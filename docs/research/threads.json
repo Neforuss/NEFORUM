@@ -1,0 +1,214 @@
+{
+  "platform": "Threads (Meta)",
+  "verified_on": "2026-08-16",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Threads API (Graph-style, graph.threads.net / graph.threads.com, version path v1.0)",
+    "docs_url": "https://developers.facebook.com/docs/threads",
+    "account_requirements": "Any Threads profile works; there is no business/professional designation on Threads. Since 2025-09-23 (changelog) profiles WITHOUT a linked Instagram account can also use the API (only followers_count / follower_demographics insights were missing, and those were added 2026-01-30). The gating is on the DEVELOPER side: you need a Meta developer account, a Meta app with the 'Access the Threads API' use case (gives a separate Threads App ID + Threads App Secret, distinct from the Facebook app ID/secret), a Privacy Policy URL, a Deauthorize (uninstall) callback URL and a Data Deletion callback URL (the redirect-URI form will not save without all of them). A user can only authorize an unreviewed app if they hold a role on it (Admin, Developer, or 'Threads Tester'); testers are added under App roles > Roles and must ACCEPT the invite inside the Threads app (Settings > Account > Website permissions > Invites). For NEFORUM's BYOK model, each user creates their own Meta app and is its admin, so no App Review is needed.",
+    "app_review_required": "Only to let people who are NOT roles on the app (admin/developer/Threads Tester) authorize it. Each permission (threads_basic, threads_content_publish, threads_manage_replies, threads_read_replies, threads_manage_insights, etc.) is reviewed separately with screencasts; the app must also be published (Live). Community sources (postproxy.dev, 2026-03-10) report a 'Tech Provider Verification' step (~1 week) before publishing to accounts you don't own, plus 2-4 weeks per permission. Not needed when every user owns their own app.",
+    "unreviewed_app_restrictions": "An unreviewed / Development-mode app can call every endpoint with full functionality, but only for accounts that hold a role on the app (admin/developer/Threads Tester). Anyone else hits an error at the authorization window (pending-tester-invite / not authorized). No numeric cap on testers is documented. Webhooks do not require review.",
+    "auth": "OAuth 2.0 authorization-code flow, confidential client (client_secret REQUIRED at token exchange). Step 1: open https://threads.com/oauth/authorize?client_id={THREADS_APP_ID}&redirect_uri={REDIRECT}&response_type=code&scope=threads_basic,threads_content_publish[&state=...] (threads.net host also works). Browser is redirected to {REDIRECT}?code=...#_ ; strip the trailing '#_' from the code. Codes are valid 1 hour, single use. Step 2: POST https://graph.threads.net/oauth/access_token (form-encoded: client_id, client_secret, grant_type=authorization_code, redirect_uri (byte-identical to step 1), code) -> {access_token, user_id, token_type:'bearer'} short-lived (1 h). Step 3: GET https://graph.threads.net/access_token?grant_type=th_exchange_token&client_secret=...&access_token=SHORT -> long-lived token (expires_in ~5183944 s = 60 days). Refresh: GET https://graph.threads.net/refresh_access_token?grant_type=th_refresh_token&access_token=LONG (token must be >=24 h old and not expired; returns a new 60-day token). Tokens are passed as access_token query/form param or Bearer header. Note (2026-08-12 changelog): short-lived token responses now include token_type.",
+    "oauth_scopes": [
+      "threads_basic (mandatory, cannot be removed)",
+      "threads_content_publish",
+      "threads_manage_replies",
+      "threads_read_replies",
+      "threads_manage_insights",
+      "threads_delete",
+      "threads_location_tagging",
+      "threads_keyword_search",
+      "threads_profile_discovery",
+      "threads_manage_mentions"
+    ],
+    "pkce_supported": false,
+    "desktop_loopback_redirect_ok": false,
+    "custom_scheme_redirect_ok": false,
+    "endpoints": [
+      {
+        "purpose": "Authorization window",
+        "method": "GET",
+        "url": "https://threads.com/oauth/authorize",
+        "request_shape": "query: client_id, redirect_uri, response_type=code, scope=comma- or space-separated, state (optional)",
+        "response_shape": "302 to redirect_uri?code=<CODE>#_ (or ?error=access_denied&error_reason=user_denied)",
+        "notes": "threads.net/oauth/authorize also accepted. redirect_uri must exactly match a 'Redirect Callback URL' configured under Use cases > Access the Threads API > Customize > Settings."
+      },
+      {
+        "purpose": "Exchange code for short-lived token",
+        "method": "POST",
+        "url": "https://graph.threads.net/oauth/access_token",
+        "request_shape": "application/x-www-form-urlencoded: client_id, client_secret, grant_type=authorization_code, redirect_uri, code",
+        "response_shape": "{\"access_token\":\"...\",\"user_id\":123,\"token_type\":\"bearer\"}",
+        "notes": "Error 36008 = redirect_uri mismatch; 36006 = stale/consumed code; 452 = token from the wrong (Facebook) app pair. graph.threads.com is an alias since 2025-06-06."
+      },
+      {
+        "purpose": "Exchange for long-lived token (60 d)",
+        "method": "GET",
+        "url": "https://graph.threads.net/access_token",
+        "request_shape": "query: grant_type=th_exchange_token, client_secret, access_token=<short-lived>",
+        "response_shape": "{\"access_token\":\"...\",\"token_type\":\"bearer\",\"expires_in\":5183944}"
+      },
+      {
+        "purpose": "Refresh long-lived token",
+        "method": "GET",
+        "url": "https://graph.threads.net/refresh_access_token",
+        "request_shape": "query: grant_type=th_refresh_token, access_token=<long-lived, >=24h old, unexpired>",
+        "response_shape": "{\"access_token\":\"...\",\"token_type\":\"bearer\",\"expires_in\":5183944}"
+      },
+      {
+        "purpose": "Get own profile / user id",
+        "method": "GET",
+        "url": "https://graph.threads.net/v1.0/me?fields=id,username,name,threads_profile_picture_url,threads_biography",
+        "request_shape": "query: fields, access_token",
+        "response_shape": "{\"id\":\"<THREADS_USER_ID>\",\"username\":\"...\"}"
+      },
+      {
+        "purpose": "Create media container (step 1 of publish)",
+        "method": "POST",
+        "url": "https://graph.threads.net/v1.0/{threads-user-id}/threads",
+        "request_shape": "form/query params: media_type=TEXT|IMAGE|VIDEO|CAROUSEL (required); text (required for TEXT, <=500 chars); image_url (IMAGE, must be publicly fetchable, JPEG/PNG); video_url (VIDEO, public URL, MP4/MOV); is_carousel_item=true for children; children=comma-separated container ids (CAROUSEL, 2-20); reply_to_id; reply_control=everyone|accounts_you_follow|mentioned_only|parent_post_author_only|followers_only; link_attachment=<url> (TEXT posts only); alt_text (<=1000 chars); topic_tag (1-50 chars, no '.' or '&'); quote_post_id; poll_attachment (object); gif_attachment={gif_id,provider:GIPHY}; text_attachment (object); is_spoiler_media; text_entities; auto_publish_text=true (skips step 2 for TEXT posts); allowlisted_country_codes; location_id; is_ghost_post; enable_reply_approvals; crossreshare_to_ig; crossreshare_to_ig_dark_mode; access_token",
+        "response_shape": "{\"id\":\"<MEDIA_CONTAINER_ID>\"}",
+        "notes": "Meta cURLs image_url/video_url, so local files cannot be used; containers expire after 24 h if unpublished. Doc recommends waiting ~30 s (or polling GET /{container-id}?fields=status,error_message until FINISHED, once per minute, max 5 min) before publishing video/images."
+      },
+      {
+        "purpose": "Publish container (step 2)",
+        "method": "POST",
+        "url": "https://graph.threads.net/v1.0/{threads-user-id}/threads_publish",
+        "request_shape": "params: creation_id=<MEDIA_CONTAINER_ID>, access_token",
+        "response_shape": "{\"id\":\"<THREADS_MEDIA_ID>\"}",
+        "notes": "Counts against 250 posts / 24 h (a carousel counts once). Replies (reply_to_id) count against the separate 1000/24h reply quota."
+      },
+      {
+        "purpose": "Container status",
+        "method": "GET",
+        "url": "https://graph.threads.net/v1.0/{threads-container-id}?fields=status,error_message",
+        "response_shape": "status: EXPIRED | ERROR | FINISHED | IN_PROGRESS | PUBLISHED; error_message e.g. FAILED_DOWNLOADING_VIDEO, INVALID_ASPECT_RATIO, INVALID_DURATION, INVALID_BIT_RATE, INVALID_FRAME_RATE, FAILED_PROCESSING_AUDIO/VIDEO, INVALID_AUDIO_CHANNELS, UNKNOWN"
+      },
+      {
+        "purpose": "Check publishing quota",
+        "method": "GET",
+        "url": "https://graph.threads.net/v1.0/{threads-user-id}/threads_publishing_limit?fields=quota_usage,config,reply_quota_usage,reply_config",
+        "response_shape": "{\"data\":[{\"quota_usage\":4,\"config\":{\"quota_total\":250,\"quota_duration\":86400}, ...}]}",
+        "notes": "Requires threads_basic + threads_content_publish."
+      },
+      {
+        "purpose": "Repost",
+        "method": "POST",
+        "url": "https://graph.threads.net/v1.0/{threads-post-id}/repost",
+        "request_shape": "access_token",
+        "response_shape": "{\"id\":\"<REPOST_ID>\"}"
+      },
+      {
+        "purpose": "Get own posts",
+        "method": "GET",
+        "url": "https://graph.threads.net/v1.0/{threads-user-id}/threads?fields=id,text,permalink,timestamp,media_type",
+        "notes": "Use permalink to show the published post."
+      }
+    ],
+    "media_upload_flow": "No binary upload at all. Images and videos must be reachable at a public HTTPS URL that Meta's servers can cURL at container-creation time (same architecture as Instagram Content Publishing). For a local-first app this means the user must supply their own public host (S3/R2/Backblaze bucket, Nextcloud public link, their own web server, etc.) or NEFORUM must offer an optional temporary upload target; the file only needs to stay reachable until the container reaches FINISHED/PUBLISHED. Flow: (1) upload file to public URL, (2) POST /{user}/threads with image_url/video_url (and is_carousel_item=true for carousel children), (3) poll GET /{container}?fields=status until FINISHED (video can take 30 s+), (4) for carousels POST /{user}/threads with media_type=CAROUSEL&children=id1,id2, poll again, (5) POST /{user}/threads_publish?creation_id=... Text-only posts can skip step 5 with auto_publish_text=true. GIFs are attached by GIPHY id (gif_attachment), not by URL.",
+    "free_tier": "Entirely free; Meta publishes no paid tier and no pricing page for the Threads API (valid as of 2026-10-07).",
+    "paid_tiers": "None.",
+    "rate_limits": "Publishing: 250 API-published posts per profile per rolling 24 h (carousel = 1); 1,000 replies per 24 h; 100 deletions per 24 h; 500 location searches per 24 h. General API calls: per-app-per-user rolling 24 h budget = 4800 x number of impressions (impressions default to a minimum of 10, i.e. 48,000 calls/day floor), plus a CPU-time budget. Check live usage via GET /{user}/threads_publishing_limit. Media processing: poll container status once per minute, max 5 minutes.",
+    "personal_profile_posting": true,
+    "token_lifetime_and_refresh": "Authorization code: 1 h, single use. Short-lived user token: 1 h. Long-lived token: 60 days (expires_in 5183944 s); refresh any time after it is 24 h old and before expiry via GET /refresh_access_token?grant_type=th_refresh_token; a token left unrefreshed for 60 days dies and the user must re-authorize. NEFORUM should refresh on every launch when age > 24 h.",
+    "server_side_scheduling": "None. There is no scheduled-publish parameter; a client must create and publish the container at post time (containers expire 24 h after creation, so pre-creating them the day before is possible but fragile)."
+  },
+  "handoff": {
+    "web_intent_url": "https://www.threads.com/intent/post",
+    "web_intent_params": "text=<percent-encoded body> (optional); url=<link attachment URL> (optional); tag=<topic tag, <=50 chars, no newline/tab/'.'/'&'> (optional); reply_control=everyone|accounts_you_follow|mentioned_only|followers_only (optional); reply_post_shortcode=<shortcode> (opens composer in reply mode); quote_post_shortcode=<shortcode> (attaches a quote). Example: https://www.threads.com/intent/post?text=Hello%20world&url=https%3A%2F%2Fexample.com . Legacy https://www.threads.net/intent/post?text=... still redirects to threads.com (Meta moved the user-facing domain from threads.net to threads.com in April 2025). A follow intent also exists: https://www.threads.com/intent/follow?username=<name>. On iOS/Android the intent URL opens the Threads app when installed.",
+    "android_share": "Intent(Intent.ACTION_SEND).setType(\"text/plain\").putExtra(Intent.EXTRA_TEXT, text).setPackage(\"com.instagram.barcelona\") opens the Threads composer prefilled with the text. Add <queries><package android:name=\"com.instagram.barcelona\"/></queries> to AndroidManifest for Android 11+ package visibility. Images/videos: use ACTION_SEND with type image/* or video/* and EXTRA_STREAM (content:// URI with FLAG_GRANT_READ_URI_PERMISSION); Threads appears in the system share sheet for media. Text cannot be guaranteed to travel with a media share (EXTRA_TEXT is often ignored when a stream is present).",
+    "ios_share": "URL scheme barcelona://post/?text=<percent-encoded text> opens the Threads composer prefilled (unofficial, discovered 2023, still reported working; declare 'barcelona' in LSApplicationQueriesSchemes to test canOpenURL). barcelona://user?username=<name> opens a profile. For media, present the system UIActivityViewController with the image/video items; Threads registers a share extension that appears in the share sheet (no public URL-scheme for media). No Meta-documented iOS SDK for Threads sharing.",
+    "desktop": "Open https://www.threads.com/intent/post?text=...&url=... in the default browser (url_launcher). The user must be logged in to threads.com; media cannot be prefilled, so NEFORUM should copy the image to the clipboard or reveal the file and let the user drag it into the composer.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "notes": "Text and a link attachment can be prefilled; images/videos cannot be prefilled by web intent or by any public URL scheme. On mobile the native share sheet (ACTION_SEND / UIActivityViewController) can hand over media, but the user still composes and taps Post manually. The intent route needs no developer app, no review, and no public media host, so it is the right fallback for users without their own Meta app."
+  },
+  "text_limits": {
+    "max_chars": 500,
+    "counting_rule": "Official doc: 'Text posts are limited to 500 characters' and 'Emojis are counted as the number of UTF-8 bytes' (the doc links grapheme-splitter but states the byte rule). Treat the limit conservatively as: count code points for plain text, but count each emoji/astral character as its UTF-8 byte length (e.g. a 4-byte emoji = 4). Community sources say URLs also count by their byte length (not shortened/weighted). Safest client-side rule for NEFORUM: length = sum over code points of (cp < 0x80 ? 1 : utf8ByteLength(cp)) and require <= 500, then surface the API error if Meta rejects.",
+    "hashtags_max": 1,
+    "notes": "No title field (title_max not applicable). Threads has one 'topic tag' per post (topic_tag param, 1-50 chars, no '.' or '&'); inline #hashtags in text are just text. Maximum 5 unique links per post (counting text URLs + link_attachment + text_attachment URLs); exceeding fails with THREADS_API__LINK_LIMIT_EXCEEDED since 2025-12-22. link_attachment is only allowed on TEXT posts (no media). alt_text <= 1000 chars. reply_control must be one of everyone, accounts_you_follow, mentioned_only, parent_post_author_only, followers_only. The web intent's 'tag' param has the same 50-char/no-'.'/'&' rule."
+  },
+  "media_limits": {
+    "images_per_post": 20,
+    "image_formats": "JPEG, PNG only (GIFs only via gif_attachment with a GIPHY id; Tenor sunset 2026-03-31). Width 320-1440 px (resized/upscaled otherwise), max aspect ratio 10:1, 8-bit sRGB recommended.",
+    "image_max_bytes": 8388608,
+    "aspect_ratio": "Any up to 10:1 width:height (images); video 0.01:1 to 10:1 width:height",
+    "video": "MP4 or MOV container, H.264 or HEVC video, AAC audio (mono or stereo, 48 kHz), 23-60 fps, max 100 Mbps video bitrate (128 kbps audio recommended), max 300 s (5 min), max 1 GB; width 320-1920 px per docs; one video per single post; carousel 2-20 items of mixed images/videos; media must be fetched by Meta from a public URL and processing can take tens of seconds (poll status).",
+    "alt_text": true
+  },
+  "web_session": {
+    "feasible": true,
+    "how": "The threads.com web app works in a normal browser session (login via Instagram or Threads credentials). A Flutter embedded WebView (flutter_inappwebview / webview_flutter) can load https://www.threads.com/intent/post?text=... with the user's cookie session so the composer is prefilled, and the user taps Post themselves; that is a web-session-assisted hand-off with low risk. Fully driving the UI (injecting JS to fill the composer, attach a file via an <input type=file> and click Post) is technically possible but relies on obfuscated React DOM, rotating GraphQL doc_ids, and Meta's anti-automation signals. Calling the private GraphQL/mobile API (what the reverse-engineered libraries did) requires Instagram-style device-id/signature headers and is the pattern Meta actively enforces against.",
+    "known_libraries": [
+      "junhoyeo/threads-api (Node/TS, MIT): development halted 2023-09-08 'due to communication received from Meta Platforms, Inc.'; archived",
+      "Danie1/threads-api (Python, MIT): archived read-only 2023-10-01, unmaintained",
+      "threadsnetapi (npm): deprecated",
+      "No maintained open-source WebView/driver library for Threads exists as of 2026; general-purpose options are flutter_inappwebview + hand-written JS, or Playwright/Puppeteer on desktop (postfa.st / upload-post style services do this server-side)."
+    ],
+    "risk": "High for true automation: Meta sent takedown-style notices to the main reverse-engineered client in Sept 2023; its ToS forbid unofficial clients and automation; detection is behavioural and results in 'Account temporarily disabled' / challenge_required / permanent bans, and because Threads accounts were historically bound to Instagram, an enforcement action could hit the Instagram account too. Low risk only for the passive variant (open the intent URL in an in-app browser and let the user press Post). Meta's OAuth window is not documented as blocking embedded WebViews (unlike Google), but Chrome Custom Tabs / ASWebAuthenticationSession are the safer choice for the official OAuth flow."
+  },
+  "gotchas": [
+    "Redirect URI: Meta's own sample README states 'Threads apps do not support redirect URLs with using localhost' and requires HTTPS; the sample maps a fake domain (threads-sample.meta) in /etc/hosts with a mkcert certificate. A loopback http://127.0.0.1:PORT/callback and a custom scheme neforum://callback are therefore NOT usable as registered redirect URIs. Design options for NEFORUM: (a) let the user register any HTTPS URL they control (even a dead one) and after the redirect paste the resulting URL/code back into NEFORUM (code lands in the query string; strip the trailing '#_'); (b) ship a tiny static HTTPS relay page (no secrets) that forwards ?code= to neforum://callback or shows it for copy; (c) run a local HTTPS server on a hosts-mapped name, which is not viable for non-technical users. Postiz docs list http://localhost:4200/... as a dev redirect, which conflicts with Meta's statement; treat localhost as unreliable.",
+    "The redirect-URI form in the dashboard silently fails to save unless you also fill Deauthorize Callback URL and Data Deletion Request URL and physically click/confirm the URL chip; it lives under Use cases > Access the Threads API > Customize > Settings, not under App settings > Basic.",
+    "There are two app-id/secret pairs in one Meta app (Facebook app ID vs Threads app ID). Use the Threads pair; mixing them yields error 452 / 'invalid platform app'.",
+    "Token exchange requires client_secret, so a BYOK desktop/mobile app must store the user's own Threads App Secret locally (acceptable because each user owns their app); never ship a shared NEFORUM app secret. No PKCE support is documented.",
+    "Authorization code arrives with '#_' appended; strip it. redirect_uri at exchange must be byte-identical (trailing slash, encoding) to the one in the authorize URL (error 36008). Codes are single-use (error 36006).",
+    "A Threads Tester must accept the invite inside the Threads app (Settings > Account > Website permissions > Invites); until then the authorize window errors. Adding and accepting are separate steps.",
+    "Media must be on a public URL that Meta can cURL; there is no binary upload endpoint. Local-first apps need a user-supplied public host. Containers expire after 24 h; publish before then.",
+    "Publishing is two-step (create container -> threads_publish) and the doc recommends ~30 s wait or polling status (once per minute, <=5 min) before publishing media; publishing too early yields 'Media ID is not available'. Text posts can use auto_publish_text=true to skip step 2.",
+    "Carousels: every child needs is_carousel_item=true; 2-20 children; children ids comma-separated; the carousel counts as one post against the 250/24h quota.",
+    "link_attachment only works on TEXT posts; max 5 unique links per post since 2025-12-22 (THREADS_API__LINK_LIMIT_EXCEEDED).",
+    "Character counting: 500 limit with emojis counted as UTF-8 bytes per the official doc; URLs are not shortened/weighted.",
+    "Long-lived tokens expire after 60 days and can only be refreshed after they are 24 h old; refresh on launch, and re-run OAuth if expired.",
+    "Unreviewed apps work fully but only for role holders; if a NEFORUM user wants to let a friend post through the same app, the friend must be added as a Threads Tester (or the app must pass App Review + be Live).",
+    "Posts published via the API are also federated to the fediverse if the user enabled sharing to the fediverse (since 2024-08-28).",
+    "Both graph.threads.net and graph.threads.com work (since 2025-06-06); use v1.0 in the path. The web domain moved to threads.com in April 2025; threads.net intent URLs still redirect.",
+    "Web intent / share-sheet routes cannot prefill media; only text + one link + tag + reply_control (and reply/quote shortcodes)."
+  ],
+  "sources": [
+    "https://developers.facebook.com/docs/threads/get-started",
+    "https://developers.facebook.com/docs/threads/get-started/get-access-tokens-and-permissions",
+    "https://developers.facebook.com/docs/threads/get-started/long-lived-tokens",
+    "https://developers.facebook.com/docs/threads/overview",
+    "https://developers.facebook.com/docs/threads/posts",
+    "https://developers.facebook.com/docs/threads/create-posts",
+    "https://developers.facebook.com/docs/threads/reference/publishing",
+    "https://developers.facebook.com/docs/threads/reply-management",
+    "https://developers.facebook.com/docs/threads/create-posts/text-attachments",
+    "https://developers.facebook.com/docs/threads/posts/quote-posts",
+    "https://developers.facebook.com/docs/threads/posts/reposts",
+    "https://developers.facebook.com/docs/threads/troubleshooting",
+    "https://developers.facebook.com/docs/threads/changelog",
+    "https://developers.facebook.com/docs/threads/threads-web-intents",
+    "https://developers.facebook.com/docs/development/create-an-app/threads-use-case",
+    "https://developers.facebook.com/docs/threads/get-started/create-an-app",
+    "https://github.com/fbsamples/threads_api",
+    "https://github.com/fbsamples/threads_api/issues/18",
+    "https://github.com/junhoyeo/threads-api",
+    "https://github.com/Danie1/threads-api",
+    "https://docs.postiz.com/providers/threads",
+    "https://nango.dev/docs/api-integrations/threads/how-to-register-your-own-threads-api-oauth-app",
+    "https://postproxy.dev/blog/how-to-post-to-threads-via-api/",
+    "https://note.com/shogo_works/n/na47d5d8f202a",
+    "https://dev.to/raylabs/fixing-threads-api-authorization-code-failures-1gba",
+    "https://www.b4x.com/android/forum/threads/149047",
+    "https://pub.dev/packages/threads_sdk",
+    "https://www.macrumors.com/2025/04/24/threads-web-features"
+  ],
+  "unverified_claims": [
+    "That the Threads Android app accepts ACTION_SEND with image/* or video/* EXTRA_STREAM (only text/plain was verified, from a 2023 forum post; media share-sheet support is from memory).",
+    "That the Threads iOS app ships a share extension appearing in UIActivityViewController for images/videos; and that barcelona://post/?text= still works in 2026 (verified only from a July 2023 forum post and a Shortcuts blog).",
+    "That inline URLs count toward the 500 limit by their byte length (stated by postproxy.dev, not by Meta's doc).",
+    "Video width 320-1920 px and audio 48 kHz / 128 kbps figures are from memory of the posts doc; the fetched excerpt confirmed only MP4/MOV, H264/HEVC, AAC, 23-60 fps, 100 Mbps, 5 min, 1 GB, 10:1 aspect limit.",
+    "That Meta's Threads OAuth window does NOT block embedded WebViews (no documentation found either way; Facebook Login does block some embedded browsers).",
+    "Whether http://localhost redirect URIs are now accepted: Postiz docs (2025-26) list one, but Meta's sample README (2024) and an Aug 2026 community write-up say localhost / non-HTTPS is rejected; not tested directly.",
+    "That the user-facing threads.net -> threads.com switch happened on 2025-04-24 (from a search-result headline; the API alias date 2025-06-06 is verified from the changelog).",
+    "Specific error codes 452, 36006, 36008 are from a dev.to article (year unverified), not from Meta's error reference."
+  ],
+  "confidence": "high"
+}

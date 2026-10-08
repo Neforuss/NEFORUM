@@ -1,0 +1,235 @@
+{
+  "platform": "Bluesky (AT Protocol)",
+  "verified_on": "2026-10-07",
+  "recommended_tiers": [
+    "open_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "AT Protocol XRPC API (com.atproto.* on the user's PDS, app.bsky.* lexicons; video via video.bsky.app)",
+    "docs_url": "https://atproto.com/specs/oauth (OAuth spec); https://github.com/bluesky-social/bsky-docs (docs source; docs.bsky.app now 308-redirects to bsky.network/docs and endpoints.bsky.app); https://github.com/bluesky-social/atproto/tree/main/lexicons (authoritative schemas)",
+    "auth": "Two routes, both free, no developer registration, no app review.\n\n(A) Legacy app-password session (verified, still works, officially 'acceptable for bots and command line tools'; 'Applications with an end user login flow should use OAuth' per atproto.com/guides/sdk-auth). User creates an app password at https://bsky.app/settings/app-passwords (format xxxx-xxxx-xxxx-xxxx; optional 'privileged' toggle for DM access - leave off). App: POST {PDS}/xrpc/com.atproto.server.createSession {identifier: handle-or-email-or-DID, password: app-password} -> {accessJwt, refreshJwt, did, handle, didDoc, email?, emailConfirmed?, active?, status?}. Use `Authorization: Bearer <accessJwt>`; when it expires POST {PDS}/xrpc/com.atproto.server.refreshSession with `Authorization: Bearer <refreshJwt>` (returns a new pair). Errors: AccountTakedown, AuthFactorTokenRequired (email 2FA; retry with authFactorToken). PDS = https://bsky.social for Bluesky-hosted accounts, otherwise resolve via DID doc (see below). Limits: createSession 30 per 5 min and 300/day per account.\n\n(B) AT Protocol OAuth 2.1 profile (verified from https://atproto.com/specs/oauth, read 2026-10-07). Mandatory for ALL client types: PKCE S256 ('plain' forbidden), PAR (pushed authorization requests), DPoP-bound tokens with ES256 keys and server nonces, client metadata document. There is no client registration: the `client_id` IS the https URL of a JSON client-metadata document the app publishes anywhere on the public web (static hosting such as GitHub Pages is fine; must be served 200 with Content-Type application/json, no redirects). Required fields: client_id, application_type ('native' for NEFORUM), grant_types ['authorization_code','refresh_token'], response_types ['code'], redirect_uris, scope (must include 'atproto'), dpop_bound_access_tokens true, token_endpoint_auth_method 'none' (public client). Native clients: redirect_uri may be a custom scheme that 'must match the client_id hostname in reverse-domain order' (client_id host app.example.com -> `com.example.app:/callback`, note single slash), or an https URL on the same origin as client_id (App Links / Universal Links). A hosted-https client_id may NOT use http://127.0.0.1 loopback; loopback exists only via the special 'localhost client': client_id = `http://localhost` (literal, no port) with virtual metadata in query params, e.g. `http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&scope=atproto%20repo%3Aapp.bsky.feed.post` ; redirect to http://127.0.0.1/<path> or http://[::1]/<path> where 'Path components must match, but port numbers are not matched' (so bind any free port); hostname 'localhost' itself is NOT allowed in redirect URIs. Official Go/Node CLI tutorials use exactly this loopback client but state 'This is for local development. The loopback client won't work in production' (it does function against bsky.social today; treat as unofficial for shipping). Public (no-backend) clients: access tokens < 30 min (5-15 min typical), refresh tokens rotate on every use (single-use), whole session capped at 2 weeks -> user must re-authorize every 14 days; confidential clients (needs a server holding a private key) get up to 180 days - not possible for a local-first app. Flow: resolve handle->DID->PDS (DID doc service #atproto_pds) -> GET {PDS}/.well-known/oauth-protected-resource -> authorization_servers[0] -> GET {AS}/.well-known/oauth-authorization-server -> POST PAR endpoint (with code_challenge, dpop proof, scope, login_hint) -> open authorize URL in system browser -> callback -> POST token endpoint with DPoP -> verify `sub` DID equals the DID resolved at start -> call PDS with `Authorization: DPoP <token>` plus a fresh DPoP proof header on every request. Flutter: pub.dev packages `atproto` 2.5.0 (BSD-3, createSession + OAuthSessionManager with automatic DPoP/refresh) and `atproto_oauth` 0.8.3 (Android/iOS/Linux/macOS/Windows; uses flutter_web_auth_2 with a custom scheme; store sessions incl. DPoP private key in flutter_secure_storage). Bluesky's own `@atproto/oauth-client-expo` README example: redirect_uris ['com.example:/auth/callback'], application_type 'native'.",
+    "oauth_scopes": [
+      "atproto (required on every session)",
+      "transition:generic (legacy broad PDS write/blob/preferences scope; still accepted, being replaced by granular scopes)",
+      "transition:email (read account email)",
+      "repo:app.bsky.feed.post?action=create (granular: create posts only; omit ?action for create+update+delete)",
+      "blob:image/* (granular: upload image blobs)",
+      "blob:video/* (granular: upload video blobs)",
+      "rpc:<lxm>?aud=<DID> (granular: service-auth / proxied calls; e.g. rpc:*?aud=did:web:api.bsky.app#bsky_appview as in Bluesky's expo example; needed for getServiceAuth used by video upload - exact string for video unverified)",
+      "include:<nsid> (permission sets bundled by a lexicon namespace)"
+    ],
+    "pkce_supported": true,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": true,
+    "endpoints": [
+      {
+        "purpose": "Resolve handle to DID (unauthenticated)",
+        "method": "GET",
+        "url": "https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle={handle}",
+        "response_shape": "{\"did\":\"did:plc:...\"}",
+        "notes": "Protocol-level alternatives: DNS TXT at _atproto.{handle} with value `did=did:...` (preferred on conflict) or GET https://{handle}/.well-known/atproto-did (text/plain body = DID). Also used to build mention facets."
+      },
+      {
+        "purpose": "Resolve DID to DID document -> PDS URL",
+        "method": "GET",
+        "url": "https://plc.directory/{did}  (did:plc)  |  https://{host}/.well-known/did.json  (did:web)",
+        "response_shape": "DID doc; find service[] entry with id ending '#atproto_pds', type 'AtprotoPersonalDataServer', use serviceEndpoint (https URL of the PDS)",
+        "notes": "Verify handle bidirectionally (DID doc alsoKnownAs contains at://{handle}). Cache < 10 min during auth flows."
+      },
+      {
+        "purpose": "OAuth discovery",
+        "method": "GET",
+        "url": "{PDS}/.well-known/oauth-protected-resource  then  {AS}/.well-known/oauth-authorization-server",
+        "response_shape": "{authorization_servers:[...]} then AS metadata (pushed_authorization_request_endpoint, authorization_endpoint, token_endpoint, dpop_signing_alg_values_supported, require_pushed_authorization_requests:true, scopes_supported)",
+        "notes": "For bsky.social accounts AS = https://bsky.social."
+      },
+      {
+        "purpose": "Create legacy session (app password)",
+        "method": "POST",
+        "url": "{PDS}/xrpc/com.atproto.server.createSession",
+        "request_shape": "{\"identifier\":\"alice.bsky.social\",\"password\":\"xxxx-xxxx-xxxx-xxxx\",\"authFactorToken\"?:\"...\",\"allowTakendown\"?:bool}",
+        "response_shape": "{accessJwt, refreshJwt, handle, did, didDoc?, email?, emailConfirmed?, emailAuthFactor?, active?, status?('takendown'|'suspended'|'deactivated')}",
+        "notes": "Errors: AccountTakedown, AuthFactorTokenRequired. Rate limit 30/5min and 300/day per account."
+      },
+      {
+        "purpose": "Refresh legacy session",
+        "method": "POST",
+        "url": "{PDS}/xrpc/com.atproto.server.refreshSession",
+        "request_shape": "no body; header Authorization: Bearer <refreshJwt>",
+        "response_shape": "{accessJwt, refreshJwt, handle, did, ...}",
+        "notes": "Refresh JWTs rotate; persist the new pair."
+      },
+      {
+        "purpose": "Upload image / thumbnail blob",
+        "method": "POST",
+        "url": "{PDS}/xrpc/com.atproto.repo.uploadBlob",
+        "request_shape": "Headers: Authorization (Bearer accessJwt or DPoP token), Content-Type: image/jpeg|image/png|image/webp|... ; body = raw bytes (lexicon input encoding */*)",
+        "response_shape": "{\"blob\":{\"$type\":\"blob\",\"ref\":{\"$link\":\"bafkrei...\"},\"mimeType\":\"image/jpeg\",\"size\":123456}}",
+        "notes": "Blob 'will be deleted if it is not referenced within a time window (eg, minutes)' - create the post record promptly. Post images: accept image/*, maxSize 2,000,000 bytes each (lexicon app.bsky.embed.images, raised from 1,000,000 in 2026), max 4 per post. Link-card thumb: maxSize 1,000,000 bytes. Client should downscale/re-encode (the official app re-encodes to JPEG and strips EXIF)."
+      },
+      {
+        "purpose": "Create a post (also replies, quotes, link cards, media posts)",
+        "method": "POST",
+        "url": "{PDS}/xrpc/com.atproto.repo.createRecord",
+        "request_shape": "{\"repo\":\"<did>\",\"collection\":\"app.bsky.feed.post\",\"record\":{\"$type\":\"app.bsky.feed.post\",\"text\":\"...\",\"createdAt\":\"2026-10-07T12:00:00.000Z\",\"langs\"?:[\"en\"],\"facets\"?:[{\"index\":{\"byteStart\":0,\"byteEnd\":12},\"features\":[{\"$type\":\"app.bsky.richtext.facet#link\",\"uri\":\"https://...\"}]}],\"embed\"?:{...one of app.bsky.embed.images|video|external|record|recordWithMedia|gallery},\"reply\"?:{\"root\":{\"uri\":\"at://...\",\"cid\":\"bafy...\"},\"parent\":{\"uri\":\"at://...\",\"cid\":\"bafy...\"}},\"tags\"?:[...],\"labels\"?:{...}},\"validate\"?:true,\"rkey\"?:\"...\",\"swapCommit\"?:\"...\"}",
+        "response_shape": "{\"uri\":\"at://did:plc:.../app.bsky.feed.post/3k...\",\"cid\":\"bafy...\",\"commit\"?:{cid,rev},\"validationStatus\"?:\"valid\"|\"unknown\"}",
+        "notes": "CREATE costs 3 rate-limit points. For a thread: post 1 has no reply; post N has reply.root = post 1 {uri,cid} and reply.parent = post N-1 {uri,cid} taken from each createRecord response. Images embed: {\"$type\":\"app.bsky.embed.images\",\"images\":[{\"alt\":\"...\",\"image\":<blob>,\"aspectRatio\":{\"width\":w,\"height\":h}}]}. Link card: {\"$type\":\"app.bsky.embed.external\",\"external\":{\"uri\":\"https://...\",\"title\":\"...\",\"description\":\"...\",\"thumb\"?:<blob<=1MB>}}. Video: {\"$type\":\"app.bsky.embed.video\",\"video\":<blob from video service>,\"aspectRatio\":{...},\"alt\"?:\"...\",\"captions\"?:[{lang,file<=20000B text/vtt}] (max 20)}. Quote: {\"$type\":\"app.bsky.embed.record\",\"record\":{uri,cid}}; quote+media: app.bsky.embed.recordWithMedia. Only ONE embed per post (images OR link card OR video). Error InvalidSwap only if swapCommit used. Web URL of the result: https://bsky.app/profile/{handle-or-did}/post/{rkey} where rkey is the last path segment of uri."
+      },
+      {
+        "purpose": "Mint service-auth token for the video service",
+        "method": "GET",
+        "url": "{PDS}/xrpc/com.atproto.server.getServiceAuth?aud=did:web:{PDS host, e.g. did:web:bsky.social or the user's entryway host}&lxm=com.atproto.repo.uploadBlob&exp={unix seconds, now+1800}",
+        "response_shape": "{\"token\":\"<jwt>\"}",
+        "notes": "Per official video tutorial the aud is the PDS DID (did:web:<pds host>), NOT did:web:video.bsky.app; lxm is com.atproto.repo.uploadBlob. Requires the user's PDS session; under granular OAuth scopes you need a matching rpc: scope (exact string unverified)."
+      },
+      {
+        "purpose": "Upload video for processing",
+        "method": "POST",
+        "url": "https://video.bsky.app/xrpc/app.bsky.video.uploadVideo?did={did}&name={filename.mp4}",
+        "request_shape": "Headers: Authorization: Bearer <service-auth token>, Content-Type: video/mp4, Content-Length: <bytes>; body = raw video bytes",
+        "response_shape": "{\"jobStatus\":{\"jobId\":\"...\",\"did\":\"...\",\"state\":\"JOB_STATE_CREATED|JOB_STATE_ENCODING|JOB_STATE_SCANNING|JOB_STATE_COMPLETED|JOB_STATE_FAILED\",\"progress\"?:int,\"blob\"?:<blob>,\"error\"?:\"...\",\"message\"?:\"...\"}}",
+        "notes": "Lexicon embed accepts video/mp4 only, maxSize 300,000,000 bytes (300 MB); Bluesky announced 10-minute / 300 MB limit on 2026-08-25/26 (was 60 s in Sept 2024, 3 min from Jan 2026). Daily quota per Sept-2024 launch post: 25 videos or 10 GB per day ('we may tweak this'). Error `already_exists` if the same video was processed before. Bluesky-hosted accounts need a verified email. Poll until state COMPLETED and blob present, then createRecord with app.bsky.embed.video."
+      },
+      {
+        "purpose": "Poll video processing",
+        "method": "GET",
+        "url": "https://video.bsky.app/xrpc/app.bsky.video.getJobStatus?jobId={jobId}",
+        "response_shape": "{\"jobStatus\":{jobId, did, state, progress?, blob?, error?, message?}}",
+        "notes": "Needs a service-auth token with lxm=app.bsky.video.getJobStatus (lexicon-defined lxm) per community sources; the official tutorial's agent handles this."
+      },
+      {
+        "purpose": "Check remaining daily video quota",
+        "method": "GET",
+        "url": "https://video.bsky.app/xrpc/app.bsky.video.getUploadLimits",
+        "response_shape": "{\"canUpload\":bool,\"remainingDailyVideos\"?:int,\"remainingDailyBytes\"?:int,\"message\"?:\"...\",\"error\"?:\"...\"}",
+        "notes": "Service-auth token with lxm=app.bsky.video.getUploadLimits."
+      },
+      {
+        "purpose": "Link-card metadata (undocumented helper used by the official app)",
+        "method": "GET",
+        "url": "https://cardyb.bsky.app/v1/extract?url={url-encoded URL}",
+        "response_shape": "{url, title, description, image (often a proxied cardyb.bsky.app/v1/image?... URL), error?}",
+        "notes": "Unofficial/undocumented endpoint; the protocol has NO server-side unfurl - the client must build app.bsky.embed.external itself (fetch OG tags yourself or via cardyb), download the thumb, uploadBlob it (<=1,000,000 bytes), then reference it."
+      }
+    ],
+    "free_tier": "Entire API is free and unmetered apart from rate limits (valid 2026-10-07). No API keys, no developer account, no app registration. Per-account rate limits from docs (bsky-docs rate-limits.md): 3,000 requests per 5 minutes per IP; repo writes 5,000 points/hour and 35,000 points/day where CREATE=3, UPDATE=2, DELETE=1 (about 1,666 new records/hour, 11,666/day); createSession 30 per 5 min / 300 per day; updateHandle 10 per 5 min / 50 per day. Video: 25 videos or 10 GB per day (Sept 2024 figure, subject to change; query getUploadLimits).",
+    "paid_tiers": "None. No paid API tiers exist.",
+    "rate_limits": "Headers returned: ratelimit-limit, ratelimit-remaining, ratelimit-reset (unix seconds), ratelimit-policy (e.g. '30;w=300'); HTTP 429 with error 'RateLimitExceeded' when exceeded. Numbers as in free_tier.",
+    "media_upload_flow": "Images: uploadBlob (raw bytes, Content-Type = mime) -> reference returned blob object in app.bsky.embed.images (max 4, each <= 2,000,000 bytes, image/*; supply alt + aspectRatio; official app re-encodes to JPEG <= 2000px historically, now up to 4000px). Link-card thumb: same uploadBlob, <= 1,000,000 bytes. Video: getServiceAuth (aud=did:web:<PDS host>, lxm=com.atproto.repo.uploadBlob) -> POST https://video.bsky.app/xrpc/app.bsky.video.uploadVideo?did=&name= with Bearer service token and video/mp4 body -> poll getJobStatus until blob -> createRecord with app.bsky.embed.video. New in 2026: app.bsky.embed.gallery (mixed media; schema max 20 items, clients told to enforce a soft limit of 10 in authoring UIs).",
+    "server_side_scheduling": "None. Posts are created immediately; createdAt is client-supplied (ISO 8601 with Z). Scheduling must be done locally (the device must be on and online at send time).",
+    "token_lifetime_and_refresh": "OAuth public client: access token < 30 min (typically 5-15), refresh tokens single-use and rotated on every refresh, total session max 2 weeks then re-authorize. Legacy createSession: accessJwt short-lived (official docs only say 'expires after a few minutes'; community observes ~1-2 hours), refreshJwt long-lived (community: weeks to ~90 days, unverified); refresh via refreshSession with Bearer refreshJwt; no hard session cap as long as you keep refreshing.",
+    "app_review_required": "No. No app review, registration, or approval of any kind. For OAuth the only 'registration' is publishing the client-metadata JSON at an https URL.",
+    "unreviewed_app_restrictions": "None - every app is 'unreviewed'. Full posting, media and thread capability from day one on a personal account. The only differences come from client type: public clients (all local-first apps) get 2-week OAuth sessions; the http://localhost loopback client is labelled a development mechanism and shows a generic/unverified client on the consent screen (exact wording unverified).",
+    "personal_profile_posting": true,
+    "account_requirements": "Any ordinary Bluesky account (free, no business/professional account concept). Video upload on Bluesky-hosted accounts requires a verified email. App passwords require the user to create one in Settings > App passwords (do not enable 'privileged' unless DMs are needed). Developer Guidelines (docs/support/developer-guidelines) forbid spam/automated bulk interactions and automated follower generation; cross-posting a user's own posts is fine."
+  },
+  "handoff": {
+    "web_intent_url": "https://bsky.app/intent/compose",
+    "web_intent_params": "text=<URL-encoded text, newlines as %0A> (only parameter; 300 grapheme limit still applies; user must confirm in the composer; unauthenticated users are prompted to sign in first). Example from docs: https://bsky.app/intent/compose?text=I%27m%20reading%20through%20the%20Bluesky%20API%20docs%21%20%F0%9F%A6%8B%0Ahttps%3A//docs.bsky.app",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "android_share": "Official app package xyz.blueskyweb.app. Its main activity registers android.intent.action.SEND for text/plain, image/* and video/*, and android.intent.action.SEND_MULTIPLE for image/* (category DEFAULT) - verified in social-app plugins/shareExtension/withIntentFilters.js. So NEFORUM can fire ACTION_SEND with EXTRA_TEXT and/or EXTRA_STREAM (content:// URIs with FLAG_GRANT_READ_URI_PERMISSION) targeted at package xyz.blueskyweb.app; the module converts it to bluesky://intent/compose?text=...&imageUris=...|videoUri=... internally. Module README says up to 4 images for multi-image share (may be stale now that posts can hold more via gallery). The https://bsky.app host is an auto-verified App Link, so opening https://bsky.app/intent/compose?text=... also lands in the app; deep-link scheme bluesky://intent/compose?text=... works too.",
+    "ios_share": "Bundle id xyz.blueskyweb.app; URL scheme `bluesky` -> bluesky://intent/compose?text=<encoded>. Universal links: applinks:bsky.app, so https://bsky.app/intent/compose?text= opens the app. Share extension target 'Share-with-Bluesky' (xyz.blueskyweb.app.Share-with-Bluesky) with NSExtensionActivationRule: text supported, web URL max 1, images max 10, movie max 1 - so a UIActivityViewController share sheet with text + up to 10 images or 1 video can prefill the Bluesky composer (user picks Bluesky in the sheet; cannot be targeted programmatically).",
+    "desktop": "Open https://bsky.app/intent/compose?text=<encoded> in the default browser (web app composer; user attaches media manually). Windows/macOS have no official native Bluesky desktop client; the web app is a PWA.",
+    "notes": "Text-only via URL on every platform; media prefill only through the OS share sheet (Android ACTION_SEND / iOS share extension), never via the intent URL. The compose intent cannot pre-set reply targets, link cards or languages."
+  },
+  "text_limits": {
+    "max_chars": 300,
+    "counting_rule": "300 Unicode extended grapheme clusters (lexicon maxGraphemes 300) AND at most 3,000 UTF-8 bytes (maxLength 3000). Every grapheme counts 1 regardless of width; an emoji ZWJ sequence or flag counts as 1 grapheme. URLs are NOT shortened by the server - the full URL text counts (the official client shows a truncated display text in `text` and puts the full URL in a link facet, which is the trick to save characters). Facet byteStart/byteEnd are zero-indexed UTF-8 byte offsets (end exclusive) - compute on the UTF-8 bytes, not Dart String code units (UTF-16).",
+    "hashtags_max": 8,
+    "title_max": 0,
+    "notes": "Hashtags are plain text plus an app.bsky.richtext.facet#tag facet (tag stored without '#', max 64 graphemes / 640 bytes); the post-level `tags` array (max 8, same per-item limits) is separate hidden metadata. Mentions: facet#mention with the resolved DID. Links: facet#link with full uri. langs: max 3 BCP-47 codes. Alt text: no schema limit on images (official UI caps at 2000 chars - unverified). Grapheme counting in Dart: use the `characters` package (`text.characters.length`); the community `bluesky_text` package does counting and facet extraction."
+  },
+  "media_limits": {
+    "images_per_post": 4,
+    "image_max_bytes": 2000000,
+    "image_formats": "accept image/* at the lexicon level; the official apps/AppView serve JPEG, PNG, WebP, GIF (static). Official client re-encodes to JPEG (now up to 4000px long edge). Link-card thumb max 1,000,000 bytes. New app.bsky.embed.gallery allows mixed media, soft limit 10 items (schema 20).",
+    "video": "1 video per post (app.bsky.embed.video), video/mp4 only at the lexicon (maxSize 300,000,000 bytes). Announced limits: up to 10 minutes and 300 MB (Aug 2026; was 3 min from Jan 2026, 60 s at Sept 2024 launch). Processed asynchronously by video.bsky.app (transcode to HLS); captions up to 20 WebVTT files of <= 20,000 bytes each. Daily quota: 25 videos / 10 GB per account (Sept 2024 figure; check getUploadLimits). Video cannot be combined with images in one post.",
+    "aspect_ratio": "Any; supply aspectRatio {width,height} on each image/video so clients lay out correctly. Image grid historically cropped; since the April 2026 carousel update mixed aspect ratios display uncropped.",
+    "alt_text": true
+  },
+  "gotchas": [
+    "docs.bsky.app URLs now 308-redirect to bsky.network/docs and endpoints.bsky.app (JS-rendered); read the markdown sources in github.com/bluesky-social/bsky-docs or the lexicon JSON in bluesky-social/atproto instead.",
+    "OAuth is unusually heavy: PAR + PKCE S256 + DPoP (ES256 keypair per session, server nonce retry on 400 use_dpop_nonce / 401) + hosted client-metadata JSON. Do not hand-roll; use pub.dev `atproto_oauth`/`atproto` (atprotodart.com, active in 2026) which handle DPoP and refresh.",
+    "Public OAuth clients get at most a 2-week session; the user must re-login every 14 days. App passwords avoid this (refresh indefinitely) but are discouraged for end-user apps and give broad access. Offer both: OAuth default, app-password fallback.",
+    "A hosted https client_id cannot use http://127.0.0.1 redirects; native apps must use a reverse-domain custom scheme matching the client_id hostname (e.g. client_id https://neforum.example.org/oauth/client-metadata.json -> org.example.neforum:/callback) or https same-origin App/Universal Links. On Windows/macOS that means registering a custom URL scheme for the desktop app. The loopback alternative requires client_id literally `http://localhost?...` which the official tutorials call development-only.",
+    "Mobile custom-scheme redirects are not restricted to the app that claims them (any app can register the scheme); the spec accepts this for native public clients, PKCE protects the code.",
+    "Refresh tokens are single-use. Persist the new pair atomically and serialize refreshes across isolates/tabs or you will invalidate your own session.",
+    "Facet offsets are UTF-8 bytes; Dart strings are UTF-16. Convert with utf8.encode before computing byteStart/byteEnd. Grapheme count via `characters` package, not .length.",
+    "Server does not auto-detect links, mentions or hashtags - without facets they are plain text. Mentions require resolving @handle -> DID (resolveHandle) at compose time.",
+    "No server-side link unfurl: to get a link card you must build app.bsky.embed.external yourself (fetch OG/title/description, download thumb <= 1,000,000 bytes, uploadBlob it). The official app uses the undocumented https://cardyb.bsky.app/v1/extract?url= service.",
+    "Exactly one embed per post: images OR video OR link card OR quote (quote+media via recordWithMedia). A post with 4 images cannot also carry a link card.",
+    "Image limit changed in 2026 from 1,000,000 to 2,000,000 bytes (post images only); link-card thumbs are still 1,000,000. Old third-party docs still say 1 MB.",
+    "Blobs are garbage-collected if not referenced by a record within minutes - upload immediately before createRecord, not at draft time.",
+    "Video is not uploaded to the PDS: it goes to https://video.bsky.app with a getServiceAuth token whose aud is did:web:<PDS host> and lxm=com.atproto.repo.uploadBlob, with ?did=&name= query params and Content-Type video/mp4, then poll getJobStatus. Requires verified email on bsky.social accounts. Only mp4 at the lexicon level; re-encode mov/webm client-side.",
+    "Threads: root/parent strong refs need both uri AND cid from each createRecord response; root stays the first post for all later posts.",
+    "Rate limits are points-based: 3 points per create, 5,000/hour and 35,000/day; a 429 returns RateLimitExceeded with ratelimit-reset (unix seconds).",
+    "Self-hosted PDS users: never hard-code bsky.social; resolve handle -> DID (plc.directory or did:web) -> service #atproto_pds -> serviceEndpoint and verify handle bidirectionally. Entryway for bsky.social accounts is https://bsky.social even though the actual PDS host is like https://puffball.us-east.host.bsky.network.",
+    "createdAt is client-supplied; a far-future timestamp is accepted but feeds may hide/sort it oddly - always use now in UTC with 'Z'.",
+    "The compose intent URL cannot prefill media; media only via OS share sheet (Android ACTION_SEND/SEND_MULTIPLE to xyz.blueskyweb.app; iOS share extension accepts text, 1 URL, 10 images or 1 movie).",
+    "Email 2FA on the main password returns AuthFactorTokenRequired; app passwords are the normal way to avoid this in third-party clients (behaviour with 2FA accounts unverified)."
+  ],
+  "sources": [
+    "https://atproto.com/specs/oauth",
+    "https://atproto.com/specs/permission",
+    "https://atproto.com/guides/permission-requests",
+    "https://atproto.com/guides/sdk-auth",
+    "https://atproto.com/guides/go-oauth-cli-tutorial",
+    "https://atproto.com/guides/oauth-cli-tutorial",
+    "https://atproto.com/specs/did",
+    "https://atproto.com/specs/handle",
+    "https://web.plc.directory/api/redoc",
+    "https://raw.githubusercontent.com/bluesky-social/bsky-docs/main/docs/advanced-guides/rate-limits.md",
+    "https://raw.githubusercontent.com/bluesky-social/bsky-docs/main/docs/advanced-guides/posts.md",
+    "https://raw.githubusercontent.com/bluesky-social/bsky-docs/main/docs/advanced-guides/intent-links.md",
+    "https://raw.githubusercontent.com/bluesky-social/bsky-docs/main/docs/advanced-guides/oauth-client.md",
+    "https://raw.githubusercontent.com/bluesky-social/bsky-docs/main/docs/tutorials/video.mdx",
+    "https://raw.githubusercontent.com/bluesky-social/bsky-docs/main/docs/support/developer-guidelines.md",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/feed/post.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/embed/images.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/embed/video.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/embed/external.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/embed/gallery.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/richtext/facet.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/video/uploadVideo.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/app/bsky/video/getUploadLimits.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/com/atproto/repo/uploadBlob.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/com/atproto/repo/createRecord.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/lexicons/com/atproto/server/createSession.json",
+    "https://raw.githubusercontent.com/bluesky-social/atproto/main/packages/oauth/oauth-client-expo/README.md",
+    "https://raw.githubusercontent.com/bluesky-social/social-app/main/app.config.js",
+    "https://raw.githubusercontent.com/bluesky-social/social-app/main/plugins/shareExtension/withIntentFilters.js",
+    "https://raw.githubusercontent.com/bluesky-social/social-app/main/modules/Share-with-Bluesky/Info.plist",
+    "https://raw.githubusercontent.com/bluesky-social/social-app/main/modules/expo-receive-android-intents/README.md",
+    "https://bsky.social/about/blog/09-11-2024-video",
+    "https://engadget.com/2244638/bluesky-now-supports-10-minute-videos-larger-file-sizes/",
+    "https://pub.dev/packages/atproto_oauth",
+    "https://pub.dev/packages/atproto",
+    "https://cdn.jsdelivr.net/npm/@atcute/oauth-node-client@2.0.0/README.md",
+    "https://github.com/bluesky-social/atproto/discussions/697",
+    "https://www.val.town/embed/x/wilhelm/komponera/docs/adr/0009-link-unfurl-via-cardyb.md"
+  ],
+  "unverified_claims": [
+    "Legacy accessJwt lifetime (~1-2 hours) and refreshJwt lifetime (~90 days / '2 months') - official docs only say 'a few minutes' and 'lasts longer'.",
+    "App passwords bypass email 2FA and cannot delete/migrate the account or change email; 'privileged' app passwords are needed for chat.bsky DMs - from community/help sources, not read on an official page.",
+    "Video daily quota of 25 videos / 10 GB is the Sept 2024 launch number; current quota not confirmed (use getUploadLimits). The 10-minute/300 MB limit comes from Engadget (2026-08-26) and lexicon maxSize, not a page on bsky.social.",
+    "Image limit raised from 1,000,000 to 2,000,000 bytes in April 2026 (TechCrunch via search summary); the 2,000,000 value itself is verified in the current lexicon.",
+    "Exact rpc: scope string required for getServiceAuth/video upload under granular OAuth scopes (likely rpc:com.atproto.repo.uploadBlob?aud=did:web:<pds> or rpc:*?aud=*); and that bsky.social already enforces granular scopes while still accepting transition:generic.",
+    "What the bsky.social consent screen displays for an http://localhost loopback client, and whether Bluesky will keep allowing it indefinitely for shipped desktop apps.",
+    "Video job states names (JOB_STATE_CREATED/ENCODING/SCANNING/COMPLETED/FAILED) and that getJobStatus/getUploadLimits need service-auth tokens with their own lxm - recalled from app.bsky.video.defs and community PHP docs, not re-read.",
+    "cardyb.bsky.app/v1/extract response shape and that it is tolerated for third-party use (it is undocumented).",
+    "Official app's image re-encode behaviour (JPEG, EXIF stripped, 4000px) and alt-text UI cap of 2000 chars.",
+    "Android share module 'up to 4 images' may be outdated after the 2026 gallery/carousel change; iOS extension max 10 images is verified from Info.plist.",
+    "Android ACTION_SEND filters are on the first <activity> (MainActivity) of xyz.blueskyweb.app - inferred from the plugin code, not from a built manifest.",
+    "The bsky.social AppView/CDN serves GIF/WebP/PNG/JPEG; animated GIFs are posted via external embed (tenor) not image blobs."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Technically possible: load https://bsky.app in a WebView (webview_flutter / flutter_inappwebview), let the user log in, then either drive the composer DOM or, more sensibly, read the session from localStorage (the web app stores the atproto session JSON, including accessJwt/refreshJwt or DPoP OAuth state) and call the XRPC API directly. But it is pointless: the web client is open source and uses exactly the same public, free, unauthenticated-registration API described above, so the direct API path is strictly simpler and more robust.",
+    "known_libraries": [],
+    "risk": "Low to negligible from Bluesky's side: third-party clients are explicitly contemplated by the Developer Guidelines; there is no ToS clause against alternative clients or automation of your own posts; enforcement targets spam/bulk interactions. Practical risks are breakage when the web UI changes, lack of 2FA/OAuth consent transparency, and storing the user's full-session tokens outside the official app. Not recommended - use the API."
+  },
+  "confidence": "high"
+}

@@ -1,0 +1,222 @@
+{
+  "platform": "LinkedIn",
+  "verified_on": "2026-10-02",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "LinkedIn OAuth 2.0 + 'Share on LinkedIn' (w_member_social, self-serve) using the versioned Posts API (POST /rest/posts) or legacy UGC Posts API (POST /v2/ugcPosts); organization pages require the vetted Community Management API (w_organization_social)",
+    "docs_url": "https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin",
+    "auth": "OAuth 2.0 3-legged authorization-code flow. Authorize: GET https://www.linkedin.com/oauth/v2/authorization?response_type=code&client_id=...&redirect_uri=...&state=...&scope=openid%20profile%20email%20w_member_social (optionally &enable_extended_login=true to allow Google/Apple/passkey login on native platforms). Token: POST https://www.linkedin.com/oauth/v2/accessToken, Content-Type application/x-www-form-urlencoded, body grant_type=authorization_code&code=...&client_id=...&client_secret=...&redirect_uri=... ; client_secret is REQUIRED in the standard flow (a 400 'A required parameter client_secret is missing' is documented). Response: {access_token (~500 chars, plan for 1000), expires_in (5184000 = 60 days), scope} plus refresh_token/refresh_token_expires_in only for approved MDP partners. Auth code lives 30 minutes. Redirect URI rules (standard flow, doc updated 2026-05-15): must be absolute, registered in the app's Auth tab, must match exactly, query parameters are ignored, fragments (#) are invalid; docs say 'via HTTPS' but community docs (Postiz, CData, 2025-2026) register http://localhost:PORT successfully. Separate 'Native Clients' PKCE flow: GET https://www.linkedin.com/oauth/native-pkce/authorization with code_challenge + code_challenge_method=S256, redirect_uri MUST be a loopback IP (http://127.0.0.1:{port}/... or http://[::1]:{port}/..., hostname 'localhost' not mentioned), token exchange at /oauth/v2/accessToken with code_verifier and NO client_secret; BUT the page says LinkedIn must enable PKCE for your app ('reach out to your point of contact at LinkedIn') and requires the system browser, not an embedded webview. OpenID Connect: discovery at https://www.linkedin.com/oauth/.well-known/openid-configuration, userinfo GET https://api.linkedin.com/v2/userinfo -> {sub,name,given_name,family_name,picture,locale,email?,email_verified?}; author URN = urn:li:person:{sub}. Requesting a different scope set than previously granted invalidates all earlier tokens for that member.",
+    "oauth_scopes": [
+      "openid",
+      "profile",
+      "email",
+      "w_member_social",
+      "w_organization_social (Community Management API, vetted)",
+      "r_organization_social (vetted)",
+      "rw_organization_admin (vetted)",
+      "r_member_social (CLOSED, not accepting requests)"
+    ],
+    "pkce_supported": true,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": false,
+    "token_lifetime_and_refresh": "Access tokens: 60 days (expires_in=5184000), verified on doc updated 2026-05-15. Programmatic refresh tokens (grant_type=refresh_token at /oauth/v2/accessToken, 365-day refresh TTL that does not reset) are 'available for a limited set of partners' / 'all approved Marketing Developer Platform (MDP) partners' only (doc updated 2025-10-08); a self-serve Share-on-LinkedIn app gets NO refresh_token. The documented 'refresh' for everyone else is to re-run the authorization flow; the consent screen is skipped automatically if the member is still logged in to linkedin.com AND the current token has not expired, otherwise full consent again. Practical consequence (community, 2026): re-auth roughly six times a year. 401 on any call means re-authorize.",
+    "endpoints": [
+      {
+        "purpose": "Get member id for author URN (OpenID Connect userinfo)",
+        "method": "GET",
+        "url": "https://api.linkedin.com/v2/userinfo",
+        "request_shape": "Header Authorization: Bearer {token}; scopes openid profile (email optional)",
+        "response_shape": "{\"sub\":\"782bbtaQ\",\"name\":\"...\",\"given_name\":\"...\",\"family_name\":\"...\",\"picture\":\"https://...\",\"locale\":\"en-US\",\"email\":\"...\",\"email_verified\":true}; author = urn:li:person:{sub}",
+        "notes": "email/email_verified may be absent. Legacy GET /v2/me needs r_liteprofile which new apps no longer get; use userinfo."
+      },
+      {
+        "purpose": "Create a post (text / single image / single video / document / article / multi-image / poll) - current versioned API",
+        "method": "POST",
+        "url": "https://api.linkedin.com/rest/posts",
+        "request_shape": "Headers: Authorization: Bearer {token}; LinkedIn-Version: 202609 (YYYYMM, latest as of 2026-09-16; each version supported >= 12 months; 202510 sunsets 2026-10-15); X-Restli-Protocol-Version: 2.0.0; Content-Type: application/json. Body: {\"author\":\"urn:li:person:{sub}\" (or urn:li:organization:{id} with w_organization_social),\"commentary\":\"little-text string (escape \\\\ | { } @ [ ] ( ) < > # * _ ~ with backslash; mentions @[Name](urn:li:person:..); hashtags #tag or {hashtag|\\\\#|tag})\",\"visibility\":\"PUBLIC\"|\"CONNECTIONS\"|\"LOGGED_IN\",\"distribution\":{\"feedDistribution\":\"MAIN_FEED\",\"targetEntities\":[],\"thirdPartyDistributionChannels\":[]},\"lifecycleState\":\"PUBLISHED\",\"isReshareDisabledByAuthor\":false, optional \"content\": {\"media\":{\"id\":\"urn:li:image:..|urn:li:video:..|urn:li:document:..\",\"title\":\"..\",\"altText\":\"..\"}} | {\"multiImage\":{\"images\":[{\"id\":\"urn:li:image:..\",\"altText\":\"..\"}, ...2-20]}} | {\"article\":{\"source\":\"https://..\",\"title\":\"..\",\"description\":\"..\",\"thumbnail\":\"urn:li:image:..\"}}}",
+        "response_shape": "201 Created, empty body; post URN in response header x-restli-id (urn:li:share:{id} or urn:li:ugcPost:{id}); view at https://www.linkedin.com/feed/update/{urn}/",
+        "notes": "lifecycleState must be PUBLISHED on create (no DRAFT/scheduling). Article posts do NOT scrape OpenGraph: you must supply title/description/thumbnail yourself (thumbnail is an uploaded urn:li:image). Errors: 400 FIELD_LENGTH_TOO_LONG (commentary), 403 ACCESS_DENIED (scope), 429 TOO_MANY_REQUESTS, 422 for little-text parse problems."
+      },
+      {
+        "purpose": "Create a share - legacy unversioned API still documented for Share on LinkedIn",
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/ugcPosts",
+        "request_shape": "Headers: Authorization Bearer, X-Restli-Protocol-Version: 2.0.0, Content-Type application/json. Body: {\"author\":\"urn:li:person:{sub}\",\"lifecycleState\":\"PUBLISHED\",\"specificContent\":{\"com.linkedin.ugc.ShareContent\":{\"shareCommentary\":{\"text\":\"...\"},\"shareMediaCategory\":\"NONE\"|\"ARTICLE\"|\"IMAGE\"|\"VIDEO\",\"media\":[{\"status\":\"READY\",\"originalUrl\":\"https://..\" (ARTICLE) or \"media\":\"urn:li:digitalmediaAsset:..\" (IMAGE/VIDEO),\"title\":{\"text\":\"..\"},\"description\":{\"text\":\"..\"}}]}},\"visibility\":{\"com.linkedin.ugc.MemberNetworkVisibility\":\"PUBLIC\"|\"CONNECTIONS\"}}",
+        "response_shape": "201 Created; X-RestLi-Id header = urn:li:share:{id}",
+        "notes": "Officially 'replaced by the Posts API' per migration guide; the Share on LinkedIn consumer page (updated 2023-12-14) still documents it with the 150/member/day + 100,000/app/day limits. No LinkedIn-Version header. ugcPosts shareCommentary is plain text with attributes array (no little-text escaping needed) and ARTICLE shares DO auto-scrape the URL preview. No stated sunset date, but no new features; treat as deprecated."
+      },
+      {
+        "purpose": "Image upload step 1: initialize",
+        "method": "POST",
+        "url": "https://api.linkedin.com/rest/images?action=initializeUpload",
+        "request_shape": "Headers: Authorization Bearer, LinkedIn-Version: 202609, X-Restli-Protocol-Version: 2.0.0, Content-Type application/json. Body: {\"initializeUploadRequest\":{\"owner\":\"urn:li:person:{sub}\"}}",
+        "response_shape": "200 {\"value\":{\"uploadUrlExpiresAt\":1650567510704,\"uploadUrl\":\"https://www.linkedin.com/dms-uploads/...\",\"image\":\"urn:li:image:C4E10AQFoyyAjHPMQuQ\"}}",
+        "notes": "SYNCHRONOUS_UPLOAD is NOT supported in Images API. Owner must be the token's member for member-owned images."
+      },
+      {
+        "purpose": "Image upload step 2: upload binary",
+        "method": "PUT",
+        "url": "{uploadUrl from initializeUpload}",
+        "request_shape": "Headers: Authorization: Bearer {token} (REQUIRED for images, unlike video parts); body = raw image bytes (curl --upload-file). Formats JPG/PNG/GIF (<=250 frames), <36,152,320 pixels.",
+        "response_shape": "201 Created, empty body",
+        "notes": "Then optionally poll GET https://api.linkedin.com/rest/images/{urn:li:image:..} until status AVAILABLE before posting. CAVEAT: docs say tokens with only w_member_social are write-only and cannot GET /rest/images on the versioned gateway (403), though 'legacy GET calls' work; Postiz polls up to 10 times and tolerates failures."
+      },
+      {
+        "purpose": "Video upload step 1: initialize (multipart by default)",
+        "method": "POST",
+        "url": "https://api.linkedin.com/rest/videos?action=initializeUpload",
+        "request_shape": "Headers as above. Body: {\"initializeUploadRequest\":{\"owner\":\"urn:li:person:{sub}\",\"fileSizeBytes\":1055736,\"uploadCaptions\":false,\"uploadThumbnail\":false}}",
+        "response_shape": "200 {\"value\":{\"uploadUrlsExpireAt\":..., \"video\":\"urn:li:video:C5505AQH-oV1qvnFtKA\",\"uploadInstructions\":[{\"uploadUrl\":\"https://www.linkedin.com/dms-uploads/...\",\"firstByte\":0,\"lastByte\":4194303}, ...],\"uploadToken\":\"\", optional thumbnailUploadUrl/captionsUploadUrl}}",
+        "notes": "Parts are 4,194,304 bytes (split -b 4194303 per docs); one uploadUrl per part; URLs expire ~30 days."
+      },
+      {
+        "purpose": "Video upload step 2: upload each part",
+        "method": "PUT",
+        "url": "{uploadInstructions[i].uploadUrl}",
+        "request_shape": "Header Content-Type: application/octet-stream; body = bytes firstByte..lastByte. Docs' sample sends NO Authorization header for video parts (Assets API doc states video upload must not include an OAuth token).",
+        "response_shape": "200 OK with response header etag: <part id> (save each ETag in order)",
+        "notes": "Thumbnail: PUT with header media-type-family: STILLIMAGE to thumbnailUploadUrl (201). Captions: multipart/form-data POST to captionsUploadUrl (SRT, English only)."
+      },
+      {
+        "purpose": "Video upload step 3: finalize",
+        "method": "POST",
+        "url": "https://api.linkedin.com/rest/videos?action=finalizeUpload",
+        "request_shape": "Headers as above. Body: {\"finalizeUploadRequest\":{\"video\":\"urn:li:video:..\",\"uploadToken\":\"<from init, may be empty string>\",\"uploadedPartIds\":[\"<etag1>\",\"<etag2>\",...]}}",
+        "response_shape": "200 OK",
+        "notes": "Then poll GET https://api.linkedin.com/rest/videos/{encoded urn} until status AVAILABLE (PROCESSING -> AVAILABLE / PROCESSING_FAILED with processingFailureReason) before creating the post; the post may otherwise sit in PUBLISH_REQUESTED/PUBLISH_FAILED."
+      },
+      {
+        "purpose": "Legacy image/video registration (pairs with /v2/ugcPosts)",
+        "method": "POST",
+        "url": "https://api.linkedin.com/v2/assets?action=registerUpload",
+        "request_shape": "{\"registerUploadRequest\":{\"recipes\":[\"urn:li:digitalmediaRecipe:feedshare-image\" | \"urn:li:digitalmediaRecipe:feedshare-video\"],\"owner\":\"urn:li:person:{sub}\",\"serviceRelationships\":[{\"relationshipType\":\"OWNER\",\"identifier\":\"urn:li:userGeneratedContent\"}], optional \"supportedUploadMechanism\":[\"SYNCHRONOUS_UPLOAD\"] for images}}",
+        "response_shape": "{\"value\":{\"uploadMechanism\":{\"com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest\":{\"uploadUrl\":\"...\"}},\"asset\":\"urn:li:digitalmediaAsset:C5522AQGTYER3k3ByHQ\"}}; then PUT binary to uploadUrl (images need Bearer header), use asset URN in ugcPosts media[].media",
+        "notes": "Assets API 'won't have any feature additions and will be deprecated'. An asset id can be reused as urn:li:image:{id} / urn:li:video:{id} in the new APIs."
+      },
+      {
+        "purpose": "Delete a post",
+        "method": "DELETE",
+        "url": "https://api.linkedin.com/rest/posts/{urlencoded urn:li:share:.. or urn:li:ugcPost:..}",
+        "request_shape": "Headers: Authorization Bearer, LinkedIn-Version, X-Restli-Protocol-Version: 2.0.0, X-RestLi-Method: DELETE",
+        "response_shape": "204 No Content (idempotent)",
+        "notes": "Partial update of commentary: POST same URL with X-RestLi-Method: PARTIAL_UPDATE and body {\"patch\":{\"$set\":{\"commentary\":\"...\"}}} -> 204."
+      }
+    ],
+    "rate_limits": "Share on LinkedIn (w_member_social, page updated 2023-12-14): Member = 150 requests/day, Application = 100,000 requests/day, reset at midnight UTC; 429 TOO_MANY_REQUESTS when exceeded. General rate-limit page (2025-08-20): standard limits are deliberately unpublished; look them up per endpoint in the app's Analytics tab after making one call; admins get email at 75% of app quota (app-level only, delayed 1-2 h). Community Management API Development tier defaults (2026-05-15): 500 requests/day per app, 100 per member. Whether the 150/day figure applies identically to /rest/posts was not verifiable from docs (it is stated on the ugcPosts page).",
+    "free_tier": "Free. 'Share on LinkedIn' and 'Sign In with LinkedIn using OpenID Connect' are Open Permissions available to all developers via the Developer Portal Products tab, no cost, no review (getting-access page updated 2026-06-03). Limits as above (150 posts/member/day) as of 2023-12-14 doc.",
+    "paid_tiers": "None for posting. Higher access (org pages, analytics, refresh tokens) comes via partner/vetted programs (Community Management API Development -> Standard tier; Marketing Developer Platform), which are free but gated by business vetting, not payment.",
+    "app_review_required": "NO for posting to a member profile: adding 'Share on LinkedIn' (w_member_social) and 'Sign In with LinkedIn using OpenID Connect' is instant self-serve (official getting-access page 2026-06-03; community walkthroughs July 2026 confirm 'tick the checkbox, accept API Terms'). HOWEVER every developer app must be associated with a LinkedIn Page (company page) and that page's super admin must approve the association ('Verify' in app Settings; 30-day window; association is permanent). If you own the page it is instant. YES for organization-page posting / Community Management API: only registered legal organizations with commercial use cases, verified business email (no personal email), legal name/address/website/privacy policy, Page super-admin verification; Development tier first (limited volume), then Standard tier needing a narrated screencast demonstrating full OAuth + posting + comment display; access revoked if you do not upgrade within 12 months; a rejected app cannot re-apply (new app required).",
+    "unreviewed_app_restrictions": "With only the self-serve products a BYO-key app can: post text/article/single image/single video/document/multi-image/poll to the authenticated member's own profile (PUBLIC/CONNECTIONS/LOGGED_IN), delete or partially update those posts, upload images/videos via /rest/images and /rest/videos, and read the member's name/photo/email via userinfo. It cannot: read back the member's posts or comments (r_member_social is closed), post to or read organization pages (w_/r_organization_social need vetted CM API), get post analytics, obtain refresh tokens (MDP partners only), GET /rest/images on the versioned gateway with a w_member_social-only token, or create scheduled/draft posts server-side. Each end user must create their own developer app + company page or share one client_id/secret; secrets cannot be kept confidential in a distributed desktop/mobile app unless LinkedIn enables the gated native-PKCE flow.",
+    "personal_profile_posting": true,
+    "media_upload_flow": "Images: POST /rest/images?action=initializeUpload {owner} -> PUT bytes to uploadUrl with Bearer header (201) -> (optionally) GET /rest/images/{urn} until AVAILABLE -> POST /rest/posts with content.media.id = urn:li:image:.. (or content.multiImage.images[] for 2-20 images). Videos: POST /rest/videos?action=initializeUpload {owner, fileSizeBytes, uploadCaptions, uploadThumbnail} -> PUT each 4 MiB part (application/octet-stream, no auth header) collecting ETags -> POST /rest/videos?action=finalizeUpload {video, uploadToken, uploadedPartIds} -> poll GET /rest/videos/{urn} until AVAILABLE -> POST /rest/posts with content.media.id = urn:li:video:... Legacy path: POST /v2/assets?action=registerUpload (recipe feedshare-image/feedshare-video, optional SYNCHRONOUS_UPLOAD for images) -> PUT to uploadUrl -> /v2/ugcPosts with media urn:li:digitalmediaAsset:...",
+    "server_side_scheduling": "None. lifecycleState must be PUBLISHED at creation (DRAFT is read-only). Scheduling must be done client-side (NEFORUM would have to be running at post time, with a token younger than 60 days).",
+    "account_requirements": "A LinkedIn member account for the user, plus a LinkedIn developer app that is associated with and verified by a LinkedIn Page (so the developer/user needs admin rights on some company page; creating a page is free). Member posting works with a personal profile - no Creator mode/business account needed. Organization posting additionally requires the member to hold ADMINISTRATOR / CONTENT_ADMIN / DIRECT_SPONSORED_CONTENT_POSTER role on the page AND the app to hold vetted Community Management access tied to a registered legal entity."
+  },
+  "handoff": {
+    "web_intent_url": "https://www.linkedin.com/sharing/share-offsite/?url={url-encoded URL}",
+    "web_intent_params": "share-offsite: only `url` (must be URL-encoded; LinkedIn scrapes the page's OpenGraph title/description/image, preview 1.91:1 ~1200x627). No text/title/summary parameters are honored. Undocumented alternative that prefills the composer text: https://www.linkedin.com/feed/?shareActive=true&text={url-encoded text} - shown working in a 2022 GitHub issue (mentions in text are not auto-detected), but a 2026-10-02 project PR reports it (and linkedin.com/post/new/) now landing in the long-form article editor instead of the feed composer, so treat as unreliable. Legacy https://www.linkedin.com/shareArticle?mini=true&url=..&title=..&summary=..&source=.. still redirects but its text params are ignored (unverified).",
+    "supports_prefilled_text": false,
+    "supports_prefilled_media": false,
+    "android_share": "Intent ACTION_SEND, setType(\"text/plain\"), EXTRA_TEXT = post text (and/or URL), setPackage(\"com.linkedin.android\"); for images use type image/* with EXTRA_STREAM content:// URI + FLAG_GRANT_READ_URI_PERMISSION (ACTION_SEND_MULTIPLE for several). Add <queries><package android:name=\"com.linkedin.android\"/></queries> to AndroidManifest for Android 11+ package visibility. Flutter packages social_sharing_plus and appinio_social_share_plus wrap exactly this for LinkedIn (feed and chat targets). Behavior of LinkedIn's receiver (text lands in composer; image attach) is community-reported, not officially documented.",
+    "ios_share": "No documented LinkedIn URL scheme for composing a post. Use UIActivityViewController (share sheet) with the text/URL/image items; LinkedIn's app exposes a share extension that appears in the sheet (community-reported, not verified by me). Register `linkedin` in LSApplicationQueriesSchemes if you want to detect the app via canOpenURL(\"linkedin://\"). appinio_social_share_plus notes that on iOS it can only hand a LINK to the LinkedIn feed, not images. Fallback: open the share-offsite URL in SFSafariViewController / external browser.",
+    "desktop": "Open the default browser to https://www.linkedin.com/sharing/share-offsite/?url=... (link-only), or copy the composed text to the clipboard and open https://www.linkedin.com/feed/ with a 'click Start a post and paste' hint (the pattern the Tagett project adopted in Oct 2026 after shareActive=true&text= became unreliable). Optionally try https://www.linkedin.com/feed/?shareActive=true&text=... first and let the user fall back.",
+    "supports_prefilled_media_note": "No web route prefills images/video. Only native share sheets (Android ACTION_SEND image/*; iOS share extension) can hand media to the LinkedIn app.",
+    "notes": "The official Share Plugin doc only documents the JS button (https://platform.linkedin.com/in.js, <script type=\"IN/Share\" data-url=...>), which opens the same share-offsite composer. LinkedIn Help confirms users may add up to 3000 chars of text manually when sharing a link."
+  },
+  "text_limits": {
+    "max_chars": 3000,
+    "counting_rule": "LinkedIn Help ('Share articles or links') states posts take 'up to 3000 characters'; the API enforces it via 400 FIELD_LENGTH_TOO_LONG on `commentary`. The unit (UTF-16 code units vs Unicode code points vs graphemes) is not documented anywhere official; community counters treat it as plain character count incl. spaces/punctuation. Unknown whether the backslashes required by little-text escaping count toward the 3000 (budget for them). Feed truncation ('see more') happens around 210 chars desktop / 140 mobile (community).",
+    "notes": "Posts API `commentary` is 'little' text: reserved characters \\ | { } @ [ ] ( ) < > # * _ ~ MUST be backslash-escaped or the post fails/parses as markup (e.g. '\\\\* bullet'). Mentions: @[Display Name](urn:li:person:123) / @[Org Name](urn:li:organization:123) - display text must case-sensitively match the member/org name (members may match on first, last or full name). Hashtags: '#tag' or {hashtag|\\#|tag}. Hashtags/mentions are not limited by the API; LinkedIn UI guidance of 3-5 hashtags is community advice only. Legacy /v2/ugcPosts shareCommentary.text is plain text with no escaping. Article posts: title/description are free text with no documented max; link previews are not auto-generated by /rest/posts."
+  },
+  "media_limits": {
+    "images_per_post": 20,
+    "image_formats": "JPG, PNG, GIF (GIF up to 250 frames); images must be < 36,152,320 pixels. No official byte limit published for the Images API (LinkedIn UI/legacy guidance of ~8 MB is unverified). Multi-image posts need 2-20 images; single image via content.media; documents (PDF/PPT/PPTX/DOC/DOCX) via Documents API.",
+    "aspect_ratio": "Not enforced/documented for feed images; link-preview images render at 1.91:1 (1200x627 recommended, LinkedIn Help). Videos: no aspect-ratio requirement stated for organic feed (ads specs are separate).",
+    "alt_text": true,
+    "video": "One video per post (cannot mix images and video in a post). MP4; length 3 seconds to 30 minutes; size 75 KB to 500 MB per the Videos API spec text (the schema field says 'Maximum allowed Videos size is 5GB'); uploaded in 4,194,304-byte parts via PUT (no auth header), each returning an ETag, then finalizeUpload; optional single English SRT caption file and custom thumbnail (JPG) via extra upload URLs; poll status until AVAILABLE (processing can take minutes)."
+  },
+  "gotchas": [
+    "Members get NO refresh token: access tokens hard-expire after 60 days and re-authorization is required (consent screen is skipped only if the member is still logged into linkedin.com and the old token has not yet expired). Build a 'reconnect LinkedIn' nudge around day ~55.",
+    "client_secret is mandatory in the standard token exchange; a distributed Flutter app cannot keep it secret. The documented PKCE/no-secret 'native clients' flow (/oauth/native-pkce/authorization, loopback 127.0.0.1 only) requires LinkedIn to enable it per app ('reach out to your point of contact'), which self-serve apps have no way to do. Realistic BYOK design: each user creates their own developer app (free) and pastes client_id + secret into NEFORUM.",
+    "Every developer app must be associated with a LinkedIn Page and verified by that page's super admin (30-day window, permanent). Solo users must create a (free) company page first. Personal email addresses fail the vetting for the Community Management API, which is only for registered legal entities with commercial use cases.",
+    "Redirect URIs: standard-flow docs say HTTPS/absolute/no-fragment, yet http://localhost:PORT is widely used and accepted in the portal (community-verified, not documented). Custom schemes like neforum://callback are undocumented and should be assumed unsupported; on mobile use an https App Link/Universal Link or an in-app loopback server. LinkedIn's native-flow doc forbids embedded webviews for OAuth and may interrupt with an email-verification checkpoint when the login looks unusual.",
+    "Requesting a different scope set later invalidates ALL previously issued tokens for that member - fix the scope list (openid profile email w_member_social) from the start.",
+    "Posts API `commentary` is 'little' text: unescaped ( ) [ ] { } < > @ # * _ ~ | \\ break the post; escape every reserved character with a backslash (Postiz does this).",
+    "Every /rest/* call must send LinkedIn-Version: YYYYMM (e.g. 202609) and X-Restli-Protocol-Version: 2.0.0; a missing or sunset version returns an error. Versions live >= 12 months (202510 dies 2026-10-15), so NEFORUM needs a user-visible setting or periodic bump for the version header.",
+    "/rest/posts does not scrape link previews: an 'article' post needs your own title/description and a thumbnail that you upload via the Images API first. The legacy /v2/ugcPosts ARTICLE share still auto-scrapes but is deprecated.",
+    "Image uploads: Bearer header required on the PUT; no synchronous mode; w_member_social-only tokens are write-only on versioned /rest/images (GET -> 403), so status polling may fail - just retry the post creation if you get MEDIA_ASSET_WAITING_UPLOAD/PROCESSING errors. Video part PUTs must NOT carry the Bearer header (per Assets doc) and need the ETags in order for finalizeUpload.",
+    "Daily caps: 150 API requests per member per day and 100,000 per app (ugcPosts doc, 2023-12-14); uploads count as separate requests. Real limits are only visible in the app's Analytics tab after one call. 429 -> exponential backoff.",
+    "Mentions require exact case-sensitive display-name matches and member URNs you cannot look up (people search/typeahead is CM-API only), so NEFORUM can realistically only support org mentions and hashtags.",
+    "r_member_social is closed: you cannot read the member's own posts/engagement, so 'post history' must be stored locally from the x-restli-id header.",
+    "The hand-off URL that prefills text (feed/?shareActive=true&text=) is undocumented and reported broken (lands in article editor) as of 2026-10-02; share-offsite only prefills a URL. Clipboard-copy + open feed is the robust fallback.",
+    "Driving linkedin.com (web or Voyager internal API) from a WebView with the user's cookies violates User Agreement 8.2 ('bots or other unauthorized automated methods to ... create, comment on, like, share, or re-share posts') and commonly triggers account restriction - do not ship it as a default path."
+  ],
+  "sources": [
+    "https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/share-on-linkedin (updated 2023-12-14)",
+    "https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access (updated 2026-06-03)",
+    "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow (updated 2026-05-15)",
+    "https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow-native (updated 2023-04-03)",
+    "https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens (updated 2025-10-08)",
+    "https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/sign-in-with-linkedin-v2 (updated 2024-08-08)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/posts-api?view=li-lms-2026-09 (updated 2026-05-13)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/post-api-schema (updated 2026-04-30)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/little-text-format (updated 2025-10-16)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/images-api (updated 2026-06-24)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/videos-api (updated 2026-03-02)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/multiimage-post-api (updated 2026-04-30)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/vector-asset-api (updated 2026-01-28)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/contentapi-migration-guide (updated 2026-02-25)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/versioning (updated 2026-09-16)",
+    "https://learn.microsoft.com/en-us/linkedin/shared/api-guide/concepts/rate-limits (updated 2025-08-20)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management/community-management-overview (updated 2026-05-15)",
+    "https://learn.microsoft.com/en-us/linkedin/marketing/community-management-app-review (updated 2026-02-11)",
+    "https://learn.microsoft.com/en-us/linkedin/consumer/integrations/self-serve/plugins/share-plugin (updated 2022-03-31)",
+    "https://www.linkedin.com/help/linkedin/answer/a525301 (Share articles or links - 3000 chars, 1200x627 preview)",
+    "https://www.linkedin.com/help/linkedin/answer/a548360/associate-an-app-with-a-linkedin-page",
+    "https://github.com/PlnDominic/Tagett/pull/36 (2026-10-02, shareActive=true&text= broken, clipboard fallback)",
+    "https://github.com/linkedin/linkedin.github.com/issues/21 (2022-08-22, feed/?shareActive=true&text= example)",
+    "https://support.cornershopcreative.com/support/solutions/articles/43000143381-how-to-create-pre-filled-social-share-links (2026-03-20)",
+    "https://dev.to/broke2builtai/how-to-post-to-linkedin-from-a-script-the-15-minute-oauth-walkthrough-2026-58fp (2026-07-10)",
+    "https://raw.githubusercontent.com/gitroomhq/postiz-app/main/libraries/nestjs-libraries/src/integrations/social/linkedin.provider.ts (Postiz provider: /rest/posts, LinkedIn-Version 202601, escaping, 2 MB video chunks)",
+    "https://mintlify.wiki/gitroomhq/postiz-app/platforms/linkedin",
+    "https://docs.postiz.com/providers/linkedin-page (http://localhost:4200 redirect accepted)",
+    "https://cdn.cdata.com/help/CLK/ado/pg_oauthcustomappcreate.htm (http://localhost:33333 redirect for desktop)",
+    "https://pub.dev/documentation/appinio_social_share_plus/latest/ (com.linkedin.android, LSApplicationQueriesSchemes linkedin, iOS link-only)",
+    "https://pub.dev/documentation/social_sharing_plus/latest/",
+    "https://github.com/bvgroup-co/lnk (Go CLI posting via Voyager with li_at/JSESSIONID; MIT; ToS/ban warning)",
+    "https://pkg.go.dev/github.com/kevin-burns/linkedin-assist (read-only Voyager tool, rate-limited for ban avoidance)",
+    "https://contentin.io/blog/linkedin-mcp-terms-of-service/ (2026-07-28, User Agreement 8.2 quotes)",
+    "https://opentweet.io/answers/is-scheduling-linkedin-posts-safe (2026-09)"
+  ],
+  "unverified_claims": [
+    "http://localhost:{port} redirect URIs are accepted by the Developer Portal for the standard (non-PKCE) flow - stated by multiple vendor/community docs (CData, Postiz, glama) but the official page only says 'via HTTPS'.",
+    "Custom-scheme redirect URIs (neforum://callback) are rejected - inferred from absence in docs and the 'absolute URL' rule; not tested.",
+    "The 150 requests/member/day cap applies to /rest/posts the same way it is documented for /v2/ugcPosts; the versioned endpoint's limit is only visible in the app Analytics tab.",
+    "Image file-size ceiling (~8 MB) for feed images - recalled from older LinkedIn UI guidance; the Images API only publishes a pixel-count cap.",
+    "LinkedIn's iOS app ships a share extension that appears in UIActivityViewController for text/links (and possibly images) - common knowledge, not verified from an Apple/LinkedIn source this session; iOS image hand-off is reported NOT to work by appinio_social_share_plus.",
+    "LinkedIn's Android app accepts ACTION_SEND image/* and image attachments open in the composer - reported by Flutter plugin docs, not by LinkedIn.",
+    "The legacy https://www.linkedin.com/shareArticle?mini=true&url=&title=&summary=&source= URL still works but ignores title/summary - recollection.",
+    "Whether backslash escape characters in little-text commentary count toward the 3000-character limit.",
+    "Voyager internal endpoint used by cookie-based tools for posting (e.g. POST https://www.linkedin.com/voyager/api/contentcreation/normShares with csrf-token = JSESSIONID) - recalled from the tomquirk/linkedin-api ecosystem; the lnk README did not list it and the tomquirk README fetch returned 404.",
+    "Quantitative restriction rates for session-automation (e.g. '23% of accounts restricted within 90 days') come from vendor marketing blogs, not independent data.",
+    "Postiz 'tokens are automatically refreshed' only works for its hosted, MDP-approved client_id; a self-serve app will receive no refresh_token in the token response (inferred from official partner-only wording)."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Embed a WebView (flutter_inappwebview / webview_flutter) pointed at https://www.linkedin.com/login, let the user log in normally (including 2FA), then either (a) keep driving the real UI in the WebView (navigate to /feed/, inject JS to open 'Start a post', type the text, attach media via file-chooser bridging, click Post) or (b) extract the li_at and JSESSIONID cookies from the WebView cookie store and call LinkedIn's undocumented 'Voyager' JSON API (https://www.linkedin.com/voyager/api/...) with headers Cookie: li_at=...; JSESSIONID=\"ajax:...\", csrf-token: <JSESSIONID value without quotes>, x-restli-protocol-version: 2.0.0 and a browser-like User-Agent, the way lnk / linkedin-api / linkedin-mcp-server do. Media upload via Voyager requires reproducing the browser's internal upload handshake (vectorSignedUpload...), which changes without notice. Cookies last weeks to months but LinkedIn periodically forces re-login or challenges with CAPTCHAs/email codes, which the user must solve inside the WebView.",
+    "known_libraries": [
+      "bvgroup-co/lnk (Go CLI: post/read/search/message via Voyager with li_at + JSESSIONID; MIT; README: 'may violate LinkedIn's Terms of Service ... may temporarily or permanently ban accounts')",
+      "tomquirk/linkedin-api (Python, Voyager wrapper, cookie auth; README warns about account restrictions)",
+      "stickerdaniel/linkedin-mcp-server (Python MCP, li_at cookie, mostly scraping)",
+      "kevin-burns/linkedin-assist (Go, read-only jobs via a real signed-in Chromium session, jittered rate limiter + daily cap 'because a ban is the worst outcome')",
+      "gazagnaire/ocaml-linkedin (typed Voyager bindings, li_at + JSESSIONID)",
+      "No maintained Flutter/Dart library drives LinkedIn's web UI; you would write the JS injection yourself."
+    ],
+    "risk": "HIGH. LinkedIn User Agreement s8.2 explicitly prohibits 'bots or other unauthorized automated methods to access the Services ... create, comment on, like, share, or re-share posts' and scraping via 'browser plugins and add-ons or any other technology'. Enforcement in 2025-2026 is aggressive (Apollo.io/Seamless.ai bans in 2025, detection reportedly up sharply); session/cookie-driven tools are the category most often restricted, with temporary restrictions escalating to permanent account closure. Because LinkedIn is the user's professional identity, a ban is far more damaging than on other networks. Also the OAuth docs forbid running LinkedIn login in an embedded webview, so even the consent step should use the system browser. Recommendation: offer web-session automation only as an opt-in 'advanced, may get your account restricted' mode (or not at all); default to the official API with BYO keys plus the share-sheet/clipboard hand-off."
+  },
+  "confidence": "high"
+}

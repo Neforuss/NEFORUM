@@ -1,0 +1,200 @@
+{
+  "platform": "Tumblr",
+  "verified_on": "2026-10-07",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff",
+    "web_session"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Tumblr API v2 (api.tumblr.com/v2) with Neue Post Format (NPF)",
+    "docs_url": "https://www.tumblr.com/docs/en/api/v2 (source: https://github.com/tumblr/docs/blob/master/api.md and npf-spec.md)",
+    "auth": "Two options. (A) OAuth 2.0 Authorization Code grant (plus Client Credentials and Refresh Token grants). Scopes: basic, write, offline_access (offline_access is what returns a refresh_token). Authorize: GET https://www.tumblr.com/oauth2/authorize?client_id={consumer_key}&response_type=code&scope=basic%20write%20offline_access&state={random}&redirect_uri={uri}. state is REQUIRED (missing state => 'The state parameter is required', tumblr/docs #122). redirect_uri is 'Maybe' required: must be supplied when multiple redirect URIs are registered on the app; if you send it in the authorize step you MUST send the identical value in the token step. Callback receives ?code=&state= (or ?error=). Token: POST https://api.tumblr.com/v2/oauth2/token as multipart/x-www-form-urlencoded with grant_type=authorization_code, code, client_id, client_secret, redirect_uri (if used). Response: {access_token, expires_in:2520, id_token:false, refresh_token, scope:'write offline_access', token_type:'bearer'}. Refresh: POST same URL with grant_type=refresh_token, refresh_token, client_id, client_secret -> new access AND refresh token (401 when refresh token expired). Use header 'Authorization: Bearer {access_token}'. client_secret is mandatory in both token calls, i.e. Tumblr treats every app as a confidential client; there is NO PKCE (code_challenge/code_verifier) in the docs. (B) OAuth 1.0a (HMAC-SHA1 only): POST https://www.tumblr.com/oauth/request_token -> GET https://www.tumblr.com/oauth/authorize?oauth_token= -> GET https://www.tumblr.com/oauth/access_token (oauth_verifier). OAuth1 tokens do not expire and can be swapped for OAuth2 via POST https://api.tumblr.com/v2/oauth2/exchange (OAuth1-signed, no params; invalidates the OAuth1 token). Read-only public endpoints accept ?api_key={consumer_key}.",
+    "oauth_scopes": [
+      "basic",
+      "write",
+      "offline_access"
+    ],
+    "pkce_supported": false,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": true,
+    "token_lifetime_and_refresh": "Access token expires_in = 2520 s (42 minutes). Refresh token lifetime 42 days (stated by Tumblr staff 'cyle' in tumblr/docs #134, 2024-08-06). Each refresh returns a new access token and a new refresh token, so store both every time. The app must request offline_access to get a refresh token at all; without it the user must re-authorize every 42 minutes. OAuth 1.0a tokens never expire (useful alternative for a local-first app that would otherwise have to ship/enter a client_secret anyway).",
+    "endpoints": [
+      {
+        "purpose": "Create a post (NPF) - text, images, video, link, with tags/state/schedule",
+        "method": "POST",
+        "url": "https://api.tumblr.com/v2/blog/{blog-identifier}/posts",
+        "request_shape": "JSON body (Content-Type: application/json) OR multipart/form-data. Fields: content (array of NPF blocks, required for new posts), layout (array, optional), state ('published' default | 'queue' | 'draft' | 'private' | 'unapproved'), publish_on (ISO 8601 future datetime; only honoured when state='queue' -> becomes a scheduled post), date (ISO 8601 past datetime to backdate), tags (ONE comma-separated string, not an array), source_url, slug, send_to_twitter (bool, dead feature), is_private (answers only), interactability_reblog ('everyone'|'noone'). Reblogs add parent_tumblelog_uuid, parent_post_id, reblog_key, hide_trail, exclude_trail_items. Text block: {\"type\":\"text\",\"text\":\"...\",\"subtype\":\"heading1|heading2|quote|chat|ordered-list-item|unordered-list-item\",\"formatting\":[{\"start\":0,\"end\":4,\"type\":\"bold|italic|strikethrough|small|link(url)|mention|color\"}]}. Link block: {\"type\":\"link\",\"url\":\"https://...\",\"title\":\"...\",\"description\":\"...\"}. MEDIA UPLOAD: send multipart/form-data where the FIRST part is name=\"json\" Content-Type: application/json containing the whole parameter object, and each media block carries an \"identifier\" that names a subsequent file part: image block {\"type\":\"image\",\"media\":[{\"type\":\"image/jpeg\",\"identifier\":\"img1\",\"width\":250,\"height\":200}],\"alt_text\":\"...\"} + part Content-Disposition: form-data; name=\"img1\"; filename=\"a.jpg\" Content-Type: image/jpeg. Video block: {\"type\":\"video\",\"media\":{\"type\":\"video/mp4\",\"identifier\":\"vid1\",\"width\":..,\"height\":..}} - NOTE media is a single OBJECT for video (array for images); sending an array yields a 400 'Measly little error' (tumblr/docs #88, resolved 2023-09-17). provider defaults to 'tumblr' on creation. Blog identifier may be 'name.tumblr.com', a custom domain, or the blog uuid 't:...'.",
+        "response_shape": "201 Created: {\"meta\":{\"msg\":\"Created\",\"status\":201},\"response\":{\"id\":\"1234567891234567\"}} (id is a STRING). Errors come as {meta, errors:[{title, code}]} with subcodes: 400.8001 invalid NPF JSON, 400.8005 unacceptable media format, 400.8016 bad layout; 401; 403.8004 cannot upload more media today, 403.8008 video not allowed in reblog, 403.8010 a video is still transcoding (wait before next video), 403.8011 cannot upload more videos today, 403.8022 blog queue limit reached, 403.8023 blog daily posting limit reached; 404 if not HTTPS or blog unknown; 500.8006/8009 upload errors; 503 posting disabled; 429 rate limited. Undocumented '{code:0, title:\"Tumblr went thud. Try again.\"}' 400 also seen (#129, 2024).",
+        "notes": "Only Content-Type application/json, application/x-www-form-urlencoded and multipart/form-data are accepted. Post permalink must be built client-side: https://{blog}.tumblr.com/post/{id} (or fetch GET /v2/blog/{blog}/posts/{id})."
+      },
+      {
+        "purpose": "Edit an NPF post (same params + publish_on for scheduled posts)",
+        "method": "PUT",
+        "url": "https://api.tumblr.com/v2/blog/{blog-identifier}/posts/{post-id}",
+        "request_shape": "Same body as create (JSON or multipart). When editing a scheduled post you must resend publish_on.",
+        "response_shape": "200 with {response:{id}}"
+      },
+      {
+        "purpose": "Fetch a post (for editing / to get post_url, state, queued_state, scheduled_publish_time)",
+        "method": "GET",
+        "url": "https://api.tumblr.com/v2/blog/{blog-identifier}/posts/{post-id}?post_format=npf",
+        "response_shape": "{response:{id, id_string, post_url, state, queued_state, scheduled_publish_time, publish_on, tags, content[], layout[] ...}}"
+      },
+      {
+        "purpose": "Delete a post",
+        "method": "POST",
+        "url": "https://api.tumblr.com/v2/blog/{blog-identifier}/post/delete",
+        "request_shape": "id={post-id}",
+        "response_shape": "200 {response:{id}}"
+      },
+      {
+        "purpose": "Get the logged-in user's blogs (needed to pick the target blog after OAuth; also the only identity source - no stable user id or email, tumblr/docs #154 Dec 2025)",
+        "method": "GET",
+        "url": "https://api.tumblr.com/v2/user/info",
+        "response_shape": "{response:{user:{name, likes, following, default_post_format, blogs:[{name, uuid, url, title, primary, posts, ...}]}}}"
+      },
+      {
+        "purpose": "OAuth2 authorize",
+        "method": "GET",
+        "url": "https://www.tumblr.com/oauth2/authorize",
+        "request_shape": "client_id, response_type=code, scope (space-delimited), state (required), redirect_uri"
+      },
+      {
+        "purpose": "OAuth2 token (authorization_code / refresh_token)",
+        "method": "POST",
+        "url": "https://api.tumblr.com/v2/oauth2/token",
+        "request_shape": "form fields grant_type, code|refresh_token, client_id, client_secret, redirect_uri",
+        "response_shape": "{access_token, expires_in, token_type, scope, refresh_token}"
+      },
+      {
+        "purpose": "List queue / drafts (for showing scheduled items)",
+        "method": "GET",
+        "url": "https://api.tumblr.com/v2/blog/{blog-identifier}/posts/queue and .../posts/draft",
+        "response_shape": "{response:{posts:[...]}}"
+      },
+      {
+        "purpose": "Legacy (deprecated) typed post creation",
+        "method": "POST",
+        "url": "https://api.tumblr.com/v2/blog/{blog-identifier}/post",
+        "request_shape": "type=text|photo|quote|link|chat|audio|video, state=published|draft|queue|private, tags, date, format=html|markdown, slug; photo: data (binary, multi-file) / data64 (base64) / source (URL), caption, link; video: data or embed; text: title, body. Docs say 'legacy posting flows are still available, but we encourage you to use the Neue Post Format creation route'.",
+        "response_shape": "201 {response:{id}}",
+        "notes": "Legacy docs give 10MB image limit, 500MB/10min video limit, 10MB audio limit."
+      }
+    ],
+    "media_upload_flow": "No separate upload endpoint. Media is sent inline in the same multipart/form-data POST /v2/blog/{blog}/posts (or PUT edit): part 'json' holds the post parameters; each media block has an 'identifier' string that must equal the form-data name of the file part (with filename and a correct Content-Type such as image/jpeg, image/gif, image/png, image/webp, video/mp4, video/quicktime). Images: media is an array of one object; video: media is a single object. Images are transcoded; GIFs become GIFV; video is transcoded asynchronously (a second video upload while one is transcoding returns 403.8010). Only one native Tumblr video block per post. Media from a URL instead of upload: an image block whose media.url points to an external image is NOT accepted for user uploads (only legacy 'source' param does URL-fetch); video blocks may reference external providers (youtube, vimeo etc.) by url.",
+    "rate_limits": "Documented (api.md, read 2026-10-07; 429 'Limit Exceeded' on breach; daily limits are per calendar day on Tumblr server clocks): 300 calls/min per IP; 18,000/hour per IP; 432,000/day per IP; 1,000 calls/hour per consumer key; 5,000 calls/day per consumer key; 250 new published posts (incl. reblogs)/day/user; 250 images uploaded/day/user; 20 videos/day/user; 60 minutes of video/day/user; 200 follows, 1,000 likes, 10 new blogs/day. Response headers x-ratelimit-perhour-limit, x-ratelimit-perhour-remaining, x-ratelimit-perday-limit, x-ratelimit-perday-remaining expose only the global per-key limit; some endpoints (e.g. /followers, blocks) have separate ~60 req/min limits not reflected in the headers (staff, tumblr/docs #139, 2024-09-30). Help Center adds: queue holds max 1,000 posts and publishes max 50 posts/day; audio 10 uploads/day. Note the 5,000/day per consumer key is shared by ALL users of that key - the reason NEFORUM should have each user register their own app (BYOK).",
+    "free_tier": "Entire API is free; there is no paid tier. Default per-app quota 1,000 calls/hour and 5,000/day per consumer key (valid as of 2026-10-07 per api.md). Per-user limits (250 posts/day etc.) are independent of the app.",
+    "paid_tiers": "None for the API. (Tumblr Premium is a consumer subscription; a Premium marketing page mentioned 'queued posts per day (2,000)' which contradicts the 1,000-queue/50-per-day help text - tumblr/docs #144, Feb 2025, unanswered.)",
+    "app_review_required": "No review. Registering at https://www.tumblr.com/oauth/apps (login required) immediately yields an OAuth Consumer Key + Consumer Secret. Form fields seen in issue reports: Application Name, Website, Description, Administrative contact email, 'Default callback URL', 'OAuth2 redirect URLs (space separate)'. OAuth2 is only enabled for an app once at least one OAuth2 redirect URL is saved. Redirect URL validation quirks (tumblr/docs #101, #104, #122, 2023): http(s)://localhost[:port]/... is accepted; private IPs (192.168.x.x), *.ts.net and some TLDs like .io were rejected with 'The url's domain is not valid'; a localhost port-stripping bug was fixed in production April 2023; a custom scheme (hik://authorized.com) only worked once registered WITH a trailing slash (hik://authorized.com/) and sent identically. Treat exact string match (incl. trailing slash) as the rule.",
+    "unreviewed_app_restrictions": "None functional - a freshly registered app can post, upload media, queue, draft and schedule immediately, subject to the default 1,000/hour + 5,000/day per-key quota and per-user daily limits. The API License Agreement forbids sharing your API key, spamming, 'executing a large number of native Tumblr actions in an unnaturally short period', page scraping, and 'working around any explicit Tumblr API limitation even if possible by avoiding use of the Tumblr API'.",
+    "account_requirements": "Any ordinary Tumblr account can register apps and use the API; no business/professional/creator status, no phone verification, no payment. Posting goes to any blog (primary or secondary) the user owns or is a member of.",
+    "personal_profile_posting": true,
+    "server_side_scheduling": "Yes, natively: state='queue' with publish_on=<ISO 8601 future datetime> creates a Tumblr-hosted scheduled post (GET shows queued_state='scheduled', scheduled_publish_time). state='queue' without publish_on appends to the blog queue (auto-posts at the blog's queue interval). Queue cap 1,000 posts, queue publishes max 50/day. state='draft' for drafts."
+  },
+  "handoff": {
+    "web_intent_url": "https://www.tumblr.com/widgets/share/tool",
+    "web_intent_params": "Official share tool (help.tumblr.com share-button documentation): posttype=text|photo|link|quote|chat|video, title (text/link/chat), content (text body; for photo a URL or comma-separated photo URLs; for link/video the URL or embed), caption (photo/link/video/quote), tags (comma-separated), canonicalUrl, show-via. Example verified 2026-10-07 to be accepted and preserved through the login wall: https://www.tumblr.com/widgets/share/tool?canonicalUrl=https%3A%2F%2Fexample.com&posttype=text&title=Hi&content=Body&tags=a%2Cb . Legacy https://www.tumblr.com/share/link?url=&name=&description= still works and 303-redirects to /widgets/share/tool?shareSource=legacy&posttype=link&title={name}&caption={description}&content={url}&url={url}. Newer composer deep links also exist and are preserved through login: https://www.tumblr.com/new/text?title=&content= , https://www.tumblr.com/new/link?url=&title= , https://www.tumblr.com/new/photo?caption=&tags= (observed as redirectTo on the login page; the actual prefill behaviour after login could not be exercised without a session - see unverified_claims). Open the share tool in a 540x600 popup per Tumblr's docs, or just the system browser.",
+    "desktop": "Open the system browser at the share tool / /new/{type} URL above. No native desktop Tumblr app exists for Windows/macOS, so the web composer is the only desktop hand-off.",
+    "android_share": "Package com.tumblr (verified on APKMirror, v46.6.0.109, uploaded 2026-10-04). Use Intent.ACTION_SEND with setPackage(\"com.tumblr\") and type text/plain (EXTRA_TEXT / EXTRA_SUBJECT) or image/* / video/* with EXTRA_STREAM (content:// URI + FLAG_GRANT_READ_URI_PERMISSION); ACTION_SEND_MULTIPLE for several images. The app appears in the share sheet for text, links, images and video (recollection - the manifest intent-filters could not be fetched, see unverified_claims). Fallback: ACTION_VIEW on the https://www.tumblr.com/new/text?... URL, which Android app-links may route into the app.",
+    "ios_share": "Official app: 'Tumblr' by Tumblr, Inc., App Store id305343404 (verified). The app ships a Share Extension that appears in the iOS share sheet for URLs, text, images and video (recollection; not verifiable from the App Store page). Use UIActivityViewController with the items; no documented public URL scheme - the old tumblr:// x-callback-url scheme docs page now 301s to a help-center section that returned 403, so treat tumblr:// as unverified. Universal links: https://www.tumblr.com/new/text?... opens in the app if installed.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "notes": "Prefilled media only works as URLs (posttype=photo&content=https://.../a.jpg,https://.../b.jpg) via the web share tool; local files cannot be prefilled through any web URL. Local images/videos can be handed off only via the mobile share sheet (ACTION_SEND / UIActivityViewController). The share tool and /new/* require a logged-in browser session (they bounce to /login?redirectTo=... and come back after login). Tags in the share tool: comma-separated; Tumblr tags cannot contain commas."
+  },
+  "text_limits": {
+    "max_chars": 4096,
+    "counting_rule": "NPF counts Unicode code points, not bytes or graphemes: 'ø' and '🌳' each count 1, but ZWJ/flag sequences like 👨‍👨‍👦 count as 5 (one per code point). Formatting start/end indices are also code-point offsets (zero-based, end exclusive). A single text block is max 4,096 code points; a post may hold up to 1,000 text blocks (1,000 content blocks total) but the whole stored post is capped at 1MB (practically ~900,000 characters); Help Center states a post including its reblog trail cannot exceed 524,288 characters. Inline links max 100, mentions max 50 per post. alt_text max 4,096 characters.",
+    "hashtags_max": 30,
+    "title_max": 4096,
+    "notes": "Tumblr has no post title field in NPF - a title is just a text block with subtype 'heading1'. Tags are sent as one comma-separated string in 'tags'; commas are therefore impossible inside a tag. The 30-tag and 140-char-per-tag figures and 'only the first 20 tags are searchable' are long-standing Tumblr rules I could not re-verify today (the help article URL 404s) - see unverified_claims. Links are plain URLs in text or a 'link' block; no URL shortening/weighting."
+  },
+  "media_limits": {
+    "images_per_post": 30,
+    "image_max_bytes": 20971520,
+    "image_formats": "JPEG, PNG, WEBP (static, max 20 MB each, RGB only - CMYK rejected; displayed up to 2048x3072); GIF max 10 MB (<=3 MB is served uncompressed, otherwise compressed to <=5 MB, all GIFs converted to GIFV; recommended <=540 px wide). 30 image blocks per post via API/web (apps allow 10). Daily cap 250 image uploads per user (403.8004). Legacy /post endpoint docs state 10 MB per image.",
+    "video": "Native upload: MP4 or MOV, max 500 MB and 10 minutes per video; max 1 native Tumblr video block per post (up to 10 video blocks total if the others are external providers e.g. youtube/vimeo by url); 20 videos/day and 60 minutes of video/day per user (403.8011); uploading while a previous video is still transcoding returns 403.8010; videos are not allowed inside reblog content (403.8008). Audio: MP3 only, max 10 MB, 10 uploads/day, max 10 audio blocks/post.",
+    "aspect_ratio": "No enforced aspect ratio; Tumblr recommends 540 px wide images (540x810) and serves originals up to 2048 px wide.",
+    "alt_text": true
+  },
+  "gotchas": [
+    "No PKCE and client_secret is mandatory at the token endpoint, so a local-first Flutter app must either have each user paste their own consumer key AND secret (BYOK, which also keeps the 5,000 calls/day per-key quota per user) or ship a secret in the binary (forbidden by the API License: 'You will not share your API Key'). OAuth 1.0a (HMAC-SHA1) is an equally valid alternative and its tokens never expire.",
+    "Access tokens last only 42 minutes (expires_in 2520); always request offline_access and store the NEW refresh token returned on every refresh; refresh tokens die after 42 days of non-use, after which the user must re-authorize.",
+    "redirect_uri must match the registered value byte-for-byte, including a trailing slash; custom-scheme URIs reportedly only validated with a trailing slash (neforum://callback/). state is required or you get 'The state parameter is required'.",
+    "Localhost loopback redirects work (http://localhost:PORT/callback or http://127.0.0.1:PORT/) - a port-stripping bug was fixed in April 2023 - but LAN IPs and some TLDs (.io, .ts.net) are rejected at registration.",
+    "tags must be a single comma-separated STRING (tumblr.js converts arrays for you); an array in JSON yields 400.8001.",
+    "Video upload: the media field is a single object, images use an array; getting this wrong gives an unhelpful 400 'Measly little error'. Set a real Content-Type (video/mp4 or video/quicktime) and filename on the file part.",
+    "Only ONE native video per post, and you cannot upload a second video while the first is still transcoding (403.8010) - serialize video posts with a retry/backoff.",
+    "The 250 posts/day, 250 images/day, 20 videos/day limits are PER USER across all clients and reset per calendar day on Tumblr server time (time zone unspecified); the API returns 403.8023 / 403.8004 / 403.8011 rather than 429 for these.",
+    "Queue limits: 1,000 posts stored, 50 queue publishes per day; scheduling with publish_on only works when state='queue'. A scheduled post's id can change when it publishes (the response id is the 'genesis' id).",
+    "No stable user id / email from /v2/user/info; key accounts by the primary blog uuid (t:...), not by blog name (names can change).",
+    "Per-endpoint rate limits (e.g. 60/min) exist that are not reflected in the x-ratelimit-* headers.",
+    "The deprecated legacy /post endpoint still works and accepts image URLs via 'source', which NPF upload does not.",
+    "Share-URL hand-off cannot carry local media; only remote image URLs. Logged-out users land on /login?redirectTo=... and the composer params survive the round-trip.",
+    "User Guidelines say 'Don't register accounts or post content automatically, systematically, or programmatically' - framed at spam, but it is the policy a reviewer would cite against unattended bulk cross-posting; keep NEFORUM user-initiated.",
+    "webview_flutter has no Windows implementation; for an embedded web session on all four targets use flutter_inappwebview (6.1.5, Android/iOS/macOS/Windows) or flutter_web_auth_2 (5.1.0; on Windows/Linux with useWebview:false the callback must start with http://localhost:{port})."
+  ],
+  "sources": [
+    "https://github.com/tumblr/docs/blob/master/api.md (raw fetched 2026-10-07; OAuth1/OAuth2 sections, rate limits, NPF create route, multipart identifier example, error subcodes)",
+    "https://github.com/tumblr/docs/blob/master/npf-spec.md (raw fetched 2026-10-07; block types, code-point counting, Post Content Limits)",
+    "https://github.com/tumblr/docs/blob/master/web-platform.md (window.tumblr.apiFetch for extensions)",
+    "https://www.tumblr.com/docs/en/api/v2",
+    "https://www.tumblr.com/policy/en/api-license-agreement",
+    "https://www.tumblr.com/policy/en/user-guidelines",
+    "https://help.tumblr.com/hc/en-us/share-button-documentation/",
+    "https://help.tumblr.com/knowledge-base/image-gif-troubleshooting/",
+    "https://help.tumblr.com/knowledge-base/adding-creating-gifs/",
+    "https://help.tumblr.com/knowledge-base/adding-photos/",
+    "https://help.tumblr.com/knowledge-base/posting-video/ (via https://help.tumblr.com/hc/en-us/articles/231455628)",
+    "https://help.tumblr.com/knowledge-base/audio/",
+    "https://help.tumblr.com/knowledge-base/queue/",
+    "https://help.tumblr.com/knowledge-base/writing-posts/",
+    "https://github.com/tumblr/docs/issues/134 (staff: access 42 min / refresh 42 days, 2024-08-06)",
+    "https://github.com/tumblr/docs/issues/122 (custom scheme redirect, trailing slash, state required, Dec 2023)",
+    "https://github.com/tumblr/docs/issues/104 (localhost port stripping fixed Apr 2023)",
+    "https://github.com/tumblr/docs/issues/101 (redirect URL validation: localhost ok, LAN IPs/.io/.ts.net rejected, Mar 2023)",
+    "https://github.com/tumblr/docs/issues/86 (redirect_uri must be identical in token request, Jun 2022)",
+    "https://github.com/tumblr/docs/issues/88 (video media must be object not array, resolved 2023-09-17)",
+    "https://github.com/tumblr/docs/issues/139 (x-ratelimit headers, undocumented per-endpoint 60/min, staff 2024-09-30)",
+    "https://github.com/tumblr/docs/issues/144 (queue limit ambiguity, Feb 2025)",
+    "https://github.com/tumblr/docs/issues/154 (no stable user id/email, Dec 2025)",
+    "https://github.com/tumblr/docs/issues/129 (undocumented 400 code 0, Apr 2024)",
+    "https://github.com/tumblr/docs/issues/79 (daily limit reset time zone unanswered, Mar 2022)",
+    "https://github.com/tumblr/tumblr.js (README: createPost with ReadStream media, OAuth1 only, not for browser; npm 5.0.1 node>=18)",
+    "https://github.com/tumblr/pytumblr",
+    "https://github.com/AprilSylph/XKit-Rewritten (src/utils/tumblr_helpers.js, src/main_world/api_fetch.js use window.tumblr.apiFetch)",
+    "https://www.tumblr.com/share/link?url=... (observed 303 to /widgets/share/tool?shareSource=legacy&posttype=link...)",
+    "https://www.tumblr.com/new/text?title=Hello&content=World and /new/link, /new/photo (observed login redirectTo preservation)",
+    "https://www.apkmirror.com/apk/tumblr-inc/tumblr/ (package com.tumblr, 46.6.0.109, 2026-10-04)",
+    "https://apps.apple.com/us/app/tumblr-fandom-art-chaos/id305343404",
+    "https://pub.dev/packages/flutter_inappwebview (6.1.5)",
+    "https://pub.dev/packages/webview_flutter (4.14.1, no Windows)",
+    "https://pub.dev/packages/flutter_web_auth_2 (5.1.0)",
+    "https://pub.dev/packages/oauth2_client (4.3.3)"
+  ],
+  "unverified_claims": [
+    "That https://www.tumblr.com/new/text?title=&content= (and /new/link?url=&title=, /new/photo?caption=&tags=) actually prefill the React composer once logged in - I only verified the login wall preserves these URLs as redirectTo; I could not exercise a logged-in session. Supported parameter names beyond title/content/url/caption/tags (e.g. tags on /new/text) are unverified.",
+    "Tumblr Android app declares ACTION_SEND / ACTION_SEND_MULTIPLE intent filters for text/plain, image/*, video/* (manifest not fetched).",
+    "Tumblr iOS app includes a Share Extension accepting URLs, text, images and video; and the historic tumblr://x-callback-url/text?title=&body=&tags= URL scheme (the old docs page now redirects to a 403 help section).",
+    "Tag rules: max 30 tags per post, 140 characters per tag, only the first 20 tags indexed for search; tags cannot contain commas (comma is the separator).",
+    "The app registration form at https://www.tumblr.com/oauth/apps has a 'Request rate limit removal' / limit-increase button (login required; not fetched). Issue reports confirm fields 'Default callback URL' and 'OAuth2 redirect URLs (space separate)'.",
+    "Registering an app does not require the account to be email-verified or of a certain age (not fetched).",
+    "The daily limits reset at midnight US Eastern (Tumblr's server time) - staff never answered #79.",
+    "Tumblr's browser web app itself calls https://www.tumblr.com/api/v2/... with an internal bearer token read from the page's initial state plus cookies; multipart media uploads through window.tumblr.apiFetch are not documented (only JSON bodies are described).",
+    "Flutter OAuth libraries: flutter_appauth cannot be used (requires PKCE-style public client with no secret unless clientSecret is passed; Tumblr needs client_secret at token time) - best to hand-roll the two HTTPS calls and use flutter_web_auth_2 / url_launcher + loopback listener for the redirect."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Embed https://www.tumblr.com in flutter_inappwebview (Android/iOS/macOS/Windows), let the user log in normally (cookies persist in the WebView's cookie store), then either (a) deep-link the WebView to https://www.tumblr.com/new/text?title=...&content=... or the share tool and let the user press Post, or (b) inject JavaScript that calls the officially documented in-page helper window.tumblr.apiFetch('/v2/blog/{blog}/posts', {method:'POST', body:{content:[...], tags:'a,b', state:'published'}}) - this is exactly how browser extensions such as XKit Rewritten post/edit and is covered by Tumblr's own web-platform.md. apiFetch uses the web app's own internal bearer token/cookies, so no API key or OAuth app is needed. Media: apiFetch is documented for JSON only; for images/video you would either drive the composer UI/file chooser in the WebView, or try a multipart FormData body through apiFetch (undocumented). The web session is subject to the same per-user daily limits (250 posts etc.) but not to the per-consumer-key 5,000/day quota.",
+    "known_libraries": [
+      "flutter_inappwebview 6.1.5 (Android, iOS, macOS, Windows; cookie manager, JS injection, file chooser hooks)",
+      "flutter_web_auth_2 5.1.0 (auth-only; desktop_webview_window on Windows/Linux)",
+      "webview_flutter 4.14.1 (no Windows)",
+      "XKit Rewritten (reference implementation of posting via window.tumblr.apiFetch from a browser context)",
+      "tumblr/docs web-platform.md (official description of window.tumblr.apiFetch, navigate, on/off)"
+    ],
+    "risk": "Low-to-medium. Tumblr officially documents window.tumblr.apiFetch for third-party extensions and has tolerated XKit for over a decade, so JSON posting from the user's own session is unlikely to trigger bans by itself. Risks: (1) User Guidelines forbid posting 'automatically, systematically, or programmatically' and the API License forbids working around API limits 'by avoiding use of the Tumblr API' - unattended bulk posting could be treated as spam; keep it user-initiated and modest in volume. (2) Login inside an embedded WebView may hit Google/Apple sign-in blocks and Tumblr's bot checks; email+password login works. (3) Internal web API shape changes without notice. (4) Undocumented 'thud'/'Measly' 400s and the same 250/day user limits still apply."
+  },
+  "confidence": "high"
+}

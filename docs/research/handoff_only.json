@@ -1,0 +1,196 @@
+{
+  "platform": "Hand-off-only networks: Snapchat, WhatsApp (Status/Channels), Google Business Profile, Twitch, Signal Stories, Substack Notes, Instagram Stories",
+  "verified_on": "2026-10-07",
+  "recommended_tiers": [
+    "handoff",
+    "byok_api",
+    "web_session"
+  ],
+  "official_api": {
+    "exists": false,
+    "name": "None usable by a personal account for any of the 7 targets. Business/approved APIs exist for: Google Business Profile (v4 localPosts, approval-gated), Instagram Stories (Instagram Platform API, professional account + app review), WhatsApp Business Platform (paid, business messaging only; cannot post Status or Channels), Twitch Helix (chat messages/announcements/clips only - no 'posts'), Snapchat Public Profile API (Marketing API partners, brands/creators). Signal Stories and Substack Notes have NO official API at all.",
+    "personal_profile_posting": false,
+    "docs_url": "https://developers.google.com/my-business/content/prereqs | https://developers.facebook.com/docs/instagram-platform/content-publishing | https://developers.facebook.com/docs/whatsapp/pricing | https://dev.twitch.tv/docs/api/reference/ | https://developers.snap.com/api/marketing-api/Public-Profile-API/Introduction",
+    "auth": "GBP: Google OAuth2 (scope https://www.googleapis.com/auth/business.manage, or legacy plus.business.manage), project quota is 0 QPM until Google approves the 'Application for Basic API Access' contact-form request (then 300 QPM). Instagram: Business Login for Instagram - GET https://www.instagram.com/oauth/authorize?client_id&redirect_uri&response_type=code&scope=instagram_business_basic,instagram_business_content_publish; code exchange POST https://api.instagram.com/oauth/access_token REQUIRES client_secret (no PKCE documented); long-lived via GET https://graph.instagram.com/access_token?grant_type=ig_exchange_token (60 days); refresh GET https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token; redirect_uri must exactly match a registered base URI. Twitch: OAuth2 at https://id.twitch.tv/oauth2/authorize (implicit for client-side/mobile apps, auth-code needs secret) plus Device Code Grant Flow (POST https://id.twitch.tv/oauth2/device, then POST https://id.twitch.tv/oauth2/token with grant_type=urn:ietf:params:oauth:grant-type:device_code) which 'does not need to maintain a client secret' and can refresh without one; PKCE not documented. WhatsApp Business Platform: Meta business portfolio + WhatsApp Business Account (WABA) + business phone number; system-user tokens; irrelevant for Status/Channels. Snapchat Public Profile API: part of Marketing API, partner/brand access.",
+    "pkce_supported": false,
+    "custom_scheme_redirect_ok": false,
+    "desktop_loopback_redirect_ok": false,
+    "oauth_scopes": [
+      "https://www.googleapis.com/auth/business.manage (GBP)",
+      "instagram_business_basic (IG)",
+      "instagram_business_content_publish (IG stories/feed/reels publish)",
+      "user:write:chat / user:bot / channel:bot (Twitch Send Chat Message)",
+      "moderator:manage:announcements (Twitch Send Chat Announcement)",
+      "clips:edit (Twitch Create Clip)",
+      "channel:manage:broadcast (Twitch Modify Channel Information - title/game/tags)"
+    ],
+    "endpoints": [
+      {
+        "purpose": "GBP: create local post (business accounts only; requires API access approval)",
+        "method": "POST",
+        "url": "https://mybusiness.googleapis.com/v4/accounts/{accountId}/locations/{locationId}/localPosts",
+        "request_shape": "JSON LocalPost: {languageCode:'en-US', summary:'...', topicType:'STANDARD'|'EVENT'|'OFFER'|'ALERT', callToAction:{actionType:'BOOK'|'ORDER'|'SHOP'|'LEARN_MORE'|'SIGN_UP'|'CALL', url}, media:[{mediaFormat:'PHOTO', sourceUrl:'https://...'}], event:{title, schedule:{startDate,startTime,endDate,endTime}} (required for EVENT/OFFER), offer:{couponCode, redeemOnlineUrl, termsConditions}, alertType (ALERT only)}",
+        "response_shape": "The created LocalPost resource (name: accounts/*/locations/*/localPosts/*, state, createTime, searchUrl)",
+        "notes": "v4 API; 'Product Posts cannot be created using the Google My Business API at this time.' media supports sourceUrl only (public URL, no upload). Posts older than 6 months are archived unless a date range is set."
+      },
+      {
+        "purpose": "Instagram Stories: create story container (professional account only)",
+        "method": "POST",
+        "url": "https://graph.instagram.com/{api-version}/{ig-user-id}/media",
+        "request_shape": "form/query params: media_type=STORIES, image_url=<public JPEG URL> OR video_url=<public MP4/MOV URL>; access_token. (Captions not documented for stories; user_tags supported since 2025-07-09.)",
+        "response_shape": "{id:'<container id>'}",
+        "notes": "Then POST /{ig-user-id}/media_publish?creation_id=<id>. 100 API-published posts per 24h moving window (GET /{ig-user-id}/content_publishing_limit); 400 containers per rolling 24h. Image 8 MB max, 9:16 recommended; video MOV/MP4, 100 MB max, 60 s max. Host with Facebook Login uses graph.facebook.com instead."
+      },
+      {
+        "purpose": "Instagram Stories: publish container",
+        "method": "POST",
+        "url": "https://graph.instagram.com/{api-version}/{ig-user-id}/media_publish",
+        "request_shape": "creation_id=<container id>&access_token=...",
+        "response_shape": "{id:'<media id>'}",
+        "notes": "Story expires after 24h."
+      },
+      {
+        "purpose": "Twitch: Send Chat Message (closest thing to 'posting')",
+        "method": "POST",
+        "url": "https://api.twitch.tv/helix/chat/messages",
+        "request_shape": "JSON {broadcaster_id, sender_id, message (max 500 chars), reply_parent_message_id?}; headers Authorization: Bearer <user token>, Client-Id",
+        "response_shape": "{data:[{message_id, is_sent, drop_reason?}]}",
+        "notes": "Scopes user:write:chat + user:bot (or channel:bot). Not a persistent post; only visible in live chat."
+      },
+      {
+        "purpose": "Twitch: Send Chat Announcement",
+        "method": "POST",
+        "url": "https://api.twitch.tv/helix/chat/announcements?broadcaster_id=&moderator_id=",
+        "request_shape": "JSON {message (max 500 chars), color?: 'blue'|'green'|'orange'|'purple'|'primary'}",
+        "response_shape": "204 No Content",
+        "notes": "Scope moderator:manage:announcements. No Helix endpoint exists for channel feed/posts/panels."
+      },
+      {
+        "purpose": "Twitch: Modify Channel Information (stream title etc.)",
+        "method": "PATCH",
+        "url": "https://api.twitch.tv/helix/channels?broadcaster_id=",
+        "request_shape": "JSON {title?, game_id?, broadcaster_language?, tags?[], content_classification_labels?[]}",
+        "response_shape": "204 No Content",
+        "notes": "Scope channel:manage:broadcast."
+      },
+      {
+        "purpose": "Twitch: Create Clip",
+        "method": "POST",
+        "url": "https://api.twitch.tv/helix/clips?broadcaster_id=",
+        "request_shape": "no body",
+        "response_shape": "{data:[{id, edit_url}]}",
+        "notes": "Scope clips:edit; only works while live."
+      }
+    ],
+    "free_tier": "GBP API: free but 0 QPM until approved; 300 QPM after approval (verified 2026-10-07). Instagram API: free, 100 API-published posts/24h, professional account required (verified 2026-10-07). Twitch Helix: free. WhatsApp Business Platform: per-message billing since 2025-07-01 (marketing/utility/authentication templates charged; free-form 'service' messages inside an open 24h customer-service window are free) - none of which can post Status or Channels. Snapchat Public Profile API: partner/brand only.",
+    "paid_tiers": "WhatsApp Business Platform per-message pricing by template category and recipient country (effective 2025-07-01). Others: no paid tiers that unlock personal posting.",
+    "rate_limits": "GBP 300 QPM per project after approval. Instagram 100 posts/24h, 400 containers/24h. Twitch standard Helix bucket (not specified per endpoint on reference page); chat message 500 chars.",
+    "token_lifetime_and_refresh": "Instagram: short-lived 1h -> long-lived 60 days, refreshable via graph.instagram.com/refresh_access_token. Twitch: user access tokens 4 hours; device-code refresh token expires after 30 days of inactivity; refresh without secret in device code flow. Google: standard OAuth2 refresh tokens.",
+    "app_review_required": "GBP: yes - 'Application for Basic API Access' form; applicant must 'Manage a Google Business Profile that is verified and active for 60+ days', have a website for the business, and use an email listed as owner/manager. Instagram: app must pass App Review for instagram_business_content_publish before non-tester accounts can use it; in Development mode only app-role users (admins/developers/testers) work. Snapchat Snap Kit: 'All integrations are subject to our review and approval'. Twitch: no review for Helix. Snapchat Creative Kit Web: no registration needed (optional snapchat:app_id meta tag for metrics).",
+    "unreviewed_app_restrictions": "GBP: 0 QPM (API unusable) until approved. Instagram: Development-mode app works only for accounts holding an app role; each tester still needs a professional (Business/Creator) account. Snapchat Creative Kit Lite (native): needs a Client ID from https://kit.snapchat.com; production use subject to Snap review. Twitch: none.",
+    "account_requirements": "GBP: owner/manager of a verified GBP, 60+ days old. Instagram: professional account (Business or Creator); with Instagram Login no Facebook Page needed. WhatsApp Business Platform: business portfolio + WABA + business number. Snapchat Public Profile API: brand/creator public profile via Marketing API partner. Twitch: any account (chat only). Signal/Substack Notes: no API at all.",
+    "media_upload_flow": "GBP: media via public sourceUrl only. Instagram: public image_url/video_url (or resumable upload for video). Twitch: n/a. Others: n/a.",
+    "server_side_scheduling": "Instagram: none (publish immediately). GBP: event/offer posts carry date ranges but no scheduled publish. Others: none."
+  },
+  "handoff": {
+    "web_intent_url": "WhatsApp: https://wa.me/?text=<urlencoded> (no recipient; opens chat picker) or https://api.whatsapp.com/send/?text=<urlencoded>; desktop resolves to https://web.whatsapp.com/send/?text=<text> (verified live 2026-10-07). Neither targets Status or Channels - user must pick/forward manually. Snapchat Web (Creative Kit Web): include <script src=\"https://sdk.snapkit.com/js/v1/create.js\"> button with data-share-url=<attachment URL>; desktop opens a Snapcode window, mobile deep-links to the app; only an attachment URL (OG title/site_name read from the page) - no caption prefill. Substack Notes: https://substack.com/notes (composer, no documented prefill params). Google Business Profile: https://business.google.com/ (posts are created in Search/Maps 'Your business on Google' UI; no prefill params). Twitch: https://dashboard.twitch.tv/ (no public composer; chat at https://www.twitch.tv/popout/<channel>/chat). Instagram Stories: no web composer for stories. Signal: none (signal.me/#p/<number> opens a chat; stories cannot be prefilled from web).",
+    "web_intent_params": "WhatsApp: text (URL-encoded; '+' accepted for spaces on web.whatsapp.com). Snapchat Web: data-share-url only (optional meta name=\"snapchat:app_id\" for metrics, optional data-share-sticker etc.). Others: none.",
+    "android_share": "WhatsApp: ACTION_SEND text/plain or image/*|video/* to package com.whatsapp (also com.whatsapp.w4b for WhatsApp Business); user then chooses a chat, 'My status' or a Channel in WhatsApp's own picker (Status/Channel targets appear in the WhatsApp share picker; cannot be preselected). Snapchat: package com.snapchat.android; Creative Kit Lite intent with extras CLIENT_ID (Snap Kit client id), captionText (<=250 chars), sticker (JSON), lensUUID, lensLaunchData; media via FileProvider content URI; plain ACTION_SEND image/*/video/* to com.snapchat.android also opens the Snapchat preview. Instagram Stories: Intent action com.instagram.share.ADD_TO_STORY, setDataAndType(contentUri, image/jpeg|image/png|video/mp4), extras source_application=<Facebook App ID, REQUIRED since Jan 2023>, interactive_asset_uri, top_background_color, bottom_background_color, content_url (link sticker, unverified); add FLAG_GRANT_READ_URI_PERMISSION; resolve against package com.instagram.android. Plain ACTION_SEND image/* to com.instagram.android opens feed/story chooser without caption. Signal: package org.thoughtcrime.securesms; ShareActivity (.sharing.v2.ShareActivity) accepts ACTION_SEND / SEND_MULTIPLE for text/plain, image/*, video/*, audio/*, application/*, */* - Signal's picker lets the user choose 'My Story' or a story for a group. Substack: package com.substack.app (unverified, no story-like target; ACTION_SEND text/plain may open Notes composer - unverified). Twitch: package tv.twitch.android.app (unverified); no composer target. Google Business Profile: no app (GMB app discontinued 2022); posts via Google Maps app com.google.android.apps.maps 'Your business' - no share target.",
+    "ios_share": "WhatsApp: URL scheme whatsapp://send?text=<urlencoded> (text only); for media use UIActivityViewController - WhatsApp's share extension lets user pick chat/Status (unverified exact key: 'whatsapp' in LSApplicationQueriesSchemes). Snapchat: Creative Kit Lite - write UIPasteboard items with keys com.snapchat.creativekit.clientID, com.snapchat.creativekit.backgroundImage, com.snapchat.creativekit.stickerImage, com.snapchat.creativekit.captionText, com.snapchat.creativekit.lensUUID then open snapchat://creativekit/camera (empty camera + overlay) or snapchat://creativekit/preview (prefilled photo/video); add 'snapchat' to LSApplicationQueriesSchemes. Instagram Stories: write UIPasteboard with com.instagram.sharedSticker.backgroundImage / .backgroundVideo / .stickerImage / .backgroundTopColor / .backgroundBottomColor (and .contentURL, unverified), then open instagram-stories://share?source_application=<Facebook App ID>; add 'instagram-stories' to LSApplicationQueriesSchemes. Signal: scheme sgnl:// (registered; only deep links like sgnl://signal.me, no compose scheme); share via UIActivityViewController to Signal's share extension (user picks story). Substack: share sheet to Substack app (unverified scheme substack://). Twitch: twitch:// (unverified); no compose target.",
+    "desktop": "WhatsApp: open https://web.whatsapp.com/send/?text=<text> or the WhatsApp Desktop app via whatsapp://send?text= (protocol handler registered by the desktop app - unverified); Status and Channel posts must be created manually in WhatsApp Web/Desktop UI (Channels admin UI exists on web; Status composing on desktop is limited). Snapchat: https://web.snapchat.com (Snapchat for Web) - manual; Creative Kit Web shows a Snapcode to scan. GBP: https://business.google.com/ then 'Add update' - manual; or Google Search 'Your business on Google'. Twitch: https://dashboard.twitch.tv/ - set title/announcement manually; NEFORUM could use Helix for chat announcement/title. Signal: Signal Desktop can view and post stories (unverified) - open signal:// not available; copy text to clipboard. Substack Notes: open https://substack.com/notes with text copied to clipboard. Instagram Stories: no desktop story composer in web UI (web create = feed/reels only); copy text + reveal media file.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": true,
+    "notes": "Text prefill: WhatsApp (text via ?text= / whatsapp://send?text=; user picks target incl. Status or Channel), Snapchat Creative Kit (captionText <= 250 chars, native only), Signal (ACTION_SEND text/plain -> can become a text story). Media prefill: WhatsApp (share sheet), Snapchat (photo/video/sticker up to 300 MB, video <= 5 min split into 10 s snaps), Instagram Stories (background image >= 720x1280 JPG/PNG or H.264/H.265/WebM video <= 20 s, <= 50 MB recommended, up to 1080p; NO text/caption prefill), Signal (image/video via share sheet). No prefill at all: Google Business Profile, Twitch, Substack Notes (manual paste)."
+  },
+  "text_limits": {
+    "max_chars": 250,
+    "counting_rule": "Snapchat Creative Kit caption: 250 characters (counting rule not specified; assume UTF-16 code units). Twitch chat/announcement: 500 characters. Instagram Stories: no text field via share intent or API (text must be baked into the image). WhatsApp status text / Channels: entered in-app (Status text ~700 chars, unverified). Google Business Profile post summary: 1,500 characters (unverified, widely cited). Substack Notes: no hard documented limit (unverified). Signal text story: in-app only.",
+    "title_max": 58,
+    "hashtags_max": 0,
+    "notes": "title_max 58 is the Google Business Profile event/offer title limit (unverified). hashtags_max 0 = no documented hashtag cap on any of these. WhatsApp wa.me text must be URL-encoded (percent-encoding; '+' is rendered as space on web.whatsapp.com)."
+  },
+  "media_limits": {
+    "images_per_post": 1,
+    "image_formats": "Snapchat: PNG/JPEG up to 300 MB, 9:16 suggested, one sticker (<= 1 MB static PNG/JPEG; animated WebP/GIF iOS only). Instagram Stories share: JPG/PNG min 720x1280, 9:16 or 9:18; API: JPEG only, 8 MB max via public URL. Google Business Profile API: media sourceUrl (public URL) only, PHOTO; GBP UI photo minimum 400x300 / 10 KB to 5 MB (unverified). WhatsApp share sheet: whatever the app accepts (JPEG/PNG; Status compresses). Signal: image/* via share sheet.",
+    "image_max_bytes": 8000000,
+    "aspect_ratio": "9:16 vertical for Snapchat and Instagram Stories; GBP posts landscape 4:3 recommended (unverified)",
+    "video": "Snapchat: MP4/MOV, up to 5 min, 300 MB, auto-split into 10 s snaps. Instagram Stories share intent: H.264/H.265/WebM, up to 1080p, max 20 s, under 50 MB recommended; Instagram API stories video: MOV/MP4, 100 MB, 60 s max. WhatsApp Status video: 30 s per status (unverified). Signal stories: video via share sheet (Signal trims long stories, unverified). GBP: video via UI only (API media is PHOTO sourceUrl; video 30 s / 75 MB in UI, unverified).",
+    "alt_text": false
+  },
+  "gotchas": [
+    "WhatsApp: wa.me / whatsapp://send?text= prefill a MESSAGE, not a Status or Channel post. The user must tap the 'My status' or Channel entry in WhatsApp's own target picker after share-sheet hand-off; there is no public API for Status or Channels, and the paid WhatsApp Business Platform (Cloud API) cannot post to either.",
+    "WhatsApp Business Platform billing is per message since 2025-07-01 and requires a Meta business portfolio + WABA + dedicated business phone number; it is irrelevant for a personal cross-poster.",
+    "Snapchat Creative Kit never posts directly: it opens Snapchat's camera/preview and the user still taps Send/Post (friends, My Story, Spotlight). It requires a Snap Kit Client ID from https://kit.snapchat.com even for 'Lite' (no-SDK) integration; the Web variant (sdk.snapkit.com create.js) needs no registration but only shares an attachment URL (no caption).",
+    "Snapchat Creative Kit Lite deep links: snapchat://creativekit/camera and snapchat://creativekit/preview with UIPasteboard keys com.snapchat.creativekit.* (iOS) and Intent extras CLIENT_ID/captionText/sticker/lensUUID to package com.snapchat.android (Android). Caption max 250 chars; only one sticker; animated stickers unsupported on Android.",
+    "Snapchat Public Profile API (Marketing API) lets 'partners post various content types on behalf of brands or creators' but is a business/partner integration tied to Public Profiles, not personal accounts; the old marketingapi.snapchat.com reference site is being deprecated in 2025 in favour of developers.snap.com/api.",
+    "Google Business Profile API project quota defaults to 0 QPM; you must submit the GBP API contact form ('Application for Basic API Access') and prove you manage a verified GBP active 60+ days with a website. A FOSS app cannot ship a shared approved project; each user would need their own approved Google Cloud project - realistically hand-off only.",
+    "GBP localPosts.create (v4) only accepts media by public sourceUrl, cannot create Product posts, and posts auto-archive after 6 months.",
+    "Twitch has no 'post' concept via API: Helix offers chat messages/announcements (500 chars), stream title/tags (PATCH /helix/channels), clips and markers. Twitch's own 'Channel feed' was removed years ago. Twitch OAuth: implicit grant for mobile/client-side, auth-code requires client secret, Device Code Grant needs no secret and can refresh without one; PKCE is not documented; user tokens live 4 h.",
+    "Instagram Stories via API: professional (Business/Creator) account only, media_type=STORIES, public image_url/video_url, 100 API-published posts per 24 h, no caption field, app must pass App Review for instagram_business_content_publish; the token exchange at api.instagram.com/oauth/access_token requires the client_secret (BYOK users must create their own Meta app and embed their own secret).",
+    "Instagram Stories share hand-off REQUIRES a Facebook App ID in source_application (Android extra / iOS query param) since January 2023 or Instagram shows 'The app you shared from doesn't currently support sharing to Stories'. No text/caption prefill - bake text into the image. Background >= 720x1280, video <= 20 s.",
+    "Signal: no API, no web composer. Share-sheet to org.thoughtcrime.securesms (Android ShareActivity accepts text/plain, image/*, video/*, */*) lets the user pick My Story / group story. iOS registers only the sgnl:// scheme (deep links, no compose). signal-cli (unofficial, links as a secondary device) has a sendStory command (attachment only, --group-id, --no-replies) - desktop-only, Java, ToS-grey.",
+    "Substack Notes: no official API; python-substack and NHagar/substack_api do not create Notes (drafts/read-only). Any Notes posting would hit undocumented endpoints (e.g. POST https://substack.com/api/v1/comment/feed - unverified) with the substack.sid cookie; hand-off is open https://substack.com/notes with text on clipboard.",
+    "Web search budget was exhausted mid-research; several hand-off identifiers (WhatsApp iOS scheme, Twitch/Substack package names, GBP text limits) are from recollection - see unverified_claims."
+  ],
+  "sources": [
+    "https://api.whatsapp.com/send/?text=hello%20world (live click-to-chat page, fetched 2026-10-07)",
+    "https://developers.facebook.com/docs/whatsapp/pricing",
+    "https://developers.facebook.com/docs/whatsapp/overview",
+    "https://developers.snap.com/snap-kit/creative-kit/overview",
+    "https://developers.snap.com/snap-kit/creative-kit/web",
+    "https://github.com/Snapchat/creative-kit (Creative Kit Lite README)",
+    "https://developers.snap.com/snap-kit/app-review/overview",
+    "https://developers.snap.com/api/marketing-api/Public-Profile-API/Introduction",
+    "https://marketingapi.snapchat.com/docs/",
+    "https://developers.google.com/my-business/content/prereqs",
+    "https://developers.google.com/my-business/content/posts-data",
+    "https://developers.google.com/my-business/reference/rest/v4/accounts.locations.localPosts/create",
+    "https://developers.google.com/my-business/reference/rest/v4/accounts.locations.localPosts",
+    "https://support.google.com/business/answer/7342169",
+    "https://dev.twitch.tv/docs/api/reference/",
+    "https://dev.twitch.tv/docs/authentication/getting-tokens-oauth/",
+    "https://dev.twitch.tv/docs/authentication/register-app/",
+    "https://raw.githubusercontent.com/signalapp/Signal-Android/main/app/src/main/AndroidManifest.xml",
+    "https://raw.githubusercontent.com/signalapp/Signal-iOS/main/Signal/Signal-Info.plist",
+    "https://raw.githubusercontent.com/AsamK/signal-cli/master/man/signal-cli.1.adoc",
+    "https://github.com/ma2za/python-substack",
+    "https://github.com/NHagar/substack_api",
+    "https://developers.facebook.com/docs/instagram-platform/sharing-to-stories",
+    "https://developers.facebook.com/docs/instagram-platform/sharing-to-feed",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media",
+    "https://developers.facebook.com/docs/instagram-platform/content-publishing",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login",
+    "https://github.com/subzeroid/instagrapi",
+    "https://github.com/WhiskeySockets/Baileys"
+  ],
+  "unverified_claims": [
+    "wa.me canonical formats https://wa.me/<E.164 number>?text=<urlencoded> and https://wa.me/?text=<urlencoded> (FAQ page https://faq.whatsapp.com/5913398998672934 returned only a truncated header; the api.whatsapp.com/send/?text= landing page was verified live instead).",
+    "iOS WhatsApp scheme whatsapp://send?text=<urlencoded> and 'whatsapp' LSApplicationQueriesSchemes entry; WhatsApp Business Android package com.whatsapp.w4b.",
+    "WhatsApp Channels have no public API and Status text limit (~700 chars) / Status video limit (30 s).",
+    "Baileys (WhatsApp Web protocol library) can post to Status by sending to the 'status@broadcast' JID - README fetched did not confirm; community issues say it works but is a ban risk.",
+    "Instagram Android extra content_url and iOS pasteboard keys com.instagram.sharedSticker.contentURL / .backgroundVideo (not present in the fetched doc excerpt).",
+    "Instagram package name com.instagram.android (doc checks 'the Instagram package' but the fetched excerpt did not print the literal).",
+    "Substack Android package com.substack.app, iOS scheme substack://, and undocumented Notes endpoint POST https://substack.com/api/v1/comment/feed with body {bodyJson:{type:'doc',attrs:{schemaVersion:'v1'},content:[...]}, tabId:'for-you', replyMinimumRole:'everyone'} using the substack.sid cookie.",
+    "Twitch Android package tv.twitch.android.app and iOS scheme twitch://; Twitch OAuth redirect URLs accept http://localhost with a port for desktop apps (community practice, register-app page did not state rules).",
+    "Google Business Profile post text limit 1,500 characters, title 58 characters, photo min 400x300 px / 10 KB-5 MB, video <= 30 s / 75 MB; GBP mobile app discontinued in 2022 (posts now via Google Maps app / Search).",
+    "Signal Desktop can post stories; Signal share extension on iOS lets the user choose a story target.",
+    "Snapchat Snap Kit apps in development mode are limited to a small list of demo users until App Review; Creative Kit sharing to Spotlight is only offered for video.",
+    "Snapchat Creative Kit Web deep link format https://www.snapchat.com/scan?attachmentUrl=<url> (seen in community posts, not in fetched doc).",
+    "Open-source WebView/session automation projects for these targets: instagrapi (IG private API, stories supported - verified exists), Baileys / whatsapp-web.js (WhatsApp Web linked-device protocol - Baileys verified exists), signal-cli (verified, sendStory), dreammis/social-auto-upload (Playwright-based uploader, platforms unverified). No known FOSS library drives Substack Notes, Google Business Profile posts, Snapchat stories or Twitch via a logged-in web session."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Flutter embedded WebView (webview_flutter / flutter_inappwebview) with the user's own cookies: WhatsApp Web (web.whatsapp.com supports Channels admin posting and viewing Status; QR-link as a linked device), Snapchat for Web (web.snapchat.com - chats and stories are limited), Substack (substack.com/notes composer is plain React - inject text via JS and click Post, or call the undocumented /api/v1/comment/feed with the session cookie), Google Business Profile (business.google.com 'Add update' form - heavy anti-automation, Google login in WebView is often blocked as 'insecure browser'), Twitch (dashboard.twitch.tv, pointless because Helix covers chat/title), Instagram (web Create does not support Stories; instagrapi-style private-API emulation needed for stories). Signal has no web client at all (only signal-cli / linked-device protocol).",
+    "known_libraries": [
+      "instagrapi (Python, private mobile API, photo_upload_to_story / video_upload_to_story; 'best suited for testing, research, and controlled internal automation')",
+      "Baileys (TypeScript WhatsApp Web socket API, QR/pairing-code linked device; maintainers 'do not condone... automated messaging usage')",
+      "whatsapp-web.js (Puppeteer-driven WhatsApp Web; unverified status support)",
+      "signal-cli (Java, linked device; sendStory command)",
+      "python-substack (undocumented Substack interfaces; drafts only, no Notes)",
+      "dreammis/social-auto-upload (Playwright; unverified platform list)"
+    ],
+    "risk": "High for Instagram (Meta aggressively challenges/locks accounts using private-API emulation; instagrapi itself warns automation is 'fragile in production' due to 'account trust, proxies, device state, challenges, and rate limits') and WhatsApp (ToS forbids automation; Baileys explicitly disclaims liability; number bans are common for bulk/automated use). Medium for Substack (undocumented API, no public ban reports, but interfaces 'may change without notice'). Medium-high for Google (login in embedded WebView frequently rejected; automation of business.google.com violates Google ToS). Low for Twitch (official Helix covers the useful actions). Signal: linked-device protocol via signal-cli is tolerated by Signal but Stories are attachment-only there; no web UI to drive. Snapchat web: low utility, automation flagged by Snap's anti-bot measures."
+  },
+  "confidence": "medium"
+}

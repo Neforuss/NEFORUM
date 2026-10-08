@@ -1,0 +1,224 @@
+{
+  "platform": "Instagram",
+  "verified_on": "2026-08-27",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff",
+    "web_session"
+  ],
+  "confidence": "high",
+  "official_api": {
+    "exists": true,
+    "name": "Instagram Platform: 'Instagram API with Instagram Login' (host graph.instagram.com, launched 2024-07-23, no Facebook Page needed) and 'Instagram API with Facebook Login' (host graph.facebook.com, requires IG professional account linked to a Facebook Page and Facebook Login for Business). Current Graph version seen in docs: v25.0.",
+    "docs_url": "https://developers.facebook.com/docs/instagram-platform/content-publishing",
+    "account_requirements": "HARD REQUIREMENT: an Instagram PROFESSIONAL account (Business or Creator). Consumer/personal accounts cannot use either API (Basic Display API was shut down 2024-12-04 and never allowed publishing). Instagram Login flavor: professional account only, no Facebook Page needed. Facebook Login flavor: professional account must be connected to a Facebook Page and the user must have an admin-equivalent task on that Page. Developer side: a Meta developer account, a Meta app of type 'Business' with the Instagram product added (use case 'Other'); the App Dashboard asks you to connect a business portfolio. Note contradiction: the Instagram-Login page says that flavor 'cannot access ads or tagging' while the overview lists product tagging as supported by Instagram Login; hashtag search and partnership ads are Facebook-Login-only. An older note on the Facebook-Login page says Stories publishing is 'only available to business accounts' (not creator).",
+    "personal_profile_posting": false,
+    "auth": "OAuth 2.0 authorization-code flow (Business Login for Instagram). Authorize: GET https://www.instagram.com/oauth/authorize (reference page also lists https://api.instagram.com/oauth/authorize) with client_id (Instagram App ID from App Dashboard > Instagram > Business login settings; this is DIFFERENT from the Meta App ID), redirect_uri, response_type=code, scope (comma- or space-separated), state, optional force_reauth=true, optional enable_fb_login=0/1. On success Instagram redirects to redirect_uri?code=...#_ (strip the trailing '#_'); the code is valid 1 hour and single-use. Errors come back as ?error=access_denied&error_reason=user_denied&error_description=... Token exchange: POST https://api.instagram.com/oauth/access_token (multipart/form-urlencoded) with client_id, client_secret, grant_type=authorization_code, redirect_uri, code -> {\"data\":[{\"access_token\":\"...\",\"user_id\":\"<instagram-scoped user id>\",\"permissions\":\"instagram_business_basic,...\"}]} (short-lived, 1 hour). Exchange for long-lived: GET https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=...&access_token=<short> -> {access_token, token_type:'bearer', expires_in:5183944} (60 days). Refresh: GET https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=<long> (token must be >=24h old and unexpired; needs instagram_business_basic). The client_secret is REQUIRED at token exchange and long-lived exchange, so a local-first app cannot do this safely with a shipped secret; the practical design is BYO Meta app (each user creates their own app and pastes Instagram App ID + App Secret into NEFORUM). Alternative in development: App Dashboard > Instagram > 'Generate access tokens' lets you add your own IG account(s) as testers and mint a 60-day long-lived token with no OAuth redirect at all (tester accepts invite in the Instagram app under Settings/Edit Profile > Apps and Websites > Tester Invites). Facebook Login flavor: standard Facebook Login (Facebook Login for Business) -> user token -> GET /me/accounts (pages_show_list) -> GET /{page-id}?fields=instagram_business_account -> IG user id; publish with the Page access token; permissions instagram_basic, instagram_content_publish, pages_read_engagement (+ads_management/ads_read if Page role via Business Manager). Meta docs for native/desktop apps: set 'Native or Desktop App' = Yes and 'Is App Secret embedded in the client' in Advanced Settings; Meta's stance is that native apps should call through your own server. There is an App Dashboard setting 'Embedded Browser OAuth Login' that must be ON if you run the OAuth flow inside a WebView.",
+    "oauth_scopes": [
+      "instagram_business_basic",
+      "instagram_business_content_publish",
+      "instagram_business_manage_comments",
+      "instagram_business_manage_messages",
+      "instagram_business_manage_insights",
+      "(Facebook Login flavor) instagram_basic",
+      "(Facebook Login flavor) instagram_content_publish",
+      "(Facebook Login flavor) pages_show_list",
+      "(Facebook Login flavor) pages_read_engagement",
+      "(Facebook Login flavor) business_management"
+    ],
+    "pkce_supported": false,
+    "desktop_loopback_redirect_ok": false,
+    "custom_scheme_redirect_ok": false,
+    "app_review_required": "Not required to publish to accounts that have a ROLE on your app (Standard Access, the default): admins/developers/testers of the Meta app and Instagram accounts added as 'Instagram Testers' / under 'Generate access tokens', or accounts in the app's claimed business portfolio. Required (Advanced Access via Meta App Review PLUS Business Verification of the linked business portfolio) the moment the app serves professional accounts the developer does not own or manage. Review asks for a working externally loadable app, a written use case, step-by-step instructions and a screencast showing the full Instagram login and creating a feed post with caption/hashtags; a privacy policy URL and (for Business apps) data-deletion/deauthorize callback URLs are configured in the dashboard. Community reports (Meta forums, 2025-2026) say pending Business Verification blocks the review submission for instagram_business_content_publish, and that review takes roughly 2-4 weeks. For a GPL local-first app the clean path is: each user creates their own Meta app and adds their own IG account as a tester => Standard Access, no review ever.",
+    "unreviewed_app_restrictions": "Standard Access only: the API works only for Instagram professional accounts that have a role on the app (app admins/developers/testers, 'Instagram Testers', or accounts of the app's own business portfolio). Those accounts get full content publishing (image, carousel, reels, stories) at the same 24h quota. Anyone else attempting Business Login gets an error / cannot be served. Meta warns that 'some features might not work properly until your app has been granted Advanced Access'. No sandbox-only limits on post count were documented beyond the normal quota.",
+    "endpoints": [
+      {
+        "purpose": "Create media container (image, reel, story, carousel item, carousel parent)",
+        "method": "POST",
+        "url": "https://graph.instagram.com/v25.0/{ig-user-id}/media   (Facebook Login flavor: https://graph.facebook.com/v25.0/{ig-user-id}/media)",
+        "request_shape": "form or JSON: access_token; media_type = IMAGE (default when image_url given) | REELS | STORIES | CAROUSEL  (VIDEO value unsupported since 2023-11-09); image_url (public JPEG URL) or video_url (public MP4/MOV URL) or upload_type=resumable; caption (<=2200 chars, <=30 hashtags, <=20 @mentions; not for STORIES or carousel children); is_carousel_item=true for children; children=[id1,...] (2-10 container ids) for CAROUSEL; cover_url | thumb_offset (ms) for reels; share_to_feed (reels); alt_text (<=1000 chars, images only, added 2025-03-24); location_id; user_tags=[{username,x,y}]; collaborators (<=3 usernames, reels); audio_name; product_tags (<=5); branded_content_sponsor_ids (<=2); is_paid_partnership; is_ai_generated; trial_params (trial reels, 2025-12-03). Example: {\"image_url\":\"https://example.com/a.jpg\",\"caption\":\"...\",\"media_type\":\"IMAGE\"}",
+        "response_shape": "{\"id\": \"<IG_CONTAINER_ID>\"}  (a container id does NOT mean the upload succeeded; poll status_code)",
+        "notes": "Instagram cURLs the URL at publish time: must be publicly reachable over https, non-redirecting is safest, Content-Type correct, US-ASCII-only URL recommended. Containers expire after 24h (error 2207020). Reels cannot be carousel children. Stories: images or videos, no stickers via API, user mentions allowed. Docs mention a max of 400 containers per 24h (not the same as the publish quota)."
+      },
+      {
+        "purpose": "Publish a FINISHED container",
+        "method": "POST",
+        "url": "https://graph.instagram.com/v25.0/{ig-user-id}/media_publish",
+        "request_shape": "creation_id=<IG_CONTAINER_ID>&access_token=...",
+        "response_shape": "{\"id\": \"<IG_MEDIA_ID>\"}",
+        "notes": "Publishing before the container is FINISHED returns code 9007 / subcode 2207027 'media is not ready'. Images are usually FINISHED immediately; videos/reels are asynchronous."
+      },
+      {
+        "purpose": "Poll container status",
+        "method": "GET",
+        "url": "https://graph.instagram.com/v25.0/{ig-container-id}?fields=status_code,status&access_token=...",
+        "request_shape": "query params only",
+        "response_shape": "{\"status_code\":\"EXPIRED|ERROR|FINISHED|IN_PROGRESS|PUBLISHED\",\"status\":\"...human readable...\",\"id\":\"...\"}",
+        "notes": "Meta recommends polling once per minute for no more than 5 minutes."
+      },
+      {
+        "purpose": "Resumable (direct binary) upload for VIDEO containers (reels, stories video) -- the only way to send local bytes",
+        "method": "POST",
+        "url": "https://rupload.facebook.com/ig-api-upload/v25.0/{ig-container-id}",
+        "request_shape": "First create the container with upload_type=resumable (and media_type=REELS or STORIES). Then POST with headers: Authorization: OAuth <access_token>, offset: 0, file_size: <bytes>; body = raw binary (curl --data-binary @file.mp4). Alternatively header file_url: <public url> instead of a body.",
+        "response_shape": "{\"success\": true, ...} then poll the container status",
+        "notes": "VIDEO ONLY. Images have no binary upload path on the public API: image_url must be a publicly hosted JPEG."
+      },
+      {
+        "purpose": "Check 24h publishing quota",
+        "method": "GET",
+        "url": "https://graph.instagram.com/v25.0/{ig-user-id}/content_publishing_limit?fields=quota_usage,config&since=<unix>&access_token=...",
+        "request_shape": "query params",
+        "response_shape": "{\"data\":[{\"quota_usage\":2,\"config\":{\"quota_total\":50 or 100,\"quota_duration\":86400}}]}",
+        "notes": "Docs contradict themselves: the content-publishing guide says 100 API-published posts per rolling 24h; the field reference still says quota_total 'currently 50'; the original 2021 value was 25. Trust the live quota_total. Carousel = 1 post."
+      },
+      {
+        "purpose": "Identify logged-in user",
+        "method": "GET",
+        "url": "https://graph.instagram.com/v25.0/me?fields=id,username,account_type&access_token=...",
+        "request_shape": "query params",
+        "response_shape": "{\"id\":\"...\",\"username\":\"...\",\"account_type\":\"BUSINESS|MEDIA_CREATOR\"}",
+        "notes": "Instagram-scoped user id is what you post to."
+      },
+      {
+        "purpose": "Token exchange (short-lived)",
+        "method": "POST",
+        "url": "https://api.instagram.com/oauth/access_token",
+        "request_shape": "client_id, client_secret, grant_type=authorization_code, redirect_uri, code",
+        "response_shape": "{\"data\":[{\"access_token\",\"user_id\",\"permissions\"}]}",
+        "notes": "Requires app secret."
+      },
+      {
+        "purpose": "Long-lived token / refresh",
+        "method": "GET",
+        "url": "https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=...&access_token=...  and  https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=...",
+        "request_shape": "query params",
+        "response_shape": "{\"access_token\",\"token_type\":\"bearer\",\"expires_in\":5183944}",
+        "notes": "60 days; refresh any time after 24h and before expiry."
+      },
+      {
+        "purpose": "Facebook Login flavor: find IG user id",
+        "method": "GET",
+        "url": "https://graph.facebook.com/v25.0/me/accounts  then  https://graph.facebook.com/v25.0/{page-id}?fields=instagram_business_account",
+        "request_shape": "query params with user/page token",
+        "response_shape": "{\"instagram_business_account\":{\"id\":\"17841405822304914\"},\"id\":\"<page-id>\"}",
+        "notes": "Publish with the Page access token."
+      }
+    ],
+    "free_tier": "The API itself is free (no paid tiers). Publishing quota: 100 API-published posts per account per rolling 24h per the content-publishing guide (valid as read 2026-10-07; field reference still shows 50; 25 was the 2021 value). Carousels count as one. Up to ~400 containers/24h. Tokens: 60-day long-lived, refreshable. Call budget: Instagram Business Use Case rate limit = 4800 x (impressions of the account's content in the last 24h) calls per app+user pair per 24h -- brand-new/low-reach accounts have a very small call budget.",
+    "paid_tiers": "None. Meta does not sell Instagram API access; only business verification (free) and App Review gate scope. Third-party resellers (Ayrshare, bundle.social, HikerAPI for the private API) are paid wrappers, not Meta tiers.",
+    "rate_limits": "Business Use Case (BUC) limiting on graph.instagram.com / graph.facebook.com: calls in 24h = 4800 x number of impressions; usage reported in the X-Business-Use-Case-Usage response header (call_count %, total_cputime %, total_time %, estimated_time_to_regain_access). Throttle errors: code 4 (app-level), 17 (user-level), 9 / subcode 2207042 ('You reached maximum number of posts', terminal until the rolling window frees), code 4 / subcode 2207051 ('We restrict certain activity to protect our community' = spam/automation flag), 341, 613. Messaging endpoints have separate per-second caps (not relevant to posting). Content quota: 100 (or 50 per field doc) published posts / 24h rolling; 400 containers / 24h; containers expire after 24h.",
+    "token_lifetime_and_refresh": "Instagram Login: short-lived 1h -> long-lived 60 days via ig_exchange_token (needs client_secret) -> refresh via ig_refresh_token (no secret needed, token must be >=24h old and not expired). Dashboard-generated tester tokens are already long-lived (60 days). Facebook Login flavor: standard FB long-lived user token (60 days) and Page tokens derived from it do not expire while the user token is valid.",
+    "media_upload_flow": "Two-step container model. (1) POST /{ig-user-id}/media with a PUBLIC https URL (image_url for JPEG; video_url for MP4/MOV) or, for video only, upload_type=resumable then push raw bytes to https://rupload.facebook.com/ig-api-upload/v25.0/{container-id} (headers Authorization: OAuth <token>, offset: 0, file_size: N). (2) Poll GET /{container-id}?fields=status_code once per minute (<=5 min) until FINISHED. (3) POST /{ig-user-id}/media_publish?creation_id=<container-id>. Carousel: create 2-10 children with is_carousel_item=true, then a parent with media_type=CAROUSEL&children=id1,id2,...&caption=..., then publish the parent. Stories: media_type=STORIES with image_url or video_url (no caption field). Reels: media_type=REELS with video_url or resumable upload; optional cover_url/thumb_offset, share_to_feed, collaborators, audio_name. IMAGES CANNOT BE UPLOADED AS BYTES: Meta's servers cURL the image_url. For a local-first app this means: (a) user pastes a URL they already host, or (b) NEFORUM uploads the JPEG to a user-configured host (S3/R2/B2-compatible bucket with public-read object URL, Nextcloud/WebDAV public share with direct-download link, catbox.moe, a user's web server) and passes that URL, deleting it after PUBLISHED. Presigned/expiring URLs work only if they are still valid at the moment of the /media call (and ideally through publish); Google Drive/Dropbox/Imgur page links fail because they are not direct JPEG responses (community reports, n8n forum). Videos can bypass hosting entirely with the resumable upload.",
+    "server_side_scheduling": "None. The API has no scheduled-publish parameter; scheduling must be done by the client (containers expire after 24h, so create the container at post time, not at schedule time)."
+  },
+  "handoff": {
+    "web_intent_url": "",
+    "web_intent_params": "No public 'create post' deep link with prefilled content exists on instagram.com. The desktop web composer (plus button, drag-and-drop or 'Select from computer', up to 10 files for a carousel) has existed since 2021-10-21 but is only reachable by clicking the UI / https://www.instagram.com/ then '+' (the SPA shows /create/select/ etc. as transient modal routes; not documented and not prefillable). The only officially documented universal links are https://www.instagram.com (open app), https://www.instagram.com/create/story (opens camera/photo library in the iOS app), /p/{media_id}, /{username}, /explore/tags/{tag}, /explore/locations/{id}.",
+    "android_share": "Feed: Intent(Intent.ACTION_SEND).setType(\"image/*\" or \"video/*\").putExtra(Intent.EXTRA_STREAM, contentUri).setPackage(\"com.instagram.android\") with a FileProvider content:// URI and FLAG_GRANT_READ_URI_PERMISSION; Instagram opens its Feed composer with the media loaded. Multiple images via ACTION_SEND_MULTIPLE is not documented by Meta (community: works inconsistently). EXTRA_TEXT / EXTRA_TITLE captions are IGNORED by Instagram on Android (Meta's doc never mentions a caption; multiple plugin READMEs confirm). Stories: Intent(\"com.instagram.share.ADD_TO_STORY\") with setPackage(\"com.instagram.android\"), setDataAndType(backgroundContentUri, \"image/*\"|\"video/*\") and extras source_application=<your Facebook App ID> (mandatory since January 2023), interactive_asset_uri (sticker content URI), top_background_color, bottom_background_color (hex); only content:// URIs to local files; grant read permission. Accepted media: images JPEG/GIF/PNG; video MKV/MP4, 3s-10min, min 640x640 (feed); stories background min 720x1280, 9:16, video <=20s 1080p, H.264/H.265/WebM. Flutter: share_plus (generic sheet), social_share / social_story_share (ADD_TO_STORY wrappers; social_share needs a FileProvider authority ${applicationId}.com.shekarmudaliyar.social_share).",
+    "ios_share": "Feed: no documented URL scheme any more. Meta's current 'Sharing to Feed' doc only lists Universal Links plus UIDocumentInteractionController with a file saved as .ig (UTI com.instagram.photo) or .igo (UTI com.instagram.exclusivegram, shows only Instagram in the picker); add 'instagram' to LSApplicationQueriesSchemes. The old instagram://library?LocalIdentifier=<PHAsset id> scheme is absent from current docs (see unverified_claims). Instagram also exposes an iOS Share Extension: a UIActivityViewController with a UIImage/video file URL shows 'Instagram' and lets the user choose Feed/Story/DM. Any text/caption passed in the activity items or UIDocumentInteractionController annotation is IGNORED. Stories: open instagram-stories://share?source_application=<Facebook App ID> after writing UIPasteboard items with keys com.instagram.sharedSticker.backgroundImage (PNG/JPG data), com.instagram.sharedSticker.backgroundVideo, com.instagram.sharedSticker.stickerImage, com.instagram.sharedSticker.backgroundTopColor / backgroundBottomColor (hex strings); set pasteboard expiration ~5 minutes; add 'instagram-stories' to LSApplicationQueriesSchemes; the Facebook App ID has been mandatory since January 2023. A Meta app (any, even unreviewed) is needed just to obtain that App ID.",
+    "desktop": "No desktop handoff. Open https://www.instagram.com/ in the system browser; the user clicks '+' and picks files (web composer since 2021-10-21, up to 10 files, supports feed photo/video; Reels/stories are also creatable on web as of 2024-2025 per community, not verified). NEFORUM can copy the caption to the clipboard and offer a 'reveal file in Finder/Explorer' button so the user drags it in. Native Instagram desktop app for Windows/macOS was discontinued; nothing to target.",
+    "supports_prefilled_text": false,
+    "supports_prefilled_media": true,
+    "notes": "Industry pattern ('notification publishing', used by Buffer and Later for personal accounts, carousels with stickers, music, etc.): the app copies the caption (hashtags, emoji, @mentions) to the clipboard, hands the media to Instagram (Android ACTION_SEND / iOS share extension or saves to camera roll; Buffer copies the first carousel image over and saves the rest to the camera roll), then the user long-presses the caption box and pastes. On iOS 16+ the first paste from another app shows an 'Allow Paste' prompt. Captions can never be prefilled on Android or iOS; media can."
+  },
+  "text_limits": {
+    "max_chars": 2200,
+    "counting_rule": "Unicode characters as counted by Instagram (error 36004/2207010 reports 'caption was N characters'); Meta does not document bytes vs graphemes. Treat as code points / graphemes, not bytes; emoji count as 1 in the UI. Hashtags and @mentions count toward the 2200. Stories have no caption field; carousel caption goes only on the parent container.",
+    "hashtags_max": 30,
+    "title_max": 0,
+    "notes": "Max 20 @mentions per caption (error 100/2207040). alt_text up to 1000 characters (images only). Exceeding limits returns code 36004 / subcode 2207010 ('caption was X characters'). Line breaks and emoji are preserved by the API."
+  },
+  "media_limits": {
+    "images_per_post": 10,
+    "image_formats": "JPEG only via API (MPO/JPS variants rejected; PNG/GIF are NOT accepted by the API even though the mobile share intent accepts JPEG/GIF/PNG). Max 8 MB (error 36000/2207004 'too large to download'). Aspect ratio 4:5 to 1.91:1 (error 36003/2207009). Width 320-1440 px (scaled otherwise). sRGB recommended (converted). Carousel children are all cropped to the first item's ratio (1:1 default). Stories image: 9:16 recommended.",
+    "image_max_bytes": 8388608,
+    "aspect_ratio": "Feed/carousel: 4:5 (0.8) to 1.91:1; Reels: 9:16 recommended (others get cropped/padded); Stories: 9:16",
+    "video": "Reels (media_type=REELS, the only feed-video type since 2023-11-09): MP4 or MOV, moov atom at front, no edit lists; H.264 or HEVC; 23-60 fps; AAC audio <=48 kHz mono/stereo; VBR <=25 Mbps; duration 3 s to 15 min; <=300 MB; 9:16 recommended; optional cover_url (JPEG) or thumb_offset ms; share_to_feed; collaborators <=3; audio_name. Stories video: same codecs, 3-60 s, <=100 MB. Video may be sent as a public video_url OR as raw bytes via the resumable upload endpoint. Processing is asynchronous: poll status_code once/min up to 5 min (reels sometimes take longer). Share-intent (not API) video: MKV/MP4, 3 s-10 min, min 640x640.",
+    "alt_text": true
+  },
+  "gotchas": [
+    "Professional (Business/Creator) account is mandatory for any API posting; NEFORUM must detect account_type via GET /me and tell personal-account users to switch (free, in-app) or fall back to the handoff route.",
+    "Images cannot be uploaded directly: image_url must be a public https URL that Meta's servers can cURL at container-creation time. Local-first implication: ship a pluggable 'media host' (S3/R2/B2 via presigned PUT then public GET, WebDAV/Nextcloud public share, catbox.moe, user web server) and delete the file after status PUBLISHED. Google Drive/Dropbox/Imgur page links and auth-gated links fail (error 9004/2207052); slow hosts time out (-2/2207003).",
+    "Videos (reels, story video) CAN be uploaded as raw bytes via upload_type=resumable + rupload.facebook.com, so video needs no hosting. Images do.",
+    "client_secret is required to exchange the code and to get a long-lived token, and Meta's redirect URIs must be exact-match HTTPS. A shipped GPL app cannot hide a secret, so the realistic model is BYO Meta app: user creates a Business-type Meta app, adds the Instagram product, adds their own IG account under 'Generate access tokens' / Instagram Testers, and either (a) clicks 'Generate token' in the dashboard and pastes the 60-day long-lived token into NEFORUM (simplest, zero OAuth plumbing), or (b) enters App ID + Secret and NEFORUM runs the OAuth flow with a redirect to an HTTPS URL the user controls. Refresh (ig_refresh_token) needs no secret, so NEFORUM can keep a pasted token alive indefinitely if it refreshes before day 60.",
+    "Redirect URI: must be HTTPS and exactly match (trailing slash included). http://127.0.0.1:PORT/callback is not accepted by the Instagram Business Login settings; community workarounds are https://localhost:PORT/ with a self-signed cert, an ngrok/https tunnel, or a static HTTPS page the user hosts that displays the ?code= for copy-paste. Custom schemes like neforum://callback are not accepted. Facebook Login (the other flavor) reportedly tolerates http://localhost while the app is in Development mode (unverified).",
+    "No PKCE: Meta's Instagram OAuth has no code_challenge; the secret is the only client authentication.",
+    "Standard Access is enough to post to your OWN account(s) with no App Review and no Business Verification; the moment the app serves other people's accounts, App Review + Business Verification are required. Keep NEFORUM's docs explicit that every user registers their own app.",
+    "App Review (if ever attempted for a shared app ID) wants a hosted app, privacy policy, data-deletion callback URL, screencast; and 2025-2026 forum threads show Business Verification pending state blocks submission for instagram_business_content_publish.",
+    "Rate limits are impression-based (4800 x impressions / 24h): fresh or tiny accounts can hit code 4/17 throttles with very few calls; a 10-image carousel costs 15-43 Graph calls (children + parent + polls + publish). Publish quota (100 or 50 per 24h; query content_publishing_limit) is separate and terminal (subcode 2207042, do not retry).",
+    "Containers expire after 24h; scheduled posts must create the container at send time. Status polling: once/min, <=5 min; videos may show IN_PROGRESS longer.",
+    "media_type=VIDEO is gone (since 2023-11-09); all feed video is REELS. Reels cannot be carousel children. Stories have no caption, no stickers via API, and per an old Meta note may be business-only (not creator).",
+    "Scope names changed: instagram_business_basic / instagram_business_content_publish etc.; the pre-2024 names were deprecated 2025-01-27. Facebook-Login flavor still uses instagram_basic / instagram_content_publish / pages_read_engagement / pages_show_list.",
+    "Error subcode 2207051 (code 4, 'We restrict certain activity to protect our community') is Instagram's spam/automation flag on the OFFICIAL API; back off and surface it to the user; repeated hits can restrict the account (2207050 'account is restricted' requires logging into the app).",
+    "Two IDs are easy to confuse: the Instagram App ID / App Secret (Instagram > Business login settings) are not the Meta App ID / Secret; the user_id returned is an Instagram-scoped ID, different from the IG user id you get through the Facebook Login flavor (17841... ids).",
+    "Handoff: captions can never be prefilled on Android (EXTRA_TEXT ignored) or iOS (share-extension text ignored); use the Buffer/Later clipboard pattern and tell the user to paste. Android stories intent and iOS instagram-stories:// require a Facebook App ID (source_application) since Jan 2023, so even the pure-handoff path needs the user (or NEFORUM) to own a Meta app ID (any unreviewed app works).",
+    "Docs contradict each other on the daily quota (100 in the guide vs 50 in the field reference) and on product tagging support under Instagram Login; trust live content_publishing_limit and test against a real account.",
+    "Meta's docs recommend that native/desktop apps never embed the app secret and set 'Native or Desktop App' = Yes; if you do, app-access-token calls are refused. NEFORUM only needs user tokens, so this mostly matters for the BYO-app instructions.",
+    "Web-session / private-API automation violates Instagram's Terms (no automated or unauthorized means of access) and is actively detected (challenge_required, feedback_required, login_required, device/TLS fingerprinting, datacenter-IP blocks reported late 2025); use only as an opt-in 'at your own risk' module, run on the user's own device/IP, never headless cloud."
+  ],
+  "sources": [
+    "https://developers.facebook.com/docs/instagram-platform/overview",
+    "https://developers.facebook.com/documentation/instagram-platform/overview.md",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/business-login",
+    "https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/business-login.md",
+    "https://developers.facebook.com/documentation/instagram-platform/reference/oauth-authorize.md",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/get-started",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login",
+    "https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-facebook-login/get-started.md",
+    "https://developers.facebook.com/docs/instagram-platform/content-publishing",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login/content-publishing",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media",
+    "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/content_publishing_limit",
+    "https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/error-codes.md",
+    "https://developers.facebook.com/docs/instagram-platform/changelog",
+    "https://developers.facebook.com/docs/graph-api/overview/rate-limiting",
+    "https://developers.facebook.com/documentation/development/create-an-app/other-app-types/instagram-apis.md",
+    "https://developers.facebook.com/documentation/development/create-an-app/app-dashboard/advanced-settings.md",
+    "https://developers.facebook.com/documentation/facebook-login/security.md",
+    "https://developers.facebook.com/docs/instagram-platform/sharing-to-stories",
+    "https://developers.facebook.com/documentation/instagram-platform/sharing-to-feed.md",
+    "https://github.com/subzeroid/instagrapi",
+    "https://github.com/dilame/instagram-private-api",
+    "https://getclawkit.com/skills/official-sa9saq-instagram-poster",
+    "https://docs.postiz.com/providers/instagram",
+    "https://support.buffer.com/article/658-using-notification-publishing",
+    "https://docs.median.co/docs/social-share-instagram",
+    "https://bundle.social/blog/instagram-api-rate-limits",
+    "https://adaptlypost.com/en/blog/instagram-business-content-publish-scope",
+    "https://www.timetopost.co/blog/how-to-auto-post-to-instagram-api/",
+    "https://code2care.org/pages/share-image-text-on-instagram-using-android-share-dialog/",
+    "https://blog.hootsuite.com/social-media-updates/instagram/instagram-desktop-publishing/",
+    "https://communityforums.atmeta.com/discussions/Questions_Discussions/business-verification-in-review-10-days-%E2%80%94-blocking-app-review-submission/1372323",
+    "https://cdn.cdata.com/help/ENK/ado/pg_oauthcustomappcreate.htm",
+    "https://pub.dev/packages/social_share/",
+    "https://techcrunch.com/2024/12/06/instagram-locks-out-developers-of-third-party-consumer-apps",
+    "https://blog.postly.ai/why-instagram-is-cracking-down-on-third-party-apps-in-2025/"
+  ],
+  "unverified_claims": [
+    "instagram://library?LocalIdentifier=<id> (and the older AssetPath variant) still launches the Instagram iOS feed composer with the asset preselected: it is absent from Meta's current docs and several plugin maintainers (Median, 2026) say iOS feed deep-sharing is no longer supported and only the OS share sheet works; I could not find an authoritative deprecation notice.",
+    "Facebook Login (not Instagram Login) accepts http://localhost redirect URIs automatically while the Meta app is in Development mode: only community blog claims, not seen in Meta docs.",
+    "https://localhost:33333/ (self-signed HTTPS loopback) is accepted in Instagram 'Business login settings' OAuth redirect URIs: stated in CData connector docs, not tested.",
+    "The '400 containers per 24h' figure came from the fetched media reference summary; I did not see the raw sentence, treat as approximate.",
+    "Reels max 15 minutes and 300 MB via API as read from the reference summary; older docs said 90 s / 1 GB; verify against the live reference before hard-coding.",
+    "Stories publishing being 'business accounts only (not creator)' is an old note on the Facebook-Login page and may be stale.",
+    "Instagram web (instagram.com) composer supports Reels and Stories creation in 2025-2026, not just feed posts: recollection, not verified.",
+    "iOS 16+ 'Allow Paste' prompt on first cross-app paste affects the clipboard-caption pattern: recollection.",
+    "Meta's late-2025 'multi-layer detection' (TLS fingerprinting, datacenter IP blocking) of non-API automation and the '30% increase in suspensions' figure come from vendor blogs (postly.ai, dredyson) with no primary Meta source.",
+    "Driving instagram.com inside a Flutter WebView (webview_flutter / flutter_inappwebview) with injected JS to click '+', set the <input type=file> and fill the caption: feasible in principle (Puppeteer projects do it), but programmatic file-input population inside a WebView requires native file-chooser interception; no Flutter project doing this was found.",
+    "Postiz 'Instagram Standalone' provider is a working reference implementation of the Instagram-Login publishing flow in TypeScript (apps/backend ... instagram.standalone.provider.ts); path from memory."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Two routes. (A) Web UI automation: log the user into https://www.instagram.com inside an embedded WebView (Flutter webview_flutter / flutter_inappwebview on mobile and macOS; webview_windows or a WebView2 wrapper on Windows), keep the cookie jar, then either let the user click '+' and only pre-copy the caption (low risk), or inject JS to open the composer, trigger the file <input> (needs native file-chooser interception on each platform), click Next/Next, set the caption contenteditable and click Share. The web composer supports feed photos/videos and carousels (up to 10). Puppeteer/Playwright projects (sa9saq instagram-poster, updated 2026-02-18, feed/carousel/reels/stories) show the selector flow but need constant selector maintenance. (B) Private mobile API: libraries speak Instagram's app API with username/password + device fingerprint (instagrapi: photo_upload, video_upload, album_upload, clip_upload for reels, photo_upload_to_story; instagram-private-api for Node). No Dart port exists; would require reimplementing signed requests, device IDs, challenge/2FA resolvers and session persistence.",
+    "known_libraries": [
+      "subzeroid/instagrapi (Python, MIT, private+web API, uploads photo/video/album/reels/story; maintainer warns it is 'fragile in production' and recommends the official API; commercial HikerAPI)",
+      "dilame/instagram-private-api (Node/TypeScript, MIT, private API; upload photo/video/album/story)",
+      "openclaw/skills sa9saq/instagram-poster (Puppeteer, local browser, feed/carousel/reels/stories, needs username+password, updated 2026-02-18)",
+      "mifi/instauto (Puppeteer, engagement bot, not posting)",
+      "jlobos/instagram-web-api (Node, web endpoints incl. uploadPhoto; archived/stale, from memory)"
+    ],
+    "risk": "HIGH. Instagram Terms of Service forbid automated or unauthorized access outside the official API; private-API and scripted-web use triggers challenge_required (email/SMS verification), feedback_required ('We restrict certain activity', temporary action blocks), login_required (session invalidation), and repeated flags lead to account restriction or permanent suspension, with vendors reporting tighter enforcement since late 2025 (device/TLS fingerprinting, datacenter IP blocks). Risk is lowest when the user does the clicking themselves in the WebView from their normal device/IP and highest for headless, scripted, high-frequency, or cloud-IP use. A GPL app should ship this only as an explicit opt-in with a warning and never as the default."
+  }
+}

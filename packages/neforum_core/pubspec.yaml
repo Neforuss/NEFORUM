@@ -1,0 +1,28 @@
+name: neforum_core
+description: >-
+  Platform-agnostic core of NEFORUM, the free and open-source cross-poster:
+  data model, platform adapters, text adaptation, quota tracking, scheduling
+  logic and hand-off (share intent) planning. Pure Dart, no Flutter dependency.
+version: 0.1.0
+repository: https://github.com/neforum-app/neforum
+publish_to: none
+
+environment:
+  sdk: ^3.8.0
+
+dependencies:
+  characters: ^1.4.0
+  collection: ^1.19.0
+  convert: ^3.1.0
+  crypto: ^3.0.0
+  http: ^1.3.0
+  http_parser: ^4.0.0
+  meta: ^1.16.0
+  mime: ^2.0.0
+  path: ^1.9.0
+  uuid: ^4.5.0
+  web_socket_channel: ^3.0.0
+
+dev_dependencies:
+  lints: ^5.0.0
+  test: ^1.25.0

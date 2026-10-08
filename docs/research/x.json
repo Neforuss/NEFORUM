@@ -1,0 +1,205 @@
+{
+  "platform": "X (Twitter)",
+  "verified_on": "2026-10-02",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "X API v2 (pay-per-use)",
+    "docs_url": "https://docs.x.com/x-api/getting-started/about-x-api",
+    "auth": "OAuth 2.0 Authorization Code + PKCE (user context) is the recommended path for new apps and the only path for the v2 media endpoints' OAuth2 variant. Authorize: GET https://x.com/i/oauth2/authorize?response_type=code&client_id=...&redirect_uri=...&scope=tweet.read%20tweet.write%20users.read%20media.write%20offline.access&state=...&code_challenge=...&code_challenge_method=S256 (plain also accepted; 'state' up to 500 chars). Token: POST https://api.x.com/2/oauth2/token (application/x-www-form-urlencoded: grant_type=authorization_code, code, redirect_uri, client_id, code_verifier; refresh with grant_type=refresh_token). App types: Native App / Single Page App = public client (no secret, PKCE only); Web App / Automated App or Bot = confidential (client secret, HTTP Basic). Each user token must be minted by the user's own X Developer app (BYOK: client_id, and for OAuth 1.0a consumer key/secret). OAuth 1.0a (3-legged: POST https://api.x.com/oauth/request_token, GET https://api.x.com/oauth/authorize, POST https://api.x.com/oauth/access_token; app permission must be 'Read and Write') is still accepted on POST /2/tweets, POST /2/media/upload*, and POST /2/media/metadata ('UserToken' security scheme in the OpenAPI spec); OAuth 1.0a access tokens do not expire. Rate-limit headers: x-rate-limit-limit / -remaining / -reset.",
+    "oauth_scopes": [
+      "tweet.read",
+      "tweet.write",
+      "users.read",
+      "media.write",
+      "offline.access"
+    ],
+    "pkce_supported": true,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": true,
+    "account_requirements": "Any normal X account can create a developer account at console.x.com (new Developer Console, launched Feb 6 2026), accept the Developer Agreement + Pay-Per-Use agreement, create a Project/App and fund it with credits; posting is then available immediately. No business/professional account, no app review, no use-case approval for self-serve. The X account used to log in to NEFORUM also needs no special status; X Premium on that account unlocks long posts (>280 chars) and larger video, but is not required to post. Policy (docs.x.com/developer-terms/policy): you must obtain express user consent before 'Posting content to X' on their behalf, clearly identify your service, and must not post 'identical or substantially similar content across multiple accounts'.",
+    "app_review_required": "None for self-serve pay-per-use. Create app -> credentials usable immediately. 'Public Utility App' status (free scaled access) is assigned by X case-by-case, not applied for in a self-serve way (Feb 6 2026 changelog: 'Public Utility Apps continue to receive free scaled access'). Academic/Enterprise tracks require application.",
+    "unreviewed_app_restrictions": "A brand-new unreviewed app can call POST /2/tweets, media upload and metadata as long as the project has a positive credit balance. Removed from ALL self-serve tiers as of Apr 16 2026: quote_tweet_id (quote posts), POST likes, POST following (changelog Apr 16 2026: 'Following, Likes, and Quote-Posts via the API have been removed from all self-serve tiers'; /2/tweets reference: quote_tweet_id 'Requires an Enterprise plan; not available on self-serve tiers'). Pay-per-use reads capped at 3,000,000 post reads per billing cycle. Endpoint rate limits (docs.x.com/x-api/fundamentals/rate-limits): POST /2/tweets 100 req / 15 min per user, 10,000 / 24 h per app; POST /2/media/upload 500 / 15 min per user, 50,000 / 24 h per app; /2/media/upload/initialize|append|finalize 1,875 / 15 min per user, 180,000 / 24 h per app each. Callback URLs: max 10 per app, exact match incl. trailing slash.",
+    "free_tier": "NONE for new developers since 2026-02-06. Legacy Free tier (history, community-sourced): Feb 2023 made write-only; Oct/Nov 2024 cut from 1,500 to 500 posts/month per app and per user plus 100 reads/month; Aug 22 2025 POST likes/following removed from Free (official changelog); Feb 6 2026 Free tier closed to new signups, 'recently active Legacy Free tier users receive a one-time $10 voucher' (official changelog) and are moved to pay-per-use. At $0.015/post that voucher is ~660 text posts or 50 link posts. Community sources (opentweet.io, Jul 2026) say new signups get only a 'small one-time credit voucher to test with'; not confirmed on official pages.",
+    "paid_tiers": "Pay-per-use credits, no subscription (official pricing page docs.x.com/x-api/getting-started/pricing, read 2026-10): post creation $0.015 per request; a post containing a URL $0.20; DM $0.015; post read $0.005 per post returned; user read $0.010; 'Owned Reads' (your own data) $0.001 per resource (introduced Apr 16 2026); resources deduplicated within a 24h UTC day; reads capped at 3M posts/billing cycle; credits do not expire and are non-refundable except EU/UK 14-day withdrawal (PPU agreement); auto-recharge and monthly spend limits configurable; xAI credit rewards 10-20% at $200+/mo spend. Legacy Basic ($200/mo; was $100 until Oct 2024; 3,000 posts/user/month, 50,000/app) closed to new signups Feb 2026 and auto-migrated to pay-per-use after Jun 1 2026 at end of billing cycle (defaults after migration: auto-recharge $200 when balance < $10, $5,000/mo spend limit). Legacy Pro ($5,000/mo, 300,000 posts/month) reported deprecated Aug 14 2026 with auto-migration after Sep 1 2026 (community source, outstand.so 2026-09-18; not found on official changelog page). Enterprise: custom contract.",
+    "personal_profile_posting": true,
+    "endpoints": [
+      {
+        "purpose": "Create post (text / media / reply / poll / community / long post for Premium)",
+        "method": "POST",
+        "url": "https://api.x.com/2/tweets",
+        "request_shape": "JSON: {\"text\": \"...\", \"media\": {\"media_ids\": [\"<id>\", ...up to 4], \"tagged_user_ids\": [...]}, \"reply\": {\"in_reply_to_tweet_id\": \"...\", \"exclude_reply_user_ids\": [...]}, \"reply_settings\": \"following|mentionedUsers|subscribers|verified\", \"poll\": {\"options\": [2-4 x 1-25 chars], \"duration_minutes\": 5-10080}, \"community_id\": \"...\", \"for_super_followers_only\": bool, \"nullcast\": bool, \"geo\": {\"place_id\": \"...\"}, \"quote_tweet_id\": \"<Enterprise only>\"}. text required unless media is provided. Threads: post first, then post next with reply.in_reply_to_tweet_id = previous id.",
+        "response_shape": "201 Created: {\"data\": {\"id\": \"1234\", \"text\": \"...\", \"edit_history_tweet_ids\"/\"edit_history_post_ids\": [\"1234\"]}}; errors: {\"errors\": [{...}]} or RFC-7807 problem (403 on duplicate/over cap, 429 on rate limit, 402-style 'insufficient credits' problem on PPU).",
+        "notes": "Scopes tweet.write + tweet.read + users.read (OAuth2) or OAuth 1.0a Read+Write. 100/15min per user, 10,000/24h per app. Costs $0.015, or $0.20 if the text contains a URL. Up to 4 photos OR 1 GIF OR 1 video. Long posts (4,000 chars Aug 2024, later 25,000) are accepted only if the authenticated user has X Premium; non-Premium gets 403 over 280 weighted chars."
+      },
+      {
+        "purpose": "Simple media upload (images/GIF <= 5/15 MB, single request)",
+        "method": "POST",
+        "url": "https://api.x.com/2/media/upload",
+        "request_shape": "multipart/form-data: media=<bytes>, media_category=tweet_image|tweet_gif|tweet_video|dm_image|dm_gif|dm_video|subtitles, optional additional_owners=<comma-separated user ids>. Also accepts application/json with base64 'media'. Do NOT send command=INIT/APPEND/FINALIZE here.",
+        "response_shape": "200: {\"data\": {\"id\": \"<media_id>\", \"media_key\": \"3_...\", \"expires_after_secs\": 86400, \"size\": n, \"image\": {\"w\", \"h\", \"image_type\"}, \"processing_info\": {\"state\": \"pending|in_progress|succeeded|failed\", \"progress_percent\", \"check_after_secs\"}}}",
+        "notes": "Scope media.write (OAuth2) or OAuth 1.0a. 500/15min per user, 50,000/24h per app. media id valid 24 h. Replaces v1.1 upload.twitter.com/1.1/media/upload.json, which X announced for deprecation on 2025-03-31 for self-serve tiers (community sources); v2 media endpoints launched 2025-01-16 (official changelog)."
+      },
+      {
+        "purpose": "Chunked upload INIT (video, large GIF)",
+        "method": "POST",
+        "url": "https://api.x.com/2/media/upload/initialize",
+        "request_shape": "JSON: {\"media_type\": \"video/mp4\", \"total_bytes\": 1048576, \"media_category\": \"tweet_video\", \"shared\": false, \"additional_owners\": [...]}",
+        "response_shape": "200: {\"data\": {\"id\": \"<media_id>\", \"media_key\": \"...\", \"expires_after_secs\": 86400}}",
+        "notes": "1,875/15min per user, 180,000/24h per app."
+      },
+      {
+        "purpose": "Chunked upload APPEND",
+        "method": "POST",
+        "url": "https://api.x.com/2/media/upload/{media_id}/append",
+        "request_shape": "multipart/form-data: segment_index=<0-based int>, media=<binary chunk>. Keep each segment <= 5 MB (server max 8 MB).",
+        "response_shape": "204 No Content (or 200 with empty data)",
+        "notes": "Repeat for each chunk; ordering by segment_index."
+      },
+      {
+        "purpose": "Chunked upload FINALIZE",
+        "method": "POST",
+        "url": "https://api.x.com/2/media/upload/{media_id}/finalize",
+        "request_shape": "no body",
+        "response_shape": "200: {\"data\": {\"id\", \"media_key\", \"expires_after_secs\", \"processing_info\": {\"state\": \"pending\", \"check_after_secs\": n}}}",
+        "notes": "If processing_info present, poll STATUS until state == succeeded before POST /2/tweets."
+      },
+      {
+        "purpose": "Chunked upload STATUS poll",
+        "method": "GET",
+        "url": "https://api.x.com/2/media/upload?command=STATUS&media_id={media_id}",
+        "request_shape": "query params only",
+        "response_shape": "200: {\"data\": {\"id\", \"processing_info\": {\"state\": \"pending|in_progress|succeeded|failed\", \"progress_percent\", \"check_after_secs\", \"error\"}}}",
+        "notes": "Only command=STATUS still uses the legacy query-param style."
+      },
+      {
+        "purpose": "Alt text / media metadata",
+        "method": "POST",
+        "url": "https://api.x.com/2/media/metadata",
+        "request_shape": "JSON: {\"id\": \"<media_id, 1-19 digits>\", \"metadata\": {\"alt_text\": {\"text\": \"<= 1000 chars\"}, \"allow_download_status\": {\"allow_download\": bool}, \"sticker_info\": {\"stickers\": []}}}",
+        "response_shape": "200: {\"data\": {\"id\": \"...\", \"associated_metadata\": {...}}}",
+        "notes": "Scope media.write. Call after upload and before POST /2/tweets. Alt text max 1000 characters."
+      },
+      {
+        "purpose": "Identify logged-in user (verify token, show handle)",
+        "method": "GET",
+        "url": "https://api.x.com/2/users/me",
+        "request_shape": "optional ?user.fields=profile_image_url,username",
+        "response_shape": "200: {\"data\": {\"id\", \"name\", \"username\"}}",
+        "notes": "Scope users.read. Billed as a user read ($0.010, or $0.001 'Owned Read' per Apr 16 2026 pricing); call once at login and cache."
+      },
+      {
+        "purpose": "OAuth 2.0 token exchange / refresh",
+        "method": "POST",
+        "url": "https://api.x.com/2/oauth2/token",
+        "request_shape": "application/x-www-form-urlencoded: grant_type=authorization_code&code=...&redirect_uri=...&client_id=...&code_verifier=...  |  grant_type=refresh_token&refresh_token=...&client_id=...",
+        "response_shape": "{\"token_type\": \"bearer\", \"expires_in\": 7200, \"access_token\": \"...\", \"scope\": \"...\", \"refresh_token\": \"...\"(only with offline.access)}",
+        "notes": "Access token valid 2 hours; refresh token is single-use (rotating) in practice - always persist the new one."
+      }
+    ],
+    "media_upload_flow": "1) Upload each file: images/GIF via single POST /2/media/upload (multipart, media_category=tweet_image|tweet_gif); video via initialize -> append (<=5 MB segments) -> finalize -> poll GET ?command=STATUS until succeeded. 2) Optional POST /2/media/metadata for alt text (<=1000 chars). 3) POST /2/tweets with media.media_ids (max 4 images, or 1 GIF, or 1 video). Media ids expire after 86,400 s. Simple upload is sufficient for all images; chunked is required for video. OAuth 2.0 user token with media.write, or OAuth 1.0a user token, on all three.",
+    "rate_limits": "POST /2/tweets: 100 per 15 min per user; 10,000 per 24 h per app. POST /2/media/upload: 500/15 min per user; 50,000/24 h per app. initialize/append/finalize: 1,875/15 min per user each; 180,000/24 h per app each. Monthly: no fixed post cap on pay-per-use (spend-limited); reads capped at 3M posts/month. Legacy Free (now gone): 500 posts/month per user and per app, 17 posts/24h per user (recollection). Headers x-rate-limit-limit/remaining/reset; 429 on exceed.",
+    "token_lifetime_and_refresh": "OAuth 2.0: access token 2 hours; refresh token only if scope includes offline.access; refresh via POST /2/oauth2/token grant_type=refresh_token (public clients pass client_id in body; confidential use Basic auth). Refresh tokens rotate - store the new refresh_token from every response. OAuth 1.0a: access token + secret never expire unless the user revokes or the app's permission level changes.",
+    "server_side_scheduling": "None. X API has no scheduled-post endpoint for third parties (scheduling exists only in X's own web UI / Ads API). NEFORUM must schedule locally (device must be awake/online at post time) or post immediately."
+  },
+  "handoff": {
+    "web_intent_url": "https://x.com/intent/tweet",
+    "web_intent_params": "text=<UTF-8, URL-encoded post text, pre-selected in composer>; url=<fully-qualified http(s) URL, URL-encoded; shortened by t.co, counts 23>; hashtags=<comma-separated, no #>; via=<username, appended as 'via @username'>; related=<comma-separated usernames, optional username%3ADescription>; in_reply_to=<numeric post id>. Combined text+hashtags+via+url must stay <= 280 weighted chars. Example: https://x.com/intent/tweet?text=Hello%20world&url=https%3A%2F%2Fexample.com&hashtags=neforum,foss . https://twitter.com/intent/tweet redirects to x.com (recollection); https://x.com/intent/post is widely used and appears to work but is not what the official doc lists (it documents /intent/tweet).",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "android_share": "ACTION_SEND with setPackage(\"com.twitter.android\"); type \"text/plain\" + EXTRA_TEXT for text, or type \"image/*\"/\"video/*\" + EXTRA_STREAM (content:// URI via FileProvider with FLAG_GRANT_READ_URI_PERMISSION) plus EXTRA_TEXT for caption; ACTION_SEND_MULTIPLE with EXTRA_STREAM ArrayList for up to 4 images. Opens the X composer prefilled with text and media attached (user must tap Post). If the app is not installed, fall back to the web intent in a browser/Custom Tab (text only). Share-sheet route cannot pre-set alt text, reply, poll or community.",
+    "ios_share": "UIActivityViewController (system share sheet) with [String, UIImage/URL] items - the X app's share extension receives text + images/video and opens a prefilled composer (user taps Post). URL scheme: twitter:// (LSApplicationQueriesSchemes must list 'twitter'); twitter://post?message=<url-encoded text> opens the composer with text only (no media) - community-documented, legacy, behaviour not guaranteed. Bundle id com.atebits.Tweetie2 (recollection). Fall back to https://x.com/intent/tweet in SFSafariViewController when the app is absent.",
+    "desktop": "Open https://x.com/intent/tweet?text=...&url=... in the default browser (url_launcher). No desktop X app on Windows; the X 'app' on macOS/Windows is a PWA. Media cannot be prefilled - user attaches manually; NEFORUM can copy media to clipboard / reveal file as a courtesy.",
+    "notes": "Hand-off is the only zero-cost route after Feb 2026. It never needs developer credentials or credits, has no per-post fee, and the user's own X login is used. Limitations: one post at a time, no media via web intent, no threads (only in_reply_to), no alt text, no scheduling, user must press Post manually."
+  },
+  "text_limits": {
+    "max_chars": 280,
+    "counting_rule": "Weighted twitter-text v3 rules on NFC-normalized text: characters in the Latin/Latin-1/Latin-Extended/General Punctuation/Currency ranges (U+0000-U+10FF, U+2000-U+200D, U+2010-U+201F, U+2032-U+2037) weigh 1; every other code point (CJK, Hangul, Thai, Arabic, Cyrillic is weight 1 actually? - no: Cyrillic U+0400-U+04FF falls inside U+0000-U+10FF so weight 1; CJK weighs 2) weighs 2; every emoji (including ZWJ sequences, skin-tone modifiers, flags) counts exactly 2; every URL (anything twitter-text's autolinker recognises as a URL, with or without scheme) counts 23 regardless of length (t.co); @mentions auto-populated in a reply do not count; attached media counts 0; hashtags count normally. Use the twitter-text library algorithm (JS/Java/Ruby/ObjC official; port to Dart or vendor the config JSON v3).",
+    "title_max": 0,
+    "hashtags_max": 0,
+    "notes": "Premium (X Premium / Premium+) users may post up to 4,000 (Aug 2024) and later 25,000 characters via POST /2/tweets; non-Premium users get a 403 above 280. NEFORUM cannot know Premium status without a user read (verified/subscription fields) so treat >280 as opt-in. Poll options 1-25 chars each. Alt text 1000 chars. Threads = chained replies."
+  },
+  "media_limits": {
+    "images_per_post": 4,
+    "image_formats": "JPG, PNG, GIF (static), WEBP; max 5 MB per image. Animated GIF: 15 MB, <= 1280x1080, <= 350 frames, <= 300 million total pixels (w*h*frames); only 1 GIF per post.",
+    "image_max_bytes": 5242880,
+    "video": "1 per post. Container MP4 (MOV accepted), H.264 High Profile, AAC-LC mono/stereo; frame rate <= 60 fps; dimensions 32x32 to 1280x1024 (1080p playback only for Premium); aspect ratio 1:3 to 3:1; min 5,000 kbps video / 128 kbps audio recommended; duration 0.5 s to 20 min and up to 8 GB for default accounts, 125 min / 16 GB for Premium (official best-practices page, Sep 2026). Upload via chunked initialize/append/finalize then poll STATUS. Legacy limit of 140 s / 512 MB still shown in some docs for non-Premium 'advanced video' - treat 140 s as the safe non-Premium ceiling.",
+    "aspect_ratio": "Images: any (timeline crops to roughly 16:9 / 4:5 preview); video 1:3 to 3:1, recommended 16:9 or 1:1",
+    "alt_text": true
+  },
+  "gotchas": [
+    "No free tier since 2026-02-06: every post costs $0.015 from the user's own prepaid credits, and $0.20 if the text contains any URL (t.co-linkable). NEFORUM should show a running cost estimate and warn when a post contains a link.",
+    "Each user must create their own X developer app at console.x.com, buy credits (minimum top-up reportedly $5 - unverified), paste client_id (and for OAuth 1.0a the consumer key/secret) into NEFORUM. There is no shared-app model without someone paying per post.",
+    "Quote posts (quote_tweet_id), likes and follows are Enterprise-only since 2026-04-16; a quote must be sent as plain text containing the post URL (and that triggers the $0.20 link price).",
+    "OAuth 2.0 access tokens last 2 h; request offline.access and persist the rotating refresh token, or use OAuth 1.0a whose tokens never expire (simpler for a local-first app, but requires the user to copy a consumer secret into the app).",
+    "Redirect URIs: X docs say use http://127.0.0.1 (not 'localhost') for local/desktop loopback; a free port must be registered as an exact match, so pick fixed ports (e.g. http://127.0.0.1:8765/callback) and register up to 10. Custom schemes (neforum://callback) are used successfully by Flutter packages (twitter_oauth2_pkce example 'org.example.android.oauth://callback/') but X's doc only lists forbidden schemes and says 'https required for production' - register the custom scheme in the portal and test; keep the loopback route as fallback.",
+    "Character counting must be weighted (CJK/emoji = 2, URL = 23); counting UTF-16 code units or graphemes will produce false 'too long' / 403 errors. Replies' auto-populated @mentions do not count.",
+    "Media ids expire after 24 h; a locally scheduled post must upload media at post time, not at compose time. Video needs STATUS polling before /2/tweets.",
+    "Duplicate detection: posting identical text twice in a short window returns 403 'duplicate content'; cross-posting the same text to multiple X accounts violates the Developer Policy.",
+    "v1.1 media/upload.json was slated for shutdown 2025-03-31 for self-serve apps; do not implement it. Only command=STATUS remains on /2/media/upload.",
+    "Rate-limit and billing errors: 429 (rate limit) vs a 402/403 'insufficient credits' problem type - surface the user's balance from console.x.com; the API exposes no balance endpoint (unverified).",
+    "Long posts (>280) silently require X Premium on the posting account; fall back to a thread for non-Premium users.",
+    "Unofficial cookie/GraphQL clients (twikit, the-convocation/twitter-scraper) are explicitly 'subject to being banned at any time', break every few months (twikit fully broken since 2026-03-18 'Couldn't get KEY_BYTE indices', issues #408/#409 still open; last PyPI release 2.3.3 on 2025-02-07), need the x-client-transaction-id anti-bot header, and violate X ToS (scraping/automation without API). Not viable as a shipped feature of a GPL app.",
+    "Driving x.com inside an in-app WebView with the user's session is technically possible (log in, inject text into the composer DOM, attach files via <input type=file>) but X's React composer, Arkose/Cloudflare bot checks and frequent DOM changes make it brittle; it is the same ToS violation as scraping and carries lock/suspension risk. Prefer the share-sheet / web-intent hand-off, which uses the real X client and is sanctioned.",
+    "Legacy Free-tier developer apps created before Feb 2026 only got a $10 one-time voucher; they are NOT still free.",
+    "Alt text is set via a separate POST /2/media/metadata call per media id, before creating the post.",
+    "Windows/macOS have no native X share target; hand-off there is browser-only and text-only."
+  ],
+  "sources": [
+    "https://docs.x.com/x-api/getting-started/pricing (read 2026-10; $0.015/post, $0.20 with URL, 3M read cap)",
+    "https://docs.x.com/changelog and https://docs.x.com/changelog.md (entries Jan 16 2025, Aug 22 2025, Feb 6 2026, Apr 16 2026, Sep 1 2026, latest Oct 2 2026)",
+    "https://docs.x.com/x-api/posts/creation-of-a-post (POST /2/tweets reference)",
+    "https://docs.x.com/x-api/media/quickstart/media-upload-chunked (initialize/append/finalize/STATUS, categories, limits)",
+    "https://docs.x.com/x-api/media/upload-media.md (simple POST /2/media/upload reference)",
+    "https://docs.x.com/x-api/media/metadata-create (alt text, 1000 chars)",
+    "https://docs.x.com/x-api/media/quickstart/best-practices.md (image/GIF/video specs)",
+    "https://docs.x.com/x-api/fundamentals/rate-limits (100/15min user, 10,000/24h app etc.)",
+    "https://docs.x.com/resources/fundamentals/authentication/oauth-2-0/authorization-code (PKCE flow, 2h tokens, scopes)",
+    "https://docs.x.com/resources/fundamentals/authentication/oauth-1-0a/obtaining-user-access-tokens (3-legged flow, non-expiring tokens)",
+    "https://docs.x.com/resources/fundamentals/developer-apps.md (http://127.0.0.1 not localhost, 10 callback URLs, forbidden schemes, app types)",
+    "https://docs.x.com/resources/fundamentals/counting-characters (280, URL=23, emoji/CJK=2, NFC)",
+    "https://docs.x.com/x-for-websites/post-button/guides/web-intent.md (https://x.com/intent/tweet params)",
+    "https://docs.x.com/developer-terms/policy.md (consent to post on behalf, no duplicate cross-account content)",
+    "https://docs.x.com/developer-terms/ppu-agreement.md (credits non-expiring, non-refundable)",
+    "https://www.outstand.so/blog/x-api-pricing (2026-09-18: Basic migrated after Jun 1 2026, Pro after Sep 1 2026, no app review)",
+    "https://postproxy.dev/blog/x-api-pricing-2026/ (2026-03-12: Free tier history, $10 voucher, Public Utility Apps)",
+    "https://opentweet.io/how-to/x-api-pay-per-use-explained (updated Jul 2026: Basic auto-migration began Jun 1 2026, new signups get only a small voucher)",
+    "https://gigazine.net/gsc_news/en/20260209-x-api-pay-per-use (2026-02-09 launch coverage)",
+    "https://www.socialmediatoday.com/news/x-now-enable-long-post-creation-via-third-party-apps/724178/ (2024-08-13: 4,000-char long posts via API for Premium)",
+    "https://github.com/d60/twikit and https://github.com/d60/twikit/blob/main/ToProtectYourAccount.md and https://github.com/d60/twikit/issues/408 (broken since 2026-03-18) and https://pypi.org/project/twikit/ (2.3.3, 2025-02-07)",
+    "https://github.com/the-convocation/twitter-scraper ('subject to being banned at any time')",
+    "https://pub.dev/packages/twitter_oauth2_pkce (Flutter PKCE with custom-scheme callback, flutter_web_auth_2, v1.0.2)",
+    "https://techcrunch.com/2024/10/30/x-makes-its-basic-api-tier-more-costly-launches-annual-subscriptions (Basic $100->$200, Free 1,500->500 posts/month)",
+    "https://code2care.org/pages/share-image-and-text-twitter-using-your-android-application-programatically/ (com.twitter.android ACTION_SEND)"
+  ],
+  "unverified_claims": [
+    "Legacy Free tier per-user cap of 17 posts per 24 hours (2023-2025) - recalled, not re-read on an official page.",
+    "Legacy Basic tier: 3,000 posts/user/month and 50,000/app/month; Pro: 300,000 posts/month - recalled from the pre-2026 pricing page.",
+    "Pro ($5,000/mo) deprecation announced 2026-08-14 with auto-migration after 2026-09-01 - only in a community article (outstand.so), not found on docs.x.com changelog.",
+    "Minimum credit top-up of $5 in the Developer Console - from a search snippet (greasyfork/community), not an official page.",
+    "https://x.com/intent/post works as an alias of /intent/tweet, and twitter.com/intent/tweet redirects to x.com - could not fetch (402) to confirm; official doc only lists /intent/tweet.",
+    "iOS URL scheme twitter://post?message=... and bundle id com.atebits.Tweetie2 - community/legacy knowledge; X's iOS share extension accepting text+images via UIActivityViewController is from experience, not documentation.",
+    "Custom-scheme redirect URIs (e.g. neforum://callback) being accepted by the X developer portal - inferred from the Flutter twitter_oauth2_pkce package example and oauth.com guidance; X's own doc neither allows nor forbids them explicitly and says production needs https.",
+    "Long-post limit raised from 4,000 to 25,000 characters for Premium via the API - from search summary of community docs, not an official page.",
+    "Refresh tokens being single-use/rotating - recalled behaviour, not stated on the fetched doc page.",
+    "Exact Unicode weight ranges (U+0000-U+10FF etc. weight 1) are from twitter-text v3 config as recalled; the official page only summarises Latin=1, emoji/CJK/other=2.",
+    "v1.1 media/upload.json shutdown date 2025-03-31 - from community posts (Make.com forum, Ayrshare); official changelog entry not located.",
+    "the-convocation/twitter-scraper's sendTweet/media upload support - README fetch did not show it; recalled from earlier versions.",
+    "No API endpoint exposes the developer's remaining credit balance."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Embed x.com in a Flutter WebView (webview_flutter / flutter_inappwebview on mobile, webview_windows / WKWebView on desktop), let the user log in normally so cookies (auth_token, ct0) persist, then either (a) navigate to https://x.com/intent/tweet?text=... inside that WebView (sanctioned, user taps Post) or (b) inject JS to fill the composer and trigger file inputs, or (c) call the internal GraphQL mutation CreateTweet with the ct0 CSRF header, the public bearer token and the x-client-transaction-id header generated from the page's ondemand.s.js (what twikit does). (b)/(c) require the anti-bot transaction-id scheme, break when X changes the bundle (twikit broken since 2026-03-18) and violate the X ToS.",
+    "known_libraries": [
+      "d60/twikit (Python, MIT) - cookie/GraphQL client with create_tweet/upload_media; broken since 2026-03-18, last release 2.3.3 2025-02-07",
+      "the-convocation/twitter-scraper (TypeScript, MIT) - cookie login, warns accounts may be banned at any time",
+      "iSarabjitDhiman/XClientTransaction and obfio/twitter-tid-generator - generators for the x-client-transaction-id header",
+      "No Dart/Flutter port exists; flutter_inappwebview can host the session"
+    ],
+    "risk": "High. X ToS and Developer Agreement prohibit scraping, automation outside the API and reverse engineering; X actively rotates the transaction-id scheme and GraphQL query ids. Accounts used with twikit/twitter-scraper are regularly locked ('AccountLocked' needs phone/Arkose verification) or suspended; the libraries themselves warn of this. Option (a) - showing the real x.com composer or intent page in the WebView with the user's own login - carries essentially no risk and is the only variant recommended for a shipped FOSS app."
+  },
+  "confidence": "high"
+}

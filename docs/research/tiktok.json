@@ -1,0 +1,198 @@
+{
+  "platform": "TikTok",
+  "verified_on": "2026-08-04",
+  "confidence": "medium",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "TikTok Content Posting API (Direct Post + Upload-to-inbox) via Login Kit OAuth 2.0",
+    "docs_url": "https://developers.tiktok.com/doc/content-posting-api-get-started",
+    "auth": "OAuth 2.0 authorization code. Authorize: GET https://www.tiktok.com/v2/auth/authorize/?client_key=...&scope=user.info.basic,video.publish,video.upload&response_type=code&redirect_uri=...&state=...[&code_challenge=...&code_challenge_method=S256][&disable_auto_auth=0|1]. Token: POST https://open.tiktokapis.com/v2/oauth/token/ with Content-Type application/x-www-form-urlencoded and body client_key, client_secret, code (URL-decoded), grant_type=authorization_code, redirect_uri (must equal the one used in authorize), code_verifier ('Required for mobile and desktop app only'). Response: access_token, expires_in, refresh_token, refresh_expires_in, open_id, scope, token_type=Bearer. Refresh: same endpoint, grant_type=refresh_token with client_key, client_secret, refresh_token (returned refresh_token may differ from the one sent). Revoke: POST https://open.tiktokapis.com/v2/oauth/revoke/ with client_key, client_secret, token. NOTE: client_secret is still required at token exchange even with PKCE (docs say upload code + code_verifier 'to your server-side'); for a local-first BYOK app the user pastes their own client_key + client_secret into the device. Every API call: Authorization: Bearer {access_token}, Content-Type: application/json; charset=UTF-8.",
+    "pkce_supported": true,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": false,
+    "oauth_scopes": [
+      "user.info.basic",
+      "user.info.profile",
+      "user.info.stats",
+      "video.publish",
+      "video.upload",
+      "video.list"
+    ],
+    "personal_profile_posting": true,
+    "account_requirements": "Any TikTok account (personal or business); no business account needed. Developer must register an app at developers.tiktok.com: apps created after 2024-09-09 require a Privacy Policy URL and Terms of Service URL, a 1024x1024 icon, category, description. App review requires at least 1 demo video (max 5, 50 MB each) showing the end-to-end flow. Content Posting API additionally requires a separate 'audit' to lift private-only posting. For PULL_FROM_URL the developer must verify domain or URL-prefix ownership in the portal (not needed for FILE_UPLOAD video).",
+    "app_review_required": "Yes, two gates. (1) App review (Login Kit + products): 'App review may take several days to two weeks after submission'; 'Apps that are still in development or testing will not be approved'; 'Only request permissions and features that your app needs'. Before review, Sandbox mode lets you test with up to 10 target users per sandbox (max 5 sandboxes per app) but 'Sandbox mode does not offer access to Content Posting API for public videos'. (2) Content Posting API audit (https://developers.tiktok.com/application/content-posting-api): until audited, 'All content posted by unaudited clients will be restricted to private viewing mode' (privacy_level forced to SELF_ONLY; error unaudited_client_can_only_post_to_private_accounts), max 5 users posting per 24 h and those accounts must be private. Community reports (bundle.social 2026-08-04, Phyllo 2026-06-30): audit takes ~1-6 weeks; requires a demo video showing login, consent screen, composer built from creator_info, pre-publish review screen, post appearing; rejections for ignoring creator settings, missing privacy/terms links, unused scopes.",
+    "unreviewed_app_restrictions": "Unaudited Content Posting client: every post is forced SELF_ONLY (private) regardless of requested privacy_level; at most 5 distinct users may post within any 24-hour window and their accounts must be private at posting time; error 403 unaudited_client_can_only_post_to_private_accounts if the account is not private. Unreviewed app (Login Kit): only sandbox target users (<=10 per sandbox) can authorize, and sandbox cannot actually post. So a GPL app where each user registers their OWN developer app gets: works for the owner's own (private) account immediately; public posting requires that user to pass TikTok's audit with a demo video, which is impractical for most individual users.",
+    "endpoints": [
+      {
+        "purpose": "Query creator info (MUST be called before showing the composer; drives privacy dropdown and interaction toggles)",
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/creator_info/query/",
+        "request_shape": "Empty JSON body; headers Authorization: Bearer, Content-Type: application/json; charset=UTF-8. Scope video.publish.",
+        "response_shape": "data: {creator_avatar_url (2h TTL), creator_username, creator_nickname, privacy_level_options: [PUBLIC_TO_EVERYONE|MUTUAL_FOLLOW_FRIENDS|FOLLOWER_OF_CREATOR|SELF_ONLY ...], comment_disabled, duet_disabled, stitch_disabled, max_video_post_duration_sec}, error:{code,message,log_id}",
+        "notes": "20 requests/min per user access_token. privacy_level sent to init must be one of privacy_level_options or you get privacy_level_option_mismatch."
+      },
+      {
+        "purpose": "Direct Post video - init",
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/video/init/",
+        "request_shape": "{\"post_info\":{\"title\":string<=2200 UTF-16 'runes' (hashtags # and mentions @ allowed),\"privacy_level\":required,\"disable_duet\":bool,\"disable_comment\":bool,\"disable_stitch\":bool,\"video_cover_timestamp_ms\":int32,\"brand_content_toggle\":bool,\"brand_organic_toggle\":bool,\"is_aigc\":bool},\"source_info\":{\"source\":\"FILE_UPLOAD\"|\"PULL_FROM_URL\",\"video_size\":int64 (FILE_UPLOAD required),\"chunk_size\":int64,\"total_chunk_count\":int64,\"video_url\":string (PULL_FROM_URL, https, no redirects, verified domain/prefix)}}",
+        "response_shape": "data:{publish_id (<=64 chars), upload_url (<=256 chars, FILE_UPLOAD only, valid 1 hour)}, error:{code,message,log_id}",
+        "notes": "Scope video.publish. 6 requests/min per user token. 403 codes: spam_risk_too_many_posts, spam_risk_user_banned_from_posting, reached_active_user_cap, unaudited_client_can_only_post_to_private_accounts, url_ownership_unverified, privacy_level_option_mismatch; 429 rate_limit_exceeded."
+      },
+      {
+        "purpose": "Upload video bytes (FILE_UPLOAD) in chunks",
+        "method": "PUT",
+        "url": "{upload_url} (host open-upload.tiktokapis.com/upload/?...)",
+        "request_shape": "Headers: Content-Type: video/mp4 (MIME), Content-Length: bytes in this chunk, Content-Range: bytes {FIRST}-{LAST}/{TOTAL}. Body: raw bytes.",
+        "response_shape": "HTTP 206 = chunk accepted, more pending; 201 = all chunks received.",
+        "notes": "Chunk rules: min 5 MB, max 64 MB per chunk, final chunk may be up to 128 MB (absorbs remainder); 1..1000 chunks; file < 5 MB is a single chunk; file > 64 MB must be split. video_size/chunk_size/total_chunk_count must be consistent. Max file 4 GB; MP4 (H.264 recommended), WebM, MOV; 360-4096 px each dimension; 23-60 fps; up to 10 min (and <= creator max_video_post_duration_sec)."
+      },
+      {
+        "purpose": "Upload-to-inbox (draft) video - init",
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/",
+        "request_shape": "{\"source_info\":{\"source\":\"FILE_UPLOAD\",\"video_size\":int64,\"chunk_size\":int64,\"total_chunk_count\":int64}} or {\"source_info\":{\"source\":\"PULL_FROM_URL\",\"video_url\":string}}. NO post_info/title/caption for video inbox uploads.",
+        "response_shape": "data:{publish_id, upload_url (FILE_UPLOAD only, valid 1 h)}, error",
+        "notes": "Scope video.upload. 6 req/min per user token. 'There may be at most 5 pending shares within any 24-hour period' (403 spam_risk_too_many_pending_share). User must open the TikTok app inbox notification and finish editing/posting; the caption must be typed in TikTok. Photo inbox variant: use content/init with post_mode=MEDIA_UPLOAD (title/description allowed there); requires TikTok app >= 31.8."
+      },
+      {
+        "purpose": "Photo post (direct or to inbox)",
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/content/init/",
+        "request_shape": "{\"post_info\":{\"title\":string<=90 UTF-16 runes,\"description\":string<=4000 UTF-16 runes,\"privacy_level\":required for DIRECT_POST,\"disable_comment\":bool,\"auto_add_music\":bool,\"brand_content_toggle\":bool,\"brand_organic_toggle\":bool},\"source_info\":{\"source\":\"PULL_FROM_URL\",\"photo_cover_index\":int (0-based),\"photo_images\":[up to 35 https URLs on verified domain]},\"post_mode\":\"DIRECT_POST\"|\"MEDIA_UPLOAD\",\"media_type\":\"PHOTO\",\"is_aigc\":bool}",
+        "response_shape": "data:{publish_id}, error",
+        "notes": "Photos ONLY support PULL_FROM_URL (no FILE_UPLOAD) -> a local-first app cannot post photos without hosting them on a domain the user has verified in the TikTok portal. WebP/JPEG, max 1080p, max 20 MB each. 6 req/min per user token. MEDIA_UPLOAD needs TikTok app >= 31.8."
+      },
+      {
+        "purpose": "Get post status (poll)",
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/post/publish/status/fetch/",
+        "request_shape": "{\"publish_id\":string}",
+        "response_shape": "data:{status: PROCESSING_UPLOAD|PROCESSING_DOWNLOAD|SEND_TO_USER_INBOX|PUBLISH_COMPLETE|FAILED, fail_reason, publicaly_available_post_id:[...] (sic, only after moderation), uploaded_bytes, downloaded_bytes}",
+        "notes": "30 req/min per user token. fail_reason values include file_format_check_failed, picture_size_check_failed, duration_check_failed, frame_rate_check_failed, spam_risk_too_many_posts, auth_removed, internal (retryable)."
+      },
+      {
+        "purpose": "Token exchange / refresh",
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/oauth/token/",
+        "request_shape": "application/x-www-form-urlencoded: client_key, client_secret, code, grant_type=authorization_code, redirect_uri, code_verifier | client_key, client_secret, grant_type=refresh_token, refresh_token",
+        "response_shape": "access_token, expires_in=86400, refresh_token, refresh_expires_in=31536000, open_id, scope, token_type=Bearer",
+        "notes": "code_verifier required for mobile and desktop apps."
+      },
+      {
+        "purpose": "Revoke token",
+        "method": "POST",
+        "url": "https://open.tiktokapis.com/v2/oauth/revoke/",
+        "request_shape": "client_key, client_secret, token",
+        "response_shape": "empty on success",
+        "notes": ""
+      }
+    ],
+    "media_upload_flow": "Video: (1) creator_info/query; (2) video/init with FILE_UPLOAD + video_size/chunk_size/total_chunk_count; (3) PUT each chunk to upload_url with Content-Range (206 per chunk, 201 at end) within 1 hour; (4) poll status/fetch until PUBLISH_COMPLETE (direct) or SEND_TO_USER_INBOX (inbox). Alternatively PULL_FROM_URL from an https URL on a domain/URL-prefix verified in the developer portal (TikTok downloads it; URL must stay reachable, no redirects, 1 h). Photos: PULL_FROM_URL only, 1-35 images. Captions: title (video, <=2200) / title+description (photo, 90/4000) are set in post_info of the init call; there is no separate caption endpoint and no caption for video inbox uploads.",
+    "rate_limits": "Per user access_token, one-minute sliding window: video/init, inbox/video/init, content/init = 6/min; creator_info/query = 20/min; status/fetch = 30/min; user/info, video/list, video/query = 600/min (per app). HTTP 429 rate_limit_exceeded. Daily posting cap per creator shared across all API clients, ~15 posts/day typical (varies by creator; Phyllo cites 25) -> spam_risk_too_many_posts. Inbox uploads: max 5 pending shares per 24 h. Unaudited apps: 5 posting users per 24 h (reached_active_user_cap).",
+    "free_tier": "Free; no paid tier. All limits above are the free (only) tier, valid as of docs last updated 2026-08-04. Higher rate limits require a support request.",
+    "paid_tiers": "None. TikTok does not sell API access for Content Posting; third-party resellers (Blotato, Ayrshare, Postiz cloud, Apify actors) charge for their own audited app/infrastructure.",
+    "token_lifetime_and_refresh": "access_token 24 h (86400 s); refresh_token 365 d (31536000 s), rotated on refresh; refresh proactively before expiry; revocation or expiry requires full re-auth.",
+    "server_side_scheduling": "None. The API has no scheduled-publish field; the app must hold the media and call init at the scheduled time (device must be awake/online). TikTok's own web/app composer supports scheduling 15 min-10 days ahead, but that is not exposed via API."
+  },
+  "handoff": {
+    "web_intent_url": "",
+    "web_intent_params": "None. TikTok has no public web share-intent / prefilled composer URL (nothing comparable to twitter.com/intent/tweet). The only web composer is the logged-in TikTok Studio upload page (https://www.tiktok.com/tiktokstudio/upload, older https://www.tiktok.com/upload) which accepts no query parameters for caption or media.",
+    "supports_prefilled_text": false,
+    "supports_prefilled_media": true,
+    "android_share": "Native share sheet: Intent.ACTION_SEND / ACTION_SEND_MULTIPLE with type video/* or image/* and a content:// FileProvider URI, FLAG_GRANT_READ_URI_PERMISSION; TikTok package names com.zhiliaoapp.musically (global) and com.ss.android.ugc.trill (some regions, e.g. Asia builds); both must be declared in <queries> for Android 11+. Share Kit SDK (official, needs client_key): ShareApi + MediaContent(MediaType.VIDEO|IMAGE, list of content:// URIs), ShareRequest(clientKey, mediaContent, shareFormat Format.DEFAULT|GREEN_SCREEN, packageName, resultActivityFullPath); limits: video 1-35 (mp4, 1-360 s, <=1100 px), images 2-35; result via ShareApi.getShareResponseFromIntent. EXTRA_TEXT/caption is NOT consumed; the user types the caption in TikTok's editor. Hashtags: Share Kit docs mention partner hashtags (SDK config) but no free-text caption.",
+    "ios_share": "UIActivityViewController with a video/image file URL shows TikTok as a target (caption not prefilled). Official Share Kit (TikTokOpenSDK 5.x / TikTokOpenShareSDK via CocoaPods or SPM): TikTokShareRequest(localIdentifiers: [PHAsset localIdentifier], mediaType: .video|.image, redirectURI: https universal link); limits: 12 videos or 35 images, video up to 10 min, aspect ratio 1/2.2-2.2; requires Photo Library permission because media must be in the Photos library. Info.plist: LSApplicationQueriesSchemes = tiktokopensdk (login), tiktoksharesdk (share), snssdk1233, snssdk1180 (app-installed detection); TikTokClientKey in Info.plist; CFBundleURLSchemes must include the client_key for SDK callbacks. Deep link to open the app: snssdk1233:// (no web fallback; does nothing if app absent).",
+    "desktop": "No desktop hand-off. Open https://www.tiktok.com/tiktokstudio/upload in the system browser (user logged in) and copy the caption to the clipboard; the user drags the file in. Windows/macOS have no TikTok native app share target (the Microsoft Store TikTok app is a PWA wrapper; unverified whether it registers as a Windows share target).",
+    "notes": "Share Kit on both platforms requires a registered TikTok developer app client_key and lets the user land in TikTok's editor with media preloaded; the caption and privacy are chosen inside TikTok. Plain OS share sheet achieves nearly the same with no client_key. Flutter wrappers: tiktok_sdk_login_share (pub.dev, MIT, v1.0.2 ~Nov 2025, unverified uploader, wraps Login + Share Kit v2) and generic share_plus / appinio_social_share for ACTION_SEND. Because video inbox uploads via API carry no caption, the OS share sheet is functionally equivalent and needs no audit."
+  },
+  "text_limits": {
+    "max_chars": 2200,
+    "title_max": 90,
+    "counting_rule": "Documented as 'UTF-16 runes' (TikTok does not define the term; safest reading is UTF-16 code units, i.e. Dart String.length, so astral emoji count as 2). Video Direct Post title: 2200. Photo post: title 90, description 4000. Hashtags (#) and mentions (@) are typed inline in the title; no separate hashtag field.",
+    "hashtags_max": 0,
+    "notes": "The TikTok app itself allows captions up to 4000 characters (raised from 2200 in 2023 per community sources), so API-posted video captions are shorter than in-app. Video inbox (upload) posts have no caption field at all. No documented hashtag count limit; TikTok recommends 3-5."
+  },
+  "media_limits": {
+    "images_per_post": 35,
+    "image_formats": "WebP, JPEG; max 1080p; max 20 MB each; photos must be fetched by TikTok from an https URL on a domain/URL-prefix the developer verified (PULL_FROM_URL only; no direct byte upload for photos). Photo posts require a TikTok app version >= 31.8 on the creator's device for MEDIA_UPLOAD mode.",
+    "image_max_bytes": 20971520,
+    "video": "MP4 (H.264 recommended), WebM, MOV; max 4 GB; 360-4096 px in each dimension; 23-60 fps; duration up to 10 min via API and no longer than creator_info.max_video_post_duration_sec. FILE_UPLOAD chunks: 5-64 MB (last chunk up to 128 MB), 1-1000 chunks, single chunk if < 5 MB, upload_url valid 1 h. Share Kit (Android): mp4, 1-360 s, up to 35 clips; Share Kit (iOS): up to 12 videos, up to 10 min, aspect 1/2.2-2.2.",
+    "aspect_ratio": "API: no hard ratio rule beyond 360-4096 px per side; vertical 9:16 recommended. Share Kit iOS: between 1/2.2 and 2.2.",
+    "alt_text": false
+  },
+  "web_session": {
+    "feasible": true,
+    "how": "Embed https://www.tiktok.com/tiktokstudio/upload in a WebView (flutter_inappwebview / webview_flutter) with the user's own login session cookies, then either let the user interact with the page directly (safest: the app only opens the page and pre-copies the caption) or inject JS to set the caption contenteditable and trigger the file input with the local file via DOM manipulation. Headless/automated variants (Python tiktok-uploader by wkaisertexas, Playwright/Selenium with exported sessionid/sid_tt/tt_csrf_token/msToken cookies; Apify actors dami_studio/tiktok-video-uploader, viralanalyzer/tiktok-poster) prove the page can be driven; they schedule 20 min-10 days ahead and set captions. The upload page's DOM changes frequently, so selectors break.",
+    "known_libraries": [
+      "wkaisertexas/tiktok-uploader (Python, Selenium/Playwright, cookies.txt; ~778 stars)",
+      "Apify dami_studio/tiktok-video-uploader (Playwright, cookie JSON, paid)",
+      "Apify viralanalyzer/tiktok-poster",
+      "No Flutter/Dart library drives the TikTok web composer; flutter_inappwebview would be used for an in-app session"
+    ],
+    "risk": "Medium-high. TikTok terms discourage automating a logged-in session; TikTok fingerprints automation and will show CAPTCHA / 'verify it's you' walls, email/SMS verification, rate limits, shadow restriction or bans. tiktok-uploader maintainer: 'This bot is not fool proof. Though I have not gotten an official ban, the video will fail to upload after too many uploads.' Apify actor: 'TikTok actively detects automation and may show a captcha / verify it's you wall, or rate-limit / restrict / ban the account.' A user-visible WebView where the human clicks Post (app only prefills caption/attaches file) is lower risk than headless automation, but still unofficial and unsupported."
+  },
+  "gotchas": [
+    "PKCE is NON-STANDARD: code_challenge = hex(SHA256(code_verifier)), not base64url. Standard OAuth libraries (e.g. flutter_appauth, oauth2 package) will fail; n8n had to add a custom hex challenge (n8n PR #15160). Verifier 43-128 chars of [A-Za-z0-9-._~].",
+    "client_secret is required at /v2/oauth/token/ even with PKCE; TikTok tells mobile/desktop devs to exchange the code server-side. A local-first app must store the user's own client_secret on-device.",
+    "Redirect URIs: Web = https only, static, no params/fragments, max 10, <512 chars. Desktop = http(s)://localhost or 127.0.0.1 WITH a port (wildcard port '*' allowed, e.g. http://127.0.0.1:*/callback/). iOS = https universal link (associated domains) via SDK; Android = https App Links via SDK. Custom schemes like neforum://callback are NOT accepted anywhere; on mobile the practical BYOK route is a desktop-style loopback is not available, so use the mobile SDK (needs a web page for the universal link) or let the user complete the flow in a browser and paste the code.",
+    "Unaudited Content Posting clients: posts forced to SELF_ONLY, 403 unaudited_client_can_only_post_to_private_accounts unless the TikTok account is set private, max 5 posting users / 24 h (reached_active_user_cap). Audit needs a demo video of a compliant composer; individual BYOK users will rarely pass it, so expect 'private only' for most NEFORUM users.",
+    "Sandbox mode (<=10 target users, <=5 sandboxes) explicitly does NOT allow Content Posting; and an unreviewed production app cannot be authorized by non-target users -> each user running their own app must still submit it for App review (several days to two weeks) to get Login Kit live for themselves (unverified whether the app owner can authorize their own account pre-review).",
+    "Mandatory UX for audit (content-sharing-guidelines): call creator_info before composing; show creator_nickname; privacy dropdown with NO default; Allow Comment/Duet/Stitch unchecked by default and greyed when creator disabled them; commercial-content toggle off by default with 'Promotional content'/'Paid partnership' labels; branded content cannot be SELF_ONLY; consent text 'By posting, you agree to TikTok's Music Usage Confirmation'; notice that processing may take minutes.",
+    "Photos cannot be uploaded as bytes: PULL_FROM_URL only, from a domain/URL-prefix the developer verified in the portal. Video inbox uploads have no caption field; photo MEDIA_UPLOAD does.",
+    "Video FILE_UPLOAD chunk arithmetic is strict: 5-64 MB chunks, last up to 128 MB, counts must match video_size; upload_url expires in 1 h; respond 206 per chunk and 201 at the end.",
+    "Daily post cap (~15/day, shared across all API clients for that creator) and 5 pending inbox shares / 24 h; 6 init calls/min per token.",
+    "Access token lives only 24 h; refresh token 365 d and rotates. Refresh before expiry; a revoked grant mid-upload yields fail_reason auth_removed.",
+    "No TikTok web share-intent URL exists; the only hand-off is the OS share sheet / Share Kit with media only (caption must be typed in TikTok). Copy the caption to the clipboard before handing off.",
+    "Scope names differ across community docs (Postiz lists 'video.create'); official scope list is user.info.basic/profile/stats, video.list, video.upload, video.publish."
+  ],
+  "sources": [
+    "https://developers.tiktok.com/doc/content-posting-api-get-started",
+    "https://developers.tiktok.com/doc/content-posting-api-reference-direct-post",
+    "https://developers.tiktok.com/doc/content-posting-api-reference-photo-post",
+    "https://developers.tiktok.com/doc/content-posting-api-reference-upload-video",
+    "https://developers.tiktok.com/doc/content-posting-api-get-started-upload-content",
+    "https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide",
+    "https://developers.tiktok.com/doc/content-posting-api-reference-query-creator-info",
+    "https://developers.tiktok.com/doc/content-posting-api-reference-get-video-status",
+    "https://developers.tiktok.com/doc/content-sharing-guidelines",
+    "https://developers.tiktok.com/doc/oauth-user-access-token-management",
+    "https://developers.tiktok.com/doc/login-kit-desktop",
+    "https://developers.tiktok.com/doc/login-kit-web",
+    "https://developers.tiktok.com/doc/login-kit-ios-quickstart",
+    "https://developers.tiktok.com/doc/login-kit-android-quickstart-v2",
+    "https://developers.tiktok.com/doc/getting-started-ios-quickstart-swift",
+    "https://developers.tiktok.com/doc/share-kit-android-quickstart-v2",
+    "https://developers.tiktok.com/doc/share-kit-ios-quickstart-v2",
+    "https://developers.tiktok.com/doc/tiktok-api-scopes",
+    "https://developers.tiktok.com/doc/tiktok-api-v2-rate-limit",
+    "https://developers.tiktok.com/doc/add-a-sandbox",
+    "https://developers.tiktok.com/doc/getting-started-create-an-app",
+    "https://developers.tiktok.com/doc/app-review-guidelines",
+    "https://developers.tiktok.com/doc/getting-started-faq",
+    "https://developers.tiktok.com/doc/oauth-error-handling",
+    "https://docs.postiz.com/providers/tiktok.md",
+    "https://bundle.social/blog/tiktok-api-approval",
+    "https://www.getphyllo.com/post/tiktok-api-integration-guide-2026-setup-endpoints-common-pitfalls",
+    "https://storrito.com/help-center/tiktok-post-limits/",
+    "https://github.com/wkaisertexas/tiktok-uploader",
+    "https://apify.com/dami_studio/tiktok-video-uploader.md",
+    "https://pub.dev/packages/tiktok_sdk_login_share",
+    "https://github.com/n8n-io/n8n/pull/15160",
+    "https://adaptlypost.com/blog/tiktok-caption-character-limit"
+  ],
+  "unverified_claims": [
+    "That an unreviewed production app blocks Login Kit authorization for every account except sandbox target users (inferred from sandbox docs and FAQ; the exact error shown to end users was not read).",
+    "That Share Kit requires the developer app to be reviewed/approved before it works with real users (official Share Kit pages do not mention audit; recalled from older docs).",
+    "That TikTok appears as a target for a plain Android ACTION_SEND video/* or iOS UIActivityViewController share without Share Kit (common in practice; not confirmed from an official page).",
+    "That the iOS 'tiktok://' and 'aweme://' schemes open the app; only snssdk1233 / snssdk1180 / tiktokopensdk / tiktoksharesdk are confirmed by the official iOS quickstart.",
+    "In-app caption limit of 4000 characters (community sources only).",
+    "Per-creator daily API post cap ~15 (Storrito) vs 25 (Phyllo); TikTok says it 'varies among creators' and publishes no fixed number.",
+    "Audit duration (1-2 weeks per Phyllo, 2-6 weeks per bundle.social) and that audits are effectively unattainable for individual hobby apps.",
+    "The Share Kit overview / Android overview pages returned 404 at fetch time, so the statement that Share Kit cannot prefill caption text relies on the v2 quickstart request shapes, which list no text field.",
+    "That the Microsoft Store TikTok app does not register as a Windows share target."
+  ]
+}

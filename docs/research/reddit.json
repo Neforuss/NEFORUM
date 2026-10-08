@@ -1,0 +1,223 @@
+{
+  "platform": "Reddit",
+  "verified_on": "2026-10-07",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Reddit Data API (OAuth2 REST API at oauth.reddit.com)",
+    "docs_url": "https://www.reddit.com/dev/api/oauth (endpoint reference; fetched 2026-10-07 via plain HTTP GET with a descriptive User-Agent) + https://github.com/reddit-archive/reddit/wiki/OAuth2 (auth flow) + https://github.com/reddit-archive/reddit/wiki/API (rules/User-Agent/rate-limit headers)",
+    "auth": "OAuth2 authorization-code flow. App types registered at https://www.reddit.com/prefs/apps: 'web app' (confidential), 'installed app' (\"Runs on devices you don't control, such as the user's mobile phone. Cannot keep a secret.\" - the right type for NEFORUM; token endpoint 'password' is an empty string), 'script' (password grant, grant_type=password&username=&password=, usable ONLY by the developer account(s) listed on the app - not for end users). Step 1: open https://www.reddit.com/api/v1/authorize?client_id=CLIENT_ID&response_type=code&state=RANDOM&redirect_uri=URI&duration=permanent&scope=identity%20submit%20read%20flair (use /api/v1/authorize.compact for a small-screen page). redirect_uri must match the registered one exactly. Step 2: POST https://www.reddit.com/api/v1/access_token with HTTP Basic auth (username=client_id, password=client_secret or '' for installed apps), body grant_type=authorization_code&code=CODE&redirect_uri=URI. Response: {access_token, token_type:'bearer', expires_in (3600), scope, refresh_token (only when duration=permanent)}. Use header 'Authorization: bearer TOKEN' against https://oauth.reddit.com (NOT www.reddit.com). Implicit flow (response_type=token) exists for installed apps but gives no refresh token. App-only (no user) token for installed apps: grant_type=https://oauth.reddit.com/grants/installed_client&device_id=<20-30 char ASCII, or DO_NOT_TRACK_THIS_DEVICE>. The archived OAuth2 wiki contains no mention of code_challenge/code_verifier.",
+    "oauth_scopes": [
+      "identity (\"Access my reddit username and signup date.\")",
+      "submit (\"Submit links and comments from my account.\") - covers POST /api/submit, /api/submit_gallery_post.json, /api/submit_poll_post, /api/v1/{subreddit}/post_requirements, /api/submit_text",
+      "read (\"Access posts and comments through my account.\") - needed to fetch the created post / subreddit info",
+      "flair (\"Manage my subreddit flair\" - /api/flairselector, r/{sub}/api/link_flair_v2 to list post flairs)",
+      "edit (\"Edit and delete my comments and submissions.\") optional, for deleting/editing a post",
+      "mysubreddits (optional: list subscribed subreddits for a picker)",
+      "Full list in docs: account, creddits, edit, flair, history, identity, livemanage, modconfig, modcontributors, modflair, modlog, modmail, modnote, modothers, modposts, modself, modwiki, mysubreddits, privatemessages, read, report, save, structuredstyles, submit, subscribe, vote, wikiedit, wikiread"
+    ],
+    "pkce_supported": false,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": true,
+    "token_lifetime_and_refresh": "\"All bearer tokens expire after 1 hour.\" (expires_in=3600). Pass duration=permanent on the authorize URL to receive a refresh_token; refresh with POST https://www.reddit.com/api/v1/access_token (same Basic auth) body grant_type=refresh_token&refresh_token=TOKEN -> new access_token (1 h). Revoke: POST https://www.reddit.com/api/v1/revoke_token body token=TOKEN&token_type_hint=refresh_token|access_token (Basic auth); revoking a refresh token also revokes its access tokens. Implicit-flow tokens cannot be refreshed.",
+    "endpoints": [
+      {
+        "purpose": "Authorize (user consent)",
+        "method": "GET",
+        "url": "https://www.reddit.com/api/v1/authorize",
+        "request_shape": "query: client_id, response_type=code, state, redirect_uri, duration=temporary|permanent, scope=space-separated. Alternate small-screen page: /api/v1/authorize.compact",
+        "response_shape": "302 to redirect_uri?state=...&code=... ; on error ?error=access_denied|unsupported_response_type|invalid_scope|invalid_request",
+        "notes": "Open in system browser / Custom Tab; verify state."
+      },
+      {
+        "purpose": "Token exchange / refresh / app-only",
+        "method": "POST",
+        "url": "https://www.reddit.com/api/v1/access_token",
+        "request_shape": "HTTP Basic auth client_id:client_secret (installed app: client_id:'' - empty password). application/x-www-form-urlencoded: grant_type=authorization_code&code=CODE&redirect_uri=URI | grant_type=refresh_token&refresh_token=TOKEN | grant_type=https://oauth.reddit.com/grants/installed_client&device_id=XXXXXXXXXXXXXXXXXXXX",
+        "response_shape": "{\"access_token\":\"...\",\"token_type\":\"bearer\",\"expires_in\":3600,\"scope\":\"identity submit ...\",\"refresh_token\":\"...\"}",
+        "notes": "Must send a unique User-Agent here too."
+      },
+      {
+        "purpose": "Revoke token",
+        "method": "POST",
+        "url": "https://www.reddit.com/api/v1/revoke_token",
+        "request_shape": "Basic auth; form token=TOKEN&token_type_hint=refresh_token",
+        "response_shape": "204 No Content"
+      },
+      {
+        "purpose": "Identity (who am I)",
+        "method": "GET",
+        "url": "https://oauth.reddit.com/api/v1/me",
+        "request_shape": "Authorization: bearer TOKEN",
+        "response_shape": "JSON user object with name, id, icon_img, etc.",
+        "notes": "scope identity"
+      },
+      {
+        "purpose": "Create text / link / image / video post",
+        "method": "POST",
+        "url": "https://oauth.reddit.com/api/submit",
+        "request_shape": "application/x-www-form-urlencoded: api_type=json, kind=one of (link, self, image, video, videogif), sr=<subreddit name without r/>, title=<=300 chars, text=<raw markdown> (self) OR richtext_json=<JSON> (error if both), url=<valid URL> (link/image/video: for image/video this is the S3 URL returned by the lease flow), video_poster_url=<URL of uploaded thumbnail> (video/videogif), nsfw=true|false, spoiler=true|false, flair_id=<=36 chars, flair_text=<=64 chars, sendreplies=true|false, resubmit=true|false, collection_id (beta UUID), extension, post_set_id, post_set_default_post_id, recaptcha_token / g-recaptcha-response, validate_on_submit=true (PRAW/Infinity send this), discussion_type=CHAT (optional), draft_id (optional)",
+        "response_shape": "{\"json\":{\"errors\":[[code,message,field],...],\"data\":{\"url\":\"https://www.reddit.com/r/<sr>/comments/<id>/...\",\"drafts_count\":0,\"id\":\"<id36>\",\"name\":\"t3_<id36>\",\"websocket_url\":\"wss://...\" (only for image/video kinds; may be null)}}}",
+        "notes": "scope submit. Errors come back HTTP 200 with json.errors populated (e.g. SUBREDDIT_NOTALLOWED, NO_TEXT, TOO_LONG, RATELIMIT, ALREADY_SUB when resubmit=false). Official doc text: 'Submit will create a link or self-post in the subreddit sr with the title title. If kind is \"link\", then url is expected to be a valid URL to link to. Otherwise, text, if present, will be the body of the self-post unless richtext_json is present'. Infinity-For-Reddit sends kind=image with video_poster_url for videogif."
+      },
+      {
+        "purpose": "Media upload lease (image/video/gif, for link posts, galleries and inline media)",
+        "method": "POST",
+        "url": "https://oauth.reddit.com/api/media/asset.json",
+        "request_shape": "application/x-www-form-urlencoded: filepath=<file name with extension, e.g. image1.png>, mimetype=<image/png|image/jpeg|image/gif|video/mp4|video/quicktime>. Infinity appends ?raw_json=1&gilding_detail=1.",
+        "response_shape": "{\"args\":{\"action\":\"//reddit-uploaded-media.s3-accelerate.amazonaws.com\" (protocol-relative; video lease: //reddit-uploaded-video.s3-accelerate.amazonaws.com),\"fields\":[{\"name\":\"acl\",\"value\":\"private\"},{\"name\":\"key\",\"value\":\"<key>\"},{\"name\":\"X-Amz-Credential\",...},{\"name\":\"policy\",...},{\"name\":\"X-Amz-Signature\",...},...]},\"asset\":{\"asset_id\":\"<media_id>\",\"processing_state\":\"incomplete\",\"payload\":{\"filepath\":\"...\"},\"websocket_url\":\"wss://ws-...\"}}",
+        "notes": "UNDOCUMENTED on /dev/api (PRAW docstring: 'Upload media and return its URL and a websocket (Undocumented endpoint)'). Then POST multipart/form-data to https:{args.action} with every args.fields name/value pair as form fields FIRST and the binary as a part named 'file' LAST; S3 answers 201 with XML containing <Location> and <Key>. Resulting media URL for /api/submit url= is f\"https:{action}/{fields.key}\" (PRAW) or the XML <Location> (Infinity). For galleries/inline media use asset.asset_id as media_id instead of the URL. PRAW mime map: png->image/png, jpg/jpeg->image/jpeg, gif->image/gif, mp4->video/mp4, mov->video/quicktime (defaults to image/jpeg)."
+      },
+      {
+        "purpose": "Create gallery (2-20 images) post",
+        "method": "POST",
+        "url": "https://oauth.reddit.com/api/submit_gallery_post.json",
+        "request_shape": "JSON body (Content-Type: application/json): {\"api_type\":\"json\",\"sr\":\"<subreddit>\",\"title\":\"...\",\"items\":[{\"media_id\":\"<asset_id from lease>\",\"caption\":\"\",\"outbound_url\":\"\"},...],\"nsfw\":false,\"spoiler\":false,\"sendreplies\":true,\"show_error_list\":true,\"validate_on_submit\":true,\"flair_id\":\"...\",\"flair_text\":\"...\",\"collection_id\":...,\"discussion_type\":...}. Infinity additionally sends \"kind\":\"self\",\"submit_type\":\"subreddit\",\"text\":\"<optional body>\",\"original_content\":false,\"post_to_twitter\":false and appends ?resubmit=true&raw_json=1.",
+        "response_shape": "{\"json\":{\"errors\":[],\"data\":{\"url\":\"https://www.reddit.com/r/<sr>/comments/<id>/...\",\"id\":\"<id36>\",...}}}",
+        "notes": "Undocumented endpoint; each image uploaded via the lease flow first. PRAW docs: gallery of '2-20' images. 'caption' and 'outbound_url' are per-image optional."
+      },
+      {
+        "purpose": "Create poll post",
+        "method": "POST",
+        "url": "https://oauth.reddit.com/api/submit_poll_post",
+        "request_shape": "JSON body: {\"api_type\":\"json\",\"sr\",\"title\",\"text\",\"options\":[2-6 strings],\"duration\":1-7 (days),\"nsfw\",\"spoiler\",\"sendreplies\",\"flair_id\",\"flair_text\",\"validate_on_submit\"}",
+        "response_shape": "{\"json\":{\"errors\":[],\"data\":{\"url\":...}}}",
+        "notes": "Undocumented; from PRAW (poll={'duration':1-7,'options':[2-6]}) and Infinity (@POST '/api/submit_poll_post.json?resubmit=true&raw_json=1&gilding_detail=1')."
+      },
+      {
+        "purpose": "List post flairs for a subreddit",
+        "method": "GET",
+        "url": "https://oauth.reddit.com/r/{subreddit}/api/link_flair_v2",
+        "request_shape": "none (Infinity uses r/{sub}/api/link_flair.json?raw_json=1; PRAW uses link_flair_v2)",
+        "response_shape": "JSON array of {id, text, text_editable, type, background_color, text_color, ...}",
+        "notes": "scope flair. Returns 403 if the subreddit has no public flairs."
+      },
+      {
+        "purpose": "Subreddit post requirements (pre-validate title/body/links)",
+        "method": "GET",
+        "url": "https://oauth.reddit.com/api/v1/{subreddit}/post_requirements",
+        "request_shape": "none",
+        "response_shape": "{title_text_min_length, title_text_max_length, body_restriction_policy ('required'|'notAllowed'|'none'), body_blacklisted_strings, domain_blacklist, domain_whitelist, is_flair_required, link_restriction_policy, title_required_strings, title_blacklisted_strings, ...}",
+        "notes": "scope submit. Official doc: 'Clients may use the values returned by this endpoint to pre-validate fields before making a request to POST /api/submit.'"
+      },
+      {
+        "purpose": "Subreddit submission text (mod notice shown on submit form)",
+        "method": "GET",
+        "url": "https://oauth.reddit.com/r/{subreddit}/api/submit_text",
+        "request_shape": "none",
+        "response_shape": "{submit_text, submit_text_html}",
+        "notes": "scope submit"
+      },
+      {
+        "purpose": "Media processing status (image/video posts)",
+        "method": "GET",
+        "url": "wss://<asset.websocket_url or json.data.websocket_url>",
+        "request_shape": "open websocket, read one message",
+        "response_shape": "{\"type\":\"success\"|\"failed\",\"payload\":{\"redirect\":\"https://www.reddit.com/r/<sr>/comments/<id>/...\"}}",
+        "notes": "Undocumented; PRAW connects after /api/submit for kind=image/video and reads json.data.websocket_url; without_websockets=True skips it but then no post id is returned (post is still created). Websocket outages happened (PRAW issue #1980, Sep 29 2023)."
+      }
+    ],
+    "personal_profile_posting": true,
+    "account_requirements": "Any normal Reddit account can create an app at https://www.reddit.com/prefs/apps (no business/developer program, no review). The user picks type 'installed app', enters a name, description, about url and a redirect uri, and immediately receives a client_id (shown under the app name; no secret for installed apps). Posting to a user profile uses sr=u_<username> (recollection, see unverified_claims). Brand-new/low-karma accounts hit subreddit karma/age rules and RATELIMIT errors ('you are doing that too much') on /api/submit.",
+    "app_review_required": "None. Self-serve registration; apps are live instantly. The June 2023 policy says 'All others will continue to access the Reddit Data API without cost, in accordance with our Developer Terms'; only apps needing more than the free rate limit, or commercial use, must contact Reddit via the Data API request form.",
+    "unreviewed_app_restrictions": "No functional restrictions on an unreviewed app: a freshly registered installed app can authorize any Reddit user and call every user-scoped endpoint, including /api/submit and media uploads. Limits are only the per-client-id rate limit (100 QPM) and the Data API Terms (non-commercial / no ads / no ML training). Default/generic User-Agents are 'drastically limited'.",
+    "free_tier": "Free. 'Effective July 1, 2023, the rate limits to use the Data API free of charge are: 100 queries per minute per OAuth client id if you are using OAuth authentication and 10 queries per minute if you are not using OAuth authentication.' (u/reddit, r/reddit post 'Addressing the community about changes to our API', June 2023; r/redditdev 'API Update: Enterprise Level Tier', May 31 2023). Before that the documented limit was 60/min. Because the limit is per client id, a BYO-client-id design (each NEFORUM user registers their own installed app) gives every user their own 100 QPM.",
+    "paid_tiers": "'Effective July 1, 2023, the rate for apps that require higher usage limits is $0.24 per 1K API calls (less than $1.00 per user / month for a typical Reddit third-party app).' Enterprise tier is by invitation/contact only ('a privilege that we will extend to select partners'). Not needed for a BYO-key local-first app.",
+    "rate_limits": "100 queries per minute per OAuth client id (free tier, since 2023-07-01); 10 QPM unauthenticated. Headers on every oauth.reddit.com response: X-Ratelimit-Used ('Approximate number of requests used in this period'), X-Ratelimit-Remaining, X-Ratelimit-Reset ('Approximate number of seconds to end of period'); when exhausted Reddit returns HTTP 429. /api/submit additionally has a per-account anti-spam ratelimit returned as json.errors [['RATELIMIT','you are doing that too much. try again in N minutes.','ratelimit']] - PRAW sleeps up to ratelimit_seconds (default 5) then raises. User-Agent rule from the API wiki: format '<platform>:<app ID>:<version string> (by /u/<reddit username>)' e.g. 'android:com.example.myredditapp:v1.2.3 (by /u/kemitche)'; 'Many default User-Agents (like \"Python/urllib\" or \"Java\") are drastically limited'; 'NEVER lie about your user-agent. This includes spoofing popular browsers and spoofing other bots. We will ban liars with extreme prejudice.'",
+    "media_upload_flow": "1) POST https://oauth.reddit.com/api/media/asset.json (form: filepath, mimetype) -> lease {args:{action, fields[]}, asset:{asset_id, websocket_url}}. 2) POST multipart/form-data to 'https:' + args.action (reddit-uploaded-media.s3-accelerate.amazonaws.com for images, reddit-uploaded-video.s3-accelerate.amazonaws.com for video) with all args.fields as form fields in order, then the binary as part 'file' (last). S3 returns 201 + XML (<Location>, <Key>). 3a) Image post: POST /api/submit kind=image&url=https:{action}/{key} (+ usual fields); optionally read json.data.websocket_url for the final post URL. 3b) Video: upload the video via the video lease, upload a poster/thumbnail image via an image lease, then POST /api/submit kind=video (or videogif) &url=<video S3 url>&video_poster_url=<poster S3 url>. 3c) Gallery: upload 2-20 images, then POST JSON to /api/submit_gallery_post.json with items[{media_id: asset.asset_id, caption, outbound_url}]. 3d) Inline media in a text post: upload, then reference asset_id inside richtext_json (PRAW converts markdown to 'fancypants' richtext and embeds media ids).",
+    "server_side_scheduling": "None in the Data API. (Reddit's web/app 'schedule post' is a mod feature via the Developer Platform / automations, not exposed on /api/submit.) NEFORUM must schedule locally.",
+    "custom_scheme_redirect_ok_notes": "Verified: the OAuth2-App-Types wiki says an installed app may redirect 'to an arbitrary URI after they grant your app permissions, such as my-cool-app:/my/redirect/uri'; Infinity-For-Reddit registers and uses redirect_uri 'infinity://localhost' with an Android intent-filter (scheme=infinity host=localhost). Loopback: PRAW docs recommend registering 'http://localhost:8080' as the redirect URI, so http://localhost:PORT/callback works (127.0.0.1 not explicitly verified)."
+  },
+  "handoff": {
+    "web_intent_url": "https://www.reddit.com/submit",
+    "web_intent_params": "url=<URL-encoded link>&title=<URL-encoded title> (verified in react-share RedditShareButton: 'https://www.reddit.com/submit' + {url, title}; and bradvin/social-share-urls: https://reddit.com/submit?url={url}&title={title}). Subreddit-targeted form: https://www.reddit.com/r/{subreddit}/submit?url=...&title=... . Text-post prefill (?selftext=true&text=... on old.reddit.com, ?type=TEXT&text=... on new reddit) is recollection only - see unverified_claims. Logged-out visitors are sent to a login page ('Welcome to Reddit') with dest=<the submit URL>, and www.reddit.com/submit serves a JS challenge page first.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "android_share": "Official app package: com.reddit.frontpage (verified on Play Store page). Send an ACTION_SEND intent with type text/plain and EXTRA_TEXT (link or text) / EXTRA_SUBJECT (title); the official app accepts image/* and video/* shares too (recollection, unverified). Alternative that always works: ACTION_VIEW on https://www.reddit.com/submit?url=..&title=.. - Reddit's app-links claim www.reddit.com so it opens in the app when installed. FOSS clients: Infinity-For-Reddit (ml.docilealligator.infinityforreddit) declares ACTION_SEND filters for text/plain, image/* and video/* on ShareDataResolverActivity; RedReader declares ACTION_SEND text/plain on PostSubmitActivity and handles reddit:// and redreader:// schemes.",
+    "ios_share": "Official app bundle id com.reddit.Reddit (App Store id 1064216828, team 2TDUX39LX8). Verified from https://www.reddit.com/.well-known/apple-app-site-association: universal-link path '/submit/*' is claimed ('Post creation page'), so opening https://www.reddit.com/submit?url=..&title=.. with UIApplication.open / Launcher launches the native composer when the app is installed, falling back to Safari otherwise. The app also appears in the iOS share sheet for URLs/text/images (standard share extension; prefill limited to what the extension reads). Custom scheme 'reddit://' exists but is undocumented (see unverified_claims).",
+    "desktop": "Open https://www.reddit.com/submit?url=...&title=... (or /r/{sub}/submit?...) in the default browser; user must be logged in on the web. There is no desktop Reddit app; macOS can run the iPad app from the Mac App Store but universal links to it are not reliable.",
+    "notes": "Hand-off only prefills link+title (text body unverified). Media cannot be prefilled through any web URL; use the native share sheet with the file for images/video, or the API."
+  },
+  "text_limits": {
+    "max_chars": 40000,
+    "title_max": 300,
+    "counting_rule": "Official doc: title 'up to 300 characters long'. Body: PRAW docs state 'selftext' max '40,000 chars' (not stated on /dev/api). flair_id <= 36 chars, flair_text <= 64 chars (official). Reddit counts Unicode characters (code points), not bytes or weighted units - exact grapheme/codepoint rule not documented; keep a safety margin for emoji. Subreddits may lower limits via post_requirements (title_text_max_length etc.).",
+    "hashtags_max": 0,
+    "notes": "Body is Markdown ('text' = raw markdown) or Reddit richtext JSON ('richtext_json'); never both. Hashtags have no meaning on Reddit. Link posts carry only title+url (optional body via 'text' on newer accounts). Errors: TOO_LONG / NO_TEXT / SUBREDDIT_NOTALLOWED / SUBREDDIT_REQUIRED / RATELIMIT in json.errors."
+  },
+  "media_limits": {
+    "images_per_post": 20,
+    "image_formats": "PNG, JPEG, GIF (PRAW lease mimetypes image/png, image/jpeg, image/gif); WebP not in the PRAW map",
+    "image_max_bytes": 20971520,
+    "video": "MP4 (video/mp4) or MOV (video/quicktime) uploaded to reddit-uploaded-video.s3-accelerate.amazonaws.com; kind=video or videogif; a poster image (video_poster_url) is required and uploaded separately through an image lease. Reddit's help pages (403 to fetchers) state max 1 GB and 15 minutes - unverified here. One video per post; galleries are images only.",
+    "aspect_ratio": "No enforced aspect ratio; Reddit transcodes video (v.redd.it) and resizes images (i.redd.it)",
+    "alt_text": false
+  },
+  "gotchas": [
+    "Register the app as type 'installed app' - 'script' apps can only authenticate the developer's own account (password grant) and 'web app' needs a secret you cannot ship.",
+    "Token endpoint uses HTTP Basic auth with client_id and an EMPTY password for installed apps; the authorize/token endpoints are on www.reddit.com, all other calls on oauth.reddit.com.",
+    "No PKCE: the OAuth2 wiki never mentions code_challenge, so protect the flow with a random 'state' and a loopback/custom-scheme redirect; anyone with the client_id can impersonate the app (expected for installed apps).",
+    "Access tokens last 1 hour; you MUST request duration=permanent on the authorize URL or you get no refresh_token.",
+    "Every request needs a unique descriptive User-Agent ('<platform>:<app ID>:<version> (by /u/<username>)'); generic/spoofed UAs are throttled or banned. Dart's default 'Dart/x.y (dart:io)' UA counts as generic - set it explicitly.",
+    "The 100 QPM free limit is per OAuth client id, shared by every installation using that id. Shipping one hard-coded client_id in a FOSS app means all users share 100 QPM - let each user paste their own client_id (local-first BYOK).",
+    "/api/submit returns HTTP 200 even on failure; check json.errors. Separate anti-spam 'RATELIMIT ... try again in N minutes' applies per account, especially new/low-karma accounts.",
+    "Image/video posts are a 3-step undocumented flow (lease -> S3 multipart -> submit); the S3 'action' is protocol-relative ('//reddit-uploaded-media...') so prepend 'https:'. Put the 'file' part LAST in the multipart body.",
+    "Video posts need video_poster_url; omit it and the submit fails/silently has no thumbnail. Generate a frame thumbnail locally.",
+    "The media websocket (json.data.websocket_url) is the only way to learn the final post URL for image/video posts; it has had outages (PRAW #1980, 2023-09-29). Treat websocket failure as 'probably posted' and poll /user/{name}/submitted instead.",
+    "Galleries need 2-20 images and use JSON (application/json) on /api/submit_gallery_post.json with media_id=asset_id, unlike /api/submit which is form-encoded.",
+    "Some subreddits require flair (is_flair_required), forbid links, or set title rules - call /api/v1/{sub}/post_requirements and r/{sub}/api/link_flair_v2 before composing.",
+    "Posting the same URL twice fails with ALREADY_SUB unless resubmit=true.",
+    "Reddit's Data API Terms forbid using the API for ads/commercial purposes without approval and forbid training ML on data; a GPL cross-poster used by individuals is non-commercial, but a hosted/commercial fork would need Reddit's approval.",
+    "www.reddit.com (and old.reddit.com submit pages) now serve a JavaScript challenge / login wall to non-browser clients, so scraping the submit form is unreliable; use the API or hand-off.",
+    "www.reddit.com, old.reddit.com, redditinc.com, support.reddithelp.com and developers.reddit.com all returned 403 or were blocked for automated fetchers during this research; documentation had to be read via a direct HTTP GET with a custom User-Agent and via Redlib mirrors."
+  ],
+  "sources": [
+    "https://www.reddit.com/dev/api/oauth (official endpoint reference; fetched 2026-10-07 by direct GET)",
+    "https://github.com/reddit-archive/reddit/wiki/OAuth2",
+    "https://github.com/reddit-archive/reddit/wiki/OAuth2-App-Types",
+    "https://github.com/reddit-archive/reddit/wiki/OAuth2-Quick-Start-Example",
+    "https://github.com/reddit-archive/reddit/wiki/API",
+    "https://safereddit.com/r/reddit/comments/145bram/addressing_the_community_about_changes_to_our_api/ (u/reddit, June 2023: 100 QPM per OAuth client id, $0.24/1K)",
+    "https://safereddit.com/r/redditdev/comments/13wsiks/ (u/FlyingLaserTurtle, May 31 2023: API Update: Enterprise Level Tier)",
+    "https://techcrunch.com/2023/04/18/reddit-will-begin-charging-for-access-to-its-api/",
+    "https://en.wikipedia.org/wiki/2023_Reddit_API_controversy",
+    "https://raw.githubusercontent.com/praw-dev/praw/refs/tags/v7.8.1/praw/models/reddit/subreddit.py (_upload_media, _submit_media, submit, submit_gallery, submit_image, submit_video)",
+    "https://raw.githubusercontent.com/praw-dev/praw/main/praw/endpoints.py",
+    "https://praw.readthedocs.io/en/stable/code_overview/models/subreddit.html",
+    "https://praw.readthedocs.io/en/stable/getting_started/authentication.html",
+    "https://praw.readthedocs.io/en/stable/getting_started/ratelimits.html",
+    "https://github.com/praw-dev/praw/issues/1980",
+    "https://github.com/praw-dev/praw/issues?q=websocket+submit_image",
+    "https://github.com/Docile-Alligator/Infinity-For-Reddit (APIUtils.java, RedditAPI.java, SubmitPost.java, UploadImageUtils.java, SubmitPostService.java, post/RedditGalleryPayload.java, LoginActivity.java, AndroidManifest.xml)",
+    "https://github.com/QuantumBadger/RedReader/blob/master/src/main/AndroidManifest.xml",
+    "https://github.com/nygardk/react-share/blob/master/src/RedditShareButton.tsx",
+    "https://github.com/bradvin/social-share-urls",
+    "https://www.reddit.com/.well-known/apple-app-site-association",
+    "https://apps.apple.com/us/app/reddit/id1064216828",
+    "https://play.google.com/store/apps/details?id=com.reddit.frontpage",
+    "https://www.reddit.com/submit?title=Hello&text=Body (observed JS challenge page) and https://old.reddit.com/r/test/submit?selftext=true&title=Hello&text=Body (observed login wall)"
+  ],
+  "unverified_claims": [
+    "Text-post prefill via hand-off: old.reddit.com/r/{sub}/submit?selftext=true&title=...&text=... and new reddit /r/{sub}/submit?type=TEXT&title=...&text=... prefill the body - could not be verified because both pages require login for automated fetchers.",
+    "Image upload size limit 20 MB and video limits 1 GB / 15 minutes (MP4/MOV) come from Reddit Help articles that returned 403; not read.",
+    "Official iOS app custom URL scheme 'reddit://' (e.g. reddit://www.reddit.com/submit) - not documented by Reddit; only universal links on /submit/* were verified via AASA.",
+    "Official Android app accepting ACTION_SEND for image/* and video/* in addition to text/plain - not verified (official app manifest not inspected).",
+    "Posting to a user profile uses sr=u_<username> (profile posts) - recollection.",
+    "Reddit refresh tokens do not rotate (the same refresh_token keeps working after each refresh) - recollection; PRAW docs wording ('single use') is ambiguous.",
+    "Rate-limit headers after July 2023 report a 1000-request / 600-second window (100 QPM averaged over 10 min) - recollection from community reports; the official post only says 100 QPM per client id.",
+    "127.0.0.1 loopback redirect URIs are accepted at prefs/apps (only 'http://localhost:8080' is documented by PRAW; the App-Types wiki says 'arbitrary URI').",
+    "Data API Terms details (commercial-use definition, no-ML-training clause, approval form) - redditinc.com/policies/data-api-terms could not be fetched; summarized from the June 2023 posts and memory.",
+    "WebP images and alt text are not supported by the upload lease - recollection (PRAW mime map omits webp).",
+    "Web-session/WebView automation: Reddit's new web client posts via GraphQL (gql.reddit.com) with signed requests and bot detection (observed JS challenge on /submit); no maintained open-source library drives the web UI for posting - risk assessment is based on this observation plus community reports of automation bans, not an official policy page."
+  ],
+  "web_session": {
+    "feasible": false,
+    "how": "Technically one could load https://www.reddit.com/submit in an embedded WebView with the user's logged-in cookies and script the composer, but www.reddit.com now front-loads a JavaScript challenge (observed: hidden form with js_challenge/jsc_token on /submit) and the SPA submits through authenticated GraphQL calls with signed headers; selectors change frequently. Because the official API is free, supports every post kind, and needs no review, there is no reason to drive the web UI. Only viable 'session' approach is the hand-off (open the prefilled /submit URL in an external browser/app) and let the user press Post.",
+    "known_libraries": [],
+    "risk": "High. The API wiki states 'NEVER lie about your user-agent. This includes spoofing popular browsers ... We will ban liars with extreme prejudice.' Automated web-UI posting from a non-browser context violates the User Agreement/Developer Terms and is subject to shadowbans or account suspension; new accounts posting via automation are quickly flagged."
+  },
+  "confidence": "high"
+}

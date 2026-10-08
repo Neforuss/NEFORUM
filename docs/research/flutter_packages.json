@@ -1,0 +1,562 @@
+{
+  "flutter_version": "3.47.6 (stable channel; 3.47.0 was the initial 3.47 stable, followed by patch releases 3.47.1–3.47.6 per the stable CHANGELOG, read 2026-10-07)",
+  "dart_version": "3.13.x (Dart 3.13.0 released 2026-08-12 per dart-lang/sdk CHANGELOG; it is the SDK bundled with Flutter 3.47 — tray_manager 0.7.0 states 'Flutter 3.47 / Dart 3.13'). Recommended pubspec: environment: sdk: ^3.13.0, flutter: '>=3.47.0'. If you must stay on Flutter 3.44 / Dart 3.12 (riverpod 3.4.3 is ^3.12.0, go_router 18 needs 3.44/3.12), pin tray_manager to 0.6.x instead of 0.7.0.",
+  "packages": [
+    {
+      "name": "share_plus",
+      "latest_version": "13.3.1",
+      "published": "~2026-10-02 (pub.dev: '5 days ago' on 2026-10-07)",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:share_plus/share_plus.dart';\n\nFuture<void> shareDraft(BuildContext context, String text, List<XFile> files) async {\n  final box = context.findRenderObject() as RenderBox?;\n  final result = await SharePlus.instance.share(\n    ShareParams(\n      text: text,\n      subject: 'NEFORUM post',\n      files: files, // List<XFile>; combinable with text\n      // Required on iPad/macOS so the popover has an anchor (13.3.0 stopped throwing when missing)\n      sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,\n    ),\n  );\n  switch (result.status) {\n    case ShareResultStatus.success: /* result.raw = activity id on iOS */ break;\n    case ShareResultStatus.dismissed: break;\n    case ShareResultStatus.unavailable: break;\n  }\n}",
+      "breaking_notes": "11.0.0 (~2025-05): new SharePlus.instance.share(ShareParams) replaces Share.share/Share.shareXFiles (old API deprecated but still present). 11.1.0: excludedCupertinoActivities. 12.0.0 (~2025-09): requires AGP >=8.12.1, Gradle >=8.13, Kotlin 2.2.0. 13.0.0 (~2026-05): win32 6.0.0 -> min Flutter 3.41.6/Dart 3.11, iOS 13, macOS 10.15; 13.1.0 lowered back to Dart 3.10/Flutter 3.38.1. 13.2.0: SwiftPM for Flutter 3.44, built-in Kotlin. 13.3.x: iPad popover fixes, no main-thread I/O on Android. ShareParams fields: text, subject, title, uri, files, fileNameOverrides, sharePositionOrigin, previewThumbnail, downloadFallbackEnabled, mailToFallbackEnabled, excludedCupertinoActivities.",
+      "alternative": "Not needed; actively maintained by fluttercommunity (plus_plugins).",
+      "verified": true
+    },
+    {
+      "name": "url_launcher",
+      "latest_version": "6.3.3",
+      "published": "~2026-10-03 (pub.dev: '4 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:url_launcher/url_launcher.dart';\n\nFuture<void> open(Uri uri) async {\n  // Do NOT gate https on canLaunchUrl: README says it 'can return false even if launchUrl would work'.\n  if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {\n    throw Exception('Could not launch $uri');\n  }\n}\n// Custom scheme (e.g. open a native app): canLaunchUrl(Uri.parse('mastodon://...')) only works on Android 11+\n// if the scheme is declared in AndroidManifest.xml:\n// <queries><intent><action android:name=\"android.intent.action.VIEW\"/><data android:scheme=\"mastodon\"/></intent></queries>\n// and on iOS in Info.plist under LSApplicationQueriesSchemes.",
+      "breaking_notes": "No breaking API changes since 6.2. 6.3.0 added BrowserConfiguration (Custom Tabs / SFSafariViewController options, showTitle). 6.3.3 requires Flutter 3.41/Dart 3.11; platform minimums Android 24+, iOS 13+, macOS 10.15+, Windows 10+.",
+      "alternative": "Not needed (flutter.dev first-party).",
+      "verified": true
+    },
+    {
+      "name": "flutter_local_notifications",
+      "latest_version": "22.3.1 (prerelease 23.0.0-dev.3 exists)",
+      "published": "~2026-09-13 (pub.dev: '24 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:flutter_local_notifications/flutter_local_notifications.dart';\nimport 'package:timezone/timezone.dart' as tz;\n\nfinal plugin = FlutterLocalNotificationsPlugin();\n\nFuture<void> init() async {\n  await plugin.initialize(\n    settings: const InitializationSettings(\n      android: AndroidInitializationSettings('@mipmap/ic_launcher'),\n      iOS: DarwinInitializationSettings(notificationCategories: [\n        DarwinNotificationCategory('neforum_post', actions: [DarwinNotificationAction.plain('post_now', 'Post now')]),\n      ]),\n      macOS: DarwinInitializationSettings(),\n      windows: WindowsInitializationSettings(appName: 'NEFORUM', appUserModelId: 'NEFORUM.App', guid: '<unique GUID>'),\n    ),\n    onDidReceiveNotificationResponse: (NotificationResponse r) {\n      final payload = r.payload; // null is coalesced to '' on all platforms\n      final action = r.actionId;  // non-null when an action button was tapped\n    },\n    onDidReceiveBackgroundNotificationResponse: _bg, // top-level @pragma('vm:entry-point')\n  );\n}\n\nFuture<void> schedule(int id, tz.TZDateTime when, String payload) async {\n  // Android 14+: exact needs SCHEDULE_EXACT_ALARM (await plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()?.requestExactAlarmsPermission())\n  // or declare USE_EXACT_ALARM (store-reviewed). Use inexact / inexactAllowWhileIdle to avoid the permission.\n  await plugin.zonedSchedule(\n    id: id,\n    title: 'Scheduled post',\n    body: 'Tap to post',\n    scheduledDate: when,\n    notificationDetails: const NotificationDetails(\n      android: AndroidNotificationDetails('posts', 'Scheduled posts',\n          actions: [AndroidNotificationAction('post_now', 'Post now')]),\n      iOS: DarwinNotificationDetails(categoryIdentifier: 'neforum_post'),\n    ),\n    androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,\n    payload: payload,\n  );\n}\n// zonedSchedule signature (v22): ({required int id, required TZDateTime scheduledDate, required NotificationDetails notificationDetails,\n//   required AndroidScheduleMode androidScheduleMode, String? title, String? body, String? payload, DateTimeComponents? matchDateTimeComponents})",
+      "breaking_notes": "19.0.0: added Windows platform; removed deprecated uiLocalNotificationDateInterpretation; compileSdk 35; SwiftPM. 20.0.0: ALL positional parameters became named (initialize(settings: ...), show(id: ...), zonedSchedule(id: ...)); min Flutter 3.32/Dart 3.8; Windows 'details' -> 'notificationDetails'. 21.0.0: min Flutter 3.38.1/Dart 3.10, Android API 24, iOS 13, macOS 10.15, compileSdk 36. 22.0.0: Web support; Windows error message for periodic (Windows does NOT support repeating notifications). 22.2.0: dismiss callbacks. 22.3.0: openAppNotificationSettings(). Windows: cancel()/getActiveNotifications() only work when packaged as MSIX (package identity). macOS: getNotificationAppLaunchDetails null on <10.14. Android 14+: exact alarms need SCHEDULE_EXACT_ALARM (runtime, revocable) or USE_EXACT_ALARM (policy-restricted); AndroidScheduleMode values: exact, exactAllowWhileIdle, inexact, inexactAllowWhileIdle, alarmClock.",
+      "alternative": "Not needed; this now covers Windows/macOS/Linux so local_notifier is redundant.",
+      "verified": true
+    },
+    {
+      "name": "workmanager",
+      "latest_version": "0.10.10 (federated: workmanager_android, workmanager_apple 0.9.11, workmanager_platform_interface ^0.10.4; workmanager_web/linux experimental)",
+      "published": "~2026-09-08 (pub.dev: '29 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": false,
+        "linux": false,
+        "web": false
+      },
+      "usage_snippet": "import 'package:workmanager/workmanager.dart';\n\n// Must be top-level; on macOS it must be literally named callbackDispatcher in the main library.\n@pragma('vm:entry-point')\nvoid callbackDispatcher() {\n  Workmanager().executeTask((task, inputData) async {\n    switch (task) {\n      case 'neforum.flush_queue':        // Android unique task name / iOS BGTask identifier\n      case Workmanager.iOSBackgroundTask: // legacy background-fetch entry\n        await flushPostQueue(inputData);\n    }\n    return true; // false = failure (retry per backoffPolicy)\n  }, onTaskStopped: (task, reason) async {});\n}\n\nvoid main() {\n  Workmanager().initialize(callbackDispatcher);\n  runApp(const App());\n}\n\nFuture<void> scheduleFlush() async {\n  await Workmanager().registerPeriodicTask(\n    'neforum-flush', 'neforum.flush_queue',\n    frequency: const Duration(minutes: 15), // 15 min minimum on Android AND iOS\n    constraints: Constraints(networkType: NetworkType.connected),\n    existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,\n    inputData: {'mode': 'queue'}, // native Map transfer since 0.8.0 (no JSON)\n  );\n  await Workmanager().registerOneOffTask(\n    'neforum-post-123', 'neforum.flush_queue',\n    initialDelay: const Duration(minutes: 2),\n    backoffPolicy: BackoffPolicy.exponential,\n  );\n  // iOS long-running: registerProcessingTask('neforum.flush_queue', 'neforum.flush_queue')\n  // iOS Info.plist: UIBackgroundModes [fetch, processing]; BGTaskSchedulerPermittedIdentifiers [neforum.flush_queue]\n  // iOS AppDelegate.swift: WorkmanagerPlugin.registerLaunchHandlers(); WorkmanagerPlugin.setPluginRegistrantCallback{...};\n  //   WorkmanagerPlugin.registerPeriodicTask(withIdentifier: \"neforum.flush_queue\", frequency: NSNumber(value: 15*60))\n  //   or WorkmanagerPlugin.registerBGProcessingTask(withIdentifier: \"neforum.flush_queue\")\n}",
+      "breaking_notes": "The '2025 rewrite' is the 0.6 -> 0.10 line, NOT 1.x (no 1.0 exists). 0.6.0 (~2025-06): Android V1 embedding removed. 0.7.0 (~2025-07): Dart 3.2/Flutter 3.16, iOS 13, targetSdk 35. 0.8.0 (~2025-07): federated split (workmanager_android/workmanager_apple), enums snake_case->camelCase (NetworkType.not_required -> notRequired), inputData no longer JSON-serialized, iOS initialDelay fix. 0.9.0 (~2025-08): debug mode replaced by hook system; periodic frequency bug fixed. 0.10.0 (~2026-08): min Flutter 3.38 across packages. Burst of 0.9.x/0.10.x releases in Aug–Sep 2026 added Android expedited work, ForegroundServiceConfig, macOS (NSBackgroundActivityScheduler, best-effort, only while app is running/backgrounded and Mac awake), onTaskStopped. Limits (docs): Android periodic >=15 min; iOS periodic is a 15-min hint, system decides; iOS/macOS one-off ~30 s runtime; iOS processing tasks 1-10 min. Windows/Linux: no stable support — on Windows run the queue in-process (tray app) instead.",
+      "alternative": "Actively maintained (fluttercommunity). For Windows use in-app timers + launch_at_startup/tray; background_fetch (transistorsoft) is a commercial-licensed alternative for mobile.",
+      "verified": true
+    },
+    {
+      "name": "flutter_secure_storage",
+      "latest_version": "11.2.0",
+      "published": "~2026-09-17 (pub.dev: '20 days ago'; 10.3.4 also released ~2026-09-14 as a maintenance line)",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:flutter_secure_storage/flutter_secure_storage.dart';\n\nconst storage = FlutterSecureStorage(\n  aOptions: AndroidOptions(migrateWithBackup: true), // v10+: RSA-OAEP + AES-GCM, no Jetpack Security\n  iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),\n  // macOS: data-protection keychain needs the keychain-access-groups entitlement + provisioning profile;\n  // set usesDataProtectionKeychain:false to use the legacy keychain without a profile (dev builds / unsigned).\n  mOptions: MacOsOptions(usesDataProtectionKeychain: false),\n);\n\nawait storage.write(key: 'mastodon.token', value: token);\nfinal t = await storage.read(key: 'mastodon.token');\nawait storage.delete(key: 'mastodon.token');\nfinal all = await storage.readAll();\n// macOS entitlements (Debug/Release .entitlements): <key>keychain-access-groups</key><array/>\n// Windows: needs C++ ATL from VS Build Tools; v10+ stores an encrypted file via FFI (DPAPI-wrapped key).",
+      "breaking_notes": "10.0.0 (~2025-12): encryptedSharedPreferences removed from AndroidOptions (Jetpack Security deprecated), custom ciphers, Android minSdk 24, iOS+macOS merged into flutter_secure_storage_darwin, Windows rewritten to FFI file-based encryption. 10.2.0: deprecated RSA_ECB_PKCS1Padding / AES_CBC_PKCS7Padding with auto-migration; compileSdk 37. 10.3.0: AndroidBiometricType, biometricPromptNegativeButton. 11.0.0 (~2026-08): storageNamespace / sharedPreferencesName migration changes. 11.1.0: checkUpgradeStatus() to detect data loss after major upgrades. 11.2.0: requireBiometricsPerOperation. Caution: multiple data-loss regressions on Android were fixed across 10.x/11.x — pin and test upgrades; use migrateWithBackup.",
+      "alternative": "Not needed; actively maintained. Fallback for Windows without ATL: implement DPAPI via package:win32 yourself.",
+      "verified": true
+    },
+    {
+      "name": "flutter_web_auth_2",
+      "latest_version": "5.1.0 (6.0.0-alpha.8 prerelease targets Flutter 3.44/Dart 3.12, web >=1.0, desktop_webview_window 0.3.0)",
+      "published": "~2026-08-13 (pub.dev: '55 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';\nimport 'dart:io' show Platform;\n\nFuture<Uri> runAuth(Uri authorizeUrl) async {\n  final desktop = Platform.isWindows || Platform.isLinux;\n  // Mobile/macOS: custom scheme 'neforum' (RFC 3986: lowercase letters, digits, + - . ; no underscores).\n  // Windows/Linux with useWebview:false: scheme MUST be 'http://localhost:PORT' (or http://127.0.0.1:PORT);\n  // the plugin binds HttpServer on 127.0.0.1:PORT, serves landingPageHtml and returns req.requestedUri.\n  final callback = desktop ? 'http://localhost:43823' : 'neforum';\n  final result = await FlutterWebAuth2.authenticate(\n    url: authorizeUrl.toString(),\n    callbackUrlScheme: callback,\n    options: const FlutterWebAuth2Options(\n      useWebview: false,      // desktop: open system browser instead of desktop_webview_window\n      preferEphemeral: false, // iOS/macOS ASWebAuthenticationSession ephemeral session\n      timeout: 5 * 60,\n    ),\n  );\n  return Uri.parse(result); // e.g. neforum://callback?code=...&state=...\n}\n// Android manifest: <activity android:name=\"com.linusu.flutter_web_auth_2.CallbackActivity\" android:exported=\"true\" android:taskAffinity=\"\">\n//   <intent-filter android:label=\"flutter_web_auth_2\"><action android:name=\"android.intent.action.VIEW\"/>\n//   <category android:name=\"android.intent.category.DEFAULT\"/><category android:name=\"android.intent.category.BROWSABLE\"/>\n//   <data android:scheme=\"neforum\"/></intent-filter></activity>\n// macOS/iOS: register 'neforum' under CFBundleURLTypes in Info.plist (ASWebAuthenticationSession, macOS 10.15+).",
+      "breaking_notes": "4.x: dropped Android v1 embedding, minSdk 21, JVM 11. 5.0.0 (2025): Dart >=3.5; new Android implementation (Chrome Auth Tab); https callbacks need httpsHost/httpsPath options; ephemeralIntentFlags replaced by preferEphemeral; android:taskAffinity=\"\" strongly recommended; iOS moved to UIScene lifecycle. 5.1.0: SecurityException handling, graceful missing authUri/callbackScheme. Desktop: Windows/Linux default (useWebview:true) embeds desktop_webview_window (WebView2 on Windows); useWebview:false launches system browser + loopback HTTP server. Loopback redirect http://127.0.0.1:PORT or http://localhost:PORT accepted (RFC 8252). macOS uses ASWebAuthenticationSession with custom scheme.",
+      "alternative": "Actively maintained (femtopedia.de). Alternative: roll your own loopback with dart:io HttpServer + url_launcher on desktop and app_links for custom-scheme capture on mobile.",
+      "verified": true
+    },
+    {
+      "name": "oauth2",
+      "latest_version": "2.0.5",
+      "published": "~2025-11 (pub.dev: '11 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:oauth2/oauth2.dart' as oauth2;\n\nfinal grant = oauth2.AuthorizationCodeGrant(\n  clientId,\n  Uri.parse('https://mastodon.social/oauth/authorize'),\n  Uri.parse('https://mastodon.social/oauth/token'),\n  secret: clientSecret, // null for public clients\n  // codeVerifier: optional; 'If none is provided a random codeVerifier will be generated' (PKCE S256 automatic)\n  basicAuth: false,     // send client_id/secret in body instead of HTTP Basic for picky servers\n);\nfinal redirect = Uri.parse('http://localhost:43823/callback');\nfinal authUrl = grant.getAuthorizationUrl(redirect, scopes: ['read', 'write'], state: myState);\n// ... open authUrl via flutter_web_auth_2 / url_launcher, receive callback Uri ...\nfinal client = await grant.handleAuthorizationResponse(callbackUri.queryParameters);\nfinal json = client.credentials.toJson(); // persist in flutter_secure_storage\n// later: oauth2.Client(oauth2.Credentials.fromJson(json), identifier: clientId, secret: clientSecret) auto-refreshes.",
+      "breaking_notes": "Constructor (2.0.5): AuthorizationCodeGrant(String identifier, Uri authorizationEndpoint, Uri tokenEndpoint, {String? secret, String? delimiter, bool basicAuth = true, Client? httpClient, CredentialsRefreshedCallback? onCredentialsRefreshed, getParameters, String? codeVerifier}). PKCE added in 1.6.0; codeVerifier constructor param since 1.6.3; always sends code_challenge (S256). No breaking changes in 2.0.x; package is in maintenance mode (dart-lang/tools) with ~1 release/year. Does not handle device-code or client-credentials-with-refresh edge cases (has ClientCredentialsGrant / ResourceOwnerPasswordGrant).",
+      "alternative": "Fine as is. For non-standard token endpoints (Threads/Instagram long-lived tokens, X 2.0 refresh with basic auth), hand-roll the token exchange with package:http and only reuse oauth2's PKCE helper pattern.",
+      "verified": true
+    },
+    {
+      "name": "flutter_inappwebview",
+      "latest_version": "6.1.5 (stable; 6.2.0-beta.3 prerelease ~2026-02 requires Dart 3.8/Flutter 3.32)",
+      "published": "~2024-10 (pub.dev: '24 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": false,
+        "web": true
+      },
+      "usage_snippet": "import 'package:flutter_inappwebview/flutter_inappwebview.dart';\n\nInAppWebView(\n  initialUrlRequest: URLRequest(url: WebUri('https://x.com/compose/post')),\n  initialSettings: InAppWebViewSettings(javaScriptEnabled: true, useShouldInterceptRequest: true),\n  onWebViewCreated: (c) => controller = c,\n  shouldOverrideUrlLoading: (c, action) async => NavigationActionPolicy.ALLOW,\n  shouldInterceptRequest: (c, req) async => null, // Android (WebView) + Windows (6.1.4+, via CDP); NOT iOS/macOS WKWebView\n  onLoadStop: (c, url) async {\n    final title = await c.evaluateJavascript(source: 'document.title');\n    final cookies = await CookieManager.instance().getCookies(url: WebUri('https://x.com'));\n  },\n);\n// Windows: WebView2 runtime required; NuGet CLI on PATH at build time. macOS: InAppWebView widget since 6.1.0 (10.14+).",
+      "breaking_notes": "6.0.0 (2024): federated plugin split (flutter_inappwebview_android/ios/macos/web/windows); Android package name changes. 6.1.0 (~2024-10): initial Windows support (flutter_inappwebview_windows 0.6.0, WebView2), macOS InAppWebView widget, min Flutter 3.24/Dart 3.5. 6.1.2–6.1.5: Windows gained pause/resume/getCertificate/onPermissionRequest/shouldOverrideUrlLoading (CDP)/shouldInterceptRequest/onLoadResourceWithCustomScheme. Risk: no stable release for ~2 years; 6.2.0-beta.x adds Linux (WPE WebKit) and newer SDK mins. Request interception is Android/Windows-only; on iOS/macOS use WKURLSchemeHandler-style custom schemes or JS injection. Cookie access on iOS requires iOS 11+ WKHTTPCookieStore and may not see HttpOnly cookies set before the store attached.",
+      "alternative": "webview_flutter (flutter.dev, Android/iOS/macOS only, no Windows) + webview_windows (unmaintained) — not a full replacement. desktop_webview_window (used by flutter_web_auth_2) for simple desktop windows. Keep flutter_inappwebview but pin 6.1.5 and track 6.2 betas.",
+      "verified": true
+    },
+    {
+      "name": "drift",
+      "latest_version": "2.35.1 (drift_dev 2.35.x, build_runner ^2.16)",
+      "published": "~2026-10-01 (pub.dev: '6 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "// pubspec: drift ^2.35.0, drift_flutter ^0.3.1, path_provider ^2.1.6; dev: drift_dev ^2.35.0, build_runner ^2.16.1\nimport 'package:drift/drift.dart';\nimport 'package:drift_flutter/drift_flutter.dart';\nimport 'package:path_provider/path_provider.dart';\npart 'database.g.dart';\n\nclass Posts extends Table {\n  IntColumn get id => integer().autoIncrement()();\n  TextColumn get body => text()();\n  DateTimeColumn get scheduledAt => dateTime().nullable()();\n}\n\n@DriftDatabase(tables: [Posts])\nclass AppDatabase extends _$AppDatabase {\n  AppDatabase([QueryExecutor? e]) : super(e ?? _open());\n  @override\n  int get schemaVersion => 1;\n  static QueryExecutor _open() => driftDatabase(\n        name: 'neforum',\n        native: const DriftNativeOptions(\n          databaseDirectory: getApplicationSupportDirectory,\n          shareAcrossIsolates: true, // needed when workmanager isolate also opens the DB\n        ),\n      );\n}\n// dart run build_runner build --delete-conflicting-outputs",
+      "breaking_notes": "No breaking API changes within 2.x; frequent minor releases (2.35.x in Oct 2026). drift_flutter 0.3.1 (~2026-08) wraps sqlite3_flutter_libs (bundled SQLite on Android/iOS/macOS/Windows/Linux) and web (needs sqlite3.wasm + drift_worker.js in web/). DriftNativeOptions: databaseDirectory, databasePath, shareAcrossIsolates. Default location: application documents dir as <name>.sqlite.",
+      "alternative": "Not needed (simonbinder.eu, very active). sqflite/isar are weaker on desktop.",
+      "verified": true
+    },
+    {
+      "name": "drift_flutter",
+      "latest_version": "0.3.1",
+      "published": "~2026-08 (pub.dev: '2 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:drift_flutter/drift_flutter.dart';\nfinal executor = driftDatabase(\n  name: 'neforum',\n  native: const DriftNativeOptions(shareAcrossIsolates: true),\n  web: DriftWebOptions(sqlite3Wasm: Uri.parse('sqlite3.wasm'), driftWorker: Uri.parse('drift_worker.js')),\n);",
+      "breaking_notes": "Pre-1.0 (0.x) but API stable since 0.2; 0.3.x added DriftNativeOptions.databaseDirectory/databasePath and shareAcrossIsolates.",
+      "alternative": "Direct NativeDatabase.createInBackground(File) from package:drift/native.dart with sqlite3_flutter_libs if you want full control.",
+      "verified": true
+    },
+    {
+      "name": "flutter_riverpod",
+      "latest_version": "3.4.3 (riverpod 3.4.3, Dart ^3.12.0; riverpod_annotation/riverpod_generator 3.x for codegen)",
+      "published": "2026-09-04",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:flutter_riverpod/flutter_riverpod.dart';\n\nclass QueueNotifier extends Notifier<List<Post>> {\n  @override\n  List<Post> build() => const [];\n  void add(Post p) => state = [...state, p];\n}\nfinal queueProvider = NotifierProvider<QueueNotifier, List<Post>>(QueueNotifier.new);\n// autoDispose in 3.x: NotifierProvider<QueueNotifier, List<Post>>(QueueNotifier.new, isAutoDispose: true)\n\nvoid main() => runApp(const ProviderScope(child: App()));\n\nclass QueueView extends ConsumerWidget {\n  const QueueView({super.key});\n  @override\n  Widget build(BuildContext context, WidgetRef ref) {\n    final queue = ref.watch(queueProvider);\n    return ListView(children: [for (final p in queue) Text(p.body)]);\n  }\n}\n// Async: final accountsProvider = AsyncNotifierProvider<AccountsNotifier, List<Account>>(AccountsNotifier.new);\n// ref.watch(accountsProvider) -> AsyncValue; pattern-match AsyncData/AsyncError/AsyncLoading.",
+      "breaking_notes": "3.0.0 (2025-09-10): StateProvider/StateNotifierProvider/ChangeNotifierProvider moved to package:flutter_riverpod/legacy.dart; all Ref subclasses removed (use Ref); Provider.autoDispose(...) -> Provider(isAutoDispose: true) (the .autoDispose modifier still exists for non-codegen); providers compare values with ==; Notifiers are recreated on rebuild; automatic retry on error; ProviderSubscription.pause/resume; Ref.mounted; ProviderContainer.test(); experimental mutations and offline persistence. 3.1.0 (2025-12-26): AsyncValue.requireValue in build. 3.2.0 (2026-01-17): Ref.isPaused; family.overrideWith deprecated for overrideWith2. 3.4.0 (2026-07-26): CustomProviderListenable, ref.watch(provider.listenable).",
+      "alternative": "Not needed; actively maintained.",
+      "verified": true
+    },
+    {
+      "name": "go_router",
+      "latest_version": "18.0.2",
+      "published": "~2026-09-29 (pub.dev: '8 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:go_router/go_router.dart';\n\nfinal router = GoRouter(\n  routes: [\n    GoRoute(path: '/', builder: (context, state) => const ComposeScreen()),\n    GoRoute(path: '/accounts', builder: (context, state) => const AccountsScreen()),\n    GoRoute(path: '/post/:id', builder: (context, state) => PostScreen(id: state.pathParameters['id']!)),\n  ],\n);\nMaterialApp.router(routerConfig: router);\n// context.go('/accounts'); context.push('/post/42');",
+      "breaking_notes": "14.0.0: GoRouteData.onExit takes (BuildContext, GoRouterState). 15.0.0: URLs case-sensitive by default (caseSensitive param). 16.0.0: /Home and /home distinct; GoRouteData method signatures changed, needs go_router_builder >=3.0.0. 17.0.0: ShellRoute navigation notifies GoRouter observers by default. 18.0.0: requires Flutter 3.44/Dart 3.12.",
+      "alternative": "Not needed (flutter.dev).",
+      "verified": true
+    },
+    {
+      "name": "file_picker",
+      "latest_version": "13.1.0",
+      "published": "~2026-09-16 (pub.dev: '21 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:file_picker/file_picker.dart';\n\n// v12+: static API, returns List<PlatformFile> (empty on cancel), allowMultiple default true\nfinal files = await FilePicker.pickFiles(\n  type: FileType.custom,\n  allowedExtensions: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov'],\n);\nfor (final f in files) {\n  final path = f.path;                 // null on web\n  final bytes = await f.readAsBytes(); // withData removed in 13.0.0\n  final len = await f.length();        // Future<int?> since 13.0.0\n}\nfinal one = await FilePicker.pickFile(type: FileType.media); // PlatformFile?",
+      "breaking_notes": "12.0.0 (2026): federated; FilePicker.platform.pickFiles() -> static FilePicker.pickFiles()/pickFile(); returns Future<List<PlatformFile>> instead of FilePickerResult; min Flutter 3.38/Dart 3.10; iOS 14; saveFile requires fileName and bytes. 13.0.0 (~2026-09): PlatformFile.length() -> Future<int?>; removed allowMultiple, withData, withReadStream, readSequential, lockParentWindow, cancelUploadOnWindowBlur; use readAsBytes()/readAsByteStream().",
+      "alternative": "file_selector (flutter.dev) is the first-party desktop/mobile alternative with XFile results.",
+      "verified": true
+    },
+    {
+      "name": "image_picker",
+      "latest_version": "1.2.4",
+      "published": "~2026-10-06 (pub.dev: '30 hours ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:image_picker/image_picker.dart';\n\nfinal picker = ImagePicker();\nfinal List<XFile> media = await picker.pickMultipleMedia(limit: 4, imageQuality: 85, maxWidth: 2048);\nfinal XFile? video = await picker.pickVideo(source: ImageSource.gallery, maxDuration: const Duration(minutes: 2));\nfinal XFile? shot = await picker.pickImage(source: ImageSource.camera); // desktop: throws unless cameraDelegate set\n// Desktop (Windows/macOS/Linux) is implemented over file_selector: no camera, and maxWidth/maxHeight/imageQuality are ignored.\n// iOS Info.plist: NSPhotoLibraryUsageDescription, NSCameraUsageDescription, NSMicrophoneUsageDescription.",
+      "breaking_notes": "No breaking changes in 1.x. 1.1.0: limit on multi-pickers (iOS/Android). 1.2.0: pickMultiVideo. 1.2.3: limit:1 no longer throws. 1.2.4: min Flutter 3.41/Dart 3.11; Android 24+, iOS 13+, macOS 10.15+, Windows 10+. Desktop support is 'limited': wraps file_selector; selection modification options (max width/height/quality) not supported; camera needs a custom cameraDelegate.",
+      "alternative": "On desktop prefer file_picker/file_selector directly; image_picker only for mobile gallery/camera.",
+      "verified": true
+    },
+    {
+      "name": "desktop_drop",
+      "latest_version": "0.8.4",
+      "published": "~2026-09-02 (pub.dev: '35 days ago')",
+      "supports": {
+        "android": true,
+        "ios": false,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:desktop_drop/desktop_drop.dart';\n\nDropTarget(\n  onDragEntered: (details) => setState(() => hovering = true),\n  onDragExited: (details) => setState(() => hovering = false),\n  onDragDone: (DropDoneDetails details) {\n    final List<XFile> files = details.files; // XFile since 0.3.0 (was urls: List<Uri>)\n    attach(files);\n  },\n  child: const ComposeBox(),\n);",
+      "breaking_notes": "0.3.0: DropDoneDetails.urls -> files (List<XFile>). 0.8.0 (2026): Android migrated to built-in Kotlin; Android host apps need AGP 9+. Android support is 'preview'; iOS unsupported.",
+      "alternative": "super_drag_and_drop (superlist) supports iOS/Android/desktop/web with richer payloads if iOS drop is needed.",
+      "verified": true
+    },
+    {
+      "name": "window_manager",
+      "latest_version": "0.5.2",
+      "published": "~2026-07 (pub.dev: '3 months ago')",
+      "supports": {
+        "android": false,
+        "ios": false,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": false
+      },
+      "usage_snippet": "import 'package:window_manager/window_manager.dart';\n\nFuture<void> main() async {\n  WidgetsFlutterBinding.ensureInitialized();\n  await windowManager.ensureInitialized();\n  const opts = WindowOptions(size: Size(1000, 700), minimumSize: Size(480, 600), center: true, titleBarStyle: TitleBarStyle.normal);\n  await windowManager.waitUntilReadyToShow(opts, () async {\n    await windowManager.show();\n    await windowManager.focus();\n  });\n  await windowManager.setPreventClose(true); // close -> hide to tray\n  runApp(const App());\n}\n\nclass _AppState extends State<App> with WindowListener {\n  @override void initState() { super.initState(); windowManager.addListener(this); }\n  @override void dispose() { windowManager.removeListener(this); super.dispose(); }\n  @override void onWindowClose() async {\n    if (await windowManager.isPreventClose()) await windowManager.hide();\n  }\n}",
+      "breaking_notes": "0.4.0: removed deprecated isBezeled. 0.5.0: getId(), SwiftPM support, multi-engine Windows crash fix. 0.5.1: macOS PrivacyInfo fix. 0.5.2: screen_retriever 0.2.2 (full SwiftPM). README states the plugin 'is being migrated to libnativeapi/nativeapi-flutter' (C++ core) — expect a breaking 0.6/1.0 like tray_manager 0.6.0.",
+      "alternative": "Still the standard; nativeapi-flutter (leanflutter) is the successor in progress.",
+      "verified": true
+    },
+    {
+      "name": "tray_manager",
+      "latest_version": "0.7.0",
+      "published": "~2026-09-19 (pub.dev: '18 days ago')",
+      "supports": {
+        "android": false,
+        "ios": false,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": false
+      },
+      "usage_snippet": "import 'package:tray_manager/tray_manager.dart'; // 0.6+ nativeapi-based API\n\nfinal trayIcon = TrayIcon.create()!;\ntrayIcon.icon = ImageAsset.fromAsset('assets/tray_icon.png'); // Windows: .png or .ico; macOS: template PNG\ntrayIcon.setTooltip('NEFORUM');\nfinal menu = Menu.create()!;\nfinal show = MenuItem.createWithLabelAndType('Show NEFORUM', MenuItemType.normal)!;\nshow.addListener((e) { if (e is MenuItemClickedEvent) windowManager.show(); });\nmenu.addItem(show);\ntrayIcon.setContextMenu(menu);\ntrayIcon.addListener((e) { /* TrayIconClickedEvent, double-click events, etc. */ });\ntrayIcon.setVisible(true);\n// Old singleton API (trayManager.setIcon / setContextMenu / TrayListener) lives in package:tray_manager/legacy.dart (@Deprecated).",
+      "breaking_notes": "0.6.0 (2026): rewritten on nativeapi (one C++ core for macOS/Windows/Linux); 0.5.x API moved to legacy.dart and deprecated; requires Flutter 3.35/Dart 3.9, macOS 10.15; adds multiple tray icons, double-click, contextMenuTrigger, menu item icons, radio groups, accelerators. 0.7.0 (~2026-09): requires Flutter 3.47/Dart 3.13, nativeapi ^0.3.0; Linux no longer needs libayatana-appindicator3-dev (needs libgtk-3-dev libx11-dev libxi-dev).",
+      "alternative": "system_tray (antler119) is the older alternative but less maintained; stay on tray_manager (pin 0.6.x if on Flutter 3.44).",
+      "verified": true
+    },
+    {
+      "name": "launch_at_startup",
+      "latest_version": "0.5.1",
+      "published": "~2025-04 (pub.dev: '18 months ago')",
+      "supports": {
+        "android": false,
+        "ios": false,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": false
+      },
+      "usage_snippet": "import 'package:launch_at_startup/launch_at_startup.dart';\nimport 'package:package_info_plus/package_info_plus.dart';\nimport 'dart:io';\n\nfinal info = await PackageInfo.fromPlatform();\nlaunchAtStartup.setup(\n  appName: info.appName,\n  appPath: Platform.resolvedExecutable,\n  packageName: 'dev.neforum.app', // Windows MSIX only (uses StartupTask instead of registry Run key)\n  args: ['--minimized'],\n);\nawait launchAtStartup.enable();\nfinal on = await launchAtStartup.isEnabled();\n// macOS: add the LaunchAtLogin SwiftPM package and MethodChannel glue in MainFlutterWindow.swift; Xcode 15+: disable User Script Sandboxing.",
+      "breaking_notes": "No breaking changes since 0.3 (Dart 3.0). 0.5.x depends on win32_registry ^2.0.0. macOS needs manual LaunchAtLogin (sindresorhus) integration; 10.13+. No release in 18 months but small surface; part of the leanflutter family that is being moved to nativeapi.",
+      "alternative": "If it bit-rots: write the Windows Run registry key with package:win32_registry and use SMAppService (macOS 13+) via a tiny platform channel.",
+      "verified": true
+    },
+    {
+      "name": "local_notifier",
+      "latest_version": "0.1.6",
+      "published": "~2024 (pub.dev: '2 years ago')",
+      "supports": {
+        "android": false,
+        "ios": false,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": false
+      },
+      "usage_snippet": "import 'package:local_notifier/local_notifier.dart';\n\nawait localNotifier.setup(appName: 'NEFORUM', shortcutPolicy: ShortcutPolicy.requireCreate); // Windows only policy\nfinal n = LocalNotification(title: 'Posted', body: 'Your post went out to 3 platforms',\n    actions: [LocalNotificationAction(text: 'Open')]);\nn.onClick = () => windowManager.show();\nn.onClickAction = (i) {};\nawait n.show();",
+      "breaking_notes": "Effectively unmaintained (no release in ~2 years; depends on uuid >=3.0.7 <5.0.0; Linux needs libnotify-dev). No scheduling support.",
+      "alternative": "flutter_local_notifications 22.x now supports Windows (19.0.0+), macOS and Linux with scheduling and actions — use it everywhere and drop local_notifier.",
+      "verified": true
+    },
+    {
+      "name": "http",
+      "latest_version": "1.6.0",
+      "published": "~2025-11 (pub.dev: '11 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:http/http.dart' as http;\n\nfinal client = http.Client();\nfinal req = http.MultipartRequest('POST', Uri.parse('https://mastodon.social/api/v2/media'))\n  ..headers['Authorization'] = 'Bearer $token'\n  ..files.add(await http.MultipartFile.fromPath('file', path, filename: 'image.jpg'))\n  ..fields['description'] = altText;\nfinal streamed = await client.send(req);\nfinal res = await http.Response.fromStream(streamed);\nclient.close();\n// Optional native adapters: cupertino_http (CupertinoClient) on iOS/macOS, cronet_http on Android.",
+      "breaking_notes": "No breaking changes in 1.x. Lacks upload progress callbacks and interceptors; implement with StreamedRequest or use dio.",
+      "alternative": "dio for progress/interceptors/retry; both can coexist.",
+      "verified": true
+    },
+    {
+      "name": "dio",
+      "latest_version": "5.11.1",
+      "published": "~2026-09-04 (pub.dev: '33 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:dio/dio.dart';\n\nfinal dio = Dio(BaseOptions(connectTimeout: const Duration(seconds: 20)));\ndio.interceptors.add(InterceptorsWrapper(onRequest: (o, h) { o.headers['Authorization'] = 'Bearer $token'; h.next(o); }));\nfinal form = FormData.fromMap({\n  'file': await MultipartFile.fromFile(path, filename: 'image.jpg'), // content-type inferred via package:mime since 5.9\n  'description': altText,\n});\nfinal res = await dio.post('https://mastodon.social/api/v2/media', data: form,\n    onSendProgress: (sent, total) => progress.value = sent / total,\n    cancelToken: cancel);",
+      "breaking_notes": "No breaking changes in 5.9–5.11. 5.9.0: initial interceptors list; mime-based content-type for MultipartFile. 5.10.0: lower-memory large uploads (FormData.readAsBytes), transformTimeout. 5.11.1: stream backpressure fix; Interceptor 'implements' fix. Migration guide covers 4.x->5.x.",
+      "alternative": "package:http for minimal footprint.",
+      "verified": true
+    },
+    {
+      "name": "crypto",
+      "latest_version": "3.0.7",
+      "published": "~2025-11 (pub.dev: '11 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'dart:convert';\nimport 'package:crypto/crypto.dart';\n\nfinal digest = sha256.convert(utf8.encode(payload)).toString(); // hex, e.g. Nostr event id, PKCE challenge input\nfinal mac = Hmac(sha256, utf8.encode(secret)).convert(utf8.encode(body)).toString();\n// PKCE: base64Url.encode(sha256.convert(ascii.encode(verifier)).bytes).replaceAll('=', '')",
+      "breaking_notes": "None in 3.x. Provides SHA-1/224/256/384/512/512-224/512-256, MD5, HMAC only; no AES/ECC.",
+      "alternative": "package:cryptography (dint) for AES-GCM/X25519/Ed25519 if needed.",
+      "verified": true
+    },
+    {
+      "name": "pointycastle",
+      "latest_version": "4.0.0",
+      "published": "~2025-03 (pub.dev: '19 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:pointycastle/export.dart';\n// secp256k1 IS available (lib/ecc/curves/secp256k1.dart in bcgit/pc-dart), but only (DET-)ECDSA — no Schnorr/BIP-340.\nfinal params = ECDomainParameters('secp256k1');\nfinal q = params.G * privBigInt;               // public point for NIP-01 x-only pubkey: q!.x!.toBigInteger()\nfinal signer = ECDSASigner(SHA256Digest(), HMac(SHA256Digest(), 64))\n  ..init(true, PrivateKeyParameter(ECPrivateKey(privBigInt, params)));",
+      "breaking_notes": "4.0.0 (2025): major bump (Dart 3 cleanup). Pure Dart, slow-ish BigInt math; no Schnorr, no secure random by default (seed FortunaRandom yourself).",
+      "alternative": "For Nostr signing use package:bip340 (built on pointycastle secp256k1) or package:ndk which bundles it.",
+      "verified": true
+    },
+    {
+      "name": "bip340",
+      "latest_version": "0.3.1",
+      "published": "~2025-09 (pub.dev: '13 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:bip340/bip340.dart' as bip340;\n// all args are hex strings\nfinal pubHex = bip340.getPublicKey(privHex);                 // 64-char x-only pubkey\nfinal sigHex = bip340.sign(privHex, eventIdHex, auxRand32Hex); // 128-char Schnorr signature\nfinal ok = bip340.verify(pubHex, eventIdHex, sigHex);",
+      "breaking_notes": "Pure Dart (deps crypto ^3.0.6, pointycastle ^4.0.0); author fiatjaf (Nostr creator); README warns 'this is not safe cryptography' (not constant-time) — fine for signing social posts, not for holding funds. Unverified uploader; last release Sep 2025 but the spec is frozen.",
+      "alternative": "package:ndk (Nostr Development Kit 0.10.1, ~2026-10-03) wraps bip340 + bech32 + relays + NIP-46/NIP-55 signers; or secp256k1 via FFI (flutter_rust_bridge) for constant-time ops.",
+      "verified": true
+    },
+    {
+      "name": "bech32",
+      "latest_version": "0.2.2",
+      "published": "~2023 (pub.dev: '3 years ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:bech32/bech32.dart';\nimport 'dart:typed_data';\n\n// npub/nsec/note (NIP-19): 5-bit conversion is NOT done by the package; convert yourself\nList<int> to5(List<int> b) { /* convertBits(b, 8, 5, pad: true) */ }\nfinal npub = const Bech32Codec().encode(Bech32('npub', to5(hexToBytes(pubHex))));\nfinal decoded = const Bech32Codec().decode(npub, 90); // maxLength param for long NIP-19 TLV / BOLT11\nfinal hrp = decoded.hrp; final data5 = decoded.data;",
+      "breaking_notes": "Unchanged since 2023 (BIP-173 only, no bech32m; optional maxLength for >90 chars). Stable because the spec is stable; used as a dependency by ndk ^0.2.2. Publisher mindshards.net (verified).",
+      "alternative": "package:ndk (includes Nip19 helpers) or copy the ~100-line bech32 implementation into NEFORUM (BSD/MIT) to avoid the dependency.",
+      "verified": true
+    },
+    {
+      "name": "web_socket_channel",
+      "latest_version": "3.0.3",
+      "published": "~2025-05 (pub.dev: '17 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:web_socket_channel/web_socket_channel.dart';\nimport 'package:web_socket_channel/status.dart' as status;\n\nfinal ch = WebSocketChannel.connect(Uri.parse('wss://relay.damus.io'));\ntry { await ch.ready; } on WebSocketChannelException catch (e) { /* connect failed */ }\nch.stream.listen((msg) => handle(jsonDecode(msg as String)), onDone: () => reconnect());\nch.sink.add(jsonEncode(['EVENT', event]));\nawait ch.sink.close(status.normalClosure);",
+      "breaking_notes": "3.0.0 (2024): WebSocketChannel() constructor removed, class is now an abstract interface, IOWebSocketChannel.ready throws WebSocketChannelException (not WebSocketException). 3.0.2 moved to dart-lang/http monorepo; 3.0.3 supports package:web_socket 1.0.0. No release in 17 months but first-party and stable.",
+      "alternative": "package:web_socket (dart.dev) is the lower-level successor; dart:io WebSocket directly on native.",
+      "verified": true
+    },
+    {
+      "name": "image",
+      "latest_version": "4.10.1",
+      "published": "~2026-09-14 (pub.dev: '23 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:image/image.dart' as img;\n\n// Async Command API runs on an isolate on native platforms\nFuture<void> resizeForUpload(String inPath, String outPath, {int maxEdge = 2048}) async {\n  final cmd = img.Command()\n    ..decodeImageFile(inPath)\n    ..bakeOrientation()\n    ..copyResize(width: maxEdge, maintainAspect: true) // width or height; aspect kept\n    ..encodeJpg(quality: 85)\n    ..writeToFile(outPath);\n  await cmd.executeThread();\n}\n// Sync: final im = img.decodeImage(bytes)!; final small = img.copyResize(im, width: 1024); final jpg = img.encodeJpg(small, quality: 85);",
+      "breaking_notes": "4.0.0 (2022-23): major API overhaul (ImageData for 1–32-bit, float formats, HDR+Animation merged into Image, Command API). 4.x minors are additive: 4.9 color-space precision, dithering; 4.10.0 lossy WebP encoding (quality/method) and faster lossless WebP; 4.10.1 WebP alpha fixes. Pure Dart: slow for large photos — always use Command.executeThread() or compute().",
+      "alternative": "flutter_image_compress (native libs, Android/iOS/macOS/Web; Windows limited) for speed on mobile.",
+      "verified": true
+    },
+    {
+      "name": "video_thumbnail",
+      "latest_version": "0.5.6",
+      "published": "~2025-05 (pub.dev: '17 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": false,
+        "windows": false,
+        "linux": false,
+        "web": false
+      },
+      "usage_snippet": "import 'package:video_thumbnail/video_thumbnail.dart';\nfinal path = await VideoThumbnail.thumbnailFile(video: videoPath, imageFormat: ImageFormat.JPEG, maxWidth: 512, quality: 80, timeMs: 1000);\nfinal bytes = await VideoThumbnail.thumbnailData(video: videoPath, imageFormat: ImageFormat.JPEG, maxWidth: 512);",
+      "breaking_notes": "Android/iOS only, unverified uploader, sporadic releases; iOS WebP generation is slow (libwebp). Not usable on macOS/Windows.",
+      "alternative": "fc_native_video_thumbnail 3.0.1 (~2026-06, flutter-cavalry.com verified): iOS/Android/macOS/Windows/Linux — final ok = await FcNativeVideoThumbnail().saveThumbnailToFile(srcFile: src, destFile: dest, width: 512, height: 512, quality: 90, at: 1000 /*ms, seeking not on Android file paths*/); or saveThumbnailToBytes(...). get_thumbnail_video 0.7.3 is a fork adding web but no desktop.",
+      "verified": true
+    },
+    {
+      "name": "mime",
+      "latest_version": "2.1.0",
+      "published": "~2026-08-29 (pub.dev: '39 days ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:mime/mime.dart';\nfinal header = await File(path).openRead(0, 64).first; // magic bytes beat extensions\nfinal type = lookupMimeType(path, headerBytes: header) ?? 'application/octet-stream'; // 'image/jpeg'\nfinal ext = extensionFromMime('image/jpeg'); // 'jpg'",
+      "breaking_notes": "2.0.0 (2024) dropped legacy APIs; 2.1.0 extends the extension map. tools.dart.dev verified.",
+      "alternative": "Not needed.",
+      "verified": true
+    },
+    {
+      "name": "timezone",
+      "latest_version": "0.11.1",
+      "published": "~2026-07 (pub.dev: '3 months ago'; IANA 2025c data)",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:timezone/data/latest_all.dart' as tzdata; // or latest.dart (~361KB, 75% smaller)\nimport 'package:timezone/timezone.dart' as tz;\nimport 'package:flutter_timezone/flutter_timezone.dart';\n\nFuture<void> initTz() async {\n  tzdata.initializeTimeZones();\n  final info = await FlutterTimezone.getLocalTimezone(); // TimezoneInfo since 5.0.0\n  tz.setLocalLocation(tz.getLocation(info.identifier)); // e.g. 'America/Detroit'\n}\nfinal when = tz.TZDateTime.from(pickedLocalDateTime, tz.local);\nfinal inNy = tz.TZDateTime(tz.getLocation('America/New_York'), 2026, 10, 7, 9, 30);",
+      "breaking_notes": "0.10 -> 0.11 (2026): data refresh and Dart 3 cleanups; no API changes. latest_all vs latest vs latest_10y variants; the 'latest' variant drops some historical/legacy zones.",
+      "alternative": "Not needed (labs.dart.dev).",
+      "verified": true
+    },
+    {
+      "name": "flutter_timezone",
+      "latest_version": "5.1.1",
+      "published": "2026-10-03",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:flutter_timezone/flutter_timezone.dart';\nfinal TimezoneInfo info = await FlutterTimezone.getLocalTimezone();\nfinal String iana = info.identifier;        // 'Europe/Berlin'\nfinal String? pretty = info.localizedName; // Android/iOS/macOS only\nfinal List<String> all = await FlutterTimezone.getAvailableTimezones();",
+      "breaking_notes": "Fork of flutter_native_timezone. 4.0.0: Android requires Java 17. 5.0.0 (2026): getLocalTimezone() returns TimezoneInfo (identifier + localizedName) instead of String — breaking. 5.1.1: equatable 3.x compatibility, plugin warning fix. Windows maps the Windows zone name to IANA.",
+      "alternative": "Not needed.",
+      "verified": true
+    },
+    {
+      "name": "uuid",
+      "latest_version": "4.6.0",
+      "published": "~2026-08 (pub.dev: '2 months ago')",
+      "supports": {
+        "android": true,
+        "ios": true,
+        "macos": true,
+        "windows": true,
+        "linux": true,
+        "web": true
+      },
+      "usage_snippet": "import 'package:uuid/uuid.dart';\nconst uuid = Uuid();\nfinal id = uuid.v4();  // random (crypto-secure RNG on all platforms)\nfinal sortable = uuid.v7(); // RFC 9562 time-ordered — good as a post/queue primary key\nfinal ok = Uuid.isValidUUID(fromString: id);",
+      "breaking_notes": "4.0.0 (2023): internal redesign, 'tries to be API compatible or similar to 3.x' (options maps -> typed config classes like V4Options); v6/v7/v8 added. 4.x minors additive; deps crypto ^3.0.0, fixnum ^1.1.0.",
+      "alternative": "Not needed.",
+      "verified": true
+    }
+  ],
+  "notes": [
+    "All versions/dates read from pub.dev on 2026-10-07; pub.dev shows relative dates ('N days ago'), so dates marked '~' are derived from that and may be off by a day or two. Only riverpod 3.x changelog dates, flutter_timezone 5.1.1 (2026-10-03) and Dart SDK dates (dart-lang/sdk CHANGELOG) are exact.",
+    "SDK floor: the strictest dependencies are tray_manager 0.7.0 (Flutter 3.47 / Dart 3.13) and go_router 18 / riverpod 3.4 / flutter_web_auth_2 6.0.0-alpha (Flutter 3.44 / Dart 3.12). Recommended pubspec: environment: sdk: ^3.13.0, flutter: '>=3.47.0'. Platform minimums implied by the set: Android minSdk 24 (flutter_secure_storage 10+, url_launcher, image_picker), compileSdk 36-37 (flutter_local_notifications 21+, flutter_secure_storage 10.2+), AGP >= 8.12.1 / Gradle 8.13 / Kotlin 2.2 (share_plus 12+), and AGP 9 for desktop_drop 0.8+; iOS 14 (file_picker 12+); macOS 10.15 (share_plus 13, flutter_local_notifications 21, tray_manager 0.6+); Windows 10 + WebView2 runtime (flutter_inappwebview_windows).",
+    "Background posting strategy: workmanager covers Android/iOS/macOS only (no stable Windows/Linux; macOS tasks only run while the app is alive). On Windows run the scheduler in-process behind window_manager setPreventClose + tray_manager + launch_at_startup. iOS periodic tasks are system-scheduled hints (>=15 min, ~30 s budget) — scheduled posts at exact times are unreliable on iOS; pair with flutter_local_notifications zonedSchedule so the user can tap to post if the background task did not fire. drift must be opened with DriftNativeOptions(shareAcrossIsolates: true) when the workmanager isolate touches the DB.",
+    "Hand-off/share-sheet: share_plus ShareParams(text, files, subject, sharePositionOrigin) is the current API; the deprecated Share.share/Share.shareXFiles still compile in 13.x. ShareResult.raw carries the chosen iOS activity id; Android returns success/dismissed only on API 22+ via chooser callback.",
+    "OAuth: oauth2 2.0.5 AuthorizationCodeGrant generates a PKCE code_verifier automatically (S256) when codeVerifier is omitted; flutter_web_auth_2 on Windows/Linux with useWebview:false binds HttpServer to 127.0.0.1:<port parsed from callbackUrlScheme> and accepts http://localhost:PORT or http://127.0.0.1:PORT (RFC 8252 loopback); on macOS/iOS/Android use a custom scheme such as 'neforum' (RFC 3986 scheme chars only — no underscores). Register the scheme in CFBundleURLTypes (iOS/macOS) and the CallbackActivity intent-filter (Android).",
+    "Embedded WebView route: flutter_inappwebview is the only Flutter WebView with Windows support, but its last stable (6.1.5) is ~2 years old and 6.2.0 has been in beta since 2024-11 (beta.3 ~2026-02). shouldInterceptRequest works on Android and Windows only; on iOS/macOS WKWebView you can only intercept via shouldOverrideUrlLoading, custom schemes, or injected JS. CookieManager works on all four target platforms. Treat it as a pinned, risk-accepted dependency.",
+    "Crypto for Nostr: pointycastle 4.0.0 has the secp256k1 curve (verified file lib/ecc/curves/secp256k1.dart in bcgit/pc-dart) but no Schnorr/BIP-340; bip340 0.3.1 (fiatjaf) supplies sign/verify/getPublicKey over hex strings and is what ndk uses; bech32 0.2.2 is 3 years old but spec-stable and sufficient for npub/nsec/note (do your own 8->5 bit conversion; pass maxLength for NIP-19 TLV entities). No bech32m support, which Nostr does not need.",
+    "Package choices to drop: local_notifier (unmaintained, superseded by flutter_local_notifications Windows/macOS/Linux support since 19.0.0); video_thumbnail (mobile-only) in favour of fc_native_video_thumbnail 3.0.1 which covers iOS/Android/macOS/Windows/Linux. image_picker on desktop is a thin wrapper over file_selector with no resize options — use file_picker 13 on desktop and image_picker only for mobile gallery/camera.",
+    "leanflutter packages (window_manager, tray_manager, launch_at_startup) are mid-migration to the nativeapi C++ core: tray_manager already made the jump in 0.6.0 (old API in legacy.dart); window_manager's README announces the same migration, so expect a breaking window_manager release soon.",
+    "UNVERIFIED (from recollection, not read today): Flutter 3.47.0 stable shipped mid/late August 2026 alongside Dart 3.13.0 (2026-08-12 is verified for Dart; the Flutter date is inferred). flutter_inappwebview 6.2.0 final had not shipped as of the pub.dev versions page read today. share_plus on Android returns ShareResultStatus.unavailable below API 22. workmanager iOS BGTaskScheduler identifiers must match the Dart taskName exactly and cannot be added at runtime (must be in Info.plist at build time). flutter_secure_storage on Windows (v10+) uses DPAPI to wrap a per-app key and stores values in a file under %APPDATA%; earlier (9.x) used the Windows Credential Manager with a 2.5KB-per-entry limit — the 10.x rewrite removed that limit. WebSearch quota in this session was exhausted (200/200), so no community-forum sources were consulted; the GitHub issue trackers were not read."
+  ]
+}

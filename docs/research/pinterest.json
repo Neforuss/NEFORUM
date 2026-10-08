@@ -1,0 +1,184 @@
+{
+  "platform": "Pinterest",
+  "verified_on": "2026-09-10",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Pinterest REST API v5 (OpenAPI spec version 5.28.0, base https://api.pinterest.com/v5)",
+    "docs_url": "https://developers.pinterest.com/docs/api/v5/pins-create/ (JS-rendered; the .md mirror https://developers.pinterest.com/docs/api/v5/pins-create.md and the OpenAPI JSON https://raw.githubusercontent.com/pinterest/api-description/main/v5/openapi.json are the readable sources)",
+    "auth": "OAuth 2.0 authorization-code grant (no PKCE in the official docs or OpenAPI securitySchemes). Authorize: GET https://www.pinterest.com/oauth/?client_id={app_id}&redirect_uri={exact registered URI}&response_type=code&scope=boards:read,boards:write,pins:read,pins:write,user_accounts:read&state={any}. Token: POST https://api.pinterest.com/v5/oauth/token with header 'Authorization: Basic base64(app_id:app_secret)' and Content-Type application/x-www-form-urlencoded, body grant_type=authorization_code&code=...&redirect_uri=... (plus continuous_refresh=true only for apps created before 2025-09-25). Response: {access_token, refresh_token (starts with 'pinr'), response_type, token_type:'bearer', expires_in:2592000, refresh_token_expires_in:5184000, refresh_token_expires_at:<unix>, scope}. Refresh: same endpoint, body grant_type=refresh_token&refresh_token=...&scope=... (optional scope). Sandbox tokens: insert '-sandbox' -> https://api-sandbox.pinterest.com/v5/oauth/token. The flow requires the app secret, so a local-first client must embed/let the user paste their own app secret (BYOK).",
+    "oauth_scopes": [
+      "pins:read",
+      "pins:write",
+      "boards:read",
+      "boards:write",
+      "user_accounts:read",
+      "pins:write_secret (secret pins)",
+      "boards:read_secret / boards:write_secret (secret boards)"
+    ],
+    "pkce_supported": false,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": false,
+    "endpoints": [
+      {
+        "purpose": "Create Pin (image, carousel or video)",
+        "method": "POST",
+        "url": "https://api.pinterest.com/v5/pins",
+        "request_shape": "JSON: {\"board_id\": \"<digits, required in practice>\", \"board_section_id\"?: \"<digits>\", \"title\"?: string(maxLength 100), \"description\"?: string(maxLength 800), \"alt_text\"?: string(maxLength 500), \"link\"?: string(maxLength 2048), \"dominant_color\"?: \"#6E7874\", \"parent_pin_id\"?: \"<digits>\", \"ai_disclosures\"?: {values:[...]}, \"media_source\": one of: {\"source_type\":\"image_url\",\"url\":\"https://...\"} | {\"source_type\":\"image_base64\",\"content_type\":\"image/jpeg\"|\"image/png\",\"data\":\"<base64, pattern ^[a-zA-Z0-9+/=]+$>\"} | {\"source_type\":\"multiple_image_urls\",\"items\":[{url,title?,description?,link?} x2-5],\"index\"?:int} | {\"source_type\":\"multiple_image_base64\",\"items\":[{content_type,data,...} x2-5]} | {\"source_type\":\"video_id\",\"media_id\":\"<from POST /media>\",\"cover_image_url\"?:string,\"cover_image_content_type\"?:\"image/jpeg\"|\"image/png\",\"cover_image_data\"?:base64,\"cover_image_key_frame_time\"?:int}}. Optional query ?ad_account_id=.",
+        "response_shape": "200/201 Pin object: {id, created_at, link, title, description, alt_text, board_id, board_section_id, board_owner, is_owner, media{...}, parent_pin_id, is_standard, has_been_promoted, note, creative_type, is_removable, pin_metrics, dominant_color, ai_disclosures}. Errors: {code:int, message:string} with 400/401/403/404/429.",
+        "notes": "OpenAPI security lists boards:read, boards:write, pins:read, pins:write; a 2026-04 forum thread confirms the API rejects pin creation without boards:write ('Missing: [boards:write]') even though prose docs only mention pins:write. Rate-limit category org_write (x-ratelimit-category). Sandbox: enabled. Only image/jpeg and image/png are allowed for image_base64 (ContentType enum); GIF/WebP must go via image_url."
+      },
+      {
+        "purpose": "Register video upload (step 1 of video pin)",
+        "method": "POST",
+        "url": "https://api.pinterest.com/v5/media",
+        "request_shape": "JSON {\"media_type\": \"video\"} (only enum value)",
+        "response_shape": "{media_id, media_type:'video', upload_url:'https://pinterest-media-upload.s3-accelerate.amazonaws.com/', upload_parameters:{'Content-Type','key','policy','x-amz-algorithm','x-amz-credential','x-amz-date','x-amz-security-token','x-amz-signature'}}",
+        "notes": "Scopes pins:read, pins:write; category org_write. Step 2: multipart/form-data POST to upload_url with every upload_parameters key/value as form fields plus the file as field 'file'. Step 3: poll GET /v5/media/{media_id} until status == succeeded. Step 4: POST /v5/pins with media_source.source_type=video_id, media_id, and cover_image_url (forum 2025-10: cover image is effectively required; omitting it yields a misleading 401)."
+      },
+      {
+        "purpose": "Poll media processing status",
+        "method": "GET",
+        "url": "https://api.pinterest.com/v5/media/{media_id}",
+        "request_shape": "none",
+        "response_shape": "{media_id, media_type, status: registered|processing|succeeded|failed}",
+        "notes": "scope pins:read; category org_read"
+      },
+      {
+        "purpose": "List boards (needed to pick board_id)",
+        "method": "GET",
+        "url": "https://api.pinterest.com/v5/boards",
+        "request_shape": "query: bookmark, page_size, privacy",
+        "response_shape": "{items:[{id,name,description,privacy,...}], bookmark}",
+        "notes": "scope boards:read; category org_read (Trial 1000/day/app)"
+      },
+      {
+        "purpose": "Create board",
+        "method": "POST",
+        "url": "https://api.pinterest.com/v5/boards",
+        "request_shape": "{name (required), description?, privacy?: PUBLIC|PROTECTED|SECRET, is_ads_only?}",
+        "response_shape": "Board object",
+        "notes": "scope boards:write; category org_write"
+      },
+      {
+        "purpose": "Get current user",
+        "method": "GET",
+        "url": "https://api.pinterest.com/v5/user_account",
+        "request_shape": "none",
+        "response_shape": "{username, account_type, profile_image, ...}",
+        "notes": "scope user_accounts:read; category org_read"
+      },
+      {
+        "purpose": "Exchange code / refresh token",
+        "method": "POST",
+        "url": "https://api.pinterest.com/v5/oauth/token",
+        "request_shape": "x-www-form-urlencoded; Basic auth app_id:app_secret; grant_type=authorization_code|refresh_token; code; redirect_uri; refresh_token; scope?; continuous_refresh? (string 'true', pre-2025-09-25 apps only)",
+        "response_shape": "OauthAccessToken {access_token, expires_in, refresh_token, refresh_token_expires_in, refresh_token_expires_at, response_type, scope, token_type}",
+        "notes": "Grant types enum: authorization_code, refresh_token, client_credentials (client_credentials uses v3 token URL and is for Pinterest-internal/partner use)."
+      }
+    ],
+    "free_tier": "The API itself has no pricing; everything is free. Trial access (granted after a human review of the 'Connect app' form, 'reviewed each business day'): universal cap 1000 requests/day/app; org_write category (pins create, boards create, media register) = 300 requests/day/app; org_read = 1000/day/app. Crucially, Pins and Boards created under Trial are 'only visible to their creator as Sandbox entities' (not public). Numbers read on developers.pinterest.com/docs/reference/rate-limits.md and /docs/key-concepts/access-tiers.md on 2026-10-07.",
+    "paid_tiers": "None. Standard access is free but requires a manual upgrade review (video demo of the OAuth flow + a live API action, accessible privacy policy, clear app description). Standard limits: universal 100 req/s/user/app; org_write 100 req/min/user/app; org_read 1000 req/min/user/app. Higher limits only by filing a support ticket.",
+    "rate_limits": "Headers x-ratelimit-limit, x-ratelimit-remaining, x-ratelimit-reset on every response; 429 when exceeded. Trial: per day per app (1000 universal, 300 org_write). Standard: per minute per user per app (org_write 100/min, org_read 1000/min) plus 100 req/s universal. Rate limits 'subject to change without notice'.",
+    "app_review_required": "Yes, twice. (1) Trial: you must fill the Connect-app request form (app name, description, website/privacy policy) and wait for approval; app secret is not shown while pending; API calls from a pending/denied app reportedly return 401 'Your application consumer type is not supported'. Community reports in 2025-2026 of Trial being pending >1 week or denied without reason. (2) Standard: upload a screen recording showing your app sending a user through OAuth and performing an API action; 'reviewed regularly', community reports 5-10 business days up to ~2-4 weeks, with repeat rejections common when the video lacks the auth flow.",
+    "unreviewed_app_restrictions": "An app that is merely created but not yet Trial-approved cannot call the API at all (no app secret, 401). A Trial-approved app can call everything but every Pin/Board it creates is private to the creating account (sandbox entity), so cross-posting is invisible to followers until Standard access is granted. Trial is also capped at 300 writes/day/app and 1000 calls/day/app.",
+    "personal_profile_posting": false,
+    "account_requirements": "The app must be owned by a Pinterest business account ('Login or create a business account. This is the account you will use to administer your app.'); the FAQ states apps linked to personal accounts 'will no longer see the app in the Developer Portal' and you must convert to a business account. Converting a personal account to business is free and keeps the profile. The authorizing end user (the account being posted to) must also complete OAuth; secret pins/boards need the *_secret scopes.",
+    "media_upload_flow": "Images: no upload endpoint; send either a public image_url (JPEG/PNG/GIF/WebP accepted by the Pin builder per help docs; up to 20 MB on web per help.pinterest.com pin specs) or image_base64 with content_type image/jpeg or image/png inline in POST /v5/pins (the base64 blob counts toward the JSON body). Carousel: 2-5 items via multiple_image_urls or multiple_image_base64. Video: POST /v5/media {media_type:'video'} -> multipart POST file + upload_parameters to the returned S3 upload_url -> poll GET /v5/media/{id} until 'succeeded' -> POST /v5/pins with source_type 'video_id', media_id and cover_image_url/cover_image_data. Help-center video specs: MP4/M4V (MOV on mobile), H.264/H.265, 4 s to 5 min (older third-party docs say 15 min / 2 GB), 9:16 recommended.",
+    "token_lifetime_and_refresh": "Access token: expires_in 2592000 s (30 days). Continuous refresh token: 60 days (refresh_token_expires_in 5184000), refreshable indefinitely; each refresh returns a new continuous refresh token. Legacy 365-day refresh tokens cannot be generated since 2025-09-25; apps created on/after that date get continuous tokens automatically, older apps must pass continuous_refresh=true. Pinterest says do not hard-code lifetimes; use the timestamps in the response. A Token Debugger exists at developers.pinterest.com/docs/developer-tools/token-debugger/.",
+    "server_side_scheduling": "None. Pinterest has no 'publish at' field in POST /v5/pins; scheduling must be done client-side. Developer Guidelines additionally require that 'if your app allows end users to schedule Pin publishing, the end user must choose each Pin to be published' and prohibit features that 'automatically initiate actions without specifically considering each action'."
+  },
+  "handoff": {
+    "web_intent_url": "https://www.pinterest.com/pin/create/button/",
+    "web_intent_params": "url=<encoded destination/landing page URL> & media=<encoded direct image URL, required for a specific image> & description=<encoded text, up to 500 characters per the Save-button docs> (optional: method=button, is_video=true are used by Pinterest's own widget JS but are not documented). Example: https://www.pinterest.com/pin/create/button/?url=https%3A%2F%2Fexample.com%2Fpost&media=https%3A%2F%2Fexample.com%2Fimg.jpg&description=My%20caption . If the user is logged out they get a login/join interstitial first, then the Pin builder prefilled with image, description and link; title is not prefillable. 'media' must be a publicly reachable image URL, so a local-only image cannot be handed off this way.",
+    "android_share": "Intent.ACTION_SEND to package 'com.pinterest' (official Pinterest app; package name from general knowledge, Play listing could not be fetched). type 'image/*' with EXTRA_STREAM content:// URI opens Pinterest's pin creation with the image; type 'text/plain' with EXTRA_TEXT=URL opens its link-save flow. There is no supported Android SDK (the old PDK is dead; Pinterest community moderator, 2025-12: 'Pinterest doesn't have a full Android SDK... Share via Intent (user-initiated, no automation)'). Description/title cannot be reliably prefilled via extras (EXTRA_TEXT is treated as the link). Use Flutter share_plus with a target package or an android_intent_plus intent.",
+    "ios_share": "Use the system share sheet (UIActivityViewController via share_plus) with a UIImage/file URL and/or URL; the Pinterest app (App Store id 429047995, seller Pinterest, Inc.) ships a Share Extension that accepts images and web URLs and opens its pin editor. No public create-pin URL scheme exists; the old PDK scheme (pdk<appId> / pin<clientId>) is defunct. Opening https://www.pinterest.com/pin/create/button/?... in Safari works as a fallback (Universal Links may route it into the app).",
+    "desktop": "Launch the default browser at https://www.pinterest.com/pin/create/button/?url=...&media=...&description=... (url_launcher). Requires the image to be hosted; otherwise open https://www.pinterest.com/pin-builder/ (unverified prefill) and let the user upload manually.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": true,
+    "notes": "Prefilled media only via a public image URL on the web route; on mobile the share sheet carries the actual file. Description max 500 chars on the web route versus 800 via API."
+  },
+  "media_limits": {
+    "images_per_post": 5,
+    "image_formats": "API image_base64: image/jpeg, image/png only. API image_url: any Pinterest-supported image (help center lists BMP, JPEG, PNG, TIFF, WEBP; GIF accepted by image_url per third-party docs). Recommended 2:3 (1000x1500); min ~100x100 (third-party).",
+    "image_max_bytes": 20971520,
+    "video": "Via POST /v5/media + S3 upload. Help-center specs: MP4/M4V (also MOV on mobile), H.264/H.265, 4 s min, 5 min max, 9:16 or 2:3/1:1 etc. Third-party API docs still cite 15 min / 2 GB (unverified against current API). Cover image strongly recommended/required (cover_image_url or cover_image_data).",
+    "aspect_ratio": "Recommended 2:3 (1000x1500 px); 9:16 (1080x1920) for video; other ratios accepted but cropped in feed.",
+    "alt_text": true
+  },
+  "text_limits": {
+    "max_chars": 800,
+    "title_max": 100,
+    "hashtags_max": 0,
+    "counting_rule": "OpenAPI maxLength is applied to the JSON string, i.e. counted in Unicode code points/characters, not bytes or weighted; no documented grapheme rule. title 100, description 800, alt_text 500, link 2048 (all nullable). The Save-button hand-off route caps description at 500.",
+    "notes": "A Pin has separate title, description, alt_text and link fields; there is no single 'post text'. Hashtags are plain text inside description (no documented cap). Carousel items each carry their own optional title/description/link."
+  },
+  "gotchas": [
+    "Trial access is NOT a usable publishing tier: every Pin/Board created under Trial is a sandbox entity 'only visible to their creator'. Users must get Standard access (video review) before cross-posts are public. Each NEFORUM user bringing their own app would have to pass this review themselves (verified on access-tiers.md and a 2026-04 forum thread).",
+    "Trial-tier writes are capped at 300/day/app (org_write) and 1000 calls/day/app overall; Standard is 100 writes/min/user/app.",
+    "App owner must be a business account; apps linked to personal accounts disappear from the developer portal (official FAQ). The user being posted to must also authorize via OAuth.",
+    "Even Trial requires a human review of the Connect-app form ('reviewed each business day'); while pending the app secret is hidden and calls return 401. 2025-2026 forum threads report multi-week waits and denials without explanation.",
+    "OAuth token exchange requires the app secret via HTTP Basic auth and there is no PKCE, so a distributed desktop/mobile client cannot keep the secret confidential; BYOK (user pastes own app id/secret) is the only guideline-compliant local-first option. Developer Guidelines: 'Keep your API access credentials private... do not allow anyone else to use yours.'",
+    "Redirect URI must match a registered URI exactly and 'must not cause the responding server to send a secondary redirect'. Pinterest's own api-quickstart registers http://localhost:8085/ (verified), so plain-HTTP loopback works; 127.0.0.1 and custom schemes (neforum://) are undocumented. For mobile, run a loopback listener or use an https page that relays the code.",
+    "POST /v5/pins needs boards:write in addition to pins:write (error 'Missing: [boards:write]', 2026-04 thread) although prose docs only list pins:write.",
+    "Video pins: omitting cover_image_url returns a misleading 401 instead of 400 (2025-10 thread); always send a cover image. Poll GET /v5/media/{id} for status 'succeeded' before creating the pin.",
+    "image_base64 accepts only image/jpeg and image/png (ContentType enum); GIF/WebP must be provided through a public image_url.",
+    "Legacy 365-day refresh tokens are gone since 2025-09-25; store refresh_token_expires_at and refresh before 60 days or the user must re-authorize.",
+    "Developer Guidelines require the end user to choose each Pin to be published and forbid bulk/automatic initiation; design the UI so each cross-post is an explicit user action.",
+    "Sandbox base URL api-sandbox.pinterest.com (token lasts 30 days) is handy for CI tests; pins there are private to the account.",
+    "The web hand-off requires a publicly hosted image; description there is capped at 500 chars and title cannot be prefilled. Logged-out users hit a login wall first.",
+    "Pinterest's docs site is a JS app; fetch the .md mirrors (e.g. /docs/reference/rate-limits.md) or the OpenAPI JSON for machine-readable content."
+  ],
+  "sources": [
+    "https://raw.githubusercontent.com/pinterest/api-description/main/v5/openapi.json (v5.28.0; PinCreate, PinMediaSource*, MediaUpload*, OauthAccessToken*, securitySchemes, x-ratelimit-category)",
+    "https://developers.pinterest.com/docs/api/v5/pins-create.md",
+    "https://developers.pinterest.com/docs/reference/rate-limits.md",
+    "https://developers.pinterest.com/docs/key-concepts/access-tiers/ and .md",
+    "https://developers.pinterest.com/docs/getting-started/ (Connect app, redirect URI exact-match rule, business account)",
+    "https://developers.pinterest.com/docs/getting-started/set-up-authentication-and-authorization/ (OAuth URLs, params, token lifetimes, continuous refresh)",
+    "https://developers.pinterest.com/docs/developer-tools/sandbox/",
+    "https://developers.pinterest.com/docs/web-features/buttons/ (Save button href, url/media/description, 500-char description)",
+    "https://policy.pinterest.com/en/developer-guidelines (scheduling, consent, credential rules)",
+    "https://help.pinterest.com/article/review-pin-specs (title 100 / description 800, 20 MB images, video 4 s-5 min)",
+    "https://community.pinterest.biz/t/frequently-asked-questions-pinterest-api/2083 (business account requirement, sandbox)",
+    "https://community.pinterest.biz/t/stuck-in-trial-mode-pins-not-showing-publicly/44410 (2026-04)",
+    "https://community.pinterest.biz/t/boards-write-permission-is-required-when-creating-pins/44201 (2026-04)",
+    "https://community.pinterest.biz/t/401-unauthorized-on-v5-pin-creation-with-video-id-but-image-url-works/39679 (2025-10)",
+    "https://community.pinterest.biz/t/pinterest-developer-monthly-newsletter-april-2025/31158 and .../september-2025/39425 (refresh-token deprecation)",
+    "https://community.pinterest.biz/t/can-i-use-an-app-that-uploads-automatically-in-pinterest/39140 (2025-09)",
+    "https://community.pinterest.biz/t/how-to-integrate-pinterest-to-my-android-app/41351 (2025-12)",
+    "https://community.make.com/t/pinterest-trial-access-vs-standard-access/50622 (2024)",
+    "https://github.com/pinterest/api-quickstart (http://localhost:8085/ redirect)",
+    "https://github.com/bstoilov/py3-pinterest and /issues",
+    "https://github.com/seregazhuk/php-pinterest-bot (archived 2020)",
+    "https://docs.postiz.com/providers/pinterest.md (localhost redirect examples)",
+    "https://www.blotato.com/blog/pinterest-api-pricing (2026-09-10)",
+    "https://apps.apple.com/us/app/pinterest/id429047995"
+  ],
+  "unverified_claims": [
+    "Android package name 'com.pinterest' and that its ACTION_SEND handler accepts image/* with EXTRA_STREAM and text/plain URLs: well-known but the Play Store listing could not be fetched this session.",
+    "iOS: existence of a 'pinterest://' URL scheme for deep links (pin/board/user) and absence of any create-pin scheme; only the defunct PDK scheme (pdk<appId>) was found in sources.",
+    "Whether http://127.0.0.1:PORT/callback (as opposed to http://localhost:8085/) and custom schemes like neforum://callback are accepted in the app's Redirect URIs field; docs only say exact match, no secondary redirect.",
+    "401 message 'Your application consumer type is not supported' for pending/denied Trial apps: seen only in search summaries of forum threads that returned 403/410 when fetched.",
+    "Video limits of 15 minutes / 2 GB via the API (third-party scheduler docs) versus the help-center 5-minute limit for the consumer Pin builder.",
+    "Undocumented Save-button query params method=button and is_video=true, and whether https://www.pinterest.com/pin-builder/ accepts any prefill parameters.",
+    "Ayrshare's 2026-08 article claims v5 'requires PKCE' and 1-hour access tokens; this contradicts the official auth docs (no PKCE, expires_in 2592000) and is treated as wrong.",
+    "Blotato's claim that Trial approval is 'immediate' contradicts official 'reviewed each business day' and 2025-2026 forum reports of multi-week waits.",
+    "Whether Pinterest actively bans accounts driven through an embedded WebView with the user's own cookies (vs. pure HTTP mimicry): forum guidance only says non-partner automation 'may risk violating policies' and that bulk/bot-like pinning triggers suspension."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Log the user into www.pinterest.com inside an in-app WebView (flutter_inappwebview / webview_flutter), then either (a) navigate to https://www.pinterest.com/pin-builder/ and drive the form via injected JS, or (b) reuse the session cookies (_pinterest_sess, csrftoken) to call the internal web endpoints the unofficial libraries use, e.g. POST https://www.pinterest.com/resource/PinResource/create/ with X-CSRFToken and the JSON 'options' payload, uploading images through the newer S3 pre-signed upload flow. These endpoints are undocumented and change without notice (py3-pinterest had to replace /upload-image/ with an S3 flow in its v2.0.0).",
+    "known_libraries": [
+      "bstoilov/py3-pinterest (Python, Selenium-based login, still receiving issues in 2026, uses internal PinResource endpoints)",
+      "seregazhuk/php-pinterest-bot (PHP, archived 2020-12-30)",
+      "tuxado/php-pinterest-bot (fork)",
+      "Apify Pinterest Poster actor (commercial scraper/poster)"
+    ],
+    "risk": "High. Developer Guidelines forbid soliciting or collecting login credentials and acting outside OAuth; Pinterest's own staff only vouch for approved partners and community reports from 2025 describe automated spam detection suspending accounts for 'bot-like' bulk pinning, with weak appeal paths. Library READMEs themselves warn 'to avoid being banned by Pinterest, do not aggressively pin'. Also fragile: Google/Facebook social login often fails inside WebViews, CAPTCHAs and 2FA break scripted sessions, and internal endpoints change silently."
+  },
+  "confidence": "medium"
+}

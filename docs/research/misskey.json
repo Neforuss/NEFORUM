@@ -1,0 +1,196 @@
+{
+  "platform": "Misskey (and Misskey-API forks: Sharkey, CherryPick; legacy Firefish / Iceshrimp-JS; NOT Iceshrimp.NET)",
+  "verified_on": "2026-10-07",
+  "recommended_tiers": [
+    "open_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Misskey API (per-instance, https://{host}/api/*)",
+    "docs_url": "https://misskey-hub.net/en/docs/for-developers/api/ (token: /token/, MiAuth: /token/miauth/, OAuth: /token/oauth/, permissions: /permission/; live per-server reference at https://{host}/api-doc)",
+    "auth": "Three routes, all free and all available to ANY unregistered client (no developer portal, no app review): (1) USER-GENERATED TOKEN: user opens Misskey Web > Settings > API > 'Generate access token', picks permissions, pastes the 32-char token into NEFORUM. Simplest; recommended default. (2) MiAuth (v12.27.0+; features.miauth=true on every Misskey/Sharkey instance queried): app generates a fresh UUID v4 session id and opens https://{host}/miauth/{uuid}?name=NEFORUM&icon={https icon url}&callback={url}&permission=write:notes,write:drive (permission list is COMMA-separated; unknown scopes are silently dropped by the frontend). User approves; the browser is redirected to callback with ?session={uuid} appended (miauth.vue: cbUrl.searchParams.set('session', props.session); window.location.href = cbUrl). Then app calls POST https://{host}/api/miauth/{uuid}/check (empty body) -> {ok:true, token:'...', user:{...}} on first call (token.fetched set true), {ok:false} afterwards or for unknown sessions (verified live against misskey.io: bogus uuid -> {\"ok\":false}). No client registration, no client secret, no expiry. (3) OAuth 2.0 (v2023.9.0+): RFC 8414 metadata at GET https://{host}/.well-known/oauth-authorization-server (verified live on misskey.io and on Sharkey transfem.social: authorization_endpoint=https://{host}/oauth/authorize, token_endpoint=https://{host}/oauth/token, grant_types_supported=[authorization_code], code_challenge_methods_supported=[S256], scopes space-separated). client_id MUST be an HTTPS URL you host (JSON client-metadata document, v2026.3.0+, or an HTML page with h-app microformats / Link: rel=redirect_uri headers); redirect_uri must EXACTLY match one in that discovered list. Token response {access_token, token_type:'Bearer', scope}; no refresh token. Only useful if you want a branded consent page; MiAuth is strictly simpler for a local-first app. Legacy app flow (app/create -> auth/session/generate -> auth/session/userkey -> i = sha256(accessToken+appSecret)) still exists in develop but is unnecessary. Calling the API: every endpoint is POST with a JSON body; token goes either in header 'Authorization: Bearer {token}' or as body field \"i\" (ApiCallService: header checked first, then body.i). Error shape: {error:{message, code, id, kind, info?}}; e.g. PERMISSION_DENIED (kind 'permission', token lacks scope), YOUR_ACCOUNT_SUSPENDED, RATE_LIMIT_EXCEEDED (HTTP 429 + Retry-After header, since v2024.7.0). Unauthenticated notes/create returns HTTP 401 (verified live).",
+    "oauth_scopes": [
+      "write:notes",
+      "write:drive",
+      "read:account",
+      "read:drive (optional, to list/re-use existing drive files)"
+    ],
+    "pkce_supported": true,
+    "custom_scheme_redirect_ok": true,
+    "desktop_loopback_redirect_ok": true,
+    "unreviewed_app_restrictions": "None. There is no app registration, review, or audit on Misskey. A user token or MiAuth token has exactly the scopes granted; only instance-level role policies (rateLimitFactor, canPublicNote, driveCapacityMb, maxFileSizeMb, uploadableFileTypes, scheduledNoteLimit) and per-endpoint rate limits apply, identical for every client including the official web UI.",
+    "personal_profile_posting": true,
+    "account_requirements": "Any ordinary account on any instance. No business/professional/developer account concept exists. Tokens are issued by the user themself (Settings > API) or by MiAuth consent; moved accounts cannot post (notes/create prohibitMoved:true).",
+    "app_review_required": "No",
+    "free_tier": "Entire API is free; limits are per-user per-instance: notes/create 300 per rolling hour, drive/files/create 120 per rolling hour (values from misskey-dev/misskey develop branch read 2026-10-07; multiplied by role policy rateLimitFactor, default 1).",
+    "paid_tiers": "None platform-wide (some instances sell roles with higher drive capacity / file size, e.g. misskey.io reports maxFileSizeMb=500, driveCapacityMb=10240 for the default role).",
+    "rate_limits": "notes/create: limit {duration: 1 hour, max: 300} keyed by user id. drive/files/create: {duration: 1 hour, max: 120}. Exceeding -> HTTP 429 {error:{code:'RATE_LIMIT_EXCEEDED', id:'d5826d14-3982-4d2e-8011-b9e9f02499ef', info:{...}}} with Retry-After seconds header. Unauthenticated calls are IP-rate-limited (hashed IP) when enableIpRateLimit is on.",
+    "token_lifetime_and_refresh": "User-generated and MiAuth tokens never expire and have no refresh mechanism; they live until the user revokes them (Settings > API / Settings > Apps). OAuth 2.0 access tokens likewise have no refresh_token (grant_types_supported=[authorization_code] only). v2023.12.1 reorganized permission names, so very old tokens may need re-issuing.",
+    "media_upload_flow": "Two-step: (1) POST https://{host}/api/drive/files/create as multipart/form-data with fields: file (the binary; Fastify multipart with limits.files=1, so ONE file per request; field name is not checked, first file part is taken), i (token, or use Authorization: Bearer), name (optional, defaults to uploaded filename), comment (alt text, max 512 chars, DB_MAX_IMAGE_COMMENT_LENGTH), isSensitive (bool, default false), force (bool, default false: if false and an identical file already exists in the user's drive, the existing DriveFile is returned instead of a duplicate), folderId (nullable). Response: DriveFile object (use .id). Errors: HTTP 413 (empty body) when the part exceeds the instance's config maxFileSize (default 262144000 bytes = 250 MiB; misskey.io reports 524288000, Sharkey transfem.social 2097152000), MAX_FILE_SIZE_EXCEEDED (role policy maxFileSizeMb, default 30 MB; misskey.design reports 50, misskey.io 500, transfem.social 1000), NO_FREE_SPACE (driveCapacityMb, default 100 MB), UNALLOWED_FILE_TYPE (policy uploadableFileTypes default ['text/*','application/json','image/*','video/*','audio/*']), INAPPROPRIATE (sensitive-media detector), INVALID_FILE_NAME. (2) Pass the ids in notes/create as fileIds (1..16 items). Read /api/meta first to show the user the real limits: maxFileSize (bytes, config level), policies.maxFileSizeMb, policies.driveCapacityMb, policies.uploadableFileTypes.",
+    "server_side_scheduling": "Yes, since Misskey 2025.10.0 (scheduled notes) with role policy scheduledNoteLimit (default 1 pending scheduled note; mi.yumechi.jp reports 1). The exact notes/create parameter name for scheduling was not confirmed in the develop create.ts read (see unverified_claims); treat as optional and feature-detect via /api/meta version >= 2025.10.0.",
+    "endpoints": [
+      {
+        "purpose": "Instance capabilities and limits (call before composing)",
+        "method": "POST",
+        "url": "https://{host}/api/meta",
+        "request_shape": "{\"detail\": false}  (no auth needed)",
+        "response_shape": "{version, name, uri, maxNoteTextLength, maxFileSize, mediaProxy, policies:{maxFileSizeMb, driveCapacityMb, uploadableFileTypes, rateLimitFactor, canPublicNote, scheduledNoteLimit, ...}, features:{miauth:true, localTimeline, registration, ...} (features only when detail:true)}",
+        "notes": "Verified live 2026-10-07: misskey.io 2025.4.1-io.12b -> maxNoteTextLength 3000, maxFileSize 524288000, maxFileSizeMb 500; misskey.design 2026.9.1 -> 3000 / 262144000 / 50; Sharkey transfem.social 2025.4.7 -> maxNoteTextLength 100000, maxFileSize 2097152000, maxFileSizeMb 1000; Misskey fork mi.yumechi.jp 2025.12.2 -> 6000. Never hard-code 3000."
+      },
+      {
+        "purpose": "Start MiAuth consent (open in system browser / ASWebAuthenticationSession / Custom Tab)",
+        "method": "GET",
+        "url": "https://{host}/miauth/{uuid}?name=NEFORUM&icon={https_icon_url}&callback={url-encoded callback}&permission=write:notes,write:drive",
+        "request_shape": "Query params only; uuid freshly generated per attempt, never reused. callback may be http://127.0.0.1:PORT/callback or neforum://callback (frontend only blocks javascript:, file:, data:, mailto:, tel:, vbscript:). If callback omitted the page just shows success and the app must poll /check.",
+        "response_shape": "Browser redirect to {callback}?session={uuid}",
+        "notes": "Scopes are comma-separated here (space-separated in OAuth). Unknown scopes are dropped client-side; the resulting token stores whatever was accepted."
+      },
+      {
+        "purpose": "Exchange MiAuth session for token",
+        "method": "POST",
+        "url": "https://{host}/api/miauth/{uuid}/check",
+        "request_shape": "empty body (or {}), no auth",
+        "response_shape": "{\"ok\": true, \"token\": \"32-char string\", \"user\": {id, username, host:null, name, avatarUrl, ...}} or {\"ok\": false}",
+        "notes": "First successful check flips token.fetched=true; subsequent checks of the same session return ok:false, so persist the token immediately. HTTP 200 in both cases."
+      },
+      {
+        "purpose": "OAuth 2.0 server metadata (optional route)",
+        "method": "GET",
+        "url": "https://{host}/.well-known/oauth-authorization-server",
+        "request_shape": "none",
+        "response_shape": "{issuer, authorization_endpoint:'https://{host}/oauth/authorize', token_endpoint:'https://{host}/oauth/token', scopes_supported:[...], response_types_supported:['code'], grant_types_supported:['authorization_code'], code_challenge_methods_supported:['S256'], authorization_response_iss_parameter_supported:true, (newer) introspection_endpoint, userinfo_endpoint}",
+        "notes": "Verified live on misskey.io and Sharkey transfem.social. Authorize: GET {authorization_endpoint}?client_id={https URL of your client metadata}&response_type=code&redirect_uri=...&scope=write:notes%20write:drive&code_challenge=...&code_challenge_method=S256&state=... ; Token: POST {token_endpoint} (application/x-www-form-urlencoded or JSON) grant_type=authorization_code&client_id&redirect_uri&code&code_verifier -> {access_token, token_type:'Bearer', scope}. Code is single-use, 5-minute TTL. Requires NEFORUM to host an HTTPS client-metadata page, so MiAuth is preferred."
+      },
+      {
+        "purpose": "Upload one media file to the user's Drive",
+        "method": "POST",
+        "url": "https://{host}/api/drive/files/create",
+        "request_shape": "multipart/form-data: file=<binary>; i=<token> (or Authorization: Bearer); name?=string; comment?=string (alt text, <=512); isSensitive?=true|false; force?=true|false; folderId?=misskey:id",
+        "response_shape": "DriveFile {id, createdAt, name, type, md5, size, isSensitive, blurhash, properties:{width,height}, url, thumbnailUrl, comment, folderId, userId}",
+        "notes": "Requires write:drive. 120/hour. One file per request. 413 with empty body if over instance maxFileSize; JSON errors MAX_FILE_SIZE_EXCEEDED (id f9e4e5f3-4df4-40b5-b400-f236945f7073), NO_FREE_SPACE (c6244ed2-a39a-4e1c-bf93-f0fbd7764fa6), UNALLOWED_FILE_TYPE (bd71c601-f9b0-4808-9137-a330647ced9b), INAPPROPRIATE, INVALID_FILE_NAME. Multipart booleans arrive as strings; send 'true'/'false'."
+      },
+      {
+        "purpose": "Create a note (post)",
+        "method": "POST",
+        "url": "https://{host}/api/notes/create",
+        "request_shape": "application/json: {\"i\": token (or Bearer header), \"text\": string|null (1..maxNoteTextLength), \"cw\": string|null (1..100), \"visibility\": \"public\"|\"home\"|\"followers\"|\"specified\" (default public), \"visibleUserIds\": [misskey:id] (for specified), \"fileIds\": [misskey:id] (1..16), \"localOnly\": bool (default false; do not federate), \"replyId\": id|null, \"renoteId\": id|null (quote when text also given), \"channelId\": id|null, \"reactionAcceptance\": null|'likeOnly'|'likeOnlyForRemote'|'nonSensitiveOnly'|'nonSensitiveOnlyForLocalLikeOnlyForRemote', \"noExtractMentions\"/\"noExtractHashtags\"/\"noExtractEmojis\": bool (default false), \"poll\": {choices:[2..10 strings of 1..50 chars], multiple:bool, expiresAt?:int ms epoch, expiredAfter?:int ms}|null}",
+        "response_shape": "{\"createdNote\": Note {id, createdAt, userId, user, text, cw, visibility, localOnly, fileIds, files, uri?, url?, ...}}  -> public URL is https://{host}/notes/{id}",
+        "notes": "Requires write:notes. 300/hour. If renoteId, fileIds, mediaIds and poll are all absent, text is required and must match /[^\\s]+/. text and cw have minLength 1: send null, never \"\". Errors: NO_SUCH_FILE, CONTAINS_PROHIBITED_WORDS, CONTAINS_TOO_MANY_MENTIONS, YOU_HAVE_BEEN_BLOCKED, NO_SUCH_CHANNEL, NO_SUCH_RENOTE_TARGET, NO_SUCH_REPLY_TARGET, CANNOT_RENOTE_DUE_TO_VISIBILITY, etc. Role policy canPublicNote=false forces non-public visibility."
+      },
+      {
+        "purpose": "Legacy app auth (pre-v12.27 instances only)",
+        "method": "POST",
+        "url": "https://{host}/api/app/create  ->  /api/auth/session/generate  ->  /api/auth/session/userkey",
+        "request_shape": "app/create {name, description, permission:[...], callbackUrl?} (no auth) -> {secret}; auth/session/generate {appSecret} -> {token, url}; auth/session/userkey {appSecret, token} -> {accessToken, user}",
+        "response_shape": "Final request token i = hex(sha256(accessToken + appSecret))",
+        "notes": "Still present in develop (requireCredential:false) but superseded; only implement if you want to support ancient instances."
+      }
+    ]
+  },
+  "handoff": {
+    "web_intent_url": "https://{host}/share",
+    "web_intent_params": "text (body), title (prepended as \"[ title ]\\n\"), url (appended at end, normalized via URL()), visibility=public|home|followers|specified, localOnly=0|1, visibleUserIds=comma,separated,ids, visibleAccts=comma,separated,@user@host, replyId, replyUri (remote AP URL), renoteId, renoteUri, fileIds=comma,separated,drive,file,ids (files must ALREADY be in the user's Drive; the page calls drive/files/show for each). All optional. Requires the user to be logged in to that instance in the browser. On success the page posts window message 'misskey:shareForm:shareCompleted' to its opener/parent and shows close/redirect buttons. PWA manifest also registers share_target {action:'/share/', method:'GET', params:{title,text,url}} so an installed Misskey PWA appears in Android/ChromeOS share sheets (text only).",
+    "android_share": "No official Misskey Android app. Installed Misskey PWA receives ACTION_SEND text via its manifest share_target (title/text/url, no files). Third-party clients: Milktea (package jp.panta.misskeyandroidclient) declares in NoteEditorActivity intent-filters ACTION_SEND text/*, ACTION_SEND image/*, and ACTION_SEND_MULTIPLE image/* (verified from its AndroidManifest.xml). Aria (com.poppingmoon.aria, Flutter, AGPL-3.0, fork of Miria), Miria (info.shiosyakeyakini.miria, Flutter, AGPL-3.0), Flare (dev.dimension.flare), ZonePane (com.zonepane) are listed on misskey-hub but their share-intent support was not verified. Practical approach: ACTION_SEND with EXTRA_TEXT and let the user pick; or ACTION_VIEW https://{host}/share?text=... which an installed PWA may claim.",
+    "ios_share": "No official iOS app and no documented URL scheme. Third-party iOS clients (Miria id6449201469, Aria id6499410880, Misscat, MissRirica, SocialHub paid, ZonePane) - share-extension support unverified. Use UIActivityViewController with text (+ images) and let the user choose, or open https://{host}/share?text=... in SFSafariViewController where the user's web session already exists.",
+    "desktop": "Open https://{host}/share?text=...&url=... in the default browser; user must be logged in there. There is no desktop app; Misskey Web is the client.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "notes": "Media cannot be prefilled by binary; fileIds only references files already uploaded to the user's Drive (so an API token with write:drive is needed to use it, at which point you might as well post via API). The misskey-hub.net share relay page lets a user pick their server but its parameters could not be read (page is JS-rendered); the per-instance /share URL is the reliable target."
+  },
+  "text_limits": {
+    "max_chars": 3000,
+    "counting_rule": "Server-side AJV maxLength on `text` against MAX_NOTE_TEXT_LENGTH (packages/backend/src/const.ts: MAX_NOTE_TEXT_LENGTH = 3000; DB hard cap DB_MAX_NOTE_TEXT_LENGTH = 8192 with comment 'Surrogate pairs count as one'). Count Unicode code points (UTF-16 surrogate pair = 1), not bytes and not grapheme clusters: a ZWJ emoji family counts as several. MFM markup, URLs, mentions and custom-emoji shortcodes (:name:) all count at face value - no URL shortening/weighting.",
+    "hashtags_max": 0,
+    "title_max": 0,
+    "notes": "hashtags_max=0 and title_max=0 mean 'no such limit / no title field'. ALWAYS read maxNoteTextLength from POST /api/meta: forks and patched instances differ (Sharkey transfem.social 100000 and admin-configurable; mi.yumechi.jp 6000; misskey.io / misskey.design 3000). cw (content warning) max 100 chars, min 1 (send null if empty). Poll choices 2-10 x 1-50 chars. Drive file comment/alt text max 512. Mentions: CONTAINS_TOO_MANY_MENTIONS error above an instance-set mention limit (role policy). Text is Markdown-like MFM: '**bold**', '$[x2 ...]', '<center>' etc are interpreted; plain '#tag' becomes a hashtag and '@user@host' a mention unless noExtractHashtags/noExtractMentions=true. Custom emoji :shortcode: must exist on that instance."
+  },
+  "media_limits": {
+    "images_per_post": 16,
+    "image_formats": "Anything allowed by role policy uploadableFileTypes (default 'text/*','application/json','image/*','video/*','audio/*'; some instances '*/*'). Browser-safe/inline-rendered image types in Misskey: PNG, GIF, JPEG, WebP, AVIF, APNG, BMP, TIFF, ICO (FILE_TYPE_IMAGE). SVG is accepted as a file but never inlined (XSS). Server generates WebP thumbnails/blurhash.",
+    "image_max_bytes": 31457280,
+    "video": "Same fileIds mechanism, same per-file limit (role maxFileSizeMb, default 30 MB; config maxFileSize hard cap default 250 MiB; real instances: misskey.io 500 MB, misskey.design 50 MB, Sharkey transfem.social 1000 MB). Browser-safe video/audio: MP4, WebM, Ogg, FLAC, WAV, etc. No server transcoding; no separate video endpoint. Also constrained by per-user driveCapacityMb (default 100 MB total; misskey.io 10 GB).",
+    "alt_text": true,
+    "aspect_ratio": "No restriction."
+  },
+  "gotchas": [
+    "Every endpoint is POST + JSON, even reads (meta, i, drive/files/show). GET /api/... is not generally supported.",
+    "Token can go in Authorization: Bearer header OR body field \"i\"; for multipart uploads use the header or a text part named i.",
+    "notes/create text/cw have minLength:1 - send null instead of empty string or you get a validation error.",
+    "If text is empty you MUST supply fileIds, renoteId or poll; text must then be non-whitespace (pattern [^\\s]+).",
+    "fileIds are Drive file ids, not URLs; one upload call per file (multipart limits.files = 1); drive/files/create force=false dedupes by md5 and returns the existing DriveFile, which is fine for reuse.",
+    "Limits are per-instance and per-role: read /api/meta {detail:false} -> maxNoteTextLength, maxFileSize (bytes), policies.maxFileSizeMb, policies.driveCapacityMb, policies.uploadableFileTypes, policies.canPublicNote. misskey.io caps notes at 3000 but Sharkey instances may allow 100000; forks like mi.yumechi.jp allow 6000.",
+    "Oversize multipart returns HTTP 413 with EMPTY body (not JSON); handle both 413-empty and JSON MAX_FILE_SIZE_EXCEEDED / NO_FREE_SPACE.",
+    "Rate limits: 300 notes/hour, 120 uploads/hour, 429 + Retry-After header; role rateLimitFactor can scale them.",
+    "MiAuth: session UUID must be new each time; /api/miauth/{session}/check returns the token only ONCE (fetched flag) - persist it before anything else; later calls return {ok:false} with HTTP 200, so do not treat ok:false as 'not yet approved' after a success.",
+    "MiAuth permission list is comma-separated; OAuth scope list is space-separated. Unknown scope names are dropped silently, and v2023.12.1 renamed some permissions.",
+    "MiAuth callback accepts custom schemes (neforum://callback) and http://127.0.0.1:PORT/callback; the frontend only blocks javascript:/file:/data:/mailto:/tel:/vbscript:. On desktop a loopback listener works; alternatively omit callback and poll /check.",
+    "OAuth 2.0 requires client_id to be an HTTPS URL that serves client metadata (JSON, v2026.3.0+, or h-app HTML) with an EXACT redirect_uris list - a random loopback port cannot be pre-listed, so use a fixed port or a custom scheme, or just use MiAuth.",
+    "Sharkey/CherryPick: same endpoints and MiAuth work (transfem.social advertises features.miauth=true and the OAuth well-known doc). Iceshrimp.NET does NOT implement the Misskey API (README only lists its Mastodon-compatible API) - route Iceshrimp.NET through the Mastodon adapter. Iceshrimp-JS is maintenance-only (security/bug fixes) and Firefish is effectively dormant; both descend from Misskey v12/13 and keep the old Misskey API + MiAuth but lack newer params (reactionAcceptance, scheduling).",
+    "Visibility 'specified' requires visibleUserIds; role policy canPublicNote=false will reject/force-down 'public'. localOnly=true stops federation entirely (good for test posts).",
+    "Instance may enable sensitive-media auto-detection (INAPPROPRIATE error) or prohibited-word lists (CONTAINS_PROHIBITED_WORDS) - surface these verbatim to the user.",
+    "Share page /share only works when the browser session is logged in; media can only be attached by pre-existing Drive fileIds, not binary.",
+    "Note URL after posting: https://{host}/notes/{createdNote.id}."
+  ],
+  "sources": [
+    "https://misskey-hub.net/en/docs/for-developers/api/token/miauth/",
+    "https://misskey-hub.net/en/docs/for-developers/api/token/",
+    "https://misskey-hub.net/en/docs/for-developers/api/token/oauth/",
+    "https://misskey-hub.net/en/docs/for-developers/api/token/app/",
+    "https://misskey-hub.net/en/docs/for-developers/api/permission/",
+    "https://misskey-hub.net/en/docs/for-developers/api/endpoints/",
+    "https://misskey-hub.net/en/docs/for-users/features/share-form/",
+    "https://misskey-hub.net/en/docs/for-users/resources/apps/",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/api/endpoints/notes/create.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/api/endpoints/drive/files/create.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/api/endpoints/miauth/gen-token.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/api/endpoints/app/create.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/const.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/config.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/core/RoleService.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/core/DriveService.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/core/entities/MetaEntityService.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/api/ApiCallService.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/api/ApiServerService.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/oauth/OAuth2ProviderService.ts",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/backend/src/server/web/manifest.json",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/frontend/src/pages/share.vue",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/frontend/src/pages/miauth.vue",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/CHANGELOG.md",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/packages/misskey-js/README.md",
+    "https://raw.githubusercontent.com/misskey-dev/misskey/develop/.config/example.yml",
+    "https://github.com/shiosyakeyakini-info/misskey_dart",
+    "https://github.com/shiosyakeyakini-info/miria",
+    "https://github.com/poppingmoon/aria",
+    "https://raw.githubusercontent.com/pantasystem/Milktea/develop/app/src/main/AndroidManifest.xml",
+    "https://joinsharkey.org/",
+    "https://iceshrimp.dev/iceshrimp/Iceshrimp.NET",
+    "https://iceshrimp.dev/iceshrimp/iceshrimp",
+    "https://codeberg.org/firefish/firefish/raw/branch/develop/README.md",
+    "Live POST https://misskey.io/api/meta, https://misskey.design/api/meta, https://transfem.social/api/meta, https://mi.yumechi.jp/api/meta (2026-10-07)",
+    "Live GET https://misskey.io/.well-known/oauth-authorization-server and https://transfem.social/.well-known/oauth-authorization-server (2026-10-07)",
+    "Live POST https://misskey.io/api/miauth/{bogus-uuid}/check -> {\"ok\":false} (2026-10-07)"
+  ],
+  "unverified_claims": [
+    "AJV's maxLength counts Unicode code points (surrogate pair = 1); inferred from AJV defaults and the const.ts comment, not re-read from AJV docs.",
+    "Exact notes/create parameter name for scheduled posts added in Misskey 2025.10.0 (likely 'scheduledAt'/'scheduleNote' endpoint); the develop create.ts summary did not surface it.",
+    "POST https://{host}/api/i {i: token} returns the authenticated user and is the usual 'validate token' call (requires read:account); not fetched during this research.",
+    "Sharkey makes the max note length an admin setting (transfem.social reports 100000) and also exposes a Mastodon-compatible API; Sharkey's source could not be fetched (activitypub.software returns an anti-bot challenge page), so this rests on the live /api/meta value and recollection.",
+    "CherryPick is Misskey-API compatible (Miria README lists it as supported); not independently verified.",
+    "Firefish project status: codeberg README still reads as active, but the firefish.dev repository returned nothing; recollection is that development stopped in 2024-2025 and users were pointed to Iceshrimp/Sharkey.",
+    "Iceshrimp-JS inherits Misskey v12-era API including MiAuth from Firefish/Calckey; README only confirms Mastodon API.",
+    "Misskey Web stores the logged-in session token in localStorage under key 'account' (JSON with a 'token' field) - basis for the WebView-extraction idea; not re-read from source.",
+    "misskey_dart (MIT, shiosyakeyakini-info) is distributed via git dependency, not pub.dev; MiAuth helper presence not confirmed.",
+    "Aria/Miria/Flare/ZonePane share-sheet (ACTION_SEND / iOS share extension) support not verified; only Milktea's manifest was read.",
+    "misskey.io's notes/create limit might be lower than the upstream 300/hour because misskey.io runs a patched fork (version 2025.4.1-io.12b)."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Load https://{host}/share?text=...&visibility=... in an embedded WebView where the user has logged in once (cookies + localStorage persist). Listen for the page's postMessage 'misskey:shareForm:shareCompleted' (sent via postMessageToParentWindow) to know the note was posted. Alternatively, after a one-time WebView login, read the token out of the frontend's localStorage 'account' entry (unverified key name) and then use the normal API - effectively a self-service way to obtain the same token the user could generate under Settings > API. Media would still have to be uploaded through the WebView's file chooser or via the API.",
+    "known_libraries": [
+      "None Misskey-specific. Generic: flutter_inappwebview / webview_flutter (JS bridge for postMessage), desktop: webview_windows / flutter_inappwebview macOS."
+    ],
+    "risk": "Low. The API token route is officially supported and identical to what the web UI itself uses, so driving the web UI brings no advantage and no distinct ban exposure; instance moderators could only object to spammy volume, which is already bounded by the 300/hour note limit. Not recommended - use MiAuth or a user-generated token."
+  },
+  "confidence": "high"
+}

@@ -1,0 +1,252 @@
+{
+  "platform": "Telegram (Bot API), Discord (Webhooks + REST v10), Matrix (Client-Server API v1.19)",
+  "verified_on": "2026-09-23",
+  "recommended_tiers": [
+    "byok_api",
+    "open_api",
+    "handoff"
+  ],
+  "confidence": "high",
+  "official_api": {
+    "exists": true,
+    "name": "Telegram Bot API 10.3 (2026-08-24) | Discord HTTP API v10 (Execute Webhook + Create Message) | Matrix Client-Server API v1.19",
+    "docs_url": "https://core.telegram.org/bots/api | https://docs.discord.com/developers/resources/webhook | https://spec.matrix.org/latest/client-server-api/",
+    "auth": "TELEGRAM: static bot token from @BotFather (format 110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw) embedded in the URL path https://api.telegram.org/bot<token>/<METHOD>; no OAuth, no redirect URI, no refresh. The bot must be added to the target channel as an administrator with the post-messages right; the user does this in the Telegram app, not via API. DISCORD (webhook route, recommended): the user creates an incoming webhook in Server Settings > Integrations > Webhooks and pastes the URL https://discord.com/api/webhooks/{id}/{token}; the Execute Webhook endpoint requires NO Authorization header (verified: 'this endpoint does not need an Authorization header'). DISCORD (bot route): create an application at discord.com/developers/applications, copy the bot token, send 'Authorization: Bot <token>' and a User-Agent of the form 'DiscordBot ($url, $versionNumber)'; invite with https://discord.com/oauth2/authorize?client_id=<id>&scope=bot&permissions=51200 (SEND_MESSAGES 2048 + EMBED_LINKS 16384 + ATTACH_FILES 32768; optional guild_id= and disable_guild_select=true). DISCORD (OAuth2 'webhook.incoming' route): https://discord.com/oauth2/authorize?response_type=code&client_id=..&scope=webhook.incoming&state=..&redirect_uri=.. lets the user pick a channel; the token exchange POST https://discord.com/api/oauth2/token (grant_type=authorization_code, code, redirect_uri, client_id, client_secret) returns a 'webhook' object {id, token, url, channel_id, guild_id} — but the docs document client_secret as required and do not mention PKCE/code_challenge, so a local-first app would have to embed a secret (not viable for GPL/BYOK unless each user registers their own app). MATRIX: two mutually incompatible auth APIs. (a) Legacy: GET /_matrix/client/v3/login to list flows, then POST /_matrix/client/v3/login with {type:'m.login.password', identifier:{type:'m.id.user', user:'<localpart or mxid>'}, password:'..', initial_device_display_name:'NEFORUM'} -> {access_token, device_id, user_id, refresh_token?, expires_in_ms?}; refresh with POST /_matrix/client/v3/refresh {refresh_token}. m.login.sso is a browser flow (GET /_matrix/client/v3/login/sso/redirect?redirectUrl=<your callback>) returning loginToken used with m.login.token. (b) OAuth 2.0 API (spec v1.15+, used by matrix.org/MAS): GET /_matrix/client/v1/auth_metadata -> {issuer, authorization_endpoint, token_endpoint, registration_endpoint, revocation_endpoint, device_authorization_endpoint, response_types_supported, response_modes_supported, grant_types_supported, code_challenge_methods_supported, prompt_values_supported}; dynamic client registration (RFC 7591) at registration_endpoint with token_endpoint_auth_method 'none', response_types ['code'], grant_types ['authorization_code','refresh_token'], application_type 'native', client_name, client_uri, redirect_uris; authorization request: response_type=code, client_id, redirect_uri, scope='urn:matrix:client:api:* urn:matrix:client:device:<DEVICE_ID>' (device id = RFC3986 unreserved chars, >=10 recommended), state, code_challenge (S256, MANDATORY), code_challenge_method=S256, response_mode=query|fragment, optional prompt=create; token request (form-urlencoded): grant_type=authorization_code, code, redirect_uri, client_id, code_verifier -> {access_token, token_type, expires_in, refresh_token, scope}; refresh with grant_type=refresh_token (new refresh token each time, old invalidated; refresh support is mandatory). All requests then use 'Authorization: Bearer <access_token>'. Server discovery: GET https://<server_name>/.well-known/matrix/client -> {'m.homeserver':{base_url}} then GET <base_url>/_matrix/client/versions.",
+    "oauth_scopes": [
+      "urn:matrix:client:api:*",
+      "urn:matrix:client:device:<device_id>",
+      "discord: bot",
+      "discord: webhook.incoming"
+    ],
+    "pkce_supported": true,
+    "custom_scheme_redirect_ok": true,
+    "desktop_loopback_redirect_ok": true,
+    "endpoints": [
+      {
+        "purpose": "Telegram: send text post to channel",
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{token}/sendMessage",
+        "request_shape": "JSON or form: {chat_id: '@channelusername' | -100xxxxxxxxxx, text: '1-4096 chars after entities parsing', parse_mode?: 'MarkdownV2'|'HTML'|'Markdown', entities?: [MessageEntity], link_preview_options?: {is_disabled, url, prefer_small_media, prefer_large_media, show_above_text}, message_thread_id?, disable_notification?, protect_content?, allow_paid_broadcast?, reply_parameters?, reply_markup?}",
+        "response_shape": "{ok: true, result: Message} or {ok:false, error_code, description, parameters?:{retry_after}}",
+        "notes": "Verified parameter table (Bot API 10.3). Bot must be channel admin with post rights."
+      },
+      {
+        "purpose": "Telegram: send single photo with caption",
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{token}/sendPhoto",
+        "request_shape": "multipart/form-data: chat_id, photo=<file> (or file_id / HTTPS URL), caption? (0-1024 chars after entities parsing), parse_mode?, caption_entities?, show_caption_above_media?, has_spoiler?, message_thread_id?, disable_notification?",
+        "response_shape": "{ok, result: Message}",
+        "notes": "Photo limits: 10 MB multipart, width+height <= 10000, URL-sourced photos 5 MB."
+      },
+      {
+        "purpose": "Telegram: send video with caption",
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{token}/sendVideo",
+        "request_shape": "multipart/form-data: chat_id, video=<file>|file_id|URL, caption? (0-1024), parse_mode?, duration?, width?, height?, thumbnail?, supports_streaming?, has_spoiler?, show_caption_above_media?",
+        "response_shape": "{ok, result: Message}",
+        "notes": "50 MB via multipart (20 MB via URL). sendDocument has the same params minus video metadata; sendAnimation for GIF/MP4-without-sound."
+      },
+      {
+        "purpose": "Telegram: send album (2-10 photos/videos)",
+        "method": "POST",
+        "url": "https://api.telegram.org/bot{token}/sendMediaGroup",
+        "request_shape": "multipart/form-data: chat_id, media=JSON string '[{type:\"photo\",media:\"attach://f0\",caption:\"..\",parse_mode:\"HTML\"},{type:\"video\",media:\"attach://f1\"}]' plus file parts named f0, f1; message_thread_id?, disable_notification?",
+        "response_shape": "{ok, result: [Message, ...]}",
+        "notes": "2-10 InputMediaPhoto/Video/Audio/Document (and InputMediaLivePhoto in 10.x). Documents/audio cannot be mixed with photos/videos in the same group. Put caption on exactly one item to show it as the album caption."
+      },
+      {
+        "purpose": "Telegram: validate token / get bot identity",
+        "method": "GET",
+        "url": "https://api.telegram.org/bot{token}/getMe",
+        "request_shape": "none",
+        "response_shape": "{ok, result: User{id, is_bot, username, ...}}",
+        "notes": "Use for 'connect account' validation. getChat with chat_id='@channel' resolves the numeric -100... id for private channels."
+      },
+      {
+        "purpose": "Discord: post via incoming webhook (no auth)",
+        "method": "POST",
+        "url": "https://discord.com/api/v10/webhooks/{webhook.id}/{webhook.token}?wait=true",
+        "request_shape": "JSON {content?: <=2000 chars, username?, avatar_url?, tts?, embeds?: [<=10 Embed], allowed_mentions?: {parse:[]}, flags?: 4 (SUPPRESS_EMBEDS) | 4096 (SUPPRESS_NOTIFICATIONS), thread_name? (forum channels), applied_tags?, poll?, components?} OR multipart/form-data with files[0..n] + payload_json=<the JSON> + attachments:[{id:0, filename, description}]. Query: wait (return message object instead of 204), thread_id, with_components.",
+        "response_shape": "204 No Content, or Message object when wait=true (id, channel_id, attachments[].url ...)",
+        "notes": "At least one of content, embeds, components, files, poll required. Requires no Authorization header. Edit later with PATCH /webhooks/{id}/{token}/messages/{message.id}; delete with DELETE on the same path. Webhook URL pasted by the user from Server Settings > Integrations."
+      },
+      {
+        "purpose": "Discord: post as a bot user",
+        "method": "POST",
+        "url": "https://discord.com/api/v10/channels/{channel.id}/messages",
+        "request_shape": "Headers: Authorization: Bot <token>, User-Agent: DiscordBot (https://github.com/..., 1.0). Body JSON {content?, embeds?, allowed_mentions?, flags?, message_reference?} or multipart with files[n]/payload_json/attachments.",
+        "response_shape": "Message object",
+        "notes": "Needs VIEW_CHANNEL (1024) + SEND_MESSAGES (2048); EMBED_LINKS (16384) for link previews; ATTACH_FILES (32768) for uploads; SEND_MESSAGES_IN_THREADS (1<<38) for threads. Up to 10 embeds, 6000 chars total across embeds; embed title 256, description 4096, 25 fields (name 256 / value 1024), footer 2048, author 256."
+      },
+      {
+        "purpose": "Discord: OAuth2 token exchange (webhook.incoming or bot flows)",
+        "method": "POST",
+        "url": "https://discord.com/api/oauth2/token",
+        "request_shape": "application/x-www-form-urlencoded: grant_type=authorization_code&code=..&redirect_uri=..&client_id=..&client_secret=..",
+        "response_shape": "{access_token, token_type:'Bearer', expires_in:604800, refresh_token, scope, webhook?:{id, token, url, channel_id, guild_id}}",
+        "notes": "client_secret documented as required; no PKCE documented. Only usable if each user registers their own Discord application."
+      },
+      {
+        "purpose": "Matrix: discover homeserver",
+        "method": "GET",
+        "url": "https://{server_name}/.well-known/matrix/client",
+        "request_shape": "none",
+        "response_shape": "{'m.homeserver':{'base_url':'https://matrix-client.matrix.org'}, 'm.identity_server'?:{base_url}}",
+        "notes": "Then GET {base_url}/_matrix/client/versions to validate. Then GET {base_url}/_matrix/client/v1/auth_metadata (200 = OAuth 2.0 API; 404 M_UNRECOGNIZED = legacy login)."
+      },
+      {
+        "purpose": "Matrix: legacy password login",
+        "method": "POST",
+        "url": "{base_url}/_matrix/client/v3/login",
+        "request_shape": "{type:'m.login.password', identifier:{type:'m.id.user', user:'alice'}, password:'..', initial_device_display_name:'NEFORUM', refresh_token?: true}",
+        "response_shape": "{user_id, access_token, device_id, refresh_token?, expires_in_ms?, well_known?}",
+        "notes": "Rate limited (429 M_LIMIT_EXCEEDED). On matrix.org and other MAS-backed servers password login may be disabled in favour of OAuth; check GET /login flows first."
+      },
+      {
+        "purpose": "Matrix: OAuth 2.0 metadata (MSC3861 / spec v1.15+)",
+        "method": "GET",
+        "url": "{base_url}/_matrix/client/v1/auth_metadata",
+        "request_shape": "none",
+        "response_shape": "{issuer, authorization_endpoint, token_endpoint, registration_endpoint, revocation_endpoint, device_authorization_endpoint, response_types_supported, response_modes_supported, grant_types_supported, code_challenge_methods_supported:['S256'], prompt_values_supported?}",
+        "notes": "Then POST registration_endpoint (RFC 7591, JSON client metadata, application_type 'native', token_endpoint_auth_method 'none', redirect_uris e.g. ['http://127.0.0.1/callback' (any port accepted for loopback), 'org.neforum.app:/callback'] where the private-use scheme MUST be the reverse-DNS of client_uri's host). Authorization code + PKCE S256, scope 'urn:matrix:client:api:* urn:matrix:client:device:<ID>'. Revocation via revocation_endpoint; account management via the server's web UI (account_management_uri)."
+      },
+      {
+        "purpose": "Matrix: upload media",
+        "method": "POST",
+        "url": "{base_url}/_matrix/media/v3/upload?filename=photo.jpg",
+        "request_shape": "Headers: Authorization: Bearer <token>, Content-Type: image/jpeg; body = raw bytes",
+        "response_shape": "{content_uri:'mxc://server/mediaId'}; 413 {errcode:'M_TOO_LARGE'}; 429 {errcode:'M_LIMIT_EXCEEDED', retry_after_ms}",
+        "notes": "Still the upload path in v1.19 (marked deprecated in favour of the two-step POST /_matrix/media/v1/create -> PUT /_matrix/media/v3/upload/{serverName}/{mediaId}; there is NO /_matrix/client/v1/media/upload). Check GET /_matrix/client/v1/media/config -> {'m.upload.size': bytes} before uploading (Synapse default 50M). Since v1.11 downloads use authenticated GET /_matrix/client/v1/media/download/{serverName}/{mediaId}; unauthenticated /_matrix/media/v3/download is deprecated (Synapse enable_authenticated_media defaults to true)."
+      },
+      {
+        "purpose": "Matrix: send message event",
+        "method": "PUT",
+        "url": "{base_url}/_matrix/client/v3/rooms/{roomId}/send/m.room.message/{txnId}",
+        "request_shape": "Text: {msgtype:'m.text', body:'plain fallback', format?:'org.matrix.custom.html', formatted_body?:'<b>hi</b>', 'm.mentions'?:{user_ids:[], room?:true}}. Image: {msgtype:'m.image', body:'caption or filename', filename:'photo.jpg', url:'mxc://..', info:{w,h,mimetype,size,thumbnail_url?,thumbnail_info?}, format?/formatted_body? for a formatted caption}. Video: msgtype 'm.video' with info.duration (ms). Generic: 'm.file'.",
+        "response_shape": "{event_id:'$...'}",
+        "notes": "txnId must be unique per device+endpoint (use a UUID); the same txnId is treated as a retransmission (idempotent). Room must be joined first (POST /_matrix/client/v3/join/{roomIdOrAlias}); resolve '#alias:server' via GET /_matrix/client/v3/directory/room/{alias}. In E2EE rooms the event must be encrypted (m.room.encrypted) and media uploaded encrypted with a 'file' key instead of 'url' — use an SDK (famedly 'matrix' Dart package) rather than raw HTTP."
+      }
+    ],
+    "media_upload_flow": "TELEGRAM: single request — multipart/form-data to sendPhoto/sendVideo/sendDocument with the file as a form part, or pass an HTTPS URL (<=5 MB photo / <=20 MB other) or a previously returned file_id (reuse is free and instant). Albums: sendMediaGroup with media JSON referencing 'attach://<partname>' file parts. Limits: 10 MB photos / 50 MB other via multipart; 2000 MB if the user runs a local Bot API server. DISCORD: single multipart/form-data request to the webhook (or channel messages) endpoint with parts files[0], files[1]... plus payload_json containing content/embeds and attachments:[{id:0, filename:'a.png', description:'alt text'}]; the attachments array index must match files[n]. Per-file limit per docs 'default limit is 20 MiB for all users' (may be higher by Nitro status / server Boost Tier); Create Message page states a 25 MiB total request limit. MATRIX: two requests — POST /_matrix/media/v3/upload (raw bytes, Content-Type header, filename query) -> content_uri mxc://, then PUT .../send/m.room.message/{txnId} with msgtype m.image/m.video/m.file and info{w,h,mimetype,size}. One file per event; a multi-image post is N events. Max size from GET /_matrix/client/v1/media/config m.upload.size (Synapse default 50M).",
+    "rate_limits": "TELEGRAM (bots/faq, verified): ~1 message/second per chat, 20 messages/minute per group, ~30 messages/second overall; exceeding gives HTTP 429 with parameters.retry_after seconds; allow_paid_broadcast (Bot API 7.11, 2024-10-31) raises the broadcast ceiling for a Stars fee. DISCORD (verified): global 50 requests/second per bot (webhooks have their own per-webhook bucket keyed by webhook_id); per-route buckets exposed via X-RateLimit-Limit/-Remaining/-Reset/-Reset-After/-Bucket/-Scope headers; 429 body {message, retry_after (float seconds), global, code?}; 10,000 invalid (401/403/429) requests per 10 minutes per IP triggers a temporary Cloudflare ban. MATRIX (verified): spec-level 429 {errcode:'M_LIMIT_EXCEEDED', retry_after_ms} plus Retry-After header; Synapse default rc_message per_second 0.2, burst_count 10 per user.",
+    "free_tier": "All three are free for the app's use: Telegram Bot API is free and unlimited apart from flood limits (2026-10-07); Discord webhooks and bot tokens are free (upload size depends on the user's Nitro/server boost, default 20 MiB per docs as read 2026-10-07); Matrix is an open protocol — cost depends only on the user's homeserver (matrix.org is free).",
+    "paid_tiers": "Telegram: allow_paid_broadcast lets a bot exceed the ~30 msg/s broadcast limit by paying Telegram Stars per message (not needed for a cross-poster). Discord: Nitro Basic '50MB uploads', Nitro '1 GB uploads' (discord.com/nitro, read 2026-10-07) raise the per-file upload limit for the posting user; server Boost tier raises it for everyone in that server. Matrix: none; some commercial homeservers (e.g. Element Matrix Services) set their own upload caps.",
+    "account_requirements": "Telegram: any Telegram account can create a bot with @BotFather instantly (no review, no business account); the bot must then be added as administrator with 'Post Messages' to each target channel (or as a member with send rights in groups). Discord: any user who has 'Manage Webhooks' in a server can create an incoming webhook; alternatively a bot token from a developer application (any user can create one; bots in <100 servers need no verification). Matrix: any account on any homeserver; no developer registration at all (OAuth clients self-register dynamically).",
+    "app_review_required": "None of the three requires app review for this use. Telegram bots are never reviewed. Discord apps only need verification to exceed 100 servers or use privileged intents, neither of which a cross-poster needs. Matrix has no review process.",
+    "unreviewed_app_restrictions": "Telegram: none (bots are first-class). Discord: an unverified app's bot cannot join more than ~100 guilds and has no privileged gateway intents, but each user installs their own bot/webhook so this never matters; a bot must use a User-Agent 'DiscordBot (url, version)'. Matrix: none; a dynamically registered OAuth client gets only the scopes it asks for (urn:matrix:client:api:* is full API).",
+    "token_lifetime_and_refresh": "Telegram bot tokens never expire (revocable via @BotFather /revoke). Discord webhook URLs never expire until deleted; bot tokens never expire until regenerated; OAuth2 access tokens expire in 604800 s (7 days) with a refresh token. Matrix legacy tokens are non-expiring unless the server enables refresh tokens (then expires_in_ms + POST /_matrix/client/v3/refresh); OAuth 2.0 tokens expire per expires_in and MUST be refreshed with grant_type=refresh_token (rotating refresh tokens — persist the new one every time).",
+    "server_side_scheduling": "None. Telegram Bot API has no scheduled sends for bots (scheduled messages exist only in the user-account MTProto API / messages.sendMessage schedule_date). Discord webhooks/bots have no scheduling. Matrix has none. NEFORUM must schedule locally (and the device must be awake/online at post time).",
+    "personal_profile_posting": false
+  },
+  "handoff": {
+    "web_intent_url": "https://t.me/share/url",
+    "web_intent_params": "url=<urlencoded, required> & text=<urlencoded, optional>; aliases t.me/share?url=&text=, t.me/share/url/?..., t.me/msg/url?url=&text=; the client opens a chat picker, inserts the URL on the first line, a newline, then the (selected, editable) text. Also t.me/<username>?text=<draft> and t.me/+<phone>?text=<draft> prefill a draft in a specific chat (trimmed to message_length_max codepoints). Discord: no share/intent URL exists; the only deep link is https://discord.com/channels/{guild_id}/{channel_id} (opens the channel, cannot prefill text). Matrix: https://matrix.to/#/<room alias or !id>?via=server and the matrix:r/<alias>, matrix:roomid/<id> URI scheme open a room but carry no message text.",
+    "desktop": "Telegram Desktop registers the tg:// scheme; tg://msg_url?url=<url>&text=<text> opens the chat picker with prefilled text (documented at core.telegram.org/api/links). Opening https://t.me/share/url?... in the default browser redirects into the installed app on macOS/Windows. Discord desktop handles discord:// links (channel navigation only). Element desktop handles matrix.to / matrix: links (navigation only). None accepts media.",
+    "android_share": "Telegram: package org.telegram.messenger (Play Store build; org.telegram.messenger.web for the direct APK, org.telegram.messenger.beta for beta; Telegram X is org.thunderdog.challegram). It handles ACTION_SEND / ACTION_SEND_MULTIPLE with text/plain, image/*, video/* and opens a chat picker; text and media can both be prefilled this way. tg://msg_url also works via ACTION_VIEW. Discord: package com.discord; it accepts ACTION_SEND text/image/video and opens a channel picker; no URL-based prefill. Element X: io.element.android.x (classic Element: im.vector.app); accept ACTION_SEND text/media via a room picker.",
+    "ios_share": "Telegram: URL scheme tg:// (tg://msg_url?url=<url>&text=<text>) and the universal link https://t.me/share/url?...; Telegram also ships a Share Extension so UIActivityViewController can hand off text + images/videos. Discord: scheme discord:// (navigation only) and a Share Extension in the App Store app for files/text to a channel picker. Element X iOS: scheme element:// plus matrix.to universal links; Share Extension for media/text.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "notes": "Prefilled text via URL exists only for Telegram (t.me/share/url, tg://msg_url, t.me/<user>?text=). Media can only be handed off through the OS share sheet (Android ACTION_SEND / iOS UIActivityViewController), never via a URL, and the user picks the destination chat manually each time. Discord and Matrix have no composer-prefill URL at all, so for them 'hand-off' means share-sheet only. For Flutter use share_plus (Share.shareXFiles) and url_launcher (launchUrl with LaunchMode.externalApplication)."
+  },
+  "text_limits": {
+    "max_chars": 2000,
+    "counting_rule": "DISCORD: content <= 2000 characters (Unicode characters; Nitro users get 4000 in the client but the API doc limit is 2000); embeds add up to 6000 more across all embeds. TELEGRAM: text 1-4096 'characters after entities parsing', captions 0-1024; markup characters consumed by parse_mode do not count; entity offsets/lengths are in UTF-16 code units, so count in UTF-16 units to be safe (an astral emoji = 2). MATRIX: no character limit — the whole event JSON (including formatted_body) must be under 65536 bytes (the federation event size cap), so budget ~60 KB.",
+    "title_max": 0,
+    "notes": "Formatting: Telegram HTML (b,strong,i,em,u,ins,s,strike,del,span class=tg-spoiler,tg-spoiler,a href,tg-emoji,code,pre,blockquote,blockquote expandable; escape < > &) or MarkdownV2 (must escape _ * [ ] ( ) ~ ` > # + - = | { } . !). Discord: its own markdown subset (**bold**, *italic*, `code`, > quote, <@id>, <#id>, <t:unix:style>), no HTML; URLs auto-embed unless flags=4. Matrix: body = plain fallback, formatted_body = restricted HTML (del,h1-h6,blockquote,p,a href(https/http/ftp/mailto/magnet),ul,ol start,sup,sub,li,b,i,u,strong,em,s,code class=language-*,hr,br,div,table,thead,tbody,tr,th,td,caption,pre,span data-mx-color/data-mx-bg-color/data-mx-spoiler,img src=mxc://,details,summary; max 100 nesting levels). Discord 'hashtags' have no meaning; Telegram and Matrix render #tag as clickable but there is no limit."
+  },
+  "media_limits": {
+    "images_per_post": 10,
+    "image_max_bytes": 10485760,
+    "image_formats": "Telegram sendPhoto: JPEG/PNG/WebP/GIF(static) up to 10 MB (multipart) / 5 MB (URL), width+height <= 10000, aspect ratio at most 20; larger or non-photo files go via sendDocument (50 MB). Discord: any file type; per-file default 20 MiB (docs), 25 MiB total request (Create Message doc); PNG/JPEG/GIF/WebP render inline; alt text via attachments[].description. Matrix: any MIME type; m.image for images (give w/h/mimetype/size in info); server cap from m.upload.size (Synapse default 50 MB).",
+    "video": "Telegram sendVideo: MP4 (H.264/AAC) up to 50 MB via multipart, 20 MB via URL, caption 1024; sendAnimation for soundless MP4/GIF; local Bot API server raises to 2000 MB. Discord: same per-file limit as images (20 MiB default; 50 MB Nitro Basic; 1 GB Nitro), MP4/WebM/MOV play inline. Matrix: m.video with info.duration (ms), same server upload cap.",
+    "aspect_ratio": "Telegram photos: width+height <= 10000 and ratio <= 20:1; Discord/Matrix: none.",
+    "alt_text": true
+  },
+  "gotchas": [
+    "Telegram chat_id for a PRIVATE channel is the numeric id -100XXXXXXXXXX (no @username). Discover it by calling getChat with the @username (public) or by having the user forward a channel post to the bot and reading forward_origin.chat.id from getUpdates.",
+    "Telegram bots cannot post unless the user adds the bot as channel administrator with 'Post Messages'; adding it as a plain member is not enough. The error is 400 'Bad Request: need administrator rights in the channel chat' / 403 'Forbidden: bot is not a member of the channel chat'.",
+    "Telegram MarkdownV2 fails the whole request (400 'can't parse entities') on any unescaped special character; generate HTML parse_mode instead and only escape <, >, &.",
+    "Telegram caption (1024) is much shorter than text (4096). For long posts with images, send the album first and then a separate sendMessage, or put the text on the first media item only.",
+    "Telegram sendMediaGroup: documents/audio cannot be mixed with photos/videos; only one caption is shown for the album; the whole album counts as one message for flood limits but each file is uploaded in the same multipart request (sum can exceed one file's 50 MB? No — each file is individually capped at 50 MB, and the total upload is limited by HTTP, so keep albums small on mobile data).",
+    "Telegram Bot API returns HTTP 429 with parameters.retry_after (seconds) — always honour it; retrying immediately escalates the penalty.",
+    "Telegram bot tokens grant full control of the bot; store them in flutter_secure_storage, never in plain shared preferences, and warn users not to paste them into other apps.",
+    "Discord Execute Webhook returns 204 by default; append ?wait=true to get the message id/URL back for 'view post' links and later edits.",
+    "Discord webhooks are per channel; a user who wants to post to five channels needs five webhook URLs (or a bot). Forum/media channels require thread_name (creates a post) and optionally applied_tags.",
+    "Discord suppresses link previews only if you set flags=4 (SUPPRESS_EMBEDS); otherwise every URL in content produces an embed. Set allowed_mentions:{parse:[]} to avoid accidental @everyone pings from cross-posted text.",
+    "Discord content > 2000 chars is rejected with 400 (code 50035). Embeds raise the total but description is 4096 and embeds render differently from normal messages.",
+    "Discord multipart uploads: the JSON must go in a form field named payload_json and files in files[0], files[1]...; attachments[].id must equal the files[n] index or the API returns 400.",
+    "Discord counts 401/403/429 responses toward a 10,000-per-10-minute IP ban; validate webhook URLs with GET /webhooks/{id}/{token} once and do not retry invalid ones in a loop.",
+    "Discord docs now state a 20 MiB default per-file limit (read 2026-10-07); community sources in 2024-2025 reported 10 MB for free users, so treat the number as volatile and read the error (413 / code 40005 'Request entity too large') rather than hard-coding it.",
+    "Discord has no composer-prefill URL and no scheduling; the only hand-off is the OS share sheet into the Discord app.",
+    "Matrix: matrix.org and other MAS-backed homeservers use the OAuth 2.0 API; m.login.password may be absent from GET /login flows, so the app MUST implement the auth_metadata -> dynamic registration -> PKCE browser flow (loopback http://127.0.0.1:PORT on desktop, org.<reverse-dns>:/callback custom scheme on mobile — the scheme must match client_uri's host reversed, e.g. client_uri https://neforum.example.org -> org.example.neforum:/callback).",
+    "Matrix: once logged in via OAuth you must not call legacy /login, /logout or UIA-protected endpoints with that token (the two APIs are mutually incompatible); logout = token revocation at revocation_endpoint.",
+    "Matrix: refresh tokens rotate — persist the new refresh_token from every refresh response or the session dies.",
+    "Matrix: encrypted rooms require Olm/Megolm (vodozemac) and encrypted media uploads; raw HTTP is only enough for unencrypted rooms. The famedly 'matrix' Dart package (AGPL-3.0, v13.0.0) handles both but its AGPL licence must be compatible with NEFORUM's GPL (GPL-3.0 is compatible with AGPL-3.0 linking per §13).",
+    "Matrix: media size is per-homeserver (GET /_matrix/client/v1/media/config -> m.upload.size); Synapse default 50 MB; expect 413 M_TOO_LARGE.",
+    "Matrix: the upload endpoint is still /_matrix/media/v3/upload in v1.19 (deprecated in favour of v1/create + PUT), while downloads moved to the authenticated /_matrix/client/v1/media/download since v1.11; do not render mxc:// previews via the unauthenticated /_matrix/media/v3/download on modern servers.",
+    "Matrix: a message is one event; an image post with text is either an m.image with a caption (filename + body differ) or two events (m.image then m.text); clients render captions only in newer versions.",
+    "Matrix events must stay under 65536 bytes in total; very long formatted_body HTML can hit this.",
+    "All three platforms: no server-side scheduling, so a 'scheduled post' needs the device to be awake (use workmanager/background_fetch on mobile; expect iOS to be unreliable).",
+    "Telegram user-account (MTProto/TDLib) is NOT needed for channel posting as a bot. It is only needed if the user wants to post as themselves to chats where they cannot add a bot. MTProto requires api_id/api_hash from my.telegram.org (one per phone number; the sample api_id triggers API_ID_PUBLISHED_FLOOD), a phone-code login, and the API ToS forbid 'making actions on behalf of the user without the user's knowledge and consent'; accounts used for automated posting get FLOOD_WAIT and may be spam-restricted. Keep MTProto out of v1."
+  ],
+  "sources": [
+    "https://core.telegram.org/bots/api (Bot API 10.3, 2026-08-24)",
+    "https://core.telegram.org/bots/api#formatting-options",
+    "https://core.telegram.org/bots/api#sendmediagroup",
+    "https://core.telegram.org/bots/api-changelog",
+    "https://core.telegram.org/bots/faq",
+    "https://core.telegram.org/bots/features",
+    "https://core.telegram.org/widgets/share",
+    "https://core.telegram.org/api/links",
+    "https://core.telegram.org/api/terms",
+    "https://core.telegram.org/api/obtaining_api_id",
+    "https://core.telegram.org/tdlib",
+    "https://docs.discord.com/developers/resources/webhook",
+    "https://docs.discord.com/developers/resources/message",
+    "https://docs.discord.com/developers/reference",
+    "https://docs.discord.com/developers/topics/rate-limits",
+    "https://docs.discord.com/developers/topics/permissions",
+    "https://docs.discord.com/developers/topics/oauth2",
+    "https://discord.com/nitro",
+    "https://discord.com/terms (effective 2025-09-29)",
+    "https://spec.matrix.org/latest/client-server-api/ (v1.19)",
+    "https://spec.matrix.org/latest/client-server-api/#oauth-20-api",
+    "https://spec.matrix.org/latest/client-server-api/#content-repository",
+    "https://spec.matrix.org/latest/appendices/#matrixto-navigation",
+    "https://raw.githubusercontent.com/matrix-org/matrix-spec/main/content/client-server-api/_index.md",
+    "https://raw.githubusercontent.com/matrix-org/matrix-spec/main/content/client-server-api/modules/instant_messaging.md",
+    "https://element-hq.github.io/synapse/latest/usage/configuration/config_documentation.html",
+    "https://pub.dev/packages/matrix (v13.0.0, famedly, AGPL-3.0)",
+    "https://pub.dev/packages/nyxx (v6.9.1, Apache-2.0)",
+    "https://pub.dev/packages/televerse (v3.6.0, Bot API 10.2)"
+  ],
+  "unverified_claims": [
+    "Telegram 'bot must be channel admin with Post Messages right' — exact error strings and the ChatAdministratorRights.can_post_messages field were not reachable in the truncated fetch; well-known behaviour but not re-read today.",
+    "Telegram allow_paid_broadcast details (up to 1000 msg/s at 0.1 Stars per message) recalled from the Bot API 7.11 release; the changelog confirmed only that the parameter exists.",
+    "Telegram photo aspect-ratio limit 'at most 20' and the 4096/1024 limits being counted in UTF-16 code units (versus Unicode code points) are recollection; the docs say 'characters' and only entities are documented as UTF-16.",
+    "Telegram Android package names (org.telegram.messenger / .web / .beta, org.thunderdog.challegram), iOS tg:// scheme handling of share sheets, and the existence of the Telegram iOS Share Extension — F-Droid page returned 404 and the Play Store page was unreadable; recalled, not verified.",
+    "Discord Android package com.discord, iOS discord:// scheme, and that the Discord mobile apps accept ACTION_SEND / share-extension with a channel picker — Play Store fetch unreadable; recalled.",
+    "Discord per-webhook rate limit of 30 requests per 60 seconds and 5 messages per 5 seconds per channel — community-documented, not in official docs read.",
+    "Discord free-user upload limit history (25 MB -> 10 MB in late 2024) — web search quota was exhausted; the official reference page read today says 20 MiB default.",
+    "Discord Automated User Accounts (self-bots) support article (https://support.discord.com/hc/en-us/articles/115002192352) returned 403; its content (self-bots violate ToS and lead to account termination) is recalled. The ToS read today only prohibits 'unauthorized software designed to modify the services' and scraping by 'automatic device'.",
+    "Discord max 15 webhooks per channel and error code 50035/40005 numbers — recalled.",
+    "Discord Nitro client-side 4000-char message limit — recalled.",
+    "Element Android package ids (io.element.android.x, im.vector.app), element:// iOS scheme and their share extensions — Play Store fetch unreadable; recalled.",
+    "matrix.org homeserver m.upload.size value — the config endpoint required auth (401); believed to be larger than Synapse's 50M default but unverified.",
+    "Matrix 65536-byte event limit was quoted from the spec fetch but the exact sentence was not displayed; it is the federation event size limit (spec: 'The complete event MUST NOT be larger than 65536 bytes').",
+    "TDLib licence (Boost Software License 1.0) and the existence of Dart FFI bindings (pub.dev 'tdlib'/'tdlib_dart') — recalled.",
+    "famedly matrix Dart SDK supports OIDC/OAuth 2.0 login (MSC3861) in v13 — pub.dev page did not confirm; check the package changelog before relying on it.",
+    "Flutter packages share_plus, url_launcher, flutter_secure_storage, flutter_inappwebview — recalled, not checked today."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Each platform has a full web client that runs in an embedded WebView (flutter_inappwebview or webview_flutter) with the user's own login: Telegram web.telegram.org/a or /k (login by phone + code/QR; posts as the USER account via MTProto-over-WebSocket, which is the only way to post as a person rather than a bot without TDLib), Discord discord.com/app (login with email/password/2FA; the WebView can then be driven by injected JS to type into the composer and submit, or the captured session token can be used to call the REST API as a user), Element app.element.io (login; the WebView itself is pointless because the Matrix API is fully open). Injected JS can fill the composer; file attachment via drag-drop simulation or the HTML file input is fragile. On Windows/macOS the Flutter WebView uses WebView2/WKWebView; cookies persist per app.",
+    "known_libraries": [
+      "flutter_inappwebview (JS injection, cookie manager, file chooser)",
+      "webview_flutter",
+      "telethon / gramjs / tdlib (user-account MTProto alternatives to driving web.telegram.org)",
+      "discord.py-self / discord.js-selfbot-v13 (user-token Discord automation; explicitly ToS-violating)"
+    ],
+    "risk": "DISCORD: high. Automating a user account (self-bot) — whether by driving the web UI or reusing its token — violates Discord's Terms ('unauthorized software designed to modify the services', automatic devices) and Discord's support policy on automated user accounts; enforcement is account termination without notice. Do not ship this; use webhooks/bots which are the sanctioned path and cost nothing. TELEGRAM: medium. The web client inside a WebView is a normal client, and the user typing is fine; programmatic posting through it is 'actions on behalf of the user' that the API ToS require explicit knowledge/consent for; spam-like posting rates lead to FLOOD_WAIT and account limitations. Unnecessary because the Bot API is free and unrestricted for channels the user admins. MATRIX: none — the protocol is open; embedding Element adds nothing over the API. Conclusion: offer the WebView route at most as a 'login in the real web app, then share' convenience, never as an automated posting tier."
+  }
+}

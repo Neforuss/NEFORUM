@@ -1,0 +1,25 @@
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+pubspec.lock
+!apps/neforum_app/pubspec.lock
+*.g.dart.bak
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Secrets / local state (never commit)
+*.secrets.json
+neforum-secrets*
+.env

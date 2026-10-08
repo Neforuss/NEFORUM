@@ -1,0 +1,219 @@
+{
+  "platform": "Facebook (Meta Graph API / Pages API)",
+  "verified_on": "2026-04-16",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Meta Graph API – Pages API (v25.0/v26.0 docs read 2026-10-07)",
+    "docs_url": "https://developers.facebook.com/docs/pages-api/posts",
+    "personal_profile_posting": false,
+    "auth": "OAuth 2.0 via Facebook Login. Authorization: GET https://www.facebook.com/v25.0/dialog/oauth?client_id={app-id}&redirect_uri={uri}&state={state}&response_type=code|token|code%20token|granted_scopes&scope=pages_manage_posts,pages_read_engagement,pages_show_list[,business_management][,publish_video]. Code exchange: GET https://graph.facebook.com/v25.0/oauth/access_token?client_id&redirect_uri&client_secret&code -> {access_token,token_type,expires_in}. Long-lived user token: GET /oauth/access_token?grant_type=fb_exchange_token&client_id&client_secret&fb_exchange_token (about 60 days). Page tokens: GET /{user-id}/accounts (or /me/accounts) with a long-lived user token -> data[].access_token per Page; docs state long-lived Page access tokens 'do not have an expiration date and only expire or are invalidated under certain conditions'. OIDC code flow with PKCE (docs: 'still in testing'): add scope openid, code_challenge, code_challenge_method=S256|plain, nonce, response_type=code; at /oauth/access_token pass code_verifier and client_secret becomes optional. Redirect URI must exactly match an entry in App Dashboard > Facebook Login > Settings > Valid OAuth Redirect URIs (Strict Mode is 'required for all apps'); docs say 'requires HTTPS for OAuth Redirects'. Official desktop guidance: use response_type=token with redirect_uri=https://www.facebook.com/connect/login_success.html inside an embedded webview and read the token from the URL fragment. Apps set to Native/Desktop type are assumed to leak the app secret and cannot use app access tokens. Alternative: Facebook Login for Devices (POST /device/login with access_token=APP_ID|CLIENT_TOKEN and scope, poll POST /device/login_status, user enters user_code at facebook.com/device; code expires 420 s; tokens valid up to 60 days; requires 'Login from Devices' = Yes; scope limited to 'Login Permissions which are approved for use in Login Review').",
+    "pkce_supported": true,
+    "desktop_loopback_redirect_ok": false,
+    "custom_scheme_redirect_ok": false,
+    "oauth_scopes": [
+      "pages_manage_posts",
+      "pages_read_engagement",
+      "pages_show_list",
+      "business_management",
+      "publish_video",
+      "pages_manage_engagement",
+      "pages_manage_metadata",
+      "openid"
+    ],
+    "endpoints": [
+      {
+        "purpose": "Create text/link Page post (also multi-photo via attached_media)",
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{page-id}/feed",
+        "request_shape": "form/query params: message (text), link (URL), published (bool, default true), scheduled_publish_time (UNIX ts/ISO8601; must be 10 min–75 days ahead per Graph reference; Pages API guide page says 10 min–30 days), attached_media[0]={\"media_fbid\":\"{photo-id}\"} (photo ids from /photos uploads with published=false), place, tags, object_attachment; for scheduled multi-photo add published=false&unpublished_content_type=SCHEDULED. access_token = Page access token.",
+        "response_shape": "{\"id\":\"{page-id}_{post-id}\"}",
+        "notes": "Requires Page access token from a user who can perform CREATE_CONTENT task on the Page + pages_manage_posts + pages_read_engagement. Posts can only be updated (POST /{post-id}) or deleted (DELETE /{post-id}) by the app that created them."
+      },
+      {
+        "purpose": "Publish a photo (single-photo post or unpublished upload for a multi-photo post)",
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{page-id}/photos",
+        "request_shape": "url={public-image-url} OR multipart source=@file; caption (message is deprecated in favor of caption per reference page), published (bool), temporary (bool, requires published=false), scheduled_publish_time, no_story, alt_text_custom (string; per Photo reference search). access_token = Page token.",
+        "response_shape": "{\"id\":\"{photo-id}\",\"post_id\":\"{page-id}_{post-id}\"}",
+        "notes": "Formats .jpeg .bmp .png .gif .tiff; max 10 MB ('for .png files, we recommend not exceeding 1MB'); Facebook strips location metadata and resizes. Requires pages_read_engagement, pages_manage_posts, pages_show_list."
+      },
+      {
+        "purpose": "Publish a Page video (non-resumable)",
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{page-id}/videos",
+        "request_shape": "multipart source=@file OR file_url={public-url} (file_url cannot be combined with upload_phase); description, title (UTF-8, emoji ok), published (default true), scheduled_publish_time (int64). Legacy chunked flow: upload_phase=start|transfer|finish|cancel with video_file_chunk.",
+        "response_shape": "{\"id\":\"{video-id}\"} (chunked flow also returns upload_session_id, video_id, start_offset, end_offset, success, skip_upload)",
+        "notes": "Docs: 'The graph-video.facebook.com host for video uploads has been deprecated. Use the graph.facebook.com host.' Limits (event/videos reference, v26.0): multipart or URL upload max 1 GB and 20 minutes; resumable upload max 1.75 GB and 45 minutes. Many container formats accepted (mp4, mov, mkv, avi, wmv, ...). Permissions: pages_show_list, pages_read_engagement, pages_manage_posts (video API overview says 'All permissions require App Review', i.e. for non-role users)."
+      },
+      {
+        "purpose": "Resumable Upload API (for large videos; handle is then passed to /videos)",
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{app-id}/uploads",
+        "request_shape": "Step 1: file_name, file_length (bytes), file_type (video/mp4|image/jpeg|image/png|application/pdf) -> {\"id\":\"upload:{session-id}\"}. Step 2: POST https://graph.facebook.com/v25.0/upload:{session-id} with headers Authorization: OAuth {token}, file_offset: 0 and raw binary body -> {\"h\":\"{handle}\"}. Resume: GET /upload:{session-id} returns file_offset. Step 3: POST /{page-id}/videos with fbuploader_video_file_chunk={handle}&description=...",
+        "response_shape": "{\"h\":\"2:c2FtcGxl...\"} then {\"id\":\"{video-id}\"}",
+        "notes": "Documented in Video API publishing guide and Graph API Resumable Upload guide (v25/v26)."
+      },
+      {
+        "purpose": "Publish a Reel to a Page (3-step)",
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/{page-id}/video_reels",
+        "request_shape": "Step 1: upload_phase=start&access_token={page-token} -> {video_id, upload_url}. Step 2: POST https://rupload.facebook.com/video-upload/v25.0/{video-id} with headers Authorization: OAuth {page-token}, offset: 0, file_size: {bytes}, body --data-binary @file (or header file_url for hosted file); resume using upload_phase.bytes_transferred from GET /{video-id}?fields=status as offset. Step 3: POST /{page-id}/video_reels?upload_phase=finish&video_id={video-id}&video_state=PUBLISHED&description={text with #hashtags}[&title=][&scheduled_publish_time= with video_state=SCHEDULED]",
+        "response_shape": "{\"success\":true,\"message\":\"...\"} (step 3); {\"video_id\":\"...\",\"upload_url\":\"https://rupload.facebook.com/video-upload/v25.0/...\"} (step 1)",
+        "notes": "Specs: 3–90 s (60 s if also Page Story), 9:16, min 540x960 (1080x1920 recommended), 24–60 fps, mp4 recommended, H.264/H.265/VP9/AV1 + AAC, audio 128 kbps+. Hard limit: 30 API-published Reels per rolling 24 h per Page; Meta says the app should enforce it client-side. Cross-posting Reels to other Pages needs publish_video. Error codes seen in the wild: 1363040 (aspect), 1363127 (resolution), 1363128 (duration), 1363129 (fps)."
+      },
+      {
+        "purpose": "List Pages the user manages and get Page access tokens",
+        "method": "GET",
+        "url": "https://graph.facebook.com/v25.0/me/accounts",
+        "request_shape": "access_token={user-token}; optional fields=id,name,access_token,tasks",
+        "response_shape": "{\"data\":[{\"access_token\":\"...\",\"name\":\"...\",\"id\":\"{page-id}\",\"tasks\":[\"ANALYZE\",\"ADVERTISE\",\"MODERATE\",\"CREATE_CONTENT\",\"MANAGE\"]}]}",
+        "notes": "Requires pages_show_list. Use a long-lived user token to get non-expiring Page tokens."
+      },
+      {
+        "purpose": "Facebook Login for Devices (no redirect URI needed; good for desktop/CLI)",
+        "method": "POST",
+        "url": "https://graph.facebook.com/v25.0/device/login",
+        "request_shape": "access_token={app-id}|{client-token}&scope=public_profile,pages_manage_posts,... -> {code,user_code,verification_uri:\"https://www.facebook.com/device\",expires_in:420,interval:5}; then poll POST /device/login_status with access_token={app-id}|{client-token}&code={code}",
+        "response_shape": "{\"access_token\":\"...\",\"expires_in\":...} once the user enters user_code at facebook.com/device",
+        "notes": "Needs 'Login from Devices' enabled in Facebook Login settings. Docs only say scope must be permissions 'approved for use in Login Review'; whether pages_* scopes work here for role users was not verified."
+      },
+      {
+        "purpose": "Groups API (REMOVED)",
+        "method": "POST",
+        "url": "https://graph.facebook.com/v19.0/{group-id}/feed",
+        "request_shape": "n/a",
+        "response_shape": "n/a",
+        "notes": "Graph API v19.0 changelog: publish_to_groups, groups_access_member_info and the Groups API were deprecated 2024-01-23 and removed from all versions 2024-04-22. No third-party app can post to Groups via API."
+      }
+    ],
+    "free_tier": "Graph API is free; no paid tier. Rate limits (rate-limiting doc, read 2026-10-07): app-level (app/user tokens) 200 calls x number of users per rolling hour; Pages API with Page or system-user tokens: 4800 x number of engaged users per rolling 24 h (error 32 / 80001; header X-Business-Use-Case-Usage); Reels 30 published per Page per rolling 24 h. Business tier/pricing: none for Pages publishing.",
+    "paid_tiers": "None. (Business Verification is free but requires legal business documents.)",
+    "rate_limits": "Platform: 200 calls/hour x daily active users (X-App-Usage header; error 4=app limit, 17=user limit). Pages BUC: 4800 x engaged users / 24h rolling with Page tokens (error 32 / 80001; X-Business-Use-Case-Usage with estimated_time_to_regain_access). Reels: 30/24h per Page. Community (adaptlypost/smarterqueue, undated): Facebook dynamically throttles Pages that post a lot with no engagement in the prior 24 h; recommended >=20 min between posts; error 1390008 'posting too fast'.",
+    "token_lifetime_and_refresh": "Short-lived user token ~1–2 h (web); long-lived user token ~60 days via grant_type=fb_exchange_token (needs client_secret, so for BYO-app the user also pastes their App Secret, or use the SDK on mobile which issues long-lived tokens and auto-refreshes if the user engages within 90 days). Page tokens derived from a long-lived user token have no expiry (invalidated on password change, permission revoke, Page role loss, app deauth, or 'inactive' user). No refresh_token grant exists.",
+    "app_review_required": "Yes for anyone WITHOUT a role on the app: pages_manage_posts, pages_read_engagement, pages_show_list etc. are all 'App Review required' permissions and need Advanced Access. Access-levels doc: Standard Access (auto-granted, no review) can only be used by app role users (admin/developer/tester); Advanced Access 'can be requested from any app user' and since 2023-02-01 requires Business Verification plus per-permission App Review (screencast of full login+consent+feature flow, privacy policy URL, data-deletion callback, test credentials). Real-world (anim.hr 2026-04-16): reviews take 2–4+ weeks, feedback vague. Tech Provider status additionally needed to access business data owned by other business portfolios.",
+    "unreviewed_app_restrictions": "Per app-modes doc: Development-mode apps can only request permissions from role users (admins/developers/testers), and 'any data generated while an app is in Development mode, such as test posts, can only be seen by role users'. Postiz self-host docs corroborate: in Development mode 'posts made via the API will display for yourself but will not be visible for other users'; media posts show without the image to non-role users. BYO-app path for NEFORUM: each user creates their own Meta app (Business type / 'Manage everything on your Page' use case), stays an admin of it (Standard Access = all pages_* permissions auto-approved for role users, no App Review), and switches the app to Live (needs Privacy Policy URL etc., not review) so that Page posts are publicly visible. App Review is only required 'if your app will be used by anyone without a Role on the app'. Business Verification is NOT required for apps used exclusively by role users.",
+    "media_upload_flow": "Photos: POST /{page-id}/photos with url= or multipart source=; for multi-photo, upload each with published=false then POST /{page-id}/feed with attached_media[n]={\"media_fbid\":id}. Videos: POST /{page-id}/videos with source= (multipart) or file_url=, or Resumable Upload API (/{app-id}/uploads -> /upload:{id} -> fbuploader_video_file_chunk). Reels: /{page-id}/video_reels start -> rupload.facebook.com binary upload (headers offset/file_size) -> finish with video_state=PUBLISHED.",
+    "server_side_scheduling": "Yes: scheduled_publish_time (+ published=false) on /feed, /photos, /videos; Reels via video_state=SCHEDULED + scheduled_publish_time. Window: 10 minutes to 75 days ahead (Graph reference) — the Pages API guide page says 30 days; treat 30 days as the safe bound. Scheduled posts can be listed via /{page-id}/scheduled_posts.",
+    "account_requirements": "A Facebook personal account that has a Page role granting the CREATE_CONTENT task (classic admin/editor or New Pages Experience 'Facebook access' with content permission); a Meta developer account (free) to create the user's own app; the Page must be managed by that user. No business/professional account needed to post to a Page one already admins, but posting to a PERSONAL profile via API is impossible (publish_actions removed 2018-08-01; apps created on/after 2018-04-24 never had it)."
+  },
+  "handoff": {
+    "web_intent_url": "https://www.facebook.com/sharer/sharer.php",
+    "web_intent_params": "u={url-encoded link} (required; the only parameter that does anything). quote= used to prefill the message but Meta deprecated it (react-share removed `quote` in v5.0.0 after a Meta rep confirmed 'the quote feature has been deprecated'); hashtag= is not documented for sharer.php. Official Share Dialog alternative: https://www.facebook.com/dialog/share?app_id={app-id}&display=popup|page|touch&href={url-encoded link}&hashtag=%23NEFORUM[&redirect_uri=...] — app_id is REQUIRED, redirect_uri and mobile_iframe are deprecated, no quote/message parameter exists any more; only href and a single hashtag can be prefilled. Both require the user to be logged in to facebook.com in that browser (sharer.php shows 'You must log in to continue' otherwise). Legacy /dialog/feed is no longer documented.",
+    "android_share": "Intent ACTION_SEND, type text/plain, setPackage(\"com.facebook.katana\"), EXTRA_TEXT — the Facebook app extracts only a URL from EXTRA_TEXT and drops the rest of the text (community-documented since 2011, still the case in 2024 forum threads); ACTION_SEND/ACTION_SEND_MULTIPLE with image/* or video/* EXTRA_STREAM opens the composer with the media attached and the user types the caption. Official Facebook Sharing SDK (ShareDialog + ShareLinkContent/SharePhotoContent/ShareVideoContent) falls back to the web dialog if the app is missing; Meta's Android sharing doc: 'your app should not pre-fill any content to share. Pre-filling content is inconsistent with the Developer Policies.' Flutter: share_plus for the generic share sheet (cannot target FB specifically without a platform channel).",
+    "ios_share": "No documented public fb:// deep-link into a prefilled composer. Facebook SDK for iOS uses LSApplicationQueriesSchemes fbapi and fb-messenger-share-api, CFBundleURLSchemes fb{APP-ID}, Info.plist FacebookAppID/FacebookClientToken/FacebookDisplayName; FBSDKShareDialog (ShareLinkContent/SharePhotoContent) shows the native share sheet if the app is installed else the web Feed/Share dialog. Meta Developer Policies 2.3 (quoted in iOS sharing doc): 'Apps may not pre-fill the share sheet's initialText field with content that wasn't entered by the user of the app.' UIActivityViewController's Facebook activity drops text (community: since iOS 8.3 only link/image survive). Practical: share an image/video or link via the system share sheet; user types caption in the Facebook app or its share extension (com.facebook.Facebook.ShareExtension).",
+    "desktop": "Open https://www.facebook.com/sharer/sharer.php?u={url} or https://www.facebook.com/dialog/share?app_id=...&href=... in the default browser; nothing else can be prefilled. For pure text with no link there is no hand-off: copy text to clipboard and open https://www.facebook.com/ (or the Page's URL) in the browser.",
+    "supports_prefilled_text": false,
+    "supports_prefilled_media": true,
+    "notes": "Facebook deliberately blocks prefilled message text on every hand-off surface (web dialogs, Android intent, iOS share sheet/SDK) as a Platform/Developer Policy matter. Media can be handed to the native apps via the OS share sheet (ACTION_SEND image/*, iOS share extension) but the caption must be typed by the user; NEFORUM should put the caption on the clipboard and tell the user to paste."
+  },
+  "text_limits": {
+    "max_chars": 63206,
+    "counting_rule": "Not officially documented; 63,206 is the widely cited composer/API maximum (PostPeer error NAME_TOO_LONG 'exceeds the 63,206-character limit'). Treat as UTF-16 code units/characters, not bytes (unverified). Feed truncates after ~477 chars with 'See more'.",
+    "hashtags_max": 0,
+    "title_max": 0,
+    "notes": "No hashtag limit documented. Reels description supports hashtags. Links: Facebook refuses posting facebook.com links in some contexts (error 1609008). Emoji supported in message/description/title (docs say UTF-8 with emoji). hashtags_max and title_max 0 = no documented limit."
+  },
+  "media_limits": {
+    "images_per_post": 10,
+    "image_max_bytes": 10485760,
+    "image_formats": "jpeg, bmp, png, gif, tiff (Page /photos reference); PNG recommended under 1 MB; EXIF location stripped and images resized server-side. Third-party error catalog (PostPeer) reports error 1366046 'Image is over 4MB' on some paths, so keep images <=4 MB to be safe.",
+    "video": "Page video: multipart/URL upload max 1 GB and 20 min; resumable upload max 1.75 GB and 45 min (Graph v26.0 event/videos reference); formats include mp4, mov, mkv, avi, wmv, 3gp, flv, m4v, mpeg, ogv, ts, vob and more. Reels: 3–90 s, 9:16, min 540x960 (1080x1920 recommended), 24–60 fps, mp4 with H.264/H.265/VP9/AV1 + AAC 128 kbps+, max 30 API-published Reels per Page per rolling 24 h.",
+    "aspect_ratio": "Feed images: any (no API restriction documented). Reels: 9:16 required (range 16:9 to 9:16 accepted but 9:16 recommended).",
+    "alt_text": true
+  },
+  "gotchas": [
+    "Personal profile (timeline) posting via API is gone: publish_actions was closed to new apps 2018-04-24 and removed 2018-08-01; Meta's official replacement is the Share Dialog, which cannot prefill text. NEFORUM can only API-post to Pages (and Reels on Pages).",
+    "Groups API removed 2024-04-22 (announced with v19.0 on 2024-01-23): publish_to_groups and /{group-id}/feed no longer exist for any app.",
+    "Only app role users (admin/developer/tester) can use an un-reviewed app; Standard Access is auto-granted to them for all pages_* permissions. For anyone else you need Advanced Access = Business Verification (mandatory since 2023-02-01) + per-permission App Review (2–4+ weeks, screencast, privacy policy, data-deletion callback). A single shared 'NEFORUM' app id would therefore need Meta review and a verified business; the local-first answer is BYO app: each user creates their own Meta app, is its admin, and uses Standard Access.",
+    "Development mode hides output: Meta docs say data generated in Development mode 'such as test posts, can only be seen by role users'; Postiz confirms API posts/photos are invisible to the public until the app is switched to Live. BYO-app users must flip their app to Live (requires a Privacy Policy URL in Settings > Basic; no App Review needed as long as only role users log in).",
+    "pages_manage_posts cannot be requested alone: request pages_manage_posts, pages_read_engagement and pages_show_list together (community note; Meta's Pages use case also adds business_management + public_profile). Video/Reels publishing also wants pages_show_list; cross-posting Reels needs publish_video.",
+    "Redirect URIs: Valid OAuth Redirect URIs require exact match with Strict Mode and HTTPS. Custom schemes (neforum://callback) are not accepted by the web /dialog/oauth; Meta's documented desktop pattern is response_type=token + redirect_uri=https://www.facebook.com/connect/login_success.html inside an embedded webview, reading the token from the fragment. localhost http redirects are reportedly auto-allowed only while the app is in Development mode (dashboard note, not found in the public docs) — but the app must be Live for posts to be public, so plan for login_success.html interception or Facebook Login for Devices (device-code flow, no redirect at all; needs 'Login from Devices' enabled) on Windows/macOS.",
+    "PKCE: Meta's OIDC code flow supports code_challenge/code_verifier (S256 or plain) and makes client_secret optional at /oauth/access_token, but the doc says it is 'still in testing' and it requires scope=openid. The long-lived token exchange (fb_exchange_token) still needs client_secret — for BYO apps, store the user's App Secret locally or rely on mobile SDK long-lived tokens (60 days, auto-refresh with 90-day engagement) and non-expiring Page tokens.",
+    "Embedded-browser login is being blocked: Facebook shows 'For your account security, logging in to Facebook from an embedded browser is disabled' on Android WebViews (iOS has no workaround). Use the system browser/Custom Tabs/ASWebAuthenticationSession on mobile; the app dashboard also has a 'Disable embedded browser OAuth flow' setting.",
+    "Hosts changed: graph-video.facebook.com is deprecated (use graph.facebook.com); Reels binary uploads go to rupload.facebook.com with HTTP headers offset/file_size/Authorization: OAuth instead of form fields.",
+    "Scheduling window is inconsistent in Meta docs: Graph reference says 10 min–75 days; Pages API guide says 10 min–30 days. Posts can only be edited/deleted by the app that created them.",
+    "Rate limits: Pages BUC 4800 x engaged users / 24 h (error 32 / 80001) — a brand-new Page with zero engaged users has a very small budget; Reels capped at 30/24h; community reports dynamic spam throttling (error 1390008 'posting too fast') for Pages with no recent engagement.",
+    "Hand-off cannot prefill text anywhere: sharer.php?quote= and the Share Dialog quote parameter were silently deprecated by Meta (~2022); Share Dialog needs an app_id; Android ACTION_SEND to com.facebook.katana keeps only the URL from EXTRA_TEXT; iOS share sheet drops text; Meta Developer Policy 2.3 forbids prefilling initialText. Only a link, one hashtag (Share Dialog), or media (OS share sheet) can be handed over.",
+    "Web-session automation violates Meta Terms 3.2.3 and the Automated Data Collection terms ('Platform APIs are the only allowable means to access data programmatically'); Meta has litigated against automation vendors and checkpoints/disables accounts. Treat as high-risk, opt-in, desktop-only if offered at all.",
+    "flutter_facebook_auth (7.x) supports Android, iOS, macOS, Web — not Windows; facebook_auth_desktop adds macOS (Windows support unverified). On Windows you will need a hand-rolled flow (webview + login_success.html fragment, or device-code login)."
+  ],
+  "sources": [
+    "https://developers.facebook.com/docs/pages-api/posts",
+    "https://developers.facebook.com/docs/graph-api/reference/page/feed/",
+    "https://developers.facebook.com/docs/graph-api/reference/page/photos/",
+    "https://developers.facebook.com/docs/graph-api/reference/page/videos/",
+    "https://developers.facebook.com/docs/graph-api/reference/event/videos/",
+    "https://developers.facebook.com/docs/video-api/overview",
+    "https://developers.facebook.com/docs/video-api/guides/publishing",
+    "https://developers.facebook.com/docs/video-api/guides/reels-publishing",
+    "https://developers.facebook.com/docs/graph-api/guides/upload",
+    "https://developers.facebook.com/docs/permissions",
+    "https://developers.facebook.com/docs/graph-api/overview/access-levels",
+    "https://developers.facebook.com/docs/development/build-and-test/app-modes",
+    "https://developers.facebook.com/docs/development/release/business-verification",
+    "https://developers.facebook.com/docs/app-review",
+    "https://developers.facebook.com/documentation/development/create-an-app/pages-use-case",
+    "https://developers.facebook.com/documentation/pages-api/getting-started.md",
+    "https://developers.facebook.com/docs/graph-api/overview/rate-limiting",
+    "https://developers.facebook.com/docs/facebook-login/guides/advanced/manual-flow",
+    "https://developers.facebook.com/docs/facebook-login/guides/advanced/oidc-token",
+    "https://developers.facebook.com/docs/facebook-login/security",
+    "https://developers.facebook.com/docs/facebook-login/guides/access-tokens",
+    "https://developers.facebook.com/docs/facebook-login/guides/access-tokens/get-long-lived",
+    "https://developers.facebook.com/docs/facebook-login/for-devices",
+    "https://developers.facebook.com/docs/facebook-login/facebook-login-for-business",
+    "https://developers.facebook.com/docs/graph-api/changelog/version19.0",
+    "https://developers.facebook.com/docs/sharing/android",
+    "https://developers.facebook.com/docs/sharing/ios",
+    "https://developers.facebook.com/documentation/sharing/reference/share-dialog.md",
+    "https://developers.facebook.com/docs/plugins/share-button",
+    "https://developers.facebook.com/docs/ios/getting-started",
+    "https://developers.facebook.com/docs/development/terms-and-policies/automated-data-collection/",
+    "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fexample.com",
+    "https://docs.postiz.com/providers/facebook.md",
+    "https://www.ayrshare.com/docs/help-center/technical-support/facebook_login_disabled",
+    "https://anim.hr/en/blog/facebook-graph-api-verifikacija-glavobolja",
+    "https://singhamandeep.com/?p=1532",
+    "https://www.postpeer.dev/errors/facebook",
+    "https://wptavern.com/facebook-shuts-down-api-for-publishing-to-user-timelines-impacts-jetpacks-publicize-feature",
+    "https://github.com/nygardk/react-share/blob/master/CHANGELOG.md",
+    "https://b4x.com/android/forum/threads/sharing-post-from-my-app-directly-to-a-facebook-group.164630/",
+    "https://pub.dev/packages/flutter_facebook_auth",
+    "https://pub.dev/packages/facebook_auth_desktop",
+    "https://github.com/d-evil0per/fb_autopost",
+    "https://github.com/adar2/Facebook-Posts-Automation",
+    "https://github.com/SuryaXanden/Facebook-Post-Bot"
+  ],
+  "unverified_claims": [
+    "App Dashboard note 'localhost redirects are automatically allowed while in development mode only' — seen in search summaries, not found on a fetched official page.",
+    "'Enforce HTTPS' for redirect URIs became mandatory (toggle removed) around late 2018, so http://127.0.0.1:PORT/callback cannot be registered for a Live app.",
+    "Custom URL schemes (neforum://callback) are rejected by the Valid OAuth Redirect URIs field; mobile SDKs use fb{APP-ID}:// internally. Widely known but not confirmed from a fetched page.",
+    "Switching an app from Development to Live requires only a Privacy Policy URL, app icon and category (no App Review) and Standard Access permissions keep working for role users in Live mode.",
+    "attached_media supports up to 10 photos per feed post (recollection; limit not found in fetched docs).",
+    "Character counting for the 63,206 limit (UTF-16 units vs graphemes) is not documented anywhere official.",
+    "Facebook Login for Devices accepts pages_* scopes for role users of an unreviewed app (docs only say scopes must be 'approved for use in Login Review').",
+    "facebook_auth_desktop supports Windows in addition to macOS (pub.dev search summary only mentioned macOS).",
+    "Some developers report Development-mode Page posts being publicly visible despite the docs; Meta's own text and Postiz docs say they are role-user-only, so treat visibility as unreliable in Development mode.",
+    "Android: ACTION_SEND with image/* EXTRA_STREAM to com.facebook.katana opens the composer with the photo attached (recollection; recent official confirmation not found). iOS text-drop behaviour since iOS 8.3 is from community posts.",
+    "publish_actions dates (apps created on/after 2018-04-24 never got it; removed 2018-08-01) come from WPTavern/search summaries; the Meta blog post URL returned an empty page.",
+    "Error 368 ('temporarily blocked for policies violations') for over-posting was recalled but not found in fetched sources; PostPeer lists 1390008 and 1346003/1404102 instead."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Technically: on Windows/macOS embed a WebView (webview_flutter/flutter_inappwebview or a real browser profile) in which the user logs in to facebook.com, then drive the Page composer DOM (navigate to the Page, click 'Create post', set the contenteditable text, attach files via a file chooser, click Post) or reuse the session cookies with Playwright/Selenium. Existing open-source examples are Python Selenium scripts (SuryaXanden/Facebook-Post-Bot, d-evil0per/fb_autopost, adar2/Facebook-Posts-Automation, theyangyu96/Facebook-Automation-Selenium) that log in with credentials or saved cookies and click through the composer; none are maintained Flutter/Dart libraries and the Facebook DOM (React, obfuscated class names) changes frequently. On mobile the approach is hampered: Facebook now refuses login inside embedded WebViews on Android ('logging in to Facebook from an embedded browser is disabled') and iOS, and m.facebook.com/mbasic were retired, so only a cookie-import trick would work.",
+    "known_libraries": [
+      "SuryaXanden/Facebook-Post-Bot (Python+Selenium+Flask)",
+      "d-evil0per/fb_autopost (Python+Selenium, pages/groups)",
+      "adar2/Facebook-Posts-Automation (Python+Selenium+PyQt5, multi-page scheduling)",
+      "theyangyu96/Facebook-Automation-Selenium",
+      "Satyampd/FB-Auto-Post-Script-using-Python-Selenium",
+      "remorses/playwriter (generic: drive existing Chrome session/cookies)"
+    ],
+    "risk": "High. Meta Terms of Service 3.2.3 and the Automated Data Collection terms prohibit automated access 'regardless of whether such automated access or collection is undertaken while logged-in'; Platform APIs are 'the only allowable means to access data programmatically'. Meta actively detects headless/scripted sessions (checkpoints, 'security check required' 1404006, temporary posting blocks, account disablement) and has sued automation vendors. Facebook's React UI and anti-bot signals change often, so breakage is frequent. If offered at all, make it desktop-only, opt-in with a warning, and never the default."
+  },
+  "confidence": "high"
+}

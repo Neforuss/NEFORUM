@@ -1,0 +1,176 @@
+{
+  "platform": "Nostr",
+  "verified_on": "2026-10-06",
+  "recommended_tiers": [
+    "open_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Nostr protocol (NIPs) — open relay WebSocket protocol; no vendor API, no registration, no app review",
+    "docs_url": "https://github.com/nostr-protocol/nips",
+    "auth": "No OAuth and no accounts. Identity = a secp256k1 keypair. Every event is signed client-side with BIP-340 Schnorr over the sha256 of the serialized event. Three ways NEFORUM can obtain a signature: (1) hold the user's nsec locally (bech32 'nsec1...' decoded to 32-byte hex privkey; sign with a BIP-340 lib); (2) NIP-46 remote signing: user pastes a 'bunker://<remote-signer-pubkey>?relay=<wss://...>&secret=<opt>' URI OR NEFORUM shows/opens a 'nostrconnect://<client-pubkey>?relay=<url>&secret=<random>&perms=sign_event:1&name=NEFORUM&url=<canonical>&image=<url>' URI; NEFORUM generates a disposable client keypair, sends kind-24133 events (content NIP-44 encrypted JSON-RPC {id,method,params}) tagged ['p', remote-signer-pubkey] via the relay, methods: connect [remote-signer-pubkey, secret?, perms?], get_public_key [], sign_event [JSON string of {kind,content,tags,created_at}] -> returns JSON-stringified signed event, ping, nip04/nip44_encrypt/decrypt, switch_relays, logout; responses {id,result,error}; a response with result='auth_url' means open error-field URL for the user to authenticate, then wait for a second response with the same id; (3) Android only, NIP-55: launch Intent(ACTION_VIEW, Uri.parse('nostrsigner:'+eventJson)) with package='com.greenart7c3.nostrsigner' (Amber) and extras type='sign_event', id=<event id or client id>, current_user=<hex pubkey>; result Intent extras: 'result' (signature), 'event' (full signed event JSON), 'id', or 'rejected'; type='get_public_key' (extra 'permissions' = JSON like [{\"type\":\"sign_event\",\"kind\":1}]) returns extras 'result' (hex pubkey) and 'package'; after permissions are granted, background signing via ContentResolver.query(Uri.parse('content://com.greenart7c3.nostrsigner.SIGN_EVENT'), projection [eventJson, '', loggedInUserPubkey]) returns cursor columns 'result' and 'event', null cursor or a 'rejected' column when not permitted; detect signer with packageManager.queryIntentActivities(Intent(ACTION_VIEW, Uri.parse('nostrsigner:')), 0). Relays may additionally demand NIP-42 AUTH: relay sends ['AUTH', <challenge>], client replies ['AUTH', <signed kind-22242 event with tags ['relay', url], ['challenge', challenge]>]; OK rejections carry prefix 'auth-required:'.",
+    "oauth_scopes": [],
+    "pkce_supported": false,
+    "desktop_loopback_redirect_ok": false,
+    "custom_scheme_redirect_ok": false,
+    "endpoints": [
+      {
+        "purpose": "Publish a note (kind 1) to a relay",
+        "method": "WebSocket message",
+        "url": "wss://<relay> — send JSON array [\"EVENT\", <event>]",
+        "request_shape": "{\"id\":<64-hex sha256>,\"pubkey\":<64-hex x-only pubkey>,\"created_at\":<unix seconds>,\"kind\":1,\"tags\":[[\"imeta\",\"url https://...\",\"m image/jpeg\",\"x <sha256>\",\"dim WxH\",\"alt ...\",\"blurhash ...\"],[\"p\",<hex>],[\"e\",<hex>,<relay-url>,\"root\"|\"reply\",<pubkey>],[\"q\",<hex>,<relay>,<pubkey>],[\"t\",\"hashtag\"]],\"content\":\"plain text, media URLs inline, nostr:npub1.../nostr:nevent1... for mentions (NIP-21/27)\",\"sig\":<128-hex BIP-340 Schnorr>} ; id = sha256( UTF-8 JSON of [0, pubkey, created_at, kind, tags, content] ) with no whitespace and exactly these escapes in content: \\n \\\" \\\\ \\r \\t \\b \\f, every other char verbatim (do NOT escape '/' or non-ASCII); sig = schnorr_sign(id, privkey, aux_rand). Hex only inside events (bech32 npub/nsec never appear in JSON).",
+        "response_shape": "[\"OK\", <event_id>, true|false, <message>] — MUST be sent by the relay; on false the message starts with a machine-readable prefix: 'duplicate:', 'pow:', 'blocked:', 'rate-limited:', 'invalid:', 'restricted:', 'mute:', 'auth-required:' (NIP-42) or 'error:'. Also possible: [\"NOTICE\", msg], [\"AUTH\", challenge].",
+        "notes": "Treat success per-relay; a note is 'published' if at least one relay returns OK true. Publish to the user's NIP-65 write relays (kind 10002 'r' tags with 'write'/no marker) plus the read relays of any p-tagged users. Subscribe with [\"REQ\", subid, {filters}] / [\"CLOSE\", subid] if you need to fetch kind 10002 or kind 0 first."
+      },
+      {
+        "purpose": "Relay capability / limits discovery (NIP-11)",
+        "method": "GET",
+        "url": "https://<relay-host>/ with header Accept: application/nostr+json",
+        "request_shape": "none",
+        "response_shape": "{name, description, supported_nips, limitation:{max_message_length, max_subscriptions, max_limit, max_subid_length, max_event_tags, max_content_length (unicode chars), min_pow_difficulty, auth_required, payment_required, restricted_writes, created_at_lower_limit, created_at_upper_limit}, payments_url, fees:{admission,subscription,publication (msats)}}",
+        "notes": "Use max_content_length / max_event_tags / min_pow_difficulty / payment_required to pre-validate per relay."
+      },
+      {
+        "purpose": "Media upload — NIP-96 (nostr.build, nostrcheck.me, etc.; spec now marked 'unrecommended, replaced by Blossom' but widely deployed)",
+        "method": "POST",
+        "url": "<api_url from https://<host>/.well-known/nostr/nip96.json> e.g. https://nostr.build/api/v2/nip96/upload or https://cdn.nostrcheck.me",
+        "request_shape": "multipart/form-data: file (required), caption, alt, expiration ('' = never), size, media_type ('avatar'|'banner'), content_type, no_transform ('true'); header Authorization: Nostr <base64(JSON of signed kind-27235 event with tags ['u', exact request URL], ['method','POST'], optional ['payload', sha256-hex of body], created_at within ~60 s, content '')>",
+        "response_shape": "201 Created (200 if same hash already exists, 202 if async with processing_url) {\"status\":\"success\",\"message\":\"...\",\"nip94_event\":{\"tags\":[[\"url\",\"https://...ext\"],[\"ox\",<sha256 original>],[\"x\",<sha256 served>],[\"m\",\"image/jpeg\"],[\"dim\",\"WxH\"],[\"size\",...],[\"blurhash\",...]],\"content\":\"\"}} ; errors 400/402 payment/403 forbidden (hash mismatch)/413 too large. DELETE <api_url>/<sha256> with NIP-98 header deletes. GET <api_url>?page=&count= lists.",
+        "notes": "Copy the returned nip94 tags into an imeta tag (NIP-92) and put the url in content. nostr.build nip96.json (read 2026-10): api_url https://nostr.build/api/v2/nip96/upload, download_url https://media.nostr.build, plans.free max_byte_size 20 MB, is_nip98_required true, no expiration. nostrcheck.me free: 100 MB, NIP-98 required, no expiration."
+      },
+      {
+        "purpose": "Media upload — Blossom (BUD-02), the current recommended path (NIP-B7)",
+        "method": "PUT",
+        "url": "https://<blossom-server>/upload (e.g. https://blossom.primal.net — implements BUD-01/02/04/05; paid nostr.build plans include a Blossom server)",
+        "request_shape": "raw binary body; headers Content-Type, Content-Length, optional X-SHA-256 (lowercase hex); Authorization: Nostr <base64url-no-padding(JSON of signed kind-24242 event)> where event.content = human-readable e.g. 'Upload Blob', tags [['t','upload'],['x',<sha256 of blob>],['expiration',<future unix ts>], optional ['server',<domain>]], created_at in the past",
+        "response_shape": "201 Created (200 if exists) Blob Descriptor {\"url\":\"https://server/<sha256>.ext\",\"sha256\":\"<hex>\",\"size\":<bytes>,\"type\":\"image/png\",\"uploaded\":<unix>} ; errors 401/402/4xx with X-Reason header; server MUST NOT modify bytes. GET /<sha256>.ext fetches, HEAD /<sha256> checks, DELETE /<sha256> (t=delete) and GET /list/<pubkey> (t=list) per BUD-12.",
+        "notes": "Users advertise their servers in kind 10063 ['server', url] tags; because the URL is content-addressed, clients can fall back to any of the user's servers by hash. Also an optional NIP-96 kind 10096 ['server', url] preference list exists (deprecated)."
+      },
+      {
+        "purpose": "Sign via NIP-46 remote signer (bunker / Amber over relay / nsec.app)",
+        "method": "WebSocket message",
+        "url": "wss://<relay from bunker:// or nostrconnect:// URI> — send [\"EVENT\", <kind 24133 event>] and REQ for kind 24133 with #p = client pubkey",
+        "request_shape": "{kind:24133, pubkey:<client-pubkey>, tags:[['p',<remote-signer-pubkey>]], content: nip44_encrypt(JSON {\"id\":\"<random>\",\"method\":\"sign_event\",\"params\":[\"<JSON string of unsigned event {kind,content,tags,created_at}>\"]})}",
+        "response_shape": "kind 24133 from remote-signer-pubkey, content nip44 -> {\"id\":\"<same>\",\"result\":\"<JSON string of signed event>\",\"error\":\"<opt>\"} ; or {\"result\":\"auth_url\",\"error\":\"<URL to open>\"}",
+        "notes": "Perms string 'sign_event:1,get_public_key' can be requested at connect. Validate the returned secret on nostrconnect:// flows. Delete the client keypair on logout."
+      }
+    ],
+    "free_tier": "Protocol: free and unlimited at the protocol level; individual relays may require NIP-42 auth, PoW (min_pow_difficulty), payment (payment_required / fees in msats) or be write-restricted. Common defaults seen in relay software (read 2026-10): nostr-rs-relay max_event_bytes 128 KB, max_ws_message_bytes 128 KB; strfry maxEventSize 64 KB, maxWebsocketPayloadSize 128 KB, maxNumTags 2000, maxTagValSize 1024 bytes, rejects created_at more than 900 s in the future or older than ~3 years. Media: nostr.build free 20 MB/file (NIP-98 required), nostrcheck.me free 100 MB/file; paid nostr.build plans (2026-10): Purist 5 GB $18/yr, Professional 25 GB $69/yr, Creator 100 GB $120/yr, Advanced 500 GB $240/yr, up to 450 MB/file.",
+    "paid_tiers": "None for the protocol. Paid relays (e.g. nostr.wine-style) charge admission via NIP-11 fees/payments_url; media hosts have paid plans (see free_tier).",
+    "rate_limits": "Relay-specific. Relays signal via OK false 'rate-limited: ...'; nostr-rs-relay messages_per_sec / subscriptions_per_min are unlimited by default; NIP-11 limitation object is the only discoverable source.",
+    "token_lifetime_and_refresh": "No tokens. NIP-98 auth events must be created within ~60 s of the request (single use per request). Blossom kind-24242 tokens carry an explicit 'expiration' tag you choose. NIP-46 sessions persist as long as the signer keeps the client pubkey authorized; Amber NIP-55 permissions persist per app package until the user revokes.",
+    "app_review_required": "None. No developer registration, no app review, no API keys.",
+    "unreviewed_app_restrictions": "None — any client can publish any event kind to any relay that accepts it.",
+    "personal_profile_posting": true,
+    "account_requirements": "A keypair (user can generate offline). No email, phone, business/pro account or verification. Optional NIP-05 identifier for display only.",
+    "media_upload_flow": "1) Pick server: user's kind 10063 Blossom list (or kind 10096 NIP-96 list) or a NEFORUM default (nostr.build NIP-96 free 20 MB / blossom.primal.net). 2) sha256 the file. 3) Sign auth event (kind 27235 for NIP-96 with u/method/payload tags; kind 24242 for Blossom with t=upload,x=sha256,expiration). 4) POST multipart (NIP-96) or PUT raw bytes (Blossom). 5) Build imeta tag ['imeta','url <url>','m <mime>','x <sha256>','dim WxH','alt <alt>','blurhash <bh>'] — MUST contain url plus at least one more field — and append the same URL to content (space-separated). 6) Publish kind 1. Signing the auth event through NIP-46/NIP-55 works the same as signing the note.",
+    "server_side_scheduling": "None. Relays store events immediately; created_at in the future is typically rejected (strfry: >900 s). Scheduling must be local (NEFORUM keeps the unsigned draft and signs/publishes at send time; pre-signing is possible only if the key is local and created_at is set at signing time)."
+  },
+  "handoff": {
+    "desktop": "No standard web composer intent exists. Fallback: copy text to clipboard and open the user's web client (e.g. https://primal.net, https://snort.social, https://coracle.social, https://nostrudel.ninja). nostr:<npub|note|nevent|nprofile|naddr> URIs (NIP-21, nsec forbidden) open the registered desktop/mobile client for viewing, not composing.",
+    "android_share": "Amethyst (verified AndroidManifest): activity .ui.MainActivity accepts ACTION_SEND for text/plain, image/*, video/*; .ui.ShareAsPictureAlias / ShareAsVideoAlias / ShareAsShortVideoAlias accept SEND_MULTIPLE for image/* / video/*; also handles VIEW for nostr:// and amethyst:// schemes and nostrconnect://. Amethyst applicationId is com.vitorpamplona.amethyst (not verified in manifest text; it is template-substituted). Use Intent(ACTION_SEND).setType(\"text/plain\").putExtra(EXTRA_TEXT, msg) with image/video ClipData for media; Amethyst prefills its composer. Other clients (Primal, Yakihonne, Voyage) also register SEND but were not verified.",
+    "ios_share": "Damus (verified repo): has a 'share extension' target (NSExtensionPointIdentifier com.apple.share-services, activation rule: images up to 5, movies up to 3, 1 web URL — NSExtensionActivationSupportsText not set, so plain text alone may not activate it), plus URL schemes 'nostr' and 'damus' (CFBundleURLName io.damus.nostr / io.damus). Use UIActivityViewController with [UIImage/URL] items; Damus share sheet prefills a post. Primal iOS and other clients were not verified.",
+    "web_intent_url": "",
+    "web_intent_params": "none standardized; nostr:npub1.../nostr:note1... (NIP-21) are view links only",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": true,
+    "notes": "Hand-off is redundant for Nostr because the open API tier needs no account or review; it is only useful when the user refuses to give NEFORUM a signer (key, bunker, or Amber). Amber (NIP-55) itself is the recommended 'hand-off' for signing on Android: the note is still built and published by NEFORUM, only the signature is delegated."
+  },
+  "text_limits": {
+    "max_chars": 0,
+    "counting_rule": "No protocol limit. Relays enforce total serialized event size in bytes (strfry default 64 KB event / 128 KB websocket frame; nostr-rs-relay 128 KB) and optionally NIP-11 limitation.max_content_length counted in unicode characters. Count UTF-8 bytes of the whole serialized event, not graphemes.",
+    "hashtags_max": 0,
+    "title_max": 0,
+    "notes": "Kind 1 content is plain text (no markdown); URLs and nostr: mentions are inline; hashtags are '#tag' in content and SHOULD be mirrored as ['t','tag'] tags (lowercase) for discoverability. Kind 1 must not be used to reply to non-kind-1 events (use NIP-22 kind 1111). Keep tags under strfry's maxNumTags 2000 / maxTagValSize 1024 bytes. For long posts use kind 30023 (NIP-23) instead."
+  },
+  "media_limits": {
+    "images_per_post": 0,
+    "image_formats": "Whatever the media host accepts; nostr.build NIP-96: image, video, audio (free 20 MB). nostrcheck.me free 100 MB. No per-post count limit — each media is one imeta tag + URL in content; clients render multiple.",
+    "image_max_bytes": 20971520,
+    "aspect_ratio": "any; publish 'dim WxH' in imeta",
+    "video": "Allowed as a URL + imeta (m video/mp4 etc.) subject to host size limit (nostr.build free 20 MB; paid up to 450 MB/file)",
+    "alt_text": true
+  },
+  "gotchas": [
+    "Serialization must be byte-exact: JSON array [0,pubkey,created_at,kind,tags,content] with no whitespace, only \\n \\\" \\\\ \\r \\t \\b \\f escaped in content, everything else (including '/' and non-ASCII) verbatim; Dart's jsonEncode escapes nothing extra except these, but double-check that it does not emit \\u escapes for control chars other than the listed ones (e.g. \\u0000-\\u001f others are rare but would break ids computed by other clients).",
+    "pubkey is the 32-byte x-only key (BIP-340), not the 33-byte compressed SEC key; npub/nsec are bech32 (NIP-19) of exactly 32 bytes; never put bech32 forms inside events or filters; NIP-19 allows strings up to 5000 chars for TLV types (nevent/nprofile/naddr).",
+    "Each relay answers independently with ['OK', id, bool, msg]; treat 'duplicate:' as success, 'rate-limited:'/'auth-required:'/'pow:' as retryable, 'blocked:'/'restricted:'/'invalid:' as terminal for that relay. Also handle AUTH challenges (NIP-42) mid-connection.",
+    "created_at too far in the future is rejected (strfry default >900 s); clock skew on mobile matters. NIP-98 auth events must be within ~60 s of the HTTP request, so sign immediately before sending.",
+    "NIP-96 is now marked 'unrecommended / replaced by Blossom' in the NIPs index (2026) but nostr.build and nostrcheck.me still serve it; support both NIP-96 (POST multipart, kind 27235 base64 header) and Blossom (PUT raw, kind 24242 base64url-no-padding header). Note the different base64 flavours.",
+    "void.cat is gone: DNS for void.cat did not resolve on 2026-10-06; do not ship it as a default host (it still appears as a 'fallback' example inside NIP-92).",
+    "nostr.build free uploads require NIP-98 auth (a signed event from the user's key) — so media upload through NIP-46/NIP-55 needs the signer to sign kind 27235/24242 too; request those kinds in the permission list (e.g. [{\"type\":\"sign_event\",\"kind\":1},{\"type\":\"sign_event\",\"kind\":27235},{\"type\":\"sign_event\",\"kind\":24242}]).",
+    "NIP-55 (Amber) is Android-only; on iOS/macOS/Windows the alternatives are a local nsec or NIP-46 (bunker://, nostrconnect://, e.g. nsec.app or Amber acting as a bunker over a relay). Flutter: ndk has an Amber (NIP-55) signer and NIP-46; the standalone 'amberflutter' package (0.0.9) has had no commits since 2024-01.",
+    "NIP-46 'nostrconnect://' deep links can be intercepted by Amber/Amethyst on Android (both register the scheme) — fine for NEFORUM (it is the client that generates the URI), but NEFORUM should also render a QR code for desktop.",
+    "Storing nsec on device is the biggest risk for a FOSS cross-poster: use flutter_secure_storage / platform keychain, offer NIP-46/NIP-55 first, and never log the serialized private key. Kind 1 drafts can be pre-built but should be signed at publish time.",
+    "Dart library landscape (pub.dev, 2026-10): 'ndk' 0.10.1 (relaystr, MIT, pushed 2026-10-06, 86 open issues, NIP-01/19/46/55/65/Blossom, requires Dart >=3.9); 'nostr' 2.0.0 (ethicnology, LGPL-3.0 — copyleft but GPL-compatible, pushed 2026-08-10, 35+ NIPs incl. 46/94/98, transport-agnostic, no NIP-55/96/Blossom); 'dart_nostr' 10.0.1 (gwhyyy/anasfik, MIT, pushed 2026-08-26, relay pool + NIP-19/05/45, no NIP-46/55/96 mentioned); 'bip340' 0.3.1 (MIT, 13 months old, self-described 'not safe cryptography'). Embedded WebView is pointless: all official web clients hold the key in browser storage/NIP-07 anyway and relays have no account to ban."
+  ],
+  "sources": [
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/01.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/19.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/92.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/94.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/96.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/98.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/46.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/55.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/65.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/21.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/27.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/10.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/11.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/42.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/44.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/07.md",
+    "https://raw.githubusercontent.com/nostr-protocol/nips/master/B7.md",
+    "https://github.com/nostr-protocol/nips/blob/master/README.md",
+    "https://raw.githubusercontent.com/hzrd149/blossom/master/buds/01.md",
+    "https://raw.githubusercontent.com/hzrd149/blossom/master/buds/02.md",
+    "https://raw.githubusercontent.com/hzrd149/blossom/master/buds/11.md",
+    "https://nostr.build/.well-known/nostr/nip96.json",
+    "https://account.nostr.build/plans",
+    "https://nostrcheck.me/.well-known/nostr/nip96.json",
+    "https://blossom.primal.net/",
+    "https://github.com/greenart7c3/Amber",
+    "https://api.github.com/repos/greenart7c3/Amber/releases/latest",
+    "https://pub.dev/packages/ndk",
+    "https://pub.dev/packages/ndk/versions",
+    "https://api.github.com/repos/relaystr/ndk",
+    "https://dart-nostr.com/",
+    "https://pub.dev/packages/dart_nostr",
+    "https://pub.dev/packages/dart_nostr/changelog",
+    "https://api.github.com/repos/anasfik/nostr",
+    "https://pub.dev/packages/nostr",
+    "https://pub.dev/packages/nostr/changelog",
+    "https://api.github.com/repos/ethicnology/dart-nostr",
+    "https://pub.dev/packages/amberflutter",
+    "https://api.github.com/repos/sebdeveloper6952/amberflutter",
+    "https://pub.dev/packages/bip340",
+    "https://raw.githubusercontent.com/vitorpamplona/amethyst/main/amethyst/src/main/AndroidManifest.xml",
+    "https://raw.githubusercontent.com/damus-io/damus/master/damus/Info.plist",
+    "https://raw.githubusercontent.com/damus-io/damus/master/share%20extension/Info.plist",
+    "https://api.github.com/repos/damus-io/damus/contents",
+    "https://raw.githubusercontent.com/scsibug/nostr-rs-relay/master/config.toml",
+    "https://raw.githubusercontent.com/hoytech/strfry/master/strfry.conf"
+  ],
+  "unverified_claims": [
+    "Commonly used default relays (recollection; could not fetch a client's default list — nostr.watch, Coracle .env, Amethyst/Damus/Snort constants all 404'd or were truncated): wss://relay.damus.io, wss://nos.lol, wss://relay.primal.net, wss://relay.nostr.band, wss://nostr.wine (paid), wss://relay.snort.social; kind-10002/0 indexer relays: wss://purplepag.es, wss://relay.nostr.band, wss://indexer.coracle.social. NEFORUM should fetch the user's kind 10002 first and only use defaults as bootstrap.",
+    "Amethyst applicationId 'com.vitorpamplona.amethyst' (manifest uses ${applicationId} placeholder) and Damus bundle id 'com.jb55.damus2' (not present in Info.plist).",
+    "Amber is also distributed on Google Play as 'Amber' by greenart7c3 (README read listed F-Droid, Zap Store, GitHub Releases, Obtainium only).",
+    "nsec.app is a web-based NIP-46 bunker usable from any platform, and Amber can act as a NIP-46 bunker (README says it supports NIP-46, but bunker-mode specifics were not read).",
+    "There is no NIP-55 equivalent on iOS; iOS signer apps (e.g. 'Nostash' Safari extension for NIP-07) exist but do not expose an app-to-app signing API; iOS clients rely on local key or NIP-46.",
+    "Primal web (https://primal.net) and other web clients have no documented prefilled-compose URL parameter; a 'new note' route may exist but was not verified.",
+    "Many public relays reject events with min_pow_difficulty > 0 or require NIP-42 auth for writes (e.g. nostr.wine paid); exact per-relay limits were not fetched (NIP-11 fetch via WebFetch cannot set the Accept header).",
+    "ndk's Amber signer is Android-only (the NDK docs list 'NIP-55 (Amber)' as a signer but do not state the platform restriction; NIP-55 itself is Android-only by design).",
+    "nostr.build's free NIP-96 tier may additionally throttle uploads per pubkey/day; nip96.json only exposes max_byte_size 20 MB."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Technically possible: load a web client (primal.net, snort.social, coracle.social, nostrudel.ninja) in flutter_inappwebview, let the user log in with nsec or a NIP-46 bunker inside the page, then inject JS to fill and submit the composer. But the key then lives in the WebView's localStorage, and NEFORUM would still need to parse an unstable DOM. There is no account to protect, so this tier gives nothing the open protocol does not.",
+    "known_libraries": [
+      "none for Nostr (no need: every client signs locally; use ndk / nostr / dart_nostr instead)"
+    ],
+    "risk": "No ban risk — relays have no accounts and cannot distinguish a WebView from a browser. The risk is purely key exposure inside the WebView and breakage when the web client's DOM changes. Not recommended."
+  },
+  "confidence": "high"
+}

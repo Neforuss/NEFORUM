@@ -1,0 +1,209 @@
+{
+  "platform": "YouTube",
+  "verified_on": "2026-09-30",
+  "recommended_tiers": [
+    "byok_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "YouTube Data API v3 (videos.insert, resumable upload)",
+    "docs_url": "https://developers.google.com/youtube/v3/docs/videos/insert",
+    "auth": "OAuth 2.0 authorization code (Google 'installed app' flow). Authorization endpoint https://accounts.google.com/o/oauth2/v2/auth with client_id, redirect_uri, response_type=code, scope, code_challenge, code_challenge_method=S256, state (optional login_hint, access_type is implicit for installed apps - refresh tokens are 'always returned for installed applications'). Token endpoint POST https://oauth2.googleapis.com/token (form-encoded: client_id, client_secret [optional for installed apps; 'not applicable' to Android/iOS/Chrome client types], code, code_verifier, grant_type=authorization_code, redirect_uri). Refresh: POST same endpoint with grant_type=refresh_token&refresh_token=... Revoke: https://oauth2.googleapis.com/revoke. API calls use Authorization: Bearer <access_token>. Google explicitly deprecates OAuth inside embedded WebViews (use system browser / Custom Tabs / ASWebAuthenticationSession); the OOB copy-paste flow is gone. Client types: 'Desktop app' (Windows/macOS/Linux, loopback redirect), 'iOS' (bundle ID; redirect = reversed client id scheme com.googleusercontent.apps.<CLIENT_ID>:/oauth2redirect; scheme 'must contain a period'; optional App Check), 'Android' (package name + SHA-1; custom URI schemes disabled by default for NEW Android clients since Oct 2023 - opt-in under client 'Advanced Settings', otherwise use Google Identity Services / Credential Manager, which Flutter's google_sign_in 7.x wraps and exposes via authorizationClient.authorizeScopes([...]) to get an access token).",
+    "oauth_scopes": [
+      "https://www.googleapis.com/auth/youtube.upload (minimum for videos.insert + thumbnails.set)",
+      "https://www.googleapis.com/auth/youtube (full account management; needed for playlists etc.)",
+      "https://www.googleapis.com/auth/youtube.force-ssl (edit/delete videos, comments, captions)",
+      "https://www.googleapis.com/auth/youtube.readonly (read only; channels.list to show the signed-in channel)",
+      "https://www.googleapis.com/auth/youtubepartner (content owners only)"
+    ],
+    "pkce_supported": true,
+    "desktop_loopback_redirect_ok": true,
+    "custom_scheme_redirect_ok": false,
+    "endpoints": [
+      {
+        "purpose": "Start resumable upload session (create video resource with metadata)",
+        "method": "POST",
+        "url": "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status",
+        "request_shape": "Headers: Authorization: Bearer <token>; Content-Type: application/json; charset=UTF-8; Content-Length: <json length>; X-Upload-Content-Length: <video bytes>; X-Upload-Content-Type: <video/mp4 or application/octet-stream>. Body JSON: {\"snippet\":{\"title\":\"...\",\"description\":\"...\",\"tags\":[\"a\",\"b\"],\"categoryId\":\"22\",\"defaultLanguage\":\"en\"},\"status\":{\"privacyStatus\":\"private|public|unlisted\",\"publishAt\":\"2026-10-08T15:00:00Z\",\"selfDeclaredMadeForKids\":false,\"containsSyntheticMedia\":false,\"embeddable\":true,\"license\":\"youtube\",\"publicStatsViewable\":true},\"recordingDetails\":{\"recordingDate\":\"...\"}}. Optional query params: notifySubscribers=true|false (default true), onBehalfOfContentOwner, onBehalfOfContentOwnerChannel.",
+        "response_shape": "HTTP 200 with Location: <session URI> header (no body needed). Session URI is where bytes are PUT.",
+        "notes": "Costs 1 call from the daily videos.insert bucket (100/day default) as of 2026-06-01. Max file 256 GB; accepted MIME video/* or application/octet-stream."
+      },
+      {
+        "purpose": "Upload the video bytes (single shot)",
+        "method": "PUT",
+        "url": "<Location session URI from step 1>",
+        "request_shape": "Headers: Authorization: Bearer <token>; Content-Length: <video bytes>; Content-Type: <same MIME as X-Upload-Content-Type>. Body: raw video bytes.",
+        "response_shape": "HTTP 201 with the created video resource JSON (id, snippet, status.uploadStatus=uploaded, etc.).",
+        "notes": "For chunked upload, each PUT carries Content-Range: bytes FIRST-LAST/TOTAL and chunk sizes must be multiples of 256 KB (except the final chunk); server answers 308 Resume Incomplete with Range: bytes=0-N per chunk."
+      },
+      {
+        "purpose": "Query upload status / resume after interruption",
+        "method": "PUT",
+        "url": "<Location session URI>",
+        "request_shape": "Headers: Content-Length: 0; Content-Range: bytes */<TOTAL>. Empty body.",
+        "response_shape": "308 Resume Incomplete with Range: bytes=0-<lastByteReceived> (or no Range header if nothing received); then PUT remaining bytes with Content-Range: bytes <lastByteReceived+1>-<TOTAL-1>/<TOTAL>.",
+        "notes": "Retry on 500/502/503/504 with exponential backoff; a 404 on the session URI means the session expired - restart from step 1 (costs another insert call). Other 4xx are permanent failures."
+      },
+      {
+        "purpose": "Set custom thumbnail",
+        "method": "POST",
+        "url": "https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=<id>&uploadType=media",
+        "request_shape": "Body: image bytes; Content-Type: image/jpeg | image/png | application/octet-stream. Max 50 MB (raised from 2 MB on 2026-09-14).",
+        "response_shape": "JSON with thumbnails map (default/medium/high/standard/maxres).",
+        "notes": "~50 quota units from the 10,000 general bucket. Channel must have custom-thumbnail access (phone-verified / advanced features) - API doc itself does not state this, it is a channel-side requirement."
+      },
+      {
+        "purpose": "Update metadata / privacy after upload",
+        "method": "PUT",
+        "url": "https://www.googleapis.com/youtube/v3/videos?part=snippet,status",
+        "request_shape": "JSON video resource with id plus full snippet (title required, categoryId required) and status fields to change.",
+        "response_shape": "Updated video resource.",
+        "notes": "~50 units. Cannot lift the 'unverified API project -> private' lock."
+      },
+      {
+        "purpose": "Identify signed-in channel",
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/channels?part=snippet,contentDetails&mine=true",
+        "request_shape": "none",
+        "response_shape": "items[0].id (UC...), snippet.title, snippet.thumbnails",
+        "notes": "1 unit. Use to display which channel will receive uploads and to build Studio deep links."
+      },
+      {
+        "purpose": "Check processing status after upload",
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=<id>",
+        "request_shape": "none",
+        "response_shape": "status.uploadStatus (uploaded|processed|failed|rejected|deleted), status.failureReason (codec|conversion|emptyFile|invalidFile|tooSmall|uploadAborted), status.rejectionReason (claim|copyright|duplicate|inappropriate|legal|length|termsOfUse|trademark|uploaderAccountClosed|uploaderAccountSuspended)",
+        "notes": "1 unit per poll."
+      },
+      {
+        "purpose": "Add uploaded video to a playlist",
+        "method": "POST",
+        "url": "https://www.googleapis.com/youtube/v3/playlistItems?part=snippet",
+        "request_shape": "{\"snippet\":{\"playlistId\":\"PL...\",\"resourceId\":{\"kind\":\"youtube#video\",\"videoId\":\"...\"}}}",
+        "response_shape": "playlistItem resource",
+        "notes": "~50 units. Requires youtube or youtube.force-ssl scope (not youtube.upload)."
+      }
+    ],
+    "media_upload_flow": "Resumable protocol (Google 'using_resumable_upload_protocol' guide): (1) POST metadata JSON to /upload/youtube/v3/videos?uploadType=resumable&part=... with X-Upload-Content-Length/Type -> 200 + Location; (2) PUT bytes to Location (whole file, or 256 KB-multiple chunks with Content-Range); (3) on interruption send empty PUT with Content-Range: bytes */TOTAL, read 308 + Range header, resume from next byte; (4) 201 + video resource on completion. Session URIs can expire (404 -> restart). Also uploadType=media (simple, single multipart-less request) and uploadType=multipart exist but resumable is what you want for mobile. Thumbnails use a separate /upload/youtube/v3/thumbnails/set?uploadType=media call.",
+    "free_tier": "Default per Google Cloud project (page last updated 2026-09-14): 100 videos.insert calls/day (own bucket, 1 unit each), 100 search.list calls/day (own bucket), and 10,000 units/day combined for every other endpoint (videos.update ~50, thumbnails.set ~50, playlistItems.insert ~50, videos.list/channels.list 1, captions.insert 400). Every request, even invalid, costs >= 1 unit. Resets at midnight Pacific. History: videos.insert cost ~1,600 units (= ~6 uploads/day) until 2025-12-04, then ~100 units (= ~100 uploads/day), then moved to its own 100-call bucket on 2026-06-01. Free of charge; there is no paid tier - more quota only via compliance audit + quota extension form.",
+    "paid_tiers": "None. YouTube Data API has no billing/paid quota. Extra quota is granted only after a YouTube API Services compliance audit (support.google.com/youtube/contact/yt_api_form), which asks for an HTTPS website, privacy policy (with YouTube/Google sections + screenshots), ToS, Cloud project number, use-case category, expected daily volume, and demo account credentials. Audits are valid 12 months; projects idle 90 days may lose access.",
+    "rate_limits": "No per-second rate limit is documented beyond the daily quota buckets. Practical channel-side limits apply (YouTube itself may throttle a channel's daily upload count; 'length' rejectionReason for >15 min on phone-unverified channels; 12 h / 256 GB max). Google OAuth: max 100 live refresh tokens per user per client ID (oldest silently revoked), refresh tokens die after 6 months unused.",
+    "account_requirements": "User needs a Google account with a YouTube channel (API uploads fail without a channel). No business/creator-program requirement for uploads. Channel must be phone-verified for >15-minute videos and custom thumbnails. Developer side: each user (in the BYOK model) needs a Google Cloud project with YouTube Data API v3 enabled, an OAuth consent screen (External user type), and an OAuth client of type Desktop/iOS/Android. YouTube Developer Policies require exactly one API project per API client, forbid embedding credentials in open-source projects, forbid multiple projects to gain quota, and require the client to show a link to YouTube ToS and a privacy policy linking to Google's privacy policy.",
+    "app_review_required": "Two separate reviews, both effectively blocking for public use: (A) Google OAuth app verification - YouTube scopes are 'sensitive' (not 'restricted', so no CASA security assessment), requiring: public homepage on a domain you verify in Search Console (no app-store links), privacy policy on the same domain, demo video of the consent flow showing the client ID in the address bar, and per-scope justification; typically 3-5 business days. (B) YouTube API Services compliance audit (yt_api_form) - the thing that actually lifts the private-upload lock and unlocks more quota; needs HTTPS website, privacy policy screenshots, ToS, demo account. Neither can be done for a scheme-less personal desktop app without a website.",
+    "unreviewed_app_restrictions": "1) Upload lock: 'All videos uploaded via the videos.insert endpoint from unverified API projects created after 28 July 2020 will be restricted to private viewing mode' (still in videos and videos.insert docs as of 2026-09; verified 2026-10-07). The call returns 200/201 normally - no error - and the video is silently locked private. YouTube Help (answer 7300965): such videos cannot be appealed; the only remedies are re-uploading via the YouTube app/site or a verified API service, or the API service passing an audit. So an unaudited BYOK project can only produce private videos; status.privacyStatus=public/unlisted and publishAt scheduling are ignored for visibility. 2) OAuth consent screen in 'Testing' status: max 100 listed test users, 'unverified app' warning, and refresh tokens / grants expire after 7 days (unless only basic-profile scopes). 3) If published 'In production' without verification: unverified-app warning screen and a lifetime cap of 100 new users for the project (cannot be reset). 4) Quota stays at defaults (100 uploads/day) - fine for one user. 5) A per-user personal project where the user is the only account is explicitly tolerated by Google's verification docs ('apps used only by the developer or a few known individuals need not be submitted'), but that exemption applies to OAuth verification, not to the YouTube private-upload lock.",
+    "token_lifetime_and_refresh": "Access tokens are short-lived (Google issues expires_in, conventionally 3600 s - exact number not stated in the fetched docs). Refresh tokens are always issued to installed-app clients and are long-lived, but become invalid if: the user revokes access; unused for 6 months; the project is in Testing publishing status (7-day expiry); more than 100 refresh tokens exist for that user+client (oldest dropped); the user granted time-based access that expired (refresh_token_expires_in field); admin policy restricts the service. Refresh with POST https://oauth2.googleapis.com/token grant_type=refresh_token. Store both tokens in OS keychain (flutter_secure_storage); Developer Policies allow storing tokens 'as long as necessary' for the consented purpose and require deleting data within 30 days of revocation.",
+    "personal_profile_posting": true,
+    "server_side_scheduling": "Yes: status.publishAt (ISO 8601, e.g. 2026-10-08T15:00:00Z) on videos.insert/update schedules a public release server-side; it is only honored when status.privacyStatus is 'private' and the video has never been published. On an unaudited project the video stays private regardless (lock overrides publishAt). Community posts cannot be created or scheduled via any API."
+  },
+  "handoff": {
+    "web_intent_url": "https://www.youtube.com/upload",
+    "web_intent_params": "None. https://www.youtube.com/upload (and https://studio.youtube.com) opens the YouTube Studio upload dialog for the signed-in channel; it accepts no query parameters for title, description, tags or file. The user must pick the file and paste metadata (NEFORUM should copy title/description/tags to the clipboard before opening it). YouTube Studio also allows selecting up to 15 short-video files at once (they land as drafts needing 'EDIT DRAFT'). Community/'Posts' tab has no prefill URL either.",
+    "supports_prefilled_text": false,
+    "supports_prefilled_media": false,
+    "android_share": "The YouTube app (package com.google.android.youtube) registers as a share target for ACTION_SEND with MIME video/* and a content:// URI in EXTRA_STREAM (grant FLAG_GRANT_READ_URI_PERMISSION via FileProvider). Use Intent.setPackage(\"com.google.android.youtube\") to skip the chooser. Sharing opens YouTube's upload/Shorts editor with the video preselected; title/description prefill via EXTRA_SUBJECT/EXTRA_TEXT/EXTRA_TITLE is not documented and should be assumed unsupported (copy to clipboard instead). Vertical/square clips <= 3 min become Shorts in that editor. Google also documents an unrelated intent com.google.android.youtube.intent.action.CREATE_LIVE_STREAM (EXTRA_REFERRER required, EXTRA_SUBJECT optional) for starting live streams, not uploads. Flutter: share_plus Share.shareXFiles([XFile(path)]) reaches the chooser; a package-targeted intent needs a tiny platform channel or the android_intent_plus package.",
+    "ios_share": "YouTube for iOS re-added a Share Extension in version 19.47.7 (released 2024-11-25): sharing a video from Photos (or any app's UIActivityViewController with a video file URL) shows 'YouTube', which imports the clip into the YouTube app's Shorts/upload editor for trimming and posting. No title/description prefill. There is no documented URL scheme to open the composer: the youtube:// / vnd.youtube scheme only opens existing videos, channels, playlists and Shorts. Flutter: share_plus Share.shareXFiles with a video XFile surfaces the YouTube extension when the app is installed. Posting still requires the user to finish inside the YouTube app.",
+    "desktop": "No desktop YouTube app on Windows/macOS. Hand-off = open https://www.youtube.com/upload (or https://studio.youtube.com/channel/<UC...>/videos/upload?d=ud) in the default browser and place metadata on the clipboard. Alternatively the official Data API with a Desktop OAuth client + loopback redirect (http://127.0.0.1:<random port>/) is fully supported on Windows/macOS/Linux and is the normal route there.",
+    "notes": "The YouTube Share Extension/share target is the only practical way for a mobile user to get an unlocked PUBLIC Short/video out of an unaudited app, because API uploads from unaudited projects are locked private. Expect the hand-off to lose scheduled publishAt, tags, playlist and thumbnail - the user sets those in the YouTube app."
+  },
+  "text_limits": {
+    "max_chars": 100,
+    "title_max": 100,
+    "counting_rule": "snippet.title: max 100 characters (Unicode characters, not bytes) and must not contain '<' or '>'. snippet.description: max 5,000 BYTES (UTF-8), no '<' or '>'. snippet.tags[]: the sum of all tag lengths must be <= 500 characters, where spaces inside a tag count and a tag containing a space is treated as if wrapped in quotes (each quote counts), and the comma separators between tags also count toward the 500. Shorts hashtag '#Shorts' is optional text and counts normally.",
+    "hashtags_max": 0,
+    "notes": "Description hashtags: YouTube ignores hashtags if more than 60 are present on a video (channel-side rule, not an API limit). Lines starting with timestamps in the description create chapters. URLs in descriptions are only clickable for channels that meet YouTube's requirements. Localized titles/descriptions go in localizations.<lang> with the same limits. Community posts are not reachable via API, so no text limit applies there."
+  },
+  "media_limits": {
+    "images_per_post": 1,
+    "image_formats": "Thumbnail only: image/jpeg, image/png (or application/octet-stream), max 50 MB since 2026-09-14 (was 2 MB); recommended 1280x720, 16:9. No image posts exist via API (Community/Posts tab unsupported).",
+    "image_max_bytes": 52428800,
+    "video": "Exactly one video per videos.insert. Max 256 GB or 12 hours, whichever is less; channels without phone verification are capped at 15 minutes. Accepted upload MIME: video/* or application/octet-stream (YouTube transcodes most containers: MP4/H.264+AAC recommended; MOV, AVI, WMV, FLV, WebM, 3GP, MPEG-PS are accepted by the site). Shorts: any upload with square or vertical aspect ratio (9:16 ideal) and length <= 3 minutes (3-min limit since 2024-10-15; 60 s before) is automatically classified as a Short - there is no API flag, endpoint or required hashtag; horizontal or >3 min uploads become regular videos. uploadStatus goes uploaded -> processed; failureReason/rejectionReason tell you why not. status.containsSyntheticMedia (since 2024-10-30) should be set true for AI-altered realistic content.",
+    "aspect_ratio": "Any aspect ratio accepted. Square (1:1) or vertical (e.g. 9:16) AND <= 180 s => Short; 16:9 landscape => regular video. Thumbnails are 16:9.",
+    "alt_text": false
+  },
+  "gotchas": [
+    "BYOK fatal flaw for public posting: every user's own Google Cloud project is an 'unverified API project', so all videos.insert uploads are locked PRIVATE with no error and no appeal (docs + Help 7300965, verified 2026-10-07). Only a YouTube API compliance audit of that specific project (needs an HTTPS website, privacy policy, ToS, demo account) lifts it. NEFORUM must warn users up front and offer the share-sheet hand-off for public Shorts/videos.",
+    "Do not ship a single shared NEFORUM OAuth client ID: YouTube Developer Policies forbid embedding API credentials in open-source projects, require exactly one Cloud project per API client, and forbid multiple projects to gain quota. Per-user projects are the compliant BYOK shape.",
+    "Redirect URIs: Google accepts loopback http://127.0.0.1:<any port> (and [::1]) only for 'Desktop app' clients; 'localhost' hostname is discouraged (firewall issues); loopback is deprecated for Android/iOS/Chrome client types. A custom scheme like neforum://callback is NOT accepted - the scheme must contain a period (reverse-DNS such as com.example.neforum:/oauth2redirect or the reversed client id com.googleusercontent.apps.<ID>:/oauth2redirect) and on iOS it is tied to the iOS client's bundle ID; on Android custom schemes are disabled by default for new clients (opt-in in 'Advanced Settings') and Google pushes Credential Manager / google_sign_in instead.",
+    "Google OAuth refuses to run inside embedded WebViews (disallowed_useragent) - use the system browser (url_launcher + loopback server on desktop, flutter_appauth or google_sign_in on mobile). flutter_appauth 12.x supports Android/iOS/macOS but not Windows; google_sign_in 7.x supports Android/iOS/macOS/web but not Windows; on Windows implement the loopback flow by hand (dart:io HttpServer + PKCE).",
+    "Leaving the OAuth consent screen in 'Testing' makes refresh tokens die every 7 days (user must re-consent weekly). Publishing to 'In production' without verification shows the unverified-app warning and caps the project at 100 lifetime users - irrelevant for a one-user personal project, but tell users to click through 'Advanced > Go to NEFORUM (unsafe)'.",
+    "Quota math changed twice recently: videos.insert cost 1,600 units (~6 uploads/day) until 2025-12-04, ~100 units until 2026-06-01, and now has its own 100-calls/day bucket; the general 10,000-unit bucket is untouched by uploads. Metadata updates (50), thumbnails (50) and playlist adds (50) come from the general bucket. Failed/invalid requests still count. Quota resets midnight Pacific.",
+    "Scheduling only works with privacyStatus=private + publishAt on a never-published video; publishAt in the past or with public status is rejected/ignored. On an unaudited project the video never leaves private even when publishAt arrives.",
+    "Shorts are inferred from file dimensions and duration (square/vertical, <= 3 min); there is no API flag, #Shorts is optional, and API-uploaded clips occasionally land in a grey zone where they are not surfaced in the Shorts shelf. Horizontal clips can never be Shorts.",
+    "Community/'Posts' tab: no public API for creating, reading or scheduling posts (Google issue tracker 405004980 open; confirmed by 2026 community sources). Only hand-off to studio.youtube.com or the mobile app.",
+    "notifySubscribers defaults to true; set notifySubscribers=false for cross-posting bursts or private test uploads to avoid spamming subscribers.",
+    "Channels without phone verification get 'length' rejectionReason above 15 minutes and cannot set custom thumbnails; handle rejectionReason/failureReason from videos.list(part=status) after processing.",
+    "Hand-off share sheets (Android ACTION_SEND video/*, iOS Share Extension since app 19.47.7) accept the video file only - title, description, tags, schedule and thumbnail are not prefilled; copy text to the clipboard and tell the user. The web upload page https://www.youtube.com/upload accepts no prefill parameters at all.",
+    "Driving YouTube Studio with the user's own cookies (youtube-up, the-toob, zyt-uploader) works today and even bypasses the private-lock and quota, but it violates YouTube ToS ('automated means' / no scraping / 'must not use any technology other than YouTube API Services') and can trigger Google's 'unusual traffic' checks or account suspension; Google also blocks its sign-in page inside embedded WebViews, so the session would have to be captured via a system browser or cookie import."
+  ],
+  "sources": [
+    "https://developers.google.com/youtube/v3/docs/videos/insert",
+    "https://developers.google.com/youtube/v3/docs/videos",
+    "https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol",
+    "https://developers.google.com/youtube/v3/guides/uploading_a_video",
+    "https://developers.google.com/youtube/v3/getting-started",
+    "https://developers.google.com/youtube/v3/determine_quota_cost",
+    "https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits",
+    "https://developers.google.com/youtube/v3/revision_history",
+    "https://developers.google.com/youtube/v3/docs/thumbnails/set",
+    "https://developers.google.com/youtube/v3/guides/auth/installed-apps",
+    "https://developers.google.com/identity/protocols/oauth2/native-app",
+    "https://developers.google.com/identity/protocols/oauth2",
+    "https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification",
+    "https://developers.google.com/identity/protocols/oauth2/production-readiness/restricted-scope-verification",
+    "https://support.google.com/cloud/answer/13463073",
+    "https://support.google.com/cloud/answer/15549945",
+    "https://support.google.com/cloud/answer/9110914",
+    "https://developers.googleblog.com/en/improving-user-safety-in-oauth-flows-through-new-oauth-custom-uri-scheme-restrictions/",
+    "https://developers.googleblog.com/en/modernizing-oauth-interactions-in-native-apps-for-better-usability-and-security/",
+    "https://developers.google.com/youtube/terms/developer-policies",
+    "https://developers.google.com/youtube/terms/developer-policies-guide",
+    "https://support.google.com/youtube/contact/yt_api_form",
+    "https://support.google.com/youtube/answer/7300965",
+    "https://support.google.com/youtube/answer/71673",
+    "https://support.google.com/youtube/answer/10059070",
+    "https://support.google.com/youtube/answer/12779649",
+    "https://developers.google.com/youtube/android/live",
+    "https://www.iclarified.com/95642/youtube-app-regains-ios-share-sheet-support",
+    "https://www.redmondpie.com/you-can-now-upload-to-youtube-from-ios-share-sheet-thanks-to-latest-app-update/",
+    "https://petapixel.com/2024/10/04/youtube-shorts-expands-video-length-to-three-minutes/",
+    "https://bundle.social/blog/youtube-shorts-api-secrets",
+    "https://bundle.social/blog/youtube-api-quota-exceeded-limits-fixes",
+    "https://www.ayrshare.com/solutions/google-api-error-403-unverified-app-how-to-fix-the-audit-pipeline/",
+    "https://issuetracker.google.com/issues/405004980",
+    "https://socialk.it/en/how-to/how-to-schedule-youtube-community-posts",
+    "https://github.com/amumu-dev/youtube-up",
+    "https://pypi.org/project/youtube-up",
+    "https://pypi.org/project/the-toob/",
+    "https://github.com/zaacksb/zyt-uploader",
+    "https://github.com/kilintrodrive/youtube-cookie-uploading-bot",
+    "https://pub.dev/packages/googleapis",
+    "https://pub.dev/packages/flutter_appauth",
+    "https://pub.dev/packages/google_sign_in",
+    "https://pub.dev/packages/yt"
+  ],
+  "unverified_claims": [
+    "Access token lifetime of 3600 seconds (expires_in) - conventional Google behaviour; the fetched OAuth docs did not state the number.",
+    "That the YouTube scopes are classified 'sensitive' rather than 'restricted': the sensitive-scope page cites 'deleting YouTube videos' as a sensitive example and the restricted list (Gmail/Drive/Fitness/etc.) is recalled, but the FAQ page's scope table was not rendered by the fetch.",
+    "Exact Android share-target activity of the YouTube app (historically com.google.android.youtube.UploadIntentHandlingActivity / .app.application.Shell$UploadActivity) and whether EXTRA_SUBJECT/EXTRA_TEXT prefill the title - from memory, not found in any 2025-2026 source.",
+    "Studio deep link https://studio.youtube.com/channel/<UC...>/videos/upload?d=ud opening the upload dialog directly - recalled, not confirmed by a fetched page; https://www.youtube.com/upload is the verified entry point.",
+    "Desktop-app OAuth clients receive a client_secret that Google says is 'not treated as a secret' and may ship inside a native binary - recalled wording; the fetched native-app page only says client_secret is optional for installed apps and not applicable to Android/iOS/Chrome clients.",
+    "Older (2020-2022) Stack Overflow reports that an owner could manually flip an API-locked private video to public in YouTube Studio - contradicted by the current Help page (no appeal, re-upload required); treat as obsolete.",
+    "Hashtag cap of 60 per video and the 15-video Shorts batch drafts behaviour are from YouTube Help/community pages read in passing, not from API docs.",
+    "The 'Shorts grey zone' (API uploads meeting the criteria but not surfacing in the Shorts feed) comes from 2026 third-party blogs (bundle.social), not from Google.",
+    "youtube-up's internal mechanism (YouTube Studio innertube upload endpoints) and its exact required cookies (SID/HSID/SSID/APISID/SAPISID + SAPISIDHASH) - inferred from similar tools; README does not document them."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Two sub-approaches exist in the wild: (1) Replay YouTube Studio's internal 'innertube'/upload endpoints with the user's browser cookies (youtube-up: load Netscape cookies.txt, supports title, description, privacy, made-for-kids, comment mode, playlists, scheduled/premiere publish); (2) full browser automation of studio.youtube.com with a logged-in profile (the-toob / youtube_uploader_selenium with Firefox+Selenium; zyt-uploader with Puppeteer; youtube-cookie-uploading-bot). In a Flutter app this would mean flutter_inappwebview with a persistent cookie jar, but Google's sign-in page refuses to load inside embedded WebViews (disallowed_useragent / 'This browser or app may not be secure'), so the session must be obtained in a real browser (system browser + cookie export, or a desktop WebView2/WKWebView masquerading as a normal UA) and then reused. Either way it bypasses both the API quota and the unverified-project private lock, which is exactly why it is policy-violating.",
+    "known_libraries": [
+      "youtube-up (Python, amumu-dev/youtube-up, cookies.txt + internal API, scheduled/premiere support)",
+      "the-toob (Python, Selenium/Firefox, v1.0.0 2025-07-14; fork of youtube_uploader_selenium)",
+      "zyt-uploader (Node/TypeScript, Puppeteer)",
+      "youtube-cookie-uploading-bot (Python, Selenium, saved cookies)"
+    ],
+    "risk": "High. YouTube ToS forbids automated access that does not go through the official API; the YouTube API Services Developer Policies explicitly ban scraping and 'any technology other than YouTube API Services' and warn against 'substitute' clients; Google actively fingerprints automation ('unusual traffic from your computer network' challenges, sign-in blocked in WebViews) and account suspension on YouTube is permanent with no new-account allowance. Internal endpoints change without notice (these libraries break regularly). Suitable at most as an opt-in 'advanced, at your own risk' mode on desktop; never default."
+  },
+  "confidence": "high"
+}
