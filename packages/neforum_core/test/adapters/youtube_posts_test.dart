@@ -92,6 +92,95 @@ void main() {
     });
   });
 
+  group('polls and quizzes', () {
+    List<String> pollCodes(PostVariant v) => adapter.validate(v, acct).map((i) => i.code).toList();
+    const question = 'Which thumbnail?';
+
+    test('limits come from YouTube Help', () {
+      final p = adapter.descriptor.polls!;
+      expect((p.minOptions, p.maxOptions, p.optionMaxLength), (2, 4, 65));
+      expect((p.quizzes, p.quizOptionMaxLength, p.quizExplanationMaxLength), (true, 80, 500));
+      expect((p.imagePolls, p.imageOptionMaxLength), (true, 36));
+    });
+
+    test('a text poll with 2 to 4 short answers is valid', () {
+      expect(pollCodes(const PostVariant(text: question, poll: PostPoll(options: ['Red', 'Blue']))), isEmpty);
+      expect(pollCodes(const PostVariant(text: question, poll: PostPoll(options: ['A', 'B', 'C', 'D', 'E']))), contains('poll.option_count'));
+      expect(pollCodes(const PostVariant(text: question, poll: PostPoll(options: ['Only one']))), contains('poll.option_count'));
+      expect(pollCodes(PostVariant(text: question, poll: PostPoll(options: ['x' * 66, 'ok']))), contains('poll.option_too_long'));
+      expect(pollCodes(const PostVariant(text: '', poll: PostPoll(options: ['a', 'b']))), contains('poll.no_question'));
+    });
+
+    test('a quiz needs a correct answer and allows 80-character answers', () {
+      final ok = PostVariant(text: question, poll: PostPoll(kind: PollKind.quiz, options: ['x' * 80, 'b'], correctIndex: 1, explanation: 'Because.'));
+      expect(pollCodes(ok), isEmpty);
+      expect(pollCodes(const PostVariant(text: question, poll: PostPoll(kind: PollKind.quiz, options: ['a', 'b']))), contains('poll.no_correct'));
+      expect(pollCodes(PostVariant(text: question, poll: PostPoll(kind: PollKind.quiz, options: ['a', 'b'], correctIndex: 0, explanation: 'e' * 501))),
+          contains('poll.explanation_too_long'));
+    });
+
+    test('an image poll needs one image per 36-character caption', () {
+      final two = [fakeImage(), fakeImage(id: 'img2')];
+      expect(pollCodes(PostVariant(text: question, media: two, poll: const PostPoll(imageOptions: true, options: ['Left', 'Right']))), isEmpty);
+      expect(pollCodes(PostVariant(text: question, media: [fakeImage()], poll: const PostPoll(imageOptions: true, options: ['Left', 'Right']))),
+          contains('poll.image_count'));
+      expect(pollCodes(PostVariant(text: question, media: two, poll: PostPoll(imageOptions: true, options: ['x' * 37, 'ok']))),
+          contains('poll.option_too_long'));
+    });
+
+    test('images next to a text poll are left out with a warning', () {
+      final v = PostVariant(text: question, media: [fakeImage()], poll: const PostPoll(options: ['a', 'b']));
+      expect(pollCodes(v), contains('youtube_posts.poll_images'));
+      expect(adapter.buildHandoff(v)!.shareFiles, isEmpty);
+    });
+
+    test('hand-off: question on the clipboard, each answer copyable, correct answer named', () {
+      final plan = adapter.buildHandoff(const PostVariant(
+        text: question,
+        poll: PostPoll(kind: PollKind.quiz, options: ['Red', '', 'Blue', 'Green'], correctIndex: 2, explanation: 'Blue pops on dark mode.'),
+      ))!;
+      expect(plan.clipboardText, question);
+      expect(plan.snippets.map((s) => (s.label, s.text)).toList(), [
+        ('Answer 1', 'Red'),
+        ('Answer 2 (correct)', 'Blue'),
+        ('Answer 3', 'Green'),
+        ('Explanation', 'Blue pops on dark mode.'),
+      ]);
+      expect(plan.instructions, contains('**quiz**'));
+      expect(plan.instructions, contains('Mark answer 2 as correct: "Blue"'));
+    });
+
+    test('hand-off of an image poll shares the images and captions them', () {
+      final plan = adapter.buildHandoff(PostVariant(
+        text: question,
+        media: [fakeImage(), fakeImage(id: 'img2')],
+        poll: const PostPoll(imageOptions: true, options: ['Left', 'Right']),
+      ))!;
+      expect(plan.shareFiles, hasLength(2));
+      expect(plan.snippets.map((s) => s.label), ['Image 1 caption', 'Image 2 caption']);
+      expect(plan.instructions, contains('image poll'));
+    });
+
+    test('other platforms get the post without the poll', () {
+      final post = Post(
+        id: 'p',
+        text: question,
+        createdAt: testNow,
+        updatedAt: testNow,
+        poll: const PostPoll(options: ['a', 'b']),
+        targets: const [PostTarget(accountId: 'a')],
+      );
+      const resolver = VariantResolver();
+      final yt = resolver.resolve(post, post.targets.single, adapter.descriptor);
+      expect(yt.poll, isNotNull);
+      final x = builtinRegistry().descriptor('x')!;
+      final v = resolver.resolve(post, post.targets.single, x);
+      expect(v.poll, isNull);
+      expect(v.issues.map((i) => i.code), contains('poll.unsupported'));
+      expect(Post.fromJson(post.toJson()).poll, post.poll);
+    });
+  });
+
   group('hand-off', () {
     test('copies the text and opens YouTube with Create > Create post steps', () {
       final plan = adapter.buildHandoff(const PostVariant(text: 'Behind the scenes of Friday’s video'))!;

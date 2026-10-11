@@ -51,9 +51,22 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           _choice[f.key] = f.defaultValue ?? (f.options?.isNotEmpty == true ? f.options!.first : null);
         default:
           _text[f.key] = TextEditingController(text: f.defaultValue ?? '');
+          // Pasting a token switches the form from browser sign-in to Connect.
+          if (_isTokenField(f)) _text[f.key]!.addListener(_onTokenChanged);
       }
     }
   }
+
+  static bool _isTokenField(ConnectField f) => f.secret && f.key.toLowerCase().contains('token');
+
+  bool _hadToken = false;
+  void _onTokenChanged() {
+    if (_tokenPasted != _hadToken) setState(() => _hadToken = _tokenPasted);
+  }
+
+  /// The user pasted an access token, so no browser sign-in will happen.
+  bool get _tokenPasted => _spec.fields.any((f) => _isTokenField(f) && (_text[f.key]?.text.trim().isNotEmpty ?? false));
+  bool get _usesBrowser => _spec.usesBrowser && !_tokenPasted;
 
   @override
   void dispose() {
@@ -78,7 +91,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     if (!(_form.currentState?.validate() ?? true)) return;
     setState(() {
       _busy = true;
-      _progress = _spec.usesBrowser ? 'Waiting for you to approve in the browser…' : 'Checking…';
+      _progress = _usesBrowser ? 'Waiting for you to approve in the browser…' : 'Checking…';
     });
     final s = ref.read(servicesProvider);
     try {
@@ -139,7 +152,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     final nf = context.nf;
     final d = ref.watch(registryProvider).descriptor(widget.platformId)!;
     final spec = _spec;
-    final redirect = spec.usesBrowser
+    final redirect = _usesBrowser
         ? ref.read(servicesProvider).broker.chooseRedirectUri(
               loopbackOk: spec.loopbackRedirectOk,
               customSchemeOk: spec.customSchemeRedirectOk,
@@ -227,8 +240,8 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             const Spacer(),
           const SizedBox(width: Space.md),
           PrimaryAction(
-            label: spec.usesBrowser ? 'Sign in with ${d.name}' : (widget.tier == PlatformTier.handoff ? 'Add ${d.name}' : 'Connect'),
-            icon: spec.usesBrowser ? Icons.open_in_new_rounded : Icons.link_rounded,
+            label: _usesBrowser ? 'Sign in with ${d.name}' : (widget.tier == PlatformTier.handoff ? 'Add ${d.name}' : 'Connect'),
+            icon: _usesBrowser ? Icons.open_in_new_rounded : Icons.link_rounded,
             loading: _busy,
             onPressed: _connect,
           ),

@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'media.dart';
+import 'poll.dart';
 import 'post.dart';
 import 'validation.dart';
 
@@ -26,6 +27,7 @@ class PostVariant {
     this.scheduledAt,
     this.issues = const [],
     this.sourcePostId,
+    this.poll,
   });
 
   /// Body text. When the post was split into a thread this is the first part.
@@ -59,6 +61,9 @@ class PostVariant {
   final List<ValidationIssue> issues;
   final String? sourcePostId;
 
+  /// The post's poll or quiz, only on platforms that have polls.
+  final PostPoll? poll;
+
   bool get isThread => threadParts.length > 1;
   bool get hasMedia => media.isNotEmpty;
   bool get hasErrors => issues.hasErrors;
@@ -82,6 +87,8 @@ class PostVariant {
     Map<String, dynamic>? extra,
     DateTime? scheduledAt,
     List<ValidationIssue>? issues,
+    PostPoll? poll,
+    bool clearPoll = false,
   }) =>
       PostVariant(
         text: text ?? this.text,
@@ -98,6 +105,7 @@ class PostVariant {
         scheduledAt: scheduledAt ?? this.scheduledAt,
         issues: issues ?? this.issues,
         sourcePostId: sourcePostId,
+        poll: clearPoll ? null : (poll ?? this.poll),
       );
 
   PostVariant addIssues(Iterable<ValidationIssue> more) =>

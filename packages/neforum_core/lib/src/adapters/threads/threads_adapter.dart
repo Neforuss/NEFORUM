@@ -77,6 +77,16 @@ class ThreadsAdapter extends PlatformAdapter {
   static const String configRedirectUri = 'redirect_uri';
   static const String configUsername = 'username';
 
+  /// `oauth` (browser sign-in) or `pasted` (token from the dashboard).
+  static const String configTokenSource = 'token_source';
+
+  /// Connect-form key of the optional pasted token.
+  static const String fieldAccessToken = 'access_token';
+
+  /// A pasted token that expires sooner than this is treated as a 1-hour
+  /// token that must be exchanged for a 60-day one.
+  static const Duration shortLivedThreshold = Duration(days: 1);
+
   /// [PostVariant.extra] keys.
   static const String extraReplyControl = 'reply_control';
   static const String extraTopicTag = 'topic_tag';
@@ -122,7 +132,8 @@ class ThreadsAdapter extends PlatformAdapter {
     ],
     personalAccountOk: true,
     accountRequirements: 'Any Threads profile works. For automatic posting you create your own free Meta developer app '
-        'with the "Access the Threads API" use case; you are its admin, so no app review is needed.',
+        'with the "Access the Threads API" use case and add your profile as its Threads Tester, so no App Review '
+        'is needed.',
     apiCostSummary: 'The Threads API is free. Each profile can publish up to 250 posts per day through it; '
         'images and videos must first be uploaded to a public media host you configure.',
     setupGuide: 'docs/platforms/threads.md',
@@ -142,52 +153,55 @@ class ThreadsAdapter extends PlatformAdapter {
     loopbackRedirectOk: false,
     customSchemeRedirectOk: false,
     fixedRedirectUri: suggestedRedirectUri,
-    redirectNote: 'Register exactly https://127.0.0.1:52771/callback as a Redirect Callback URL '
-        '(Use cases > Access the Threads API > Customize > Settings).',
+    redirectNote: 'Register exactly https://127.0.0.1:52771/callback in your app under Use cases > '
+        'Access the Threads API > Settings > Client OAuth Settings (redirect URIs). Not needed when you paste a token.',
     intro: '''
-**Connect Threads with your own free Meta app** (about 10 minutes, once).
+**Post to your Threads profile through your own free Meta app** (about 10 minutes, once). Any Threads profile works; no App Review.
 
-1. Go to <https://developers.facebook.com/apps> and click **Create app**. Pick the use case
-   **Access the Threads API** (it adds the Threads API product).
-2. Open **Use cases > Access the Threads API > Customize > Permissions** and make sure
-   **threads_basic** and **threads_content_publish** are added.
-3. Open **Use cases > Access the Threads API > Customize > Settings** and fill in:
-   - **Redirect Callback URLs:** `https://127.0.0.1:52771/callback`
-     (type it, then click the suggestion so it turns into a grey chip).
-   - **Uninstall Callback URL** and **Delete Callback URL:** the same URL is fine.
-   Click **Save**. Meta only accepts HTTPS redirect addresses, so NEFORUM cannot catch the
-   redirect itself.
-4. On the same Settings page copy the **Threads app ID** and **Threads app secret** (not the
-   Facebook app ID under App settings) into the fields below.
-5. Click Connect, sign in to Threads and allow access. Your browser then lands on a page that
-   does not load (`https://127.0.0.1:52771/callback?code=...`). **Copy the whole address from the
-   address bar and paste it into NEFORUM.**
+1. Open <https://developers.facebook.com/apps/creation/>, pick the use case **Access the Threads API** and finish the wizard.
+2. **Use cases > Access the Threads API > Customize**: click **Add** next to `threads_content_publish` (`threads_basic` is always on).
+3. **App roles > Roles > Add People**, choose **Threads Tester** and enter your Threads username. Accept the invite in Threads: **Settings > Account > Website permissions > Invites**.
+4. Back in the use case open **Settings**. Under **Client OAuth Settings** add `https://127.0.0.1:52771/callback`; put the same address in **Deauthorize callback URL** and **Data Deletion Requests URL**; click **Save**.
+5. Copy the **Threads app ID** and **Threads app secret** from that page (not the Facebook App ID) into the fields below.
+6. Press **Sign in**, allow access, then copy the whole address of the page that does not load (`https://127.0.0.1:52771/callback?code=...`) and paste it into NEFORUM.
 
-You are the app's admin, so no app review is needed. To post from a second Threads profile, add it
-under **App roles > Roles** as a Threads Tester and accept the invite in the Threads app
-(Settings > Account > Website permissions > Invites).
+**Shortcut:** if that Settings page offers a **User Token Generator**, generate a token for your profile and paste it into the last field instead (steps 4 to 6 are then not needed; add the app secret if NEFORUM asks for it).
 ''',
     fields: [
       ConnectField(
         key: 'app_id',
         label: 'Threads app ID',
+        required: false,
         placeholder: '1234567890123456',
-        help: 'Use cases > Access the Threads API > Customize > Settings > Threads app ID.',
+        help: 'Use cases > Access the Threads API > **Settings** > Threads app ID (not the Facebook App ID). '
+            'Needed for browser sign-in.',
       ),
       ConnectField(
-        key: 'app_secret',
+        key: secretAppSecret,
         label: 'Threads app secret',
         kind: FieldKind.password,
+        required: false,
         secret: true,
-        help: 'Shown next to the Threads app ID. Stays on this device.',
+        help: 'Same Settings page, next to the Threads app ID (click **Show**). Needed for browser sign-in, and to '
+            'turn a 1-hour token into a 60-day one. Stays on this device.',
       ),
       ConnectField(
-        key: 'redirect_uri',
+        key: configRedirectUri,
         label: 'Redirect URI you registered',
         kind: FieldKind.url,
         required: false,
         defaultValue: 'https://127.0.0.1:52771/callback',
-        help: 'Must match the Redirect Callback URL in your app exactly (watch for a trailing slash). Must start with https://.',
+        help: 'Must match the address under Client OAuth Settings exactly (watch for a trailing slash) and start '
+            'with https://.',
+      ),
+      ConnectField(
+        key: fieldAccessToken,
+        label: 'Or: access token from the User Token Generator',
+        kind: FieldKind.password,
+        required: false,
+        secret: true,
+        help: 'Use cases > Access the Threads API > **Settings** > User Token Generator, for a profile that has '
+            'accepted its Threads Tester invite. NEFORUM checks it and renews it before it expires (60 days).',
       ),
     ],
   );
@@ -218,14 +232,19 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
     if (tier != PlatformTier.byokApi) {
       throw ConnectException('Threads does not support the ${tier.label} tier');
     }
-    final appId = (input['app_id'] ?? '').trim();
-    final appSecret = (input['app_secret'] ?? '').trim();
-    if (appId.isEmpty) throw const ConnectException('Enter your Threads app ID', field: 'app_id');
-    if (!RegExp(r'^\d+$').hasMatch(appId)) {
+    final appId = (input[configAppId] ?? '').trim();
+    final appSecret = (input[secretAppSecret] ?? '').trim();
+    final pasted = (input[fieldAccessToken] ?? '').trim();
+    if (appId.isNotEmpty && !RegExp(r'^\d+$').hasMatch(appId)) {
       throw const ConnectException('The Threads app ID is a number (copy it from Use cases > Access the Threads API > Settings)',
-          field: 'app_id');
+          field: configAppId);
     }
-    if (appSecret.isEmpty) throw const ConnectException('Enter your Threads app secret', field: 'app_secret');
+    if (pasted.isNotEmpty) return _connectWithToken(pasted, appId, appSecret, ctx);
+    if (appId.isEmpty) {
+      throw const ConnectException('Enter your Threads app ID, or paste a token from the User Token Generator',
+          field: configAppId);
+    }
+    if (appSecret.isEmpty) throw const ConnectException('Enter your Threads app secret', field: secretAppSecret);
     final redirectInput = (input['redirect_uri'] ?? '').trim();
     final registered = redirectInput.isEmpty ? suggestedRedirectUri : Uri.tryParse(redirectInput);
     if (registered == null || registered.scheme != 'https' || registered.host.isEmpty) {
@@ -271,10 +290,94 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
       throw ConnectException('Threads did not accept the token: ${e.error.message}');
     }
 
-    final userId = '${me['id'] ?? short.raw['user_id'] ?? ''}';
+    return ConnectResult(
+      account: _apiAccount(me, now,
+          fallbackUserId: short.raw['user_id'],
+          config: {
+            configAppId: appId,
+            configRedirectUri: redirect.toString(),
+            configTokenSource: 'oauth',
+          }),
+      secrets: long.toSecrets({
+        secretAppSecret: appSecret,
+        secretIssuedAt: now.toUtc().toIso8601String(),
+      }),
+    );
+  }
+
+  /// Connects with a token the user generated in the App Dashboard. Checks it
+  /// with `GET /me`, reads its lifetime and permissions from `debug_token`
+  /// when Meta answers, and swaps a 1-hour token for a 60-day one
+  /// (`th_exchange_token`, which needs the app secret). The token is renewed
+  /// later by [refreshSecrets] like an OAuth one.
+  Future<ConnectResult> _connectWithToken(String token, String appId, String appSecret, AdapterContext ctx) async {
+    final now = ctx.now();
+    ctx.progress('Checking the Threads token');
+    final Map<String, dynamic> me;
+    try {
+      me = await ThreadsApi(ctx.http, token, delay: _delay, log: ctx.log).me();
+    } on AdapterException catch (e) {
+      throw ConnectException('Threads did not accept the token: ${e.error.message}. Generate a new one and paste '
+          'all of it.', field: fieldAccessToken);
+    }
+    final info = await ThreadsApi.debugToken(ctx.http, token, log: ctx.log);
+    if (info != null && !info.isValid) {
+      throw const ConnectException('Threads says this token is no longer valid; generate a new one.',
+          field: fieldAccessToken);
+    }
+    if (info != null && info.scopes.isNotEmpty && !info.scopes.contains('threads_content_publish')) {
+      throw const ConnectException('This token cannot publish: add threads_content_publish under Use cases > '
+          'Access the Threads API > Customize, then generate a new token.', field: fieldAccessToken);
+    }
+
+    var tokens = OAuthTokens(accessToken: token, expiresAt: info?.expiresAt);
+    var issuedAt = info?.issuedAt ?? now;
+    final expiresAt = info?.expiresAt;
+    final shortLived = expiresAt != null && expiresAt.difference(now) < shortLivedThreshold;
+    if (shortLived && appSecret.isEmpty) {
+      throw const ConnectException('This token only lasts about an hour. Also enter the Threads app secret so '
+          'NEFORUM can swap it for a 60-day token.', field: secretAppSecret);
+    }
+    // When debug_token gave no answer the token's kind is unknown: try the
+    // exchange if possible and keep the pasted token when Meta refuses it
+    // (it is then most likely a 60-day token already).
+    if (shortLived || (info == null && appSecret.isNotEmpty)) {
+      try {
+        ctx.progress('Exchanging for a 60-day token');
+        tokens = await ThreadsApi.exchangeForLongLived(ctx.http,
+            clientSecret: appSecret, shortLivedToken: token, now: now);
+        issuedAt = now;
+      } on HttpFailure catch (f) {
+        if (shortLived) {
+          throw ConnectException('Threads would not swap the token for a 60-day one '
+              '(${threadsErrorFrom(f).message}). Check the Threads app secret.', field: secretAppSecret);
+        }
+        ctx.log.debug('Threads kept the pasted token as is: ${threadsErrorFrom(f).message}');
+      } on AdapterException catch (e) {
+        if (shortLived) throw ConnectException('Threads did not return a 60-day token: ${e.error.message}');
+        ctx.log.debug('Threads kept the pasted token as is: ${e.error.message}');
+      }
+    }
+    return ConnectResult(
+      account: _apiAccount(me, now,
+          fallbackUserId: info?.userId,
+          config: {
+            if (appId.isNotEmpty) configAppId: appId,
+            configTokenSource: 'pasted',
+          }),
+      secrets: tokens.toSecrets({
+        if (appSecret.isNotEmpty) secretAppSecret: appSecret,
+        secretIssuedAt: issuedAt.toUtc().toIso8601String(),
+      }),
+    );
+  }
+
+  ConnectedAccount _apiAccount(Map<String, dynamic> me, DateTime now,
+      {Object? fallbackUserId, required Map<String, dynamic> config}) {
+    final userId = '${me['id'] ?? fallbackUserId ?? ''}';
     if (userId.isEmpty) throw const ConnectException('Threads did not return your user id');
     final username = me['username'] as String?;
-    final account = ConnectedAccount(
+    return ConnectedAccount(
       id: 'threads:$userId',
       platformId: platformId,
       tier: PlatformTier.byokApi,
@@ -284,18 +387,10 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
       profileUrl: username == null ? null : 'https://www.threads.com/@$username',
       createdAt: now,
       config: {
-        configAppId: appId,
+        ...config,
         configUserId: userId,
-        configRedirectUri: redirect.toString(),
         if (username != null) configUsername: username,
       },
-    );
-    return ConnectResult(
-      account: account,
-      secrets: long.toSecrets({
-        secretAppSecret: appSecret,
-        secretIssuedAt: now.toUtc().toIso8601String(),
-      }),
     );
   }
 

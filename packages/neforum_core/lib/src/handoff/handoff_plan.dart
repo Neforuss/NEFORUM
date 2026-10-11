@@ -17,6 +17,15 @@ enum HandoffMethod {
   manual,
 }
 
+/// A labelled piece of text the user copies into a separate field of the
+/// platform's composer (a poll answer, a title, tags).
+@immutable
+class HandoffSnippet {
+  const HandoffSnippet(this.label, this.text);
+  final String label;
+  final String text;
+}
+
 /// Everything the UI layer needs to hand a post to the platform's own app or
 /// website. Built by adapters; executed by the app (share_plus, url_launcher,
 /// clipboard) or printed by the CLI.
@@ -34,6 +43,7 @@ class HandoffPlan {
     this.desktopUrl,
     this.preferred = HandoffMethod.webIntent,
     this.mediaNote,
+    this.snippets = const [],
   });
 
   final String platformId;
@@ -69,6 +79,9 @@ class HandoffPlan {
   /// caption is on the clipboard").
   final String? mediaNote;
 
+  /// Extra values to copy one by one, beyond [clipboardText].
+  final List<HandoffSnippet> snippets;
+
   bool get hasMedia => shareFiles.isNotEmpty;
 
   HandoffPlan copyWith({HandoffMethod? preferred, String? instructions, Uri? webIntent}) => HandoffPlan(
@@ -83,5 +96,6 @@ class HandoffPlan {
         desktopUrl: desktopUrl,
         preferred: preferred ?? this.preferred,
         mediaNote: mediaNote,
+        snippets: snippets,
       );
 }

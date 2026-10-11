@@ -51,18 +51,23 @@ void openMarkdownLink(String text, String? href, String title) {
   launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
-/// Convenience widget.
+/// Convenience widget. Selectable by default: setup steps are full of
+/// addresses, scopes and redirect URIs people copy into other sites, so the
+/// whole block can be drag-selected (across paragraphs) and copied, while
+/// links still open on tap.
 class NfMarkdown extends StatelessWidget {
-  const NfMarkdown(this.data, {super.key, this.small = false, this.selectable = false});
+  const NfMarkdown(this.data, {super.key, this.small = false, this.selectable = true});
   final String data;
   final bool small;
   final bool selectable;
 
   @override
-  Widget build(BuildContext context) => MarkdownBody(
-        data: data,
-        selectable: selectable,
-        styleSheet: neforumMarkdown(context, small: small),
-        onTapLink: openMarkdownLink,
-      );
+  Widget build(BuildContext context) {
+    final body = MarkdownBody(
+      data: data,
+      styleSheet: neforumMarkdown(context, small: small),
+      onTapLink: openMarkdownLink,
+    );
+    return selectable ? SelectionArea(child: body) : body;
+  }
 }

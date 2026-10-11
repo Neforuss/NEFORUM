@@ -6,6 +6,7 @@ import '../../auth/auth_broker.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
+import '../../media_hosts/media_host.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
@@ -152,7 +153,8 @@ class TumblrAdapter extends PlatformAdapter {
           tier: PlatformTier.handoff,
           intro: 'No setup needed. NEFORUM opens Tumblr\'s post composer with your text, title and tags filled in '
               '(sign in if asked) and you click **Post** yourself. Photos and videos go through the share sheet '
-              'on phones.',
+              'on phones. On a computer you drag them into a new Tumblr post, or, with a media host set up in '
+              'Settings, NEFORUM fills in the photos too.',
           fields: [
             ConnectField(key: 'displayName', label: 'Name to show in NEFORUM', required: false, placeholder: 'My Tumblr'),
           ],
@@ -428,7 +430,8 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
     }
     if (account.tier == PlatformTier.handoff && variant.hasMedia) {
       issues.add(const ValidationIssue.info('handoff.media',
-          'Tumblr\'s website cannot receive files from NEFORUM; use the share sheet on a phone or attach them yourself',
+          'Tumblr\'s website cannot receive files from NEFORUM: phones use the share sheet, on a computer you drag '
+              'the files into the post (with a media host set up in Settings, photos are filled in for you)',
           field: 'media'));
     }
     return issues;
@@ -697,15 +700,118 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
 
   // ------------------------------------------------------------- hand-off
 
+  /// Tumblr's official share tool (help.tumblr.com "Share button
+  /// documentation"): `posttype` text|photo|link|quote|chat|video, `content`
+  /// (for photo posts one photo URL or a comma-separated list for a photoset),
+  /// `title` (text, link, chat), `caption` (photo, link, video, quote),
+  /// `tags` (comma-separated) and `canonicalUrl`.
+  static const String shareToolPath = '/widgets/share/tool';
+
+  /// Tumblr's web composer for a new post of each kind. Nothing can be
+  /// prefilled there; it is where files are dragged in on a computer.
+  static const String newTextUrl = 'https://www.tumblr.com/new/text';
+  static const String newPhotoUrl = 'https://www.tumblr.com/new/photo';
+  static const String newVideoUrl = 'https://www.tumblr.com/new/video';
+
+  /// How long hand-off photos stay on the user's media host when the host can
+  /// expire files: long enough to finish the post, without leaving copies
+  /// around for good.
+  static const Duration handoffMediaTtl = Duration(hours: 24);
+
+  static const String _tumblrPackage = 'com.tumblr';
+
   @override
-  HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
+  HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) =>
+      variant.hasMedia ? _mediaHandoff(variant) : _textHandoff(variant);
+
+  /// With photos and a media host configured, the photos are put on the host
+  /// first, because the share tool takes photos only as links. It then opens
+  /// a photo post with them, the caption and the tags. Videos are never
+  /// uploaded: the share tool's video `content` is a URL or embed code of a
+  /// video service (Tumblr's API refuses URLs of unsupported services), not a
+  /// file. Without a host nothing is uploaded; on any failure the plain plan
+  /// is returned.
+  @override
+  Future<HandoffPlan?> prepareHandoff(PostVariant variant, ConnectedAccount account, AdapterContext ctx) async {
+    final host = ctx.mediaHost;
+    final photos = [for (final m in variant.media) if (m.isImage) m];
+    if (host == null || photos.isEmpty) return buildHandoff(variant, account: account);
+
+    final limit = host.maxBytes;
+    final tooBig = limit == null ? null : photos.where((m) => m.sizeBytes > limit).firstOrNull;
+    if (tooBig != null) {
+      final problem = '${_mediaLabel(tooBig)} is larger than ${host.name} accepts';
+      ctx.log.warn('Tumblr hand-off: $problem; the photos are not filled in');
+      return _mediaHandoff(variant, hostProblem: problem);
+    }
+
+    final hosted = <HostedMedia>[];
+    try {
+      for (var i = 0; i < photos.length; i++) {
+        ctx.progress('Uploading photo ${i + 1} of ${photos.length} to ${host.name}');
+        final bytes = await ctx.readMedia(photos[i]);
+        hosted.add(await host.upload(photos[i], bytes, ttl: handoffMediaTtl));
+      }
+    } on Object catch (e) {
+      ctx.log.warn('Tumblr hand-off: could not put the photos on ${host.name}; using the plain hand-off', e);
+      await _discardHosted(host, hosted, ctx);
+      return _mediaHandoff(variant,
+          hostProblem: e is MediaHostException ? e.message : 'the upload to ${host.name} failed');
+    }
+    return _photoToolHandoff(variant, photos, [for (final h in hosted) h.url], host.name);
+  }
+
+  static Future<void> _discardHosted(MediaHost host, List<HostedMedia> hosted, AdapterContext ctx) async {
+    for (final h in hosted) {
+      try {
+        await host.delete(h);
+      } on Object catch (e) {
+        ctx.log.warn('Could not delete ${h.url} from ${host.name}', e);
+      }
+    }
+  }
+
+  static Uri _shareTool(Map<String, String> params) => Uri.https('www.tumblr.com', shareToolPath, params);
+
+  /// Title, text and (unless the text has it) the link: what goes on the
+  /// clipboard and, for photo posts, into the caption (the share tool has no
+  /// title for photos).
+  static String _fullText(PostVariant v) {
+    final text = bodyText(v).trimRight();
+    final title = v.title?.trim() ?? '';
+    final link = _link(v);
+    return [
+      if (title.isNotEmpty) title,
+      if (text.isNotEmpty) text,
+      if (link != null && !_textHasLink(text, link)) link,
+    ].join('\n\n');
+  }
+
+  /// Values to copy one by one: the tags (comma-separated, as Tumblr's tag
+  /// field takes them) and each photo's alt text (no hand-off route carries
+  /// alt text).
+  static List<HandoffSnippet> _snippets(PostVariant v) {
+    final tags = TumblrApi.tagsField(v.tags);
+    final photos = [for (final m in v.media) if (m.isImage) m];
+    return [
+      if (tags != null) HandoffSnippet('Tags', tags),
+      for (var i = 0; i < photos.length; i++)
+        if ((photos[i].altText ?? '').trim().isNotEmpty)
+          HandoffSnippet(photos.length == 1 ? 'Alt text' : 'Alt text, photo ${i + 1}', photos[i].altText!.trim()),
+    ];
+  }
+
+  static bool _hasAltText(PostVariant v) => v.media.any((m) => m.isImage && (m.altText ?? '').trim().isNotEmpty);
+
+  static String _mediaLabel(MediaAttachment m) => m.fileName ?? m.id;
+
+  static String _numbered(List<String> steps) => [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n');
+
+  HandoffPlan _textHandoff(PostVariant variant) {
     final text = bodyText(variant).trimRight();
     final title = variant.title?.trim() ?? '';
     final link = _link(variant);
     final tags = TumblrApi.tagsField(variant.tags);
-    final media = variant.media;
-
-    // Official share tool (help.tumblr.com share-button documentation).
     final params = <String, String>{
       if (link != null) ...{
         'posttype': 'link',
@@ -719,40 +825,130 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       if (title.isNotEmpty) 'title': title,
       if (tags != null) 'tags': tags,
     };
-    final webIntent = Uri.https('www.tumblr.com', '/widgets/share/tool', params);
+    final clipboard = _fullText(variant);
+    return HandoffPlan(
+      platformId: id,
+      instructions: _numbered([
+        'Tumblr opens a new post with your text${tags == null ? '' : ' and tags'} filled in (sign in if asked; '
+            'the draft survives the sign-in).',
+        'If anything is missing, paste it: the text is on the clipboard${tags == null ? '' : ', the tags are listed below'}.',
+        'Click **Post now**.',
+      ]),
+      webIntent: _shareTool(params),
+      clipboardText: clipboard,
+      shareText: clipboard,
+      androidPackage: _tumblrPackage,
+      desktopUrl: newTextUrl,
+      preferred: HandoffMethod.webIntent,
+      snippets: _snippets(variant),
+    );
+  }
 
-    final clipboard = [
-      if (title.isNotEmpty) title,
-      if (text.isNotEmpty) text,
-      if (link != null && !_textHasLink(text, link)) link,
-    ].join('\n\n');
-    final tagHint = tags == null ? '' : ' and the tags ${tags.split(',').map((t) => '#$t').join(' ')}';
+  /// Photos or a video, nothing uploaded: the share sheet hands the files to
+  /// the Tumblr app on phones; on a computer Tumblr's new photo (or video)
+  /// post opens and the user drags in the files the app's "Save media to
+  /// Downloads" button saved. [hostProblem] says why the media host could not
+  /// be used.
+  HandoffPlan _mediaHandoff(PostVariant variant, {String? hostProblem}) {
+    final media = variant.media;
+    final photoCount = media.where((m) => m.isImage).length;
+    final videoOnly = photoCount == 0;
+    final kind = videoOnly ? 'video' : 'photo';
+    final files = media.length == 1 ? 'the $kind' : 'the files';
+    final clipboard = _fullText(variant);
+    final hasText = clipboard.isNotEmpty;
+    final hasTags = TumblrApi.tagsField(variant.tags) != null;
 
-    final instructions = media.isNotEmpty
-        ? '1. Your text is on the clipboard.\n'
-            '2. In the share sheet pick **Tumblr** (on a computer, open tumblr.com, create a post and add the files).\n'
-            '3. Paste the text$tagHint.\n'
-            '4. Tap **Post**.'
-        : '1. Tumblr opens a new post with your text${tags == null ? '' : ' and tags'} filled in (sign in if asked; '
-            'the draft survives the sign-in).\n'
-            '2. If anything is missing, paste it: the text is on the clipboard.\n'
-            '3. Click **Post now**.';
+    final steps = [
+      if (hasText) 'Your text is on the clipboard.',
+      'On a phone, share $files to the **Tumblr** app${hasText ? ' and paste the text if the app leaves it out' : ''}.',
+      'On a computer, click **Save media to Downloads** (it saves $files with friendly names and opens the folder), '
+          'open Tumblr\'s new $kind post and drag $files into it${hasText ? ', then paste the text' : ''}.',
+      if (hasTags) 'Add the tags listed below.',
+      if (_hasAltText(variant)) 'Add the alt text listed below to ${photoCount == 1 ? 'the photo' : 'each photo'}.',
+      'Click **Post now**.',
+    ];
+
+    final note = StringBuffer('Tumblr\'s website cannot take files from another app, so NEFORUM cannot attach '
+        '$files there. On a phone the share sheet hands them to the Tumblr app. On a computer NEFORUM opens a new '
+        'Tumblr $kind post; use "Save media to Downloads" and drag the files in.');
+    if (hostProblem != null) {
+      note.write(' NEFORUM could not put the photos on your media host ($hostProblem), so they are not filled in '
+          'this time.');
+    } else if (!videoOnly) {
+      note.write(' With a media host set up in Settings, NEFORUM fills in photo posts on computers too (photos, '
+          'text and tags).');
+    }
 
     return HandoffPlan(
       platformId: id,
-      instructions: instructions,
-      webIntent: webIntent,
+      instructions: _numbered(steps),
       clipboardText: clipboard,
       shareText: clipboard,
       shareFiles: media,
-      androidPackage: 'com.tumblr',
-      desktopUrl: 'https://www.tumblr.com/new/text',
-      preferred: media.isNotEmpty ? HandoffMethod.shareSheet : HandoffMethod.webIntent,
-      mediaNote: media.isEmpty
-          ? null
-          : 'Tumblr\'s website cannot receive photos or videos from NEFORUM. On a phone the share sheet hands the '
-              'files to the Tumblr app; the text is on the clipboard in case the app ignores it. On a computer, '
-              'attach the files yourself.',
+      androidPackage: _tumblrPackage,
+      desktopUrl: videoOnly ? newVideoUrl : newPhotoUrl,
+      preferred: HandoffMethod.shareSheet,
+      mediaNote: note.toString(),
+      snippets: _snippets(variant),
+    );
+  }
+
+  /// The photos are at [urls] on the user's media host: the share tool opens
+  /// a photo post (a photoset for several) with them, the caption and tags.
+  HandoffPlan _photoToolHandoff(PostVariant variant, List<MediaAttachment> photos, List<Uri> urls, String hostName) {
+    final tags = TumblrApi.tagsField(variant.tags);
+    final caption = _fullText(variant);
+    final source = _sourceUrl(variant);
+    final params = <String, String>{
+      'posttype': 'photo',
+      // One URL, or a comma-separated list for a photoset. A comma inside a
+      // URL is escaped so it cannot split it.
+      'content': urls.map((u) => u.toString().replaceAll(',', '%2C')).join(','),
+      if (caption.isNotEmpty) 'caption': caption,
+      if (tags != null) 'tags': tags,
+      if (source != null) 'canonicalUrl': source,
+    };
+
+    final n = photos.length;
+    final hasVideo = variant.media.any((m) => m.isVideo);
+    final hasText = caption.isNotEmpty;
+    final filledParts = [n == 1 ? 'your photo' : 'your $n photos', if (hasText) 'text', if (tags != null) 'tags'];
+    final filled = filledParts.length == 1
+        ? filledParts.single
+        : '${filledParts.sublist(0, filledParts.length - 1).join(', ')} and ${filledParts.last}';
+
+    final steps = [
+      'Open the Tumblr composer: Tumblr\'s share tool shows a photo post with $filled filled in (sign in if asked).',
+      if (hasVideo)
+        'The share tool cannot take your video: add it yourself in Tumblr\'s editor (click **Save media to '
+            'Downloads** to get the file) or post it separately.',
+      if (_hasAltText(variant)) 'Add the alt text listed below to ${n == 1 ? 'the photo' : 'each photo'}.',
+      'Click **Post now**.',
+      'On a phone you can share the files to the **Tumblr** app instead'
+          '${hasText ? ', paste the text from the clipboard' : ''}${tags != null ? ' and add the tags listed below' : ''}.',
+    ];
+
+    final them = n == 1 ? 'it' : 'them';
+    final note = StringBuffer('NEFORUM put ${n == 1 ? 'the photo' : 'the $n photos'} on $hostName, your media host, '
+        'so Tumblr\'s share tool can fetch $them. Post within a day: hosts that expire files delete $them after '
+        'about 24 hours. Alt text cannot be passed to the share tool.');
+    if (hasVideo) note.write(' The share tool takes photos only as links, so the video has to be added by hand.');
+
+    return HandoffPlan(
+      platformId: id,
+      instructions: _numbered(steps),
+      webIntent: _shareTool(params),
+      clipboardText: caption,
+      shareText: caption,
+      shareFiles: variant.media,
+      androidPackage: _tumblrPackage,
+      desktopUrl: newPhotoUrl,
+      // Phones still hand the files to the Tumblr app; computers (no share
+      // sheet) open the prefilled share tool.
+      preferred: HandoffMethod.shareSheet,
+      mediaNote: note.toString(),
+      snippets: _snippets(variant),
     );
   }
 }

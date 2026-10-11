@@ -128,6 +128,12 @@ class VariantResolver {
     }
     if (!t.titleSupported) title = null;
 
+    // ---- poll ----------------------------------------------------------
+    final poll = post.poll;
+    if (poll != null && d.polls == null) {
+      issues.add(ValidationIssue.info('poll.unsupported', '${d.name} has no polls; it gets the post without the poll', field: 'poll'));
+    }
+
     // ---- extra ---------------------------------------------------------
     final extra = <String, dynamic>{
       if (account != null) ...(account.config['postDefaults'] as Map?)?.cast<String, dynamic>() ?? const {},
@@ -151,6 +157,7 @@ class VariantResolver {
       scheduledAt: d.serverSideScheduling && delegateSchedule ? post.scheduledAt : null,
       issues: issues,
       sourcePostId: post.id,
+      poll: d.polls == null ? null : poll,
     );
   }
 

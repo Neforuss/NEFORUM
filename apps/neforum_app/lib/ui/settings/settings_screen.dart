@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/neforum_logo.dart';
 import '../../platform/desktop.dart';
+import '../../brand/platform_brand.dart';
 import '../../media/text_card.dart';
 import '../../platform/env.dart';
 import '../../platform/media_library.dart';
@@ -283,6 +284,25 @@ class _TextCards extends ConsumerWidget {
           description: 'Your words, set large on a plain card with the NEFORUM signature. The caption still carries the full text, hashtags and link.',
           value: s.textCards,
           onChanged: (v) => n.update((x) => x.copyWith(textCards: v)),
+        ),
+        SettingRow(
+          title: 'NEFORUM signature',
+          description: 'The purple rule, mark and name on the card. Turn it off for a plain card with just your words and handle. '
+              'You can also switch it per post under the preview.',
+          enabled: s.textCards,
+          below: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+            for (final id in const ['instagram', 'tiktok', 'pinterest', 'snapchat'])
+              FilterChip(
+                label: Text(ref.watch(registryProvider).descriptor(id)?.name ?? id),
+                avatar: PlatformTile(id, size: 18),
+                selected: s.textCardBranded(id),
+                onSelected: !s.textCards
+                    ? null
+                    : (on) => n.update((x) => x.copyWith(
+                          textCardPlainPlatforms: on ? x.textCardPlainPlatforms.where((p) => p != id).toList() : {...x.textCardPlainPlatforms, id}.toList(),
+                        )),
+              ),
+          ]),
         ),
         SettingRow(
           title: 'Card style',

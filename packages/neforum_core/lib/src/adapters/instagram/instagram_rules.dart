@@ -5,7 +5,8 @@ import '../../model/validation.dart';
 
 /// Static facts about Instagram, taken from the Instagram Platform docs
 /// (content publishing guide, IG User Media reference, error-code reference;
-/// read 2026-10-07) and `docs/research/instagram.json`.
+/// re-checked 2026-10-11 against developers.facebook.com/documentation/
+/// instagram-platform) and `docs/research/instagram.json`.
 class InstagramRules {
   InstagramRules._();
 
@@ -45,8 +46,9 @@ class InstagramRules {
         'hands the photo or video to the Instagram app. Automatic posting needs a professional (Business or '
         'Creator) account and your own free Meta developer app; personal accounts cannot use the API.',
     apiCostSummary:
-        'The Instagram API is free. Each account can publish up to 100 posts per rolling 24 hours through it, '
-        'and photos must be put on a public media host you configure because Instagram downloads them from a link.',
+        'The Instagram API is free. Meta\'s docs give each account 100 API posts per rolling 24 hours in one place '
+        'and 50 in two others; NEFORUM counts up to 100 and treats Instagram\'s own limit error as a quota problem. '
+        'Photos must be put on a public media host you configure because Instagram downloads them from a link.',
     text: TextRules(
       maxLength: captionMax,
       counting: CountingRule.utf16,
@@ -77,7 +79,8 @@ class InstagramRules {
         id: 'instagram.posts_per_day',
         limit: 100,
         window: Duration(hours: 24),
-        note: 'Instagram allows 100 API-published posts per account in a rolling 24 hours (a carousel counts as one).',
+        note: 'API-published posts per account in a rolling 24 hours (a carousel counts as one). The content '
+            'publishing guide says 100; its carousel section and the content_publishing_limit reference say 50.',
         appliesToTier: PlatformTier.byokApi,
       ),
     ],

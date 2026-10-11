@@ -12,7 +12,11 @@ import 'settings.dart';
 ///
 /// Cards are ordinary media files marked [MediaAttachment.generated]; only
 /// the targets that list them in their overrides receive them.
-Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {TextCardTheme? theme}) async {
+///
+/// [branded] picks the NEFORUM signature per network (platform id); otherwise
+/// a target keeps the choice its current card was made with, else the
+/// Settings default.
+Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {TextCardTheme? theme, Map<String, bool> branded = const {}}) async {
   final cards = {for (final m in post.media.where((m) => m.generated)) m.id: m};
   if (!settings.textCards && cards.isEmpty) return post;
   final style = theme ?? textCardThemeOfPost(post) ?? settings.textCardTheme;
@@ -24,6 +28,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {Te
   for (final original in post.targets) {
     final t = p.targetFor(original.accountId)!;
     final own = t.overrides.mediaIds;
+    final oldCard = own?.map((id) => cards[id]).whereType<MediaAttachment>().firstOrNull;
     final userIds = own?.where((id) => !cards.containsKey(id)).toList();
     final onlyCards = own != null && own.isNotEmpty && userIds!.isEmpty;
     final base = t.copyWith(overrides: onlyCards ? t.overrides.copyWith(clearMediaIds: true) : t.overrides.copyWith(mediaIds: userIds));
@@ -40,17 +45,19 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {Te
     final text = textCardText(p, base);
     final size = textCardSize(d.id);
     final byline = account.handle ?? account.displayName;
-    final key = '${size.width}x${size.height}|${style.name}|$byline|$text';
+    final signed = branded[d.id] ?? (oldCard == null ? null : textCardBrandedOf(oldCard)) ?? settings.textCardBranded(d.id);
+    final key = '${size.width}x${size.height}|${style.name}|$signed|$byline|$text';
     var card = made[key];
     card ??= cards.values.where((m) =>
         m.width == size.width.round() &&
         m.height == size.height.round() &&
         textCardThemeOf(m) == style &&
+        textCardBrandedOf(m) == signed &&
         m.altText == textCardAltText(text)).firstOrNull;
     if (card == null) {
       try {
-        final bytes = await renderTextCardJpeg(text: text, theme: style, size: size, byline: byline);
-        final m = await s.media.importBytes(bytes, fileName: textCardFileName(style), mimeHint: 'image/jpeg');
+        final bytes = await renderTextCardJpeg(text: text, theme: style, size: size, byline: byline, branded: signed);
+        final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed), mimeHint: 'image/jpeg');
         card = MediaAttachment(
           id: m.id,
           path: m.path,
@@ -110,4 +117,17 @@ Post withoutTextCards(Post post) {
           }(),
     ],
   );
+}
+
+/// Platform id -> whether its card on [post] carries the signature, for the
+/// composer when a saved post is edited again.
+Map<String, bool> textCardBrandingOfPost(Post post, String? Function(String accountId) platformOf) {
+  final cards = {for (final m in post.media.where((m) => m.generated)) m.id: m};
+  final out = <String, bool>{};
+  for (final t in post.targets) {
+    final card = t.overrides.mediaIds?.map((id) => cards[id]).whereType<MediaAttachment>().firstOrNull;
+    final platform = platformOf(t.accountId);
+    if (card != null && platform != null) out[platform] = textCardBrandedOf(card);
+  }
+  return out;
 }

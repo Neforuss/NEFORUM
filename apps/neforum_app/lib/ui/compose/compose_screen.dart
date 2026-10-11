@@ -12,6 +12,7 @@ import '../../widgets/layout.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
 import 'action_bar.dart';
+import 'differentiation_panel.dart';
 import 'editor_card.dart';
 import 'media_tray.dart';
 import 'preview_pane.dart';
@@ -251,6 +252,10 @@ class _WriteColumn extends ConsumerWidget {
         TargetPicker(scrollable: scrollableTargets),
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
+        if (!c.isEmpty) ...[
+          const SizedBox(height: Space.lg),
+          const DifferentiationPanel(),
+        ],
         if (c.isEmpty) ...[
           const SizedBox(height: Space.lg),
           _Starters(onFocus: focusNode.requestFocus),

@@ -27,6 +27,7 @@ class AppSettings {
     this.compactPreviews = false,
     this.textCards = true,
     this.textCardTheme = TextCardTheme.dark,
+    this.textCardPlainPlatforms = const [],
     this.delegateSchedules = true,
   });
 
@@ -50,6 +51,7 @@ class AppSettings {
         compactPreviews: j['compactPreviews'] as bool? ?? false,
         textCards: j['textCards'] as bool? ?? true,
         textCardTheme: TextCardTheme.values.asNameMap()[j['textCardTheme']] ?? TextCardTheme.dark,
+        textCardPlainPlatforms: (j['textCardPlainPlatforms'] as List? ?? const []).cast<String>(),
         delegateSchedules: j['delegateSchedules'] as bool? ?? true,
       );
 
@@ -89,6 +91,11 @@ class AppSettings {
   final bool textCards;
   final TextCardTheme textCardTheme;
 
+  /// Networks whose cards leave out the NEFORUM signature (plain cards).
+  final List<String> textCardPlainPlatforms;
+
+  bool textCardBranded(String platformId) => !textCardPlainPlatforms.contains(platformId);
+
   /// Let platforms that can (Mastodon, Facebook Pages, YouTube, Tumblr,
   /// WordPress, Ghost) hold scheduled posts, so they go out even when this
   /// device is off.
@@ -124,6 +131,7 @@ class AppSettings {
     bool? compactPreviews,
     bool? textCards,
     TextCardTheme? textCardTheme,
+    List<String>? textCardPlainPlatforms,
     bool? delegateSchedules,
   }) =>
       AppSettings(
@@ -146,6 +154,7 @@ class AppSettings {
         compactPreviews: compactPreviews ?? this.compactPreviews,
         textCards: textCards ?? this.textCards,
         textCardTheme: textCardTheme ?? this.textCardTheme,
+        textCardPlainPlatforms: textCardPlainPlatforms ?? this.textCardPlainPlatforms,
         delegateSchedules: delegateSchedules ?? this.delegateSchedules,
       );
 
@@ -169,6 +178,7 @@ class AppSettings {
         'compactPreviews': compactPreviews,
         'textCards': textCards,
         'textCardTheme': textCardTheme.name,
+        'textCardPlainPlatforms': textCardPlainPlatforms,
         'delegateSchedules': delegateSchedules,
       };
 }

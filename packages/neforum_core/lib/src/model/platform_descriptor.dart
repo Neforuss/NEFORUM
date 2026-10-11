@@ -151,6 +151,36 @@ class MediaRules {
   bool get supportsAnyMedia => maxImages > 0 || maxVideos > 0;
 }
 
+/// Poll and quiz limits for platforms that have them.
+@immutable
+class PollRules {
+  const PollRules({
+    required this.maxOptions,
+    this.minOptions = 2,
+    this.optionMaxLength,
+    this.quizzes = false,
+    this.quizOptionMaxLength,
+    this.quizExplanationMaxLength,
+    this.imagePolls = false,
+    this.imageOptionMaxLength,
+    this.notes,
+  });
+
+  final int minOptions;
+  final int maxOptions;
+  final int? optionMaxLength;
+
+  /// The platform has quizzes (one correct answer).
+  final bool quizzes;
+  final int? quizOptionMaxLength;
+  final int? quizExplanationMaxLength;
+
+  /// Polls whose options are the post's images with captions.
+  final bool imagePolls;
+  final int? imageOptionMaxLength;
+  final String? notes;
+}
+
 /// A rate/quota limit NEFORUM tracks locally so that it can warn before the
 /// platform rejects a post (or fall back to hand-off).
 @immutable
@@ -194,6 +224,7 @@ class PlatformDescriptor {
     this.serverSideScheduling = false,
     this.supportsLinkField = false,
     this.family,
+    this.polls,
   });
 
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
@@ -232,6 +263,9 @@ class PlatformDescriptor {
 
   /// Groups compatible software, e.g. `mastodon-api` for Pleroma/GoToSocial.
   final String? family;
+
+  /// Set when posts can carry a poll or quiz ([PostPoll]).
+  final PollRules? polls;
 
   bool supportsTier(PlatformTier t) => tiers.contains(t);
 

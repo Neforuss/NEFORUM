@@ -74,20 +74,16 @@ const PlatformDescriptor facebookDescriptor = PlatformDescriptor(
 );
 
 const String _byokIntro = '''
-**Posts to a Facebook Page you manage** (not to a personal profile: Meta has not allowed that since 2018).
-You need your own free Meta developer app. You stay its admin, so no App Review is needed.
+**Posts to a Facebook Page you manage** (no app can post to personal profiles or groups). You need your own free Meta app; you are its admin, so no App Review.
 
-1. Open <https://developers.facebook.com/apps> and click **Create app**. Pick the use case
-   **Manage everything on your Page** (or app type **Business**) and connect your Page's business portfolio if asked.
-2. In the use case's **Customize** screen make sure these permissions are added:
-   `pages_show_list`, `pages_read_engagement`, `pages_manage_posts`, `business_management`.
-3. Open **Facebook Login (for Business) > Settings**: switch on **Client OAuth login**, **Web OAuth login** and
-   **Embedded browser OAuth login**, and add this to **Valid OAuth Redirect URIs**:
-   `https://www.facebook.com/connect/login_success.html`
-4. In **App settings > Basic** copy the **App ID** and **App Secret** (click Show). Fill in a Privacy Policy URL,
-   icon and category; if your app has a Development/Live switch, set it to **Live**, otherwise only you can see the posts.
-5. Press Connect. Facebook opens: approve and **select your Page(s)**. You end up on a page that says
-   "Success": copy the **whole address** from the address bar and paste it into NEFORUM.
+1. Open <https://developers.facebook.com/apps/creation/>, pick the use case **Manage everything on your Page** and finish the wizard.
+2. **Use cases > Manage everything on your Page > Customize**: click **Add** next to `pages_manage_posts` and `pages_read_engagement` (`pages_show_list` and `business_management` are already there).
+3. **App settings > Basic**: copy the **App ID** and the **App Secret** (click **Show**) into the fields below.
+4. Open <https://developers.facebook.com/tools/explorer/>. Under **Meta App** pick your app, under **User or Page** pick **User Token**, add the four permissions above and click **Generate Access Token**. Allow it and **select your Page**. Copy the token into the **User access token** field.
+5. Press **Sign in**. NEFORUM turns the token into a Page token that does not expire.
+6. So that people other than you see the posts, **Publish** the app (left menu; needs an app icon, a privacy policy URL and a data deletion URL).
+
+**Without a token** NEFORUM opens Facebook to sign in. First add `https://www.facebook.com/connect/login_success.html` under **Facebook Login for Business > Settings > Valid OAuth Redirect URIs** (with **Client OAuth login** and **Web OAuth login** on); at the end copy the whole address of the "Success" page into NEFORUM.
 ''';
 
 const String _handoffIntro = '''
@@ -103,8 +99,9 @@ final List<ConnectSpec> facebookConnectSpecs = [
     tier: PlatformTier.byokApi,
     usesBrowser: true,
     intro: _byokIntro,
-    redirectNote: 'Register exactly https://www.facebook.com/connect/login_success.html as a Valid OAuth Redirect URI. '
-        'Facebook Login rejects http://127.0.0.1 and neforum:// redirects.',
+    redirectNote: 'Only for browser sign-in (not needed when you paste a token): register exactly '
+        'https://www.facebook.com/connect/login_success.html under Facebook Login for Business > Settings > '
+        'Valid OAuth Redirect URIs. Facebook Login rejects http://127.0.0.1 and neforum:// redirects.',
     loopbackRedirectOk: false,
     customSchemeRedirectOk: false,
     fixedRedirectUri: facebookLoginSuccessUri,
@@ -113,14 +110,25 @@ final List<ConnectSpec> facebookConnectSpecs = [
         key: 'app_id',
         label: 'App ID',
         placeholder: '1234567890123456',
-        help: 'Meta app dashboard > App settings > Basic.',
+        help: 'Your app at developers.facebook.com/apps > **App settings > Basic** > App ID (also shown at the top '
+            'of the dashboard).',
       ),
       ConnectField(
         key: 'app_secret',
         label: 'App Secret',
         kind: FieldKind.password,
         secret: true,
-        help: 'App settings > Basic > App Secret (Show). Needed for the long-lived token; stays on this device.',
+        help: '**App settings > Basic** > App Secret, click **Show** (Facebook may ask for your password). Needed '
+            'for the long-lived token; stays on this device.',
+      ),
+      ConnectField(
+        key: 'user_access_token',
+        label: 'User access token from the Graph API Explorer',
+        kind: FieldKind.password,
+        required: false,
+        secret: true,
+        help: 'developers.facebook.com/tools/explorer > **Meta App**: your app > **User or Page**: User Token > '
+            '**Generate Access Token** (step 4). Leave empty to sign in through the browser instead.',
       ),
       ConnectField(
         key: 'page',
@@ -128,15 +136,6 @@ final List<ConnectSpec> facebookConnectSpecs = [
         required: false,
         help: 'Leave empty to use the first Page you can post to. All your Pages are listed in the account '
             'details after connecting; reconnect with another name to switch Pages.',
-      ),
-      ConnectField(
-        key: 'user_access_token',
-        label: 'User access token (optional)',
-        kind: FieldKind.password,
-        required: false,
-        secret: true,
-        help: 'Advanced: skip the browser sign-in by pasting a user token for YOUR app from the Graph API Explorer '
-            '(https://developers.facebook.com/tools/explorer) with the permissions above.',
       ),
       ConnectField(
         key: 'scopes',

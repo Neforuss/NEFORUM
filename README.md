@@ -35,6 +35,20 @@ If an API account runs out of quota (for example X's monthly cap), NEFORUM can f
 
 Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an image. When a post is only words, NEFORUM sets them on a plain card, white on black or black on white, with the same signature every time: a purple rule with a yellow tab along the top, and the NEFORUM mark, wordmark and your handle at the bottom. The card is made on your device when you save or schedule the post. It goes only to the networks that need it (the others get plain text) and carries the words as alt text. The caption still has the full text, hashtags and link. Pick the style per post under the preview, or turn cards off in Settings.
 
+The signature is optional per network: turn it off (for example only for Instagram) under the preview or in Settings → Text cards, and the card keeps just your words and handle. **Save image** under the preview saves the card as a JPEG (into `Downloads\NEFORUM\Text cards` on a computer, through the share sheet on a phone), and in a hand-off **Save media to Downloads** saves the post's photos and cards with readable names and opens the folder, ready to drag into Instagram or TikTok on the web.
+
+### DIFFERENTIATION: a version for each network
+
+What works on X rarely works on LinkedIn or Instagram. Under the editor, **Differentiate** opens one editable version per network, side by side, each with that network's counter and conventions. One-tap changes per version: fit to the limit, hashtags to the end, fewer or no hashtags, "link in bio", remove the link, airy paragraphs. **Auto-differentiate** applies every network's conventions at once (LinkedIn gets short paragraphs and three hashtags, X two hashtags, Instagram "link in bio", Reddit no hashtags, …). Versions you don't touch keep following the main post; all of it is plain text work on your own words, nothing is generated or sent anywhere.
+
+<p align="center">
+  <img src="docs/screenshots/differentiation-dark.png" alt="DIFFERENTIATION: one version per network, side by side" width="900">
+</p>
+
+### Polls and quizzes
+
+The **Poll** button adds a text poll, an image poll or a quiz for networks that have them (YouTube Posts today). The post text is the question; other networks get the post without the poll. In the hand-off every answer has its own copy button.
+
 <p align="center">
   <img src="docs/screenshots/text-card-dark.jpg" alt="A NEFORUM text card, white on black" width="260">
   &nbsp;
@@ -67,6 +81,8 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **X:** new developer accounts are pay-per-use (about $0.015 per post, $0.20 for a post containing a link). No free tier. Hand-off is free.
 - **Instagram and Threads (API mode):** Instagram needs a professional (creator or business) account. Both fetch media from a public web address, so you pick a media host in Settings (a free temporary one is built in). Hand-off works with any account and needs none of this.
 - **Facebook:** the API only posts to Pages you manage. Personal profiles use hand-off.
+- **Connecting Meta (Facebook Pages, Instagram, Threads):** besides browser sign-in, you can paste a token from Meta's own tools (Graph API Explorer, Instagram's **Generate token**, the Threads token), so no redirect address has to be registered. NEFORUM turns it into a long-lived token and renews it. The setup guides follow Meta's current documentation step by step.
+- **Tumblr without API keys:** text and link posts open Tumblr's composer prefilled. Photo posts open prefilled too on a computer when you have set up a media host; otherwise NEFORUM opens a new photo post and saves the photos to Downloads to drag in.
 - **TikTok:** apps TikTok has not audited can only post privately. Hand-off posts publicly from the TikTok app.
 - **YouTube Posts** (the text and image posts on a channel's Posts tab) have no API at all, so they always use hand-off. Your channel needs YouTube's advanced features turned on.
 - **YouTube:** uploads from apps that have not passed Google's verification may be locked to private. Google's own pages disagree on whether that still applies, and NEFORUM cannot detect it. Hand-off always posts publicly.

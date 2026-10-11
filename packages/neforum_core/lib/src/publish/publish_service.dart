@@ -178,7 +178,12 @@ class PublishService {
     final adapter = registry.byId(account.platformId);
     if (adapter == null) return null;
     final variant = resolver.resolve(post, target, adapter.descriptorForAccount(account), account: account);
-    return adapter.buildHandoff(variant, account: account);
+    try {
+      return await adapter.prepareHandoff(variant, account, context(log: _log.child(account.platformId)));
+    } on Object catch (e) {
+      _log.warn('Preparing the ${adapter.descriptor.name} hand-off failed ($e); using the plain plan');
+      return adapter.buildHandoff(variant, account: account);
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -540,7 +545,13 @@ class PublishService {
     required bool interactive,
     String? reason,
   }) async {
-    var plan = adapter.buildHandoff(variant, account: account);
+    HandoffPlan? plan;
+    try {
+      plan = await adapter.prepareHandoff(variant, account, context(log: _log.child(account.platformId)));
+    } on Object catch (e) {
+      _log.warn('Preparing the ${adapter.descriptor.name} hand-off failed ($e); using the plain plan');
+      plan = adapter.buildHandoff(variant, account: account);
+    }
     if (plan == null) {
       return _fail(attempt, PublishError.unsupported('${adapter.descriptor.name} has no hand-off route'));
     }

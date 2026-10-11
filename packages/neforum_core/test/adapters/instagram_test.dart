@@ -85,8 +85,15 @@ void main() {
       expect(api.customSchemeRedirectOk, isFalse);
       expect(api.fixedRedirectUri.toString(), 'https://localhost:52771/callback');
       expect(api.fields.where((f) => f.secret).map((f) => f.key), containsAll(['app_secret', 'access_token']));
-      expect(api.intro, contains('developers.facebook.com/apps'));
+      // The dashboard token is the easiest path, so it comes first and
+      // nothing else is required.
+      expect(api.fields.first.key, 'access_token');
+      expect(api.fields.where((f) => f.required), isEmpty);
+      expect(api.fields.first.help, contains('Generate token'));
+      expect(api.intro, contains('https://developers.facebook.com/apps/creation/'));
       expect(api.intro, contains('instagram_business_content_publish'));
+      expect(api.intro, contains('Generate token'));
+      expect(api.intro, contains('`https://localhost:52771/callback`'));
       final handoff = adapter.specFor(PlatformTier.handoff);
       expect(handoff.usesBrowser, isFalse);
     });
@@ -214,10 +221,42 @@ void main() {
           throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('redirect_uri is identical'))));
     });
 
-    test('expired token at connect becomes a ConnectException', () async {
+    test('expired token at connect becomes a ConnectException on the token field', () async {
       final ctx = testContext(handler: (r) async => _graphError(190, subcode: 463, message: 'Session has expired'));
-      expect(() => adapter.connect(PlatformTier.byokApi, {'access_token': 't'}, ctx),
-          throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('expired'))));
+      expect(
+          () => adapter.connect(PlatformTier.byokApi, {'access_token': 't'}, ctx),
+          throwsA(isA<ConnectException>()
+              .having((e) => e.message, 'message', contains('expired'))
+              .having((e) => e.field, 'field', 'access_token')));
+    });
+
+    test('dashboard token then refresh: /me only at connect, ig_refresh_token a day later', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({
+          'data': [
+            {'user_id': '42', 'username': 'shop', 'account_type': 'BUSINESS'}
+          ]
+        });
+      });
+      final res = await adapter.connect(PlatformTier.byokApi, {'access_token': 'IGTOKEN', 'app_id': '', 'app_secret': ''}, ctx);
+      expect(calls.single.url.path, '/v25.0/me');
+      expect(DateTime.parse(res.secrets['refreshed_at']!), testNow);
+
+      final later = testContext(
+        now: testNow.add(const Duration(hours: 25)),
+        handler: (r) async {
+          calls.add(r);
+          return _json({'access_token': 'RENEWED', 'token_type': 'bearer', 'expires_in': 5183944});
+        },
+      );
+      final renewed = await adapter.refreshSecrets(res.account, res.secrets, later);
+      expect(calls.last.url.toString(),
+          'https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=IGTOKEN');
+      expect(renewed!['access_token'], 'RENEWED');
+      expect(DateTime.parse(renewed['expires_at']!),
+          testNow.add(const Duration(hours: 25)).add(const Duration(seconds: 5183944)));
     });
 
     test('hand-off connect needs nothing', () async {

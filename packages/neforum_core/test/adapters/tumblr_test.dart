@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -827,14 +828,268 @@ void main() {
       expect(plan.clipboardText, 'Read this\n\nhttps://example.com/a');
     });
 
-    test('media prefers the share sheet', () {
-      final img = fakeImage();
-      final plan = adapter.buildHandoff(PostVariant(text: 'Pic', media: [img], tags: const ['cats']))!;
+    test('text post lists the tags as a snippet too', () {
+      final plan = adapter.buildHandoff(const PostVariant(text: 'Body', tags: ['a', 'b c']))!;
+      expect(plan.snippets.map((s) => (s.label, s.text)), [('Tags', 'a,b c')]);
+      expect(adapter.buildHandoff(const PostVariant(text: 'Body'))!.snippets, isEmpty);
+    });
+
+    test('photos without a host: share sheet on phones, new photo post on computers', () {
+      final img = fakeImage(altText: 'A cat on a mat');
+      final plan = adapter.buildHandoff(PostVariant(text: 'Pic', title: 'Cats', media: [img], tags: const ['cats']))!;
       expect(plan.preferred, HandoffMethod.shareSheet);
       expect(plan.shareFiles, [img]);
-      expect(plan.shareText, 'Pic');
-      expect(plan.mediaNote, isNotNull);
-      expect(plan.instructions, contains('#cats'));
+      expect(plan.androidPackage, 'com.tumblr');
+      expect(plan.iosScheme, isNull);
+      // No share-tool link: on a computer the app opens the new photo post,
+      // where the saved files are dragged in.
+      expect(plan.webIntent, isNull);
+      expect(plan.desktopUrl, 'https://www.tumblr.com/new/photo');
+      expect(plan.clipboardText, 'Cats\n\nPic');
+      expect(plan.shareText, 'Cats\n\nPic');
+      expect(plan.instructions, contains('**Save media to Downloads**'));
+      expect(plan.instructions, contains('**Tumblr** app'));
+      expect(plan.instructions, contains('tags listed below'));
+      expect(plan.instructions, contains('alt text listed below to the photo'));
+      expect(plan.snippets.map((s) => (s.label, s.text)), [('Tags', 'cats'), ('Alt text', 'A cat on a mat')]);
+      expect(plan.mediaNote, contains('Save media to Downloads'));
+      expect(plan.mediaNote, contains('media host set up in Settings'));
+    });
+
+    test('desktop URL follows the kind of post', () {
+      String? desktop(List<MediaAttachment> media) => adapter.buildHandoff(PostVariant(text: 'x', media: media))!.desktopUrl;
+      expect(desktop(const []), 'https://www.tumblr.com/new/text');
+      expect(desktop([fakeImage()]), 'https://www.tumblr.com/new/photo');
+      expect(desktop([fakeImage(mimeType: 'image/gif')]), 'https://www.tumblr.com/new/photo');
+      expect(desktop([fakeVideo()]), 'https://www.tumblr.com/new/video');
+      expect(desktop([fakeImage(), fakeVideo()]), 'https://www.tumblr.com/new/photo');
+    });
+
+    test('a video post does not suggest a media host and names the video', () {
+      final plan = adapter.buildHandoff(PostVariant(text: 'Clip', media: [fakeVideo()]))!;
+      expect(plan.webIntent, isNull);
+      expect(plan.desktopUrl, 'https://www.tumblr.com/new/video');
+      expect(plan.preferred, HandoffMethod.shareSheet);
+      expect(plan.instructions, contains('share the video'));
+      expect(plan.instructions, contains('new video post'));
+      expect(plan.mediaNote, isNot(contains('media host')));
+      expect(plan.snippets, isEmpty);
+    });
+
+    test('alt texts of several photos are numbered snippets', () {
+      final plan = adapter.buildHandoff(PostVariant(
+        text: 'x',
+        media: [fakeImage(altText: 'First'), fakeImage(id: 'img2', altText: null), fakeImage(id: 'img3', altText: 'Third')],
+      ))!;
+      expect(plan.snippets.map((s) => (s.label, s.text)), [('Alt text, photo 1', 'First'), ('Alt text, photo 3', 'Third')]);
+      expect(plan.instructions, contains('to each photo'));
     });
   });
+
+  group('prepareHandoff', () {
+    AdapterContext ctxWith(MediaHost? host, {List<String>? log, Future<Uint8List> Function(MediaAttachment)? read}) =>
+        AdapterContext(
+          http: NeforumHttp(client: MockClient((r) async => throw StateError('no HTTP expected')), maxRetries: 0),
+          mediaHost: host,
+          clock: () => testNow,
+          log: Logger('test', sink: (level, area, msg, [err]) => log?.add('[${level.name}] $msg ${err ?? ''}')),
+          readMedia: read ?? (m) async => fakeJpegBytes,
+        );
+    final account = _account(tier: PlatformTier.handoff);
+
+    test('with a media host: photos are uploaded for a day and the share tool opens a prefilled photoset', () async {
+      final host = _RecordingHost();
+      final progress = <String>[];
+      final ctx = ctxWith(host).copyWith(onProgress: progress.add);
+      final a = fakeImage(altText: 'Cat');
+      final b = fakeImage(id: 'img2', mimeType: 'image/png', altText: null);
+      final variant = PostVariant(
+        text: 'Two cats',
+        title: 'Cats',
+        link: 'https://example.com/cats',
+        tags: const ['cats', 'fan art'],
+        media: [a, b],
+      );
+      final plan = (await adapter.prepareHandoff(variant, account, ctx))!;
+
+      expect(host.uploaded.map((m) => m.id), ['img1', 'img2']);
+      expect(host.ttls, [const Duration(hours: 24), const Duration(hours: 24)]);
+      expect(host.deleted, isEmpty);
+      expect(progress, ['Uploading photo 1 of 2 to Fake host', 'Uploading photo 2 of 2 to Fake host']);
+
+      final u = plan.webIntent!;
+      expect(u.scheme, 'https');
+      expect(u.host, 'www.tumblr.com');
+      expect(u.path, '/widgets/share/tool');
+      expect(u.queryParameters, {
+        'posttype': 'photo',
+        'content': 'https://cdn.example.test/img1,https://cdn.example.test/img2',
+        'caption': 'Cats\n\nTwo cats\n\nhttps://example.com/cats',
+        'tags': 'cats,fan art',
+        'canonicalUrl': 'https://example.com/cats',
+      });
+      // The share tool documents no title for photo posts: it is in the caption.
+      expect(u.queryParameters.containsKey('title'), isFalse);
+      expect(u.query, contains('content=https%3A%2F%2Fcdn.example.test%2Fimg1%2Chttps%3A%2F%2Fcdn.example.test%2Fimg2'));
+
+      expect(plan.preferred, HandoffMethod.shareSheet);
+      expect(plan.shareFiles, [a, b]);
+      expect(plan.androidPackage, 'com.tumblr');
+      expect(plan.desktopUrl, 'https://www.tumblr.com/new/photo');
+      expect(plan.clipboardText, 'Cats\n\nTwo cats\n\nhttps://example.com/cats');
+      expect(plan.instructions, contains('your 2 photos, text and tags filled in'));
+      expect(plan.instructions, contains('alt text listed below to each photo'));
+      expect(plan.mediaNote, contains('Fake host'));
+      expect(plan.mediaNote, contains('24 hours'));
+      expect(plan.snippets.map((s) => (s.label, s.text)), [('Tags', 'cats,fan art'), ('Alt text, photo 1', 'Cat')]);
+    });
+
+    test('a single photo, a source override and a comma in the hosted URL', () async {
+      final host = _RecordingHost(urlFor: (m) => 'https://cdn.example.test/a,b/${m.id}.jpg');
+      final variant = PostVariant(
+        text: '',
+        media: [fakeImage(altText: null)],
+        extra: const {'tumblrSourceUrl': 'https://artist.example/original'},
+      );
+      final plan = (await adapter.prepareHandoff(variant, account, ctxWith(host)))!;
+      final q = plan.webIntent!.queryParameters;
+      expect(q, {
+        'posttype': 'photo',
+        'content': 'https://cdn.example.test/a%2Cb/img1.jpg',
+        'canonicalUrl': 'https://artist.example/original',
+      });
+      expect(q['content']!.split(','), hasLength(1));
+      expect(plan.instructions, contains('with your photo filled in'));
+      expect(plan.snippets, isEmpty);
+    });
+
+    test('without a media host nothing is uploaded and the plain plan is returned', () async {
+      final variant = PostVariant(text: 'Pic', media: [fakeImage()], tags: const ['cats']);
+      final plan = (await adapter.prepareHandoff(variant, account, ctxWith(null)))!;
+      final plain = adapter.buildHandoff(variant, account: account)!;
+      expect(plan.webIntent, isNull);
+      expect(plan.desktopUrl, 'https://www.tumblr.com/new/photo');
+      expect(plan.instructions, plain.instructions);
+      expect(plan.mediaNote, plain.mediaNote);
+      expect(plan.preferred, HandoffMethod.shareSheet);
+    });
+
+    test('a text post with a host configured uploads nothing', () async {
+      final host = _RecordingHost();
+      final plan = (await adapter.prepareHandoff(const PostVariant(text: 'Hi', tags: ['a']), account, ctxWith(host)))!;
+      expect(host.uploaded, isEmpty);
+      expect(plan.webIntent!.queryParameters['posttype'], 'text');
+    });
+
+    test('a failed upload falls back to the plain plan, removes what was uploaded and logs a warning', () async {
+      final host = _RecordingHost(failAt: 2);
+      final log = <String>[];
+      final variant = PostVariant(text: 'Pics', media: [fakeImage(), fakeImage(id: 'img2')]);
+      final plan = (await adapter.prepareHandoff(variant, account, ctxWith(host, log: log)))!;
+
+      expect(plan.webIntent, isNull);
+      expect(plan.desktopUrl, 'https://www.tumblr.com/new/photo');
+      expect(plan.preferred, HandoffMethod.shareSheet);
+      expect(plan.shareFiles, hasLength(2));
+      expect(plan.mediaNote, contains('could not put the photos on your media host (Host is full)'));
+      expect(plan.mediaNote, isNot(contains('media host set up in Settings')));
+      expect(host.deleted.map((h) => h.url.toString()), ['https://cdn.example.test/img1']);
+      final warnings = log.where((l) => l.startsWith('[warn]')).toList();
+      expect(warnings, hasLength(1));
+      expect(warnings.single, contains('Fake host'));
+      expect(warnings.single, contains('Host is full'));
+    });
+
+    test('unreadable media falls back without throwing', () async {
+      final host = _RecordingHost();
+      final plan = await adapter.prepareHandoff(PostVariant(text: 'x', media: [fakeImage()]), account,
+          ctxWith(host, read: (m) async => throw const FormatException('Media not found')));
+      expect(plan!.webIntent, isNull);
+      expect(host.uploaded, isEmpty);
+      expect(plan.mediaNote, contains('the upload to Fake host failed'));
+    });
+
+    test('a photo larger than the host accepts is not uploaded', () async {
+      final host = _RecordingHost(maxBytes: 1000);
+      final log = <String>[];
+      final variant = PostVariant(text: 'x', media: [fakeImage(), fakeImage(id: 'big', sizeBytes: 5000)]);
+      final plan = (await adapter.prepareHandoff(variant, account, ctxWith(host, log: log)))!;
+      expect(host.uploaded, isEmpty);
+      expect(plan.webIntent, isNull);
+      expect(plan.mediaNote, contains('big.jpg is larger than Fake host accepts'));
+      expect(log.where((l) => l.startsWith('[warn]')), hasLength(1));
+    });
+
+    test('a video is never uploaded: video-only stays manual, a mixed post prefills only the photos', () async {
+      final host = _RecordingHost();
+      final video = await adapter.prepareHandoff(PostVariant(text: 'Clip', media: [fakeVideo()]), account, ctxWith(host));
+      expect(host.uploaded, isEmpty);
+      expect(video!.webIntent, isNull);
+      expect(video.desktopUrl, 'https://www.tumblr.com/new/video');
+      expect(video.shareFiles.single.id, 'vid1');
+
+      final mixed = (await adapter.prepareHandoff(
+          PostVariant(text: 'Both', media: [fakeVideo(), fakeImage(altText: null)]), account, ctxWith(host)))!;
+      expect(host.uploaded.map((m) => m.id), ['img1']);
+      expect(mixed.webIntent!.queryParameters['posttype'], 'photo');
+      expect(mixed.webIntent!.queryParameters['content'], 'https://cdn.example.test/img1');
+      expect(mixed.shareFiles.map((m) => m.id), ['vid1', 'img1']);
+      expect(mixed.instructions, contains('cannot take your video'));
+      expect(mixed.mediaNote, contains('video has to be added by hand'));
+    });
+
+    test('PublishService.planHandoff uses the uploaded photos', () async {
+      final host = _RecordingHost();
+      final accounts = InMemoryAccountRepository();
+      await accounts.upsert(account);
+      final service = PublishService(
+        registry: AdapterRegistry([adapter]),
+        accounts: accounts,
+        posts: InMemoryPostRepository(),
+        secrets: InMemorySecretStore(),
+        quota: QuotaTracker(InMemoryQuotaRepository()),
+        http: NeforumHttp(client: MockClient((r) async => throw StateError('no HTTP expected')), maxRetries: 0),
+        mediaHostProvider: () => host,
+        readMedia: (m) async => fakeJpegBytes,
+      );
+      final post = Post(
+        id: 'p1',
+        text: 'Hello',
+        createdAt: testNow,
+        updatedAt: testNow,
+        media: [fakeImage()],
+        targets: [PostTarget(accountId: account.id)],
+      );
+      final plan = await service.planHandoff(post, account.id);
+      expect(plan, isNotNull);
+      expect(host.uploaded, hasLength(1));
+      expect(plan!.webIntent!.queryParameters['content'], 'https://cdn.example.test/img1');
+    });
+  });
+}
+
+/// A [FakeMediaHost] that records the requested lifetime, can refuse the
+/// n-th upload and can return other URLs.
+class _RecordingHost extends FakeMediaHost {
+  _RecordingHost({this.failAt, this.urlFor, int? maxBytes}) : _maxBytes = maxBytes;
+
+  final int? failAt;
+  final String Function(MediaAttachment media)? urlFor;
+  final int? _maxBytes;
+  final List<Duration?> ttls = [];
+  int _calls = 0;
+
+  @override
+  int? get maxBytes => _maxBytes;
+
+  @override
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+    _calls++;
+    if (_calls == failAt) throw MediaHostException('Host is full', hostId: id);
+    ttls.add(ttl);
+    final custom = urlFor;
+    if (custom == null) return super.upload(media, bytes, ttl: ttl);
+    uploaded.add(media);
+    return HostedMedia(hostId: id, url: Uri.parse(custom(media)), deleteHandle: media.id);
+  }
 }

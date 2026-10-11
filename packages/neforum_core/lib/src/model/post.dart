@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'media.dart';
+import 'poll.dart';
 import 'publish_result.dart';
 
 /// Lifecycle of a master post.
@@ -216,6 +217,7 @@ class Post {
     this.targets = const [],
     this.status = PostStatus.draft,
     this.tags = const [],
+    this.poll,
   });
 
   factory Post.fromJson(Map<String, dynamic> json) => Post(
@@ -240,6 +242,7 @@ class Post {
             .toList(),
         status: PostStatus.values.byName(json['status'] as String? ?? 'draft'),
         tags: (json['tags'] as List? ?? const []).cast<String>(),
+        poll: json['poll'] == null ? null : PostPoll.fromJson(Map<String, dynamic>.from(json['poll'] as Map)),
       );
 
   final String id;
@@ -265,6 +268,9 @@ class Post {
   /// Free-form hashtags without `#`, kept separately so each platform can
   /// decide where (and whether) to place them.
   final List<String> tags;
+
+  /// Poll or quiz; the text is the question. Only platforms with polls get it.
+  final PostPoll? poll;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -297,9 +303,11 @@ class Post {
     PostStatus? status,
     List<String>? tags,
     DateTime? updatedAt,
+    PostPoll? poll,
     bool clearScheduledAt = false,
     bool clearTitle = false,
     bool clearLink = false,
+    bool clearPoll = false,
   }) =>
       Post(
         id: id,
@@ -317,6 +325,7 @@ class Post {
         targets: targets ?? this.targets,
         status: status ?? this.status,
         tags: tags ?? this.tags,
+        poll: clearPoll ? null : (poll ?? this.poll),
       );
 
   /// Replaces the target with the same account id.
@@ -343,5 +352,6 @@ class Post {
         'targets': targets.map((t) => t.toJson()).toList(),
         'status': status.name,
         'tags': tags,
+        if (poll != null) 'poll': poll!.toJson(),
       };
 }

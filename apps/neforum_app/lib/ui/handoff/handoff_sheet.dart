@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
@@ -8,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/platform_brand.dart';
 import '../../platform/env.dart';
+import '../../platform/file_export.dart';
 import '../../platform/ui_bridge.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
@@ -58,6 +60,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   bool _copied = false;
   bool _launched = false;
 
+  /// Where Save media to Downloads put the files.
+  String? _saved;
+
   HandoffPlan get plan => widget.plan;
 
   String get _text => plan.clipboardText ?? plan.shareText ?? widget.variant.text;
@@ -98,12 +103,31 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     setState(() => _launched = _launched || r.status == ShareResultStatus.success || r.status == ShareResultStatus.unavailable);
   }
 
-  /// Desktop has no share sheet for files: open the folder so photos can be
-  /// dragged into the browser's upload box.
-  Future<void> _revealMedia() async {
-    final first = plan.shareFiles.firstOrNull;
-    if (first == null || Env.isWeb) return;
-    await launchUrl(Uri.file(p.dirname(first.path)));
+  /// Desktop has no share sheet for files: save copies with readable names
+  /// into a dated folder under Downloads/NEFORUM and open that folder with
+  /// the files selected, ready to drag into the browser's upload box.
+  Future<void> _saveMedia(String platformName) async {
+    final media = ref.read(servicesProvider).media;
+    final files = <ExportFile>[];
+    var n = 0;
+    for (final m in plan.shareFiles) {
+      n++;
+      final ext = p.extension(m.fileName ?? m.path).isEmpty ? '.jpg' : p.extension(m.fileName ?? m.path);
+      final name = m.generated
+          ? 'NEFORUM card - $platformName$ext'
+          : '$n${(m.fileName ?? '').isEmpty ? ext : ' - ${m.fileName}'}';
+      files.add(ExportFile(name, await media.read(m), mimeType: m.mimeType));
+    }
+    final words = widget.variant.text.split(RegExp(r'\s+')).where((w) => w.isNotEmpty && !w.startsWith('http')).take(5).join(' ');
+    final folder = '${DateFormat('yyyy-MM-dd HHmm').format(DateTime.now())} $platformName${words.isEmpty ? '' : ' - $words'}';
+    try {
+      final r = await FileExport.save(folder, files);
+      if (!mounted) return;
+      setState(() => _saved = r.location);
+      showToast(context, 'Saved ${files.length} ${files.length == 1 ? 'file' : 'files'} to ${r.location}', icon: Icons.download_done_rounded);
+    } on Object catch (e) {
+      if (mounted) showToast(context, 'Could not save the files: $e', icon: Icons.error_outline_rounded);
+    }
   }
 
   @override
@@ -122,7 +146,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       ),
     );
 
-    final shareFirst = plan.preferred == HandoffMethod.shareSheet && Env.hasShareSheet;
+    // Phones put the share sheet first; a computer's share menu rarely has
+    // the network's app, so there the composer link or manual steps lead.
+    final shareFirst = plan.preferred == HandoffMethod.shareSheet && Env.isMobile;
     if (shareFirst) {
       addAction(
         Builder(
@@ -160,8 +186,12 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     } else if (appTarget != null && (plan.webIntent == null || shareFirst)) {
       addAction(OutlinedButton.icon(onPressed: () => _openUrl(appTarget), icon: const Icon(Icons.open_in_new_rounded, size: 18), label: Text('Open $name')));
     }
-    if (plan.hasMedia && Env.isDesktop) {
-      addAction(OutlinedButton.icon(onPressed: _revealMedia, icon: const Icon(Icons.folder_open_rounded, size: 18), label: const Text('Show media files')));
+    if (plan.hasMedia && (Env.isDesktop || Env.isWeb)) {
+      addAction(OutlinedButton.icon(
+        onPressed: () => _saveMedia(name),
+        icon: Icon(_saved == null ? Icons.download_rounded : Icons.download_done_rounded, size: 18),
+        label: Text(_saved == null ? 'Save media to Downloads' : 'Saved: open again'),
+      ));
     }
 
     final footer = Padding(
@@ -242,6 +272,10 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                     ],
                   ),
                 ),
+                for (final sn in plan.snippets) ...[
+                  const SizedBox(height: Space.sm),
+                  _SnippetRow(snippet: sn),
+                ],
                 if (plan.hasMedia) ...[
                   const SizedBox(height: Space.md),
                   SizedBox(
@@ -346,6 +380,46 @@ class _Callout extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// One extra value to paste into its own field (a poll answer, a caption, the
+/// tags), with its own copy button.
+class _SnippetRow extends StatefulWidget {
+  const _SnippetRow({required this.snippet});
+  final HandoffSnippet snippet;
+
+  @override
+  State<_SnippetRow> createState() => _SnippetRowState();
+}
+
+class _SnippetRowState extends State<_SnippetRow> {
+  bool _copied = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    return NfWell(
+      padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm, Space.sm, Space.sm),
+      child: Row(children: [
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(widget.snippet.label, style: context.text.labelSmall?.copyWith(color: nf.textFaint)),
+            const SizedBox(height: 2),
+            SelectableText(widget.snippet.text, style: context.text.bodyMedium),
+          ]),
+        ),
+        ToolButton(
+          icon: _copied ? Icons.check_rounded : Icons.copy_rounded,
+          tooltip: _copied ? 'Copied' : 'Copy ${widget.snippet.label.toLowerCase()}',
+          active: _copied,
+          onPressed: () async {
+            await Clipboard.setData(ClipboardData(text: widget.snippet.text));
+            if (mounted) setState(() => _copied = true);
+          },
+        ),
+      ]),
     );
   }
 }

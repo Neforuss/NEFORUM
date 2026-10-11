@@ -10,6 +10,7 @@ import '../../widgets/buttons.dart';
 import '../../widgets/char_ring.dart';
 import '../../widgets/surfaces.dart';
 import 'media_tray.dart';
+import 'poll_sheet.dart';
 import 'rich_text.dart';
 
 /// The writing surface: optional title, content warning, the text itself,
@@ -74,6 +75,7 @@ class _EditorCardState extends ConsumerState<EditorCard> {
     final titleUseful = previews.any((p) => p.descriptor.text.titleSupported);
     final cwUseful = previews.any((p) => p.descriptor.text.supportsContentWarning);
     final showTitle = _showTitle || (titleUseful && previews.any((p) => p.descriptor.text.titleRequired));
+    final pollNetworks = [for (final p in previews) if (p.descriptor.polls != null) p.descriptor];
 
     final card = NfCard(
       padding: EdgeInsets.zero,
@@ -154,7 +156,7 @@ class _EditorCardState extends ConsumerState<EditorCard> {
             ),
           ),
         ),
-        if (c.link != null || c.tags.isNotEmpty)
+        if (c.link != null || c.tags.isNotEmpty || c.poll != null)
           Padding(
             padding: const EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.sm),
             child: Wrap(spacing: Space.xs + 2, runSpacing: Space.xs + 2, children: [
@@ -165,6 +167,15 @@ class _EditorCardState extends ConsumerState<EditorCard> {
                   tone: nf.info,
                   onTap: () => _editLink(context),
                   onRemove: () => notifier.setLink(''),
+                ),
+              if (c.poll != null)
+                _MetaChip(
+                  icon: c.poll!.isQuiz ? Icons.quiz_outlined : Icons.poll_outlined,
+                  label: '${c.poll!.isQuiz ? 'Quiz' : (c.poll!.imageOptions ? 'Image poll' : 'Poll')} · ${c.poll!.cleanOptions.length} answers'
+                      '${pollNetworks.isEmpty ? ' · no network takes polls' : ''}',
+                  tone: pollNetworks.isEmpty ? nf.warning : nf.accent,
+                  onTap: () => _editPoll(context, pollNetworks),
+                  onRemove: () => notifier.setPoll(null),
                 ),
               for (final t in c.tags)
                 _MetaChip(
@@ -190,6 +201,9 @@ class _EditorCardState extends ConsumerState<EditorCard> {
           cwActive: _showCw,
           onTitle: titleUseful || _showTitle ? () => setState(() => _showTitle = !_showTitle) : null,
           titleActive: showTitle,
+          onPoll: pollNetworks.isNotEmpty || c.poll != null ? () => _editPoll(context, pollNetworks) : null,
+          pollActive: c.poll != null,
+          pollTooltip: pollNetworks.isEmpty ? 'Poll or quiz' : 'Poll or quiz for ${pollNetworks.map((d) => d.name).toSet().join(', ')}',
         ),
       ]),
     );
@@ -238,6 +252,22 @@ class _EditorCardState extends ConsumerState<EditorCard> {
     if (result != null) ref.read(composerProvider.notifier).setLink(result);
   }
 
+  Future<void> _editPoll(BuildContext context, List<PlatformDescriptor> networks) async {
+    final c = ref.read(composerProvider);
+    final rules = networks.map((d) => d.polls).whereType<PollRules>().firstOrNull ??
+        const PollRules(maxOptions: 4, optionMaxLength: 65, quizzes: true, quizOptionMaxLength: 80, quizExplanationMaxLength: 500);
+    final names = networks.map((d) => d.name).toSet();
+    final result = await showPollEditor(
+      context,
+      initial: c.poll,
+      rules: rules,
+      networks: names.isEmpty ? 'networks that take polls' : names.join(', '),
+      imageCount: c.media.where((m) => m.isImage).length,
+    );
+    if (result == null) return;
+    ref.read(composerProvider.notifier).setPoll(identical(result, kRemovePoll) ? null : result);
+  }
+
   Future<void> _editTags(BuildContext context) async {
     final current = ref.read(composerProvider).tags;
     final result = await showDialog<List<String>>(context: context, builder: (_) => _TagsDialog(initial: current));
@@ -254,6 +284,9 @@ class _Toolbar extends ConsumerWidget {
     required this.cwActive,
     required this.onTitle,
     required this.titleActive,
+    this.onPoll,
+    this.pollActive = false,
+    this.pollTooltip = 'Poll or quiz',
   });
 
   final VoidCallback onMedia;
@@ -263,6 +296,9 @@ class _Toolbar extends ConsumerWidget {
   final bool cwActive;
   final VoidCallback? onTitle;
   final bool titleActive;
+  final VoidCallback? onPoll;
+  final bool pollActive;
+  final String pollTooltip;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -288,6 +324,7 @@ class _Toolbar extends ConsumerWidget {
               ToolButton(icon: Icons.tag_rounded, tooltip: 'Hashtags', onPressed: onTags, active: c.tags.isNotEmpty, size: s),
               if (onCw != null) ToolButton(icon: Icons.warning_amber_rounded, tooltip: 'Content warning', onPressed: onCw, active: cwActive, size: s),
               if (onTitle != null) ToolButton(icon: Icons.title_rounded, tooltip: 'Title', onPressed: onTitle, active: titleActive, size: s),
+              if (onPoll != null) ToolButton(icon: Icons.poll_outlined, tooltip: pollTooltip, onPressed: onPoll, active: pollActive, size: s),
               _VisibilityButton(value: c.visibility, onChanged: notifier.setVisibility),
             ]),
           ),

@@ -2,7 +2,9 @@ import 'package:uuid/uuid.dart';
 
 import '../../handoff/handoff_plan.dart';
 import '../../model/account.dart';
+import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
+import '../../model/poll.dart';
 import '../../model/post_variant.dart';
 import '../../model/validation.dart';
 import '../adapter_context.dart';
@@ -53,7 +55,7 @@ class YouTubePostsAdapter extends HandoffOnlyAdapter {
     text: TextRules(
       counting: CountingRule.utf16,
       notes: 'YouTube publishes no length limit for posts; viewers see about the first 280 characters before '
-          '"Read more". Polls and quizzes are added in YouTube.',
+          '"Read more". For a poll or quiz the text is the question.',
     ),
     media: MediaRules(
       maxImages: maxImages,
@@ -68,6 +70,20 @@ class YouTubePostsAdapter extends HandoffOnlyAdapter {
     apiCostSummary: "Free. YouTube's API can upload videos but cannot create posts, so NEFORUM uses hand-off: it "
         'copies your text and opens YouTube, where you choose Create > Create post. For videos, connect "YouTube".',
     setupGuide: 'docs/platforms/youtube_posts.md',
+    // YouTube Help "Create a post": text poll answers within 65 characters,
+    // up to 4; image poll captions within 36 characters, up to 4 images;
+    // quiz answers up to 80 characters, up to 4, one correct; quiz
+    // explanation 500 characters at most.
+    polls: PollRules(
+      maxOptions: 4,
+      optionMaxLength: 65,
+      quizzes: true,
+      quizOptionMaxLength: 80,
+      quizExplanationMaxLength: 500,
+      imagePolls: true,
+      imageOptionMaxLength: 36,
+      notes: 'Text polls, image polls (2 to 4 images with captions) and quizzes with one correct answer.',
+    ),
   );
 
   @override
@@ -173,6 +189,14 @@ and must not be set as Made for Kids. There is no subscriber minimum.''';
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
     final issues = [...super.validate(variant, account)];
+    final poll = variant.poll;
+    if (poll != null && !poll.imageOptions && variant.media.isNotEmpty) {
+      issues.add(const ValidationIssue.warning(
+        'youtube_posts.poll_images',
+        'A YouTube poll or quiz cannot carry images, so the images are left out here (an image poll uses them as answers)',
+        field: 'media',
+      ));
+    }
     if (handoffFullText(variant).length > previewLength) {
       issues.add(const ValidationIssue.info(
         'youtube_posts.read_more',
@@ -186,27 +210,69 @@ and must not be set as Made for Kids. There is no subscriber minimum.''';
   @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
     final text = handoffFullText(variant);
-    final images = variant.media.length;
+    final poll = variant.poll;
+    final answers = poll?.cleanOptions ?? const <String>[];
+    // A poll or quiz post cannot carry images; an image poll uses them as
+    // its answers.
+    final media = poll == null || poll.imageOptions ? variant.media : const <MediaAttachment>[];
+    final images = media.length;
+    final saveHint = 'On a computer use **Save media to Downloads** and drag ${images == 1 ? 'it' : 'them'} in; on a phone '
+        'use **Share with media** to save ${images == 1 ? 'it' : 'them'} to your photos first.';
+
     final steps = <String>[
       'On youtube.com select **Create** > **Create post** at the top of the page. In the YouTube app tap **+** '
           '(Create), then **Post**.',
-      if (text.isNotEmpty) 'Paste your text: it is on the clipboard.',
-      if (images > 0)
-        'Choose the image option and add your ${images == 1 ? 'image' : '$images images'}. On a phone, use '
-            '**Share with media** first to save ${images == 1 ? 'it' : 'them'} to your photos.',
+      if (text.isNotEmpty) poll == null ? 'Paste your text: it is on the clipboard.' : 'Paste your question: it is on the clipboard.',
+      if (poll == null && images > 0)
+        'Choose the image option and add your ${images == 1 ? 'image' : '$images images'}. $saveHint',
+      if (poll != null && poll.imageOptions)
+        'Choose the **poll** option and switch to an **image poll**. Add the $images images in order and give each '
+            'the caption below. $saveHint',
+      if (poll != null && !poll.imageOptions && !poll.isQuiz)
+        'Choose the **poll** option and add the ${answers.length} answers below (each has a copy button).',
+      if (poll != null && poll.isQuiz) ...[
+        'Choose the **quiz** option and add the ${answers.length} answers below (each has a copy button).',
+        if (_correct(poll) != null) 'Mark answer ${_correct(poll)! + 1} as correct: "${answers[_correct(poll)!]}".',
+        if ((poll.explanation ?? '').trim().isNotEmpty) 'Paste the explanation below.',
+      ],
       'Select **Post** (or the arrow next to it to schedule).',
     ];
+
+    final snippets = <HandoffSnippet>[
+      if (poll != null)
+        for (var i = 0; i < answers.length; i++)
+          HandoffSnippet(
+            poll.imageOptions ? 'Image ${i + 1} caption' : 'Answer ${i + 1}${poll.isQuiz && _correct(poll) == i ? ' (correct)' : ''}',
+            answers[i],
+          ),
+      if (poll != null && poll.isQuiz && (poll.explanation ?? '').trim().isNotEmpty)
+        HandoffSnippet('Explanation', poll.explanation!.trim()),
+    ];
+
     return HandoffPlan(
       platformId: descriptor.id,
       preferred: HandoffMethod.manual,
       clipboardText: nonEmptyOrNull(text),
-      shareFiles: variant.media,
+      shareFiles: media,
       androidPackage: androidPackage,
       iosScheme: iosScheme,
       desktopUrl: desktopUrl,
       instructions: [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n'),
-      mediaNote: 'YouTube has no link that opens a prefilled post, so your text is on the clipboard'
-          '${images > 0 ? ' and you add the images in its post editor' : ''}.',
+      snippets: snippets,
+      mediaNote: 'YouTube has no link that opens a prefilled post, so your ${poll == null ? 'text is' : 'question is'} on the '
+          'clipboard${images > 0 ? ' and you add the images in its post editor' : ''}'
+          '${answers.isNotEmpty ? '; copy the ${poll!.imageOptions ? 'captions' : 'answers'} one by one below' : ''}.',
     );
+  }
+
+  /// Index of the quiz's correct answer within [PostPoll.cleanOptions].
+  static int? _correct(PostPoll poll) {
+    final c = poll.correctIndex;
+    if (c == null || c < 0 || c >= poll.options.length || poll.options[c].trim().isEmpty) return null;
+    var index = 0;
+    for (var i = 0; i < c; i++) {
+      if (poll.options[i].trim().isNotEmpty) index++;
+    }
+    return index;
   }
 }

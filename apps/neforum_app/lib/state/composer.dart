@@ -32,6 +32,9 @@ class ComposerState {
     this.focusedAccountId,
     this.revision = 0,
     this.textCardTheme,
+    this.textCardBranded = const {},
+    this.poll,
+    this.differentiate = false,
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -63,6 +66,16 @@ class ComposerState {
   /// from Settings.
   final TextCardTheme? textCardTheme;
 
+  /// Per network (platform id): whether its text card carries the NEFORUM
+  /// signature; missing = the Settings default.
+  final Map<String, bool> textCardBranded;
+
+  /// Poll or quiz for networks that have them (YouTube Posts).
+  final PostPoll? poll;
+
+  /// DIFFERENTIATION: the composer shows one editable version per network.
+  final bool differentiate;
+
   bool get isEmpty => text.trim().isEmpty && media.isEmpty && (title ?? '').trim().isEmpty && (link ?? '').trim().isEmpty;
 
   ComposerState copyWith({
@@ -81,6 +94,10 @@ class ComposerState {
     String? focusedAccountId,
     int? revision,
     TextCardTheme? textCardTheme,
+    Map<String, bool>? textCardBranded,
+    PostPoll? poll,
+    bool? differentiate,
+    bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
     bool clearLink = false,
@@ -103,6 +120,9 @@ class ComposerState {
         focusedAccountId: clearFocus ? null : (focusedAccountId ?? this.focusedAccountId),
         revision: revision ?? this.revision,
         textCardTheme: textCardTheme ?? this.textCardTheme,
+        textCardBranded: textCardBranded ?? this.textCardBranded,
+        poll: clearPoll ? null : (poll ?? this.poll),
+        differentiate: differentiate ?? this.differentiate,
       );
 
   /// Builds the master [Post] for this composer state.
@@ -116,6 +136,7 @@ class ComposerState {
         sensitive: sensitive,
         visibility: visibility,
         tags: tags,
+        poll: poll,
         scheduledAt: scheduledAt,
         status: status,
         createdAt: createdAt ?? now,
@@ -163,6 +184,33 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setSchedule(DateTime? when) => state = when == null ? state.copyWith(clearSchedule: true) : state.copyWith(scheduledAt: when);
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
   void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
+  void setTextCardBranded(String platformId, bool branded) =>
+      state = state.copyWith(textCardBranded: {...state.textCardBranded, platformId: branded});
+  void setPoll(PostPoll? poll) => state = poll == null ? state.copyWith(clearPoll: true) : state.copyWith(poll: poll);
+  void setDifferentiate(bool on) => state = state.copyWith(differentiate: on);
+
+  /// DIFFERENTIATION: [text] becomes this account's own version; null goes
+  /// back to the main post.
+  void setVersionText(String accountId, String? text) {
+    final current = state.overrides[accountId] ?? const PostOverrides();
+    final next = text == null ? current.copyWith(clearText: true) : current.copyWith(text: text);
+    state = state.copyWith(overrides: next.isEmpty ? ({...state.overrides}..remove(accountId)) : {...state.overrides, accountId: next});
+  }
+
+  /// Applies several versions at once (Auto-differentiate).
+  void setVersionTexts(Map<String, String?> texts) {
+    final overrides = {...state.overrides};
+    for (final e in texts.entries) {
+      final current = overrides[e.key] ?? const PostOverrides();
+      final next = e.value == null ? current.copyWith(clearText: true) : current.copyWith(text: e.value);
+      if (next.isEmpty) {
+        overrides.remove(e.key);
+      } else {
+        overrides[e.key] = next;
+      }
+    }
+    state = state.copyWith(overrides: overrides);
+  }
 
   void addMedia(Iterable<MediaAttachment> items) => state = state.copyWith(media: [...state.media, ...items]);
 
@@ -206,6 +254,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// Generated text cards stay out of the editor; they are rebuilt on save.
   void load(Post post) {
     final p = withoutTextCards(post);
+    final accounts = ref.read(accountListProvider);
+    String? platformOf(String id) => accounts.where((a) => a.id == id).map((a) => a.platformId).firstOrNull;
     state = ComposerState(
         editingPostId: p.id,
         text: p.text,
@@ -221,6 +271,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
         scheduledAt: p.scheduledAt,
         revision: state.revision + 1,
         textCardTheme: textCardThemeOfPost(post),
+        textCardBranded: textCardBrandingOfPost(post, platformOf),
+        poll: p.poll,
+        differentiate: p.targets.any((t) => t.overrides.text != null),
       );
   }
 
@@ -246,6 +299,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
       overrides: state.overrides,
       revision: state.revision + 1,
       textCardTheme: state.textCardTheme,
+      textCardBranded: state.textCardBranded,
+      poll: state.poll,
+      differentiate: state.differentiate,
     );
   }
 }
@@ -273,8 +329,9 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     // Image-only platforms get the words as a NEFORUM text card, rendered
     // when the post is saved; preview and check a stand-in for it.
     if (settings.textCards && qualifiesForTextCard(d, variant)) {
-      variant = variant.copyWith(media: [textCardPlaceholder(d.id, c.textCardTheme ?? settings.textCardTheme)]);
-      issues.add(ValidationIssue.info('media.text_card', '${d.name} needs an image, so your words go out as a NEFORUM text card', field: 'media'));
+      final signed = c.textCardBranded[d.id] ?? settings.textCardBranded(d.id);
+      variant = variant.copyWith(media: [textCardPlaceholder(d.id, c.textCardTheme ?? settings.textCardTheme, branded: signed)]);
+      issues.add(ValidationIssue.info('media.text_card', '${d.name} needs an image, so your words go out as ${signed ? 'a NEFORUM' : 'a plain'} text card', field: 'media'));
     }
     try {
       issues.addAll(adapter.validate(variant, a));
@@ -365,7 +422,7 @@ class PostActions {
     var post = c.toPost(id: c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
     // Hand the old cards over so unchanged ones are reused, stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
-    post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme);
+    post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme, branded: c.textCardBranded);
     await s.posts.upsert(post);
     return post;
   }

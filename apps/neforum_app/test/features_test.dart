@@ -13,6 +13,7 @@ import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
+import 'package:neforum_app/ui/compose/preview_card.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
@@ -154,6 +155,127 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('YouTube Posts polls: editor, previews and copyable answers in the hand-off', (tester) async {
+    final (services, c) = await boot(tester);
+    c.read(routerProvider).go('/compose');
+    await settle(tester);
+    final yt = c.read(accountListProvider).firstWhere((a) => a.platformId == 'youtube_posts');
+    final x = c.read(accountListProvider).firstWhere((a) => a.platformId == 'x');
+    final editor = find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController);
+    await tester.enterText(editor, 'Which thumbnail for Friday?');
+    c.read(composerProvider.notifier).selectAccounts([yt.id, x.id]);
+    await settle(tester);
+
+    // The toolbar offers polls because YouTube Posts takes them.
+    await tester.tap(find.byTooltip('Poll or quiz for YouTube Posts'));
+    await settle(tester);
+    await tester.enterText(find.widgetWithText(TextField, 'Answer 1'), 'The red one');
+    await tester.enterText(find.widgetWithText(TextField, 'Answer 2'), 'The blue one');
+    await settle(tester);
+    await tester.tap(find.text('Done'));
+    await settle(tester);
+    expect(c.read(composerProvider).poll!.cleanOptions, ['The red one', 'The blue one']);
+    expect(find.textContaining('Poll · 2 answers'), findsWidgets);
+
+    final previews = {for (final p in c.read(composerPreviewsProvider)) p.account.platformId: p};
+    expect(previews['youtube_posts']!.variant.poll, isNotNull);
+    expect(previews['youtube_posts']!.issues.hasErrors, isFalse);
+    expect(previews['x']!.variant.poll, isNull);
+    expect(previews['x']!.issues.map((i) => i.code), contains('poll.unsupported'));
+    expect(find.byType(PollPreview), findsOneWidget);
+
+    final post = (await tester.runAsync(() => c.read(postActionsProvider).saveDraft()))!;
+    expect(post.poll!.options, ['The red one', 'The blue one']);
+    final plan = (await tester.runAsync(() => services.publisher().planHandoff(post, yt.id)))!;
+    expect(plan.snippets.map((s) => s.text), ['The red one', 'The blue one']);
+    expect(plan.clipboardText, 'Which thumbnail for Friday?');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('text cards: the NEFORUM signature is optional per network', (tester) async {
+    final (services, c) = await boot(tester);
+    c.read(routerProvider).go('/compose');
+    await settle(tester);
+    final ig = c.read(accountListProvider).firstWhere((a) => a.platformId == 'instagram');
+    await tester.enterText(find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController), 'Plain words, plain card.');
+    c.read(composerProvider.notifier).selectAccounts([ig.id]);
+    await settle(tester);
+    expect(textCardBrandedOf(c.read(composerPreviewsProvider).single.variant.media.single), isTrue);
+
+    await tester.ensureVisible(find.text('NEFORUM signature').first);
+    await tester.tap(find.text('NEFORUM signature').first);
+    await settle(tester);
+    expect(c.read(composerProvider).textCardBranded['instagram'], isFalse);
+    expect(c.read(settingsProvider).textCardBranded('instagram'), isFalse, reason: 'remembered for Instagram');
+    expect(c.read(settingsProvider).textCardBranded('tiktok'), isTrue, reason: 'other networks keep it');
+    expect(textCardBrandedOf(c.read(composerPreviewsProvider).single.variant.media.single), isFalse);
+
+    final post = (await tester.runAsync(() => c.read(postActionsProvider).saveDraft()))!;
+    final card = post.media.singleWhere((m) => m.generated);
+    expect(card.fileName, textCardFileName(TextCardTheme.dark, branded: false));
+    final bytes = (await tester.runAsync(() => services.media.read(card)))!;
+    expect(img.decodeJpg(bytes)!.width, 1080);
+    // A plain card has no purple rule along the top.
+    final top = img.decodeJpg(bytes)!.getPixel(540, 4);
+    expect(top.b, lessThan(60));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  testWidgets('DIFFERENTIATION: a version per network, side by side', (tester) async {
+    final (services, c) = await boot(tester);
+    c.read(routerProvider).go('/compose');
+    await settle(tester);
+    final accounts = c.read(accountListProvider);
+    String idOf(String platform) => accounts.firstWhere((a) => a.platformId == platform).id;
+    await tester.enterText(
+      find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController),
+      'We rebuilt the firmware from scratch this spring. It took four months and two prototypes. Today it ships to everyone. '
+      'Guide: https://example.org/kb\n\n#opensource #keyboards #diy',
+    );
+    c.read(composerProvider.notifier).selectAccounts([idOf('x'), idOf('linkedin'), idOf('instagram'), idOf('reddit')]);
+    await settle(tester);
+
+    await tester.ensureVisible(find.text('Differentiate'));
+    await tester.tap(find.text('Differentiate'));
+    await settle(tester);
+    expect(find.text('A version for each network'), findsOneWidget);
+    expect(find.text('Main post'), findsNWidgets(4));
+
+    await tester.ensureVisible(find.text('Auto-differentiate'));
+    await tester.tap(find.text('Auto-differentiate'));
+    await settle(tester);
+    final o = c.read(composerProvider).overrides;
+    expect(o[idOf('instagram')]!.text, contains('Link in bio.'));
+    expect(o[idOf('reddit')]!.text, isNot(contains('#')));
+    expect(o[idOf('linkedin')]!.text!.split('\n\n').length, greaterThan(3));
+    expect(o[idOf('x')]!.text, endsWith('#opensource #keyboards'));
+    final previews = {for (final p in c.read(composerPreviewsProvider)) p.account.platformId: p};
+    expect(previews['instagram']!.variant.text, contains('Link in bio.'));
+
+    // Edit one version by hand.
+    final xField = find.byWidgetPredicate((w) => w is TextField && w.decoration?.hintText == 'The X (Twitter) version');
+    await tester.ensureVisible(xField);
+    await tester.enterText(xField, 'Firmware v2 is out. Open source, smooth RGB. #keyboards');
+    await settle(tester);
+    expect(c.read(composerProvider).overrides[idOf('x')]!.text, 'Firmware v2 is out. Open source, smooth RGB. #keyboards');
+
+    // Saved versions come back when the post is edited again.
+    final post = (await tester.runAsync(() => c.read(postActionsProvider).saveDraft()))!;
+    expect(post.targetFor(idOf('x'))!.overrides.text, startsWith('Firmware v2'));
+    c.read(composerProvider.notifier).load(post);
+    await settle(tester);
+    expect(c.read(composerProvider).differentiate, isTrue);
+    expect(find.text('Own version'), findsNWidgets(4));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+    services.dispose();
   });
 
   // Found on a real Windows window: with a schedule set, the composer's

@@ -80,7 +80,7 @@ Generated from the code on 2026-10-11.
 ### Instagram
 
 - **Account:** Hand-off works with any Instagram account, including personal ones: NEFORUM copies the caption and hands the photo or video to the Instagram app. Automatic posting needs a professional (Business or Creator) account and your own free Meta developer app; personal accounts cannot use the API.
-- **Cost and limits:** The Instagram API is free. Each account can publish up to 100 posts per rolling 24 hours through it, and photos must be put on a public media host you configure because Instagram downloads them from a link.
+- **Cost and limits:** The Instagram API is free. Meta's docs give each account 100 API posts per rolling 24 hours in one place and 50 in two others; NEFORUM counts up to 100 and treats Instagram's own limit error as a quota problem. Photos must be put on a public media host you configure because Instagram downloads them from a link.
 
 ### Lemmy
 
@@ -144,7 +144,7 @@ Generated from the code on 2026-10-11.
 
 ### Threads
 
-- **Account:** Any Threads profile works. For automatic posting you create your own free Meta developer app with the "Access the Threads API" use case; you are its admin, so no app review is needed.
+- **Account:** Any Threads profile works. For automatic posting you create your own free Meta developer app with the "Access the Threads API" use case and add your profile as its Threads Tester, so no App Review is needed.
 - **Cost and limits:** The Threads API is free. Each profile can publish up to 250 posts per day through it; images and videos must first be uploaded to a public media host you configure.
 
 ### TikTok

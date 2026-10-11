@@ -1,4 +1,7 @@
+import 'package:characters/characters.dart';
+
 import '../model/platform_descriptor.dart';
+import '../model/poll.dart';
 import '../model/post_variant.dart';
 import '../model/validation.dart';
 import 'text_counter.dart';
@@ -91,9 +94,73 @@ class RulesValidator {
       issues.add(const ValidationIssue.info('media.no_alt', 'Add alt text for accessibility', field: 'media'));
     }
 
+    // --- poll / quiz -----------------------------------------------------
+    final poll = v.poll;
+    final pr = d.polls;
+    if (poll != null && pr != null) issues.addAll(_validatePoll(poll, pr, v, d.name));
+
     // --- tier-specific ---------------------------------------------------
     if (tier == PlatformTier.handoff && v.isThread) {
       issues.add(const ValidationIssue.warning('thread.handoff', 'Threads cannot be handed off; only the first part will be prefilled', field: 'text'));
+    }
+    return issues;
+  }
+
+  static List<ValidationIssue> _validatePoll(PostPoll poll, PollRules r, PostVariant v, String name) {
+    final issues = <ValidationIssue>[];
+    final options = poll.cleanOptions;
+    final what = poll.isQuiz ? 'quiz' : 'poll';
+    if (v.text.trim().isEmpty) {
+      issues.add(ValidationIssue.error('poll.no_question', 'Write the $what question as the post text', field: 'text'));
+    }
+    if (poll.isQuiz && !r.quizzes) {
+      issues.add(ValidationIssue.error('poll.no_quizzes', '$name has polls but no quizzes', field: 'poll'));
+    }
+    if (poll.imageOptions && !r.imagePolls) {
+      issues.add(ValidationIssue.error('poll.no_image_polls', '$name has no image polls', field: 'poll'));
+    }
+    if (options.length < r.minOptions || options.length > r.maxOptions) {
+      issues.add(ValidationIssue.error(
+        'poll.option_count',
+        'A $name $what needs ${r.minOptions} to ${r.maxOptions} answers (${options.length} given)',
+        field: 'poll',
+      ));
+    }
+    if (options.length != poll.options.length) {
+      issues.add(const ValidationIssue.warning('poll.empty_option', 'Empty answers are left out', field: 'poll'));
+    }
+    final max = poll.imageOptions ? r.imageOptionMaxLength : (poll.isQuiz ? r.quizOptionMaxLength : r.optionMaxLength);
+    if (max != null) {
+      for (var i = 0; i < options.length; i++) {
+        final n = options[i].characters.length;
+        if (n > max) {
+          issues.add(ValidationIssue.error('poll.option_too_long', 'Answer ${i + 1} is $n/$max characters for $name', field: 'poll'));
+        }
+      }
+    }
+    if (poll.isQuiz) {
+      final c = poll.correctIndex;
+      if (c == null || c < 0 || c >= poll.options.length || poll.options[c].trim().isEmpty) {
+        issues.add(const ValidationIssue.error('poll.no_correct', 'Mark the correct answer of the quiz', field: 'poll'));
+      }
+      final e = poll.explanation?.trim() ?? '';
+      if (r.quizExplanationMaxLength != null && e.characters.length > r.quizExplanationMaxLength!) {
+        issues.add(ValidationIssue.error(
+          'poll.explanation_too_long',
+          'The explanation is ${e.characters.length}/${r.quizExplanationMaxLength} characters for $name',
+          field: 'poll',
+        ));
+      }
+    }
+    if (poll.imageOptions) {
+      final images = v.media.where((m) => m.isImage).length;
+      if (images != options.length) {
+        issues.add(ValidationIssue.error(
+          'poll.image_count',
+          'An image poll needs one image per answer ($images image${images == 1 ? '' : 's'}, ${options.length} answers)',
+          field: 'poll',
+        ));
+      }
     }
     return issues;
   }

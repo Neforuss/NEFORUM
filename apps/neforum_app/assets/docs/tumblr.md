@@ -62,14 +62,39 @@ A Tumblr sign-in lasts only 42 minutes. NEFORUM renews it automatically, and Tum
 
 Your Secret Key is stored only in this device's secure storage, next to the sign-in. NEFORUM never sends it anywhere except to Tumblr's sign-in server.
 
-## Hand-off tier
+## Without API keys (hand-off)
 
-No setup is needed. NEFORUM opens Tumblr's official share tool (`https://www.tumblr.com/widgets/share/tool`), filled in with your text, title and tags. A link post uses Tumblr's link layout. If you are not signed in, Tumblr asks you to sign in first and then opens the filled-in post. Check it and click **Post now**. Your text is also on the clipboard.
+No setup is needed. You check the post and click **Post now** yourself. Your text (title, text and link) is always on the clipboard too, and values that go into separate fields (tags, alt text) are listed in the hand-off window so you can copy them one by one.
 
-Photos and videos cannot be passed to Tumblr's website from another program:
+### Text and link posts
 
-- **Android and iPhone**: NEFORUM opens the share sheet. Pick **Tumblr** (the Android app is `com.tumblr`), and paste the text if the app does not take it.
-- **Windows and macOS**: Tumblr has no desktop app. Open tumblr.com, create a post, paste the text and add the files yourself.
+NEFORUM opens Tumblr's official share tool (`https://www.tumblr.com/widgets/share/tool`), filled in with your text, title and tags. A post with a link uses Tumblr's link layout: the link is the post, your text is its caption. If you are not signed in, Tumblr asks you to sign in first and then opens the filled-in post.
+
+### Photo posts on a computer, with a media host
+
+If you have set up a **media host** in **Settings** (your own S3/R2 bucket, WebDAV, Litterbox, your own links, ...), NEFORUM fills in photo posts too:
+
+1. NEFORUM uploads the photos to your media host. It asks for a lifetime of about **24 hours**, so hosts that can expire files delete them after a day. Post within that day.
+2. The share tool opens as a **photo post** with your photos (several photos become a photoset), your text as the caption and your tags. Tumblr's share tool has no title for photo posts, so the title becomes the first line of the caption. The post's link (or the per-post `tumblrSourceUrl` option) is passed as the post's source.
+3. Add the alt text yourself: the share tool cannot take it. NEFORUM lists it for each photo.
+
+The share tool takes photos only as links, which is why a media host is needed. NEFORUM never uploads anything when no media host is set up. If the upload fails (host unreachable, file larger than the host accepts), NEFORUM falls back to the steps below and says why.
+
+**Videos are not uploaded.** The share tool's video posts take a link or embed code from a video service, not a video file, so a video from your device cannot be filled in this way. A post with photos and a video gets the photos filled in; add the video in Tumblr's editor or post it separately.
+
+### Photo and video posts on a computer, without a media host
+
+Tumblr's website cannot receive files from another program, so NEFORUM:
+
+1. puts your text on the clipboard and lists the tags and alt texts;
+2. opens Tumblr's new post page: `https://www.tumblr.com/new/photo` for photos, `https://www.tumblr.com/new/video` for a video;
+3. lets you click **Save media to Downloads** in the hand-off window. NEFORUM saves the files with friendly names and opens the folder, so you can drag them into Tumblr's post.
+
+Paste the text, add the tags and click **Post now**.
+
+### Phones (Android and iPhone)
+
+NEFORUM opens the share sheet with your photos or video. Pick **Tumblr** (the Android app is `com.tumblr`; on iPhone the Tumblr share extension), paste the text if the app leaves it out and add the tags. This is the same with or without a media host. Tumblr documents no URL scheme for opening its iPhone app, so NEFORUM does not use one.
 
 ## Known limitations
 
@@ -90,7 +115,9 @@ Photos and videos cannot be passed to Tumblr's website from another program:
 - Images and GIFs (20 MB, GIF 10 MB, RGB only, 30 images on the web): <https://help.tumblr.com/knowledge-base/image-gif-troubleshooting/>
 - Posting video (MP4/MOV, 500 MB, 10 minutes, 20 videos and 60 minutes a day): <https://help.tumblr.com/knowledge-base/posting-video/>
 - Queue limits: <https://help.tumblr.com/knowledge-base/queue/>
-- Share button / share tool parameters: <https://help.tumblr.com/hc/en-us/share-button-documentation/>
+- Share button / share tool parameters (`posttype` text, photo, link, quote, chat or video; `content` is one photo URL or a comma-separated list for a photoset; `caption` for photo, link, video and quote posts; `title` only for text, link and chat posts; comma-separated `tags`; `canonicalUrl`): <https://help.tumblr.com/hc/en-us/share-button-documentation/> (<https://www.tumblr.com/docs/en/share_button> redirects there)
+- Video by link must come from a supported video service ("If you provide an unsupported service's URI you may receive a 400 response", legacy post creation in <https://github.com/tumblr/docs/blob/master/api.md>)
+- iOS: URL schemes are listed as deprecated, the share extension is the supported route: <https://github.com/tumblr/TMTumblrSDK>
 - Register an app: <https://www.tumblr.com/oauth/apps>
 - API License Agreement: <https://www.tumblr.com/policy/en/api-license-agreement>
 - User Guidelines: <https://www.tumblr.com/policy/en/user-guidelines>

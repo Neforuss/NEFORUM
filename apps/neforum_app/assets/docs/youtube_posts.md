@@ -32,7 +32,7 @@ Status as of October 2026.
 
 1. NEFORUM copies your text to the clipboard and opens youtube.com (on a phone: the YouTube app).
 2. Select **Create** > **Create post** at the top of the page. In the app, tap **+** (Create), then **Post**.
-3. Paste your text. To add images, choose the image option. On a phone, tap **Share with media** in NEFORUM first and save the images to your photos; on a computer, **Show media files** opens the folder so you can drag them in.
+3. Paste your text. To add images, choose the image option. On a computer, **Save media to Downloads** in NEFORUM saves them with clear names and opens the folder so you can drag them in; on a phone, tap **Share with media** first and save the images to your photos.
 4. Select **Post**, or the arrow next to it and **Schedule post** to let YouTube publish it later.
 
 If you schedule the post in NEFORUM, it reminds you at the scheduled time.
@@ -43,7 +43,13 @@ From YouTube Help, "Create a post":
 
 - Up to **10 images or GIFs** per post. JPG, PNG, GIF or WEBP, up to 16 MB each. Square (1:1) images show best in the feed.
 - Posts **cannot upload a video**. A video post points at an existing YouTube video: paste its link.
-- Polls have up to 4 options of 65 characters; quizzes up to 4 answers. Text posts cannot be combined with polls. Add polls and quizzes in YouTube's editor; NEFORUM does not model them.
+- **Polls and quizzes:** add them in NEFORUM's composer with the **Poll** button; the post text is the question.
+  - Text poll: 2 to 4 answers, each within 65 characters.
+  - Image poll: 2 to 4 of the post's images, each with a caption within 36 characters.
+  - Quiz: 2 to 4 answers of up to 80 characters, exactly one correct, and an optional explanation of up to 500 characters.
+  - A poll or quiz post cannot also carry images (except an image poll, whose images are the answers), so NEFORUM leaves the images out for YouTube and says so.
+  - In the hand-off, the question is on the clipboard and every answer, caption and the explanation has its own **Copy** button. In YouTube choose the poll or quiz option under the text box and paste them in order.
+  - Other networks get the same post without the poll.
 - YouTube publishes **no length limit** for text. Viewers see about the first 280 characters before **Read more**, so NEFORUM shows a note for longer posts.
 - Mention another channel with @ and its handle. Hashtags work as on the rest of YouTube.
 

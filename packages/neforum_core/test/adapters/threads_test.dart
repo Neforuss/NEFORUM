@@ -89,7 +89,17 @@ void main() {
       expect(byok.customSchemeRedirectOk, isFalse);
       expect(byok.fixedRedirectUri.toString(), 'https://127.0.0.1:52771/callback');
       expect(byok.fields.firstWhere((f) => f.key == 'app_secret').secret, isTrue);
+      final token = byok.fields.firstWhere((f) => f.key == 'access_token');
+      expect(token.secret, isTrue);
+      expect(token.required, isFalse);
+      // App ID and secret are optional because a pasted token needs neither.
+      expect(byok.fields.firstWhere((f) => f.key == 'app_id').required, isFalse);
+      expect(byok.fields.firstWhere((f) => f.key == 'app_secret').required, isFalse);
       expect(byok.intro, contains('threads_content_publish'));
+      expect(byok.intro, contains('https://developers.facebook.com/apps/creation/'));
+      expect(byok.intro, contains('Threads Tester'));
+      expect(byok.intro, contains('Website permissions'));
+      expect(byok.intro, contains('`https://127.0.0.1:52771/callback`'));
       expect(adapter.specFor(PlatformTier.handoff).usesBrowser, isFalse);
     });
   });
@@ -180,6 +190,131 @@ void main() {
       }, status: 400);
       await expectLater(adapter.connect(PlatformTier.byokApi, {'app_id': '1', 'app_secret': 'S'}, ctx(broker: FakeAuthBroker())),
           throwsA(isA<ConnectException>()));
+    });
+
+    group('pasted token', () {
+      int unix(DateTime t) => t.millisecondsSinceEpoch ~/ 1000;
+      void stubMe() =>
+          router.on('GET', '/v1.0/me', {'id': '123', 'username': 'alice', 'threads_profile_picture_url': 'https://x.test/a.jpg'});
+      void stubDebug(Duration expiresIn, {Duration age = Duration.zero, List<String>? scopes}) =>
+          router.on('GET', '/v1.0/debug_token', {
+            'data': {
+              'type': 'USER',
+              'application': 'My NEFORUM',
+              'is_valid': true,
+              'issued_at': unix(testNow.subtract(age)),
+              'expires_at': unix(testNow.add(expiresIn)),
+              'scopes': scopes ?? ['threads_basic', 'threads_content_publish'],
+              'user_id': '123',
+            }
+          });
+
+      test('60-day token: /me and debug_token, no exchange, no app credentials needed', () async {
+        stubMe();
+        stubDebug(const Duration(days: 58), age: const Duration(days: 2));
+        final res = await adapter.connect(PlatformTier.byokApi, {'access_token': ' THTOKEN ', 'redirect_uri': ''}, ctx());
+
+        expect(router.calls.map((c) => '${c.method} ${c.url.path}'), ['GET /v1.0/me', 'GET /v1.0/debug_token']);
+        expect(router.calls[0].url.queryParameters['access_token'], 'THTOKEN');
+        expect(router.calls[1].url.host, 'graph.threads.net');
+        expect(router.calls[1].url.queryParameters, {'input_token': 'THTOKEN', 'access_token': 'THTOKEN'});
+
+        expect(res.account.id, 'threads:123');
+        expect(res.account.handle, '@alice');
+        expect(res.account.config['token_source'], 'pasted');
+        expect(res.account.config.containsKey('app_id'), isFalse);
+        expect(res.secrets['access_token'], 'THTOKEN');
+        expect(res.secrets.containsKey('app_secret'), isFalse);
+        expect(DateTime.parse(res.secrets['expires_at']!), testNow.add(const Duration(days: 58)));
+        expect(DateTime.parse(res.secrets['token_issued_at']!), testNow.subtract(const Duration(days: 2)));
+      });
+
+      test('a pasted token older than 24 h is renewed with th_refresh_token on the next publish', () async {
+        stubMe();
+        stubDebug(const Duration(days: 58), age: const Duration(days: 2));
+        final res = await adapter.connect(PlatformTier.byokApi, {'access_token': 'THTOKEN'}, ctx());
+        router.on('GET', '/refresh_access_token', {'access_token': 'RENEWED', 'token_type': 'bearer', 'expires_in': 5183944});
+        final s = await adapter.refreshSecrets(res.account, res.secrets, ctx());
+        final call = router.calls.last;
+        expect(call.url.toString().split('?').first, 'https://graph.threads.net/refresh_access_token');
+        expect(call.url.queryParameters, {'grant_type': 'th_refresh_token', 'access_token': 'THTOKEN'});
+        expect(s!['access_token'], 'RENEWED');
+        expect(DateTime.parse(s['expires_at']!), testNow.add(const Duration(seconds: 5183944)));
+        expect(DateTime.parse(s['token_issued_at']!), testNow);
+      });
+
+      test('1-hour token with the app secret is exchanged for a 60-day token', () async {
+        stubMe();
+        stubDebug(const Duration(minutes: 50));
+        router.on('GET', '/access_token', {'access_token': 'LONG', 'token_type': 'bearer', 'expires_in': 5183944});
+        final res = await adapter.connect(
+            PlatformTier.byokApi, {'access_token': 'SHORT', 'app_id': '111', 'app_secret': 'SECRET'}, ctx());
+
+        final exchange = router.calls.last;
+        expect(exchange.url.path, '/access_token');
+        expect(exchange.url.queryParameters,
+            {'grant_type': 'th_exchange_token', 'client_secret': 'SECRET', 'access_token': 'SHORT'});
+        expect(res.secrets['access_token'], 'LONG');
+        expect(res.secrets['app_secret'], 'SECRET');
+        expect(DateTime.parse(res.secrets['expires_at']!), testNow.add(const Duration(seconds: 5183944)));
+        expect(DateTime.parse(res.secrets['token_issued_at']!), testNow);
+        expect(res.account.config['app_id'], '111');
+      });
+
+      test('1-hour token without the app secret asks for it', () async {
+        stubMe();
+        stubDebug(const Duration(minutes: 50));
+        await expectLater(adapter.connect(PlatformTier.byokApi, {'access_token': 'SHORT'}, ctx()),
+            throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'app_secret')));
+      });
+
+      test('a token without threads_content_publish is refused', () async {
+        stubMe();
+        stubDebug(const Duration(days: 50), scopes: ['threads_basic']);
+        await expectLater(
+            adapter.connect(PlatformTier.byokApi, {'access_token': 'T'}, ctx()),
+            throwsA(isA<ConnectException>()
+                .having((e) => e.field, 'field', 'access_token')
+                .having((e) => e.message, 'message', contains('threads_content_publish'))));
+      });
+
+      test('an invalid token fails at /me and points at the token field', () async {
+        router.on('GET', '/v1.0/me', {
+          'error': {'message': 'Invalid OAuth access token', 'type': 'OAuthException', 'code': 190}
+        }, status: 400);
+        await expectLater(adapter.connect(PlatformTier.byokApi, {'access_token': 'BAD'}, ctx()),
+            throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'access_token')));
+        expect(router.calls, hasLength(1));
+      });
+
+      test('debug_token unavailable: keeps the token and renews it 24 h after connecting', () async {
+        stubMe(); // debug_token is not stubbed -> 404
+        final res = await adapter.connect(PlatformTier.byokApi, {'access_token': 'THTOKEN'}, ctx());
+        expect(res.secrets['access_token'], 'THTOKEN');
+        expect(res.secrets.containsKey('expires_at'), isFalse);
+        expect(DateTime.parse(res.secrets['token_issued_at']!), testNow);
+        expect(router.calls.where((c) => c.url.path == '/access_token'), isEmpty);
+        // Too young to refresh: Meta only renews tokens that are 24 h old.
+        expect(await adapter.refreshSecrets(res.account, res.secrets, ctx()), isNull);
+      });
+
+      test('debug_token unavailable with an app secret: tries the exchange, keeps the token if Meta refuses', () async {
+        stubMe();
+        router.on('GET', '/access_token', {
+          'error': {'message': 'Unsupported request', 'type': 'OAuthException', 'code': 100}
+        }, status: 400);
+        final res = await adapter.connect(
+            PlatformTier.byokApi, {'access_token': 'THTOKEN', 'app_secret': 'SECRET'}, ctx());
+        expect(router.calls.where((c) => c.url.path == '/access_token'), hasLength(1));
+        expect(res.secrets['access_token'], 'THTOKEN');
+        expect(res.secrets['app_secret'], 'SECRET');
+      });
+
+      test('a non-numeric app id is still rejected', () async {
+        await expectLater(adapter.connect(PlatformTier.byokApi, {'access_token': 'T', 'app_id': 'abc'}, ctx()),
+            throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'app_id')));
+        expect(router.calls, isEmpty);
+      });
     });
 
     test('hand-off tier needs no credentials', () async {

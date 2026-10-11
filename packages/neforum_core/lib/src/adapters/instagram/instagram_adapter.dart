@@ -95,17 +95,28 @@ class InstagramAdapter extends PlatformAdapter {
           loopbackRedirectOk: false,
           customSchemeRedirectOk: false,
           fixedRedirectUri: Uri.parse(defaultRedirectUri),
-          redirectNote: 'Register exactly $defaultRedirectUri under Instagram > API setup with Instagram business '
-              'login > Business login settings > OAuth redirect URIs. After you approve, the browser shows an '
-              'error page: copy the whole address from the address bar and paste it into NEFORUM.',
+          redirectNote: 'Only for browser sign-in (not needed when you paste a token): register exactly '
+              '$defaultRedirectUri under API setup with Instagram login > Set up Instagram business login > '
+              'Business login settings > OAuth redirect URIs. After you approve, the browser shows an error '
+              'page: copy the whole address from the address bar and paste it into NEFORUM.',
           fields: const [
+            ConnectField(
+              key: 'access_token',
+              label: 'Access token from "Generate token"',
+              kind: FieldKind.password,
+              required: false,
+              secret: true,
+              help: 'App Dashboard > **API setup with Instagram login** > **Generate access tokens** > '
+                  '**Generate token** next to your account. Lasts 60 days; NEFORUM renews it automatically. '
+                  'With a token, leave the fields below empty.',
+            ),
             ConnectField(
               key: 'app_id',
               label: 'Instagram app ID',
               required: false,
               placeholder: '1234567890123456',
-              help: 'App Dashboard > Instagram > API setup with Instagram business login. This is NOT the Meta '
-                  'App ID shown at the top of the dashboard.',
+              help: 'Only for browser sign-in. Top of **API setup with Instagram login** (not the Meta App ID '
+                  'under App settings > Basic).',
             ),
             ConnectField(
               key: 'app_secret',
@@ -113,7 +124,8 @@ class InstagramAdapter extends PlatformAdapter {
               kind: FieldKind.password,
               required: false,
               secret: true,
-              help: 'Shown next to the Instagram app ID (click Show). Only used while connecting.',
+              help: 'Only for browser sign-in. Next to the Instagram app ID, click **Show**. Used once while '
+                  'connecting, never stored.',
             ),
             ConnectField(
               key: 'redirect_uri',
@@ -121,16 +133,8 @@ class InstagramAdapter extends PlatformAdapter {
               kind: FieldKind.url,
               required: false,
               defaultValue: defaultRedirectUri,
-              help: 'Must match the OAuth redirect URI in your app character for character (https only).',
-            ),
-            ConnectField(
-              key: 'access_token',
-              label: 'Or: access token from "Generate token"',
-              kind: FieldKind.password,
-              required: false,
-              secret: true,
-              help: 'Instead of the app ID and secret you can paste a token made with Generate token in the '
-                  'App Dashboard. NEFORUM keeps it fresh automatically.',
+              help: 'Only for browser sign-in. Must match an address under **Business login settings > OAuth '
+                  'redirect URIs** character for character (https only).',
             ),
           ],
         ),
@@ -145,8 +149,8 @@ class InstagramAdapter extends PlatformAdapter {
       throw ConnectException('Instagram does not support "${tier.label}"');
     }
     final api = _api(ctx);
+    final pasted = (input['access_token'] ?? '').trim();
     try {
-      final pasted = (input['access_token'] ?? '').trim();
       final Map<String, String> secrets;
       final config = <String, dynamic>{};
       if (pasted.isNotEmpty) {
@@ -185,7 +189,13 @@ class InstagramAdapter extends PlatformAdapter {
         secrets: secrets,
       );
     } on AdapterException catch (e) {
-      throw ConnectException(e.error.message);
+      // A pasted token is the only input the first call depends on, so point
+      // the error at that field.
+      throw ConnectException(
+          pasted.isEmpty
+              ? e.error.message
+              : '${e.error.message}. Generate a new token for your account and paste all of it.',
+          field: pasted.isEmpty ? null : 'access_token');
     } on OAuthException catch (e) {
       throw ConnectException('Instagram sign-in failed: ${e.description ?? e.error ?? e.message}');
     }
@@ -536,17 +546,12 @@ const String _handoffIntro = '''
 When you post, NEFORUM copies your caption to the clipboard and hands the photo or video to the Instagram app (or opens instagram.com on a computer). You paste the caption and tap **Share** yourself. Nothing to set up.''';
 
 const String _apiIntro = '''
-**Automatic posting needs a professional Instagram account (Business or Creator) and your own free Meta app.** Personal accounts cannot use the API; use Hand-off for those.
+**Automatic posting needs a professional Instagram account (Business or Creator), your own free Meta app and a media host.** Personal accounts cannot use the API: use Hand-off, or switch for free in Instagram (**Settings > Account type and tools > Switch to professional account**). No Facebook Page and no App Review needed.
 
-1. In the Instagram app: *Settings > Account type and tools > Switch to professional account* (free).
-2. Go to [developers.facebook.com/apps](https://developers.facebook.com/apps), click **Create app** and choose the use case **Manage messaging & content on Instagram** (if your dashboard does not offer it: use case **Other**, app type **Business**, then add the product **Instagram**).
-3. Open **API setup with Instagram login** (called *API setup with Instagram business login* on some dashboards) and click **Add all required permissions**; make sure `instagram_business_content_publish` is among them.
-4. Under **Business login settings**, add the OAuth redirect URI `https://localhost:52771/callback` exactly (pick it from the dropdown so it turns into a chip) and save.
-5. Under **Generate access tokens**, click **Add account** and sign in with your Instagram account. Accept the tester invite in Instagram (*Settings > Apps and websites > Tester invites*) if asked.
-6. Copy the **Instagram app ID** and **Instagram app secret** from that page into the fields below (not the Meta App ID at the top).
+1. Open <https://developers.facebook.com/apps/creation/> and create an app with the use case **Manage messaging and content on Instagram** (if asked for an app type, pick **Business**).
+2. **Use cases > Customize**: click **Add** next to `instagram_business_content_publish` (`instagram_business_basic` is added for you).
+3. Open **API setup with Instagram login** (left menu). Under **Generate access tokens** click **Add account** and log in to your Instagram account. If Instagram shows a tester invite, accept it (**Settings > Apps and websites > Tester invites**).
+4. Click **Generate token** next to your account, log in, copy the token and paste it into the first field below. Done: it lasts 60 days and NEFORUM renews it automatically.
+5. Set up a **media host** (NEFORUM **Settings > Media hosting**): Instagram downloads every photo and video from a public link; NEFORUM deletes the copy after posting.
 
-NEFORUM asks for `instagram_business_basic` and `instagram_business_content_publish`. After you approve, your browser lands on a page that does not load: copy the full address from the address bar and paste it into NEFORUM.
-
-Shortcut: click **Generate token** next to your account in step 5 and paste that token into the last field instead.
-
-You also need a **media host** (Settings > Media hosting): Instagram downloads every photo and video from a public link. NEFORUM deletes the copy after posting.''';
+**Browser sign-in instead of a token:** copy the **Instagram app ID** and **Instagram app secret** from the top of the same page (not the Meta App ID), add `https://localhost:52771/callback` under **Set up Instagram business login > Business login settings > OAuth redirect URIs**, press **Sign in**, then paste the whole address of the page that fails to load.''';

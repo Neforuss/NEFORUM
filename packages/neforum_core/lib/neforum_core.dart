@@ -18,6 +18,7 @@ export 'src/media_hosts/media_hosts.dart';
 export 'src/model/account.dart';
 export 'src/model/media.dart';
 export 'src/model/platform_descriptor.dart';
+export 'src/model/poll.dart';
 export 'src/model/post.dart';
 export 'src/model/post_variant.dart';
 export 'src/model/publish_result.dart';

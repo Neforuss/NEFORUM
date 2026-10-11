@@ -161,6 +161,21 @@ void main() {
         await tester.tap(b);
       }));
 
+  testWidgets('differentiation', (t) => shoot(t, name: 'differentiation-dark', size: desktop, brightness: Brightness.dark, route: '/compose', before: (tester, c) async {
+        final editor = find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController);
+        await tester.enterText(editor,
+            'We rebuilt the firmware from scratch this spring. It took four months and two prototypes. Today it ships to everyone. Guide: https://example.org/kb\n\n#opensource #keyboards #diy');
+        c.read(composerProvider.notifier).selectAccounts(c
+            .read(accountListProvider)
+            .where((a) => const ['x', 'linkedin', 'instagram', 'mastodon'].contains(a.platformId))
+            .map((a) => a.id));
+        c.read(composerProvider.notifier).setDifferentiate(true);
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.text('Auto-differentiate'));
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, -520));
+      }));
+
   testWidgets('text cards', (t) async {
     for (final theme in TextCardTheme.values) {
       final bytes = await t.runAsync(() => renderTextCardJpeg(

@@ -165,6 +165,26 @@ class ThreadsApi {
     return _tokensOf(res, now);
   }
 
+  /// `GET /v1.0/debug_token` with [token] as both the inspected token and
+  /// the caller (Threads "Debug Access Token": the caller must be a Threads
+  /// tester's token for the same app, which a token the user generated for
+  /// themselves is). Best effort: `null` when Meta does not answer usefully.
+  static Future<ThreadsTokenInfo?> debugToken(NeforumHttp http, String token, {Logger? log}) async {
+    try {
+      final res = await http.get(graphUri('debug_token', {'input_token': token, 'access_token': token}),
+          throwOnError: false);
+      if (!res.ok) {
+        log?.debug('Threads debug_token answered HTTP ${res.statusCode}');
+        return null;
+      }
+      final data = res.jsonMap['data'];
+      return data is Map ? ThreadsTokenInfo.fromJson(Map<String, dynamic>.from(data)) : null;
+    } on Exception catch (e) {
+      log?.debug('Threads debug_token failed: $e');
+      return null;
+    }
+  }
+
   static OAuthTokens _tokensOf(NeforumResponse res, DateTime now) {
     final j = res.jsonMap;
     if (j['access_token'] is! String) {
@@ -180,6 +200,36 @@ class ThreadsApi {
       raw: t.raw,
     );
   }
+}
+
+/// What `debug_token` says about a Threads user access token.
+class ThreadsTokenInfo {
+  const ThreadsTokenInfo({required this.isValid, this.expiresAt, this.issuedAt, this.scopes = const [], this.userId});
+
+  factory ThreadsTokenInfo.fromJson(Map<String, dynamic> j) {
+    DateTime? time(Object? v) {
+      final secs = v is int ? v : int.tryParse('${v ?? ''}');
+      // 0 means "does not expire" / unknown; neither gives NEFORUM a date.
+      return secs == null || secs <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true);
+    }
+
+    final scopes = j['scopes'];
+    return ThreadsTokenInfo(
+      isValid: j['is_valid'] != false,
+      expiresAt: time(j['expires_at']),
+      issuedAt: time(j['issued_at']),
+      scopes: scopes is List ? scopes.map((s) => '$s').toList() : const [],
+      userId: j['user_id']?.toString(),
+    );
+  }
+
+  final bool isValid;
+  final DateTime? expiresAt;
+  final DateTime? issuedAt;
+
+  /// Granted permissions; empty when Meta did not list them.
+  final List<String> scopes;
+  final String? userId;
 }
 
 /// Graph API error codes NEFORUM maps explicitly.

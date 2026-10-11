@@ -60,6 +60,13 @@ abstract class PlatformAdapter {
   /// has no sensible hand-off route.
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) => null;
 
+  /// The plan for an actual hand-off. Unlike [buildHandoff] it may do network
+  /// work first, e.g. put photos on the user's media host so a share link can
+  /// carry them. Defaults to [buildHandoff]. Must not throw for platform or
+  /// network problems: fall back to the plain plan instead.
+  Future<HandoffPlan?> prepareHandoff(PostVariant variant, ConnectedAccount account, AdapterContext ctx) async =>
+      buildHandoff(variant, account: account);
+
   /// Removes a post the platform is holding for later, i.e. one that
   /// [publish] returned as [PublishResult.scheduled]. Completes normally when
   /// the held copy is gone, including when it no longer exists (404). Throws

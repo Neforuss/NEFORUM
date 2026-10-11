@@ -73,7 +73,14 @@ void main() {
       expect(api.fixedRedirectUri.toString(), 'https://www.facebook.com/connect/login_success.html');
       expect(api.fields.map((f) => f.key), containsAll(['app_id', 'app_secret', 'page', 'user_access_token', 'scopes']));
       expect(api.fields.firstWhere((f) => f.key == 'app_secret').secret, isTrue);
+      final token = api.fields.firstWhere((f) => f.key == 'user_access_token');
+      expect(token.secret, isTrue);
+      expect(token.required, isFalse);
+      expect(token.help, contains('Generate Access Token'));
       expect(api.intro, contains('pages_manage_posts'));
+      expect(api.intro, contains('https://developers.facebook.com/apps/creation/'));
+      expect(api.intro, contains('https://developers.facebook.com/tools/explorer/'));
+      expect(api.intro, contains('`https://www.facebook.com/connect/login_success.html`'));
       final handoff = adapter.specFor(PlatformTier.handoff);
       expect(handoff.tier, PlatformTier.handoff);
       expect(handoff.usesBrowser, isFalse);
@@ -82,7 +89,8 @@ void main() {
 
   group('connect', () {
     Future<http.Response> Function(http.Request) connectHandler(List<http.Request> calls,
-            {List<Map<String, Object>>? pages}) =>
+            {List<Map<String, Object>>? pages,
+            List<String> granted = const ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts', 'business_management']}) =>
         (req) async {
           calls.add(req);
           final path = req.url.path;
@@ -93,6 +101,15 @@ void main() {
             return _json({'access_token': 'EAALONG', 'token_type': 'bearer', 'expires_in': 5184000});
           }
           if (path.endsWith('/me')) return _json({'id': '42', 'name': 'Alice'});
+          if (path.endsWith('/me/permissions')) {
+            return _json({
+              'data': [
+                for (final p in granted) {'permission': p, 'status': 'granted'},
+                {'permission': 'public_profile', 'status': 'granted'},
+                if (!granted.contains('pages_manage_posts')) {'permission': 'pages_manage_posts', 'status': 'declined'},
+              ]
+            });
+          }
           if (path.endsWith('/me/accounts')) {
             return _json({
               'data': pages ??
@@ -123,7 +140,7 @@ void main() {
       expect(auth.queryParameters['state'], isNotEmpty);
       expect(auth.queryParameters.containsKey('code_challenge'), isFalse);
 
-      expect(calls, hasLength(4));
+      expect(calls, hasLength(5));
       // 1. code exchange
       expect(calls[0].method, 'POST');
       expect(calls[0].url.toString(), '$_graph/oauth/access_token');
@@ -147,9 +164,14 @@ void main() {
       expect(calls[2].url.path, '/v25.0/me');
       expect(calls[2].url.queryParameters['access_token'], 'EAALONG');
       expect(calls[2].url.queryParameters['appsecret_proof'], appSecretProof('EAALONG', 'APPSECRET'));
-      // 4. /me/accounts
-      expect(calls[3].url.path, '/v25.0/me/accounts');
-      expect(calls[3].url.queryParameters['fields'], 'id,name,access_token,tasks,link');
+      // 4. granted permissions
+      expect(calls[3].method, 'GET');
+      expect(calls[3].url.path, '/v25.0/me/permissions');
+      expect(calls[3].url.queryParameters['access_token'], 'EAALONG');
+      expect(calls[3].url.queryParameters['appsecret_proof'], appSecretProof('EAALONG', 'APPSECRET'));
+      // 5. /me/accounts
+      expect(calls[4].url.path, '/v25.0/me/accounts');
+      expect(calls[4].url.queryParameters['fields'], 'id,name,access_token,tasks,link');
 
       // First Page with CREATE_CONTENT is chosen.
       expect(r.account.id, 'facebook-123');
@@ -195,6 +217,86 @@ void main() {
           {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAEXPLORER', 'page': '123'}, ctx);
       expect(calls.first.url.queryParameters['fb_exchange_token'], 'EAAEXPLORER');
       expect(r.account.config['page_id'], '123');
+    });
+
+    test('Graph API Explorer token: exchange, /me, permission check, Page token without expiry', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: connectHandler(calls));
+      final r = await adapter.connect(PlatformTier.byokApi,
+          {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': ' EAAEXPLORER '}, ctx);
+      expect(calls.map((c) => '${c.method} ${c.url.path}'), [
+        'GET /v25.0/oauth/access_token',
+        'GET /v25.0/me',
+        'GET /v25.0/me/permissions',
+        'GET /v25.0/me/accounts',
+      ]);
+      expect(calls[0].url.queryParameters, {
+        'grant_type': 'fb_exchange_token',
+        'client_id': '987654321',
+        'client_secret': 'APPSECRET',
+        'fb_exchange_token': 'EAAEXPLORER',
+      });
+      expect(r.secrets['access_token'], 'PT123');
+      expect(r.secrets.containsKey('expires_at'), isFalse);
+      expect(r.secrets['user_access_token'], 'EAALONG');
+      expect(DateTime.parse(r.secrets['user_token_expires_at']!), testNow.add(const Duration(seconds: 5184000)));
+      // Page tokens never expire, so there is nothing to refresh.
+      expect(await adapter.refreshSecrets(r.account, r.secrets, ctx), isNull);
+      expect(calls, hasLength(4));
+    });
+
+    test('a token without pages_manage_posts is refused with a fix', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: connectHandler(calls, granted: ['pages_show_list', 'pages_read_engagement']));
+      await expectLater(
+          adapter.connect(PlatformTier.byokApi,
+              {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAEXPLORER'}, ctx),
+          throwsA(isA<ConnectException>()
+              .having((e) => e.field, 'field', 'user_access_token')
+              .having((e) => e.message, 'message', contains('pages_manage_posts'))
+              .having((e) => e.message, 'message', contains('Generate Access Token'))));
+      expect(calls.where((c) => c.url.path.endsWith('/me/accounts')), isEmpty);
+    });
+
+    test('an unreadable permission list does not block connecting', () async {
+      final calls = <http.Request>[];
+      final base = connectHandler(calls);
+      final ctx = testContext(
+          handler: (req) async => req.url.path.endsWith('/me/permissions') ? _graphError(2, status: 500) : base(req));
+      final r = await adapter.connect(PlatformTier.byokApi,
+          {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAEXPLORER'}, ctx);
+      expect(r.account.config['page_id'], '123');
+    });
+
+    test('an expired or foreign pasted token points at the token field', () async {
+      final ctx = testContext(handler: (req) async => _graphError(190, subcode: 463));
+      await expectLater(
+          adapter.connect(PlatformTier.byokApi,
+              {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAOLD'}, ctx),
+          throwsA(isA<ConnectException>()
+              .having((e) => e.field, 'field', 'user_access_token')
+              .having((e) => e.message, 'message', contains('User Token'))));
+    });
+
+    test('a pasted Page token is recognised and explained', () async {
+      final calls = <http.Request>[];
+      final base = connectHandler(calls);
+      final ctx = testContext(
+          handler: (req) async => req.url.path.endsWith('/me/accounts')
+              ? _json({
+                  'error': {
+                    'message': '(#100) Tried accessing nonexisting field (accounts) on node type (Page)',
+                    'type': 'OAuthException',
+                    'code': 100,
+                  }
+                }, 400)
+              : base(req));
+      await expectLater(
+          adapter.connect(PlatformTier.byokApi,
+              {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAPAGE'}, ctx),
+          throwsA(isA<ConnectException>()
+              .having((e) => e.field, 'field', 'user_access_token')
+              .having((e) => e.message, 'message', contains('Page access token'))));
     });
 
     test('state mismatch, unknown page, no pages and bad input are ConnectExceptions', () async {

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../media/text_card.dart';
+import '../../platform/file_export.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
@@ -12,6 +14,7 @@ import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/char_ring.dart';
+import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'rich_text.dart';
@@ -157,7 +160,11 @@ class _Microblog extends StatelessWidget {
                   if (i == 0 && v.contentWarning != null) _CwBar(text: v.contentWarning!),
                   const SizedBox(height: 3),
                   _PostText(parts[i], empty: v.media.isEmpty),
-                  if (i == 0 && v.media.isNotEmpty) ...[
+                  // A poll or quiz post shows no images (an image poll shows them as its answers).
+                  if (i == 0 && v.poll != null) ...[
+                    const SizedBox(height: Space.sm + 2),
+                    PollPreview(poll: v.poll!, media: v.media),
+                  ] else if (i == 0 && v.media.isNotEmpty) ...[
                     const SizedBox(height: Space.sm + 2),
                     MediaGrid(media: v.media),
                   ],
@@ -183,6 +190,9 @@ class _Visual extends ConsumerWidget {
     final nf = context.nf;
     final v = p.variant;
     final card = v.media.isNotEmpty && isTextCardPlaceholder(v.media.first) ? textCardThemeOf(v.media.first) : null;
+    final branded = card != null && textCardBrandedOf(v.media.first);
+    final cardText = card == null ? '' : textCardText(_previewPost(ref), p.target);
+    final byline = p.account.handle ?? p.account.displayName;
     final cardSize = textCardSize(p.descriptor.id);
     final aspect = card != null ? cardSize.width / cardSize.height : _visualAspect(p.descriptor.id, v.media);
     return LayoutBuilder(builder: (context, c) {
@@ -197,12 +207,7 @@ class _Visual extends ConsumerWidget {
                 child: DecoratedBox(
                   position: DecorationPosition.foreground,
                   decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
-                  child: TextCardView(
-                    text: textCardText(_previewPost(ref), p.target),
-                    theme: card,
-                    aspect: aspect,
-                    byline: p.account.handle ?? p.account.displayName,
-                  ),
+                  child: TextCardView(text: cardText, theme: card, aspect: aspect, byline: byline, branded: branded),
                 ),
               ),
             )
@@ -238,7 +243,7 @@ class _Visual extends ConsumerWidget {
         Center(child: frame),
         if (card != null) ...[
           const SizedBox(height: Space.sm),
-          Center(child: _CardStylePicker(current: card)),
+          Center(child: _CardStylePicker(current: card, platform: p.descriptor, branded: branded, text: cardText, byline: byline)),
         ],
         const SizedBox(height: Space.sm + 2),
         if ((v.title ?? '').isNotEmpty) ...[
@@ -264,55 +269,195 @@ class _Visual extends ConsumerWidget {
 /// The composer's current post, for the words on a text card.
 Post _previewPost(WidgetRef ref) => ref.read(composerProvider).toPost(id: 'preview', status: PostStatus.draft, now: DateTime.now());
 
-/// Black-on-white or white-on-black for the text card.
-class _CardStylePicker extends ConsumerWidget {
-  const _CardStylePicker({required this.current});
+/// Under a text card: black-on-white or white-on-black, the NEFORUM
+/// signature on or off for this network, and saving the card as an image.
+class _CardStylePicker extends ConsumerStatefulWidget {
+  const _CardStylePicker({required this.current, required this.platform, required this.branded, required this.text, required this.byline});
   final TextCardTheme current;
+  final PlatformDescriptor platform;
+  final bool branded;
+  final String text;
+  final String byline;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CardStylePicker> createState() => _CardStylePickerState();
+}
+
+class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
+  bool _saving = false;
+
+  Future<void> _save(BuildContext buttonContext) async {
+    final box = buttonContext.findRenderObject() as RenderBox?;
+    final origin = box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+    setState(() => _saving = true);
+    try {
+      final bytes = await renderTextCardJpeg(
+        text: widget.text,
+        theme: widget.current,
+        size: textCardSize(widget.platform.id),
+        byline: widget.byline,
+        branded: widget.branded,
+      );
+      final stamp = DateFormat('yyyy-MM-dd HHmm').format(DateTime.now());
+      final r = await FileExport.save(
+        'Text cards',
+        [ExportFile('NEFORUM card - ${widget.platform.name} - $stamp.jpg', bytes, mimeType: 'image/jpeg')],
+        shareOrigin: origin,
+      );
+      if (mounted && r.paths.isNotEmpty) {
+        showToast(context, 'Card saved to ${r.location}', icon: Icons.download_done_rounded);
+      }
+    } on Object catch (e) {
+      if (mounted) showToast(context, 'Could not save the card: $e', icon: Icons.error_outline_rounded);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final nf = context.nf;
-    Widget option(TextCardTheme t) {
-      final selected = t == current;
-      return Tooltip(
-        message: t.label,
-        child: InkWell(
-          borderRadius: Radii.rPill,
+    Widget pill({required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) => Tooltip(
+          message: tooltip ?? label,
+          child: InkWell(
+            borderRadius: Radii.rPill,
+            onTap: onTap,
+            child: AnimatedContainer(
+              duration: Motion.fast,
+              padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2, vertical: Space.xs + 1),
+              decoration: BoxDecoration(
+                color: selected ? nf.accentSoft : Colors.transparent,
+                borderRadius: Radii.rPill,
+                border: Border.all(color: selected ? nf.accent : nf.border),
+              ),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                leading,
+                const SizedBox(width: Space.xs + 2),
+                Text(label, style: context.text.labelSmall?.copyWith(color: selected ? nf.text : nf.textMuted)),
+              ]),
+            ),
+          ),
+        );
+
+    Widget themeOption(TextCardTheme t) => pill(
+          selected: t == widget.current,
+          label: t.label,
+          leading: Container(
+            width: 14,
+            height: 14,
+            decoration: BoxDecoration(color: t.background, shape: BoxShape.circle, border: Border.all(color: nf.borderStrong)),
+            alignment: Alignment.center,
+            child: Container(width: 6, height: 6, decoration: BoxDecoration(color: t.foreground, shape: BoxShape.circle)),
+          ),
           onTap: () {
             ref.read(composerProvider.notifier).setTextCardTheme(t);
             final s = ref.read(settingsProvider);
             if (s.textCardTheme != t) ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardTheme: t));
           },
-          child: AnimatedContainer(
-            duration: Motion.fast,
-            padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2, vertical: Space.xs + 1),
-            decoration: BoxDecoration(
-              color: selected ? nf.accentSoft : Colors.transparent,
-              borderRadius: Radii.rPill,
-              border: Border.all(color: selected ? nf.accent : nf.border),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Container(
-                width: 14,
-                height: 14,
-                decoration: BoxDecoration(color: t.background, shape: BoxShape.circle, border: Border.all(color: nf.borderStrong)),
-                alignment: Alignment.center,
-                child: Container(width: 6, height: 6, decoration: BoxDecoration(color: t.foreground, shape: BoxShape.circle)),
-              ),
-              const SizedBox(width: Space.xs + 2),
-              Text(t.label, style: context.text.labelSmall?.copyWith(color: selected ? nf.text : nf.textMuted)),
-            ]),
-          ),
-        ),
-      );
-    }
+        );
 
+    final id = widget.platform.id;
     return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
-      for (final t in TextCardTheme.values) option(t),
+      for (final t in TextCardTheme.values) themeOption(t),
+      pill(
+        selected: widget.branded,
+        label: 'NEFORUM signature',
+        tooltip: widget.branded ? 'Signature on: tap for a plain card on ${widget.platform.name}' : 'Plain card: tap to add the NEFORUM signature',
+        leading: Icon(widget.branded ? Icons.verified_rounded : Icons.do_not_disturb_on_outlined, size: 14, color: widget.branded ? nf.accent : nf.textFaint),
+        onTap: () {
+          final on = !widget.branded;
+          ref.read(composerProvider.notifier).setTextCardBranded(id, on);
+          // Remember it for this network from now on.
+          ref.read(settingsProvider.notifier).update((x) => x.copyWith(
+                textCardPlainPlatforms: on ? (x.textCardPlainPlatforms.where((p) => p != id).toList()) : {...x.textCardPlainPlatforms, id}.toList(),
+              ));
+        },
+      ),
+      Builder(
+        builder: (bc) => pill(
+          selected: false,
+          label: _saving ? 'Saving…' : 'Save image',
+          tooltip: 'Save this card as a JPEG (Downloads on a computer, the share sheet on a phone)',
+          leading: Icon(Icons.download_rounded, size: 14, color: nf.textMuted),
+          onTap: _saving || widget.text.isEmpty ? null : () => _save(bc),
+        ),
+      ),
     ]);
   }
 }
 
+/// A poll or quiz the way YouTube shows it: one outlined row per answer (the
+/// correct quiz answer ticked), or captioned images for an image poll.
+class PollPreview extends StatelessWidget {
+  const PollPreview({super.key, required this.poll, this.media = const []});
+  final PostPoll poll;
+  final List<MediaAttachment> media;
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    final options = poll.cleanOptions;
+    final correct = poll.isQuiz ? _correctClean(poll) : null;
+    final images = media.where((m) => m.isImage).toList();
+    final Widget body;
+    if (poll.imageOptions) {
+      body = LayoutBuilder(builder: (context, c) {
+        const gap = 6.0;
+        final w = (c.maxWidth - gap) / 2;
+        return Wrap(spacing: gap, runSpacing: gap, children: [
+          for (var i = 0; i < options.length; i++)
+            SizedBox(
+              width: w,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                if (i < images.length)
+                  MediaThumb(images[i], size: w, radius: Radii.rSm)
+                else
+                  Container(height: w, decoration: BoxDecoration(color: nf.surfaceSunken, borderRadius: Radii.rSm)),
+                const SizedBox(height: 4),
+                Text(options[i], maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelMedium),
+              ]),
+            ),
+        ]);
+      });
+    } else {
+      body = Column(children: [
+        for (var i = 0; i < options.length; i++)
+          Container(
+            margin: const EdgeInsets.only(bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+            decoration: BoxDecoration(
+              borderRadius: Radii.rSm,
+              border: Border.all(color: correct == i ? nf.success : nf.borderStrong),
+              color: correct == i ? nf.successSoft : null,
+            ),
+            child: Row(children: [
+              Expanded(child: Text(options[i], style: context.text.bodyMedium)),
+              if (correct == i) Icon(Icons.check_circle_rounded, size: 16, color: nf.success),
+            ]),
+          ),
+      ]);
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      body,
+      const SizedBox(height: 2),
+      Text(
+        poll.isQuiz ? 'Quiz · ${options.length} answers' : '${poll.imageOptions ? 'Image poll' : 'Poll'} · ${options.length} answers',
+        style: context.text.bodySmall?.copyWith(color: nf.textFaint),
+      ),
+      if (poll.isQuiz && (poll.explanation ?? '').trim().isNotEmpty)
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text('Explanation: ${poll.explanation!.trim()}', style: context.text.bodySmall),
+        ),
+    ]);
+  }
+
+  static int? _correctClean(PostPoll poll) {
+    final c = poll.correctIndex;
+    if (c == null || c < 0 || c >= poll.options.length || poll.options[c].trim().isEmpty) return null;
+    return poll.options.take(c).where((o) => o.trim().isNotEmpty).length;
+  }
+}
 class _Forum extends StatelessWidget {
   const _Forum({required this.p});
   final TargetPreview p;

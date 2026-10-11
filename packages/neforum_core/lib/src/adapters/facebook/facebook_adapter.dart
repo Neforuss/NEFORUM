@@ -130,8 +130,20 @@ class FacebookAdapter extends PlatformAdapter {
     try {
       final shortToken = pasted.isNotEmpty ? pasted : await _browserLogin(appId, appSecret, scopes, ctx);
       ctx.progress('Exchanging for a long-lived token');
-      final userTokens = await _longLivedToken(appId, appSecret, shortToken, ctx);
+      final OAuthTokens userTokens;
+      try {
+        userTokens = await _longLivedToken(appId, appSecret, shortToken, ctx);
+      } on HttpFailure catch (f) {
+        final err = GraphError.parse(f.response.jsonMap);
+        if (pasted.isEmpty || err?.code != 190) rethrow;
+        throw ConnectException(
+            'Facebook did not accept the pasted token (${err!.display}). Explorer tokens expire after one to two '
+            'hours: generate a fresh one for this same app (Meta App: your app; User or Page: User Token) and paste '
+            'all of it.',
+            field: secUserToken);
+      }
       final user = await _getJson(ctx, 'me', {'fields': 'id,name'}, userTokens.accessToken, appSecret);
+      await _checkPermissions(ctx, userTokens.accessToken, appSecret, fromExplorer: pasted.isNotEmpty);
       ctx.progress('Fetching your Pages');
       final pages = await _listPages(ctx, userTokens.accessToken, appSecret);
       final page = _choosePage(pages, input['page']);
@@ -271,12 +283,59 @@ class FacebookAdapter extends PlatformAdapter {
     return OAuthTokens.fromTokenResponse(json, now: ctx.now());
   }
 
+  /// Permissions without which NEFORUM cannot list Pages or post
+  /// (`pages_manage_posts` depends on the other two, permissions reference).
+  static const List<String> requiredPermissions = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
+
+  /// Reads `GET /me/permissions` and fails early, with a fix, when a
+  /// required permission was not granted. Best effort: when Facebook does not
+  /// answer, the publish-time error mapping still catches it.
+  Future<void> _checkPermissions(AdapterContext ctx, String userToken, String appSecret,
+      {required bool fromExplorer}) async {
+    final NeforumResponse res;
+    try {
+      res = await ctx.http.get(graphUri('me/permissions', withToken(const {}, userToken, appSecret)),
+          throwOnError: false);
+    } on Exception catch (e) {
+      ctx.log.debug('Could not read the granted Facebook permissions: $e');
+      return;
+    }
+    final data = res.jsonMap['data'];
+    if (!res.ok || data is! List) return;
+    final granted = {
+      for (final p in data)
+        if (p is Map && p['status'] == 'granted') '${p['permission']}',
+    };
+    final missing = requiredPermissions.where((p) => !granted.contains(p)).toList();
+    if (missing.isEmpty) return;
+    throw ConnectException(fromExplorer
+        ? 'The token is missing ${missing.join(', ')}. In the Graph API Explorer add them under Permissions, click '
+            'Generate Access Token again, allow everything and select your Page.'
+        : 'Facebook did not grant ${missing.join(', ')}. Make sure they are added to your app '
+            '(Use cases > Customize), connect again and keep every permission switched on.',
+        field: fromExplorer ? secUserToken : null);
+  }
+
   Future<List<FacebookPage>> _listPages(AdapterContext ctx, String userToken, String appSecret) async {
     final pages = <FacebookPage>[];
     Uri? next = graphUri('me/accounts', withToken({'fields': 'id,name,access_token,tasks,link', 'limit': '100'}, userToken, appSecret));
     var guard = 0;
     while (next != null && guard++ < 10) {
-      final json = (await ctx.http.get(next)).jsonMap;
+      final NeforumResponse res;
+      try {
+        res = await ctx.http.get(next);
+      } on HttpFailure catch (f) {
+        final err = GraphError.parse(f.response.jsonMap);
+        // "(#100) Tried accessing nonexisting field (accounts) on node type (Page)".
+        if (err != null && err.code == 100 && err.message.contains('(Page)')) {
+          throw const ConnectException(
+              'This is a Page access token. In the Graph API Explorer choose User Token under "User or Page", '
+              'generate the token again and paste that one; NEFORUM finds your Pages itself.',
+              field: secUserToken);
+        }
+        rethrow;
+      }
+      final json = res.jsonMap;
       final data = json['data'];
       if (data is List) {
         for (final item in data) {
