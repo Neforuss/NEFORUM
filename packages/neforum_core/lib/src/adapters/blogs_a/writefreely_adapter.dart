@@ -228,12 +228,16 @@ class WriteFreelyAdapter extends PlatformAdapter {
       return (token, blogStr(blogMap(data?['user'])?['username']) ?? username);
     } on HttpFailure catch (f) {
       final msg = _errorMsg(f.response);
+      // The API answers 404 "User doesn't exist." for an unknown username; a
+      // 404 without the API's JSON error means there is no API at all.
+      final noApi = f.statusCode == 404 && msg == null;
       throw ConnectException(switch (f.statusCode) {
         400 || 401 || 403 => 'Wrong username or password${msg == null ? '' : ' ($msg)'}.',
-        404 => '${instance.host} does not offer the WriteFreely API. Check the server address.',
+        404 when noApi => '${instance.host} does not offer the WriteFreely API. Check the server address.',
+        404 => 'There is no account called "$username" on ${instance.host} ($msg).',
         429 => 'Too many sign-in attempts. Wait a few minutes and try again.',
         _ => '${instance.host} answered HTTP ${f.statusCode} while signing in${msg == null ? '' : ': $msg'}.',
-      }, field: f.statusCode == 404 ? 'instance' : 'password');
+      }, field: noApi ? 'instance' : (f.statusCode == 404 ? 'username' : 'password'));
     } on FormatException {
       throw ConnectException('${instance.host} did not return an access token. Is this a WriteFreely server?');
     } on Exception catch (e) {
@@ -287,6 +291,9 @@ class WriteFreelyAdapter extends PlatformAdapter {
     } on AdapterException catch (e) {
       ctx.log.warn('WriteFreely publish failed: ${e.error.message}');
       return PublishResult.failure(e.error);
+    } on Exception catch (e) {
+      ctx.log.warn('WriteFreely publish failed unexpectedly: $e');
+      return PublishResult.failure(unexpectedBlogError('WriteFreely', e));
     }
   }
 
@@ -367,7 +374,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
           '(or turn on Snap.as for a Write.as account), or remove the images.'));
     }
     ctx.progress('Uploading image ${index + 1} of $total to ${useSnap ? 'Snap.as' : host!.name}');
-    final bytes = await ctx.readMedia(m);
+    final bytes = await readBlogMedia(ctx, m);
     if (useSnap) return _snapAs(m, bytes, token, index, total, ctx);
     try {
       return (await host!.upload(m, bytes)).url.toString();
@@ -456,7 +463,8 @@ PublishError mapWriteFreelyFailure(HttpFailure f, String what) {
   return switch (f.statusCode) {
     401 => PublishError.auth('$what: the access token is no longer valid$suffix. Reconnect the account.',
         raw: raw, statusCode: 401),
-    403 => PublishError.platform('$what: the server does not allow this$suffix', raw: raw, statusCode: 403),
+    // "You don't have permission to add to this collection." / "Account is silenced."
+    403 => PublishError.auth('$what: this account is not allowed to do that$suffix', raw: raw, statusCode: 403),
     429 => PublishError.quota(
         '$what: posting limit reached$suffix. Free Write.as accounts can only publish a few posts per day.',
         raw: raw,

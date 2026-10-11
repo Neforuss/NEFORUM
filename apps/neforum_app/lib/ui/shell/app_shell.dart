@@ -115,8 +115,8 @@ class _AppShellState extends ConsumerState<AppShell> {
       return Scaffold(
         backgroundColor: nf.bg,
         body: SafeArea(bottom: false, child: body),
-        bottomNavigationBar: DecoratedBox(
-          decoration: BoxDecoration(border: Border(top: BorderSide(color: nf.border))),
+        bottomNavigationBar: ColoredBox(
+          color: nf.chrome,
           child: NavigationBar(
             selectedIndex: widget.shell.currentIndex,
             onDestinationSelected: (i) => _go(AppSection.values[i]),
@@ -152,7 +152,8 @@ class _AppShellState extends ConsumerState<AppShell> {
     if (count == 0) return icon;
     return Badge(
       label: Text('$count'),
-      backgroundColor: urgent ? context.nf.warning : context.nf.accent,
+      backgroundColor: urgent ? context.nf.highlight : context.nf.onChrome,
+      textColor: context.nf.onHighlight,
       child: icon,
     );
   }
@@ -174,15 +175,15 @@ class _Sidebar extends ConsumerWidget {
     final accounts = ref.watch(accountListProvider);
     return Container(
       width: 264,
-      decoration: BoxDecoration(color: nf.surface, border: Border(right: BorderSide(color: nf.border))),
+      color: nf.chrome,
       padding: const EdgeInsets.fromLTRB(Space.lg, Space.xxl, Space.lg, Space.lg),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: Space.sm),
-          child: NeforumWordmark(size: 32, showTagline: true),
+          child: NeforumWordmark(size: 32, showTagline: true, onChrome: true),
         ),
         const SizedBox(height: Space.x3),
-        PrimaryAction(label: 'New post', icon: Icons.add_rounded, onPressed: onNewPost, expand: true),
+        PrimaryAction(label: 'New post', icon: Icons.add_rounded, onPressed: onNewPost, expand: true, onChrome: true),
         const SizedBox(height: Space.xxl),
         for (final s in AppSection.values) ...[
           _NavItem(
@@ -200,7 +201,7 @@ class _Sidebar extends ConsumerWidget {
         const SizedBox(height: Space.md),
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: Space.sm),
-          child: Text('v0.1.0 · Free & open source · GPL-3.0', style: context.text.bodySmall?.copyWith(color: nf.textFaint, fontSize: 11)),
+          child: Text('v$kAppVersion · Free & open source · GPL-3.0', style: context.text.bodySmall?.copyWith(color: nf.onChromeMuted, fontSize: 11)),
         ),
       ]),
     );
@@ -242,17 +243,24 @@ class _NavItemState extends State<_NavItem> {
             height: 44,
             padding: const EdgeInsets.symmetric(horizontal: Space.md),
             decoration: BoxDecoration(
-              color: sel ? nf.accentSoft : (_hover ? nf.surfaceHover : Colors.transparent),
+              color: sel ? nf.chromeRaised : (_hover ? nf.onChrome.withValues(alpha: 0.05) : Colors.transparent),
               borderRadius: Radii.rMd,
             ),
             child: Row(children: [
-              Icon(sel ? widget.section.selectedIcon : widget.section.icon, size: 20, color: sel ? nf.accent : nf.textMuted),
+              AnimatedContainer(
+                duration: Motion.fast,
+                width: 3,
+                height: sel ? 18 : 0,
+                margin: const EdgeInsets.only(right: Space.sm),
+                decoration: BoxDecoration(color: nf.highlight, borderRadius: Radii.rPill),
+              ),
+              Icon(sel ? widget.section.selectedIcon : widget.section.icon, size: 20, color: sel ? nf.highlight : nf.onChromeMuted),
               const SizedBox(width: Space.md),
               Expanded(
                 child: Text(
                   widget.section.label,
                   style: context.text.labelLarge?.copyWith(
-                    color: sel ? nf.text : nf.textMuted,
+                    color: sel ? nf.onChrome : nf.onChromeMuted,
                     fontWeight: sel ? FontWeight.w700 : FontWeight.w500,
                   ),
                 ),
@@ -262,13 +270,13 @@ class _NavItemState extends State<_NavItem> {
                   constraints: const BoxConstraints(minWidth: 22),
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: widget.urgent ? nf.warningSoft : (sel ? nf.surface : nf.surfaceSunken),
+                    color: widget.urgent ? nf.highlight : nf.onChrome.withValues(alpha: sel ? 0.16 : 0.10),
                     borderRadius: Radii.rPill,
                   ),
                   child: Text(
                     '${widget.badge}',
                     textAlign: TextAlign.center,
-                    style: context.text.labelSmall?.copyWith(color: widget.urgent ? nf.warning : nf.textMuted, fontWeight: FontWeight.w700),
+                    style: context.text.labelSmall?.copyWith(color: widget.urgent ? nf.onHighlight : nf.onChrome, fontWeight: FontWeight.w700),
                   ),
                 ),
             ]),
@@ -290,7 +298,7 @@ class _ConnectedSummary extends StatelessWidget {
     final auto = accounts.where((a) => a.tier != PlatformTier.handoff).length;
     final hand = accounts.length - auto;
     return Material(
-      color: nf.surfaceSunken,
+      color: nf.chromeRaised,
       borderRadius: Radii.rMd,
       child: InkWell(
         borderRadius: Radii.rMd,
@@ -300,11 +308,11 @@ class _ConnectedSummary extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             PlatformStack(accounts.map((a) => a.platformId).toList(), size: 22, max: 7),
             const SizedBox(height: Space.sm),
-            Text('${accounts.length} connected', style: context.text.labelMedium),
+            Text('${accounts.length} connected', style: context.text.labelMedium?.copyWith(color: nf.onChrome)),
             const SizedBox(height: 2),
             Text(
               '$auto automatic${hand > 0 ? ' · $hand hand-off' : ''}',
-              style: context.text.bodySmall?.copyWith(color: nf.textFaint, fontSize: 11.5),
+              style: context.text.bodySmall?.copyWith(color: nf.onChromeMuted, fontSize: 11.5),
             ),
           ]),
         ),
@@ -326,7 +334,7 @@ class _Rail extends StatelessWidget {
     final nf = context.nf;
     return Container(
       width: 88,
-      decoration: BoxDecoration(color: nf.surface, border: Border(right: BorderSide(color: nf.border))),
+      color: nf.chrome,
       padding: const EdgeInsets.symmetric(vertical: Space.xl),
       child: Column(children: [
         const NeforumMark(size: 38),
@@ -340,8 +348,8 @@ class _Rail extends StatelessWidget {
               child: Container(
                 width: 52,
                 height: 52,
-                decoration: BoxDecoration(gradient: nf.brandGradient, borderRadius: Radii.rLg, boxShadow: nf.glow(nf.accent)),
-                child: const Icon(Icons.add_rounded, color: Colors.white, size: 26),
+                decoration: BoxDecoration(color: nf.highlight, borderRadius: Radii.rLg, boxShadow: nf.glow(nf.highlight, strength: 0.6)),
+                child: Icon(Icons.add_rounded, color: nf.onHighlight, size: 26),
               ),
             ),
           ),
@@ -366,7 +374,7 @@ class _RailItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    final icon = Icon(selected ? section.selectedIcon : section.icon, size: 22, color: selected ? nf.accent : nf.textMuted);
+    final icon = Icon(selected ? section.selectedIcon : section.icon, size: 22, color: selected ? nf.onHighlight : nf.onChromeMuted);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Space.xs),
       child: InkWell(
@@ -379,15 +387,17 @@ class _RailItem extends StatelessWidget {
               duration: Motion.fast,
               width: 52,
               height: 32,
-              decoration: BoxDecoration(color: selected ? nf.accentSoft : Colors.transparent, borderRadius: Radii.rPill),
+              decoration: BoxDecoration(color: selected ? nf.highlight : Colors.transparent, borderRadius: Radii.rPill),
               child: Center(
-                child: badge > 0 ? Badge(label: Text('$badge'), backgroundColor: urgent ? nf.warning : nf.accent, child: icon) : icon,
+                child: badge > 0
+                    ? Badge(label: Text('$badge'), backgroundColor: urgent ? nf.highlight : nf.onChrome, textColor: nf.onHighlight, child: icon)
+                    : icon,
               ),
             ),
             const SizedBox(height: Space.xs),
             Text(
               section.label,
-              style: context.text.labelSmall?.copyWith(color: selected ? nf.text : nf.textFaint, fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
+              style: context.text.labelSmall?.copyWith(color: selected ? nf.onChrome : nf.onChromeMuted, fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
             ),
             const SizedBox(height: Space.xs),
           ]),

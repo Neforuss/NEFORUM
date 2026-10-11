@@ -1,10 +1,37 @@
+import 'dart:typed_data';
+
 import '../../http/neforum_http.dart';
 import '../../model/media.dart';
 import '../../model/post_variant.dart';
+import '../../model/publish_result.dart';
 import '../../text/url_detector.dart';
+import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../platform_adapter.dart';
 
 /// Helpers shared by the WordPress, Ghost and WriteFreely adapters.
+
+/// Reads a media file, turning a missing or unreadable file into an
+/// [AdapterException] so `publish` can report it instead of throwing.
+Future<Uint8List> readBlogMedia(AdapterContext ctx, MediaAttachment m) async {
+  try {
+    return await ctx.readMedia(m);
+  } on Exception catch (e) {
+    throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
+  }
+}
+
+/// Last-resort mapping for an exception that escaped an adapter's helpers,
+/// so `publish` always returns a failure instead of throwing.
+PublishError unexpectedBlogError(String platform, Exception e) {
+  if (e is HttpFailure) return e.toPublishError(context: platform);
+  if (NeforumHttp.isTransportError(e)) return PublishError.network('$platform: $e', raw: '$e');
+  return PublishError.platform('$platform: $e', raw: '$e');
+}
+
+/// True when [r] is an HTML page (a proxy, firewall or theme 404) rather
+/// than an answer from the blog's API.
+bool isHtmlResponse(NeforumResponse r) => (r.headers['content-type'] ?? '').toLowerCase().contains('html');
 
 /// Normalises what the user typed as a blog address into `scheme://host[/path]`
 /// without a trailing slash, query or fragment.
@@ -183,6 +210,16 @@ String extensionForMime(String mime) {
     'x-m4v' => 'm4v',
     _ => sub,
   };
+}
+
+/// Normalised `scheme://host[:port][/path]` of [u] (lower-case host, no
+/// trailing slash, query or fragment), for comparing blog addresses.
+Uri blogOrigin(Uri u) {
+  var path = u.path;
+  while (path.endsWith('/')) {
+    path = path.substring(0, path.length - 1);
+  }
+  return Uri(scheme: u.scheme, host: u.host.toLowerCase(), port: u.hasPort ? u.port : null, path: path);
 }
 
 /// UTC timestamp formatted `YYYY-MM-DDTHH:MM:SS` (no zone suffix), as the

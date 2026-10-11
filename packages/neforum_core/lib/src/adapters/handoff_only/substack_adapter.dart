@@ -16,8 +16,8 @@ class SubstackAdapter extends HandoffOnlyAdapter {
   /// The signed-in home feed, which has the Notes composer on top.
   static const String desktopUrl = 'https://substack.com/home';
 
-  /// Android package of the Substack app (from research; not confirmed on
-  /// an official Substack page).
+  /// Android package of the Substack app (its Google Play listing,
+  /// play.google.com/store/apps/details?id=com.substack.app).
   static const String androidPackage = 'com.substack.app';
 
   /// Substack Notes FAQ: "add up to 6 images or GIFs".

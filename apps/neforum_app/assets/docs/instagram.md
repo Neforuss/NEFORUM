@@ -44,8 +44,8 @@ Limitations:
 ### Create your Meta app (about 10 minutes)
 
 1. Open https://developers.facebook.com/apps and sign in. Accept the developer terms if this is your first app.
-2. Click **Create app**. Choose the use case **Other**, then the app type **Business**. Give it any name, for example "My NEFORUM". If the dashboard asks for a business portfolio, you may create or pick one.
-3. In the app's dashboard, find the product **Instagram** and click **Set up**. Open **API setup with Instagram business login**.
+2. Click **Create app**. Choose the use case **Manage messaging & content on Instagram**. (If your dashboard does not offer it, choose **Other**, then the app type **Business**, and add the product **Instagram** with **Set up**.) Give it any name, for example "My NEFORUM". If the dashboard asks for a business portfolio, you may create or pick one.
+3. Open **API setup with Instagram login** (some dashboards say *API setup with Instagram business login*) and click **Add all required permissions**. Make sure `instagram_business_content_publish` is in the list.
 4. In section **3. Set up Instagram business login**, open **Business login settings**. Under **OAuth redirect URIs**, enter
 
    ```
@@ -65,7 +65,7 @@ Limitations:
 
 NEFORUM exchanges the code for a 60-day token and refreshes it automatically about once a week, whenever it publishes. Your app secret is only used while connecting and is not stored. If NEFORUM does not post for more than 60 days, the token expires and you must connect again.
 
-**Shortcut without the browser step:** in step 5 above, click **Generate token** next to your account. Log in and paste the token into NEFORUM's *Or: access token* field. You can leave the app ID and secret empty. NEFORUM refreshes this token too.
+**Shortcut without the browser step:** in step 5 above, click **Generate token** next to your account. Log in and paste the token into NEFORUM's *Or: access token* field. You can leave the app ID and secret empty. NEFORUM refreshes this token too: Instagram does not say how old a pasted token is, so NEFORUM refreshes it the first time it publishes after the token is a day old, and from then on knows when it expires.
 
 ### What gets posted
 
@@ -89,7 +89,7 @@ NEFORUM exchanges the code for a 60-day token and refreshes it automatically abo
 
 - **No scheduling on Instagram's side.** NEFORUM keeps scheduled posts itself and publishes at the chosen time. Instagram containers expire after 24 hours, so nothing is sent early.
 - **Video processing takes time.** NEFORUM checks the status for about five minutes, as Meta recommends. Long Reels can take longer. If they do, the post fails with a "still processing" message and you can retry.
-- **Rate limits depend on reach.** Meta allows roughly 4,800 calls × the account's impressions per 24 hours. A brand-new account with almost no views can be throttled after a few posts. A 10-item carousel needs about 25 calls.
+- **Rate limits depend on reach.** Meta allows roughly 4,800 calls × the account's impressions per 24 hours. A brand-new account with almost no views can be throttled after a few posts (errors 4, 17 or 80002, reported as a quota problem). A 10-item carousel needs about 25 calls.
 - **"We restrict certain activity to protect our community"** (error 2207051) is Instagram's spam filter. NEFORUM stops and tells you. Wait before posting again.
 - **"The media could not be fetched"** (error 2207052) means Instagram could not download from your media host. Check that the link is public, is not behind bot protection or a redirect, has not expired, and returns the file itself rather than a web page.
 - Not supported yet: tagging people or products, locations, collaborators, music, cover images for Reels, trial Reels, and the binary video upload (`rupload.facebook.com`) that would avoid hosting videos.

@@ -21,7 +21,7 @@ Status as of October 2026: the Telegram Bot API is free. There is no developer p
    - **Group:** add the bot as a member. It needs permission to send messages, and to send media if you post images.
 5. In NEFORUM, add **Telegram**, paste the token and enter the chat:
    - a public channel or group: `@channelusername` (or its `https://t.me/channelusername` link)
-   - a private channel or group: its numeric id, which starts with `-100`, for example `-1001234567890`. Bots can't use invite links (`t.me/+…`). To find the id, forward one post from the channel to a bot such as @userinfobot, or open the channel in Telegram Web, where the id is in the address bar.
+   - a private channel or group: its numeric id. Channels and supergroups start with `-100`, for example `-1001234567890`; a small basic group has a shorter negative id such as `-123456789`. Bots can't use invite links (`t.me/+…`). To find the id, forward one post from the channel to a bot such as @userinfobot, or open the channel in Telegram Web, where the id is in the address bar.
 6. Pick **Formatting**. `markdown` (default) turns `**bold**`, `*italic*`, `` `code` ``, `~~strike~~`, `> quotes` and `[label](https://…)` links into Telegram formatting. `plain` sends your text exactly as written.
 
 There is no redirect URI and nothing to register. Bot tokens never expire.
@@ -33,11 +33,12 @@ When you connect, NEFORUM checks the token (`getMe`), looks up the chat (`getCha
 - **Text**: up to 4096 characters per message. Longer posts are split into several messages, and each one is a reply to the one before it.
 - **Media**: up to 10 photos and/or MP4 videos per post. One file is sent with `sendPhoto`, `sendVideo` or `sendAnimation` (for GIFs). Two to ten files are sent as an album (`sendMediaGroup`).
   - Photos: up to 10 MB each. Width + height must be at most 10000 pixels, and the long side at most 20 times the short side.
-  - Videos and GIFs: up to 50 MB each.
+  - Videos and GIFs: up to 50 MB each. A GIF inside an album is sent as a photo, so there the 10 MB photo limit applies.
 - **Captions**: a caption on media holds 1024 characters. If your text fits, it becomes the caption. If not, NEFORUM sends the media first and then the full text as a separate message right after it.
 - **Sensitive media** is sent with Telegram's spoiler blur.
 - **Link**: the post's link is added to the text. Telegram shows a preview for it unless you set `disableLinkPreview: true` in the per-network options. Set `silent: true` to send without a notification sound.
 - **View post** links: `https://t.me/<channel>/<id>` for public chats, and `https://t.me/c/<id>/<message>` (members only) for private supergroups and channels.
+- **Several messages per post** (media plus a long text, or a long text split into parts): if Telegram asks NEFORUM to slow down between them for up to 10 seconds, NEFORUM waits and carries on. If a later message still fails, the earlier ones stay posted and NEFORUM does **not** retry the post on its own (that would post them twice); the error lists what is already live so you can finish by hand.
 
 ## Known limitations
 

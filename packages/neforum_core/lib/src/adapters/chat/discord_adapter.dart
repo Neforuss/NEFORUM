@@ -153,7 +153,8 @@ class DiscordAdapter extends PlatformAdapter {
               key: 'username',
               label: 'Post as (optional)',
               required: false,
-              help: 'Overrides the webhook\'s name for NEFORUM posts. Leave empty to use the webhook\'s own name.',
+              help: 'Overrides the webhook\'s name for NEFORUM posts (up to 80 characters, without "discord" or '
+                  '"clyde"). Leave empty to use the webhook\'s own name.',
             ),
             ConnectField(
               key: 'forum',
@@ -173,6 +174,13 @@ class DiscordAdapter extends PlatformAdapter {
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
     final hook = DiscordWebhook.parse(input['webhook_url'] ?? '');
+    final username = (input['username'] ?? '').trim();
+    // Webhook names: 1-80 characters and never "clyde" or "discord" (any
+    // case); Discord refuses every post that overrides the name with one.
+    if (username.length > 80 || RegExp('clyde|discord', caseSensitive: false).hasMatch(username)) {
+      throw const ConnectException('"Post as" must be at most 80 characters and may not contain "discord" or "clyde".',
+          field: 'username');
+    }
     ctx.progress('Checking the webhook');
     final NeforumResponse res;
     try {
@@ -200,7 +208,6 @@ class DiscordAdapter extends PlatformAdapter {
     final name = chatStr(w['name']) ?? 'Webhook';
     final guildId = chatId(w['guild_id']);
     final avatar = chatStr(w['avatar']);
-    final username = (input['username'] ?? '').trim();
     final forum = (input['forum'] ?? '').trim().toLowerCase() == 'true';
     return ConnectResult(
       account: ConnectedAccount(
@@ -257,19 +264,27 @@ class DiscordAdapter extends PlatformAdapter {
   @override
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final sent = ChatMessages();
+    PublishResult failed(PublishError error) {
+      final e = sent.fail(error);
+      ctx.log.warn('Discord publish failed: ${e.message}');
+      return PublishResult.failure(e);
+    }
+
     try {
-      return await _publish(variant, account, secrets, ctx);
+      return await _publish(variant, account, secrets, ctx, sent);
     } on AdapterException catch (e) {
-      ctx.log.warn('Discord publish failed: ${e.error.message}');
-      return PublishResult.failure(e.error);
+      return failed(e.error);
     } on Exception catch (e) {
-      ctx.log.warn('Discord publish: network error (${e.runtimeType})');
-      return PublishResult.failure(const PublishError.network('Could not reach discord.com'));
+      // The webhook token is part of the URL; keep it out of the message.
+      final hook = secrets['webhook_url'];
+      final token = hook == null ? null : RegExp(r'/webhooks/\d+/([^/?#]+)').firstMatch(hook)?.group(1);
+      return failed(chatUnexpected(e, 'discord.com', secret: token));
     }
   }
 
-  Future<PublishResult> _publish(
-      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+  Future<PublishResult> _publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets,
+      AdapterContext ctx, ChatMessages sent) async {
     final raw = secrets['webhook_url'];
     if (raw == null || raw.isEmpty) {
       throw const AdapterException(PublishError.auth('No Discord webhook URL stored; reconnect the account'));
@@ -287,7 +302,8 @@ class DiscordAdapter extends PlatformAdapter {
     if (parts.isEmpty) parts.add('');
     final forum = account.config['forum'] == true;
     var threadId = chatStr(account.config['threadId']);
-    final ids = <String>[];
+    final ids = sent.ids;
+    sent.total = parts.length;
     String? channelId;
 
     for (var i = 0; i < parts.length; i++) {
@@ -302,10 +318,16 @@ class DiscordAdapter extends PlatformAdapter {
       final query = {'wait': 'true', if (threadId != null) 'thread_id': threadId};
       final url = hook.url.replace(queryParameters: query);
       final media = i == 0 ? variant.media : const <MediaAttachment>[];
-      final msg = await _execute(url, payload, media, variant.sensitive, ctx, i, parts.length);
+      final part = i;
+      // Later messages sit out a short rate-limit wait instead of leaving
+      // the post half finished.
+      final msg = ids.isEmpty
+          ? await _execute(url, payload, media, variant.sensitive, ctx, part, parts.length)
+          : await chatSendWithFloodWait(
+              () => _execute(url, payload, media, variant.sensitive, ctx, part, parts.length), _discordFloodWait);
       final msgId = chatId(msg['id']);
       if (msgId == null) throw const AdapterException(PublishError.platform('Discord did not return a message id'));
-      ids.add(msgId);
+      sent.add(msgId);
       channelId ??= chatId(msg['channel_id']);
       // A forum post creates a thread whose id is the message's channel id;
       // later parts go into it.
@@ -317,7 +339,7 @@ class DiscordAdapter extends PlatformAdapter {
     return PublishResult.ok(
       remoteId: ids.first,
       remoteUrl: guild == null || channel == null ? null : 'https://discord.com/channels/$guild/$channel/${ids.first}',
-      threadRemoteIds: ids.length > 1 ? ids : const [],
+      threadRemoteIds: ids.length > 1 ? List.unmodifiable(ids) : const [],
       publishedAt: ctx.now(),
     );
   }
@@ -352,6 +374,10 @@ class DiscordAdapter extends PlatformAdapter {
     return msg;
   }
 }
+
+/// How long Discord asked to wait when [e] is a 429 answer.
+Duration? _discordFloodWait(Object e) =>
+    e is AdapterException && e.error.statusCode == 429 ? (e.error.retryAfter ?? const Duration(seconds: 1)) : null;
 
 /// Forum post name: the variant title, else the first line, max 100 chars.
 String discordThreadName(PostVariant v) {

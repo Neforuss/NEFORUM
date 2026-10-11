@@ -139,8 +139,40 @@ class MastodonInstanceProfile {
   /// Pixelfed refuses top-level posts without media.
   bool get requiresMedia => isPixelfed;
 
-  /// `scheduled_at` is ignored by Pixelfed and absent from Mitra's API.
-  bool get supportsScheduling => software != MastodonSoftware.pixelfed && software != MastodonSoftware.mitra;
+  /// The server holds `scheduled_at` posts itself and lets NEFORUM remove them
+  /// again with `DELETE /api/v1/scheduled_statuses/:id`: Mastodon (2.7+),
+  /// Pleroma, Akkoma, Friendica and GoToSocial 0.20+ (older GoToSocial
+  /// answers 501). Pixelfed and Mitra have no scheduled statuses, and unknown
+  /// software is not trusted with them: a server that ignored `scheduled_at`
+  /// would publish the post immediately.
+  bool get supportsScheduling => switch (software) {
+    MastodonSoftware.mastodon ||
+    MastodonSoftware.pleroma ||
+    MastodonSoftware.akkoma ||
+    MastodonSoftware.friendica => true,
+    MastodonSoftware.gotosocial => versionAtLeast(softwareVersion, const [0, 20]),
+    _ => false,
+  };
+
+  /// Why [supportsScheduling] is false, for the composer.
+  String get schedulingUnsupportedReason => switch (software) {
+    MastodonSoftware.gotosocial => 'GoToSocial before 0.20 cannot hold scheduled posts',
+    MastodonSoftware.pixelfed || MastodonSoftware.mitra => '$softwareLabel cannot hold scheduled posts',
+    _ => '$softwareLabel is not known to hold scheduled posts',
+  };
+
+  /// `true` when [version] (`0.20.1`, `0.20.0-rc1+git-abc`) is at least
+  /// [minimum]. Unknown versions count as too old.
+  static bool versionAtLeast(String? version, List<int> minimum) {
+    final m = RegExp(r'^v?(\d+(?:\.\d+)*)').firstMatch(version?.trim() ?? '');
+    if (m == null) return false;
+    final parts = m.group(1)!.split('.').map(int.parse).toList();
+    for (var i = 0; i < minimum.length; i++) {
+      final have = i < parts.length ? parts[i] : 0;
+      if (have != minimum[i]) return have > minimum[i];
+    }
+    return true;
+  }
 
   /// Pixelfed rejects `visibility=direct`.
   bool get supportsDirectVisibility => !isPixelfed;

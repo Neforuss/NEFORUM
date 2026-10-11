@@ -174,6 +174,14 @@ Future<void> disconnectAccount(BuildContext context, WidgetRef ref, ConnectedAcc
     destructive: true,
   );
   if (!ok) return;
+  // Take back scheduled posts the platform holds for this account while its
+  // keys still work; afterwards nothing could remove them.
+  var stillHeld = 0;
+  for (final p in await s.posts.all()) {
+    if (!p.targets.any((t) => t.accountId == a.id && t.isHeldByPlatform)) continue;
+    final outcome = await s.publisher().releaseSchedules(p.id, onlyAccountIds: {a.id});
+    stillHeld += outcome.failed.length;
+  }
   try {
     final secrets = await s.secrets.read(a.id) ?? const <String, String>{};
     await s.registry.byId(a.platformId)?.disconnect(a, secrets, s.connectContext());
@@ -187,5 +195,10 @@ Future<void> disconnectAccount(BuildContext context, WidgetRef ref, ConnectedAcc
     await ref.read(settingsProvider.notifier).update((x) => x.copyWith(defaultTargetIds: x.defaultTargetIds.where((id) => id != a.id).toList()));
   }
   if (ref.read(composerProvider).selected.contains(a.id)) ref.read(composerProvider.notifier).toggleAccount(a.id);
-  if (context.mounted) showToast(context, '$name disconnected', icon: Icons.check_rounded);
+  if (!context.mounted) return;
+  if (stillHeld > 0) {
+    showToast(context, '$name disconnected. $stillHeld scheduled ${stillHeld == 1 ? 'post is' : 'posts are'} still held there; delete ${stillHeld == 1 ? 'it' : 'them'} on $name.', icon: Icons.warning_amber_rounded);
+  } else {
+    showToast(context, '$name disconnected', icon: Icons.check_rounded);
+  }
 }

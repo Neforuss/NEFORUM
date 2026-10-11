@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:uuid/uuid.dart';
 
 import '../../auth/auth_broker.dart';
@@ -356,12 +358,13 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       final fresh = await _oauthClient(key, secret).refresh(ctx.http, refreshToken: refresh, now: ctx.now());
       return fresh.toSecrets(secrets);
     } on OAuthException catch (e) {
-      final status = int.tryParse(RegExp(r'HTTP (\d{3})').firstMatch(e.message)?.group(1) ?? '');
-      if (status != null && status >= 500) {
-        throw AdapterException(PublishError.network('Tumblr could not renew the sign-in right now (HTTP $status)',
-            raw: e.toString(), statusCode: status));
+      // 401 = refresh token expired (api.md), 429 = rate limited, 5xx = outage.
+      throw AdapterException(e.toRefreshError('Tumblr'));
+    } on Object catch (e) {
+      if (NeforumHttp.isTransportError(e)) {
+        throw AdapterException(PublishError.network('Could not reach Tumblr to renew the sign-in: $e'));
       }
-      throw AdapterException(PublishError.auth(_expiredMessage, raw: e.toString(), statusCode: status));
+      rethrow;
     }
   }
 
@@ -411,11 +414,7 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       issues.add(ValidationIssue.error('tumblr.state',
           'Unknown Tumblr post state "$rawState"; use published, queue, draft or private', field: 'extra'));
     }
-    final state = _stateValue(rawState);
-    if (variant.scheduledAt != null && (state == 'draft' || state == 'private')) {
-      issues.add(ValidationIssue.warning('schedule.ignored',
-          'Tumblr can only schedule queued posts; this $state post will be created right away', field: 'schedule'));
-    }
+    if (account.tier == PlatformTier.byokApi) _checkSchedule(variant, DateTime.now(), issues);
 
     if (variant.visibility == Visibility.unlisted || variant.visibility == Visibility.followers) {
       issues.add(const ValidationIssue.warning('visibility.public',
@@ -434,6 +433,36 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
     }
     return issues;
   }
+
+  /// Errors on `scheduledAt` make the publish service keep the schedule on
+  /// this device instead of handing it to Tumblr. Only a schedule that is
+  /// still ahead is checked: once it is due the post is published normally.
+  static void _checkSchedule(PostVariant v, DateTime now, List<ValidationIssue> issues) {
+    final at = v.scheduledAt;
+    if (at == null || !at.isAfter(now)) return;
+    final state = _effectiveState(v);
+    if (state == 'draft' || state == 'private') {
+      // publish_on "will be ignored unless the state parameter is queue".
+      issues.add(ValidationIssue.error('schedule.state',
+          'Tumblr can only hold queued posts, not ${state == 'draft' ? 'drafts' : 'private posts'}; '
+              'NEFORUM keeps this schedule itself',
+          field: 'scheduledAt'));
+      return;
+    }
+    final bytes = v.media.fold<int>(0, (s, m) => s + m.sizeBytes);
+    final lead = TumblrApi.scheduleLead(bytes);
+    if (at.isBefore(now.add(lead))) {
+      issues.add(ValidationIssue.error('schedule.too_soon',
+          'Tumblr needs the post at least ${lead.inMinutes} minutes before its publishing time; '
+              'NEFORUM keeps this schedule itself',
+          field: 'scheduledAt'));
+    }
+  }
+
+  /// The state the post is created with, before scheduling turns it into
+  /// `queue`.
+  static String _effectiveState(PostVariant v) =>
+      _stateValue(v.extra['state']) ?? (v.visibility == Visibility.private ? 'private' : 'published');
 
   static String? _stateValue(Object? raw) {
     if (raw is! String) return null;
@@ -458,6 +487,12 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       return PublishResult.failure(e.error);
     } on HttpFailure catch (e) {
       return PublishResult.failure(TumblrApi.mapFailure(e, 'Posting to Tumblr'));
+    } on Object catch (e) {
+      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Tumblr: $e'));
+      if (e is FormatException) {
+        return PublishResult.failure(PublishError.platform('Tumblr sent a response NEFORUM did not understand: $e'));
+      }
+      rethrow;
     }
   }
 
@@ -489,7 +524,13 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       final m = variant.media[i];
       ctx.progress('Preparing ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${variant.media.length}');
       final identifier = 'media$i';
-      final bytes = await ctx.readMedia(m);
+      final Uint8List bytes;
+      try {
+        bytes = await ctx.readMedia(m);
+      } on Exception catch (e) {
+        return PublishResult.failure(PublishError.configuration(
+            'Could not read ${m.fileName ?? m.path}; re-attach it and try again ($e)'));
+      }
       uploads.add(TumblrUpload(
         identifier: identifier,
         bytes: bytes,
@@ -527,12 +568,24 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
           'Tumblr accepted the post but did not return its id (HTTP ${res.statusCode})',
           raw: res.body, statusCode: res.statusCode));
     }
-    final visible = schedule.state == 'published' || schedule.state == 'private';
     final name = blogName.isNotEmpty ? blogName : account.handle ?? '';
+    final publishOn = schedule.publishOn;
+    if (publishOn != null) {
+      // Tumblr holds the post. Its id changes when it is published (the old
+      // one becomes the "genesis" id, which cannot look the post up), so link
+      // the blog rather than a permalink that will stop working. The blog
+      // identifier needed to delete it again is in the account config.
+      return PublishResult.scheduled(
+        remoteId: postId,
+        scheduledFor: publishOn,
+        remoteUrl: name.isNotEmpty ? TumblrApi.blogUrl(name) : account.profileUrl,
+      );
+    }
+    final visible = schedule.state == 'published' || schedule.state == 'private';
     return PublishResult.ok(
       remoteId: postId,
       remoteUrl: visible && name.isNotEmpty ? TumblrApi.postUrl(name, postId) : null,
-      publishedAt: schedule.publishOn ?? (visible ? ctx.now() : null),
+      publishedAt: visible ? ctx.now() : null,
     );
   }
 
@@ -570,8 +623,7 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
   }
 
   static ({String state, DateTime? publishOn}) _schedule(PostVariant v, DateTime now) {
-    final forced = _stateValue(v.extra['state']);
-    final state = forced ?? (v.visibility == Visibility.private ? 'private' : 'published');
+    final state = _effectiveState(v);
     final at = v.scheduledAt;
     if (at != null && at.isAfter(now) && (state == 'published' || state == 'queue')) {
       // publish_on is only honoured for state=queue.
@@ -589,6 +641,59 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
         'video/quicktime' => '.mov',
         _ => '',
       };
+
+  // ------------------------------------------------- cancel scheduled post
+
+  /// A 404 this close to the publishing time may mean Tumblr has already
+  /// published the post (which gives it a new id), not that it is gone.
+  static const Duration _publishRace = Duration(minutes: 5);
+
+  /// Deletes a post Tumblr holds in the blog's queue:
+  /// `POST /v2/blog/{blog-identifier}/post/delete` with `id`.
+  @override
+  Future<void> cancelScheduled(
+      PublishResult held, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (account.tier != PlatformTier.byokApi) {
+      throw const AdapterException(PublishError.unsupported('Hand-off Tumblr accounts have no scheduled posts to remove'));
+    }
+    final postId = (held.remoteId ?? '').trim();
+    if (postId.isEmpty) {
+      throw const AdapterException(PublishError.configuration(
+          'NEFORUM does not know which Tumblr post holds this schedule; delete it from your blog\'s queue on tumblr.com'));
+    }
+    final blogId = account.configString(cfgBlogUuid, account.configString(cfgBlogName));
+    if (blogId.isEmpty) {
+      throw const AdapterException(PublishError.configuration('No Tumblr blog selected; reconnect Tumblr'));
+    }
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    if (tokens == null) throw const AdapterException(PublishError.auth(_reconnectMessage));
+    if (tokens.isExpired(now: ctx.now(), leeway: Duration.zero)) {
+      throw const AdapterException(PublishError.auth(_expiredMessage));
+    }
+    try {
+      await ctx.http.postForm(
+        TumblrApi.deleteEndpoint(blogId),
+        {'id': postId},
+        headers: {..._bearer(tokens.accessToken), 'Accept': 'application/json'},
+      );
+    } on HttpFailure catch (e) {
+      if (e.statusCode != 404) throw AdapterException(TumblrApi.mapFailure(e, 'Removing the scheduled Tumblr post'));
+      final due = held.scheduledFor;
+      if (due != null && ctx.now().isAfter(due.subtract(_publishRace))) {
+        throw AdapterException(PublishError.platform(
+            'Tumblr no longer has the scheduled post under its original id. It was due at ${due.toUtc().toIso8601String()}, '
+            'so it may already be live; check your blog before posting it again.',
+            raw: e.body,
+            statusCode: 404));
+      }
+      ctx.log.info('Tumblr post $postId was already gone from the queue');
+    } on Object catch (e) {
+      if (NeforumHttp.isTransportError(e)) {
+        throw AdapterException(PublishError.network('Could not reach Tumblr to remove the scheduled post: $e'));
+      }
+      rethrow;
+    }
+  }
 
   // ------------------------------------------------------------- hand-off
 

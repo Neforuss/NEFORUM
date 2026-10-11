@@ -19,7 +19,7 @@ Discord has no share link that can fill in a message, so NEFORUM has no hand-off
 3. Click the new webhook. Set the name and avatar your posts should have, and check that the **Channel** is right.
 4. Click **Copy Webhook URL**. It looks like `https://discord.com/api/webhooks/123456789012345678/AbCdEf…`.
 5. In NEFORUM, add **Discord** and paste the URL.
-   - **Post as** (optional) replaces the webhook's name on NEFORUM posts.
+   - **Post as** (optional) replaces the webhook's name on NEFORUM posts. It can be up to 80 characters and may not contain "discord" or "clyde"; Discord refuses posts with such a name, so NEFORUM checks it when you connect.
    - Turn on **Forum or media channel** if the webhook belongs to a forum or media channel. Each post then starts a new forum post, named after the post title (or its first line).
 
 Treat the webhook URL like a password: anyone who has it can post in the channel. If it leaks, delete the webhook in Discord and create a new one. There is no redirect URI and nothing else to register. Webhooks don't expire until someone deletes them.
@@ -28,7 +28,7 @@ When you connect, NEFORUM checks the webhook once (`GET /webhooks/{id}/{token}`)
 
 ## Posting
 
-- **Text** uses Discord's own Markdown (`**bold**`, `*italic*`, `` `code` ``, `> quote`) and is sent as written. Posts longer than 2000 characters are sent as several messages in a row.
+- **Text** uses Discord's own Markdown (`**bold**`, `*italic*`, `` `code` ``, `> quote`) and is sent as written. Posts longer than 2000 characters are sent as several messages in a row. If Discord asks NEFORUM to wait up to 10 seconds between them, NEFORUM waits and carries on. If a later message still fails, the earlier ones stay posted and NEFORUM does **not** retry on its own (that would post them twice); the error lists what is already live.
 - **Mentions are switched off.** `@everyone`, `@here`, role and user mentions in cross-posted text show as text but don't ping anyone.
 - **Media**: up to 10 images/videos per message, uploaded together with the text. Alt text is sent as the attachment description (max 1024 characters). Media marked **sensitive** is sent as a spoiler.
 - **Link previews**: Discord previews every link. Set `disableLinkPreview: true` in the per-network options to turn that off.

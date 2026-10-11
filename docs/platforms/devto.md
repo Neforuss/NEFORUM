@@ -31,7 +31,7 @@ NEFORUM sends `POST /api/articles` with `{"article": {...}}`:
 |---|---|---|
 | Title (**required**) | `title` | 128 characters at most. If there's no title, NEFORUM uses the first line of your text. |
 | Text | `body_markdown` | Markdown, up to 800 KB. A link you attach is added to the end. |
-| Tags | `tags` | At most **4**. They're lower-cased, and anything except letters and digits is removed: `Web-Dev` becomes `webdev`. Extra tags are dropped. |
+| Tags | `tags` | At most **4**, each at most **30** characters. They're lower-cased, and anything except letters and digits is removed: `Web-Dev` becomes `webdev`. Extra tags and tags that are still longer than 30 characters are dropped (DEV would refuse the whole article). |
 | Images | `main_image` and inline images | See below. |
 
 By default, `published` is set to `true`. Set `draft: true` to save the article as a draft instead.
@@ -65,7 +65,8 @@ The full Markdown is also copied to the clipboard. Images can't travel in the li
 ## Known limitations
 
 - **No image upload.** Images need a media host, or you add them in the hand-off editor.
-- **No scheduling.** DEV's API can't schedule. NEFORUM schedules on your device.
+- **No scheduling.** The API v1 reference documents no scheduling field. (Forem's source code accepts a future `published_at`, but it is undocumented, so NEFORUM does not rely on it.) NEFORUM schedules on your device.
+- **New accounts.** Forem limits accounts that are only a few days old to about one new article per 5 minutes; DEV then answers HTTP 429 with `Retry-After: 300`.
 - **Duplicate titles.** DEV refuses a new article with the same title as one you posted in the last five minutes. A `canonical_url` that another published article already uses is also refused. NEFORUM shows DEV's own message.
 - **Rate limits.** The 10-per-30-seconds figure comes from DEV's published guidance. Forem's code confirms the limiter but sets the exact number in each community's settings. Other Forem communities may use different limits.
 - **The DEV mobile app** has no documented share target. Hand-off uses the web editor on every device.
@@ -75,6 +76,7 @@ The full Markdown is also copied to the clipboard. Images can't travel in the li
 - Forem API v1 reference: https://developers.forem.com/api/v1
 - Article API controller (tags array, 201 + Location, 422 `{error, status}`): https://github.com/forem/forem/blob/main/app/controllers/concerns/api/articles_controller.rb
 - Article validations (title ≤ 128, body ≤ 800 KB, max 4 tags, duplicate-title rule): https://github.com/forem/forem/blob/main/app/models/article.rb
-- Rate limiting (write throttle 1/s, Retry-After): https://github.com/forem/forem/blob/main/config/initializers/rack_attack.rb and https://github.com/forem/forem/blob/main/app/services/rate_limit_checker.rb
+- Rate limiting (write throttle 1/s, Retry-After): https://github.com/forem/forem/blob/main/config/initializers/rack_attack.rb and https://github.com/forem/forem/blob/main/app/services/rate_limit_checker.rb (defaults in https://github.com/forem/forem/blob/main/app/models/settings/rate_limit.rb)
+- Tag rules (letters and digits, 30 characters): https://github.com/forem/forem/blob/main/app/models/tag.rb
 - Share-to-DEV prefill link: https://dev.to/share-to-dev-button
 - Editor guide (front matter): https://dev.to/p/editor_guide

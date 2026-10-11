@@ -43,8 +43,8 @@ NEFORUM cannot read your direct messages, follow people or change your profile w
 
 NEFORUM registers exactly one of these when it creates its app on your server:
 
-- Desktop (Windows, macOS): `http://127.0.0.1:52771/callback`
-- Mobile (Android, iOS): `neforum://callback`
+- Windows and Linux: `http://127.0.0.1:52771/callback`
+- Android, iOS and macOS: `neforum://callback`
 - Paste-the-code fallback: `urn:ietf:wg:oauth:2.0:oob` (the server shows a code that you copy into NEFORUM)
 
 ### If your server does not allow automatic app registration
@@ -82,7 +82,7 @@ NEFORUM uses **your server's own limits**, which it reads when you connect, inst
 
 Server-specific rules:
 
-- **Pixelfed** needs at least one image per post, has no "direct" visibility, and ignores scheduling.
+- **Pixelfed** needs at least one image per post, has no "direct" visibility, and cannot hold scheduled posts.
 - **Mitra** treats text as Markdown by default; NEFORUM sends `content_type=text/plain` so your text appears as
   typed.
 - **GoToSocial** ignores the duplicate-protection header (see below).
@@ -99,20 +99,32 @@ Re-connect the account if your admin changes the server's limits.
   (followers only), *Private* → `direct` (only you, unless you mention someone).
 - Language: NEFORUM sends the two-letter code (`en-GB` becomes `en`).
 - Each post carries an `Idempotency-Key`. If the connection drops and NEFORUM retries within an hour, Mastodon
-  returns the post it already made instead of posting twice.
+  returns the post it already made instead of posting twice. The key changes when you edit the post. Posts handed
+  to the server's scheduler get a new key every time, because Mastodon and Pleroma/Akkoma would otherwise answer a
+  re-scheduled or "publish now" request with the copy NEFORUM had just removed.
+- If a thread fails half-way, the parts already posted stay up and NEFORUM does not retry (that would post them
+  twice). The error lists the ids of the parts that went out.
 
 ### Scheduling on the server
 
-If you let the server hold a scheduled post, NEFORUM sends `scheduled_at` and your server publishes it at the time
-you chose, even if NEFORUM is closed.
+If you let the server hold a scheduled post, NEFORUM uploads the media, sends the post with `scheduled_at`, and your
+server publishes it at the time you chose, even if NEFORUM is closed. When you edit, reschedule, delete or
+"publish now" such a post, NEFORUM first removes the held copy (`DELETE /api/v1/scheduled_statuses/:id`; a copy
+that is already gone counts as removed).
 
-- The time must be **at least 5 minutes in the future**. If you pick a time less than 5 minutes away, NEFORUM moves
-  it to 5½ minutes from now. It never publishes early.
-- Mastodon allows **25 scheduled posts per day and 300 in total**.
-- Threads cannot be scheduled on the server, because replies need the first post to exist. NEFORUM schedules them
-  itself.
-- Pixelfed and Mitra cannot schedule. For those accounts, NEFORUM schedules locally (the app must be running at
-  the time).
+| Server | Holds scheduled posts |
+|---|---|
+| Mastodon | Yes |
+| Pleroma, Akkoma | Yes |
+| Friendica | Yes |
+| GoToSocial | From version 0.20; older versions refuse |
+| Pixelfed, Mitra | No |
+| Other or unknown software | Not used: a server that ignored the time would publish immediately |
+
+- The time must be **at least 5 minutes in the future** (NEFORUM wants 6, to leave room for uploads and clock
+  differences). Closer times, threads (replies need the first post to exist) and servers from the "No" rows are
+  scheduled by NEFORUM on your device instead; the app must then be running at that time.
+- Mastodon and GoToSocial allow **25 scheduled posts per day and 300 in total**.
 - A scheduled post's link is not known until it is published, so NEFORUM shows it as "scheduled".
 
 ## Rate limits
@@ -176,6 +188,10 @@ Reconnecting fixes either case.
 - https://github.com/mastodon/mastodon/blob/main/app/validators/status_length_validator.rb
 - https://github.com/mastodon/mastodon/blob/main/app/models/scheduled_status.rb
 - https://github.com/mastodon/mastodon/blob/main/config/initializers/doorkeeper.rb
+- https://github.com/mastodon/mastodon/blob/main/app/services/post_status_service.rb
+- https://codeberg.org/superseriousbusiness/gotosocial/releases (v0.20.0: scheduled statuses)
+- https://codeberg.org/superseriousbusiness/gotosocial/src/branch/main/internal/processing/status/create.go
+- https://github.com/friendica/friendica/blob/develop/doc/en/spec/api/mastodon.md
 - https://docs.gotosocial.org/en/latest/api/authentication/
 - https://docs.gotosocial.org/en/latest/api/ratelimiting/
 - https://docs.gotosocial.org/en/latest/configuration/statuses/

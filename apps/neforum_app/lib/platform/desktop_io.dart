@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:nativeapi/nativeapi.dart' as native show LaunchAtLogin;
@@ -20,9 +21,19 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
   Future<void> initWindow({bool startHidden = false}) async {
     if (!Env.isDesktop) return;
     await windowManager.ensureInitialized();
-    const options = WindowOptions(
-      size: Size(1320, 860),
-      minimumSize: Size(420, 620),
+    // 1320 x 860 where it fits; a little inside the screen on small laptops.
+    var size = const Size(1320, 860);
+    final displays = WidgetsBinding.instance.platformDispatcher.displays;
+    if (displays.isNotEmpty) {
+      final d = displays.first;
+      final screen = d.size / d.devicePixelRatio;
+      if (screen.width > 0 && screen.height > 0) {
+        size = Size(math.min(size.width, math.max(420, screen.width * 0.92)), math.min(size.height, math.max(560, screen.height * 0.86)));
+      }
+    }
+    final options = WindowOptions(
+      size: size,
+      minimumSize: const Size(420, 560),
       center: true,
       title: 'NEFORUM',
       backgroundColor: Colors.transparent,

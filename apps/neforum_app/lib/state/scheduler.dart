@@ -75,20 +75,29 @@ class AppScheduler {
     if (when == null || p.status != PostStatus.scheduled) return;
     final s = _s;
     final handoffNames = <String>[];
+    final heldNames = <String>[];
     for (final t in p.targets) {
       final a = await s.accounts.get(t.accountId);
-      if (a == null || a.tier != PlatformTier.handoff) continue;
-      final d = s.registry.descriptor(a.platformId);
-      if (d != null) handoffNames.add(d.name);
+      final d = a == null ? null : s.registry.descriptor(a.platformId);
+      if (a == null || d == null) continue;
+      if (t.isHeldByPlatform) heldNames.add(d.name);
+      if (a.tier == PlatformTier.handoff) handoffNames.add(d.name);
     }
     if (Env.isIOS) {
-      await NotificationService.instance.schedule(
-        key: 'due:${p.id}',
-        when: when,
-        title: handoffNames.isEmpty ? 'Your scheduled post is ready' : 'Time to post',
-        body: 'Tap to publish now: ${_short(p.text)}',
-        payload: 'publish:${p.id}',
-      );
+      if (!p.needsDeviceAtSchedule) {
+        // Every target is held by its platform: nothing for the phone to do.
+        await NotificationService.instance.cancel('due:${p.id}');
+      } else {
+        final held = heldNames.isEmpty ? '' : '${_join(heldNames)} already ${heldNames.length == 1 ? 'has' : 'have'} it. ';
+        await NotificationService.instance.schedule(
+          key: 'due:${p.id}',
+          when: when,
+          title: handoffNames.isEmpty ? 'Your scheduled post is ready' : 'Time to post',
+          body: '${held}Publish now: ${_short(p.text)}',
+          payload: 'publish:${p.id}',
+          publishAction: true,
+        );
+      }
     } else if (handoffNames.isNotEmpty) {
       await NotificationService.instance.schedule(
         key: 'due:${p.id}',

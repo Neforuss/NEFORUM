@@ -32,12 +32,12 @@ Status as of October 2026.
 - Up to **6 images or GIFs** per note. GIFs can only be added on the web. Images and video cannot be mixed. Video in notes is newer and only mentioned for the app.
 - Formatting (bold, italic, links) and @mentions are added in Substack's composer. A pasted URL turns into a link preview.
 - Hashtags have no special meaning on Substack, so NEFORUM does not add them.
-- Substack can schedule notes itself (calendar icon in the composer). NEFORUM does not control that.
+- Substack can schedule notes itself (three dots at the top of the composer > **Schedule**). NEFORUM does not control that.
 
 ## Known limitations
 
 - You always paste the text yourself.
-- The Android share target (`com.substack.app`) is not documented by Substack. NEFORUM shares files to it, but whether they land in a new note depends on the app.
+- The Android app is `com.substack.app` (its Google Play listing), but Substack does not document a share target. NEFORUM shares files to it, but whether they land in a new note depends on the app.
 
 ## Sources
 

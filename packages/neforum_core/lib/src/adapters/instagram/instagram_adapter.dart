@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
@@ -299,7 +300,10 @@ class InstagramAdapter extends PlatformAdapter {
     final age = refreshedAt == null ? null : now.difference(refreshedAt);
     final expiringSoon = expiresAt != null && expiresAt.difference(now) < refreshEvery;
     if (age != null && age < minRefreshAge) return null;
-    if (age != null && age < refreshEvery && !expiringSoon) return null;
+    // A pasted "Generate token" token has no known expiry (it may already be
+    // weeks old), so it is refreshed as soon as Instagram allows, which also
+    // tells NEFORUM when it expires.
+    if (age != null && age < refreshEvery && !expiringSoon && expiresAt != null) return null;
     try {
       ctx.progress('Refreshing the Instagram token…');
       final fresh = await _api(ctx).refresh(tokens.accessToken);
@@ -440,23 +444,36 @@ class InstagramAdapter extends PlatformAdapter {
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
       ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${media.length} to ${host.name}…');
+      final bytes = await _read(ctx, m);
       try {
-        final bytes = await ctx.readMedia(m);
         final h = await host.upload(m, bytes, ttl: const Duration(hours: 24));
         hosted.add(h);
         urls.add(h.url.toString());
       } on MediaHostException catch (e) {
         throw AdapterException(PublishError.configuration('Your media host (${host.name}) failed: ${e.message}'));
       } on HttpFailure catch (f) {
-        throw AdapterException(PublishError.configuration(
-            'Your media host (${host.name}) refused the upload: HTTP ${f.statusCode}'));
+        final message = 'Your media host (${host.name}) refused the upload: HTTP ${f.statusCode}';
+        throw AdapterException(f.statusCode >= 500 || f.statusCode == 429
+            ? PublishError.network(message, statusCode: f.statusCode, retryAfter: f.response.retryAfter)
+            : PublishError.configuration(message));
       } on AdapterException {
         rethrow;
       } on Object catch (e) {
-        throw AdapterException(PublishError.validation('Could not read ${m.fileName ?? m.path}: $e'));
+        if (NeforumHttp.isTransportError(e)) {
+          throw AdapterException(PublishError.network('Could not reach your media host (${host.name}): $e'));
+        }
+        throw AdapterException(PublishError.configuration('Your media host (${host.name}) failed: $e'));
       }
     }
     return urls;
+  }
+
+  static Future<Uint8List> _read(AdapterContext ctx, MediaAttachment m) async {
+    try {
+      return await ctx.readMedia(m);
+    } on Object catch (e) {
+      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
+    }
   }
 
   Future<void> _cleanup(List<HostedMedia> hosted, AdapterContext ctx) async {
@@ -522,8 +539,8 @@ const String _apiIntro = '''
 **Automatic posting needs a professional Instagram account (Business or Creator) and your own free Meta app.** Personal accounts cannot use the API; use Hand-off for those.
 
 1. In the Instagram app: *Settings > Account type and tools > Switch to professional account* (free).
-2. Go to [developers.facebook.com/apps](https://developers.facebook.com/apps), click **Create app**, choose the use case **Other** and the app type **Business**.
-3. In your app, add the product **Instagram** and open **API setup with Instagram business login**.
+2. Go to [developers.facebook.com/apps](https://developers.facebook.com/apps), click **Create app** and choose the use case **Manage messaging & content on Instagram** (if your dashboard does not offer it: use case **Other**, app type **Business**, then add the product **Instagram**).
+3. Open **API setup with Instagram login** (called *API setup with Instagram business login* on some dashboards) and click **Add all required permissions**; make sure `instagram_business_content_publish` is among them.
 4. Under **Business login settings**, add the OAuth redirect URI `https://localhost:52771/callback` exactly (pick it from the dropdown so it turns into a chip) and save.
 5. Under **Generate access tokens**, click **Add account** and sign in with your Instagram account. Accept the tester invite in Instagram (*Settings > Apps and websites > Tester invites*) if asked.
 6. Copy the **Instagram app ID** and **Instagram app secret** from that page into the fields below (not the Meta App ID at the top).

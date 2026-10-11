@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:convert/convert.dart' show hex;
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/blogs_a/blog_common.dart';
 import 'package:neforum_core/src/adapters/blogs_a/ghost_adapter.dart';
@@ -214,6 +215,9 @@ void main() {
       expect(res.success, isTrue, reason: '${res.error}');
       expect(res.remoteId, '101');
       expect(res.remoteUrl, 'https://example.com/?p=101');
+      // status future in the response: WordPress holds the post.
+      expect(res.isHeldByPlatform, isTrue);
+      expect(res.scheduledFor, at);
 
       expect(calls.map((c) => '${c.method} ${c.url}'), [
         'POST https://example.com/wp-json/wp/v2/media',
@@ -237,6 +241,7 @@ void main() {
       expect(post['title'], 'Hello & welcome');
       expect(post['status'], 'future');
       expect(post['date_gmt'], '2026-10-09T08:30:00');
+      expect(post.containsKey('date'), isFalse, reason: 'date is in the site time zone; only date_gmt is exact');
       expect(post['tags'], [3, 9]);
       expect(post['featured_media'], 55);
       expect(post['excerpt'], 'Short');
@@ -267,6 +272,154 @@ void main() {
       expect(post['categories'], [2, 4]);
       expect(post['status'], 'draft');
       expect(post.containsKey('date_gmt'), isFalse);
+    });
+
+    test('publish: schedule sent in local time zone is converted to date_gmt', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({'id': 8, 'link': 'https://example.com/?p=8', 'status': 'future', 'date_gmt': '2026-10-09T08:30:00'}, 201);
+      });
+      final local = DateTime.utc(2026, 10, 9, 8, 30).toLocal();
+      final res = await wp.publish(PostVariant(title: 'T', text: 'x', scheduledAt: local), account(), secrets, ctx);
+      expect(bodyOf(calls.single)['date_gmt'], '2026-10-09T08:30:00');
+      expect(res.scheduledFor, local);
+    });
+
+    test('publish: status publish in the response (date already past on the server) -> normal ok result', () async {
+      final ctx = testContext(handler: (r) async => _json({'id': 9, 'link': 'https://example.com/live/', 'status': 'publish'}, 201));
+      final res = await wp.publish(PostVariant(title: 'T', text: 'x', scheduledAt: DateTime.utc(2026, 10, 7, 11, 59)),
+          account(), secrets, ctx);
+      expect(res.success, isTrue);
+      expect(res.isHeldByPlatform, isFalse);
+      expect(res.scheduledFor, isNull);
+      expect(res.remoteId, '9');
+      expect(res.remoteUrl, 'https://example.com/live/');
+      expect(res.publishedAt, testNow);
+    });
+
+    test('validate: a schedule only works when WordPress will publish the post', () {
+      final at = DateTime.utc(2026, 10, 20, 9);
+      List<ValidationIssue> errors(PostVariant v, ConnectedAccount a) =>
+          wp.validate(v, a).where((i) => i.isError).toList();
+      expect(errors(PostVariant(title: 't', text: 'b', scheduledAt: at), account()), isEmpty);
+      for (final (v, a) in [
+        (PostVariant(title: 't', text: 'b', scheduledAt: at, extra: const {'status': 'draft'}), account()),
+        (PostVariant(title: 't', text: 'b', scheduledAt: at), account(extra: {'defaultStatus': 'draft'})),
+        (PostVariant(title: 't', text: 'b', scheduledAt: at), account(extra: {'defaultStatus': 'pending'})),
+        (PostVariant(title: 't', text: 'b', scheduledAt: at, visibility: Visibility.private), account()),
+        (PostVariant(title: 't', text: 'b', scheduledAt: at), account(extra: {'canPublish': false})),
+      ]) {
+        final e = errors(v, a);
+        expect(e.map((i) => i.code), ['wordpress.cannot_schedule']);
+        expect(e.single.field, 'scheduledAt');
+      }
+      // Without a schedule a draft is fine.
+      expect(errors(const PostVariant(title: 't', text: 'b', extra: {'status': 'draft'}), account()), isEmpty);
+    });
+
+    group('cancelScheduled', () {
+      final held = PublishResult.scheduled(remoteId: '101', scheduledFor: DateTime.utc(2026, 10, 20, 9));
+
+      test('DELETE /wp/v2/posts/{id}?force=true with Basic auth', () async {
+        final calls = <http.Request>[];
+        await wp.cancelScheduled(held, account(), secrets, testContext(handler: (r) async {
+          calls.add(r);
+          return _json({'deleted': true, 'previous': {'id': 101, 'status': 'future'}});
+        }));
+        expect('${calls.single.method} ${calls.single.url}', 'DELETE https://example.com/wp-json/wp/v2/posts/101?force=true');
+        expect(calls.single.headers['authorization'], _basic('alice', 'abcdefghijklmnopqrstuvwx'));
+      });
+
+      test('uses ?rest_route= on plain permalinks', () async {
+        final calls = <http.Request>[];
+        await wp.cancelScheduled(held, account(extra: {'restBase': 'https://example.com/?rest_route=/'}), secrets,
+            testContext(handler: (r) async {
+          calls.add(r);
+          return _json({'deleted': true});
+        }));
+        expect(calls.single.method, 'DELETE');
+        expect(calls.single.url.path, '/');
+        expect(calls.single.url.queryParameters, {'rest_route': '/wp/v2/posts/101', 'force': 'true'});
+      });
+
+      test('404 rest_post_invalid_id = already gone', () async {
+        await wp.cancelScheduled(held, account(), secrets,
+            testContext(handler: (r) async => _json({'code': 'rest_post_invalid_id', 'message': 'Invalid post ID.', 'data': {'status': 404}}, 404)));
+      });
+
+      Future<PublishError> cancelError(http.Response response) async {
+        try {
+          await wp.cancelScheduled(held, account(), secrets, testContext(handler: (r) async => response));
+        } on AdapterException catch (e) {
+          return e.error;
+        }
+        fail('expected AdapterException');
+      }
+
+      test('404 without the post route is not "gone"', () async {
+        expect((await cancelError(_json({'code': 'rest_no_route', 'message': 'No route'}, 404))).kind,
+            PublishErrorKind.configuration);
+        expect((await cancelError(http.Response('<html>Not found</html>', 404, headers: {'content-type': 'text/html'}))).kind,
+            PublishErrorKind.platform);
+      });
+
+      test('errors map to the right kind', () async {
+        expect((await cancelError(_json({'code': 'incorrect_password', 'message': 'bad'}, 401))).kind, PublishErrorKind.auth);
+        expect((await cancelError(_json({'code': 'rest_cannot_delete', 'message': 'Sorry'}, 403))).kind, PublishErrorKind.auth);
+        final q = await cancelError(_json({'code': 'too_many'}, 429, {'retry-after': '30'}));
+        expect(q.kind, PublishErrorKind.quota);
+        expect(q.retryAfter, const Duration(seconds: 30));
+        expect((await cancelError(_json({'code': 'internal'}, 503))).kind, PublishErrorKind.network);
+      });
+
+      test('missing id or password -> AdapterException without a request', () async {
+        final ctx = testContext(handler: (r) async => fail500());
+        await expectLater(wp.cancelScheduled(PublishResult.ok(), account(), secrets, ctx), throwsA(isA<AdapterException>()));
+        await expectLater(wp.cancelScheduled(held, account(), const {}, ctx),
+            throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)));
+      });
+    });
+
+    test('connect: follows the home address the REST index reports (apex -> www)', () async {
+      final calls = <http.Request>[];
+      final wwwIndex = {...index, 'url': 'https://www.example.com', 'home': 'http://www.example.com/'};
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        if (r.url.path == '/wp-json/') return _json(wwwIndex);
+        if (r.url.path == '/wp-json/wp/v2/users/me') return _json(me);
+        return _json({'code': 'rest_no_route'}, 404);
+      });
+      final res = await wp.connect(PlatformTier.openApi, {'site': 'example.com', 'username': 'alice', 'password': 'x'}, ctx);
+      expect(calls.map((c) => '${c.method} ${c.url}'), [
+        'GET https://example.com/wp-json/',
+        'GET https://www.example.com/wp-json/',
+        'GET https://www.example.com/wp-json/wp/v2/users/me?context=edit',
+      ]);
+      expect(res.account.config['restBase'], 'https://www.example.com/wp-json/');
+      expect(res.account.config['site'], 'https://www.example.com');
+    });
+
+    test('connect: keeps the typed address when the home address does not answer', () async {
+      final ctx = testContext(handler: (r) async {
+        if (r.url.host == 'other.example.net') return http.Response('down', 503);
+        if (r.url.path == '/wp-json/') return _json({...index, 'home': 'https://other.example.net'});
+        return _json(me);
+      });
+      final res = await wp.connect(PlatformTier.openApi, {'site': 'example.com', 'username': 'alice', 'password': 'x'}, ctx);
+      expect(res.account.config['restBase'], 'https://example.com/wp-json/');
+    });
+
+    test('publish: unreadable media -> failure result, not an exception', () async {
+      final ctx = AdapterContext(
+        http: NeforumHttp(client: MockClient((r) async => fail500()), maxRetries: 0),
+        clock: () => testNow,
+        readMedia: (m) async => throw Exception('file was moved'),
+      );
+      final res = await wp.publish(PostVariant(title: 'T', text: 'x', media: [fakeImage()]), account(), secrets, ctx);
+      expect(res.isFailure, isTrue);
+      expect(res.error!.kind, PublishErrorKind.configuration);
+      expect(res.error!.message, contains('file was moved'));
     });
 
     test('publish: contributors are downgraded to pending', () async {
@@ -362,7 +515,10 @@ void main() {
       expect(d.media.maxVideos, 0);
       expect(d.media.imageMimeTypes, {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'});
       expect(d.serverSideScheduling, isTrue);
-      expect(d.apiCostSummary, contains('Business'));
+      // ghost.org/pricing: Custom integrations / Admin API on Publisher, Business and Custom; not on Starter.
+      expect(d.apiCostSummary, contains('Publisher'));
+      expect(d.accountRequirements, contains('not in Starter'));
+      expect(ghost.specFor(PlatformTier.openApi).intro, contains('Publisher plan and above'));
       final key = ghost.specFor(PlatformTier.openApi).fields.firstWhere((f) => f.key == 'adminKey');
       expect(key.secret, isTrue);
     });
@@ -496,10 +652,91 @@ void main() {
           PostVariant(title: 'Later', text: 'x', scheduledAt: at, visibility: Visibility.followers),
           account(), secrets, ctx);
       expect(res.success, isTrue);
+      expect(res.isHeldByPlatform, isTrue);
+      expect(res.scheduledFor, at);
+      expect(res.remoteId, 'p2');
+      expect(res.remoteUrl, 'https://blog.example.com/p/x/');
+      expect('${calls.single.method} ${calls.single.url}', 'POST https://blog.example.com/ghost/api/admin/posts/?source=html');
       final post = (bodyOf(calls.single)['posts'] as List).single as Map;
       expect(post['status'], 'scheduled');
       expect(post['published_at'], '2026-10-20T09:00:00.000Z');
       expect(post['visibility'], 'members');
+    });
+
+    test('publish: Ghost answering published -> normal ok result', () async {
+      final ctx = testContext(
+          handler: (r) async => _json({'posts': [{'id': 'p4', 'url': 'https://blog.example.com/now/', 'status': 'published'}]}, 201));
+      final res = await ghost.publish(PostVariant(title: 'Now', text: 'x', scheduledAt: DateTime.utc(2026, 10, 20, 9)),
+          account(), secrets, ctx);
+      expect(res.success, isTrue);
+      expect(res.isHeldByPlatform, isFalse);
+      expect(res.publishedAt, testNow);
+    });
+
+    test('validate: drafts cannot be held by Ghost', () {
+      final at = DateTime.utc(2026, 10, 20, 9);
+      Iterable<ValidationIssue> errors(PostVariant v, ConnectedAccount a) => ghost.validate(v, a).where((i) => i.isError);
+      expect(errors(PostVariant(title: 't', text: 'x', scheduledAt: at), account()), isEmpty);
+      for (final (v, a) in [
+        (PostVariant(title: 't', text: 'x', scheduledAt: at), account(extra: {'defaultStatus': 'draft'})),
+        (PostVariant(title: 't', text: 'x', scheduledAt: at, extra: const {'status': 'draft'}), account()),
+      ]) {
+        final e = errors(v, a).toList();
+        expect(e.map((i) => i.code), ['ghost.cannot_schedule']);
+        expect(e.single.field, 'scheduledAt');
+      }
+    });
+
+    group('cancelScheduled', () {
+      final held = PublishResult.scheduled(remoteId: '6489d8a1b2c3d4e5f6a7b8d0', scheduledFor: DateTime.utc(2026, 10, 20, 9));
+
+      test('DELETE /ghost/api/admin/posts/{id}/ with a fresh token (204)', () async {
+        final calls = <http.Request>[];
+        await ghost.cancelScheduled(held, account(), secrets, testContext(handler: (r) async {
+          calls.add(r);
+          return http.Response('', 204);
+        }));
+        final c = calls.single;
+        expect('${c.method} ${c.url}', 'DELETE https://blog.example.com/ghost/api/admin/posts/6489d8a1b2c3d4e5f6a7b8d0/');
+        expect(c.headers['authorization'], startsWith('Ghost '));
+        expect(_jwtPart(c.headers['authorization']!.substring(6), 1)['aud'], '/admin/');
+        expect(c.headers['accept-version'], 'v5.0');
+      });
+
+      test('404 NotFoundError = already gone', () async {
+        await ghost.cancelScheduled(held, account(), secrets, testContext(handler: (r) async => _json({
+              'errors': [{'message': 'Resource not found error, cannot delete post.', 'type': 'NotFoundError'}],
+            }, 404)));
+      });
+
+      Future<PublishError> cancelError(http.Response response) async {
+        try {
+          await ghost.cancelScheduled(held, account(), secrets, testContext(handler: (r) async => response));
+        } on AdapterException catch (e) {
+          return e.error;
+        }
+        fail('expected AdapterException');
+      }
+
+      test('errors map to the right kind; an HTML 404 is not "gone"', () async {
+        expect((await cancelError(http.Response('<html>404</html>', 404, headers: {'content-type': 'text/html; charset=utf-8'}))).kind,
+            PublishErrorKind.configuration);
+        expect((await cancelError(_json({'errors': [{'message': 'Invalid token', 'type': 'UnauthorizedError'}]}, 401))).kind,
+            PublishErrorKind.auth);
+        expect((await cancelError(_json({'errors': [{'message': 'No permission', 'type': 'NoPermissionError'}]}, 403))).kind,
+            PublishErrorKind.auth);
+        final q = await cancelError(_json({'errors': [{'type': 'TooManyRequestsError'}]}, 429, {'retry-after': '10'}));
+        expect(q.kind, PublishErrorKind.quota);
+        expect(q.retryAfter, const Duration(seconds: 10));
+        expect((await cancelError(_json({'errors': [{'type': 'InternalServerError'}]}, 500))).kind, PublishErrorKind.network);
+      });
+
+      test('missing id or key -> AdapterException without a request', () async {
+        final ctx = testContext(handler: (r) async => fail500());
+        await expectLater(ghost.cancelScheduled(PublishResult.ok(), account(), secrets, ctx), throwsA(isA<AdapterException>()));
+        await expectLater(ghost.cancelScheduled(held, account(), const {}, ctx),
+            throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)));
+      });
     });
 
     test('publish: raw HTML can be wrapped in an HTML card', () async {
@@ -620,6 +857,17 @@ void main() {
           throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'blog')));
     });
 
+    test('connect: 404 "User doesn\'t exist." points at the username, a bare 404 at the server', () async {
+      final noUser = testContext(handler: (r) async => _json({'code': 404, 'error_msg': "User doesn't exist."}, 404));
+      await expectLater(wf.connect(PlatformTier.openApi, {'username': 'alcie', 'password': 'x'}, noUser),
+          throwsA(isA<ConnectException>()
+              .having((e) => e.field, 'field', 'username')
+              .having((e) => e.message, 'message', contains('alcie'))));
+      final noApi = testContext(handler: (r) async => http.Response('<html>Not found</html>', 404, headers: {'content-type': 'text/html'}));
+      await expectLater(wf.connect(PlatformTier.openApi, {'instance': 'blog.example.org', 'username': 'a', 'password': 'x'}, noApi),
+          throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'instance')));
+    });
+
     test('connect: anonymous needs no request', () async {
       final ctx = testContext(handler: (r) async => throw StateError('no request expected'));
       final res = await wf.connect(PlatformTier.openApi, {'instance': 'write.as'}, ctx);
@@ -721,6 +969,14 @@ void main() {
         final r = await fail(400, {'code': 400, 'error_msg': 'Post body is required.'});
         expect(r.error!.kind, PublishErrorKind.validation);
         expect(r.error!.message, contains('Post body is required.'));
+      });
+      test('403 -> auth', () async {
+        final r = await fail(403, {'code': 403, 'error_msg': "You don't have permission to add to this collection."});
+        expect(r.error!.kind, PublishErrorKind.auth);
+        expect(r.error!.message, contains('permission'));
+      });
+      test('5xx -> network', () async {
+        expect((await fail(502, {'code': 502, 'error_msg': 'Bad gateway'})).error!.kind, PublishErrorKind.network);
       });
     });
 

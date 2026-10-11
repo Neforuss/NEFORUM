@@ -84,6 +84,23 @@ class TargetPreview {
   bool get canPublish => !issues.hasErrors;
 }
 
+/// Result of [PublishService.releaseSchedules].
+@immutable
+class ReleaseOutcome {
+  const ReleaseOutcome({required this.post, this.failed = const {}, this.alreadyLive = const {}});
+
+  final Post post;
+
+  /// Account id -> why the held copy could not be removed. Those copies may
+  /// still go out at their scheduled time.
+  final Map<String, PublishError> failed;
+
+  /// Accounts whose held copy had already been published by the platform.
+  final Set<String> alreadyLive;
+
+  bool get ok => failed.isEmpty;
+}
+
 /// Fans a [Post] out to its targets: resolves the per-platform variant,
 /// validates, refreshes tokens, checks quota, publishes or hands off, and
 /// records the outcome on the post.
@@ -146,9 +163,10 @@ class PublishService {
       if (account == null) continue;
       final adapter = registry.byId(account.platformId);
       if (adapter == null) continue;
-      final variant = resolver.resolve(post, target, adapter.descriptor, account: account);
+      final d = adapter.descriptorForAccount(account);
+      final variant = resolver.resolve(post, target, d, account: account);
       final issues = [...variant.issues, ...adapter.validate(variant, account)];
-      out.add(TargetPreview(target: target, account: account, descriptor: adapter.descriptor, variant: variant, issues: issues));
+      out.add(TargetPreview(target: target, account: account, descriptor: d, variant: variant, issues: issues));
     }
     return out;
   }
@@ -159,7 +177,7 @@ class PublishService {
     if (target == null || account == null) return null;
     final adapter = registry.byId(account.platformId);
     if (adapter == null) return null;
-    final variant = resolver.resolve(post, target, adapter.descriptor, account: account);
+    final variant = resolver.resolve(post, target, adapter.descriptorForAccount(account), account: account);
     return adapter.buildHandoff(variant, account: account);
   }
 
@@ -183,6 +201,16 @@ class PublishService {
 
     for (final target in post.targets) {
       if (onlyAccountIds != null && !onlyAccountIds.contains(target.accountId)) continue;
+      if (target.isHeldByPlatform) {
+        // The platform publishes this one itself; record it once its time
+        // has come. Never publish it a second time from here.
+        final held = target.result;
+        if (held != null && _isReleased(held)) {
+          post = post.withTarget(target.copyWith(status: TargetStatus.published, result: held.asReleased()));
+          await posts.upsert(post);
+        }
+        continue;
+      }
       if (target.isDone) continue;
       if (target.status == TargetStatus.failed && !retryFailed) continue;
       if (target.status == TargetStatus.awaitingHandoff && !interactive) continue;
@@ -226,6 +254,190 @@ class PublishService {
     return post;
   }
 
+  // ---------------------------------------------------------------------
+  // Server-side scheduling
+  // ---------------------------------------------------------------------
+
+  /// Hands the schedule of [postId] to every platform that can hold a post
+  /// itself (Mastodon, Facebook Pages, YouTube, Tumblr, WordPress, Ghost).
+  /// Those targets become [TargetStatus.heldByPlatform] and go out even when
+  /// this device is off. Everything else stays pending for the local
+  /// scheduler, which is also the fallback whenever delegation does not work
+  /// (thread, schedule too soon or too far out, platform error): this method
+  /// never fails a target.
+  Future<Post> delegateSchedules(
+    String postId, {
+    Set<String>? onlyAccountIds,
+    void Function(String accountId, String message)? onProgress,
+  }) async {
+    var post = await _require(postId);
+    final at = post.scheduledAt;
+    if (post.status != PostStatus.scheduled || at == null || !at.isAfter(_now())) return post;
+    for (final target in post.targets) {
+      if (onlyAccountIds != null && !onlyAccountIds.contains(target.accountId)) continue;
+      if (target.status != TargetStatus.pending || target.attempts > 0) continue;
+      final updated = await _delegateTarget(post, target,
+          onProgress: onProgress == null ? null : (m) => onProgress(target.accountId, m));
+      if (updated == null) continue;
+      post = post.withTarget(updated);
+      await posts.upsert(post);
+    }
+    return post;
+  }
+
+  /// Whether [delegateSchedules] would try this target. Cheap; for the UI.
+  bool canDelegate(ConnectedAccount account) {
+    if (!account.enabled || !account.tier.isAutomatic) return false;
+    final adapter = registry.byId(account.platformId);
+    return adapter != null && adapter.descriptorForAccount(account).serverSideScheduling;
+  }
+
+  Future<PostTarget?> _delegateTarget(Post post, PostTarget target, {void Function(String message)? onProgress}) async {
+    final account = await accounts.get(target.accountId);
+    if (account == null || !canDelegate(account)) return null;
+    final adapter = registry.byId(account.platformId)!;
+    final name = adapter.descriptor.name;
+    final log = _log.child(account.platformId);
+    final variant = resolver.resolve(post, target, adapter.descriptorForAccount(account), account: account, delegateSchedule: true);
+    // A thread cannot be held: its replies need the first part's id.
+    if (variant.scheduledAt == null || variant.isThread) return null;
+    final issues = [...variant.issues, ...adapter.validate(variant, account)];
+    if (issues.hasErrors) {
+      log.info('${account.displayName}: keeping the schedule on this device (${issues.errors.first.message})');
+      return null;
+    }
+    final ctx = context(onProgress: onProgress, log: log);
+    final (secretMap, secretError) = await _freshSecrets(account, adapter, ctx);
+    if (secretMap == null) {
+      log.warn('${account.displayName}: could not hand the schedule to $name (${secretError?.message}); it stays on this device');
+      return null;
+    }
+    if (await quota.firstExceeded(account, adapter.descriptor) != null) return null;
+
+    PublishResult result;
+    try {
+      result = await adapter.publish(variant, account, secretMap, ctx);
+    } on AdapterException catch (e) {
+      result = PublishResult.failure(e.error);
+    } on HttpFailure catch (e) {
+      result = PublishResult.failure(e.toPublishError(context: name));
+    } on Object catch (e) {
+      result = PublishResult.failure(_classifyUnexpected(e, name));
+    }
+    if (result.isHeldByPlatform) {
+      await quota.record(account, adapter.descriptor);
+      log.info('$name holds the post for ${account.displayName} until ${result.scheduledFor!.toLocal()}');
+      return target.copyWith(status: TargetStatus.heldByPlatform, result: result, lastAttemptAt: _now());
+    }
+    if (result.success) {
+      // The server ignored the schedule and published straight away.
+      await quota.record(account, adapter.descriptor);
+      log.warn('$name published ${account.displayName}\'s post immediately instead of holding it');
+      return target.copyWith(status: TargetStatus.published, result: result, attempts: 1, lastAttemptAt: _now());
+    }
+    log.warn('${account.displayName}: $name did not take the schedule (${result.error?.message}); it stays on this device');
+    return null;
+  }
+
+  /// Takes back the copies platforms hold for [postId], so the post can be
+  /// edited, rescheduled, published now or deleted without a stale copy
+  /// going out later. Released targets return to pending. Copies whose time
+  /// has already passed are recorded as published instead.
+  ///
+  /// Check [ReleaseOutcome.ok]: when a platform could not be reached its copy
+  /// is still held and will still be published, so the caller must not
+  /// pretend the edit or deletion took effect there.
+  Future<ReleaseOutcome> releaseSchedules(String postId, {Set<String>? onlyAccountIds}) async {
+    var post = await _require(postId);
+    final failed = <String, PublishError>{};
+    final live = <String>{};
+    for (final target in post.targets) {
+      if (!target.isHeldByPlatform) continue;
+      if (onlyAccountIds != null && !onlyAccountIds.contains(target.accountId)) continue;
+      final held = target.result;
+      if (held == null || !held.isHeldByPlatform) {
+        post = post.withTarget(target.copyWith(status: TargetStatus.pending, clearResult: true));
+        continue;
+      }
+      if (_isReleased(held)) {
+        post = post.withTarget(target.copyWith(status: TargetStatus.published, result: held.asReleased()));
+        live.add(target.accountId);
+        continue;
+      }
+      final account = await accounts.get(target.accountId);
+      final adapter = account == null ? null : registry.byId(account.platformId);
+      if (account == null || adapter == null) {
+        failed[target.accountId] = const PublishError.configuration(
+            'The account was removed from NEFORUM, so its scheduled copy has to be deleted on the platform itself');
+        continue;
+      }
+      final name = adapter.descriptor.name;
+      // Due within two minutes: the platform may be publishing it right now,
+      // and a cancel would race it (a 404 would then look like "gone").
+      if (held.scheduledFor!.difference(_now()) < const Duration(minutes: 2)) {
+        failed[target.accountId] = PublishError.platform('$name is publishing it right now, so it can no longer be taken back');
+        continue;
+      }
+      final ctx = context(log: _log.child(account.platformId));
+      final (secretMap, secretError) = await _freshSecrets(account, adapter, ctx);
+      if (secretMap == null) {
+        failed[target.accountId] = secretError!;
+        continue;
+      }
+      try {
+        await adapter.cancelScheduled(held, account, secretMap, ctx);
+        _log.info('Removed the copy $name was holding for ${account.displayName}');
+        post = post.withTarget(target.copyWith(status: TargetStatus.pending, clearResult: true, attempts: 0));
+      } on AdapterException catch (e) {
+        failed[target.accountId] = e.error;
+      } on HttpFailure catch (e) {
+        failed[target.accountId] = e.toPublishError(context: name);
+      } on Object catch (e) {
+        failed[target.accountId] = _classifyUnexpected(e, name);
+      }
+    }
+    post = post.copyWith(updatedAt: _now());
+    await posts.upsert(post);
+    for (final e in failed.entries) {
+      _log.warn('${e.key}: could not remove the held copy: ${e.value.message}');
+    }
+    return ReleaseOutcome(post: post, failed: failed, alreadyLive: live);
+  }
+
+  bool _isReleased(PublishResult held) {
+    final at = held.scheduledFor;
+    return at == null || !at.isAfter(_now());
+  }
+
+  /// Current secrets for [account], refreshed when needed. Returns the error
+  /// instead when the sign-in cannot be renewed.
+  Future<(Map<String, String>?, PublishError?)> _freshSecrets(
+      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx) async {
+    final secretMap = await secrets.read(account.id) ?? const <String, String>{};
+    try {
+      final refreshed = await adapter.refreshSecrets(account, secretMap, ctx);
+      if (refreshed == null) return (secretMap, null);
+      await secrets.write(account.id, refreshed);
+      return (refreshed, null);
+    } on AdapterException catch (e) {
+      return (null, e.error);
+    } on AuthCancelled {
+      return (null, const PublishError(kind: PublishErrorKind.cancelled, message: 'Sign-in cancelled'));
+    } on HttpFailure catch (e) {
+      // A 5xx/429 from the token endpoint is the platform having a bad
+      // moment, not a revoked login.
+      final err = e.statusCode >= 500 || e.statusCode == 429
+          ? e.toPublishError(context: '${adapter.descriptor.name} sign-in renewal')
+          : PublishError.auth('Could not renew the ${adapter.descriptor.name} sign-in (HTTP ${e.statusCode}); reconnect the account', raw: e.body, statusCode: e.statusCode);
+      return (null, err);
+    } on Object catch (e) {
+      if (NeforumHttp.isTransportError(e)) {
+        return (null, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: $e'));
+      }
+      return (null, PublishError.auth('Could not refresh credentials: $e'));
+    }
+  }
+
   Future<PostTarget> _publishTarget(
     Post post,
     PostTarget target, {
@@ -245,7 +457,7 @@ class PublishService {
     final log = _log.child(account.platformId);
     final ctx = context(onProgress: onProgress, log: log);
 
-    final variant = resolver.resolve(post, target, adapter.descriptor, account: account);
+    final variant = resolver.resolve(post, target, adapter.descriptorForAccount(account), account: account);
     final issues = [...variant.issues, ...adapter.validate(variant, account)];
     if (issues.hasErrors) {
       return _fail(target, PublishError.validation(issues.errors.map((i) => i.message).join('; ')));
@@ -262,30 +474,9 @@ class PublishService {
     }
 
     // ---- API tiers ----------------------------------------------------
-    var secretMap = await secrets.read(account.id) ?? const <String, String>{};
-    try {
-      final refreshed = await adapter.refreshSecrets(account, secretMap, ctx);
-      if (refreshed != null) {
-        await secrets.write(account.id, refreshed);
-        secretMap = refreshed;
-      }
-    } on AdapterException catch (e) {
-      return _fail(attempt, e.error, account: account);
-    } on AuthCancelled {
-      return _fail(attempt, const PublishError(kind: PublishErrorKind.cancelled, message: 'Sign-in cancelled'));
-    } on HttpFailure catch (e) {
-      // A 5xx/429 from the token endpoint is the platform having a bad
-      // moment, not a revoked login.
-      final err = e.statusCode >= 500 || e.statusCode == 429
-          ? e.toPublishError(context: '${adapter.descriptor.name} sign-in renewal')
-          : PublishError.auth('Could not renew the ${adapter.descriptor.name} sign-in (HTTP ${e.statusCode}); reconnect the account', raw: e.body, statusCode: e.statusCode);
-      return _fail(attempt, err, account: account);
-    } on Object catch (e) {
-      if (NeforumHttp.isTransportError(e)) {
-        return _fail(attempt, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: $e'));
-      }
-      return _fail(attempt, PublishError.auth('Could not refresh credentials: $e'), account: account);
-    }
+    final (freshSecrets, secretError) = await _freshSecrets(account, adapter, ctx);
+    if (freshSecrets == null) return _fail(attempt, secretError!, account: account);
+    final secretMap = freshSecrets;
 
     final needed = variant.isThread ? variant.threadParts.length : 1;
     final exceeded = await quota.firstExceeded(account, adapter.descriptor, needed: needed);
@@ -318,6 +509,11 @@ class PublishService {
       }
     }
 
+    if (result.isHeldByPlatform) {
+      // Not expected from a normal publish, but never record a held post as live.
+      await quota.record(account, adapter.descriptor);
+      return attempt.copyWith(status: TargetStatus.heldByPlatform, result: result);
+    }
     if (result.success) {
       await quota.record(account, adapter.descriptor, count: math.max(1, result.threadRemoteIds.length));
       if (account.lastError != null) await accounts.upsert(account.copyWith(clearLastError: true));
@@ -326,7 +522,9 @@ class PublishService {
     }
 
     final err = result.error!;
-    if (err.kind == PublishErrorKind.quota && options.fallbackToHandoffOnQuota && adapter.buildHandoff(variant, account: account) != null) {
+    // A quota error after part of a thread went out is not retryable; handing
+    // the whole post off then would post those parts a second time.
+    if (err.kind == PublishErrorKind.quota && err.retryable && options.fallbackToHandoffOnQuota && adapter.buildHandoff(variant, account: account) != null) {
       log.warn('${account.displayName}: ${err.message}; falling back to hand-off');
       return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message);
     }
@@ -382,11 +580,12 @@ class PublishService {
     if (p.targets.isEmpty) return p.copyWith(status: PostStatus.draft);
     final ts = p.targets;
     final anyRetrying = ts.any((t) => t.status == TargetStatus.pending || t.status == TargetStatus.publishing);
+    final anyHeld = ts.any((t) => t.isHeldByPlatform);
     final anyWaiting = ts.any((t) => t.status == TargetStatus.awaitingHandoff);
     final anyFailed = ts.any((t) => t.status == TargetStatus.failed);
     final allDone = ts.every((t) => t.isDone);
     if (allDone) return p.copyWith(status: PostStatus.published);
-    if (anyRetrying) {
+    if (anyRetrying || anyHeld) {
       // Keep it in the queue so the scheduler retries; immediate publishes
       // get "now" as their schedule so they are picked up too.
       return p.copyWith(status: PostStatus.scheduled, scheduledAt: p.scheduledAt ?? _now());

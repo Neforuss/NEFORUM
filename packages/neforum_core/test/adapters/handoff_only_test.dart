@@ -271,17 +271,20 @@ void main() {
       expect(plan.iosScheme, 'comgooglemaps://');
       expect(plan.clipboardText, 'New menu!');
       expect(plan.shareFiles, [img]);
-      expect(plan.instructions, contains('Add update'));
-      expect(plan.instructions, contains('https://example.org/menu'));
+      // Labels from support.google.com/business/answer/7390603.
+      expect(plan.instructions, contains('**Posts** > **Add post**'));
+      expect(plan.instructions, isNot(contains('Add update')));
+      expect(plan.instructions, contains('Under **Button**, pick **Learn more** and enter https://example.org/menu'));
       expect(plan.instructions.split('\n'), hasLength(4));
       expect(plan.instructions, startsWith('1. '));
-      expect(plan.instructions, contains('\n4. Tap **Post**.'));
+      expect(plan.instructions, contains('\n4. Select **Post**.'));
     });
 
     test('hand-off without link or media has three steps', () {
       final plan = a.buildHandoff(const PostVariant(text: 'Closed Monday'))!;
       expect(plan.instructions.split('\n'), hasLength(3));
-      expect(plan.instructions, isNot(contains('Add a button')));
+      expect(plan.instructions, isNot(contains('**Button**')));
+      expect(a.connectSpecs.single.intro, contains('**Posts** > **Add post**'));
     });
   });
 

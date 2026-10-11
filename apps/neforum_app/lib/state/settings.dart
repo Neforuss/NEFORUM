@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../media/text_card.dart';
 import '../theme/tokens.dart';
 
 /// Everything the user can change in Settings. Persisted as settings.json.
@@ -8,7 +9,7 @@ import '../theme/tokens.dart';
 class AppSettings {
   const AppSettings({
     this.themeMode = ThemeMode.system,
-    this.accent = AccentChoice.violet,
+    this.accent = AccentChoice.neforum,
     this.overflow = OverflowStrategy.threadOrError,
     this.threadNumbering = true,
     this.appendHashtags = true,
@@ -24,11 +25,14 @@ class AppSettings {
     this.defaultTargetIds = const [],
     this.onboarded = false,
     this.compactPreviews = false,
+    this.textCards = true,
+    this.textCardTheme = TextCardTheme.dark,
+    this.delegateSchedules = true,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
         themeMode: ThemeMode.values.asNameMap()[j['themeMode']] ?? ThemeMode.system,
-        accent: AccentChoice.values.asNameMap()[j['accent']] ?? AccentChoice.violet,
+        accent: AccentChoice.values.asNameMap()[j['accent']] ?? AccentChoice.neforum,
         overflow: OverflowStrategy.values.asNameMap()[j['overflow']] ?? OverflowStrategy.threadOrError,
         threadNumbering: j['threadNumbering'] as bool? ?? true,
         appendHashtags: j['appendHashtags'] as bool? ?? true,
@@ -44,6 +48,9 @@ class AppSettings {
         defaultTargetIds: (j['defaultTargetIds'] as List? ?? const []).cast<String>(),
         onboarded: j['onboarded'] as bool? ?? false,
         compactPreviews: j['compactPreviews'] as bool? ?? false,
+        textCards: j['textCards'] as bool? ?? true,
+        textCardTheme: TextCardTheme.values.asNameMap()[j['textCardTheme']] ?? TextCardTheme.dark,
+        delegateSchedules: j['delegateSchedules'] as bool? ?? true,
       );
 
   final ThemeMode themeMode;
@@ -77,6 +84,16 @@ class AppSettings {
   final bool onboarded;
   final bool compactPreviews;
 
+  /// Turn text-only posts into an image card for platforms that require an
+  /// image (Instagram, Pinterest, TikTok photos, Snapchat).
+  final bool textCards;
+  final TextCardTheme textCardTheme;
+
+  /// Let platforms that can (Mastodon, Facebook Pages, YouTube, Tumblr,
+  /// WordPress, Ghost) hold scheduled posts, so they go out even when this
+  /// device is off.
+  final bool delegateSchedules;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -105,6 +122,9 @@ class AppSettings {
     List<String>? defaultTargetIds,
     bool? onboarded,
     bool? compactPreviews,
+    bool? textCards,
+    TextCardTheme? textCardTheme,
+    bool? delegateSchedules,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -124,6 +144,9 @@ class AppSettings {
         defaultTargetIds: defaultTargetIds ?? this.defaultTargetIds,
         onboarded: onboarded ?? this.onboarded,
         compactPreviews: compactPreviews ?? this.compactPreviews,
+        textCards: textCards ?? this.textCards,
+        textCardTheme: textCardTheme ?? this.textCardTheme,
+        delegateSchedules: delegateSchedules ?? this.delegateSchedules,
       );
 
   Map<String, dynamic> toJson() => {
@@ -144,5 +167,8 @@ class AppSettings {
         'defaultTargetIds': defaultTargetIds,
         'onboarded': onboarded,
         'compactPreviews': compactPreviews,
+        'textCards': textCards,
+        'textCardTheme': textCardTheme.name,
+        'delegateSchedules': delegateSchedules,
       };
 }

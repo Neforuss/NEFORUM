@@ -12,14 +12,15 @@ import 'handoff_common.dart';
 /// a separate access application, which needs a verified profile older than
 /// 60 days and a business website. A FOSS app cannot ship one shared approved
 /// project, so NEFORUM opens business.google.com (or the Google Maps app) with
-/// the text on the clipboard and the user adds the update there.
+/// the text on the clipboard and the user adds the post there
+/// (Posts > Add post > Update).
 class GoogleBusinessAdapter extends HandoffOnlyAdapter {
   /// Where owners manage their profile on a computer.
   static const String desktopUrl = 'https://business.google.com/';
 
   /// The standalone Google My Business app (`com.google.android.apps.vega`)
-  /// was retired in 2022; owners now manage their profile from the Business
-  /// tab of Google Maps.
+  /// was retired in 2022 (its Play listing is gone); owners now manage their
+  /// profile on Google Search / business.google.com or in Google Maps.
   static const String androidPackage = 'com.google.android.apps.maps';
 
   /// Google Maps iOS URL scheme.
@@ -90,8 +91,8 @@ active for 60+ days and have a website for the business. NEFORUM is a free, open
 project between its users, so it does not use the API.
 
 When you publish, NEFORUM copies your text and opens [business.google.com](https://business.google.com/) (on a phone:
-the **Business** tab in Google Maps). Choose **Add update**, paste, add your photo and tap **Post**. You need to be an
-owner or manager of a verified Business Profile.''';
+your Business Profile in the Google Maps app). Choose **Posts** > **Add post** > **Update**, paste, add your photo and
+select **Post**. You need to be an owner or manager of a verified Business Profile.''';
 
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
@@ -111,13 +112,16 @@ owner or manager of a verified Business Profile.''';
     final text = handoffFullText(variant);
     final link = (variant.link ?? '').trim();
     final hasMedia = variant.media.isNotEmpty;
+    // Labels from Google's help page "How to make a post & track its status
+    // for your Business Profile" (support.google.com/business/answer/7390603).
     final steps = <String>[
-      'Open your profile on **business.google.com** (phone: Google Maps > **Business** tab) and choose **Add update**.',
+      'Open your profile on **business.google.com** (phone: your Business Profile in the Google Maps app), choose '
+          '**Posts** > **Add post** and pick **Update**.',
       hasMedia
           ? 'Paste your text (it is on the clipboard) and add your photo or video.'
           : 'Paste your text: it is on the clipboard.',
-      if (link.isNotEmpty) 'Under **Add a button**, pick **Learn more** and enter $link',
-      'Tap **Post**.',
+      if (link.isNotEmpty) 'Under **Button**, pick **Learn more** and enter $link',
+      'Select **Post**.',
     ];
     return HandoffPlan(
       platformId: descriptor.id,

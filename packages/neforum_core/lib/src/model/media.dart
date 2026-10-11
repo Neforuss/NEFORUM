@@ -16,6 +16,7 @@ class MediaAttachment {
     this.durationMs,
     this.altText,
     this.fileName,
+    this.generated = false,
   });
 
   factory MediaAttachment.fromJson(Map<String, dynamic> json) => MediaAttachment(
@@ -28,6 +29,7 @@ class MediaAttachment {
         durationMs: json['durationMs'] as int?,
         altText: json['altText'] as String?,
         fileName: json['fileName'] as String?,
+        generated: json['generated'] as bool? ?? false,
       );
 
   final String id;
@@ -39,6 +41,11 @@ class MediaAttachment {
   final int? durationMs;
   final String? altText;
   final String? fileName;
+
+  /// Made by NEFORUM, not picked by the user: the text card for platforms
+  /// that require an image. Generated media only reaches the targets that
+  /// list it in [PostOverrides.mediaIds]; everyone else ignores it.
+  final bool generated;
 
   MediaKind get kind {
     if (mimeType == 'image/gif') return MediaKind.gif;
@@ -62,6 +69,7 @@ class MediaAttachment {
         durationMs: durationMs,
         altText: clearAltText ? null : (altText ?? this.altText),
         fileName: fileName,
+        generated: generated,
       );
 
   Map<String, dynamic> toJson() => {
@@ -74,5 +82,6 @@ class MediaAttachment {
         if (durationMs != null) 'durationMs': durationMs,
         if (altText != null) 'altText': altText,
         if (fileName != null) 'fileName': fileName,
+        if (generated) 'generated': true,
       };
 }

@@ -116,7 +116,8 @@ class S3CompatibleMediaHost implements MediaHost {
   static String defaultRegionFor(Uri endpoint) {
     final host = endpoint.host.toLowerCase();
     if (host.endsWith('.r2.cloudflarestorage.com')) return 'auto';
-    final aws = RegExp(r'^s3[.-]([a-z0-9-]+)\.amazonaws\.com$').firstMatch(host);
+    // s3.<region>, s3-<region> (legacy) and s3.dualstack.<region>.
+    final aws = RegExp(r'^s3[.-](?:dualstack\.)?([a-z0-9-]+)\.amazonaws\.com$').firstMatch(host);
     if (aws != null && aws.group(1) != 'external-1') return aws.group(1)!;
     final b2 = RegExp(r'^s3\.([a-z0-9-]+)\.backblazeb2\.com$').firstMatch(host);
     if (b2 != null) return b2.group(1)!;

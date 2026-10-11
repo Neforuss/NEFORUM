@@ -1,5 +1,6 @@
-// Renders the NEFORUM mark (one point broadcasting in three arcs on the
-// signature gradient) into every icon the platforms need.
+// Renders the NEFORUM mark (one yellow point broadcasting in three white arcs
+// on the purple tile) into every icon the platforms need. Colors match
+// Brand.markGradient and Brand.yellow in lib/theme/tokens.dart.
 //
 //   dart run tool/generate_icons.dart
 //
@@ -11,9 +12,10 @@ import 'dart:math' as math;
 
 import 'package:image/image.dart' as img;
 
-const _c0 = (0x7C, 0x5C, 0xFF); // violet
-const _c1 = (0xFF, 0x4D, 0x8D); // pink
-const _c2 = (0xFF, 0x9F, 0x43); // amber
+const _c0 = (0x94, 0x26, 0xFF); // light purple
+const _c1 = (0x7D, 0x00, 0xFF); // NEFORUM purple
+const _c2 = (0x5C, 0x00, 0xC4); // deep purple
+const _yellow = (0xFF, 0xFF, 0x00);
 
 void main() {
   final root = Directory.current.path;
@@ -166,23 +168,32 @@ img.Image _render(
       }
 
       if (!markless) {
-        var markCov = _cov(math.sqrt(math.pow(px - origin.$1, 2) + math.pow(py - origin.$2, 2)) - dotR);
+        final dotCov = _cov(math.sqrt(math.pow(px - origin.$1, 2) + math.pow(py - origin.$2, 2)) - dotR);
+        var arcCov = 0.0;
         for (var i = 0; i < radii.length; i++) {
           final d = _arcSdf(px, py, origin.$1, origin.$2, markScale * radii[i], sweep) - stroke / 2;
-          markCov = math.max(markCov, _cov(d) * alphas[i]);
+          arcCov = math.max(arcCov, _cov(d) * alphas[i]);
         }
         if (mono) {
           // Black shapes; alpha carries the shape.
           r = 0;
           g = 0;
           b = 0;
-          a = math.max(a, markCov);
-        } else if (markCov > 0) {
-          // White mark over the tile.
-          r = r + (255 - r) * markCov;
-          g = g + (255 - g) * markCov;
-          b = b + (255 - b) * markCov;
-          a = a + markCov * (1 - a);
+          a = math.max(a, math.max(dotCov, arcCov));
+        } else {
+          // White arcs, then the yellow point on top.
+          if (arcCov > 0) {
+            r = r + (255 - r) * arcCov;
+            g = g + (255 - g) * arcCov;
+            b = b + (255 - b) * arcCov;
+            a = a + arcCov * (1 - a);
+          }
+          if (dotCov > 0) {
+            r = r + (_yellow.$1 - r) * dotCov;
+            g = g + (_yellow.$2 - g) * dotCov;
+            b = b + (_yellow.$3 - b) * dotCov;
+            a = a + dotCov * (1 - a);
+          }
         }
       }
 
@@ -229,5 +240,5 @@ double _arcSdf(double px, double py, double cx, double cy, double r, double swee
 (double, double, double) _gradient(double t) {
   (double, double, double) mix((int, int, int) a, (int, int, int) b, double u) =>
       (a.$1 + (b.$1 - a.$1) * u, a.$2 + (b.$2 - a.$2) * u, a.$3 + (b.$3 - a.$3) * u);
-  return t < 0.55 ? mix(_c0, _c1, t / 0.55) : mix(_c1, _c2, (t - 0.55) / 0.45);
+  return t < 0.5 ? mix(_c0, _c1, t / 0.5) : mix(_c1, _c2, (t - 0.5) / 0.5);
 }

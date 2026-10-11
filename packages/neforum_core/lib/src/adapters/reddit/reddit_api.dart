@@ -122,6 +122,8 @@ class RedditApi {
       headers: _headers,
     );
     final j = lease.jsonMap;
+    // Refusals (e.g. RATELIMIT) come back as HTTP 200 with json.errors.
+    _throwOnErrors(_map(j['json']), lease);
     final args = _map(j['args']);
     final asset = _map(j['asset']);
     final action = _str(args['action']);
@@ -244,7 +246,26 @@ class RedditApi {
     final status = f.statusCode;
     final body = f.response.jsonMap;
     final raw = _snippet(f.body);
-    final detail = _str(body['message']) ?? _str(body['explanation']) ?? _str(body['error']) ?? 'HTTP $status';
+    if (status >= 400 && status < 500 && status != 401 && status != 429) {
+      // Some endpoints (galleries among them) refuse with an HTTP 4xx whose
+      // body is {"reason": CODE, "explanation": ..., "fields": [...]} (PRAW
+      // turns it into RedditAPIException), or with the usual json.errors.
+      final errors = _map(body['json'])['errors'];
+      if (errors is List && errors.isNotEmpty) {
+        return _withStatus(mapApiErrors(errors, ratelimitSeconds: _map(body['json'])['ratelimit'], raw: raw), status);
+      }
+      final reason = _str(body['reason']);
+      if (reason != null) {
+        final fields = body['fields'];
+        final field = fields is List && fields.isNotEmpty ? _str(fields.first) : null;
+        return _withStatus(
+            mapApiErrors([
+              [reason, _str(body['explanation']) ?? _str(body['message']) ?? reason, field],
+            ], raw: raw),
+            status);
+      }
+    }
+    final detail = _str(body['explanation']) ?? _str(body['message']) ?? _str(body['error']) ?? 'HTTP $status';
     if (status == 401) {
       return PublishError.auth('Reddit rejected the sign-in (token expired or revoked); reconnect the account. ($detail)',
           raw: raw, statusCode: status);
@@ -270,6 +291,15 @@ class RedditApi {
     }
     return f.toPublishError(context: 'Reddit');
   }
+
+  static PublishError _withStatus(PublishError e, int status) => PublishError(
+        kind: e.kind,
+        message: e.message,
+        retryable: e.retryable,
+        statusCode: status,
+        raw: e.raw,
+        retryAfter: e.retryAfter,
+      );
 
   /// `X-Ratelimit-Reset` is the number of seconds until the window resets.
   static Duration? rateLimitReset(NeforumResponse res) {

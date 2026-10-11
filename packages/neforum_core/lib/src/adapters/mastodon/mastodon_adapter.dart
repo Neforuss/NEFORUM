@@ -19,6 +19,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../../text/text_counter.dart';
+import '../../util/logger.dart' show Clock, systemClock;
 import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
@@ -34,12 +35,17 @@ import 'mastodon_instance.dart';
 /// portal. The server's real limits are read from `/api/v2/instance` and kept
 /// in the account config; [validate] checks posts against them.
 class MastodonAdapter extends PlatformAdapter {
-  MastodonAdapter({this.mediaPollInterval = const Duration(seconds: 2), this.maxMediaPolls = 90});
+  MastodonAdapter({this.mediaPollInterval = const Duration(seconds: 2), this.maxMediaPolls = 90, Clock? clock})
+    : _clock = clock ?? systemClock;
 
   /// How long to wait between `GET /api/v1/media/:id` polls while a video is
   /// being processed.
   final Duration mediaPollInterval;
   final int maxMediaPolls;
+
+  /// "Now" for [validate], which gets no [AdapterContext]. Injectable for
+  /// tests; [publish] uses `ctx.now` instead.
+  final Clock _clock;
 
   static const String oob = 'urn:ietf:wg:oauth:2.0:oob';
 
@@ -53,8 +59,17 @@ class MastodonAdapter extends PlatformAdapter {
   /// Umbrella scopes for the other servers (Pixelfed checks `write` itself).
   static const String scopesUmbrella = 'read write';
 
-  /// Minimum lead time Mastodon accepts for `scheduled_at`.
+  /// Minimum lead time Mastodon, GoToSocial, Pleroma and Akkoma accept for
+  /// `scheduled_at`. Mastodon and GoToSocial answer 422 below it; Pleroma and
+  /// Akkoma silently publish the post immediately.
   static const Duration minScheduleLead = Duration(minutes: 5);
+
+  /// Extra lead [validate] asks for on top of [minScheduleLead], to cover
+  /// media uploads and a device clock that runs a little behind the server.
+  static const Duration scheduleSafetyMargin = Duration(minutes: 1);
+
+  /// Lead still required right before `POST /api/v1/statuses` is sent.
+  static const Duration _sendLead = Duration(minutes: 5, seconds: 20);
 
   @override
   PlatformDescriptor get descriptor => mastodonDescriptor;
@@ -64,6 +79,9 @@ class MastodonAdapter extends PlatformAdapter {
 
   /// The descriptor with this account's server limits applied.
   PlatformDescriptor descriptorFor(MastodonInstanceProfile p) => mastodonDescriptorFor(p);
+
+  @override
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) => descriptorFor(MastodonInstanceProfile.fromConfig(account.config));
 
   // ---------------------------------------------------------------------------
   // Connect
@@ -295,7 +313,10 @@ class MastodonAdapter extends PlatformAdapter {
   // ---------------------------------------------------------------------------
 
   @override
-  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) =>
+      _validateAt(variant, account, _clock());
+
+  List<ValidationIssue> _validateAt(PostVariant variant, ConnectedAccount account, DateTime now) {
     final p = MastodonInstanceProfile.fromConfig(account.config);
     final d = descriptorFor(p);
     final issues = RulesValidator.validate(variant, d, tier: account.tier);
@@ -348,7 +369,7 @@ class MastodonAdapter extends PlatformAdapter {
       );
     }
     _checkMatrix(variant.media, p, issues);
-    if (account.tier == PlatformTier.openApi) _checkSchedule(variant, p, issues);
+    if (account.tier == PlatformTier.openApi) _checkSchedule(variant, p, now, issues);
     if (account.tier == PlatformTier.handoff) {
       if (!p.hasSharePage) {
         issues.add(
@@ -390,13 +411,26 @@ class MastodonAdapter extends PlatformAdapter {
     }
   }
 
-  static void _checkSchedule(PostVariant v, MastodonInstanceProfile p, List<ValidationIssue> issues) {
-    if (v.scheduledAt == null) return;
+  /// Server-side scheduling checks. A time that has already passed is not an
+  /// error: the post is then published now, without `scheduled_at` (which
+  /// GoToSocial would read as a request to backdate the post).
+  static void _checkSchedule(PostVariant v, MastodonInstanceProfile p, DateTime now, List<ValidationIssue> issues) {
+    final at = v.scheduledAt;
+    if (at == null || !at.isAfter(now)) return;
     if (!p.supportsScheduling) {
       issues.add(
         ValidationIssue.error(
           'schedule.unsupported',
-          '${p.softwareLabel} cannot hold scheduled posts; let NEFORUM schedule this one instead',
+          '${p.schedulingUnsupportedReason}; NEFORUM schedules this one on this device instead',
+          field: 'scheduledAt',
+        ),
+      );
+    } else if (at.isBefore(now.add(minScheduleLead + scheduleSafetyMargin))) {
+      issues.add(
+        ValidationIssue.error(
+          'schedule.too_soon',
+          '${p.softwareLabel} only holds posts scheduled at least ${minScheduleLead.inMinutes} minutes ahead; '
+              'NEFORUM schedules this one on this device instead',
           field: 'scheduledAt',
         ),
       );
@@ -425,18 +459,22 @@ class MastodonAdapter extends PlatformAdapter {
   ) async {
     try {
       return await _publish(variant, account, secrets, ctx);
-    } on AdapterException catch (e) {
-      return PublishResult.failure(e.error);
-    } on HttpFailure catch (e) {
-      return PublishResult.failure(MastodonApi.mapFailure(e, now: ctx.now()));
-    } on TimeoutException {
-      return PublishResult.failure(const PublishError.network('The server did not answer in time'));
-    } on http.ClientException catch (e) {
-      return PublishResult.failure(PublishError.network('Network error: ${e.message}', raw: e.toString()));
     } on Exception catch (e) {
-      if (isTransientIoError(e)) return PublishResult.failure(PublishError.network('Network error: $e'));
-      return PublishResult.failure(PublishError.platform('Unexpected error: $e', raw: e.toString()));
+      return PublishResult.failure(_toError(e, ctx));
     }
+  }
+
+  /// Maps whatever a request ran into onto a [PublishError].
+  static PublishError _toError(Exception e, AdapterContext ctx, {String? context}) {
+    if (e is AdapterException) return e.error;
+    if (e is HttpFailure) return MastodonApi.mapFailure(e, now: ctx.now(), context: context);
+    final prefix = context == null ? '' : '$context: ';
+    if (e is TimeoutException) return PublishError.network('${prefix}The server did not answer in time');
+    if (e is http.ClientException) {
+      return PublishError.network('${prefix}Network error: ${e.message}', raw: e.toString());
+    }
+    if (isTransientIoError(e)) return PublishError.network('${prefix}Network error: $e');
+    return PublishError.platform('${prefix}Unexpected error: $e', raw: e.toString());
   }
 
   Future<PublishResult> _publish(
@@ -456,11 +494,13 @@ class MastodonAdapter extends PlatformAdapter {
     if (token == null) {
       throw const AdapterException(PublishError.auth('No access token stored for this account. Reconnect it.'));
     }
-    final errors = validate(v, account).where((i) => i.isError).toList();
+    final now = ctx.now();
+    final errors = _validateAt(v, account, now).where((i) => i.isError).toList();
     if (errors.isNotEmpty) {
-      final kind = errors.first.code.startsWith('schedule.')
-          ? PublishErrorKind.unsupported
-          : PublishErrorKind.validation;
+      final kind = switch (errors.first.code) {
+        'schedule.unsupported' || 'schedule.thread' => PublishErrorKind.unsupported,
+        _ => PublishErrorKind.validation,
+      };
       throw AdapterException(PublishError(kind: kind, message: errors.map((e) => e.message).join('; ')));
     }
     final api = MastodonApi(
@@ -471,8 +511,23 @@ class MastodonAdapter extends PlatformAdapter {
       maxPolls: maxMediaPolls,
     );
 
+    // A time that has passed means "publish now": never send it, GoToSocial
+    // would backdate the post instead.
+    final requested = v.scheduledAt;
+    final schedule = requested != null && requested.isAfter(now) ? requested.toUtc() : null;
+    if (requested != null && schedule == null) ctx.log.info('The scheduled time has passed; publishing now');
+
+    // Media first, also for a scheduled post: the server stores the ids.
     final mediaIds = await _uploadAll(api, v.media, p, ctx);
-    final scheduledAt = _effectiveSchedule(v.scheduledAt, ctx);
+    if (schedule != null && schedule.isBefore(ctx.now().add(_sendLead))) {
+      throw AdapterException(
+        PublishError.validation(
+          'The scheduled time is now less than ${minScheduleLead.inMinutes} minutes away, '
+          'too close for ${p.softwareLabel} to hold the post',
+        ),
+      );
+    }
+
     final parts = v.isThread ? v.threadParts : [v.text];
     final ids = <String>[];
     String? firstUrl;
@@ -484,29 +539,30 @@ class MastodonAdapter extends PlatformAdapter {
         parts[i],
         mediaIds: i == 0 ? mediaIds : const [],
         replyTo: i == 0 ? null : ids.last,
-        scheduledAt: scheduledAt,
+        scheduledAt: schedule,
       );
-      final Map<String, dynamic> res;
       try {
-        res = await api.postStatus(form, idempotencyKey: _idempotencyKey(account, v, i, parts[i]));
-      } on HttpFailure catch (e) {
-        if (ids.isEmpty) rethrow;
-        throw AdapterException(_partial(MastodonApi.mapFailure(e, now: ctx.now()), ids, parts.length));
-      }
-      final id = res['id'];
-      if (id == null) {
-        throw AdapterException(PublishError.platform('The server answered without a post id', raw: jsonEncode(res)));
-      }
-      if (scheduledAt != null && res['scheduled_at'] != null && res['params'] is Map) {
-        ctx.log.info('Scheduled on ${p.domain} for ${res['scheduled_at']}');
-        return PublishResult.ok(
-          remoteId: 'scheduled:$id',
-          publishedAt: DateTime.tryParse('${res['scheduled_at']}') ?? scheduledAt,
+        final res = await api.postStatus(
+          form,
+          idempotencyKey: _idempotencyKey(account, v, i, form, scheduled: schedule != null),
         );
+        final id = _string(res['id']);
+        if (id == null) {
+          throw AdapterException(PublishError.platform('The server answered without a post id', raw: jsonEncode(res)));
+        }
+        if (schedule != null && _isScheduledStatus(res)) {
+          final at = DateTime.tryParse(_string(res['scheduled_at']) ?? '')?.toUtc() ?? schedule;
+          ctx.log.info('${p.domain} holds the post until $at (scheduled status $id)');
+          return PublishResult.scheduled(remoteId: id, scheduledFor: at);
+        }
+        if (schedule != null) ctx.log.warn('${p.domain} ignored scheduled_at and published immediately');
+        ids.add(id);
+        firstUrl ??= _string(res['url']) ?? _string(res['uri']);
+      } on Exception catch (e) {
+        if (ids.isEmpty) rethrow;
+        // Earlier parts are live: a retry would post them a second time.
+        throw AdapterException(_toError(e, ctx).asPartialThread(postedIds: ids, total: parts.length));
       }
-      if (scheduledAt != null) ctx.log.warn('${p.domain} ignored scheduled_at and published immediately');
-      ids.add('$id');
-      firstUrl ??= (res['url'] as String?) ?? (res['uri'] as String?);
     }
     return PublishResult.ok(
       remoteId: ids.first,
@@ -515,6 +571,15 @@ class MastodonAdapter extends PlatformAdapter {
       publishedAt: ctx.now(),
     );
   }
+
+  /// A ScheduledStatus (`id`, `scheduled_at`, `params`) rather than a Status.
+  static bool _isScheduledStatus(Map<String, dynamic> res) => res['scheduled_at'] is String && res['params'] is Map;
+
+  static String? _string(Object? v) => switch (v) {
+    final String s when s.isNotEmpty => s,
+    final num n => '$n',
+    _ => null,
+  };
 
   Future<List<String>> _uploadAll(
     MastodonApi api,
@@ -538,21 +603,6 @@ class MastodonAdapter extends PlatformAdapter {
     } on Exception catch (e) {
       throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
     }
-  }
-
-  /// `null` = publish now. Times in the past publish now; times less than
-  /// [minScheduleLead] ahead are moved to just past the minimum, because
-  /// Mastodon refuses them (publishing late beats publishing early).
-  static DateTime? _effectiveSchedule(DateTime? at, AdapterContext ctx) {
-    if (at == null) return null;
-    final now = ctx.now();
-    if (!at.isAfter(now)) return null;
-    final earliest = now.add(minScheduleLead + const Duration(seconds: 30));
-    if (at.isBefore(earliest)) {
-      ctx.log.warn('Scheduled time is less than 5 minutes ahead; Mastodon needs 5, using $earliest');
-      return earliest;
-    }
-    return at;
   }
 
   static List<MapEntry<String, String>> _statusForm(
@@ -594,24 +644,71 @@ class MastodonAdapter extends PlatformAdapter {
     return primary;
   }
 
-  /// Stable per (account, post, part) so a retry after a dropped connection
-  /// returns the original status instead of posting twice (Mastodon keeps
-  /// keys for an hour). Random when the variant has no source post.
-  static String _idempotencyKey(ConnectedAccount a, PostVariant v, int part, String text) {
+  /// The `Idempotency-Key` for one status request.
+  ///
+  /// Immediate posts get a key derived from everything that defines the
+  /// status except the freshly uploaded media ids, so a retry after a dropped
+  /// connection gets the original status back instead of posting twice
+  /// (Mastodon keeps keys for an hour; Pleroma/Akkoma replay the stored
+  /// response), while an edited post gets a new key.
+  ///
+  /// Scheduled requests get a fresh key on every call. Mastodon shares one key
+  /// space between scheduled and immediate posts and answers 404 once the
+  /// earlier record is gone, and Pleroma/Akkoma would replay a scheduled post
+  /// NEFORUM has since cancelled. HTTP-level retries inside the call still
+  /// reuse the key. Random as well when the variant has no source post.
+  static String _idempotencyKey(
+    ConnectedAccount a,
+    PostVariant v,
+    int part,
+    List<MapEntry<String, String>> form, {
+    required bool scheduled,
+  }) {
     final src = v.sourcePostId;
-    if (src == null) return const Uuid().v4();
-    final digest = sha256.convert(utf8.encode('neforum|${a.id}|$src|$part|$text'));
+    if (src == null || scheduled) return const Uuid().v4();
+    final fields = form.where((e) => e.key != 'media_ids[]').map((e) => '${e.key}=${e.value}').join('\n');
+    final media = part == 0 ? v.media.map((m) => m.id).join(',') : '';
+    final digest = sha256.convert(utf8.encode('neforum|${a.id}|$src|$part|$media|$fields'));
     return digest.toString().substring(0, 40);
   }
 
-  static PublishError _partial(PublishError e, List<String> posted, int total) => PublishError(
-    kind: e.kind,
-    message: 'Only ${posted.length} of $total thread parts were posted (ids ${posted.join(', ')}): ${e.message}',
-    retryable: false,
-    statusCode: e.statusCode,
-    raw: e.raw,
-    retryAfter: e.retryAfter,
-  );
+  // ---------------------------------------------------------------------------
+  // Server-side scheduling
+  // ---------------------------------------------------------------------------
+
+  /// Takes back a post the server holds with
+  /// `DELETE /api/v1/scheduled_statuses/:id`. 404/410 mean it is gone already
+  /// (published or removed elsewhere), which counts as success.
+  @override
+  Future<void> cancelScheduled(
+    PublishResult held,
+    ConnectedAccount account,
+    Map<String, String> secrets,
+    AdapterContext ctx,
+  ) async {
+    final id = held.remoteId ?? '';
+    if (id.isEmpty) {
+      throw const AdapterException(
+        PublishError.platform('No id was recorded for the scheduled post; remove it on the server itself'),
+      );
+    }
+    final p = MastodonInstanceProfile.fromConfig(account.config);
+    if (p.baseUrl.isEmpty) {
+      throw const AdapterException(PublishError.configuration('The server address is missing; reconnect the account'));
+    }
+    final token = OAuthTokens.fromSecrets(secrets);
+    if (token == null) {
+      throw const AdapterException(PublishError.auth('No access token stored for this account. Reconnect it.'));
+    }
+    try {
+      final removed = await MastodonApi(ctx, p.base, accessToken: token.accessToken).deleteScheduledStatus(id);
+      ctx.log.info(
+        removed ? 'Removed scheduled post $id from ${p.domain}' : 'Scheduled post $id was already gone from ${p.domain}',
+      );
+    } on Exception catch (e) {
+      throw AdapterException(_toError(e, ctx, context: 'Removing the scheduled post from ${p.domain}'));
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Hand-off

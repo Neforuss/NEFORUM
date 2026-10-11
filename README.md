@@ -31,6 +31,16 @@ Every connected account uses one of these. You can connect the same platform mor
 
 If an API account runs out of quota (for example X's monthly cap), NEFORUM can fall back to hand-off for that post instead of failing.
 
+### Text cards for photo-only networks
+
+Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an image. When a post is only words, NEFORUM sets them on a plain card, white on black or black on white, with the same signature every time: a purple rule with a yellow tab along the top, and the NEFORUM mark, wordmark and your handle at the bottom. The card is made on your device when you save or schedule the post. It goes only to the networks that need it (the others get plain text) and carries the words as alt text. The caption still has the full text, hashtags and link. Pick the style per post under the preview, or turn cards off in Settings.
+
+<p align="center">
+  <img src="docs/screenshots/text-card-dark.jpg" alt="A NEFORUM text card, white on black" width="260">
+  &nbsp;
+  <img src="docs/screenshots/text-card-light.jpg" alt="A NEFORUM text card, black on white" width="260">
+</p>
+
 <p align="center">
   <img src="docs/screenshots/phone-compose-dark.png" alt="Composer on a phone" width="260">
   &nbsp;
@@ -58,14 +68,16 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **Instagram and Threads (API mode):** Instagram needs a professional (creator or business) account. Both fetch media from a public web address, so you pick a media host in Settings (a free temporary one is built in). Hand-off works with any account and needs none of this.
 - **Facebook:** the API only posts to Pages you manage. Personal profiles use hand-off.
 - **TikTok:** apps TikTok has not audited can only post privately. Hand-off posts publicly from the TikTok app.
-- **YouTube:** uploads from apps that have not passed Google's verification are private until you change them.
+- **YouTube:** uploads from apps that have not passed Google's verification may be locked to private. Google's own pages disagree on whether that still applies, and NEFORUM cannot detect it. Hand-off always posts publicly.
+- **Micropub (IndieAuth):** sign-in works on Windows and macOS. On phones, servers that check the app's client page can refuse it until the project publishes that page.
 - **Hand-off** always needs one tap from you in the other app, so it cannot run unattended.
 
 ## Scheduling without a server
 
-- **Windows and macOS:** NEFORUM keeps running in the tray (menu bar) when you close the window and posts on time. It can start when you sign in.
+- **Platforms that can hold a post publish it themselves:** Mastodon (and Pleroma, Akkoma, Friendica, GoToSocial 0.20+), Facebook Pages, YouTube, Tumblr, WordPress and Ghost. NEFORUM hands them the post when you schedule it, so it goes out even if your device is off. Editing, rescheduling, publishing now or deleting the post in NEFORUM takes their copy back first. If that fails (offline, expired sign-in), NEFORUM tells you instead of pretending. Threads, private or unlisted YouTube videos, and times too close or too far out stay on the device.
+- **Windows and macOS:** for everything else, NEFORUM keeps running in the tray (menu bar) when you close the window and posts on time. It can start when you sign in.
 - **Android:** posts go out in the background within a few minutes of their time.
-- **iPhone and iPad:** iOS does not let apps run on a timer, so you get a notification at the scheduled time; tap it and NEFORUM publishes.
+- **iPhone and iPad:** iOS does not let apps run on a timer. Networks that hold posts need nothing from the phone. For the rest you get a notification at the scheduled time; its **Publish now** button posts without opening the app.
 - **Hand-off accounts** always get a "time to post" reminder.
 
 ## More screenshots
@@ -85,7 +97,7 @@ Builds for every platform are produced by [GitHub Actions](.github/workflows/bui
 | Platform | Artifact | Notes |
 |---|---|---|
 | Android | `neforum-android.apk` | Allow installing from your browser or file manager. Android 7 or newer. |
-| Windows | `neforum-windows.zip` | Unzip and run `NEFORUM.exe`. Windows 10 or newer. |
+| Windows | `NEFORUM-Setup-1.0.0.exe` | Installer: no administrator rights needed, Start menu entry, clean uninstall. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. Windows 10 or 11, 64-bit; the Visual C++ runtime is included. |
 | macOS | `neforum-macos.zip` | Unsigned: right-click the app, then Open, the first time. macOS 10.15 or newer. |
 | iPhone and iPad | `neforum-ios-unsigned.ipa` | Sign it with your own Apple ID (Xcode, AltStore or Sideloadly), or build from source in Xcode. |
 
@@ -109,6 +121,12 @@ flutter build apk --release
 
 ```bash
 flutter build windows --release
+```
+
+Then, for the Windows installer (needs [Inno Setup 6](https://jrsoftware.org/isinfo.php)):
+
+```bash
+iscc installer\neforum.iss
 ```
 
 ```bash
@@ -142,7 +160,13 @@ cd packages/neforum_core && dart test
 cd apps/neforum_app && flutter test --exclude-tags screenshots
 ```
 
-The core has over 900 tests that pin every adapter's requests and error handling against mocked APIs. The app tests render every screen at phone, tablet, desktop and ultrawide sizes in both themes, and drive the main flows end to end.
+On a desktop, also run the real app with its native plugins (window, tray, keychain, notifications) against a throwaway data folder:
+
+```bash
+cd apps/neforum_app && flutter test integration_test -d windows
+```
+
+The core has over 1,000 tests that pin every adapter's requests and error handling against mocked APIs, including server-side scheduling and taking a scheduled post back. The app tests render every screen at phone, tablet, desktop and ultrawide sizes in both themes, and drive the main flows end to end, including text cards and platform-held schedules.
 
 ## Privacy
 

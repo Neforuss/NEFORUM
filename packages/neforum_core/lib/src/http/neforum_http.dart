@@ -172,6 +172,11 @@ class NeforumHttp {
     final base = timeout ?? this.timeout;
     final effectiveTimeout = bodySize > 512 * 1024 ? _uploadTimeout(bodySize, base) : base;
     final retries = bodySize > 8 * 1024 * 1024 ? 0 : maxRetries;
+    // A POST that may already have been processed (gateway error, dropped
+    // connection) is never re-sent here: that could publish twice. The
+    // publish service retries the whole target later instead.
+    final idempotent = _idempotentMethods.contains(method.toUpperCase()) ||
+        (headers?.keys.any((k) => k.toLowerCase() == 'idempotency-key') ?? false);
     var attempt = 0;
     while (true) {
       attempt++;
@@ -181,7 +186,7 @@ class NeforumHttp {
         final streamed = await _client.send(req).timeout(effectiveTimeout);
         final res = await http.Response.fromStream(streamed).timeout(effectiveTimeout);
         final out = NeforumResponse(res.statusCode, _lowercase(res.headers), res.bodyBytes, url);
-        if (!out.ok && _retryable(out.statusCode) && attempt <= retries) {
+        if (!out.ok && attempt <= retries && (idempotent ? _retryable(out.statusCode) : _notProcessed(out))) {
           final wait = out.retryAfter ?? _backoff(attempt);
           if (wait <= const Duration(seconds: 30)) {
             _log.warn('HTTP ${out.statusCode} from ${url.host}; retrying in ${wait.inSeconds}s');
@@ -195,7 +200,7 @@ class NeforumHttp {
         rethrow;
       } on Object catch (e) {
         final transient = e is TimeoutException || e is http.ClientException || isTransientIoError(e);
-        if (transient && attempt <= retries) {
+        if (transient && idempotent && attempt <= retries) {
           final wait = _backoff(attempt);
           _log.warn('Network error calling ${url.host} ($e); retrying in ${wait.inSeconds}s');
           await Future<void>.delayed(wait);
@@ -253,6 +258,11 @@ class NeforumHttp {
   static bool isTransportError(Object e) => e is TimeoutException || e is http.ClientException || isTransientIoError(e);
 
   static bool _retryable(int status) => status == 429 || status == 502 || status == 503 || status == 504;
+
+  /// The server says it did not act on the request, so re-sending is safe.
+  static bool _notProcessed(NeforumResponse r) => r.statusCode == 503 || (r.statusCode == 429 && r.retryAfter != null);
+
+  static const _idempotentMethods = {'GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS'};
 
   static Duration _backoff(int attempt) => Duration(milliseconds: 500 * (1 << (attempt - 1)));
 

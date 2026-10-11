@@ -4,7 +4,7 @@ NEFORUM reaches Google Business Profile (formerly Google My Business) by **hand-
 
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
-| **Hand-off** (only tier) | Owner or manager of a **verified** Business Profile. A browser (computer) or the Google Maps app (phone) | Free | NEFORUM copies your text and opens Google. You choose **Add update**, paste, add a photo and tap **Post**. |
+| **Hand-off** (only tier) | Owner or manager of a **verified** Business Profile. A browser (computer) or the Google Maps app (phone) | Free | NEFORUM copies your text and opens Google. You choose **Posts > Add post > Update**, paste, add a photo and select **Post**. |
 
 Status as of October 2026.
 
@@ -24,11 +24,11 @@ Google does have an API for this (Business Profile API v4, `localPosts.create`),
 
 ## What happens when you publish
 
-1. NEFORUM copies your text to the clipboard and opens <https://business.google.com/>. On a phone it opens **Google Maps**: tap the **Business** tab.
-2. Choose **Add update**. For an offer or event, pick that type instead.
+1. NEFORUM copies your text to the clipboard and opens <https://business.google.com/>. On a phone it opens **Google Maps**: open your Business Profile there.
+2. Choose **Posts > Add post** and pick **Update**. For an offer or event, pick that type instead.
 3. Paste your text and add your photo or video.
-4. If your post has a link, NEFORUM shows it. Use **Add a button > Learn more** and paste the link there.
-5. Tap **Post**.
+4. If your post has a link, NEFORUM shows it. Under **Button**, pick **Learn more** and paste the link there.
+5. Select **Post**. Google's form can also schedule the post (**Schedule this post**); NEFORUM does not control that.
 
 ## Limits
 
@@ -50,6 +50,7 @@ Google does have an API for this (Business Profile API v4, `localPosts.create`),
 - Business Profile API prerequisites (0 QPM until approved, eligibility): https://developers.google.com/my-business/content/prereqs
 - Posts data and `localPosts.create`: https://developers.google.com/my-business/content/posts-data and https://developers.google.com/my-business/reference/rest/v4/accounts.locations.localPosts/create
 - Create posts on your Business Profile: https://support.google.com/business/answer/7342169
+- How to make a post & track its status (Posts > Add post, Button, Schedule this post; checked 2026-10-11): https://support.google.com/business/answer/7390603
 - Posts content policy (contact information): https://support.google.com/business/answer/7213077
 - Photo and video guidelines: https://support.google.com/business/answer/6103862
 - Managing your profile in Google Maps: https://support.google.com/business/answer/9867764

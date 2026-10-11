@@ -221,6 +221,12 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
               if (err != null) ...[
                 const SizedBox(height: Space.xs + 2),
                 Text(err.message, style: context.text.bodySmall?.copyWith(color: nf.danger)),
+              ] else if (t.isHeldByPlatform && t.result?.scheduledFor != null) ...[
+                const SizedBox(height: Space.xs),
+                Text(
+                  '${d?.name ?? 'The platform'} holds this post and publishes it itself on ${DateFormat.MMMEd().add_jm().format(t.result!.scheduledFor!.toLocal())}, even if this device is off. Editing or deleting the post here takes it back.',
+                  style: context.text.bodySmall,
+                ),
               ] else if (t.result?.threadRemoteIds.isNotEmpty ?? false) ...[
                 const SizedBox(height: Space.xs),
                 Text('Posted as a ${t.result!.threadRemoteIds.length}-part thread', style: context.text.bodySmall),

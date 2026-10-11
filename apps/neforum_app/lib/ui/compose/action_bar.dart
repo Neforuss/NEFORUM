@@ -32,13 +32,10 @@ class ComposerActionBar extends ConsumerWidget {
     final targets = r.ready + r.handoff + r.blocked;
     final when = c.scheduledAt;
 
-    final String label;
-    if (when != null) {
-      label = compact ? 'Schedule' : 'Schedule for ${DateFormat.E().add_jm().format(when)}';
-    } else if (targets == 0) {
-      label = 'Post';
-    } else {
-      label = 'Post to $targets';
+    String labelFor({required bool short}) {
+      if (when != null) return short ? 'Schedule' : 'Schedule for ${DateFormat.E().add_jm().format(when)}';
+      if (targets == 0) return 'Post';
+      return 'Post to $targets';
     }
 
     String? why;
@@ -64,7 +61,7 @@ class ComposerActionBar extends ConsumerWidget {
         ),
     ]);
 
-    final schedule = when == null
+    Widget scheduleFor({required bool short}) => when == null
         ? (compact
             ? IconButton.outlined(
                 onPressed: busy ? null : onSchedule,
@@ -75,17 +72,17 @@ class ComposerActionBar extends ConsumerWidget {
             : PillButton(label: 'Schedule', icon: Icons.schedule_rounded, onPressed: busy ? null : onSchedule))
         : InputChip(
             avatar: Icon(Icons.schedule_rounded, size: 16, color: nf.accent),
-            label: Text(DateFormat.MMMEd().add_jm().format(when)),
+            label: Text((short ? DateFormat.MMMd() : DateFormat.MMMEd()).add_jm().format(when), maxLines: 1, overflow: TextOverflow.ellipsis),
             onPressed: onSchedule,
             onDeleted: () => ref.read(composerProvider.notifier).setSchedule(null),
             side: BorderSide(color: nf.accent.withValues(alpha: 0.5)),
             backgroundColor: nf.accentSoft,
           );
 
-    final post = Tooltip(
+    Widget postFor({required bool short}) => Tooltip(
       message: why ?? (when == null ? 'Ctrl+Enter' : 'Adds it to the queue'),
       child: PrimaryAction(
-        label: label,
+        label: labelFor(short: short),
         icon: when == null ? Icons.send_rounded : Icons.event_available_rounded,
         loading: busy,
         compact: compact,
@@ -103,25 +100,39 @@ class ComposerActionBar extends ConsumerWidget {
               Row(children: [
                 IconButton(onPressed: busy ? null : onSaveDraft, tooltip: 'Save draft', icon: const Icon(Icons.save_outlined)),
                 const SizedBox(width: Space.xs),
-                if (when == null) schedule else Flexible(child: schedule),
+                if (when == null) scheduleFor(short: true) else Flexible(child: scheduleFor(short: true)),
                 const SizedBox(width: Space.md),
-                Expanded(child: post),
+                Expanded(child: postFor(short: true)),
               ]),
             ])
-          : Row(children: [
-              TextButton.icon(
-                onPressed: busy ? null : onSaveDraft,
-                icon: const Icon(Icons.save_outlined, size: 18),
-                label: const Text('Save draft'),
-                style: TextButton.styleFrom(foregroundColor: nf.textMuted),
-              ),
-              const SizedBox(width: Space.md),
-              Expanded(child: summary),
-              const SizedBox(width: Space.md),
-              schedule,
-              const SizedBox(width: Space.sm),
-              post,
-            ]),
+          // The composer column can be narrow on a wide window (previews take
+          // the rest), so adapt to the bar's own width.
+          : LayoutBuilder(builder: (context, box) {
+              // A schedule adds a date chip and a longer button label.
+              if (box.maxWidth < (when == null ? 460 : 780)) {
+                return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  IconButton(onPressed: busy ? null : onSaveDraft, tooltip: 'Save draft', icon: const Icon(Icons.save_outlined)),
+                  const Spacer(),
+                  Flexible(flex: 3, child: scheduleFor(short: true)),
+                  const SizedBox(width: Space.sm),
+                  Flexible(flex: 3, child: postFor(short: true)),
+                ]);
+              }
+              return Row(children: [
+                TextButton.icon(
+                  onPressed: busy ? null : onSaveDraft,
+                  icon: const Icon(Icons.save_outlined, size: 18),
+                  label: const Text('Save draft'),
+                  style: TextButton.styleFrom(foregroundColor: nf.textMuted),
+                ),
+                const SizedBox(width: Space.md),
+                Expanded(child: summary),
+                const SizedBox(width: Space.md),
+                scheduleFor(short: false),
+                const SizedBox(width: Space.sm),
+                postFor(short: false),
+              ]);
+            }),
     );
   }
 }
@@ -136,12 +147,16 @@ class _Dot extends StatelessWidget {
   Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
         Container(width: 7, height: 7, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: Space.xs + 2),
-        Text(
-          label,
-          style: context.text.labelMedium?.copyWith(
-            color: context.nf.textMuted,
-            decoration: underline ? TextDecoration.underline : null,
-            decorationColor: color,
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: context.text.labelMedium?.copyWith(
+              color: context.nf.textMuted,
+              decoration: underline ? TextDecoration.underline : null,
+              decorationColor: color,
+            ),
           ),
         ),
       ]);

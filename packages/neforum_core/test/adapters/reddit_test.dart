@@ -246,6 +246,12 @@ void main() {
       );
     });
 
+    test('no browser available -> ConnectException', () async {
+      final ctx = testContext(handler: (req) async => fail('no HTTP expected'));
+      await expectLater(
+          adapter.connect(PlatformTier.byokApi, {'client_id': 'cid-123'}, ctx), throwsA(isA<ConnectException>()));
+    });
+
     test('missing client id and bad subreddit are refused', () async {
       final ctx = testContext(broker: FakeAuthBroker(), handler: (req) async => _json({}));
       expect(() => adapter.connect(PlatformTier.byokApi, {}, ctx),
@@ -612,6 +618,53 @@ void main() {
       expect(user.error!.kind, PublishErrorKind.auth);
     });
 
+    test('HTTP 400 with {reason, explanation, fields} keeps Reddit\'s reason (gallery endpoint style)', () async {
+      final flair = await run(http.Response(
+          jsonEncode({
+            'explanation': 'Your post must contain post flair.',
+            'message': 'Bad Request',
+            'reason': 'SUBMIT_VALIDATION_FLAIR_REQUIRED',
+            'fields': ['flair'],
+          }),
+          400,
+          headers: jsonHeaders));
+      expect(flair.error!.kind, PublishErrorKind.validation);
+      expect(flair.error!.message, contains('must contain post flair'));
+      expect(flair.error!.statusCode, 400);
+
+      final rate = await run(http.Response(
+          jsonEncode({
+            'explanation': 'you are doing that too much. try again in 4 minutes.',
+            'message': 'Bad Request',
+            'reason': 'RATELIMIT',
+          }),
+          400,
+          headers: jsonHeaders));
+      expect(rate.error!.kind, PublishErrorKind.quota);
+      expect(rate.error!.retryAfter, const Duration(minutes: 4));
+    });
+
+    test('RATELIMIT on the media lease -> quota, not "no upload slot"', () async {
+      final r = await run(
+          _json({
+            'json': {
+              'errors': [
+                ['RATELIMIT', 'you are doing that too much. try again in 2 minutes.', 'ratelimit'],
+              ],
+            },
+          }),
+          v: _variant(media: [fakeImage()]));
+      expect(r.error!.kind, PublishErrorKind.quota);
+      expect(r.error!.retryAfter, const Duration(minutes: 2));
+    });
+
+    test('network failure -> network error result, not an exception', () async {
+      final ctx = testContext(handler: (req) async => throw http.ClientException('connection refused'));
+      final r = await adapter.publish(_variant(), _apiAccount(), _secrets(), ctx);
+      expect(r.error!.kind, PublishErrorKind.network);
+      expect(r.error!.retryable, isTrue);
+    });
+
     test('400 -> validation, 503 -> network', () async {
       expect((await run(http.Response('{"message":"Bad Request"}', 400, headers: jsonHeaders))).error!.kind,
           PublishErrorKind.validation);
@@ -653,6 +706,20 @@ void main() {
       expect(req.headers['Authorization'], _basicEmptySecret);
       expect(req.headers['User-Agent'], _ua);
       expect(bodyOf(req), {'grant_type': 'refresh_token', 'refresh_token': 'rt-1'});
+    });
+
+    test('refresh rate limited -> quota; unreachable -> network', () async {
+      final expired = _secrets(expiresAt: testNow.subtract(const Duration(minutes: 5)));
+      final limited = testContext(handler: (req) async => http.Response('Too Many Requests', 429));
+      await expectLater(
+        adapter.refreshSecrets(_apiAccount(), expired, limited),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.quota)),
+      );
+      final offline = testContext(handler: (req) async => throw http.ClientException('no route'));
+      await expectLater(
+        adapter.refreshSecrets(_apiAccount(), expired, offline),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.network)),
+      );
     });
 
     test('revoked refresh token -> auth', () async {

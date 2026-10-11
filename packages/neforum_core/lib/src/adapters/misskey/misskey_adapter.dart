@@ -337,6 +337,9 @@ class MisskeyAdapter extends PlatformAdapter {
 
   /// The descriptor with this account's instance limits (note length, file
   /// size) applied. Use it wherever per-account limits matter.
+  @override
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) => descriptorFor(account);
+
   PlatformDescriptor descriptorFor(ConnectedAccount account) {
     final d = _descriptor;
     final maxLen = _int(account.config['maxNoteTextLength']);

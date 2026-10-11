@@ -88,7 +88,7 @@ ConnectedAccount account([Map<String, dynamic> config = mastodonConfig, Platform
     fakeAccount('mastodon', config: config, tier: tier);
 
 void main() {
-  final adapter = MastodonAdapter(mediaPollInterval: Duration.zero, maxMediaPolls: 5);
+  final adapter = MastodonAdapter(mediaPollInterval: Duration.zero, maxMediaPolls: 5, clock: () => testNow);
 
   group('descriptor', () {
     test('matches the research numbers', () {
@@ -128,6 +128,14 @@ void main() {
       expect(api.fields.first.key, 'instance');
       expect(api.fields.firstWhere((f) => f.key == 'client_secret').secret, isTrue);
       expect(adapter.specFor(PlatformTier.handoff).usesBrowser, isFalse);
+    });
+
+    test('connect text matches the scopes and redirects actually used', () {
+      final api = adapter.specFor(PlatformTier.openApi);
+      expect(api.intro, contains(MastodonAdapter.scopesModern));
+      expect(api.intro, contains(MastodonAdapter.scopesUmbrella));
+      expect(api.intro, isNot(contains('asks only to publish posts and upload media (`write:statuses write:media profile` on Mastodon; `read write`')));
+      expect(api.redirectNote, contains('neforum://callback on Android, iOS and macOS'));
     });
 
     test('normalizes instance input', () {
@@ -414,6 +422,57 @@ void main() {
       );
       expect(codes(v), contains('schedule.thread'));
     });
+
+    test('schedules closer than 5 minutes (+1 min margin) are refused on scheduledAt; past ones publish now', () {
+      List<ValidationIssue> schedule(Duration ahead, [Map<String, dynamic> config = mastodonConfig]) => adapter
+          .validate(PostVariant(text: 'x', scheduledAt: testNow.add(ahead)), account(config))
+          .where((i) => i.isError && i.field == 'scheduledAt')
+          .toList();
+      expect(schedule(const Duration(minutes: 3)).single.code, 'schedule.too_soon');
+      expect(schedule(const Duration(minutes: 5, seconds: 30)).single.code, 'schedule.too_soon');
+      expect(schedule(const Duration(minutes: 6)), isEmpty);
+      expect(schedule(const Duration(days: 30)), isEmpty);
+      expect(schedule(const Duration(minutes: -1)), isEmpty, reason: 'a time that has passed means publish now');
+      expect(
+        schedule(const Duration(minutes: 3), {...mastodonConfig, 'software': 'akkoma'}).single.code,
+        'schedule.too_soon',
+        reason: 'Akkoma would publish a too-close post immediately',
+      );
+    });
+
+    test('server-side scheduling support per server software', () {
+      bool supports(String software, [String? version]) {
+        final config = {...mastodonConfig, 'software': software, if (version != null) 'softwareVersion': version};
+        final p = MastodonInstanceProfile.fromConfig(config);
+        final viaValidate = adapter
+            .validate(PostVariant(text: 'x', media: [fakeImage()], scheduledAt: testNow.add(const Duration(hours: 2))), account(config))
+            .every((i) => i.code != 'schedule.unsupported');
+        expect(adapter.descriptorFor(p).serverSideScheduling, p.supportsScheduling);
+        expect(viaValidate, p.supportsScheduling);
+        return p.supportsScheduling;
+      }
+
+      expect(supports('mastodon', '4.5.0'), isTrue);
+      expect(supports('pleroma', '2.9.1'), isTrue);
+      expect(supports('akkoma', '3.15.2'), isTrue);
+      expect(supports('friendica', '2024.12'), isTrue);
+      expect(supports('gotosocial', '0.20.1'), isTrue);
+      expect(supports('gotosocial', '0.21.0-rc1+git-abc'), isTrue);
+      expect(supports('gotosocial', '0.19.1'), isFalse, reason: 'GoToSocial before 0.20 answers 501');
+      expect(supports('gotosocial'), isFalse);
+      expect(supports('pixelfed', '0.12.5'), isFalse);
+      expect(supports('mitra', '4.0.0'), isFalse);
+      expect(supports('iceshrimp.net', '2025.1'), isFalse, reason: 'unknown software is not trusted with scheduled_at');
+      expect(adapter.descriptor.serverSideScheduling, isTrue, reason: 'the service must try delegation');
+    });
+
+    test('version comparison', () {
+      expect(MastodonInstanceProfile.versionAtLeast('0.20.0', const [0, 20]), isTrue);
+      expect(MastodonInstanceProfile.versionAtLeast('v1.2', const [0, 20]), isTrue);
+      expect(MastodonInstanceProfile.versionAtLeast('0.9.9', const [0, 20]), isFalse);
+      expect(MastodonInstanceProfile.versionAtLeast('git-abc', const [0, 20]), isFalse);
+      expect(MastodonInstanceProfile.versionAtLeast(null, const [0, 20]), isFalse);
+    });
   });
 
   group('publish', () {
@@ -549,51 +608,204 @@ void main() {
       final r = await adapter.publish(v, account(), tokenSecrets, testContext(handler: server.handle));
       expect(r.success, isFalse);
       expect(r.error!.kind, PublishErrorKind.validation);
-      expect(r.error!.message, contains('Only 1 of 2'));
+      expect(r.error!.retryable, isFalse);
+      expect(r.error!.message, contains('Part 2 of 2 failed'));
       expect(r.error!.message, contains('s1'));
     });
 
-    test('server-side scheduling sends scheduled_at and returns the scheduled id', () async {
-      final at = testNow.add(const Duration(hours: 3));
+    test('a dropped connection on part 2 is a partial thread, never retried', () async {
+      var n = 0;
+      final r = await adapter.publish(
+        const PostVariant(text: 'one', threadParts: ['one', 'two', 'three']),
+        account(),
+        tokenSecrets,
+        testContext(
+          handler: (req) async {
+            if (++n == 1) return j({'id': 's1'});
+            throw http.ClientException('connection reset', req.url);
+          },
+        ),
+      );
+      expect(r.error!.kind, PublishErrorKind.network);
+      expect(r.error!.retryable, isFalse, reason: 'a retry would post part 1 again');
+      expect(r.error!.message, allOf(contains('Part 2 of 3 failed'), contains('s1')));
+    });
+
+    test('a 429 on part 2 keeps its kind but is not retryable', () async {
+      var n = 0;
       final server = FakeServer({
-        'POST /api/v1/statuses': (_) => one({
-          'id': '3221',
-          'scheduled_at': at.toIso8601String(),
-          'params': {'text': 'later'},
-          'media_attachments': <Object>[],
-        }),
+        'POST /api/v1/statuses': (_) => ++n == 1 ? one({'id': 's1'}) : [j({'error': 'Too many requests'}, 429)],
       });
       final r = await adapter.publish(
-        PostVariant(text: 'later', scheduledAt: at),
+        const PostVariant(text: 'one', threadParts: ['one', 'two']),
         account(),
         tokenSecrets,
         testContext(handler: server.handle),
       );
-      expect(r.success, isTrue, reason: '${r.error}');
-      expect(r.remoteId, 'scheduled:3221');
-      expect(r.publishedAt, at);
-      expect(formMap(server.calls.single)['scheduled_at'], '2026-10-07T15:00:00.000Z');
+      expect(r.error!.kind, PublishErrorKind.quota);
+      expect(r.error!.retryable, isFalse);
     });
 
-    test('schedules less than 5 minutes ahead are pushed past the minimum; past ones post now', () async {
-      final server = FakeServer({
-        'POST /api/v1/statuses': (_) => one({'id': '1'}),
+    group('server-side scheduling', () {
+      Map<String, dynamic> scheduledStatus(String id, DateTime at, {List<Object> media = const []}) => {
+        'id': id,
+        'scheduled_at': at.toUtc().toIso8601String(),
+        'params': {'text': 'later', 'media_ids': null, 'visibility': null},
+        'media_attachments': media,
+      };
+
+      test('sends scheduled_at and returns PublishResult.scheduled with the scheduled status id', () async {
+        final at = testNow.add(const Duration(hours: 3));
+        final server = FakeServer({'POST /api/v1/statuses': (_) => one(scheduledStatus('3221', at))});
+        final r = await adapter.publish(
+          PostVariant(text: 'later', scheduledAt: at, sourcePostId: 'p'),
+          account(),
+          tokenSecrets,
+          testContext(handler: server.handle),
+        );
+        expect(r.success, isTrue, reason: '${r.error}');
+        expect(r.isHeldByPlatform, isTrue);
+        expect(r.remoteId, '3221');
+        expect(r.scheduledFor, at);
+        expect(r.remoteUrl, isNull);
+        final post = server.calls.single;
+        expect(post.method, 'POST');
+        expect(post.url.toString(), 'https://mastodon.example/api/v1/statuses');
+        expect(post.headers['Authorization'], 'Bearer tok');
+        expect(formMap(post)['scheduled_at'], '2026-10-07T15:00:00.000Z');
+        expect(formMap(post)['status'], 'later');
       });
-      final ctx = testContext(handler: server.handle);
-      await adapter.publish(
-        PostVariant(text: 'soon', scheduledAt: testNow.add(const Duration(minutes: 1))),
-        account(),
-        tokenSecrets,
-        ctx,
-      );
-      expect(formMap(server.calls.last)['scheduled_at'], '2026-10-07T12:05:30.000Z');
-      await adapter.publish(
-        PostVariant(text: 'late', scheduledAt: testNow.subtract(const Duration(minutes: 1))),
-        account(),
-        tokenSecrets,
-        ctx,
-      );
-      expect(formMap(server.calls.last).containsKey('scheduled_at'), isFalse);
+
+      test('uses the time the server reports', () async {
+        final at = testNow.add(const Duration(hours: 3));
+        final server = FakeServer({
+          'POST /api/v1/statuses': (_) => one(scheduledStatus('9', at.add(const Duration(seconds: 1)))),
+        });
+        final r = await adapter.publish(
+          PostVariant(text: 'later', scheduledAt: at),
+          account({...mastodonConfig, 'software': 'friendica'}),
+          tokenSecrets,
+          testContext(handler: server.handle),
+        );
+        expect(r.scheduledFor, at.add(const Duration(seconds: 1)));
+      });
+
+      test('media is uploaded (and processed) before the post is scheduled', () async {
+        final at = testNow.add(const Duration(days: 1));
+        final server = FakeServer({
+          'POST /api/v2/media': (_) => one({'id': 'v1', 'url': null}, 202),
+          'GET /api/v1/media/v1': (_) => one({'id': 'v1', 'url': 'https://files/v1.mp4'}),
+          'POST /api/v1/statuses': (_) => one(scheduledStatus('77', at)),
+        });
+        final r = await adapter.publish(
+          PostVariant(text: 'clip', media: [fakeVideo()], scheduledAt: at),
+          account({...mastodonConfig, 'software': 'gotosocial', 'softwareVersion': '0.20.1'}),
+          tokenSecrets,
+          testContext(handler: server.handle),
+        );
+        expect(r.isHeldByPlatform, isTrue, reason: '${r.error}');
+        expect(server.trail, ['POST /api/v2/media', 'GET /api/v1/media/v1', 'POST /api/v1/statuses']);
+        final pairs = formPairs(server.calls.last);
+        expect(pairs.where((e) => e.key == 'media_ids[]').map((e) => e.value), ['v1']);
+        expect(formMap(server.calls.last)['scheduled_at'], '2026-10-08T12:00:00.000Z');
+      });
+
+      test('a server that ignores scheduled_at gives a normal published result', () async {
+        final server = FakeServer({
+          'POST /api/v1/statuses': (_) => one({'id': '55', 'url': 'https://mastodon.example/@a/55'}),
+        });
+        final r = await adapter.publish(
+          PostVariant(text: 'x', scheduledAt: testNow.add(const Duration(hours: 1))),
+          account(),
+          tokenSecrets,
+          testContext(handler: server.handle),
+        );
+        expect(r.success, isTrue);
+        expect(r.isHeldByPlatform, isFalse);
+        expect(r.remoteId, '55');
+        expect(r.remoteUrl, 'https://mastodon.example/@a/55');
+      });
+
+      test('too-close schedules are refused before any request; past ones publish now without scheduled_at', () async {
+        final server = FakeServer({'POST /api/v1/statuses': (_) => one({'id': '1'})});
+        final ctx = testContext(handler: server.handle);
+        final soon = await adapter.publish(
+          PostVariant(text: 'soon', scheduledAt: testNow.add(const Duration(minutes: 3))),
+          account(),
+          tokenSecrets,
+          ctx,
+        );
+        expect(soon.error!.kind, PublishErrorKind.validation);
+        expect(server.calls, isEmpty);
+
+        final late = await adapter.publish(
+          PostVariant(text: 'late', scheduledAt: testNow.subtract(const Duration(minutes: 1))),
+          account(),
+          tokenSecrets,
+          ctx,
+        );
+        expect(late.success, isTrue);
+        expect(late.isHeldByPlatform, isFalse);
+        expect(formMap(server.calls.single).containsKey('scheduled_at'), isFalse);
+      });
+
+      test('a schedule that became too close during a slow upload is not sent', () async {
+        var now = testNow;
+        final server = FakeServer({
+          'POST /api/v2/media': (_) {
+            now = now.add(const Duration(minutes: 2));
+            return one({'id': 'm1', 'url': 'u'});
+          },
+          'POST /api/v1/statuses': (_) => one({'id': '1'}),
+        });
+        final base = testContext(handler: server.handle);
+        final ctx = AdapterContext(http: base.http, clock: () => now, log: base.log, readMedia: base.readMedia);
+        final r = await adapter.publish(
+          PostVariant(text: 'x', media: [img1], scheduledAt: testNow.add(const Duration(minutes: 6, seconds: 30))),
+          account(),
+          tokenSecrets,
+          ctx,
+        );
+        expect(r.error!.kind, PublishErrorKind.validation);
+        expect(server.trail, ['POST /api/v2/media']);
+      });
+
+      test('GoToSocial before 0.20 is refused before any request', () async {
+        final server = FakeServer({});
+        final r = await adapter.publish(
+          PostVariant(text: 'x', scheduledAt: testNow.add(const Duration(days: 1))),
+          account({...mastodonConfig, 'software': 'gotosocial', 'softwareVersion': '0.19.1'}),
+          tokenSecrets,
+          testContext(handler: server.handle),
+        );
+        expect(r.error!.kind, PublishErrorKind.unsupported);
+        expect(server.calls, isEmpty);
+      });
+
+      test('scheduled requests never reuse an Idempotency-Key; immediate ones keep a stable key', () async {
+        final at = testNow.add(const Duration(hours: 2));
+        final server = FakeServer({
+          'POST /api/v1/statuses': (r) =>
+              formMap(r).containsKey('scheduled_at') ? one(scheduledStatus('1', at)) : one({'id': '2'}),
+        });
+        final ctx = testContext(handler: server.handle);
+        final scheduled = PostVariant(text: 'same', scheduledAt: at, sourcePostId: 'p');
+        await adapter.publish(scheduled, account(), tokenSecrets, ctx);
+        await adapter.publish(scheduled, account(), tokenSecrets, ctx); // re-delegated after a cancel
+        await adapter.publish(const PostVariant(text: 'same', sourcePostId: 'p'), account(), tokenSecrets, ctx);
+        await adapter.publish(const PostVariant(text: 'same', sourcePostId: 'p'), account(), tokenSecrets, ctx);
+        await adapter.publish(
+          const PostVariant(text: 'same', sourcePostId: 'p', visibility: Visibility.followers),
+          account(),
+          tokenSecrets,
+          ctx,
+        );
+        final keys = server.calls.map((c) => c.headers['Idempotency-Key']!).toList();
+        expect(keys[0], isNot(keys[1]));
+        expect(keys[2], keys[3], reason: 'a retry of the same immediate post must reuse its key');
+        expect({keys[0], keys[1]}.contains(keys[2]), isFalse);
+        expect(keys[4], isNot(keys[2]), reason: 'an edited post gets a new key');
+      });
     });
 
     test('Pixelfed scheduling is refused before any request', () async {
@@ -725,6 +937,107 @@ void main() {
         expect(r.error!.kind, PublishErrorKind.auth);
         expect(server.calls, isEmpty);
       });
+    });
+  });
+
+  group('cancelScheduled', () {
+    final held = PublishResult.scheduled(remoteId: '3221', scheduledFor: testNow.add(const Duration(hours: 3)));
+
+    Matcher adapterError(PublishErrorKind kind) =>
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', kind));
+
+    test('DELETE /api/v1/scheduled_statuses/:id with the user token', () async {
+      final server = FakeServer({'DELETE /api/v1/scheduled_statuses/3221': (_) => one(<String, Object>{})});
+      await adapter.cancelScheduled(held, account(), tokenSecrets, testContext(handler: server.handle));
+      final call = server.calls.single;
+      expect(call.method, 'DELETE');
+      expect(call.url.toString(), 'https://mastodon.example/api/v1/scheduled_statuses/3221');
+      expect(call.headers['Authorization'], 'Bearer tok');
+    });
+
+    test('cancels what publish() returned', () async {
+      final at = testNow.add(const Duration(hours: 1));
+      final server = FakeServer({
+        'POST /api/v1/statuses': (_) => one({
+          'id': '88',
+          'scheduled_at': at.toIso8601String(),
+          'params': {'text': 'x'},
+          'media_attachments': <Object>[],
+        }),
+        'DELETE /api/v1/scheduled_statuses/88': (_) => one(<String, Object>{}),
+      });
+      final ctx = testContext(handler: server.handle);
+      final r = await adapter.publish(PostVariant(text: 'x', scheduledAt: at), account(), tokenSecrets, ctx);
+      await adapter.cancelScheduled(r, account(), tokenSecrets, ctx);
+      expect(server.trail, ['POST /api/v1/statuses', 'DELETE /api/v1/scheduled_statuses/88']);
+    });
+
+    test('404 and 410 mean already gone (success)', () async {
+      for (final status in [404, 410]) {
+        final server = FakeServer({
+          'DELETE /api/v1/scheduled_statuses/3221': (_) => one({'error': 'Record not found'}, status),
+        });
+        await adapter.cancelScheduled(held, account(), tokenSecrets, testContext(handler: server.handle));
+        expect(server.calls, hasLength(1));
+      }
+    });
+
+    test('401 → auth', () {
+      final server = FakeServer({
+        'DELETE /api/v1/scheduled_statuses/3221': (_) => one({'error': 'The access token is invalid'}, 401),
+      });
+      expect(
+        () => adapter.cancelScheduled(held, account(), tokenSecrets, testContext(handler: server.handle)),
+        adapterError(PublishErrorKind.auth),
+      );
+    });
+
+    test('5xx → retryable network', () async {
+      final server = FakeServer({'DELETE /api/v1/scheduled_statuses/3221': (_) => [http.Response('oops', 503)]});
+      try {
+        await adapter.cancelScheduled(held, account(), tokenSecrets, testContext(handler: server.handle));
+        fail('should throw');
+      } on AdapterException catch (e) {
+        expect(e.error.kind, PublishErrorKind.network);
+        expect(e.error.retryable, isTrue);
+        expect(e.error.statusCode, 503);
+      }
+    });
+
+    test('429 → quota with retryAfter', () async {
+      final server = FakeServer({
+        'DELETE /api/v1/scheduled_statuses/3221': (_) => [
+          j({'error': 'Too many requests'}, 429, {'x-ratelimit-reset': testNow.add(const Duration(minutes: 2)).toIso8601String()}),
+        ],
+      });
+      try {
+        await adapter.cancelScheduled(held, account(), tokenSecrets, testContext(handler: server.handle));
+        fail('should throw');
+      } on AdapterException catch (e) {
+        expect(e.error.kind, PublishErrorKind.quota);
+        expect(e.error.retryAfter, const Duration(minutes: 2));
+      }
+    });
+
+    test('transport failure → network', () {
+      expect(
+        () => adapter.cancelScheduled(
+          held,
+          account(),
+          tokenSecrets,
+          testContext(handler: (r) async => throw http.ClientException('connection reset', r.url)),
+        ),
+        adapterError(PublishErrorKind.network),
+      );
+    });
+
+    test('missing token → auth without any request', () async {
+      final server = FakeServer({});
+      await expectLater(
+        () => adapter.cancelScheduled(held, account(), const {'client_id': 'c'}, testContext(handler: server.handle)),
+        adapterError(PublishErrorKind.auth),
+      );
+      expect(server.calls, isEmpty);
     });
   });
 

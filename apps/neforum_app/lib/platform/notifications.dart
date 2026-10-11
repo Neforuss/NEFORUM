@@ -46,6 +46,13 @@ class PublishDueIntent extends NotificationIntent {
   final String postId;
 }
 
+/// Action id of the "Publish now" button on due-post reminders.
+const String kPublishAction = 'publish';
+
+/// Set by main.dart: runs when a notification action is used while the app
+/// is not running (iOS background action). Must be a top-level function.
+typedef BackgroundNotificationHandler = void Function(NotificationResponse response);
+
 /// Local notifications on every platform NEFORUM runs on.
 class NotificationService {
   NotificationService._();
@@ -60,6 +67,9 @@ class NotificationService {
 
   /// The notification that launched the app, if any.
   NotificationIntent? launchIntent;
+
+  /// Top-level handler for actions used while NEFORUM is not running.
+  BackgroundNotificationHandler? backgroundHandler;
 
   static const _channelScheduled = AndroidNotificationChannel(
     'neforum.scheduled',
@@ -94,6 +104,12 @@ class NotificationService {
         DarwinNotificationCategory('neforum.post', actions: [
           DarwinNotificationAction.plain('open', 'Open', options: {DarwinNotificationActionOption.foreground}),
         ]),
+        // Due-post reminder: "Publish now" runs in the background, without
+        // opening the app.
+        DarwinNotificationCategory('neforum.due', actions: [
+          DarwinNotificationAction.plain(kPublishAction, 'Publish now'),
+          DarwinNotificationAction.plain('open', 'Open NEFORUM', options: {DarwinNotificationActionOption.foreground}),
+        ]),
       ],
     );
     final settings = InitializationSettings(
@@ -114,6 +130,7 @@ class NotificationService {
           final intent = NotificationIntent.parse(r.payload);
           if (intent != null) _intents.add(intent);
         },
+        onDidReceiveBackgroundNotificationResponse: backgroundHandler,
       );
       final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       await android?.createNotificationChannel(_channelScheduled);
@@ -148,7 +165,7 @@ class NotificationService {
     return true;
   }
 
-  NotificationDetails _details(AndroidNotificationChannel channel) => NotificationDetails(
+  NotificationDetails _details(AndroidNotificationChannel channel, {String category = 'neforum.post'}) => NotificationDetails(
         android: AndroidNotificationDetails(
           channel.id,
           channel.name,
@@ -157,8 +174,8 @@ class NotificationService {
           priority: channel.importance == Importance.high ? Priority.high : Priority.defaultPriority,
           category: AndroidNotificationCategory.reminder,
         ),
-        iOS: const DarwinNotificationDetails(categoryIdentifier: 'neforum.post'),
-        macOS: const DarwinNotificationDetails(categoryIdentifier: 'neforum.post'),
+        iOS: DarwinNotificationDetails(categoryIdentifier: category, interruptionLevel: category == 'neforum.due' ? InterruptionLevel.timeSensitive : null),
+        macOS: DarwinNotificationDetails(categoryIdentifier: category),
       );
 
   /// Shows a notification now.
@@ -173,7 +190,9 @@ class NotificationService {
 
   /// Schedules a reminder at [when] (wall clock). Inexact on Android so no
   /// special alarm permission is needed; a minute late is fine for a reminder.
-  Future<void> schedule({required String key, required DateTime when, required String title, required String body, required String payload}) async {
+  /// With [publishAction] the reminder carries a "Publish now" button
+  /// (iOS), which publishes without opening the app.
+  Future<void> schedule({required String key, required DateTime when, required String title, required String body, required String payload, bool publishAction = false}) async {
     if (!_ready || kIsWeb) return;
     if (!when.isAfter(DateTime.now())) {
       return show(key: key, title: title, body: body, payload: payload);
@@ -184,7 +203,7 @@ class NotificationService {
         title: title,
         body: body,
         scheduledDate: tz.TZDateTime.from(when, tz.local),
-        notificationDetails: _details(_channelScheduled),
+        notificationDetails: _details(_channelScheduled, category: publishAction ? 'neforum.due' : 'neforum.post'),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         payload: payload,
       );

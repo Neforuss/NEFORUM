@@ -17,7 +17,7 @@ Tumblr's daily limits reset once per calendar day on Tumblr's server clock. Tumb
 - **Tags** go into Tumblr's tag field and are not added to the text. Tags cannot contain commas, so NEFORUM turns any comma into a space.
 - **Images**: up to 30 per post. JPEG, PNG and WEBP files can be up to 20 MB and must be RGB (CMYK files are refused). GIFs can be up to 10 MB. Alt text is sent with each image.
 - **Video**: one uploaded MP4 or MOV per post, up to 500 MB and 10 minutes. You can mix images and a video in one post.
-- **Scheduling on Tumblr's side**: if you schedule a post, NEFORUM sends it to Tumblr straight away as a scheduled queue item. Tumblr publishes it at the chosen time, so NEFORUM does not need to be running then.
+- **Scheduling on Tumblr's side**: if you schedule a post, NEFORUM sends it to Tumblr straight away as a scheduled queue item (`state` `queue` with `publish_on`). Tumblr publishes it at the chosen time, so NEFORUM does not need to be running then. If you edit, reschedule, delete or "publish now" the post, NEFORUM first deletes the copy Tumblr is holding (`/post/delete`). NEFORUM keeps the schedule on your device instead when Tumblr cannot hold the post: drafts and private posts (Tumblr only schedules queued posts), and posts due in less than 5 minutes (plus the time a large upload needs).
 - **Post state**: the per-post option `state` can be `published` (the default), `queue` (added to your blog's queue), `draft` or `private`. If you set the post's visibility to *private*, NEFORUM creates a private post.
 
 ## Set up "Your own API keys"
@@ -77,7 +77,7 @@ Photos and videos cannot be passed to Tumblr's website from another program:
 - **No content warnings or community labels.** Tumblr's "mature" labels cannot be set through the API. Set them on tumblr.com after posting.
 - **No unlisted or followers-only posts.** Such posts are published publicly. Use *private* to hide a post.
 - **One video at a time.** Tumblr refuses a new video while the previous one is still processing. NEFORUM shows "still processing your previous video" and retries a few minutes later.
-- **Scheduled posts and the queue**: a blog queue holds at most 1,000 posts and publishes at most 50 a day. A Tumblr Premium page mentions a different queue figure (2,000); Tumblr has not clarified which is correct. A scheduled post may get a new ID when it is published, so NEFORUM does not show a link for queued posts.
+- **Scheduled posts and the queue**: a blog queue holds at most 1,000 posts and publishes at most 50 a day. A Tumblr Premium page mentions a different queue figure (2,000); Tumblr has not clarified which is correct. A scheduled post gets a new ID when it is published (Tumblr calls the old one the "genesis" ID, and it can no longer be used to look the post up), so for scheduled posts NEFORUM links to your blog rather than to the post. For the same reason, if NEFORUM tries to remove a scheduled post within 5 minutes of its publishing time and Tumblr no longer finds it, NEFORUM reports that it may already be live instead of assuming it is gone.
 - **Tags**: Tumblr is commonly said to allow 30 tags per post, and NEFORUM warns above 30. Tumblr's own documentation no longer states this limit, so it is unconfirmed.
 - **Daily limits are per Tumblr user**, not per app. Posts you make on tumblr.com or in the Tumblr app count too.
 - **Tumblr's rules**: Tumblr's User Guidelines forbid automated or systematic posting aimed at spam. Use NEFORUM for your own, user-initiated posts and keep the volume modest.

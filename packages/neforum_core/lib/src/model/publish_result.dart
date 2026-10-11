@@ -136,6 +136,7 @@ class PublishResult {
     this.threadRemoteIds = const [],
     this.handedOff = false,
     this.publishedAt,
+    this.scheduledFor,
   });
 
   factory PublishResult.ok({
@@ -150,6 +151,21 @@ class PublishResult {
         remoteUrl: remoteUrl,
         threadRemoteIds: threadRemoteIds,
         publishedAt: publishedAt,
+      );
+
+  /// The platform accepted the post and holds it until [scheduledFor]
+  /// (server-side scheduling). [remoteId] must be whatever
+  /// [PlatformAdapter.cancelScheduled] needs to remove it again.
+  factory PublishResult.scheduled({
+    required String remoteId,
+    required DateTime scheduledFor,
+    String? remoteUrl,
+  }) =>
+      PublishResult._(
+        success: true,
+        remoteId: remoteId,
+        remoteUrl: remoteUrl,
+        scheduledFor: scheduledFor,
       );
 
   factory PublishResult.failure(PublishError error) =>
@@ -171,6 +187,9 @@ class PublishResult {
         publishedAt: json['publishedAt'] == null
             ? null
             : DateTime.parse(json['publishedAt'] as String),
+        scheduledFor: json['scheduledFor'] == null
+            ? null
+            : DateTime.parse(json['scheduledFor'] as String),
       );
 
   final bool success;
@@ -183,7 +202,23 @@ class PublishResult {
   final bool handedOff;
   final DateTime? publishedAt;
 
+  /// Set when the platform holds the post and publishes it itself at this
+  /// time (see [PublishResult.scheduled]).
+  final DateTime? scheduledFor;
+
   bool get isFailure => !success;
+
+  /// The post is waiting on the platform's own scheduler.
+  bool get isHeldByPlatform => success && scheduledFor != null;
+
+  /// The same result once the platform's scheduled time has passed.
+  PublishResult asReleased() => PublishResult._(
+        success: true,
+        remoteId: remoteId,
+        remoteUrl: remoteUrl,
+        threadRemoteIds: threadRemoteIds,
+        publishedAt: scheduledFor ?? publishedAt,
+      );
 
   Map<String, dynamic> toJson() => {
         'success': success,
@@ -193,10 +228,11 @@ class PublishResult {
         if (threadRemoteIds.isNotEmpty) 'threadRemoteIds': threadRemoteIds,
         'handedOff': handedOff,
         if (publishedAt != null) 'publishedAt': publishedAt!.toUtc().toIso8601String(),
+        if (scheduledFor != null) 'scheduledFor': scheduledFor!.toUtc().toIso8601String(),
       };
 
   @override
   String toString() => success
-      ? 'PublishResult.ok(${handedOff ? 'handed off' : remoteId ?? remoteUrl ?? ''})'
+      ? 'PublishResult.${scheduledFor != null ? 'scheduled' : 'ok'}(${handedOff ? 'handed off' : remoteId ?? remoteUrl ?? ''})'
       : 'PublishResult.failure($error)';
 }

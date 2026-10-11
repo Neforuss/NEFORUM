@@ -185,11 +185,22 @@ class WebDavMediaHost implements MediaHost {
     if (file is String) await _deleteFile(Uri.parse(file));
   }
 
-  /// Puts a probe file, shares it (Nextcloud), and deletes it again.
+  /// Puts a probe file, shares it (Nextcloud), checks that its public link
+  /// answers without a login, and deletes it again.
   @override
   Future<void> verify() async {
     final hosted = await upload(probeAttachment(), Uint8List.fromList(probeBytes()), ttl: const Duration(hours: 1));
-    await delete(hosted);
+    try {
+      final r = await guardedCall(id, 'open the public link ${hosted.url}', () => _http.get(hosted.url, throwOnError: false));
+      if (!r.ok) {
+        throw MediaHostException(
+            'Upload works, but the public link ${hosted.url} answered HTTP ${r.statusCode}. '
+            '${publicUrlTemplate != null ? 'Check the public URL template.' : 'Check that public link sharing is allowed without a password.'}',
+            hostId: id);
+      }
+    } finally {
+      await delete(hosted);
+    }
   }
 
   Future<void> _put(Uri fileUrl, Uint8List bytes, String contentType) async {

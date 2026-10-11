@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/instagram/instagram_adapter.dart';
 import 'package:neforum_core/src/adapters/instagram/instagram_api.dart';
@@ -198,6 +200,20 @@ void main() {
           throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('Hand-off'))));
     });
 
+    test('token endpoint error in its flat shape keeps Meta\'s message', () async {
+      final ctx = testContext(
+        broker: FakeAuthBroker(),
+        handler: (r) async => _json({
+          'error_type': 'OAuthException',
+          'code': 400,
+          'error_message': 'Error validating verification code. Please make sure your redirect_uri is identical',
+        }, 400),
+      );
+      await expectLater(
+          adapter.connect(PlatformTier.byokApi, {'app_id': 'A', 'app_secret': 'S'}, ctx),
+          throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('redirect_uri is identical'))));
+    });
+
     test('expired token at connect becomes a ConnectException', () async {
       final ctx = testContext(handler: (r) async => _graphError(190, subcode: 463, message: 'Session has expired'));
       expect(() => adapter.connect(PlatformTier.byokApi, {'access_token': 't'}, ctx),
@@ -374,6 +390,58 @@ void main() {
       expect(bodies.last, {'media_type': 'STORIES', 'image_url': 'https://cdn.example.test/img1'});
     });
 
+    test('a container that is "not available yet" (24 / 2207008) right after creation is polled again', () async {
+      var polls = 0;
+      final ctx = testContext(
+        mediaHost: FakeMediaHost(),
+        handler: (r) async {
+          final p = r.url.path;
+          if (p.endsWith('/media')) return _json({'id': 'C1'});
+          if (p.endsWith('/media_publish')) return _json({'id': 'M1'});
+          if (p == '/v25.0/C1') {
+            return ++polls == 1
+                ? _graphError(24, subcode: 2207008, message: 'The media builder does not exist or has been expired')
+                : _json({'status_code': 'FINISHED'});
+          }
+          return _json({'permalink': 'https://www.instagram.com/p/a/'});
+        },
+      );
+      final res = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), apiAccount(), apiSecrets, ctx);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(polls, 2);
+    });
+
+    test('a container that never becomes available fails as a retryable network error', () async {
+      final ctx = testContext(
+        mediaHost: FakeMediaHost(),
+        handler: (r) async => r.url.path.endsWith('/media')
+            ? _json({'id': 'C1'})
+            : _graphError(24, subcode: 2207008, message: 'does not exist'),
+      );
+      final res = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), apiAccount(), apiSecrets, ctx);
+      expect(res.error!.kind, PublishErrorKind.network);
+      expect(res.error!.retryable, isTrue);
+    });
+
+    test('media host problems: network -> network, refusal -> configuration, unreadable file -> configuration', () async {
+      Future<PublishResult> withHost(MediaHost host) => adapter.publish(PostVariant(text: 'x', media: [fakeImage()]),
+          apiAccount(), apiSecrets, testContext(mediaHost: host, handler: (r) async => fail('no Instagram call expected')));
+      expect((await withHost(_FailingHost(http.ClientException('connection reset')))).error!.kind, PublishErrorKind.network);
+      expect((await withHost(_FailingHost(const MediaHostException('bucket not found')))).error!.kind,
+          PublishErrorKind.configuration);
+
+      final host = FakeMediaHost();
+      final unreadable = AdapterContext(
+        http: NeforumHttp(client: MockClient((r) async => fail('no HTTP expected')), maxRetries: 0),
+        mediaHost: host,
+        clock: () => testNow,
+        readMedia: (m) async => throw Exception('PathNotFoundException: /tmp/img1.jpg'),
+      );
+      final res = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), apiAccount(), apiSecrets, unreadable);
+      expect(res.error!.kind, PublishErrorKind.configuration);
+      expect(host.uploaded, isEmpty);
+    });
+
     test('no media host -> configuration error, no HTTP', () async {
       final ctx = testContext(handler: (r) async => fail('no HTTP expected'));
       final res = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), apiAccount(), apiSecrets, ctx);
@@ -431,6 +499,11 @@ void main() {
             headers: {...jsonHeaders, 'x-business-use-case-usage': buc}));
         expect(res.error!.kind, PublishErrorKind.quota);
         expect(res.error!.retryAfter, const Duration(minutes: 15));
+      });
+
+      test('Instagram BUC rate limit (80002) -> quota', () async {
+        final res = await publishWith((_) => _graphError(80002, message: 'There have been too many calls'));
+        expect(res.error!.kind, PublishErrorKind.quota);
       });
 
       test('daily publishing limit (9 / 2207042) -> quota', () async {
@@ -495,6 +568,23 @@ void main() {
       expect(DateTime.parse(out['refreshed_at']!), testNow);
     });
 
+    test('pasted token with unknown expiry is refreshed once it is 24 h old', () async {
+      final pasted = {'access_token': 'PASTED', 'refreshed_at': testNow.subtract(const Duration(hours: 2)).toIso8601String()};
+      final none = testContext(handler: (r) async => fail('no HTTP expected'));
+      expect(await adapter.refreshSecrets(apiAccount(), pasted, none), isNull);
+
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({'access_token': 'NEW', 'token_type': 'bearer', 'expires_in': 5183944});
+      });
+      final dayOld = {...pasted, 'refreshed_at': testNow.subtract(const Duration(hours: 25)).toIso8601String()};
+      final out = await adapter.refreshSecrets(apiAccount(), dayOld, ctx);
+      expect(calls.single.url.path, '/refresh_access_token');
+      expect(out!['access_token'], 'NEW');
+      expect(DateTime.parse(out['expires_at']!), testNow.add(const Duration(seconds: 5183944)));
+    });
+
     test('expired token -> AdapterException(auth)', () async {
       final ctx = testContext(handler: (r) async => fail('no HTTP expected'));
       final expired = {...apiSecrets, 'expires_at': testNow.subtract(const Duration(minutes: 1)).toIso8601String()};
@@ -542,4 +632,14 @@ void main() {
   test('graph helper builds versioned URLs', () {
     expect(InstagramApi.graph('me', {'fields': 'user_id'}).toString(), '$_base/me?fields=user_id');
   });
+}
+
+/// A media host whose uploads always fail with [error].
+class _FailingHost extends FakeMediaHost {
+  _FailingHost(this.error);
+
+  final Object error;
+
+  @override
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async => throw error;
 }

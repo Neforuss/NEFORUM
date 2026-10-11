@@ -80,6 +80,8 @@ class GhostApi {
   Future<NeforumResponse> postJson(String path, Object body, [Map<String, String>? query]) =>
       ctx.http.postJson(endpoint(path, query), body, headers: _headers);
 
+  Future<NeforumResponse> delete(String path) => ctx.http.delete(endpoint(path), headers: _headers);
+
   /// `POST images/upload/` (multipart `file`, `purpose=image`, `ref`).
   Future<NeforumResponse> uploadImage(Uint8List bytes, {required String fileName, required String contentType}) =>
       ctx.http.multipart(endpoint('images/upload/'),

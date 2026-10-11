@@ -1,11 +1,15 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
+import '../media/text_card.dart';
 import '../platform/notifications.dart';
 import 'providers.dart';
 import 'scheduler.dart';
+import 'text_cards.dart';
 
 const _uuid = Uuid();
 
@@ -27,6 +31,7 @@ class ComposerState {
     this.scheduledAt,
     this.focusedAccountId,
     this.revision = 0,
+    this.textCardTheme,
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -54,6 +59,10 @@ class ComposerState {
   /// know to resync their controllers.
   final int revision;
 
+  /// Style of the text card for image-only platforms; null = the default
+  /// from Settings.
+  final TextCardTheme? textCardTheme;
+
   bool get isEmpty => text.trim().isEmpty && media.isEmpty && (title ?? '').trim().isEmpty && (link ?? '').trim().isEmpty;
 
   ComposerState copyWith({
@@ -71,6 +80,7 @@ class ComposerState {
     DateTime? scheduledAt,
     String? focusedAccountId,
     int? revision,
+    TextCardTheme? textCardTheme,
     bool clearSchedule = false,
     bool clearTitle = false,
     bool clearLink = false,
@@ -92,6 +102,7 @@ class ComposerState {
         scheduledAt: clearSchedule ? null : (scheduledAt ?? this.scheduledAt),
         focusedAccountId: clearFocus ? null : (focusedAccountId ?? this.focusedAccountId),
         revision: revision ?? this.revision,
+        textCardTheme: textCardTheme ?? this.textCardTheme,
       );
 
   /// Builds the master [Post] for this composer state.
@@ -151,6 +162,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setTags(List<String> v) => state = state.copyWith(tags: v);
   void setSchedule(DateTime? when) => state = when == null ? state.copyWith(clearSchedule: true) : state.copyWith(scheduledAt: when);
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
+  void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
 
   void addMedia(Iterable<MediaAttachment> items) => state = state.copyWith(media: [...state.media, ...items]);
 
@@ -191,7 +203,10 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void clearOverride(String accountId) => state = state.copyWith(overrides: {...state.overrides}..remove(accountId));
 
   /// Loads an existing post into the composer (edit draft / reschedule).
-  void load(Post p) => state = ComposerState(
+  /// Generated text cards stay out of the editor; they are rebuilt on save.
+  void load(Post post) {
+    final p = withoutTextCards(post);
+    state = ComposerState(
         editingPostId: p.id,
         text: p.text,
         title: p.title,
@@ -205,7 +220,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
         overrides: {for (final t in p.targets) if (!t.overrides.isEmpty) t.accountId: t.overrides},
         scheduledAt: p.scheduledAt,
         revision: state.revision + 1,
+        textCardTheme: textCardThemeOfPost(post),
       );
+  }
 
   /// Starts over with the same targets.
   void reset({bool keepTargets = true}) {
@@ -228,6 +245,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       selected: state.selected,
       overrides: state.overrides,
       revision: state.revision + 1,
+      textCardTheme: state.textCardTheme,
     );
   }
 }
@@ -249,8 +267,15 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     final adapter = registry.byId(a.platformId);
     if (adapter == null) continue;
     final target = post.targetFor(a.id)!;
-    final variant = resolver.resolve(post, target, adapter.descriptor, account: a);
+    final d = adapter.descriptorForAccount(a);
+    var variant = resolver.resolve(post, target, d, account: a);
     final issues = <ValidationIssue>[...variant.issues];
+    // Image-only platforms get the words as a NEFORUM text card, rendered
+    // when the post is saved; preview and check a stand-in for it.
+    if (settings.textCards && qualifiesForTextCard(d, variant)) {
+      variant = variant.copyWith(media: [textCardPlaceholder(d.id, c.textCardTheme ?? settings.textCardTheme)]);
+      issues.add(ValidationIssue.info('media.text_card', '${d.name} needs an image, so your words go out as a NEFORUM text card', field: 'media'));
+    }
     try {
       issues.addAll(adapter.validate(variant, a));
     } on Object catch (e) {
@@ -258,12 +283,12 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     }
     // Media host requirement is a configuration problem, not a text one.
     final services = ref.read(servicesProvider);
-    if (!services.demo && adapter.descriptor.media.requiresPublicMediaUrl && a.tier != PlatformTier.handoff && variant.hasMedia && services.mediaHost == null) {
-      issues.add(ValidationIssue.error('media.host_missing', '${adapter.descriptor.name} needs a public media host (Settings → Media hosting)', field: 'media'));
+    if (!services.demo && d.media.requiresPublicMediaUrl && a.tier != PlatformTier.handoff && variant.hasMedia && services.mediaHost == null) {
+      issues.add(ValidationIssue.error('media.host_missing', '${d.name} needs a public media host (Settings → Media hosting)', field: 'media'));
     }
     // An empty composer is not a problem worth shouting about on every card.
     if (c.isEmpty) issues.removeWhere((i) => i.code == 'post.empty' || i.code.endsWith('.empty') || i.code.contains('required') && i.field != 'account');
-    out.add(TargetPreview(target: target, account: a, descriptor: adapter.descriptor, variant: variant, issues: _dedupe(issues)));
+    out.add(TargetPreview(target: target, account: a, descriptor: d, variant: variant, issues: _dedupe(issues)));
   }
   return out;
 });
@@ -304,20 +329,85 @@ final composerReadinessProvider = Provider<ComposerReadiness>((ref) {
 // Actions
 // ---------------------------------------------------------------------------
 
+/// A platform still holds a copy of a scheduled post that NEFORUM could not
+/// take back (offline, expired sign-in). The copy will still go out there.
+class HeldCopiesException implements Exception {
+  const HeldCopiesException({required this.platforms, required this.reason});
+
+  /// Display names of the platforms that still hold a copy.
+  final List<String> platforms;
+  final String reason;
+
+  String get message =>
+      '${platforms.join(', ')} still ${platforms.length == 1 ? 'holds' : 'hold'} a scheduled copy that NEFORUM could not remove ($reason). '
+      'Try again when you are online, or delete it on ${platforms.length == 1 ? 'that site' : 'those sites'}.';
+
+  @override
+  String toString() => message;
+}
+
 /// Publishing, scheduling and draft actions shared by composer and lists.
 class PostActions {
   PostActions(this.ref);
   final Ref ref;
+
+  /// Server-side scheduling runs in the background after a post is
+  /// scheduled; anything that changes the post waits for it first so the
+  /// two never overwrite each other.
+  final Map<String, Future<void>> _delegations = {};
 
   Future<Post> _save(PostStatus status) async {
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
     final now = DateTime.now();
     final existing = c.editingPostId == null ? null : await s.posts.get(c.editingPostId!);
-    final post = c.toPost(id: c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
+    if (existing != null) await _releaseHeld(existing.id);
+    var post = c.toPost(id: c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
+    // Hand the old cards over so unchanged ones are reused, stale ones deleted.
+    post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
+    post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme);
     await s.posts.upsert(post);
     return post;
   }
+
+  /// Takes back every copy a platform holds for [postId]. Throws
+  /// [HeldCopiesException] when one could not be removed.
+  Future<void> _releaseHeld(String postId, {Set<String>? onlyAccountIds}) async {
+    await _delegations[postId];
+    final s = ref.read(servicesProvider);
+    final p = await s.posts.get(postId);
+    if (p == null || !p.hasHeldTargets) return;
+    final outcome = await s.publisher().releaseSchedules(postId, onlyAccountIds: onlyAccountIds);
+    if (outcome.ok) return;
+    final names = <String>[];
+    for (final id in outcome.failed.keys) {
+      final a = await s.accounts.get(id);
+      names.add(a == null ? 'A removed account' : (s.registry.descriptor(a.platformId)?.name ?? a.displayName));
+    }
+    throw HeldCopiesException(platforms: names, reason: outcome.failed.values.first.message);
+  }
+
+  /// Lets the platforms that can hold [p] do so, in the background.
+  void _delegate(Post p) {
+    final settings = ref.read(settingsProvider);
+    if (!settings.delegateSchedules || p.status != PostStatus.scheduled) return;
+    final s = ref.read(servicesProvider);
+    final job = () async {
+      try {
+        final updated = await s.publisher().delegateSchedules(p.id);
+        await ref.read(schedulerProvider).planReminders(updated);
+      } on Object catch (e) {
+        debugPrint('Server-side scheduling failed: $e');
+      }
+    }();
+    _delegations[p.id] = job;
+    unawaited(job.whenComplete(() {
+      if (identical(_delegations[p.id], job)) _delegations.remove(p.id);
+    }));
+  }
+
+  /// Waits for background scheduling hand-offs (tests, shutdown).
+  Future<void> settle() => Future.wait(_delegations.values.toList());
 
   Future<Post> saveDraft() async {
     final p = await _save(PostStatus.draft);
@@ -329,6 +419,7 @@ class PostActions {
   Future<Post> schedule() async {
     final p = await _save(PostStatus.scheduled);
     await ref.read(schedulerProvider).planReminders(p);
+    _delegate(p);
     return p;
   }
 
@@ -340,12 +431,18 @@ class PostActions {
     return publishExisting(p.id, accountIds: c.selected);
   }
 
-  /// Runs (or re-runs) publishing for an existing post.
+  /// Runs (or re-runs) publishing for an existing post. Copies held by
+  /// platforms are taken back first, so nothing goes out twice.
   Future<Post> publishExisting(String postId, {Set<String>? accountIds, bool retryFailed = true}) async {
     final s = ref.read(servicesProvider);
-    final run = ref.read(publishRunProvider.notifier);
-    final post = await s.posts.get(postId);
+    await _releaseHeld(postId, onlyAccountIds: accountIds);
+    var post = await s.posts.get(postId);
     if (post == null) throw StateError('Post $postId not found');
+    // Posts saved before text cards existed, or drafts published from a
+    // list, get their cards here.
+    post = await attachTextCards(s, post, ref.read(settingsProvider));
+    await s.posts.upsert(post);
+    final run = ref.read(publishRunProvider.notifier);
     run.start(postId, accountIds ?? post.targets.map((t) => t.accountId));
     final done = await s.publisher().publish(
           postId,
@@ -386,8 +483,15 @@ class PostActions {
   Future<Post> markHandedOff(String postId, String accountId, {bool done = true}) =>
       ref.read(servicesProvider).publisher().confirmHandoff(postId, accountId, completed: done);
 
-  Future<void> delete(Post p) async {
+  /// Deletes [p] from NEFORUM. Copies held by platforms are removed first;
+  /// when that fails a [HeldCopiesException] is thrown unless [force].
+  Future<void> delete(Post p, {bool force = false}) async {
     final s = ref.read(servicesProvider);
+    try {
+      await _releaseHeld(p.id);
+    } on HeldCopiesException {
+      if (!force) rethrow;
+    }
     await ref.read(schedulerProvider).cancelReminders(p);
     await s.posts.delete(p.id);
     // Drop media files no other post uses.
@@ -400,7 +504,9 @@ class PostActions {
 
   Future<Post> unschedule(Post p) async {
     final s = ref.read(servicesProvider);
-    final draft = p.copyWith(status: PostStatus.draft, clearScheduledAt: true, updatedAt: DateTime.now());
+    await _releaseHeld(p.id);
+    final current = await s.posts.get(p.id) ?? p;
+    final draft = current.copyWith(status: PostStatus.draft, clearScheduledAt: true, updatedAt: DateTime.now());
     await s.posts.upsert(draft);
     await ref.read(schedulerProvider).cancelReminders(p);
     return draft;
@@ -408,13 +514,15 @@ class PostActions {
 
   Future<Post> reschedule(Post p, DateTime when) async {
     final s = ref.read(servicesProvider);
-    final next = p.copyWith(status: PostStatus.scheduled, scheduledAt: when, updatedAt: DateTime.now());
+    await _releaseHeld(p.id);
+    final current = await s.posts.get(p.id) ?? p;
+    final next = current.copyWith(status: PostStatus.scheduled, scheduledAt: when, updatedAt: DateTime.now());
     await s.posts.upsert(next);
     await ref.read(schedulerProvider).planReminders(next);
+    _delegate(next);
     return next;
   }
 
   static String _short(String s) => s.length > 80 ? '${s.substring(0, 80)}…' : s;
 }
-
 final postActionsProvider = Provider<PostActions>(PostActions.new);

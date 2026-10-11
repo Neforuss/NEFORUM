@@ -90,10 +90,10 @@ const _byokIntro = '''
 2. Enable **YouTube Data API v3**: [APIs & Services > Library > YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com) > **Enable**.
 3. Open **Google Auth Platform** (formerly "OAuth consent screen"): [console.cloud.google.com/auth/overview](https://console.cloud.google.com/auth/overview) > **Get started**. Enter an app name and your e-mail, choose **External**, finish.
 4. Under **Audience**, click **Publish app** so it is *In production*. (In *Testing* mode Google signs you out every 7 days; if you stay in Testing, add your own Google address as a test user.)
-5. Under **Data Access** > **Add or remove scopes**, add `https://www.googleapis.com/auth/youtube.upload` and `https://www.googleapis.com/auth/youtube.readonly`, then **Save**.
+5. Under **Data Access** > **Add or remove scopes**, add `https://www.googleapis.com/auth/youtube.upload`, `https://www.googleapis.com/auth/youtube.readonly` and `https://www.googleapis.com/auth/youtube.force-ssl`, then **Save**. (The last one lets NEFORUM delete a video YouTube is holding for a scheduled post when you edit or cancel that post.)
 6. Under **Clients** > **Create client**, pick Application type **Desktop app**. Desktop clients need no redirect URI: NEFORUM signs in through `$youtubeLoopbackRedirect` automatically.
 7. Copy the **Client ID** and **Client secret** into the fields below and click Connect.
-8. Google will warn "Google hasn't verified this app". That is your own app: click **Advanced** > **Go to (your app name)**, then tick **both** YouTube boxes.
+8. Google will warn "Google hasn't verified this app". That is your own app: click **Advanced** > **Go to (your app name)**, then tick **every** YouTube box. Without the "manage your videos" box, scheduled posts stay on this device and are uploaded at their time.
 
 Google only accepts `http://127.0.0.1` sign-ins for this kind of client (not `neforum://`), so connect from NEFORUM on Windows or macOS.
 ''';

@@ -118,4 +118,5 @@ IconData tierIcon(PlatformTier t) => switch (t) {
       TargetStatus.awaitingHandoff => ('Tap to post', Tone.warning, Icons.touch_app_rounded),
       TargetStatus.handedOff => ('Handed off', Tone.success, Icons.ios_share_rounded),
       TargetStatus.skipped => ('Skipped', Tone.neutral, Icons.remove_rounded),
+      TargetStatus.heldByPlatform => ('Held by platform', Tone.accent, Icons.cloud_done_rounded),
     };

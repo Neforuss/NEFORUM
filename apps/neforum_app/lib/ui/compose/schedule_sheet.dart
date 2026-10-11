@@ -5,14 +5,16 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../platform/env.dart';
 import '../../state/composer.dart';
+import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/surfaces.dart';
 
 /// Picks a date and time for the post. Returns null when cancelled; a
-/// `DateTime(0)` sentinel means "clear the schedule".
-Future<DateTime?> showScheduleSheet(BuildContext context, {DateTime? initial}) {
-  final sheet = ScheduleSheet(initial: initial);
+/// `DateTime(0)` sentinel means "clear the schedule". Pass [post] when
+/// rescheduling an existing post (otherwise the composer's targets are used).
+Future<DateTime?> showScheduleSheet(BuildContext context, {DateTime? initial, Post? post}) {
+  final sheet = ScheduleSheet(initial: initial, post: post);
   if (context.isCompact) {
     return showModalBottomSheet<DateTime>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => sheet);
   }
@@ -29,8 +31,9 @@ Future<DateTime?> showScheduleSheet(BuildContext context, {DateTime? initial}) {
 final DateTime kClearSchedule = DateTime(0);
 
 class ScheduleSheet extends ConsumerStatefulWidget {
-  const ScheduleSheet({super.key, this.initial});
+  const ScheduleSheet({super.key, this.initial, this.post});
   final DateTime? initial;
+  final Post? post;
 
   @override
   ConsumerState<ScheduleSheet> createState() => _ScheduleSheetState();
@@ -73,8 +76,27 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    final previews = ref.watch(composerPreviewsProvider);
-    final handoff = previews.where((p) => p.account.tier == PlatformTier.handoff).map((p) => p.descriptor.name).toSet();
+    final settings = ref.watch(settingsProvider);
+    final registry = ref.watch(registryProvider);
+    // (account, platform, is a thread) for every target of the post.
+    final targets = <(ConnectedAccount, PlatformDescriptor, bool)>[];
+    if (widget.post == null) {
+      for (final p in ref.watch(composerPreviewsProvider)) {
+        targets.add((p.account, p.descriptor, p.variant.isThread));
+      }
+    } else {
+      for (final t in widget.post!.targets) {
+        final a = ref.watch(accountByIdProvider(t.accountId));
+        final d = a == null ? null : registry.byId(a.platformId)?.descriptorForAccount(a);
+        if (a != null && d != null) targets.add((a, d, false));
+      }
+    }
+    final handoff = {for (final t in targets) if (t.$1.tier == PlatformTier.handoff) t.$2.name};
+    final held = {
+      for (final t in targets)
+        if (settings.delegateSchedules && t.$1.tier.isAutomatic && t.$2.serverSideScheduling && !t.$3) t.$2.name,
+    };
+    final onDevice = {for (final t in targets) if (t.$1.tier.isAutomatic && !held.contains(t.$2.name)) t.$2.name};
     final past = !_when.isAfter(DateTime.now());
     final tz = DateTime.now().timeZoneName;
 
@@ -137,7 +159,12 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
             const SizedBox(height: Space.xs),
             Text('Time zone: $tz', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
             const SizedBox(height: Space.lg),
-            _Note(icon: Icons.computer_rounded, text: _deviceNote()),
+            if (held.isNotEmpty)
+              _Note(
+                icon: Icons.cloud_done_outlined,
+                text: '${_join(held)} will hold this post and publish it ${held.length == 1 ? 'itself' : 'themselves'}, even if this device is off.',
+              ),
+            if (onDevice.isNotEmpty || targets.isEmpty) _Note(icon: Icons.computer_rounded, text: onDevice.isEmpty ? _cap(_deviceNote()) : '${_join(onDevice)}: ${_deviceNote()}'),
             if (handoff.isNotEmpty) _Note(icon: Icons.notifications_active_outlined, text: '${handoff.join(', ')} ${handoff.length == 1 ? 'is a hand-off account' : 'are hand-off accounts'}: you will get a reminder to tap Post.'),
           ]),
         ),
@@ -165,11 +192,19 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
     ]);
   }
 
+  static String _cap(String s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}';
+
+  static String _join(Set<String> names) {
+    final l = names.toList();
+    if (l.length == 1) return l.first;
+    return '${l.sublist(0, l.length - 1).join(', ')} and ${l.last}';
+  }
+
   static String _deviceNote() {
-    if (Env.isIOS) return 'At the scheduled time you will get a notification; tap it to publish.';
-    if (Env.isAndroid) return 'Posts go out in the background within a few minutes of their time.';
-    if (Env.isDesktop) return 'Keep NEFORUM running (it stays in the tray when you close the window) and posts go out on time.';
-    return 'Scheduling works in the installed apps; the web preview only stores the time.';
+    if (Env.isIOS) return 'at the scheduled time you get a notification with a Publish now button (iOS does not let apps post on a timer).';
+    if (Env.isAndroid) return 'goes out in the background within a few minutes of its time.';
+    if (Env.isDesktop) return 'keep NEFORUM running (it stays in the tray when you close the window) and it goes out on time.';
+    return 'scheduling works in the installed apps; the web preview only stores the time.';
   }
 }
 

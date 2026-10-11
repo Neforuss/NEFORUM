@@ -1,6 +1,6 @@
 # Hashnode
 
-NEFORUM publishes articles to a Hashnode blog through Hashnode's GraphQL API at `https://gql.hashnode.com`.
+NEFORUM publishes articles to a Hashnode blog through Hashnode's GraphQL API at `https://gql-beta.hashnode.com`. That is the production address in Hashnode's own API skill, and `apidocs.hashnode.com` redirects there. The old `https://gql.hashnode.com` now answers every request, POST included, with a redirect to an announcement page (checked 2026-10-11).
 
 > **Important: API access needs Hashnode Pro.** On 13 May 2026, Hashnode started requiring the paid **Pro** plan on a blog for *every* API request, reads and writes alike. Without Pro, Hashnode answers *"Publication does not have an active Pro plan"*. The hand-off option is free and works on any plan.
 
@@ -20,7 +20,7 @@ NEFORUM publishes articles to a Hashnode blog through Hashnode's GraphQL API at 
 
 There's no OAuth app, redirect address or review. The token doesn't expire until you revoke it on the same page.
 
-When you connect, NEFORUM runs the `me` query. If you entered a blog, it then runs `publication(host:)` or `publication(id:)`. The token is sent in the `Authorization` header.
+When you connect, NEFORUM runs the `me` query. If you entered a blog, it then runs `publication(host:)` or `publication(id:)`. The token is sent in the `Authorization` header (Hashnode accepts it with or without a `Bearer ` prefix).
 
 ## Posting
 
@@ -54,7 +54,7 @@ Each image is uploaded to Hashnode's CDN in three steps:
 
 Images can be up to **8 MB**. Any `image/*` type works except SVG. The first image becomes the cover. The others are added at the end of the article as `![alt](url)`.
 
-The cover goes in `coverImageOptions.coverImageURL`. Hashnode's newer schema uses a flat `coverImage` field instead. If the server rejects `coverImageOptions`, NEFORUM retries once with `coverImage`.
+The cover goes in the `coverImage` field of `PublishPostInput`. The older `coverImageOptions` object is no longer part of the schema; the API rejects it with `BAD_USER_INPUT`.
 
 ## Hand-off
 
@@ -73,21 +73,22 @@ Hashnode's editor can't be prefilled from a link. NEFORUM copies your article (M
 | `UNAUTHENTICATED` | The token was revoked or mistyped | Reconnect. |
 | `BAD_USER_INPUT` / `GRAPHQL_VALIDATION_FAILED` | Something in the post was rejected | NEFORUM shows Hashnode's message. |
 | `NOT_FOUND` | The blog is gone or the token can't see it | Reconnect and pick the blog again. |
+| HTTP 301/302 | Hashnode moved its API address again | NEFORUM shows where it moved. Enter the new address under **API endpoint (advanced)**. |
 
 Hashnode often returns these errors with HTTP 200. NEFORUM reads the `errors` list, not only the status code.
 
 ## Known limitations
 
 - **Pro is required for API posting.** This is Hashnode's rule since May 2026, and NEFORUM can't work around it.
-- **No server-side scheduling.** Hashnode schedules only through drafts. `publishedAt` back-dates a post; it doesn't schedule one. NEFORUM schedules on your device.
-- **Endpoint.** Hashnode's own 2026 developer skill points at `https://gql-beta.hashnode.com`. NEFORUM uses the long-standing `https://gql.hashnode.com`. If Hashnode retires that address, enter the new one under **API endpoint (advanced)**.
+- **No server-side scheduling.** The current API has no mutation that schedules a post (`scheduledPost` is read-only). `publishedAt` back-dates a post; it doesn't schedule one. NEFORUM schedules on your device.
+- **Endpoint.** Accounts and input that still name `https://gql.hashnode.com` are moved to `https://gql-beta.hashnode.com` automatically. If Hashnode moves the API again, enter the new address under **API endpoint (advanced)**.
 - **No video upload.** Embed videos with a link in the text instead.
 
 ## Sources
 
 - Hashnode API announcement (Pro requirement, 13 May 2026): https://hashnode.com/announcements/graphql-api
 - Image upload change (`presignedPut`, `presignedPost` removed 7 September 2026): https://hashnode.com/changelog/2026-09-01-presigned-post-deprecated
-- Hashnode GQL skill (official): https://hashnode.com/blog/hashnode-gql-agent-skill
+- Hashnode GQL skill (official; production endpoint `gql-beta.hashnode.com`, `Bearer` optional): https://hashnode.com/blog/hashnode-gql-agent-skill and https://github.com/Hashnode/gql-skill/blob/main/skills/gql-api/SKILL.md
 - Schema: https://github.com/Hashnode/gql-skill/blob/main/skills/gql-api/references/schema.graphql
 - Auth: https://github.com/Hashnode/gql-skill/blob/main/skills/gql-api/references/auth-and-roles.md
 - Errors and limits: https://github.com/Hashnode/gql-skill/blob/main/skills/gql-api/references/errors-and-limits.md

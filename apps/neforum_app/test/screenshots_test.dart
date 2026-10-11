@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
@@ -159,6 +160,20 @@ void main() {
         await tester.pump(const Duration(milliseconds: 200));
         await tester.tap(b);
       }));
+
+  testWidgets('text cards', (t) async {
+    for (final theme in TextCardTheme.values) {
+      final bytes = await t.runAsync(() => renderTextCardJpeg(
+            text: 'Shipped v2 of my split keyboard firmware! Per-key RGB is finally smooth at 1 kHz, and the whole thing is open source.',
+            theme: theme,
+            size: textCardSize('instagram'),
+            byline: '@robin.makes',
+          ));
+      File('test/goldens/text-card-${theme.name}.jpg')
+        ..createSync(recursive: true)
+        ..writeAsBytesSync(bytes!);
+    }
+  });
 
   // Keep the token import used (accent defaults) so the file compiles alone.
   test('tokens available', () => expect(AccentChoice.values, isNotEmpty));

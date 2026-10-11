@@ -21,8 +21,8 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
     onSecondary: c.bg,
     secondaryContainer: c.surfaceSunken,
     onSecondaryContainer: c.text,
-    tertiary: const Color(0xFFFF4D8D),
-    onTertiary: Colors.white,
+    tertiary: c.highlight,
+    onTertiary: c.onHighlight,
     error: c.danger,
     onError: Colors.white,
     errorContainer: c.dangerSoft,
@@ -93,7 +93,7 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       style: ButtonStyle(
         backgroundColor: WidgetStateProperty.resolveWith((s) {
           if (s.contains(WidgetState.disabled)) return c.surfaceSunken;
-          return c.accent;
+          return c.accentFill;
         }),
         foregroundColor: WidgetStateProperty.resolveWith((s) {
           if (s.contains(WidgetState.disabled)) return c.textFaint;
@@ -185,13 +185,13 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
 
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : c.textMuted),
-      trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.accent : c.surfaceSunken),
-      trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.accent : c.borderStrong),
+      trackColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.accentFill : c.surfaceSunken),
+      trackOutlineColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.accentFill : c.borderStrong),
       thumbIcon: WidgetStateProperty.all(null),
     ),
 
     checkboxTheme: CheckboxThemeData(
-      fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.accent : Colors.transparent),
+      fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.accentFill : Colors.transparent),
       checkColor: WidgetStateProperty.all(Colors.white),
       side: BorderSide(color: c.borderStrong, width: 1.5),
       shape: const RoundedRectangleBorder(borderRadius: Radii.rXs),
@@ -303,18 +303,20 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       ),
     ),
 
+    // The phone bottom bar is navigation chrome: deep purple, yellow for the
+    // current section.
     navigationBarTheme: NavigationBarThemeData(
-      backgroundColor: c.surface,
+      backgroundColor: c.chrome,
       surfaceTintColor: Colors.transparent,
-      indicatorColor: c.accentSoft,
+      indicatorColor: c.highlight,
       elevation: 0,
       height: 68,
       labelTextStyle: WidgetStateProperty.resolveWith((s) => text.labelSmall?.copyWith(
-            color: s.contains(WidgetState.selected) ? c.text : c.textFaint,
-            fontWeight: s.contains(WidgetState.selected) ? FontWeight.w600 : FontWeight.w500,
+            color: s.contains(WidgetState.selected) ? c.onChrome : c.onChromeMuted,
+            fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500,
           )),
       iconTheme: WidgetStateProperty.resolveWith((s) => IconThemeData(
-            color: s.contains(WidgetState.selected) ? c.accent : c.textFaint,
+            color: s.contains(WidgetState.selected) ? c.onHighlight : c.onChromeMuted,
             size: 22,
           )),
     ),
@@ -355,7 +357,7 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       dialBackgroundColor: c.surfaceSunken,
     ),
 
-    badgeTheme: BadgeThemeData(backgroundColor: c.accent, textColor: Colors.white),
+    badgeTheme: BadgeThemeData(backgroundColor: c.highlight, textColor: c.onHighlight),
     pageTransitionsTheme: const PageTransitionsTheme(builders: {
       TargetPlatform.android: FadeForwardsPageTransitionsBuilder(),
       TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),

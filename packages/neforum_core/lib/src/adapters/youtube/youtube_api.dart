@@ -21,14 +21,31 @@ abstract final class YouTubeEndpoints {
   static Uri uploadSession({bool notifySubscribers = true}) => Uri.parse(
       'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status'
       '${notifySubscribers ? '' : '&notifySubscribers=false'}');
+
+  /// `videos.delete` (HTTP 204 on success, 50 quota units).
+  static Uri video(String id) => Uri.https('www.googleapis.com', '/youtube/v3/videos', {'id': id});
 }
 
-/// Scopes NEFORUM asks for: upload, plus read-only to show which channel
-/// is connected (`channels.list mine=true`).
+/// Scopes NEFORUM asks for: upload; read-only to show which channel is
+/// connected (`channels.list mine=true`); and `youtube.force-ssl`, the
+/// narrowest scope `videos.delete` accepts, so a video YouTube holds for a
+/// scheduled post can be taken back when the post is edited or cancelled.
 const youtubeScopes = [
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/youtube.force-ssl',
 ];
+
+/// Scopes that authorize `videos.delete`
+/// (developers.google.com/youtube/v3/docs/videos/delete).
+const youtubeDeleteScopes = {
+  'https://www.googleapis.com/auth/youtube.force-ssl',
+  'https://www.googleapis.com/auth/youtube',
+  'https://www.googleapis.com/auth/youtubepartner',
+};
+
+/// Whether a space-separated OAuth `scope` string allows deleting videos.
+bool scopesAllowDelete(String scope) => scope.split(' ').any(youtubeDeleteScopes.contains);
 
 /// Secret-map keys on top of the `OAuthTokens` keys.
 abstract final class YouTubeSecretKeys {
@@ -43,6 +60,16 @@ abstract final class YouTubeConfigKeys {
   static const clientId = 'clientId';
   static const channelId = 'channelId';
   static const redirectUri = 'redirectUri';
+
+  /// `true` when the sign-in includes a scope that allows `videos.delete`.
+  /// Without it YouTube must not hold scheduled videos: NEFORUM could not
+  /// take them back. Accounts connected before this key existed lack it.
+  static const canDeleteVideos = 'canDeleteVideos';
+
+  /// Set (by the app) to `true` once YouTube locked an upload of this
+  /// project as private. A locked video never goes public at `publishAt`,
+  /// so the schedule then stays on this device.
+  static const uploadsLockedPrivate = 'uploadsLockedPrivate';
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +157,8 @@ PublishError mapYouTubeError(NeforumResponse res, {required String context, requ
   }
   if (reason == 'insufficientPermissions' || reason == 'ACCESS_TOKEN_SCOPE_INSUFFICIENT') {
     return PublishError.auth(
-        'Google did not grant NEFORUM permission to upload to YouTube; reconnect and tick every YouTube box',
+        '$context: Google did not grant NEFORUM the YouTube permission this needs; reconnect and tick every '
+        'YouTube box',
         raw: raw,
         statusCode: status);
   }

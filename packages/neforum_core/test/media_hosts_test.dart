@@ -120,6 +120,10 @@ void main() {
           accessKeyId: 'a',
           secretAccessKey: 'b');
       expect(aws.region, 'eu-central-1');
+      expect(S3CompatibleMediaHost.defaultRegionFor(Uri.parse('https://s3.dualstack.ap-south-1.amazonaws.com')),
+          'ap-south-1');
+      expect(S3CompatibleMediaHost.defaultRegionFor(Uri.parse('https://s3-eu-west-1.amazonaws.com')), 'eu-west-1');
+      expect(S3CompatibleMediaHost.defaultRegionFor(Uri.parse('https://s3.amazonaws.com')), 'us-east-1');
       expect(aws.objectUri('k.jpg').toString(), 'https://my-bucket.s3.eu-central-1.amazonaws.com/k.jpg');
       final b2 = S3CompatibleMediaHost(
           http: rec.client,
@@ -359,6 +363,30 @@ void main() {
       expect(hosted.url.toString(), 'https://files.example.org/media/beef.mp4');
     });
 
+    test('verify opens the public link and still removes the probe when it fails', () async {
+      final ok = Recorder((r, i) => i == 1 ? ocsOk() : http.Response('', i == 0 ? 201 : 200));
+      await nextcloud(ok).verify();
+      expect(ok.calls.map((c) => '${c.method} ${c.url}'), [
+        'PUT https://cloud.example.com/remote.php/dav/files/alice/NEFORUM/f00d.txt',
+        'POST https://cloud.example.com/ocs/v2.php/apps/files_sharing/api/v1/shares?format=json',
+        'GET https://cloud.example.com/s/TOKEN1/download',
+        'DELETE https://cloud.example.com/ocs/v2.php/apps/files_sharing/api/v1/shares/42?format=json',
+        'DELETE https://cloud.example.com/remote.php/dav/files/alice/NEFORUM/f00d.txt',
+      ]);
+      expect(ok.calls[2].headers.containsKey('authorization'), isFalse, reason: 'the public link must work without login');
+
+      final broken = Recorder((r, i) => r.method == 'GET' ? http.Response('', 404) : http.Response('', 201));
+      final plain = WebDavMediaHost.fromConfig({
+        'webdavUrl': 'https://dav.example.org/media/',
+        'username': 'bob',
+        'password': 'pw',
+        'publicUrlTemplate': 'https://files.example.org/wrong/{name}',
+      }, broken.client, newId: () => 'beef');
+      await expectLater(plain.verify(),
+          throwsA(isA<MediaHostException>().having((e) => e.message, 'message', contains('public URL template'))));
+      expect(broken.calls.last.method, 'DELETE');
+    });
+
     test('generic WebDAV without a template is a configuration error', () {
       expect(
           () => WebDavMediaHost.fromConfig(
@@ -441,9 +469,23 @@ void main() {
   });
 
   group('ManualUrlMediaHost', () {
-    test('asks the user to paste a link', () async {
+    test('without a link or pattern it tells the user what to set', () async {
       await expectLater(const ManualUrlMediaHost().upload(fakeImage(), Uint8List(0)),
-          throwsA(isA<MediaHostException>().having((e) => e.message, 'message', contains('Paste a public https link'))));
+          throwsA(isA<MediaHostException>().having((e) => e.message, 'message', contains('link pattern'))));
+    });
+
+    test('the link pattern from the settings gives every file its public link', () async {
+      final host = MediaHostRegistry.builtIn().create(
+          'manual', {'urlTemplate': 'https://me.example/media/{name}'}, NeforumHttp(client: MockClient((r) async => fail('no HTTP'))));
+      const named = MediaAttachment(
+          id: 'x', path: '/photos/a.jpg', mimeType: 'image/jpeg', sizeBytes: 1, fileName: 'Summer 2026.jpg');
+      expect((await host.upload(named, Uint8List(0))).url.toString(), 'https://me.example/media/Summer%202026.jpg');
+      const unnamed = MediaAttachment(id: 'y', path: r'C:\photos\b.png', mimeType: 'image/png', sizeBytes: 1);
+      expect((await host.upload(unnamed, Uint8List(0))).url.toString(), 'https://me.example/media/b.png');
+      expect(() => ManualUrlMediaHost.fromConfig({'urlTemplate': 'http://me.example/{name}'}),
+          throwsA(isA<MediaHostException>()));
+      expect(() => ManualUrlMediaHost.fromConfig({'urlTemplate': 'https://me.example/media/'}),
+          throwsA(isA<MediaHostException>()));
     });
 
     test('returns a pasted https link and rejects http', () async {
@@ -467,7 +509,9 @@ void main() {
 
     test('create builds configured hosts', () {
       expect(registry.create('litterbox', const {}, httpClient), isA<CatboxMediaHost>());
-      expect(registry.create('manual', const {}, httpClient), isA<ManualUrlMediaHost>());
+      expect(registry.create('manual', const {'urlTemplate': 'https://me.example/{name}'}, httpClient),
+          isA<ManualUrlMediaHost>());
+      expect(registry.missingFields('manual', const {}), ['Link pattern']);
       final s3 = registry.create('s3', {
         'endpoint': 's3.us-west-004.backblazeb2.com',
         'bucket': 'b',

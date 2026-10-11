@@ -57,14 +57,18 @@ class VariantResolver {
 
   final ResolverOptions options;
 
-  PostVariant resolve(Post post, PostTarget target, PlatformDescriptor d, {ConnectedAccount? account}) {
+  /// With [delegateSchedule] the variant carries the post's schedule so the
+  /// adapter hands it to the platform's own scheduler (only for platforms
+  /// with `serverSideScheduling`).
+  PostVariant resolve(Post post, PostTarget target, PlatformDescriptor d, {ConnectedAccount? account, bool delegateSchedule = false}) {
     final o = target.overrides;
     final issues = <ValidationIssue>[];
     final t = d.text;
 
     // ---- media ---------------------------------------------------------
+    // Generated media (text cards) only goes where a target asks for it.
     var media = o.mediaIds == null
-        ? post.media
+        ? post.media.where((m) => !m.generated).toList()
         : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)];
     media = _filterMedia(media, d, issues);
 
@@ -142,7 +146,9 @@ class VariantResolver {
       language: post.language,
       tags: tags,
       extra: extra,
-      scheduledAt: d.serverSideScheduling && extra['delegateSchedule'] == true ? post.scheduledAt : null,
+      // Only PublishService.delegateSchedules asks for this; a normal publish
+      // must never queue the post on the platform again.
+      scheduledAt: d.serverSideScheduling && delegateSchedule ? post.scheduledAt : null,
       issues: issues,
       sourcePostId: post.id,
     );

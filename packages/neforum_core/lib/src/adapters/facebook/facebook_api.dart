@@ -120,7 +120,9 @@ PublishError mapGraphFailure(HttpFailure f, {String? context}) {
   if (code == 1609005 || sub == 1609008) {
     return PublishError.validation('$msg. Facebook would not attach this link.', raw: raw, statusCode: status);
   }
-  if (code == 1 || code == 2 || err.isTransient) {
+  // 1 / 2: "Temporary issue due to downtime. Wait and retry"; 6001 (/videos):
+  // "There was a problem uploading your video. Please try again."
+  if (code == 1 || code == 2 || code == 6001 || err.isTransient) {
     return PublishError.network(msg, raw: raw, statusCode: status, retryAfter: _retryAfter(f.response));
   }
   if (code == 100 || status == 400) {

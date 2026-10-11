@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
 
-/// The NEFORUM mark: one point broadcasting outward in three arcs, on the
-/// signature gradient. "One message, every platform."
+/// The NEFORUM mark: one yellow point broadcasting outward in three white
+/// arcs, on the purple tile. "One message, every platform."
 ///
 /// With [animate] the arcs pulse outward in sequence (used while publishing).
 class NeforumMark extends StatefulWidget {
@@ -14,7 +14,7 @@ class NeforumMark extends StatefulWidget {
   final double size;
   final bool animate;
 
-  /// Defaults to the theme's brand gradient.
+  /// Defaults to the fixed brand tile ([Brand.markGradient]).
   final Gradient? gradient;
 
   @override
@@ -50,7 +50,7 @@ class _NeforumMarkState extends State<NeforumMark> with SingleTickerProviderStat
       width: s,
       height: s,
       decoration: BoxDecoration(
-        gradient: widget.gradient ?? context.nf.brandGradient,
+        gradient: widget.gradient ?? Brand.markGradient,
         borderRadius: BorderRadius.circular(s * 0.3),
       ),
       child: AnimatedBuilder(
@@ -61,6 +61,17 @@ class _NeforumMarkState extends State<NeforumMark> with SingleTickerProviderStat
       ),
     );
   }
+}
+
+/// Paints the full mark (tile, yellow point, white arcs) into [rect], for
+/// canvases that are not widgets (generated text cards).
+void paintNeforumMark(Canvas canvas, Rect rect) {
+  final tile = RRect.fromRectAndRadius(rect, Radius.circular(rect.width * 0.3));
+  canvas.drawRRect(tile, Paint()..shader = Brand.markGradient.createShader(rect));
+  canvas.save();
+  canvas.translate(rect.left, rect.top);
+  _MarkPainter().paint(canvas, rect.size);
+  canvas.restore();
 }
 
 class _MarkPainter extends CustomPainter {
@@ -76,7 +87,7 @@ class _MarkPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final w = size.width * k;
     final origin = Offset(size.width * 0.5 - w * 0.20, size.height * 0.5);
-    final dot = Paint()..color = Colors.white;
+    final dot = Paint()..color = Brand.yellow;
     canvas.drawCircle(origin, w * 0.085, dot);
 
     const sweep = 100 * math.pi / 180;
@@ -105,10 +116,13 @@ class _MarkPainter extends CustomPainter {
 
 /// Mark + "NEFORUM" wordmark.
 class NeforumWordmark extends StatelessWidget {
-  const NeforumWordmark({super.key, this.size = 30, this.showTagline = false});
+  const NeforumWordmark({super.key, this.size = 30, this.showTagline = false, this.onChrome = false});
 
   final double size;
   final bool showTagline;
+
+  /// White type for the deep-purple navigation chrome.
+  final bool onChrome;
 
   @override
   Widget build(BuildContext context) {
@@ -130,14 +144,14 @@ class NeforumWordmark extends StatelessWidget {
                 fontSize: size * 0.62,
                 letterSpacing: size * 0.035,
                 height: 1,
-                color: nf.text,
+                color: onChrome ? nf.onChrome : nf.text,
               ),
             ),
             if (showTagline) ...[
               SizedBox(height: size * 0.12),
               Text(
                 'One message, every platform',
-                style: TextStyle(fontSize: size * 0.34, color: nf.textFaint, height: 1, fontWeight: FontWeight.w500),
+                style: TextStyle(fontSize: size * 0.34, color: onChrome ? nf.onChromeMuted : nf.textFaint, height: 1, fontWeight: FontWeight.w500),
               ),
             ],
           ],

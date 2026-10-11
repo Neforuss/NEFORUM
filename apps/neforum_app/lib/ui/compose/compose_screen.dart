@@ -9,6 +9,7 @@ import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
+import '../queue/post_menu.dart';
 import '../router.dart';
 import 'action_bar.dart';
 import 'editor_card.dart';
@@ -61,7 +62,12 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
       showToast(context, 'Nothing to save yet', icon: Icons.info_outline_rounded);
       return;
     }
-    await ref.read(postActionsProvider).saveDraft();
+    try {
+      await ref.read(postActionsProvider).saveDraft();
+    } on HeldCopiesException catch (e) {
+      if (mounted) await showHeldCopiesDialog(context, e);
+      return;
+    }
     if (!mounted) return;
     ref.read(composerProvider.notifier).reset();
     showToast(context, 'Saved to drafts', icon: Icons.check_circle_rounded, actionLabel: 'View', onAction: () => context.go(AppSection.queue.path));
@@ -103,6 +109,8 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
         }
         await future;
       }
+    } on HeldCopiesException catch (e) {
+      if (mounted) await showHeldCopiesDialog(context, e);
     } on Object catch (e) {
       if (mounted) showToast(context, 'Could not publish: $e', icon: Icons.error_outline_rounded);
     } finally {

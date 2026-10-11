@@ -20,6 +20,9 @@ class DemoAdapter extends PlatformAdapter {
   PlatformDescriptor get descriptor => inner.descriptor;
 
   @override
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) => inner.descriptorForAccount(account);
+
+  @override
   List<ConnectSpec> get connectSpecs => inner.connectSpecs;
 
   /// Real validation, minus complaints about the account's own setup (demo
@@ -58,15 +61,23 @@ class DemoAdapter extends PlatformAdapter {
       ctx.progress('Uploading ${i + 1} of $steps');
       await Future<void>.delayed(const Duration(milliseconds: 380));
     }
-    ctx.progress(variant.isThread ? 'Posting ${variant.threadParts.length}-part thread' : 'Posting');
+    final at = variant.scheduledAt;
+    ctx.progress(at != null ? 'Handing the schedule to ${descriptor.name}' : (variant.isThread ? 'Posting ${variant.threadParts.length}-part thread' : 'Posting'));
     await Future<void>.delayed(Duration(milliseconds: 500 + (descriptor.id.hashCode % 7) * 120));
     final id = 'demo${DateTime.now().millisecondsSinceEpoch}';
+    if (at != null) return PublishResult.scheduled(remoteId: id, scheduledFor: at, remoteUrl: descriptor.homepage);
     return PublishResult.ok(
       remoteId: id,
       remoteUrl: descriptor.homepage,
       threadRemoteIds: variant.isThread ? [for (var i = 0; i < variant.threadParts.length; i++) '$id-$i'] : const [],
       publishedAt: DateTime.now(),
     );
+  }
+
+  @override
+  Future<void> cancelScheduled(PublishResult held, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (!descriptor.serverSideScheduling) return super.cancelScheduled(held, account, secrets, ctx);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
   }
 }
 
@@ -195,6 +206,7 @@ Future<void> seedDemo({
     ),
   ));
 
+  final streamAt = DateTime(now.year, now.month, now.day + 1, 9, 30);
   await posts.upsert(Post(
     id: 'demo-post-3',
     text: 'Live stream tomorrow at 18:00: building a split keyboard from scratch, start to finish. Bring questions!',
@@ -202,9 +214,18 @@ Future<void> seedDemo({
     media: pics.length > 1 ? [pics[1]] : const [],
     createdAt: now.subtract(const Duration(hours: 2)),
     updatedAt: now.subtract(const Duration(hours: 2)),
-    scheduledAt: DateTime(now.year, now.month, now.day + 1, 9, 30),
+    scheduledAt: streamAt,
     status: PostStatus.scheduled,
-    targets: targets(['mastodon', 'bluesky', 'x', 'threads', 'telegram', 'instagram']),
+    targets: [
+      // Mastodon holds this one itself (server-side scheduling).
+      for (final t in targets(['mastodon', 'bluesky', 'x', 'threads', 'telegram', 'instagram']))
+        t.accountId == id('mastodon')
+            ? t.copyWith(
+                status: TargetStatus.heldByPlatform,
+                result: PublishResult.scheduled(remoteId: 'demo-held-1', scheduledFor: streamAt, remoteUrl: registry.descriptor('mastodon')?.homepage),
+              )
+            : t,
+    ],
   ));
 
   await posts.upsert(Post(

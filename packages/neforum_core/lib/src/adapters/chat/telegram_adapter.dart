@@ -99,7 +99,8 @@ class TelegramAdapter extends PlatformAdapter {
               '2. Open your channel > **Administrators** > **Add Admin**, search for your bot and add it with the '
               '**Post Messages** right. For a group, just add the bot as a member.\n'
               '3. Paste the token below and enter the channel as `@channelusername`. For a private channel or '
-              'group enter its numeric id (starts with `-100`).\n\n'
+              'group enter its numeric id (channels and supergroups start with `-100`; a small basic group has a '
+              'shorter negative id).\n\n'
               'Keep the token secret: anyone who has it controls your bot.',
           redirectNote: 'Nothing to register: Telegram bots do not use redirect URIs.',
           fields: [
@@ -268,6 +269,12 @@ class TelegramAdapter extends PlatformAdapter {
       }
       return issues;
     }
+    // A GIF on its own goes out with sendAnimation, which takes 50 MB like
+    // other files; the generic 10 MB photo limit only applies to album GIFs
+    // (sent as photos).
+    if (variant.media.length == 1 && variant.media.single.kind == MediaKind.gif) {
+      issues.removeWhere((i) => i.code == 'media.image_too_large');
+    }
     if (variant.media.length > telegramMaxAlbum) {
       issues.add(ValidationIssue.error('media.too_many',
           '${variant.media.length} files; Telegram allows $telegramMaxAlbum per album', field: 'media'));
@@ -306,23 +313,28 @@ class TelegramAdapter extends PlatformAdapter {
   @override
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final sent = ChatMessages();
+    PublishResult failed(PublishError error) {
+      final e = sent.fail(error);
+      ctx.log.warn('Telegram publish failed: ${e.message}');
+      return PublishResult.failure(e);
+    }
+
     try {
-      return await _publish(variant, account, secrets, ctx);
+      return await _publish(variant, account, secrets, ctx, sent);
     } on AdapterException catch (e) {
-      ctx.log.warn('Telegram publish failed: ${e.error.message}');
-      return PublishResult.failure(e.error);
+      return failed(e.error);
     } on TelegramApiError catch (e) {
-      ctx.log.warn('Telegram publish failed: $e');
-      return PublishResult.failure(e.toPublishError());
+      return failed(e.toPublishError());
     } on Exception catch (e) {
-      // The exception text may contain the token-bearing URL; keep only its type.
-      ctx.log.warn('Telegram publish: network error (${e.runtimeType})');
-      return PublishResult.failure(const PublishError.network('Could not reach api.telegram.org'));
+      // The exception text may contain the token-bearing URL; chatUnexpected
+      // blanks the token out.
+      return failed(chatUnexpected(e, 'api.telegram.org', secret: secrets['bot_token']));
     }
   }
 
-  Future<PublishResult> _publish(
-      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+  Future<PublishResult> _publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets,
+      AdapterContext ctx, ChatMessages sent) async {
     if (account.tier == PlatformTier.handoff) {
       throw const AdapterException(PublishError.unsupported('Hand-off accounts publish through the share page'));
     }
@@ -340,17 +352,18 @@ class TelegramAdapter extends PlatformAdapter {
     final api = TelegramApi(token, ctx);
     final markdown = account.configString('formatting', 'markdown') != 'plain';
     final parts = (variant.isThread ? variant.threadParts : [variant.text]).where((p) => p.trim().isNotEmpty).toList();
-    final ids = <String>[];
+    final ids = sent.ids;
     String? previous;
     var nextPart = 0;
+    final first = parts.isEmpty ? '' : parts.first;
+    final asCaption = variant.hasMedia && first.isNotEmpty && first.length <= telegramMaxCaption;
+    sent.total = (variant.hasMedia ? 1 : 0) + parts.length - (asCaption ? 1 : 0);
 
     if (variant.hasMedia) {
-      final first = parts.isEmpty ? '' : parts.first;
-      final asCaption = first.isNotEmpty && first.length <= telegramMaxCaption;
       final mediaId = variant.media.length == 1
           ? await _sendSingle(api, chat, variant, asCaption ? first : null, markdown, ctx)
           : await _sendAlbum(api, chat, variant, asCaption ? first : null, markdown, ctx);
-      ids.add(mediaId);
+      sent.add(mediaId);
       if (asCaption) {
         previous = mediaId;
         nextPart = 1;
@@ -359,8 +372,15 @@ class TelegramAdapter extends PlatformAdapter {
 
     for (var i = nextPart; i < parts.length; i++) {
       ctx.progress(parts.length > 1 ? 'Sending part ${i + 1} of ${parts.length}' : 'Sending message');
-      final id = await _sendText(api, chat, variant, parts[i], markdown, previous);
-      ids.add(id);
+      final replyTo = previous;
+      final text = parts[i];
+      // Later messages sit out a short flood wait (about one message per
+      // second per chat) instead of leaving the post half finished.
+      final id = ids.isEmpty
+          ? await _sendText(api, chat, variant, text, markdown, replyTo)
+          : await chatSendWithFloodWait(
+              () => _sendText(api, chat, variant, text, markdown, replyTo), _telegramFloodWait);
+      sent.add(id);
       previous = id;
     }
     if (ids.isEmpty) throw const AdapterException(PublishError.validation('Nothing to post'));
@@ -368,7 +388,7 @@ class TelegramAdapter extends PlatformAdapter {
     return PublishResult.ok(
       remoteId: ids.first,
       remoteUrl: telegramMessageUrl(account, ids.first),
-      threadRemoteIds: ids.length > 1 ? ids : const [],
+      threadRemoteIds: ids.length > 1 ? List.unmodifiable(ids) : const [],
       publishedAt: ctx.now(),
     );
   }
@@ -535,3 +555,7 @@ String? telegramMessageUrl(ConnectedAccount account, String messageId) {
 }
 
 Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) : <String, dynamic>{};
+
+/// How long Telegram asked to wait when [e] is a flood-control answer.
+Duration? _telegramFloodWait(Object e) =>
+    e is TelegramApiError && e.code == 429 ? (e.retryAfter ?? const Duration(seconds: 1)) : null;

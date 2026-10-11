@@ -109,7 +109,7 @@ class MatrixAdapter extends PlatformAdapter {
               'once as a new device called *NEFORUM* and does not store the password.\n'
               '   To get a token in Element: **Settings > Help & About > Advanced > Access Token** '
               '(do not sign that session out afterwards, or the token dies with it).\n'
-              '3. Enter the room as `#alias:server` or `!roomid:server` (Room settings > Advanced). '
+              '3. Enter the room as `#alias:server` or by its room id `!…` (Room settings > Advanced). '
               'The account must be allowed to post there; NEFORUM joins public rooms automatically.\n\n'
               'End-to-end encrypted rooms cannot be used (NEFORUM does not do Matrix encryption).',
           redirectNote: 'Nothing to register: password and token sign-in need no redirect URI.',
@@ -150,7 +150,8 @@ class MatrixAdapter extends PlatformAdapter {
               key: 'room',
               label: 'Room',
               placeholder: '#myroom:matrix.org',
-              help: 'Room alias (`#name:server`) or room id (`!abc123:server`).',
+              help: 'Room alias (`#name:server`) or room id (`!abc123:server`; rooms created with room version 12 '
+                  'or later have ids without the `:server` part).',
             ),
             ConnectField(
               key: 'formatting',
@@ -178,7 +179,7 @@ class MatrixAdapter extends PlatformAdapter {
     if (server.isEmpty) throw const ConnectException('Enter your homeserver, e.g. matrix.org', field: 'homeserver');
     final room = (input['room'] ?? '').trim();
     if (!_roomRef.hasMatch(room)) {
-      throw const ConnectException('Enter the room as #alias:server or !roomid:server', field: 'room');
+      throw const ConnectException('Enter the room as #alias:server or by its room id (!…)', field: 'room');
     }
     final token = (input['access_token'] ?? '').trim();
     final password = input['password'] ?? '';
@@ -215,8 +216,12 @@ class MatrixAdapter extends PlatformAdapter {
     final rooms = (joined['joined_rooms'] as List? ?? const []).whereType<String>().toSet();
     if (!rooms.contains(roomId)) {
       ctx.progress('Joining the room');
+      // Joining by an old-style room id needs a server that is in the room
+      // (`via`; `server_name` for servers older than spec v1.12).
+      final via = room.startsWith('!') ? _serverOf(room) : null;
       try {
-        await api.post(matrixClient('v3', ['join', room]), const {});
+        await api.post(matrixClient('v3', ['join', room]), const {},
+            query: via == null ? null : {'via': via, 'server_name': via});
       } on MatrixApiError catch (e) {
         throw ConnectException('Could not join the room (${e.message}). Join it (or ask for an invite) in your '
             'Matrix app first.', field: 'room');
@@ -243,7 +248,9 @@ class MatrixAdapter extends PlatformAdapter {
         tier: PlatformTier.openApi,
         displayName: '$title (${login.userId})',
         handle: login.userId,
-        profileUrl: 'https://matrix.to/#/${Uri.encodeComponent(alias ?? roomId)}',
+        profileUrl: alias != null
+            ? 'https://matrix.to/#/${Uri.encodeComponent(alias)}'
+            : 'https://matrix.to/#/${Uri.encodeComponent(roomId)}?via=${Uri.encodeComponent(_serverOf(login.userId) ?? '')}',
         createdAt: ctx.now(),
         config: {
           'homeserver': base.toString(),
@@ -349,6 +356,9 @@ class MatrixAdapter extends PlatformAdapter {
   // --------------------------------------------------------------- validate
 
   /// The descriptor with this account's homeserver upload limit applied.
+  @override
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) => descriptorFor(account);
+
   PlatformDescriptor descriptorFor(ConnectedAccount account) {
     final max = chatInt(account.config['maxUploadBytes']);
     if (max == null || max <= 0) return _descriptor;
@@ -411,22 +421,27 @@ class MatrixAdapter extends PlatformAdapter {
   @override
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final sent = ChatMessages();
+    PublishResult failed(PublishError error) {
+      final e = sent.fail(error);
+      ctx.log.warn('Matrix publish failed: ${e.message}');
+      return PublishResult.failure(e);
+    }
+
     try {
-      return await _publish(variant, account, secrets, ctx);
+      return await _publish(variant, account, secrets, ctx, sent);
     } on AdapterException catch (e) {
-      ctx.log.warn('Matrix publish failed: ${e.error.message}');
-      return PublishResult.failure(e.error);
+      return failed(e.error);
     } on MatrixApiError catch (e) {
-      ctx.log.warn('Matrix publish failed: $e');
-      return PublishResult.failure(e.toPublishError('Matrix'));
+      return failed(e.toPublishError('Matrix'));
     } on Exception catch (e) {
-      ctx.log.warn('Matrix publish: network error ($e)');
-      return PublishResult.failure(PublishError.network('Could not reach the homeserver', raw: '$e'));
+      final host = Uri.tryParse(account.configString('homeserver'))?.host ?? '';
+      return failed(chatUnexpected(e, host.isEmpty ? 'the homeserver' : host));
     }
   }
 
-  Future<PublishResult> _publish(
-      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+  Future<PublishResult> _publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets,
+      AdapterContext ctx, ChatMessages sent) async {
     final hs = account.configString('homeserver');
     final roomId = account.configString('roomId');
     if (hs.isEmpty || roomId.isEmpty) {
@@ -448,28 +463,37 @@ class MatrixAdapter extends PlatformAdapter {
       uploaded.add((m, await api.upload(bytes, contentType: m.mimeType, fileName: chatFileName(m))));
     }
 
-    final ids = <String>[];
+    final ids = sent.ids;
     final text = _fullText(variant);
-    if (text.trim().isNotEmpty) {
+    final hasText = text.trim().isNotEmpty;
+    sent.total = (hasText ? 1 : 0) + uploaded.length;
+    if (hasText) {
       ctx.progress('Sending message');
-      ids.add(await _send(api, roomId, _textContent(text, account.configString('formatting', 'markdown') != 'plain')));
+      sent.add(await _send(api, roomId, _textContent(text, account.configString('formatting', 'markdown') != 'plain')));
     }
     for (var i = 0; i < uploaded.length; i++) {
       final (m, mxc) = uploaded[i];
       ctx.progress('Sending ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${uploaded.length}');
-      ids.add(await _send(api, roomId, matrixMediaContent(m, mxc)));
+      final content = matrixMediaContent(m, mxc);
+      // The transaction id is fixed before the first try, so a retry after
+      // a flood wait is idempotent on the homeserver.
+      final txnId = _newTxnId();
+      sent.add(ids.isEmpty
+          ? await _send(api, roomId, content, txnId)
+          : await chatSendWithFloodWait(() => _send(api, roomId, content, txnId), _matrixFloodWait));
     }
     if (ids.isEmpty) throw const AdapterException(PublishError.validation('Nothing to post'));
     return PublishResult.ok(
       remoteId: ids.first,
-      remoteUrl: matrixToUrl(roomId, ids.first),
-      threadRemoteIds: ids.length > 1 ? ids : const [],
+      remoteUrl: matrixToUrl(roomId, ids.first, userId: chatStr(account.config['userId'])),
+      threadRemoteIds: ids.length > 1 ? List.unmodifiable(ids) : const [],
       publishedAt: ctx.now(),
     );
   }
 
-  Future<String> _send(MatrixApi api, String roomId, Map<String, Object?> content) async {
-    final res = await api.put(matrixClient('v3', ['rooms', roomId, 'send', 'm.room.message', _newTxnId()]), content);
+  Future<String> _send(MatrixApi api, String roomId, Map<String, Object?> content, [String? txnId]) async {
+    final res =
+        await api.put(matrixClient('v3', ['rooms', roomId, 'send', 'm.room.message', txnId ?? _newTxnId()]), content);
     final eventId = chatStr(res['event_id']);
     if (eventId == null) throw const AdapterException(PublishError.platform('The homeserver returned no event id'));
     return eventId;
@@ -551,7 +575,18 @@ class _Login {
 }
 
 final RegExp _mxid = RegExp(r'^@[^:\s]+:[A-Za-z0-9.\-\[\]]+(?::\d+)?$');
-final RegExp _roomRef = RegExp(r'^[#!][^:\s]+:[A-Za-z0-9.\-\[\]]+(?::\d+)?$');
+/// `#alias:server`, `!opaque:server`, or (room version 12 and later, whose
+/// room ids carry no server name) `!<create event hash>`.
+final RegExp _roomRef =
+    RegExp(r'^(?:#[^:\s]+:[A-Za-z0-9.\-\[\]]+(?::\d+)?|![^:\s]+(?::[A-Za-z0-9.\-\[\]]+(?::\d+)?)?)$');
+
+/// The server part of a user id, alias or old-style room id, or `null`.
+String? _serverOf(String id) => id.contains(':') ? id.substring(id.indexOf(':') + 1) : null;
+
+/// How long the homeserver asked to wait when [e] is a rate-limit answer.
+Duration? _matrixFloodWait(Object e) => e is MatrixApiError && (e.errcode == 'M_LIMIT_EXCEEDED' || e.statusCode == 429)
+    ? (e.retryAfter ?? const Duration(seconds: 1))
+    : null;
 
 /// The `m.image` / `m.video` event content for an uploaded file.
 Map<String, Object?> matrixMediaContent(MediaAttachment m, String mxc) {
@@ -572,11 +607,17 @@ Map<String, Object?> matrixMediaContent(MediaAttachment m, String mxc) {
   };
 }
 
-/// `https://matrix.to/#/<room>/<event>?via=<server>`.
-String matrixToUrl(String roomId, String eventId) {
-  final server = roomId.contains(':') ? roomId.substring(roomId.indexOf(':') + 1) : null;
+/// `https://matrix.to/#/<room>/<event>?via=<server>`. The poster's own
+/// homeserver ([userId]) is certainly in the room, so it is the first `via`;
+/// room ids from room version 12 on have no server part at all.
+String matrixToUrl(String roomId, String eventId, {String? userId}) {
+  final servers = <String>{
+    if (userId != null && _serverOf(userId) != null) _serverOf(userId)!,
+    if (_serverOf(roomId) != null) _serverOf(roomId)!,
+  };
+  final via = servers.map((s) => 'via=${Uri.encodeComponent(s)}').join('&');
   return 'https://matrix.to/#/${Uri.encodeComponent(roomId)}/${Uri.encodeComponent(eventId)}'
-      '${server == null ? '' : '?via=${Uri.encodeComponent(server)}'}';
+      '${via.isEmpty ? '' : '?$via'}';
 }
 
 /// Finds the client base URL for [input] (a server name or URL): reads

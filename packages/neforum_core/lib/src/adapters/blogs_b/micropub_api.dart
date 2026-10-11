@@ -171,6 +171,8 @@ Future<Map<String, dynamic>> _fetchMetadata(Uri url, AdapterContext ctx) async {
     throw ConnectException('Your IndieAuth metadata at $url answered HTTP ${f.statusCode}.');
   } on FormatException {
     throw ConnectException('Your IndieAuth metadata at $url is not valid JSON.');
+  } on Exception catch (e) {
+    throw ConnectException('Could not read your IndieAuth metadata at $url: $e');
   }
 }
 

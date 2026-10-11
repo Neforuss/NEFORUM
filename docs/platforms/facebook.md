@@ -1,6 +1,7 @@
 # Facebook in NEFORUM
 
-*Last checked against Meta's developer docs on 7 October 2026 (Graph API v25.0).*
+*Last checked against Meta's developer docs on 11 October 2026. NEFORUM calls Graph API v25.0; the reference pages
+now show v26.0, and v25.0 stays supported for about two years after its release.*
 
 ## What works, in one paragraph
 
@@ -75,7 +76,8 @@ secret store. NEFORUM also sends `appsecret_proof` with every call, so you can s
 | One photo | `POST /{page-id}/photos`: multipart `source` upload with `caption` and `alt_text_custom`. No media host is needed. |
 | 2 to 10 photos | each photo `POST /{page-id}/photos` with `published=false`, then `POST /{page-id}/feed` with `attached_media[n]={"media_fbid":"..."}` |
 | One video | `POST /{page-id}/videos`: multipart `source` with `description` (and `title` if set) |
-| Scheduled (when you let Facebook hold the schedule) | `published=false` + `scheduled_publish_time`. Multi-photo posts also send `unpublished_content_type=SCHEDULED` and upload the photos as `temporary`. |
+| Scheduled (when you let Facebook hold the schedule) | `published=false` + `scheduled_publish_time` on the same call. Multi-photo posts upload the photos with `published=false&temporary=true` and send `unpublished_content_type=SCHEDULED` on `/feed` (Page photos reference). |
+| Taking a scheduled post back (you edit, reschedule, delete or "publish now") | `DELETE /{id}` with the Page token, where the id is the scheduled post (text, link and photo posts) or the video. A post that no longer exists (HTTP 404 or error 100/33) counts as removed. |
 
 ## Limits
 
@@ -85,8 +87,11 @@ secret store. NEFORUM also sends `appsecret_proof` with every call, so you can s
   10 per post in NEFORUM. Photos and video cannot be mixed in one post.
 * Video: one per post, up to 1 GB and 20 minutes (the limit for non-resumable uploads).
 * Photo posts cannot carry a link preview, so NEFORUM adds the link to the text.
-* Scheduling: at least 10 minutes ahead. Posts and photos up to 30 days ahead (the Pages API guide; the
-  Graph reference says 75 days, so NEFORUM uses the safer 30). Videos up to 6 months ahead.
+* Scheduling on Facebook's side: Facebook needs at least 10 minutes' notice; NEFORUM hands a post over only when it
+  is at least 15 minutes ahead, so that uploads and clock drift cannot push it under the minimum. Posts and photos
+  up to 30 days ahead (the Pages API guide; the `/feed` reference says 75 days, so NEFORUM uses the safer 30), videos
+  up to 180 days (the `/videos` reference says 6 months). Anything outside that window is kept and published by
+  NEFORUM itself, which needs the device to be on at that time.
 
 ## Known limitations
 

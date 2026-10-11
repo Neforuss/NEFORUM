@@ -28,13 +28,14 @@ const int hashnodeMaxRequestBytes = 100 * 1024;
 /// NEFORUM's own cap on images per post (first = cover, rest inline).
 const int hashnodeMaxImages = 10;
 
-/// Adapter for Hashnode blogs (public GraphQL API at gql.hashnode.com).
+/// Adapter for Hashnode blogs (public GraphQL API at gql-beta.hashnode.com).
 ///
 /// Connect: a Personal Access Token plus the blog (host or id), resolved
 /// with `publication(host:)`. Publish: images go through
 /// `createImageUploadURL` -> PUT -> `confirmImageUpload`, then
-/// `publishPost`. Since 2026-05-13 every API call needs Hashnode Pro on the
-/// blog; the FORBIDDEN answer is mapped to a configuration error.
+/// `publishPost` with the flat `coverImage` field of the current schema.
+/// Since 2026-05-13 every API call needs Hashnode Pro on the blog; the
+/// FORBIDDEN answer is mapped to a configuration error.
 class HashnodeAdapter extends PlatformAdapter {
   HashnodeAdapter();
 
@@ -121,8 +122,8 @@ class HashnodeAdapter extends PlatformAdapter {
               label: 'API endpoint (advanced)',
               kind: FieldKind.url,
               required: false,
-              defaultValue: 'https://gql.hashnode.com',
-              help: 'Leave as is.',
+              defaultValue: 'https://gql-beta.hashnode.com',
+              help: 'Leave as is. The retired https://gql.hashnode.com is replaced automatically.',
             ),
           ],
         ),
@@ -235,7 +236,7 @@ class HashnodeAdapter extends PlatformAdapter {
     if (u == null || u.scheme != 'https' || u.host.isEmpty) {
       throw const ConnectException('The API endpoint must be an https:// URL', field: 'endpoint');
     }
-    return u;
+    return hashnodeEndpointOrDefault(u);
   }
 
   String _host(String raw) {
@@ -337,10 +338,13 @@ class HashnodeAdapter extends PlatformAdapter {
       if (blogStr(v.extra['slug']) != null) 'slug': blogStr(v.extra['slug']),
       if (blogStr(v.extra['canonicalUrl']) != null) 'originalArticleURL': blogStr(v.extra['canonicalUrl']),
       if (v.extra['disableComments'] == true) 'disableComments': true,
+      // PublishPostInput has a flat `coverImage: String`; the old
+      // `coverImageOptions` object is rejected with BAD_USER_INPUT.
+      if (cover != null) 'coverImage': cover,
     };
 
     ctx.progress('Publishing on Hashnode');
-    final data = await _publishWithCover(api, input, cover);
+    final data = await _guard('Hashnode post', () => api.call(HashnodeDocs.publishPost, {'input': input}));
     final post = blogMap(blogMap(data['publishPost'])['post']);
     final postId = blogStr(post['id']);
     if (postId == null) {
@@ -348,29 +352,6 @@ class HashnodeAdapter extends PlatformAdapter {
     }
     ctx.log.info('Published Hashnode post $postId');
     return PublishResult.ok(remoteId: postId, remoteUrl: blogStr(post['url']), publishedAt: ctx.now());
-  }
-
-  /// `publishPost` with the cover as `coverImageOptions.coverImageURL`. When
-  /// the server's schema only knows the flat `coverImage` field it rejects
-  /// the input; NEFORUM then retries once with `coverImage`.
-  Future<Map<String, dynamic>> _publishWithCover(HashnodeApi api, Map<String, Object?> input, String? cover) {
-    const context = 'Hashnode post';
-    if (cover == null) return _guard(context, () => api.call(HashnodeDocs.publishPost, {'input': input}));
-    return _guard(context, () async {
-      try {
-        return await api.call(HashnodeDocs.publishPost, {
-          'input': {
-            ...input,
-            'coverImageOptions': {'coverImageURL': cover},
-          },
-        });
-      } on HashnodeError catch (e) {
-        if (!e.isInputError || !e.message.contains('coverImageOptions')) rethrow;
-        return api.call(HashnodeDocs.publishPost, {
-          'input': {...input, 'coverImage': cover},
-        });
-      }
-    });
   }
 
   Future<String> _uploadImage(HashnodeApi api, MediaAttachment m, int n, int total, AdapterContext ctx) async {

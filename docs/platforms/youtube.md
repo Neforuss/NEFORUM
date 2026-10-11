@@ -28,15 +28,16 @@ Status as of October 2026.
 2. Enable the API: <https://console.cloud.google.com/apis/library/youtube.googleapis.com>, then click **Enable** on **YouTube Data API v3**.
 3. Open **Google Auth Platform** (called "OAuth consent screen" in older guides) at <https://console.cloud.google.com/auth/overview> and click **Get started**. Enter an app name and your e-mail address, choose **External** as the audience, add your contact e-mail and finish.
 4. Go to **Audience** and click **Publish app** so the status is **In production**. If you'd rather stay in *Testing*, add your own Google address under **Test users** and expect to reconnect weekly.
-5. Go to **Data Access**, click **Add or remove scopes**, add these two and **Save**:
+5. Go to **Data Access**, click **Add or remove scopes**, add these three and **Save**:
    - `https://www.googleapis.com/auth/youtube.upload` (upload videos)
    - `https://www.googleapis.com/auth/youtube.readonly` (lets NEFORUM show which channel is connected)
+   - `https://www.googleapis.com/auth/youtube.force-ssl` (lets NEFORUM delete a video YouTube is holding for a scheduled post when you edit, reschedule or delete that post; `videos.delete` accepts no narrower scope)
 6. Go to **Clients**, click **Create client**, and pick Application type **Desktop app**. Give it any name and click **Create**.
    - A Desktop app client has no redirect-URI setting. NEFORUM signs in through **`http://127.0.0.1:52771/callback`**, which Google allows for Desktop clients automatically.
    - Do **not** choose "Web application", "Android" or "iOS". They don't accept this sign-in address.
 7. Copy the **Client ID** (ends in `.apps.googleusercontent.com`) and the **Client secret**.
 8. In NEFORUM: **Accounts > Add > YouTube > Your own API keys**. Paste both values and click **Connect**.
-9. Your browser opens Google. Pick the Google account that owns your channel. When Google says *"Google hasn't verified this app"*, click **Advanced**, then **Go to (your app name) (unsafe)**. It is your own app. **Tick both YouTube checkboxes** and continue.
+9. Your browser opens Google. Pick the Google account that owns your channel. When Google says *"Google hasn't verified this app"*, click **Advanced**, then **Go to (your app name) (unsafe)**. It is your own app. **Tick every YouTube checkbox** and continue. (Without the "manage your videos" box everything works, but scheduled posts stay on this device instead of being held by YouTube.)
 
 NEFORUM stores the tokens and the client secret only in this device's secure storage. To disconnect, remove the account in NEFORUM; it revokes the token at Google. Google's policies don't allow sharing one OAuth client across users, so every NEFORUM user creates their own.
 
@@ -47,7 +48,11 @@ NEFORUM stores the tokens and the client secret only in this device's secure sto
 - **Tags:** your hashtags go into the tags field. All tags together can use 500 characters, counting the commas between them and two quote marks for every tag that contains a space.
 - YouTube doesn't allow `<` or `>` in titles, descriptions or tags. NEFORUM replaces them with `‹ ›`.
 - **Visibility:** comes from the post visibility (public, unlisted, or private for anything else). Per-post override: `privacyStatus` = `public` / `unlisted` / `private`.
-- **Scheduling:** if you let YouTube hold the schedule, the video uploads as *private* with `publishAt` and YouTube makes it public at that time. This doesn't work if the video is locked private (see above).
+- **Scheduling:** if you let YouTube hold the schedule, the video uploads right away as *private* with `publishAt`, and YouTube makes it **public** at that time, even when NEFORUM is closed. If you edit, reschedule, delete or "publish now" the post, NEFORUM deletes the held video (`videos.delete`, 50 quota units) and uploads again when needed, which uses another upload from your daily quota. NEFORUM keeps the schedule on this device instead (and uploads at the scheduled time) when:
+  - the post is unlisted or private: YouTube's scheduler can only make a video public;
+  - the account was connected without the `youtube.force-ssl` permission (accounts connected before October 2026 too): reconnect to let YouTube hold schedules;
+  - the account is marked as having its uploads locked private, because a locked video never goes public at `publishAt`.
+  A schedule whose time has already passed is uploaded immediately.
 - Other per-post options: `categoryId` (e.g. `22` = People & Blogs), `notifySubscribers` (default on), `madeForKids` (default off), `containsSyntheticMedia` (declare realistic AI-altered content).
 - Vertical or square videos of 3 minutes or less automatically become **Shorts**. There is no separate Shorts switch.
 - The link to the result is `https://youtu.be/<video id>`.
@@ -74,7 +79,8 @@ Why the clipboard? YouTube takes only the video file from the share sheet, and i
 ## Sources
 
 - https://developers.google.com/youtube/v3/docs/videos/insert (checked 2026-10-10, page updated 2026-10-08)
-- https://developers.google.com/youtube/v3/docs/videos (title, description and tag limits, publishAt)
+- https://developers.google.com/youtube/v3/docs/videos (title, description and tag limits; publishAt only on private, never-published videos; a past publishAt publishes right away; checked 2026-10-11)
+- https://developers.google.com/youtube/v3/docs/videos/delete (scopes youtube / youtube.force-ssl / youtubepartner, 50 units, 204 or 404 videoNotFound; checked 2026-10-11)
 - https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol
 - https://developers.google.com/youtube/v3/determine_quota_cost (checked 2026-10-10, page updated 2026-10-08)
 - https://developers.google.com/youtube/v3/revision_history (2025-12-04 and 2026-06-01 quota changes)

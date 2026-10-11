@@ -161,9 +161,11 @@ void micropubTests() {
       final auth = broker.lastAuthorizationUrl!;
       expect(auth.origin + auth.path, 'https://alice.example/auth');
       expect(auth.queryParameters['response_type'], 'code');
-      expect(auth.queryParameters['client_id'], 'https://neforum.app/');
+      // Loopback redirect -> loopback client id: servers must not fetch it and
+      // the redirect shares its scheme, host and port (IndieAuth 4.2 / 5.2).
+      expect(auth.queryParameters['client_id'], 'http://127.0.0.1:52771/');
       expect(auth.queryParameters['redirect_uri'], 'http://127.0.0.1:52771/callback');
-      expect(auth.queryParameters['scope'], 'create media');
+      expect(auth.queryParameters['scope'], 'create media profile');
       expect(auth.queryParameters['code_challenge_method'], 'S256');
       expect(auth.queryParameters['code_challenge'], isNotEmpty);
       expect(auth.queryParameters['me'], 'https://alice.example/');
@@ -172,7 +174,7 @@ void micropubTests() {
       final token = bodyOf(calls[2]);
       expect(token['grant_type'], 'authorization_code');
       expect(token['code'], 'test-code');
-      expect(token['client_id'], 'https://neforum.app/');
+      expect(token['client_id'], 'http://127.0.0.1:52771/');
       expect(token['redirect_uri'], 'http://127.0.0.1:52771/callback');
       expect((token['code_verifier'] as String).length, greaterThanOrEqualTo(43));
       expect(token.containsKey('client_secret'), isFalse);
@@ -186,6 +188,7 @@ void micropubTests() {
       expect(res.account.config['tokenEndpoint'], 'https://alice.example/token');
       expect(res.account.config['revocationEndpoint'], 'https://alice.example/revoke');
       expect(res.account.config['authMethod'], 'indieauth');
+      expect(res.account.config['clientId'], 'http://127.0.0.1:52771/');
       expect(res.account.config['syndicateTargets'], [
         {'uid': 'https://social.example/@alice', 'name': 'Mastodon'},
       ]);
@@ -203,6 +206,33 @@ void micropubTests() {
       });
       await expectLater(adapter.connect(PlatformTier.openApi, {'me': 'alice.example'}, ctx),
           throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('issuer'))));
+    });
+
+    Future<Uri> clientIdRun({required Uri redirect, String? clientId}) async {
+      final broker = FakeAuthBroker(extraParams: {'iss': _issuer}, redirect: redirect);
+      final ctx = testContext(broker: broker, handler: (r) async {
+        final u = r.url.toString();
+        if (u == 'https://alice.example/') return _homePage();
+        if (u.contains('oauth-authorization-server')) return _json(_metadata());
+        if (u == 'https://alice.example/token') return _json({'access_token': 'AT', 'me': 'https://alice.example/'});
+        return _json({});
+      });
+      await adapter.connect(PlatformTier.openApi, {'me': 'alice.example', 'clientId': ?clientId}, ctx);
+      return broker.lastAuthorizationUrl!;
+    }
+
+    test('client id: hosted id for a custom-scheme redirect, the user\'s own id when entered', () async {
+      final mobile = await clientIdRun(redirect: Uri.parse('neforum://callback'));
+      expect(mobile.queryParameters['client_id'], micropubDefaultClientId);
+      expect(mobile.queryParameters['redirect_uri'], 'neforum://callback');
+      // The old pre-filled default counts as "not customised".
+      final prefilled = await clientIdRun(redirect: Uri.parse('http://127.0.0.1:52771/callback'), clientId: micropubDefaultClientId);
+      expect(prefilled.queryParameters['client_id'], 'http://127.0.0.1:52771/');
+      final own = await clientIdRun(redirect: Uri.parse('http://127.0.0.1:52771/callback'), clientId: 'https://me.example');
+      expect(own.queryParameters['client_id'], 'https://me.example/');
+      expect(micropubLoopbackClientId(Uri.parse('http://[::1]:8080/cb')), 'http://[::1]:8080/');
+      expect(micropubLoopbackClientId(Uri.parse('http://localhost:8080/cb')), isNull);
+      expect(adapter.specFor(PlatformTier.openApi).fields.firstWhere((f) => f.key == 'clientId').defaultValue, isNull);
     });
 
     test('rejects a returned me that uses another authorization server', () async {
@@ -502,6 +532,15 @@ void devtoTests() {
       final canon = adapter.validate(const PostVariant(text: 'B', title: 'T', extra: {'canonicalUrl': 'not a url'}), _devAccount());
       expect(canon.map((i) => i.code), contains('devto.canonical_url'));
     });
+
+    test('tags over 30 characters (Forem Tag#validate_name) are left out instead of failing the article', () {
+      final long = 'a' * 31;
+      final issues = adapter.validate(PostVariant(text: 'B', title: 'T', tags: [long, 'dart']), _devAccount());
+      expect(issues.map((i) => i.code), contains('devto.tag_too_long'));
+      expect(issues.hasErrors, isFalse);
+      expect(DevtoAdapter.sendableTags([long, 'Dart', 'dart', 'x' * 30, 'b', 'c', 'd']), ['dart', 'x' * 30, 'b', 'c']);
+      expect(DevtoAdapter.prefillMarkdown(PostVariant(text: 'B', title: 'T', tags: [long, 'dart'])), contains('tags: dart\n'));
+    });
   });
 
   group('devto publish', () {
@@ -643,7 +682,7 @@ void hashnodeTests() {
         });
       });
       final res = await adapter.connect(PlatformTier.byokApi, {'token': 'PAT123', 'publication': 'https://alice.hashnode.dev/'}, ctx);
-      expect(calls.map((c) => '${c.method} ${c.url}'), ['POST https://gql.hashnode.com', 'POST https://gql.hashnode.com']);
+      expect(calls.map((c) => '${c.method} ${c.url}'), ['POST https://gql-beta.hashnode.com', 'POST https://gql-beta.hashnode.com']);
       expect(calls.first.headers['Authorization'], 'PAT123');
       expect(_gqlBody(calls[1])['query'], contains('publication(host: \$host)'));
       expect(_gqlBody(calls[1])['variables'], {'host': 'alice.hashnode.dev'});
@@ -732,10 +771,10 @@ void hashnodeTests() {
       final res = await adapter.publish(variant, _hnAccount(), _hnSecrets, ctx);
       expect(res.success, isTrue, reason: '${res.error}');
       expect(calls.map((c) => '${c.method} ${c.url}'), [
-        'POST https://gql.hashnode.com',
+        'POST https://gql-beta.hashnode.com',
         'PUT https://s3.example.test/up?sig=1',
-        'POST https://gql.hashnode.com',
-        'POST https://gql.hashnode.com',
+        'POST https://gql-beta.hashnode.com',
+        'POST https://gql-beta.hashnode.com',
       ]);
       expect(calls.first.headers['Authorization'], 'PAT123');
       expect(_gqlInput(calls[0]), {'contentType': 'image/jpeg'});
@@ -751,27 +790,19 @@ void hashnodeTests() {
         {'slug': 'web-dev', 'name': 'Web Dev'},
         {'slug': 'dart', 'name': 'dart'},
       ]);
-      expect(input['coverImageOptions'], {'coverImageURL': 'https://cdn.hashnode.com/res/k1.jpg'});
+      // Live PublishPostInput (gql-beta, 2026-10) has a flat coverImage.
+      expect(input['coverImage'], 'https://cdn.hashnode.com/res/k1.jpg');
+      expect(input.containsKey('coverImageOptions'), isFalse);
       expect(input['originalArticleURL'], 'https://alice.example/hello');
       expect(input['subtitle'], 'Sub');
       expect(res.remoteId, 'p1');
       expect(res.remoteUrl, 'https://alice.hashnode.dev/hello');
     });
 
-    test('falls back to coverImage when coverImageOptions is unknown', () async {
-      final inputs = <Map<String, dynamic>>[];
+    test('a hosted cover URL goes out as coverImage in one call; the retired endpoint is replaced', () async {
+      final calls = <http.Request>[];
       final ctx = testContext(handler: (r) async {
-        inputs.add(_gqlInput(r));
-        if (inputs.length == 1) {
-          return _json({
-            'errors': [
-              {
-                'message': 'Field "coverImageOptions" is not defined by type "PublishPostInput".',
-                'extensions': {'code': 'GRAPHQL_VALIDATION_FAILED'},
-              },
-            ],
-          }, 400);
-        }
+        calls.add(r);
         return _json({
           'data': {
             'publishPost': {
@@ -780,12 +811,44 @@ void hashnodeTests() {
           },
         });
       });
+      final legacy = fakeAccount('hashnode', tier: PlatformTier.byokApi, config: {
+        'publicationId': '650000000000000000000001',
+        'endpoint': 'https://gql.hashnode.com',
+      });
       final res = await adapter.publish(
-          const PostVariant(text: 'B', title: 'T', extra: {'coverImageUrl': 'https://img.example/c.png'}), _hnAccount(), _hnSecrets, ctx);
+          const PostVariant(text: 'B', title: 'T', extra: {'coverImageUrl': 'https://img.example/c.png'}), legacy, _hnSecrets, ctx);
       expect(res.success, isTrue, reason: '${res.error}');
-      expect(inputs, hasLength(2));
-      expect(inputs[1]['coverImage'], 'https://img.example/c.png');
-      expect(inputs[1].containsKey('coverImageOptions'), isFalse);
+      expect(calls.single.url.toString(), 'https://gql-beta.hashnode.com');
+      expect(_gqlInput(calls.single)['coverImage'], 'https://img.example/c.png');
+      expect(_gqlInput(calls.single).containsKey('coverImageOptions'), isFalse);
+    });
+
+    test('connect maps the typed legacy endpoint to the current one', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({
+          'data': {
+            'me': {
+              'id': 'u1',
+              'username': 'alice',
+              'name': 'Alice',
+              'publications': {
+                'edges': [
+                  {
+                    'node': {'id': '650000000000000000000009', 'title': 'Only', 'url': 'https://only.hashnode.dev'},
+                  },
+                ],
+              },
+            },
+          },
+        });
+      });
+      final res = await adapter.connect(PlatformTier.byokApi, {'token': 'PAT123', 'endpoint': 'https://gql.hashnode.com'}, ctx);
+      expect(calls.single.url.toString(), 'https://gql-beta.hashnode.com');
+      expect(res.account.config.containsKey('endpoint'), isFalse);
+      expect(adapter.specFor(PlatformTier.byokApi).fields.firstWhere((f) => f.key == 'endpoint').defaultValue,
+          'https://gql-beta.hashnode.com');
     });
 
     Future<PublishResult> failWith(http.Response response) => adapter.publish(
@@ -813,6 +876,16 @@ void hashnodeTests() {
       expect(q.error!.retryAfter, const Duration(seconds: 60));
       expect((await failWith(http.Response('', 401))).error!.kind, PublishErrorKind.auth);
       expect((await failWith(http.Response('oops', 502))).error!.kind, PublishErrorKind.network);
+    });
+
+    test('a redirect from the API (Hashnode moved it) is a configuration error naming the target', () async {
+      final res = await failWith(http.Response('<html>301 Moved Permanently</html>', 301,
+          headers: {'location': 'https://hashnode.com/announcements/graphql-api'}));
+      expect(res.error!.kind, PublishErrorKind.configuration);
+      expect(res.error!.message, contains('https://hashnode.com/announcements/graphql-api'));
+      final html = await failWith(http.Response('<html>hi</html>', 200, headers: {'content-type': 'text/html'}));
+      expect(html.error!.kind, PublishErrorKind.platform);
+      expect(html.error!.message, contains('did not answer with GraphQL'));
     });
 
     test('image refused by confirmImageUpload is a validation error', () async {

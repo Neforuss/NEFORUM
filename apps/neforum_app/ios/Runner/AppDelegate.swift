@@ -1,6 +1,7 @@
 import Flutter
 import UIKit
 import UserNotifications
+import flutter_local_notifications
 import workmanager_apple
 
 @main
@@ -16,6 +17,10 @@ import workmanager_apple
     // Background publishing: plugins must be available in the headless
     // engine WorkManager starts for BGTaskScheduler runs.
     WorkmanagerPlugin.setPluginRegistrantCallback { registry in
+      GeneratedPluginRegistrant.register(with: registry)
+    }
+    // Same for the isolate that runs "Publish now" on a due-post reminder.
+    FlutterLocalNotificationsPlugin.setPluginRegistrantCallback { registry in
       GeneratedPluginRegistrant.register(with: registry)
     }
     WorkmanagerPlugin.registerPeriodicTask(

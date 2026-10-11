@@ -1,9 +1,65 @@
+import '../../http/neforum_http.dart';
 import '../../model/media.dart';
+import '../../model/publish_result.dart';
 
 /// Helpers shared by the chat adapters (Telegram, Discord, Matrix).
 ///
-/// Nothing in here talks to the network; it is plain text and value
+/// Nothing in here talks to the network itself; it is text, value and error
 /// handling so it can be unit-tested in isolation.
+
+/// The messages of one post that goes out as several messages (thread
+/// parts, media + text). Once one of them is live, a failure must be
+/// reported through [PublishError.asPartialThread]: a retry would post the
+/// earlier messages a second time.
+class ChatMessages {
+  final List<String> ids = [];
+
+  /// How many messages the post needs in total.
+  int total = 1;
+
+  void add(String id) => ids.add(id);
+
+  /// [error] as the post's failure: unchanged while nothing is live yet,
+  /// otherwise a non-retryable partial failure naming the live messages.
+  PublishError fail(PublishError error) =>
+      error.asPartialThread(postedIds: ids, total: total > ids.length ? total : ids.length + 1);
+}
+
+/// Longest flood wait a chat adapter sits out between the messages of one
+/// post. A longer wait fails the post (as a partial failure).
+const Duration chatMaxFloodWait = Duration(seconds: 10);
+
+/// Runs [send]. When it fails with a short flood wait ([floodWait] returns
+/// how long the platform asked to wait, or `null` for any other error), waits
+/// once and tries again. A 429 means the message was not accepted, so the
+/// second try cannot duplicate it.
+Future<T> chatSendWithFloodWait<T>(Future<T> Function() send, Duration? Function(Object error) floodWait) async {
+  try {
+    return await send();
+  } on Object catch (e) {
+    final wait = floodWait(e);
+    if (wait == null || wait > chatMaxFloodWait) rethrow;
+    await Future<void>.delayed(wait);
+    return send();
+  }
+}
+
+/// Maps an exception that is not an answer from the platform (network
+/// failure, unreadable media file, ...) onto a [PublishError]. [secret] is
+/// blanked out of the text: the Telegram bot token is part of every URL.
+PublishError chatUnexpected(Object e, String host, {String? secret}) {
+  var text = e.toString();
+  if (secret != null && secret.isNotEmpty) text = text.replaceAll(secret, '<token>');
+  if (NeforumHttp.isTransportError(e)) {
+    return PublishError.network('Could not reach $host', raw: chatSnippet(text));
+  }
+  // dart:io is off limits in lib/, so recognise file errors by name.
+  if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
+    return PublishError.configuration(
+        'A media file for this post is missing or unreadable. Re-attach it and try again. (${chatSnippet(text, 200)})');
+  }
+  return PublishError.platform('Unexpected error while posting via $host: ${chatSnippet(text, 200)}');
+}
 
 /// Non-empty string or `null`.
 String? chatStr(Object? v) => v is String && v.trim().isNotEmpty ? v : null;

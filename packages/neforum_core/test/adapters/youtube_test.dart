@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:io' show OSError, PathNotFoundException;
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/youtube/youtube_adapter.dart';
 import 'package:neforum_core/src/adapters/youtube/youtube_api.dart';
@@ -34,9 +36,18 @@ const _secrets = {
   'client_secret': 'GOCSPX-secret',
 };
 
-ConnectedAccount _byok() => fakeAccount('youtube',
+const _allScopes = 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly '
+    'https://www.googleapis.com/auth/youtube.force-ssl';
+
+/// An account connected before the delete scope existed (no canDeleteVideos).
+ConnectedAccount _byok({Map<String, dynamic> extra = const {}}) => fakeAccount('youtube',
     tier: PlatformTier.byokApi,
-    config: {'clientId': '123-abc.apps.googleusercontent.com', 'channelId': 'UC123'});
+    config: {'clientId': '123-abc.apps.googleusercontent.com', 'channelId': 'UC123', ...extra});
+
+/// An account whose sign-in can delete videos, so YouTube may hold schedules.
+ConnectedAccount _scheduling({Map<String, dynamic> extra = const {}}) => _byok(extra: {'canDeleteVideos': true, ...extra});
+
+const _videoId = 'dQw4w9WgXcQ';
 
 Map<String, dynamic> _videoResource({String privacy = 'public', String upload = 'uploaded'}) => {
       'kind': 'youtube#video',
@@ -165,7 +176,7 @@ void main() {
               'access_token': 'ya29.new',
               'expires_in': 3599,
               'refresh_token': '1//new-refresh',
-              'scope': 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
+              'scope': _allScopes,
               'token_type': 'Bearer',
             });
           }
@@ -194,8 +205,8 @@ void main() {
       expect(q['client_id'], '123-abc.apps.googleusercontent.com');
       expect(q['response_type'], 'code');
       expect(q['redirect_uri'], 'http://127.0.0.1:52771/callback');
-      expect(q['scope'],
-          'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly');
+      // videos.delete (cancelling a held schedule) needs youtube.force-ssl.
+      expect(q['scope'], _allScopes);
       expect(q['access_type'], 'offline');
       expect(q['prompt'], 'consent');
       expect(q['code_challenge_method'], 'S256');
@@ -228,6 +239,8 @@ void main() {
       expect(a.profileUrl, 'https://www.youtube.com/channel/UC123');
       expect(a.config['clientId'], '123-abc.apps.googleusercontent.com');
       expect(a.config['channelId'], 'UC123');
+      expect(a.config['canDeleteVideos'], isTrue);
+      expect(a.config.values.join(' '), isNot(contains('GOCSPX')), reason: 'secrets never go into config');
       expect(res.secrets['access_token'], 'ya29.new');
       expect(res.secrets['refresh_token'], '1//new-refresh');
       expect(res.secrets['client_secret'], 'GOCSPX-secret');
@@ -259,6 +272,26 @@ void main() {
       );
       expect(adapter.connect(PlatformTier.byokApi, {'client_id': '1-a.apps.googleusercontent.com'}, ctx),
           throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('upload permission'))));
+    });
+
+    test('records when the user declined the manage-videos (delete) permission', () async {
+      final ctx = testContext(
+        broker: FakeAuthBroker(),
+        handler: (r) async => r.url.host == 'oauth2.googleapis.com'
+            ? _json({
+                'access_token': 'ya29.new',
+                'expires_in': 3599,
+                'scope': 'https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly',
+                'token_type': 'Bearer',
+              })
+            : _json({
+                'items': [
+                  {'id': 'UC9', 'snippet': {'title': 'Bob'}},
+                ],
+              }),
+      );
+      final res = await adapter.connect(PlatformTier.byokApi, {'client_id': '1-a.apps.googleusercontent.com'}, ctx);
+      expect(res.account.config['canDeleteVideos'], isFalse);
     });
 
     test('fails when the account has no channel', () {
@@ -308,6 +341,53 @@ void main() {
       final issues = adapter.validate(_variant(extra: {'privacyStatus': 'friends'}), _byok());
       expect(issues.map((i) => i.code), contains('youtube.privacy_invalid'));
     });
+
+    test('< > replacements that push the description over 5000 bytes', () {
+      final issues = adapter.validate(_variant(text: '${'a' * 4999}<'), _byok()).map((i) => i.code);
+      expect(issues, contains('youtube.description_too_long'));
+      expect(issues, isNot(contains('text.too_long')));
+    });
+
+    group('schedule hand-over (validate is the delegation gate)', () {
+      // validate() compares with the wall clock, like the composer does.
+      final future = DateTime.now().toUtc().add(const Duration(days: 3));
+      List<ValidationIssue> scheduleIssues(PostVariant v, ConnectedAccount a) =>
+          adapter.validate(v, a).where((i) => i.field == 'scheduledAt').toList();
+
+      test('public post on an account that can delete videos: YouTube may hold it', () {
+        final issues = scheduleIssues(_variant(scheduledAt: future), _scheduling());
+        expect(issues.hasErrors, isFalse);
+        expect(issues.map((i) => i.code), ['youtube.scheduled']);
+      });
+
+      test('unlisted / private posts stay local: publishAt would make them public', () {
+        for (final v in [
+          _variant(scheduledAt: future, visibility: Visibility.unlisted),
+          _variant(scheduledAt: future, visibility: Visibility.private),
+          _variant(scheduledAt: future, extra: {'privacyStatus': 'private'}),
+        ]) {
+          final issues = scheduleIssues(v, _scheduling());
+          expect(issues.single.code, 'youtube.schedule_not_public');
+          expect(issues.single.isError, isTrue);
+        }
+      });
+
+      test('sign-in without a delete scope stays local (held video could not be cancelled)', () {
+        final issues = scheduleIssues(_variant(scheduledAt: future), _byok());
+        expect(issues.single.code, 'youtube.schedule_needs_delete_permission');
+        expect(issues.single.isError, isTrue);
+      });
+
+      test('project flagged as locked private stays local', () {
+        final issues = scheduleIssues(_variant(scheduledAt: future), _scheduling(extra: {'uploadsLockedPrivate': true}));
+        expect(issues.single.code, 'youtube.schedule_locked_private');
+      });
+
+      test('a schedule that has passed means upload now: no schedule issue', () {
+        final past = DateTime.now().toUtc().subtract(const Duration(minutes: 5));
+        expect(scheduleIssues(_variant(scheduledAt: past, visibility: Visibility.unlisted), _byok()), isEmpty);
+      });
+    });
   });
 
   group('publish', () {
@@ -355,7 +435,7 @@ void main() {
       expect(put.bodyBytes, _videoBytes);
     });
 
-    test('scheduled upload is private with publishAt; notifySubscribers=false', () async {
+    test('scheduled upload is private with publishAt and returns a held (scheduled) result', () async {
       final calls = <http.Request>[];
       final ctx = testContext(
         mediaBytes: _videoBytes,
@@ -367,13 +447,62 @@ void main() {
       );
       final when = DateTime.utc(2026, 10, 8, 15);
       final res = await adapter.publish(
-          _variant(scheduledAt: when, extra: {'notifySubscribers': false, 'madeForKids': false}), _byok(), _secrets, ctx);
+          _variant(scheduledAt: when, extra: {'notifySubscribers': false, 'madeForKids': false}),
+          _scheduling(),
+          _secrets,
+          ctx);
       expect(res.success, isTrue, reason: '${res.error}');
-      expect(res.publishedAt, when);
+      expect(res.isHeldByPlatform, isTrue);
+      expect(res.scheduledFor, when);
+      expect(res.remoteId, _videoId);
+      expect(res.remoteUrl, 'https://youtu.be/$_videoId');
+      expect(res.publishedAt, isNull);
       expect(calls[0].url.toString(), '$_initUrl&notifySubscribers=false');
       final status = bodyOf(calls[0])['status'] as Map;
       expect(status['privacyStatus'], 'private');
       expect(status['publishAt'], '2026-10-08T15:00:00Z');
+      expect(status['selfDeclaredMadeForKids'], false);
+    });
+
+    test('a schedule that has already passed is uploaded now with the requested privacy', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(
+        mediaBytes: _videoBytes,
+        handler: (r) async {
+          calls.add(r);
+          if (r.method == 'POST') return http.Response('', 200, headers: {'location': _sessionUrl});
+          return _json(_videoResource(privacy: 'unlisted'), 201);
+        },
+      );
+      final res = await adapter.publish(
+          _variant(scheduledAt: testNow.subtract(const Duration(minutes: 1)), visibility: Visibility.unlisted),
+          _byok(),
+          _secrets,
+          ctx);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(res.isHeldByPlatform, isFalse);
+      expect(res.publishedAt, testNow);
+      final status = bodyOf(calls[0])['status'] as Map;
+      expect(status['privacyStatus'], 'unlisted');
+      expect(status.containsKey('publishAt'), isFalse);
+    });
+
+    test('refuses to let YouTube hold non-public posts or posts it could not take back (no HTTP)', () async {
+      final ctx = testContext(handler: (r) async => throw StateError('no HTTP expected'));
+      final when = DateTime.utc(2026, 10, 8, 15);
+      final unlisted =
+          await adapter.publish(_variant(scheduledAt: when, visibility: Visibility.unlisted), _scheduling(), _secrets, ctx);
+      expect(unlisted.error!.kind, PublishErrorKind.unsupported);
+      expect(unlisted.error!.message, contains('only make a video public'));
+
+      // The granted scope (in the secrets) wins over the config flag.
+      final noDelete = await adapter.publish(_variant(scheduledAt: when), _scheduling(),
+          {..._secrets, 'scope': 'https://www.googleapis.com/auth/youtube.upload'}, ctx);
+      expect(noDelete.error!.kind, PublishErrorKind.unsupported);
+
+      final oldAccount = await adapter.publish(_variant(scheduledAt: when), _byok(), _secrets, ctx);
+      expect(oldAccount.error!.kind, PublishErrorKind.unsupported);
+      expect(oldAccount.error!.message, contains('reconnect YouTube'));
     });
 
     test('derives the title from the first line and sanitizes < >', () async {
@@ -461,6 +590,90 @@ void main() {
       final ctx = testContext(handler: (r) async => throw StateError('no HTTP'));
       final res = await adapter.publish(_variant(media: const []), _byok(), _secrets, ctx);
       expect(res.error!.kind, PublishErrorKind.validation);
+    });
+
+    test('a missing video file is a failure result, not an exception', () async {
+      final ctx = AdapterContext(
+        http: NeforumHttp(client: MockClient((r) async => throw StateError('no HTTP')), maxRetries: 0),
+        clock: () => testNow,
+        readMedia: (m) async => throw PathNotFoundException(m.path, const OSError('No such file', 2)),
+      );
+      final res = await adapter.publish(_variant(), _byok(), _secrets, ctx);
+      expect(res.isFailure, isTrue);
+      expect(res.error!.kind, PublishErrorKind.configuration);
+    });
+  });
+
+  group('cancelScheduled', () {
+    final held = PublishResult.scheduled(
+        remoteId: _videoId, scheduledFor: DateTime.utc(2026, 10, 8, 15), remoteUrl: 'https://youtu.be/$_videoId');
+
+    test('deletes the held video with videos.delete', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return http.Response('', 204);
+      });
+      await adapter.cancelScheduled(held, _scheduling(), _secrets, ctx);
+      final del = calls.single;
+      expect(del.method, 'DELETE');
+      expect(del.url.toString(), 'https://www.googleapis.com/youtube/v3/videos?id=$_videoId');
+      expect(del.headers['authorization'], 'Bearer ya29.token');
+    });
+
+    test('renews an expired token first', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        if (r.url.host == 'oauth2.googleapis.com') {
+          return _json({'access_token': 'ya29.fresh', 'expires_in': 3599, 'token_type': 'Bearer', 'scope': _allScopes});
+        }
+        return http.Response('', 204);
+      });
+      await adapter.cancelScheduled(held, _scheduling(), {..._secrets, 'expires_at': '2026-10-07T11:00:00.000Z'}, ctx);
+      expect(calls.map((c) => c.method), ['POST', 'DELETE']);
+      expect(calls.last.headers['authorization'], 'Bearer ya29.fresh');
+    });
+
+    test('404 videoNotFound means it is already gone', () async {
+      final ctx = testContext(handler: (r) async => _googleError(404, 'videoNotFound', 'Video not found'));
+      await adapter.cancelScheduled(held, _scheduling(), _secrets, ctx);
+    });
+
+    Future<PublishError> cancelError(Future<http.Response> Function(http.Request) handler) async {
+      try {
+        await adapter.cancelScheduled(held, _scheduling(), _secrets, testContext(handler: handler));
+      } on AdapterException catch (e) {
+        return e.error;
+      }
+      fail('cancelScheduled should have thrown');
+    }
+
+    test('errors map to the right kind and are thrown', () async {
+      final scope = await cancelError((r) async => _googleError(403, 'insufficientPermissions', 'Insufficient Permission'));
+      expect(scope.kind, PublishErrorKind.auth);
+      final forbidden = await cancelError((r) async => _googleError(403, 'forbidden', 'cannot be deleted'));
+      expect(forbidden.kind, PublishErrorKind.platform);
+      final quota = await cancelError((r) async => _googleError(403, 'quotaExceeded'));
+      expect(quota.kind, PublishErrorKind.quota);
+      expect(quota.retryAfter, const Duration(hours: 19));
+      final auth = await cancelError((r) async => _googleError(401, 'authError', 'Invalid Credentials'));
+      expect(auth.kind, PublishErrorKind.auth);
+      final outage = await cancelError((r) async => _googleError(503, 'backendError'));
+      expect(outage.kind, PublishErrorKind.network);
+      expect(outage.retryable, isTrue);
+      final offline = await cancelError((r) async => throw http.ClientException('connection reset'));
+      expect(offline.kind, PublishErrorKind.network);
+      final otherNotFound = await cancelError((r) async => http.Response('<html>Not Found</html>', 404));
+      expect(otherNotFound.kind, isNot(PublishErrorKind.auth));
+    });
+
+    test('hand-off accounts and results without an id cannot be cancelled', () async {
+      final ctx = testContext(handler: (r) async => throw StateError('no HTTP'));
+      await expectLater(adapter.cancelScheduled(held, fakeAccount('youtube', tier: PlatformTier.handoff), _secrets, ctx),
+          throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.unsupported)));
+      await expectLater(adapter.cancelScheduled(PublishResult.ok(), _scheduling(), _secrets, ctx),
+          throwsA(isA<AdapterException>()));
     });
   });
 
@@ -551,6 +764,19 @@ void main() {
       await expectLater(
         adapter.refreshSecrets(_byok(), expired, ctx),
         throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)),
+      );
+    });
+
+    test('429 / outage while renewing are retried later, not "reconnect"', () async {
+      final expired = {..._secrets, 'expires_at': '2026-10-07T11:00:00.000Z'};
+      await expectLater(
+        adapter.refreshSecrets(_byok(), expired, testContext(handler: (r) async => _json({'error': 'rate_limited'}, 429))),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.quota)),
+      );
+      await expectLater(
+        adapter.refreshSecrets(
+            _byok(), expired, testContext(handler: (r) async => _json({'error': 'backend_error'}, 503))),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.network)),
       );
     });
 

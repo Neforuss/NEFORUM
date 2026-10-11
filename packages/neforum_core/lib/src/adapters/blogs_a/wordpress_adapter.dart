@@ -160,17 +160,19 @@ class WordPressAdapter extends PlatformAdapter {
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
     if (tier == PlatformTier.handoff) return _connectHandoff(input, ctx);
-    final site = parseBlogSiteUrl(input['site'] ?? '');
-    ctx.progress('Contacting ${site.host}');
-    final (root, index) = await discoverWordPress(site, ctx);
+    final typed = parseBlogSiteUrl(input['site'] ?? '');
+    ctx.progress('Contacting ${typed.host}');
+    final (root, index, site) = await discoverWordPress(typed, ctx);
     final authorizeUrl = applicationPasswordsEndpoint(index);
 
     var username = (input['username'] ?? '').trim();
     var password = (input['password'] ?? '').trim();
     if (password.isEmpty) {
       if (authorizeUrl == null) {
+        final wpCom = site.host.endsWith('.wordpress.com') ? ' WordPress.com sites cannot be connected this way; use Hand-off.' : '';
         throw ConnectException('${site.host} does not offer Application Passwords (the site must use https and the '
-            'feature must not be disabled by a plugin). Paste a password if you created one another way.', field: 'password');
+            'feature must not be disabled by a plugin). Paste a password if you created one another way.$wpCom',
+            field: 'password');
       }
       final creds = await _authorizeInBrowser(authorizeUrl, username, ctx);
       username = creds.$1;
@@ -330,10 +332,15 @@ class WordPressAdapter extends PlatformAdapter {
       issues.add(const ValidationIssue.warning('wordpress.visibility',
           'WordPress posts are either public or private; this one will be public', field: 'visibility'));
     }
-    final at = variant.scheduledAt;
-    if (at != null && status == 'draft') {
-      issues.add(const ValidationIssue.warning('wordpress.draft_schedule',
-          'Drafts cannot be scheduled on WordPress; the date is stored but nothing is published', field: 'scheduledAt'));
+    if (variant.scheduledAt != null) {
+      // Only `future` posts are published by WordPress at their date; a
+      // draft, pending or private post with a date stays as it is.
+      final effective = _status(variant, account);
+      if (effective != 'future') {
+        issues.add(ValidationIssue.error('wordpress.cannot_schedule',
+            'WordPress can only hold posts that it will publish; a "$effective" post cannot be scheduled on the site',
+            field: 'scheduledAt'));
+      }
     }
     return issues;
   }
@@ -375,11 +382,15 @@ class WordPressAdapter extends PlatformAdapter {
     } on AdapterException catch (e) {
       ctx.log.warn('WordPress publish failed: ${e.error.message}');
       return PublishResult.failure(e.error);
+    } on Exception catch (e) {
+      ctx.log.warn('WordPress publish failed unexpectedly: $e');
+      return PublishResult.failure(unexpectedBlogError('WordPress', e));
     }
   }
 
-  Future<PublishResult> _publish(
-      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+  /// API client for an API-tier account; throws [AdapterException] when the
+  /// account or its password is missing.
+  WordPressApi _api(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) {
     if (account.tier == PlatformTier.handoff) {
       throw const AdapterException(PublishError.unsupported('Hand-off accounts publish through the WordPress editor'));
     }
@@ -392,9 +403,14 @@ class WordPressAdapter extends PlatformAdapter {
     if (password.isEmpty) {
       throw const AdapterException(PublishError.auth('No WordPress application password stored; reconnect the account'));
     }
+    return WordPressApi(WordPressRoot(restBase), ctx, username: username, appPassword: password);
+  }
+
+  Future<PublishResult> _publish(
+      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final api = _api(account, secrets, ctx);
     final title = (variant.title ?? '').trim();
     if (title.isEmpty) throw const AdapterException(PublishError.validation('WordPress posts need a title'));
-    final api = WordPressApi(WordPressRoot(restBase), ctx, username: username, appPassword: password);
 
     final uploads = <(MediaAttachment, int, String)>[];
     for (var i = 0; i < variant.media.length; i++) {
@@ -436,12 +452,57 @@ class WordPressAdapter extends PlatformAdapter {
     if (postId == null) {
       throw AdapterException(PublishError.platform('WordPress did not return the created post', raw: bodySnippet(r)));
     }
-    ctx.log.info('WordPress post $postId created with status ${post['status'] ?? status}');
-    return PublishResult.ok(
-      remoteId: '$postId',
-      remoteUrl: blogStr(post['link']),
-      publishedAt: at ?? ctx.now(),
-    );
+    final remoteStatus = blogStr(post['status']) ?? status;
+    final link = blogStr(post['link']);
+    ctx.log.info('WordPress post $postId created with status $remoteStatus');
+    if (remoteStatus == 'future') {
+      // WordPress holds the post and publishes it through WP-Cron.
+      final when = at ?? _parseGmt(post['date_gmt']);
+      if (when != null) return PublishResult.scheduled(remoteId: '$postId', scheduledFor: when, remoteUrl: link);
+    }
+    // `publish` although a date was sent: the date is in the past by the
+    // server's clock, so WordPress published straight away.
+    return PublishResult.ok(remoteId: '$postId', remoteUrl: link, publishedAt: ctx.now());
+  }
+
+  /// WordPress `date_gmt` values carry no zone suffix.
+  static DateTime? _parseGmt(Object? v) {
+    final s = blogStr(v);
+    if (s == null) return null;
+    return DateTime.tryParse(s.endsWith('Z') ? s : '${s}Z');
+  }
+
+  // ------------------------------------------------------------ scheduling
+
+  /// Deletes the `future` post WordPress is holding (`DELETE
+  /// /wp/v2/posts/{id}?force=true`, skipping the trash so it cannot be
+  /// restored and published by mistake). A 404 means it is already gone.
+  @override
+  Future<void> cancelScheduled(
+      PublishResult held, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final postId = int.tryParse(held.remoteId ?? '');
+    if (postId == null) {
+      throw const AdapterException(PublishError.configuration(
+          'NEFORUM does not know which WordPress post holds this schedule; delete it in WordPress under Posts > Scheduled'));
+    }
+    final api = _api(account, secrets, ctx);
+    ctx.progress('Removing the scheduled WordPress post');
+    const what = 'Removing the scheduled WordPress post';
+    try {
+      await api.delete('wp/v2/posts/$postId', {'force': 'true'});
+      ctx.log.info('WordPress post $postId deleted');
+    } on HttpFailure catch (f) {
+      // `rest_post_invalid_id`: deleted already. A missing route or an HTML
+      // error page means the API was not reached, so the post may still be
+      // held and must not be reported as gone.
+      if (f.statusCode == 404 && !isHtmlResponse(f.response) && blogStr(f.response.jsonMap['code']) != 'rest_no_route') {
+        ctx.log.info('WordPress post $postId no longer exists');
+        return;
+      }
+      throw AdapterException(mapWordPressFailure(f, what));
+    } on Exception catch (e) {
+      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+    }
   }
 
   /// Uploads one file; returns (attachment, media id, source URL).
@@ -449,7 +510,7 @@ class WordPressAdapter extends PlatformAdapter {
       WordPressApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
     final label = m.isVideo ? 'video' : 'image';
     ctx.progress('Uploading $label ${index + 1} of $total');
-    final bytes = await ctx.readMedia(m);
+    final bytes = await readBlogMedia(ctx, m);
     final what = 'WordPress upload ${index + 1}/$total';
     final r = await guardWordPress(what,
         () => api.uploadMedia(bytes, fileName: safeFileName(m), contentType: m.mimeType));

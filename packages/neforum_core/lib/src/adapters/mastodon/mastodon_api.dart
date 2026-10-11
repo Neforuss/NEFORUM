@@ -288,6 +288,20 @@ class MastodonApi {
     return res.jsonMap;
   }
 
+  /// `DELETE /api/v1/scheduled_statuses/:id` (scope `write:statuses`).
+  /// Returns `false` when the server no longer has it (404/410: already
+  /// published or removed). Throws [HttpFailure] for anything else.
+  Future<bool> deleteScheduledStatus(String id) async {
+    final res = await ctx.http.delete(
+      url('/api/v1/scheduled_statuses/${Uri.encodeComponent(id)}'),
+      headers: _auth,
+      throwOnError: false,
+    );
+    if (res.ok) return true;
+    if (res.statusCode == 404 || res.statusCode == 410) return false;
+    throw HttpFailure(res);
+  }
+
   static Uint8List encodeForm(List<MapEntry<String, String>> pairs) => Uint8List.fromList(
     utf8.encode(pairs.map((e) => '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&')),
   );

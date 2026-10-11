@@ -16,6 +16,10 @@ import 'blogs_common.dart';
 /// Forem's `MAX_TAG_LIST_SIZE`.
 const int devtoMaxTags = 4;
 
+/// Forem `Tag#validate_name`: at most 30 characters, letters and digits only.
+/// A longer tag makes the whole article fail with HTTP 422.
+const int devtoTagMaxLength = 30;
+
 /// Forem article title maximum for full posts (app/models/article.rb).
 const int devtoTitleMax = 128;
 
@@ -63,7 +67,7 @@ class DevtoAdapter extends PlatformAdapter {
       maxHashtags: devtoMaxTags,
       linkInText: true,
       notes: 'Articles are Markdown with a required title (max 128 characters). At most 4 tags, letters and digits '
-          'only. Body up to 800 KB.',
+          'only, 30 characters each. Body up to 800 KB.',
     ),
     media: MediaRules(
       maxImages: devtoMaxImages,
@@ -86,7 +90,8 @@ class DevtoAdapter extends PlatformAdapter {
     personalAccountOk: true,
     accountRequirements: 'Any DEV (or other Forem) account. You create a personal API key in your settings; '
         'no developer registration or review.',
-    apiCostSummary: 'Free. DEV allows about 10 new articles per 30 seconds and one write request per second.',
+    apiCostSummary: 'Free. DEV allows about 10 new articles per 30 seconds (brand-new accounts only about one '
+        'per 5 minutes) and one write request per second.',
     setupGuide: 'docs/platforms/devto.md',
     serverSideScheduling: false,
     supportsLinkField: false,
@@ -204,12 +209,28 @@ class DevtoAdapter extends PlatformAdapter {
   /// DEV tags: lower-case letters and digits only.
   static String cleanTag(String tag) => tag.toLowerCase().replaceAll(RegExp(r'[^\p{L}\p{N}]', unicode: true), '');
 
+  /// The tags DEV will accept, in order: cleaned, de-duplicated, at most
+  /// [devtoTagMaxLength] characters each and [devtoMaxTags] in total.
+  static List<String> sendableTags(Iterable<String> raw) {
+    final tags = <String>[];
+    for (final t in raw.map(cleanTag)) {
+      if (t.isEmpty || t.length > devtoTagMaxLength || tags.contains(t)) continue;
+      if (tags.length == devtoMaxTags) break;
+      tags.add(t);
+    }
+    return tags;
+  }
+
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
     final issues = RulesValidator.validate(variant, descriptor, tier: account.tier);
     if (variant.tags.any((t) => cleanTag(t) != t)) {
       issues.add(const ValidationIssue.info('devto.tag_cleaned',
           'DEV tags may only contain lower-case letters and digits; NEFORUM will clean them up', field: 'tags'));
+    }
+    if (variant.tags.any((t) => cleanTag(t).length > devtoTagMaxLength)) {
+      issues.add(const ValidationIssue.warning('devto.tag_too_long',
+          'DEV tags are at most $devtoTagMaxLength characters; longer tags are left out', field: 'tags'));
     }
     if (variant.tags.length > devtoMaxTags) {
       issues.add(const ValidationIssue.info('devto.tags_dropped', 'Only the first 4 tags are sent to DEV', field: 'tags'));
@@ -269,10 +290,7 @@ class DevtoAdapter extends PlatformAdapter {
       }
     }
 
-    final tags = <String>[];
-    for (final t in v.tags.map(cleanTag)) {
-      if (t.isNotEmpty && !tags.contains(t) && tags.length < devtoMaxTags) tags.add(t);
-    }
+    final tags = sendableTags(v.tags);
     final article = <String, Object?>{
       'title': v.title!.trim(),
       'body_markdown': markdown,
@@ -323,10 +341,7 @@ class DevtoAdapter extends PlatformAdapter {
 
   /// The Markdown with front matter that `/new?prefill=` expects.
   static String prefillMarkdown(PostVariant v) {
-    final tags = <String>[];
-    for (final t in v.tags.map(cleanTag)) {
-      if (t.isNotEmpty && !tags.contains(t) && tags.length < devtoMaxTags) tags.add(t);
-    }
+    final tags = sendableTags(v.tags);
     final canonical = blogStr(v.extra['canonicalUrl']);
     final cover = blogStr(v.extra['mainImage']);
     final title = v.title?.trim() ?? '';

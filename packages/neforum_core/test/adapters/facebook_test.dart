@@ -256,16 +256,46 @@ void main() {
       expect(codes(const PostVariant(text: 'hi'), _apiAccount(config: {})), contains('account.no_page'));
       expect(codes(PostVariant(text: 'hi', link: 'https://example.com', media: [fakeImage()]), _apiAccount()),
           contains('link.in_caption'));
-      expect(codes(PostVariant(text: 'hi', scheduledAt: DateTime.now().add(const Duration(minutes: 2))), _apiAccount()),
-          contains('schedule.too_soon'));
-      expect(codes(PostVariant(text: 'hi', scheduledAt: DateTime.now().add(const Duration(days: 40))), _apiAccount()),
-          contains('schedule.too_far'));
-      expect(
-          codes(PostVariant(text: 'hi', media: [fakeVideo()], scheduledAt: DateTime.now().add(const Duration(days: 40))),
-              _apiAccount()),
-          isNot(contains('schedule.too_far')));
+      expect(codes(PostVariant(text: 'hi', link: 'https://example.com', media: [fakeVideo()]), _apiAccount()),
+          contains('link.in_caption'));
       expect(codes(const PostVariant(text: 'hi'), fakeAccount('facebook', tier: PlatformTier.handoff)),
           contains('handoff.paste_text'));
+    });
+
+    group('schedule window (10 min + 5 min margin .. 30 days, videos 6 months)', () {
+      final now = DateTime.now();
+      List<ValidationIssue> scheduleIssues(Duration ahead, {bool video = false}) => adapter
+          .validate(PostVariant(text: 'hi', media: [if (video) fakeVideo()], scheduledAt: now.add(ahead)), _apiAccount())
+          .where((i) => i.code.startsWith('schedule.'))
+          .toList();
+
+      test('too soon and too far are errors on the scheduledAt field', () {
+        for (final ahead in [const Duration(minutes: 2), const Duration(minutes: 12)]) {
+          final issue = scheduleIssues(ahead).single;
+          expect(issue.code, 'schedule.too_soon');
+          expect(issue.isError, isTrue);
+          expect(issue.field, 'scheduledAt');
+        }
+        final far = scheduleIssues(const Duration(days: 31)).single;
+        expect(far.code, 'schedule.too_far');
+        expect(far.isError, isTrue);
+        expect(far.field, 'scheduledAt');
+        expect(scheduleIssues(const Duration(days: 181), video: true).single.code, 'schedule.too_far');
+      });
+
+      test('inside the window, or already due, is fine', () {
+        expect(scheduleIssues(const Duration(minutes: 20)), isEmpty);
+        expect(scheduleIssues(const Duration(days: 29)), isEmpty);
+        expect(scheduleIssues(const Duration(days: 40), video: true), isEmpty);
+        expect(scheduleIssues(const Duration(minutes: -5)), isEmpty);
+      });
+
+      test('scheduleIssue uses the clock it is given', () {
+        final t = DateTime.utc(2026, 1, 1);
+        expect(FacebookAdapter.scheduleIssue(t.add(const Duration(minutes: 16)), isVideo: false, now: t), isNull);
+        expect(FacebookAdapter.scheduleIssue(t.add(const Duration(minutes: 14)), isVideo: false, now: t)!.code,
+            'schedule.too_soon');
+      });
     });
   });
 
@@ -382,34 +412,195 @@ void main() {
       expect(f['access_token'], 'PAGE_TOKEN');
     });
 
-    test('server-side scheduling sets published=false and scheduled_publish_time', () async {
-      final calls = <http.Request>[];
-      final ctx = testContext(handler: (req) async {
-        calls.add(req);
-        if (req.url.path.endsWith('/photos')) return _json({'id': 'p${calls.length}'});
-        return _json({'id': '123_901'});
-      });
+    group('server-side scheduling', () {
       final at = testNow.add(const Duration(days: 2));
       final unix = '${at.millisecondsSinceEpoch ~/ 1000}';
-      await adapter.publish(PostVariant(text: 'Later', scheduledAt: at), _apiAccount(), _secrets, ctx);
-      expect(bodyOf(calls.single)['published'], 'false');
-      expect(bodyOf(calls.single)['scheduled_publish_time'], unix);
 
-      calls.clear();
-      await adapter.publish(
-          PostVariant(text: 'Later album', scheduledAt: at, media: [fakeImage(id: 'a'), fakeImage(id: 'b')]),
-          _apiAccount(),
-          _secrets,
-          ctx);
-      expect(multipartFieldsOf(calls[0])['temporary'], 'true');
-      final feed = bodyOf(calls[2]);
-      expect(feed['published'], 'false');
-      expect(feed['scheduled_publish_time'], unix);
-      expect(feed['unpublished_content_type'], 'SCHEDULED');
+      test('text + link: /feed with published=false and scheduled_publish_time, held result', () async {
+        final calls = <http.Request>[];
+        final ctx = testContext(handler: (req) async {
+          calls.add(req);
+          return _json({'id': '123_901'});
+        });
+        final r = await adapter.publish(
+            PostVariant(text: 'Later', link: 'https://example.com/l', scheduledAt: at), _apiAccount(), _secrets, ctx);
+        expect(r.success, isTrue, reason: '${r.error}');
+        expect(r.isHeldByPlatform, isTrue);
+        expect(r.remoteId, '123_901');
+        expect(r.scheduledFor, at);
+        expect(r.remoteUrl, 'https://www.facebook.com/123/posts/901');
+        expect(r.publishedAt, isNull);
+        expect(calls.single.url.toString(), '$_graph/123/feed');
+        expect(bodyOf(calls.single), {
+          'message': 'Later',
+          'link': 'https://example.com/l',
+          'published': 'false',
+          'scheduled_publish_time': unix,
+          'access_token': 'PAGE_TOKEN',
+          'appsecret_proof': appSecretProof('PAGE_TOKEN', 'APPSECRET'),
+        });
+      });
 
-      final soon = await adapter.publish(
-          PostVariant(text: 'x', scheduledAt: testNow.add(const Duration(minutes: 5))), _apiAccount(), _secrets, ctx);
-      expect(soon.error?.kind, PublishErrorKind.validation);
+      test('single photo: /photos carries the schedule; post_id is what gets deleted', () async {
+        final calls = <http.Request>[];
+        final ctx = testContext(handler: (req) async {
+          calls.add(req);
+          return _json({'id': '555', 'post_id': '123_556'});
+        });
+        final r = await adapter.publish(
+            PostVariant(text: 'Photo later', media: [fakeImage()], scheduledAt: at), _apiAccount(), _secrets, ctx);
+        expect(r.isHeldByPlatform, isTrue, reason: '${r.error}');
+        expect(r.remoteId, '123_556');
+        expect(r.scheduledFor, at);
+        final f = multipartFieldsOf(calls.single);
+        expect(calls.single.url.toString(), '$_graph/123/photos');
+        expect(f['published'], 'false');
+        expect(f['scheduled_publish_time'], unix);
+        expect(f['caption'], 'Photo later');
+        expect(f.containsKey('temporary'), isFalse);
+      });
+
+      test('single photo without post_id falls back to the photo id', () async {
+        final ctx = testContext(handler: (req) async => _json({'id': '555'}));
+        final r = await adapter.publish(
+            PostVariant(text: 'Photo later', media: [fakeImage()], scheduledAt: at), _apiAccount(), _secrets, ctx);
+        expect(r.isHeldByPlatform, isTrue);
+        expect(r.remoteId, '555');
+      });
+
+      test('multi-photo: temporary unpublished uploads, then /feed with unpublished_content_type=SCHEDULED', () async {
+        final calls = <http.Request>[];
+        var n = 0;
+        final ctx = testContext(handler: (req) async {
+          calls.add(req);
+          if (req.url.path.endsWith('/photos')) return _json({'id': 'p${++n}'});
+          return _json({'id': '123_902'});
+        });
+        final r = await adapter.publish(
+            PostVariant(text: 'Later album', scheduledAt: at, media: [fakeImage(id: 'a'), fakeImage(id: 'b')]),
+            _apiAccount(),
+            _secrets,
+            ctx);
+        expect(r.isHeldByPlatform, isTrue, reason: '${r.error}');
+        expect(r.remoteId, '123_902');
+        for (final upload in calls.take(2)) {
+          final f = multipartFieldsOf(upload);
+          expect(f['published'], 'false');
+          expect(f['temporary'], 'true');
+          expect(f.containsKey('scheduled_publish_time'), isFalse);
+        }
+        final feed = bodyOf(calls[2]);
+        expect(feed['attached_media[0]'], '{"media_fbid":"p1"}');
+        expect(feed['published'], 'false');
+        expect(feed['scheduled_publish_time'], unix);
+        expect(feed['unpublished_content_type'], 'SCHEDULED');
+      });
+
+      test('video: /videos carries the schedule; video id is what gets deleted', () async {
+        final calls = <http.Request>[];
+        final ctx = testContext(handler: (req) async {
+          calls.add(req);
+          return _json({'id': 'v78'});
+        });
+        final videoAt = testNow.add(const Duration(days: 90));
+        final r = await adapter.publish(
+            PostVariant(text: 'Clip later', media: [fakeVideo()], scheduledAt: videoAt), _apiAccount(), _secrets, ctx);
+        expect(r.isHeldByPlatform, isTrue, reason: '${r.error}');
+        expect(r.remoteId, 'v78');
+        expect(r.scheduledFor, videoAt);
+        expect(r.remoteUrl, 'https://www.facebook.com/123/videos/v78');
+        final f = multipartFieldsOf(calls.single);
+        expect(calls.single.url.toString(), '$_graph/123/videos');
+        expect(f['published'], 'false');
+        expect(f['scheduled_publish_time'], '${videoAt.millisecondsSinceEpoch ~/ 1000}');
+      });
+
+      test('outside the window -> validation failure without a request; already due -> published now', () async {
+        final calls = <http.Request>[];
+        final ctx = testContext(handler: (req) async {
+          calls.add(req);
+          return _json({'id': '123_903'});
+        });
+        final soon = await adapter.publish(
+            PostVariant(text: 'x', scheduledAt: testNow.add(const Duration(minutes: 5))), _apiAccount(), _secrets, ctx);
+        expect(soon.error?.kind, PublishErrorKind.validation);
+        final far = await adapter.publish(
+            PostVariant(text: 'x', scheduledAt: testNow.add(const Duration(days: 31))), _apiAccount(), _secrets, ctx);
+        expect(far.error?.kind, PublishErrorKind.validation);
+        expect(calls, isEmpty);
+
+        final due = await adapter.publish(
+            PostVariant(text: 'x', scheduledAt: testNow.subtract(const Duration(minutes: 1))), _apiAccount(), _secrets, ctx);
+        expect(due.success, isTrue);
+        expect(due.isHeldByPlatform, isFalse);
+        expect(bodyOf(calls.single).containsKey('published'), isFalse);
+        expect(bodyOf(calls.single).containsKey('scheduled_publish_time'), isFalse);
+      });
+    });
+
+    group('cancelScheduled', () {
+      final held = PublishResult.scheduled(remoteId: '123_901', scheduledFor: testNow.add(const Duration(days: 2)));
+
+      Future<void> cancel(http.Response res, {List<http.Request>? calls, Map<String, String> secrets = _secrets}) =>
+          adapter.cancelScheduled(
+              held,
+              _apiAccount(),
+              secrets,
+              testContext(handler: (req) async {
+                calls?.add(req);
+                return res;
+              }));
+
+      Matcher failsWith(PublishErrorKind kind) =>
+          throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', kind));
+
+      test('DELETEs the held id with the Page token and appsecret_proof', () async {
+        final calls = <http.Request>[];
+        await cancel(_json({'success': true}), calls: calls);
+        expect(calls.single.method, 'DELETE');
+        expect(calls.single.url.path, '/v25.0/123_901');
+        expect(calls.single.url.queryParameters, {
+          'access_token': 'PAGE_TOKEN',
+          'appsecret_proof': appSecretProof('PAGE_TOKEN', 'APPSECRET'),
+        });
+      });
+
+      test('already gone (404, or 100/33 "does not exist") counts as removed', () async {
+        await cancel(http.Response('', 404));
+        await cancel(_graphError(100, subcode: 33));
+      });
+
+      test('failures throw AdapterException with the right kind', () async {
+        await expectLater(cancel(_graphError(190, subcode: 460)), failsWith(PublishErrorKind.auth));
+        await expectLater(cancel(_graphError(200, status: 403)), failsWith(PublishErrorKind.auth));
+        await expectLater(cancel(_graphError(100)), failsWith(PublishErrorKind.validation));
+        await expectLater(cancel(_graphError(2, status: 500)), failsWith(PublishErrorKind.network));
+        await expectLater(cancel(http.Response('down', 503)), failsWith(PublishErrorKind.network));
+        await expectLater(cancel(_json({'success': false})), failsWith(PublishErrorKind.platform));
+        await expectLater(
+            cancel(_graphError(80001, headers: {
+              'x-business-use-case-usage': jsonEncode({
+                '123': [
+                  {'type': 'pages', 'estimated_time_to_regain_access': 3}
+                ]
+              })
+            })),
+            throwsA(isA<AdapterException>()
+                .having((e) => e.error.kind, 'kind', PublishErrorKind.quota)
+                .having((e) => e.error.retryAfter, 'retryAfter', const Duration(minutes: 3))));
+      });
+
+      test('network failure, missing token, missing id and hand-off tier', () async {
+        final offline = testContext(handler: (req) async => throw http.ClientException('no route'));
+        await expectLater(adapter.cancelScheduled(held, _apiAccount(), _secrets, offline), failsWith(PublishErrorKind.network));
+        await expectLater(cancel(_json({'success': true}), secrets: const {}), failsWith(PublishErrorKind.auth));
+        final ctx = testContext(handler: (req) async => fail('no HTTP expected'));
+        await expectLater(
+            adapter.cancelScheduled(PublishResult.ok(), _apiAccount(), _secrets, ctx), failsWith(PublishErrorKind.platform));
+        await expectLater(
+            adapter.cancelScheduled(held, fakeAccount('facebook', tier: PlatformTier.handoff), const {}, ctx),
+            failsWith(PublishErrorKind.unsupported));
+      });
     });
 
     test('thread parts are joined (Facebook has no threads)', () async {
@@ -468,9 +659,22 @@ void main() {
         expect((await run(_graphError(100))).error!.kind, PublishErrorKind.validation);
       });
 
-      test('transient (2) and 5xx -> network', () async {
+      test('transient (2), video upload hiccup (6001) and 5xx -> network', () async {
         expect((await run(_graphError(2, status: 500))).error!.kind, PublishErrorKind.network);
+        expect((await run(_graphError(6001))).error!.kind, PublishErrorKind.network);
         expect((await run(http.Response('oops', 503))).error!.kind, PublishErrorKind.network);
+      });
+
+      test('throttling codes 4, 17, 32, 613 -> quota; temporary block 368 -> quota', () async {
+        for (final code in [4, 17, 32, 613, 368]) {
+          expect((await run(_graphError(code))).error!.kind, PublishErrorKind.quota, reason: 'code $code');
+        }
+      });
+
+      test('connection failure -> network result, not an exception', () async {
+        final r = await adapter.publish(const PostVariant(text: 'x'), _apiAccount(), _secrets,
+            testContext(handler: (req) async => throw http.ClientException('no route')));
+        expect(r.error!.kind, PublishErrorKind.network);
       });
     });
 

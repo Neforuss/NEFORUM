@@ -1,10 +1,9 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' show ClientException;
 import 'package:uuid/uuid.dart';
 
+import '../../auth/auth_broker.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
@@ -152,7 +151,12 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
       throw const ConnectException('Paste the client ID of your Reddit installed app', field: 'client_id');
     }
     final uaPlatform = (input['ua_platform'] ?? '').trim();
-    final broker = ctx.requireBroker();
+    final AuthBroker broker;
+    try {
+      broker = ctx.requireBroker();
+    } on StateError {
+      throw const ConnectException('Connecting Reddit needs a browser sign-in, which is not available here');
+    }
     final redirect = broker.chooseRedirectUri(loopbackOk: true, customSchemeOk: true);
     final client = _client(clientId, userAgent(platform: uaPlatform), compact: redirect.scheme != 'http');
 
@@ -244,10 +248,11 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
       return fresh.toSecrets(secrets);
     } on OAuthException catch (e) {
       throw AdapterException(e.toRefreshError('Reddit'));
-    } on TimeoutException catch (e) {
-      throw AdapterException(PublishError.network('Could not reach Reddit to renew the sign-in: $e'));
-    } on ClientException catch (e) {
-      throw AdapterException(PublishError.network('Could not reach Reddit to renew the sign-in: ${e.message}'));
+    } on Object catch (e) {
+      if (NeforumHttp.isTransportError(e)) {
+        throw AdapterException(PublishError.network('Could not reach Reddit to renew the sign-in: $e'));
+      }
+      rethrow;
     }
   }
 
@@ -360,10 +365,12 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
       return PublishResult.failure(e.error);
     } on HttpFailure catch (e) {
       return PublishResult.failure(RedditApi.mapHttpError(e));
-    } on TimeoutException catch (e) {
-      return PublishResult.failure(PublishError.network('Reddit did not answer in time: $e'));
-    } on ClientException catch (e) {
-      return PublishResult.failure(PublishError.network('Could not reach Reddit: ${e.message}'));
+    } on Object catch (e) {
+      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Reddit: $e'));
+      if (e is FormatException) {
+        return PublishResult.failure(PublishError.platform('Reddit sent a response NEFORUM did not understand: $e'));
+      }
+      rethrow;
     }
   }
 

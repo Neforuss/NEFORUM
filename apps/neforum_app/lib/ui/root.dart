@@ -80,8 +80,8 @@ class _SwitchingSplash extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: buildTheme(Brightness.light, AccentChoice.violet),
-      darkTheme: buildTheme(Brightness.dark, AccentChoice.violet),
+      theme: buildTheme(Brightness.light, AccentChoice.neforum),
+      darkTheme: buildTheme(Brightness.dark, AccentChoice.neforum),
       home: const Scaffold(body: Center(child: NeforumMark(size: 72, animate: true))),
     );
   }

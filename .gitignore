@@ -27,3 +27,6 @@ neforum-secrets*
 # Rendered by test/screenshots_test.dart (copied to docs/screenshots)
 apps/neforum_app/test/goldens/
 
+
+# Release files built locally
+/dist/

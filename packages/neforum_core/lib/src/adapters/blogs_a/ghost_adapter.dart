@@ -65,9 +65,10 @@ class GhostAdapter extends PlatformAdapter {
     defaultQuotas: [],
     personalAccountOk: true,
     accountRequirements: 'A Ghost site where you are Owner or Administrator (to create a custom integration). Self-hosted '
-        'Ghost works on any setup; on Ghost(Pro) custom integrations are only included in the Business and Custom plans.',
-    apiCostSummary: 'Free on self-hosted Ghost. On Ghost(Pro) the Admin API needs the Business plan or higher. '
-        'Ghost does not publish an API quota.',
+        'Ghost works on any setup; on Ghost(Pro) custom integrations are included in the Publisher, Business and Custom '
+        'plans, not in Starter.',
+    apiCostSummary: 'Free on self-hosted Ghost. On Ghost(Pro) the Admin API needs the Publisher plan or higher (not '
+        'Starter). Ghost does not publish an API quota.',
     setupGuide: 'docs/platforms/ghost.md',
     serverSideScheduling: true,
     supportsLinkField: false,
@@ -85,7 +86,7 @@ class GhostAdapter extends PlatformAdapter {
               '(older versions: **Settings > Integrations**).\n'
               '2. Press **Add custom integration**, name it `NEFORUM` and press **Create**.\n'
               '3. Copy the **API URL** and the **Admin API key** (not the Content API key) into the fields below.\n\n'
-              'Ghost(Pro): custom integrations are only available on the Business plan and above. '
+              'Ghost(Pro): custom integrations are available on the Publisher plan and above, not on Starter. '
               'Self-hosted Ghost has no such restriction. Nothing is sent to your newsletter subscribers.',
           fields: [
             ConnectField(
@@ -116,7 +117,7 @@ class GhostAdapter extends PlatformAdapter {
         ),
         ConnectSpec(
           tier: PlatformTier.handoff,
-          intro: 'For Ghost(Pro) plans without integrations: NEFORUM copies the post to the clipboard and opens the Ghost '
+          intro: 'For Ghost(Pro) Starter, which has no integrations: NEFORUM copies the post to the clipboard and opens the Ghost '
               'editor, where you paste it and press **Publish**.',
           fields: [
             ConnectField(
@@ -233,6 +234,11 @@ class GhostAdapter extends PlatformAdapter {
       issues.add(const ValidationIssue.error('ghost.schedule_without_date',
           'A scheduled Ghost post needs a date; set one or choose published/draft', field: 'scheduledAt'));
     }
+    if (variant.scheduledAt != null && _status(variant, account) != 'scheduled') {
+      // Ghost only publishes `scheduled` posts by itself; a draft keeps its date and stays a draft.
+      issues.add(const ValidationIssue.error('ghost.cannot_schedule',
+          'Ghost can only hold posts that it will publish; a draft cannot be scheduled on the site', field: 'scheduledAt'));
+    }
     final vis = blogStr(variant.extra['ghostVisibility']);
     if (vis != null && !ghostVisibilities.contains(vis)) {
       issues.add(ValidationIssue.error('ghost.bad_visibility',
@@ -276,16 +282,20 @@ class GhostAdapter extends PlatformAdapter {
     } on AdapterException catch (e) {
       ctx.log.warn('Ghost publish failed: ${e.error.message}');
       return PublishResult.failure(e.error);
+    } on Exception catch (e) {
+      ctx.log.warn('Ghost publish failed unexpectedly: $e');
+      return PublishResult.failure(unexpectedBlogError('Ghost', e));
     }
   }
 
-  Future<PublishResult> _publish(
-      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+  /// Admin API client for an API-tier account; throws [AdapterException]
+  /// when the account or its key is missing.
+  GhostApi _api(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) {
     if (account.tier == PlatformTier.handoff) {
       throw const AdapterException(PublishError.unsupported('Hand-off accounts publish through the Ghost editor'));
     }
-    final apiRaw = account.configString('apiUrl');
-    if (apiRaw.isEmpty) {
+    final apiUrl = Uri.tryParse(account.configString('apiUrl'));
+    if (apiUrl == null || apiUrl.host.isEmpty) {
       throw const AdapterException(PublishError.configuration('This Ghost account has no API URL; reconnect it'));
     }
     final GhostAdminKey key;
@@ -294,13 +304,18 @@ class GhostAdapter extends PlatformAdapter {
     } on FormatException {
       throw const AdapterException(PublishError.auth('No valid Ghost Admin API key stored; reconnect the account'));
     }
+    return GhostApi(apiUrl, ctx, key: key);
+  }
+
+  Future<PublishResult> _publish(
+      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final api = _api(account, secrets, ctx);
     final title = (variant.title ?? '').trim();
     if (title.isEmpty) throw const AdapterException(PublishError.validation('Ghost posts need a title'));
     if (variant.media.any((m) => m.isVideo)) {
       throw const AdapterException(
           PublishError.unsupported('NEFORUM can only upload images to Ghost; remove the video or add it in Ghost'));
     }
-    final api = GhostApi(Uri.parse(apiRaw), ctx, key: key);
 
     final images = <(MediaAttachment, String)>[];
     for (var i = 0; i < variant.media.length; i++) {
@@ -345,13 +360,51 @@ class GhostAdapter extends PlatformAdapter {
     if (created == null || postId == null) {
       throw AdapterException(PublishError.platform('Ghost did not return the created post', raw: bodySnippet(r)));
     }
-    ctx.log.info('Ghost post $postId created with status ${created['status'] ?? status}');
-    return PublishResult.ok(remoteId: postId, remoteUrl: blogStr(created['url']), publishedAt: at ?? ctx.now());
+    final remoteStatus = blogStr(created['status']) ?? status;
+    final url = blogStr(created['url']);
+    ctx.log.info('Ghost post $postId created with status $remoteStatus');
+    if (remoteStatus == 'scheduled') {
+      final when = at ?? DateTime.tryParse(blogStr(created['published_at']) ?? '');
+      if (when != null) return PublishResult.scheduled(remoteId: postId, scheduledFor: when, remoteUrl: url);
+    }
+    return PublishResult.ok(remoteId: postId, remoteUrl: url, publishedAt: ctx.now());
+  }
+
+  // ------------------------------------------------------------ scheduling
+
+  /// Deletes the `scheduled` post Ghost is holding
+  /// (`DELETE /ghost/api/admin/posts/{id}/`, answered with 204). A 404 means
+  /// it is already gone.
+  @override
+  Future<void> cancelScheduled(
+      PublishResult held, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final postId = held.remoteId ?? '';
+    if (!RegExp(r'^[0-9a-fA-F]+$').hasMatch(postId)) {
+      throw const AdapterException(PublishError.configuration(
+          'NEFORUM does not know which Ghost post holds this schedule; delete it in Ghost under Posts > Scheduled'));
+    }
+    final api = _api(account, secrets, ctx);
+    ctx.progress('Removing the scheduled Ghost post');
+    const what = 'Removing the scheduled Ghost post';
+    try {
+      await api.delete('posts/$postId/');
+      ctx.log.info('Ghost post $postId deleted');
+    } on HttpFailure catch (f) {
+      // A Ghost NotFoundError means the post is gone; an HTML 404 page means
+      // the Admin API was not reached, so the post may still be held.
+      if (f.statusCode == 404 && !isHtmlResponse(f.response)) {
+        ctx.log.info('Ghost post $postId no longer exists');
+        return;
+      }
+      throw AdapterException(mapGhostFailure(f, what));
+    } on Exception catch (e) {
+      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+    }
   }
 
   Future<String> _upload(GhostApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
     ctx.progress('Uploading image ${index + 1} of $total');
-    final bytes = await ctx.readMedia(m);
+    final bytes = await readBlogMedia(ctx, m);
     final what = 'Ghost image upload ${index + 1}/$total';
     final r = await guardGhost(what, () => api.uploadImage(bytes, fileName: safeFileName(m), contentType: m.mimeType));
     final url = blogStr(blogMap(blogList(r.jsonMap['images']).firstOrNull)?['url']);

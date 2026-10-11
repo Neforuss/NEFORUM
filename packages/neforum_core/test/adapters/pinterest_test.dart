@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io' show OSError, PathNotFoundException;
 
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/pinterest/pinterest_adapter.dart';
 import 'package:neforum_core/src/adapters/pinterest/pinterest_api.dart';
@@ -156,6 +158,8 @@ void main() {
         'grant_type': 'authorization_code',
         'code': 'the-code',
         'redirect_uri': 'http://localhost:52771/callback',
+        // Apps created before 2025-09-25 otherwise get a legacy 365-day token.
+        'continuous_refresh': 'true',
       });
 
       expect(calls[1].method, 'GET');
@@ -253,6 +257,11 @@ void main() {
       expect(PinterestAdapter.resolveBoard(boards, 'summer recipes').id, '222');
       expect(PinterestAdapter.resolveBoard(boards, 'summer-recipes').id, '222');
       expect(PinterestAdapter.resolveBoard(boards, 'https://www.pinterest.com/ada/summer-recipes/').id, '222');
+      // Pinterest board URLs drop apostrophes: "Mom's Recipes" -> /moms-recipes/.
+      expect(
+          PinterestAdapter.resolveBoard(
+              const [...boards, PinterestBoard(id: '333', name: 'Mom’s Recipes')], 'https://www.pinterest.com/ada/moms-recipes/').id,
+          '333');
       expect(() => PinterestAdapter.resolveBoard(boards, ''),
           throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('"Travel"'))));
       expect(() => PinterestAdapter.resolveBoard(boards, 'Cats'), throwsA(isA<ConnectException>()));
@@ -302,6 +311,13 @@ void main() {
           codes(PostVariant(text: 'x', media: [fakeImage()], extra: const {'pinterestBoardId': '9'}),
               _account(config: const {'appId': 'a', 'accessLevel': 'standard'})),
           isNot(contains('pinterest.no_board')));
+    });
+
+    test('board / section overrides must be numeric ids', () {
+      expect(codes(PostVariant(text: 'x', media: [fakeImage()], extra: const {'pinterestBoardId': 'My recipes'})),
+          contains('pinterest.bad_id'));
+      expect(codes(PostVariant(text: 'x', media: [fakeImage()], extra: const {'pinterestBoardSectionId': '12'})),
+          isNot(contains('pinterest.bad_id')));
     });
 
     test('hand-off warns about the 500-character web description', () {
@@ -543,6 +559,23 @@ void main() {
         expect(e.kind, PublishErrorKind.network);
         expect(e.retryable, isTrue);
       });
+
+      test('connection failure -> network', () async {
+        final ctx = testContext(handler: (r) async => throw http.ClientException('connection reset'));
+        final result = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), _account(), _secrets(), ctx);
+        expect(result.error!.kind, PublishErrorKind.network);
+      });
+
+      test('a missing image file -> configuration, not a retryable network error', () async {
+        final ctx = AdapterContext(
+          http: NeforumHttp(client: MockClient((r) async => fail('no request expected')), maxRetries: 0),
+          clock: () => testNow,
+          readMedia: (m) async => throw PathNotFoundException(m.path, const OSError('No such file', 2)),
+        );
+        final result = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), _account(), _secrets(), ctx);
+        expect(result.error!.kind, PublishErrorKind.configuration);
+        expect(result.error!.retryable, isFalse);
+      });
     });
   });
 
@@ -582,6 +615,19 @@ void main() {
       expect(
         () => adapter.refreshSecrets(_account(), _secrets(expiresAt: testNow), ctx),
         throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)),
+      );
+    });
+
+    test('429 or an outage while renewing are retried later, not "reconnect"', () async {
+      await expectLater(
+        adapter.refreshSecrets(_account(), _secrets(expiresAt: testNow),
+            testContext(handler: (r) async => _json({'code': 8, 'message': 'Rate limit exceeded'}, 429))),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.quota)),
+      );
+      await expectLater(
+        adapter.refreshSecrets(_account(), _secrets(expiresAt: testNow),
+            testContext(handler: (r) async => _json({'code': 1, 'message': 'Service unavailable'}, 503))),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.network)),
       );
     });
 

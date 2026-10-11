@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io' show FileSystemException;
 
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/chat/chat_common.dart';
 import 'package:neforum_core/src/adapters/chat/discord_adapter.dart';
@@ -33,6 +35,30 @@ void main() {
     test('line breaks and quotes', () {
       expect(chatMarkdownToHtml('**a**\nb', brLineBreaks: true), '<b>a</b><br>b');
       expect(chatMarkdownToHtml('> quoted\nafter'), '<blockquote>quoted</blockquote>\nafter');
+    });
+  });
+
+  group('chat error helpers', () {
+    test('a failure after the first message is partial and never retryable', () {
+      final sent = ChatMessages()..total = 3;
+      const err = PublishError.network('boom');
+      expect(sent.fail(err), same(err), reason: 'nothing live yet: keep the retryable error');
+      sent.add('m1');
+      final partial = sent.fail(err);
+      expect(partial.retryable, isFalse);
+      expect(partial.kind, PublishErrorKind.network);
+      expect(partial.message, allOf(contains('Part 2 of 3'), contains('m1')));
+    });
+
+    test('unexpected exceptions: transport, missing file, other; secrets blanked', () {
+      final net = chatUnexpected(http.ClientException('Connection reset', Uri.parse('https://x.test/botSECRET/m')),
+          'api.telegram.org', secret: 'SECRET');
+      expect(net.kind, PublishErrorKind.network);
+      expect(net.retryable, isTrue);
+      expect('${net.message} ${net.raw}', isNot(contains('SECRET')));
+      expect(chatUnexpected(const FileSystemException('Cannot open file', '/tmp/a.jpg'), 'h').kind,
+          PublishErrorKind.configuration);
+      expect(chatUnexpected(const FormatException('bad'), 'h').kind, PublishErrorKind.platform);
     });
   });
 
@@ -160,6 +186,16 @@ void telegramTests() {
       expect(issues.map((i) => i.code), contains('text.caption_split'));
       expect(issues.hasErrors, isFalse);
       expect(adapter.validate(PostVariant(text: 'a' * 4097), _tgAccount()).map((i) => i.code), contains('text.too_long'));
+    });
+
+    test('a GIF on its own may be 50 MB (sendAnimation); in an album the 10 MB photo limit applies', () {
+      final gif = fakeImage(id: 'g', mimeType: 'image/gif', sizeBytes: 20 * 1024 * 1024);
+      expect(adapter.validate(PostVariant(text: 'x', media: [gif]), _tgAccount()).hasErrors, isFalse);
+      expect(adapter.validate(PostVariant(text: 'x', media: [gif, fakeImage()]), _tgAccount()).map((i) => i.code),
+          contains('media.image_too_large'));
+      final huge = fakeImage(id: 'h', mimeType: 'image/gif', sizeBytes: 51 * 1024 * 1024);
+      expect(adapter.validate(PostVariant(text: 'x', media: [huge]), _tgAccount()).map((i) => i.code),
+          contains('media.gif_too_large'));
     });
   });
 
@@ -305,6 +341,82 @@ void telegramTests() {
           const PostVariant(text: 'x'), _tgAccount(), const {}, testContext(handler: (r) async => fail('no request')));
       expect(res.error!.kind, PublishErrorKind.auth);
     });
+
+    const thread = PostVariant(text: 'one', threadParts: ['one', 'two', 'three']);
+
+    test('a part failing after earlier parts went out is a partial, non-retryable failure', () async {
+      var n = 0;
+      final ctx = testContext(handler: (r) async {
+        n++;
+        if (n == 2) return _json({'ok': false, 'error_code': 502, 'description': 'Bad Gateway'}, 502);
+        return _tgOk({'message_id': 100 + n});
+      });
+      final res = await adapter.publish(thread, _tgAccount(), {'bot_token': _tgToken}, ctx);
+      expect(n, 2, reason: 'stops at the failed part');
+      expect(res.isFailure, isTrue);
+      expect(res.error!.kind, PublishErrorKind.network);
+      expect(res.error!.retryable, isFalse, reason: 'a retry would post part 1 again');
+      expect(res.error!.message, allOf(contains('Part 2 of 3'), contains('101')));
+    });
+
+    test('a network error after the media went out is partial too, and hides the token', () async {
+      var n = 0;
+      final ctx = testContext(handler: (r) async {
+        if (++n == 1) return _tgOk({'message_id': 7});
+        throw http.ClientException('Connection closed', r.url);
+      });
+      final res = await adapter.publish(
+          PostVariant(text: 'x' * 1500, media: [fakeImage()]), _tgAccount(), {'bot_token': _tgToken}, ctx);
+      expect(res.error!.retryable, isFalse);
+      expect(res.error!.message, contains('Part 2 of 2'));
+      expect('${res.error!.message} ${res.error!.raw}', isNot(contains(_tgToken)));
+    });
+
+    test('a short flood wait between parts is sat out, a long one fails the post as partial', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        if (calls.length == 2) {
+          return _json({
+            'ok': false,
+            'error_code': 429,
+            'description': 'Too Many Requests: retry after 1',
+            'parameters': {'retry_after': 1},
+          }, 429);
+        }
+        return _tgOk({'message_id': calls.length});
+      });
+      final ok = await adapter.publish(thread, _tgAccount(), {'bot_token': _tgToken}, ctx);
+      expect(ok.success, isTrue, reason: '${ok.error}');
+      expect(calls, hasLength(4));
+      expect(ok.threadRemoteIds, ['1', '3', '4']);
+
+      var m = 0;
+      final slow = testContext(handler: (r) async {
+        if (++m == 2) {
+          return _json({
+            'ok': false,
+            'error_code': 429,
+            'description': 'Too Many Requests: retry after 60',
+            'parameters': {'retry_after': 60},
+          }, 429);
+        }
+        return _tgOk({'message_id': m});
+      });
+      final res = await adapter.publish(thread, _tgAccount(), {'bot_token': _tgToken}, slow);
+      expect(m, 2);
+      expect(res.error!.kind, PublishErrorKind.quota);
+      expect(res.error!.retryable, isFalse);
+    });
+
+    test('an unreadable media file is a configuration error, not a network error', () async {
+      final ctx = AdapterContext(
+        http: NeforumHttp(client: MockClient((r) async => fail('no request expected')), maxRetries: 0),
+        readMedia: (m) async => throw const FileSystemException('Cannot open file', '/tmp/img1.jpg'),
+      );
+      final res = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), _tgAccount(), {'bot_token': _tgToken}, ctx);
+      expect(res.error!.kind, PublishErrorKind.configuration);
+    });
   });
 
   group('telegram hand-off', () {
@@ -411,6 +523,14 @@ void discordTests() {
       expect(adapter.connect(PlatformTier.openApi, {'webhook_url': _hookUrl}, ctx),
           throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'webhook_url')));
     });
+
+    test('"Post as" names Discord refuses are caught before any request', () async {
+      final ctx = testContext(handler: (r) async => fail('no request expected'));
+      for (final name in ['My Discord Bot', 'clyde', 'x' * 81]) {
+        await expectLater(adapter.connect(PlatformTier.openApi, {'webhook_url': _hookUrl, 'username': name}, ctx),
+            throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'username')));
+      }
+    });
   });
 
   group('discord validate', () {
@@ -510,6 +630,32 @@ void discordTests() {
       expect((await run(_json({'message': 'Request entity too large', 'code': 40005}, 413))).kind,
           PublishErrorKind.validation);
       expect((await run(http.Response('oops', 503))).kind, PublishErrorKind.network);
+    });
+
+    test('a part failing after the first message is a partial, non-retryable failure', () async {
+      var n = 0;
+      final ctx = testContext(handler: (r) async {
+        if (++n == 2) return http.Response('oops', 503);
+        return _json({'id': '$n', 'channel_id': '555'});
+      });
+      final res = await adapter.publish(
+          const PostVariant(text: 'a', threadParts: ['a', 'b', 'c']), _dcAccount(), secrets, ctx);
+      expect(n, 2);
+      expect(res.error!.kind, PublishErrorKind.network);
+      expect(res.error!.retryable, isFalse);
+      expect(res.error!.message, contains('Part 2 of 3'));
+    });
+
+    test('a short 429 between parts is waited out', () async {
+      var n = 0;
+      final ctx = testContext(handler: (r) async {
+        if (++n == 2) return _json({'message': 'You are being rate limited.', 'retry_after': 0.2, 'global': false}, 429);
+        return _json({'id': '$n', 'channel_id': '555'});
+      });
+      final res =
+          await adapter.publish(const PostVariant(text: 'a', threadParts: ['a', 'b']), _dcAccount(), secrets, ctx);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(res.threadRemoteIds, ['1', '3']);
     });
   });
 }
@@ -627,11 +773,33 @@ void matrixTests() {
       });
       expect(login.headers.containsKey('Authorization'), isFalse);
       final join = calls.firstWhere((c) => c.url.path.contains('/join/'));
-      expect(_line(join), 'POST $_mxBase/_matrix/client/v3/join/!abc123:example.org');
+      expect(_line(join), 'POST $_mxBase/_matrix/client/v3/join/!abc123:example.org?via=example.org&server_name=example.org');
       expect(res.secrets['access_token'], 'syt_new');
       expect(res.secrets.values, isNot(contains('hunter2')));
       expect(res.account.config['authMethod'], 'password');
       expect(res.account.config['deviceId'], 'NEFDEV');
+    });
+
+    test('room version 12 ids have no server part and are accepted', () async {
+      const v12 = '!Nhcu5BS-UMnFX7hBVfVSoXiD7OgH6iRT-xyIuqDnpYQ';
+      final calls = <http.Request>[];
+      final base = server(calls, joined: false);
+      final ctx = testContext(handler: (r) async {
+        if (r.url.path.startsWith('/_matrix/client/v3/join/')) {
+          calls.add(r);
+          return _json({'room_id': v12});
+        }
+        return base(r);
+      });
+      final res = await adapter.connect(
+          PlatformTier.openApi, {'homeserver': 'example.org', 'access_token': 'syt_tok', 'room': v12}, ctx);
+      final join = calls.firstWhere((c) => c.url.path.contains('/join/'));
+      expect(join.url.path, '/_matrix/client/v3/join/$v12');
+      expect(join.url.queryParameters, isEmpty, reason: 'no server part to use as via');
+      expect(res.account.config['roomId'], v12);
+      expect(res.account.profileUrl, 'https://matrix.to/#/${Uri.encodeComponent(v12)}?via=example.org');
+      expect(matrixToUrl(v12, r'$ev', userId: '@alice:example.org'),
+          'https://matrix.to/#/${Uri.encodeComponent(v12)}/%24ev?via=example.org');
     });
 
     test('password sign-in unavailable (OAuth-only server)', () async {
@@ -742,6 +910,37 @@ void matrixTests() {
       expect((await run(_json({'errcode': 'M_FORBIDDEN', 'error': 'not in room'}, 403))).kind, PublishErrorKind.auth);
       expect((await run(_json({'errcode': 'M_TOO_LARGE'}, 413))).kind, PublishErrorKind.validation);
       expect((await run(http.Response('', 502))).kind, PublishErrorKind.network);
+    });
+
+    test('a file event failing after the text went out is a partial, non-retryable failure', () async {
+      final ctx = testContext(handler: (r) async {
+        if (r.url.path.endsWith('/upload')) return _json({'content_uri': 'mxc://example.org/m'});
+        if (r.url.path.endsWith('/txn-2')) return _json({'errcode': 'M_FORBIDDEN', 'error': 'no media for you'}, 403);
+        return _json({'event_id': r'$text'});
+      });
+      final res = await adapter.publish(
+          PostVariant(text: 'hello', media: [fakeImage()]), _mxAccount(), {'access_token': 't'}, ctx);
+      expect(res.error!.kind, PublishErrorKind.auth);
+      expect(res.error!.retryable, isFalse);
+      expect(res.error!.message, allOf(contains('Part 2 of 2'), contains(r'$text')));
+    });
+
+    test('a short rate limit before a file event is waited out with the same transaction id', () async {
+      final sends = <String>[];
+      var limited = false;
+      final ctx = testContext(handler: (r) async {
+        if (r.url.path.endsWith('/upload')) return _json({'content_uri': 'mxc://example.org/m'});
+        sends.add(r.url.pathSegments.last);
+        if (r.url.path.endsWith('/txn-2') && !limited) {
+          limited = true;
+          return _json({'errcode': 'M_LIMIT_EXCEEDED', 'error': 'Too many', 'retry_after_ms': 200}, 429);
+        }
+        return _json({'event_id': '\$e${sends.length}'});
+      });
+      final res = await adapter.publish(
+          PostVariant(text: 'hello', media: [fakeImage()]), _mxAccount(), {'access_token': 't'}, ctx);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(sends, ['txn-1', 'txn-2', 'txn-2']);
     });
   });
 

@@ -33,6 +33,7 @@ class TargetChip extends ConsumerWidget {
       TargetStatus.published when url != null => 'Open on $name',
       TargetStatus.awaitingHandoff => 'Finish on $name',
       TargetStatus.failed => target.result?.error?.message ?? 'Failed',
+      TargetStatus.heldByPlatform => '$name publishes this itself at the scheduled time',
       _ => '$name: $label',
     };
 

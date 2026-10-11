@@ -70,18 +70,34 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
-      - name: Build Windows
+      - name: Integration test (real Windows build and plugins)
         working-directory: apps/neforum_app
         shell: pwsh
         run: |
           flutter pub get
           dart run tool/sync_docs.dart
+          flutter test integration_test -d windows
+      - name: Build Windows
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
           flutter build windows --release
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath ../../neforum-windows.zip
+      - name: Build installer
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc installer\neforum.iss
+          Copy-Item build\installer\NEFORUM-Setup-*.exe ..\..\
       - uses: actions/upload-artifact@v4
         with:
           name: neforum-windows
-          path: neforum-windows.zip
+          path: |
+            neforum-windows.zip
+            NEFORUM-Setup-*.exe
 
   macos:
     needs: test

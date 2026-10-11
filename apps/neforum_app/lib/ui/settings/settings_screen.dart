@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/neforum_logo.dart';
 import '../../platform/desktop.dart';
+import '../../media/text_card.dart';
 import '../../platform/env.dart';
 import '../../platform/media_library.dart';
 import '../../platform/notifications.dart';
@@ -43,6 +44,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final sections = <(String, IconData, Widget)>[
       ('Appearance', Icons.palette_outlined, const _Appearance()),
       ('Posting', Icons.send_outlined, const _Posting()),
+      ('Scheduling', Icons.event_available_outlined, const _Scheduling()),
+      ('Text cards', Icons.text_fields_rounded, const _TextCards()),
       ('Media hosting', Icons.cloud_upload_outlined, const MediaHostSection()),
       if (Env.isDesktop) ('Desktop', Icons.desktop_windows_outlined, const _Desktop()),
       ('Notifications', Icons.notifications_none_rounded, const _Notifications()),
@@ -203,6 +206,98 @@ class _Posting extends ConsumerWidget {
   }
 }
 
+class _Scheduling extends ConsumerWidget {
+  const _Scheduling();
+
+  static String _deviceText() {
+    if (Env.isIOS) {
+      return 'iOS does not let apps post on a timer. At the scheduled time you get a notification; its Publish now button posts without opening NEFORUM.';
+    }
+    if (Env.isAndroid) return 'Android posts them in the background within a few minutes of their time.';
+    if (Env.isDesktop) return 'NEFORUM posts them on time while it runs. Closing the window keeps it in the tray; it can also start when you sign in.';
+    return 'The installed apps post them on time; this web preview only stores the time.';
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final s = ref.watch(settingsProvider);
+    final n = ref.read(settingsProvider.notifier);
+    return SettingsSection(title: 'Scheduling', icon: Icons.event_available_outlined, subtitle: 'No NEFORUM server: platforms or this device publish on time.', children: [
+      SettingSwitch(
+        title: 'Let platforms hold scheduled posts',
+        description: 'Mastodon, Facebook Pages, YouTube, Tumblr, WordPress and Ghost can publish a scheduled post themselves, even when this device is off. '
+            'Editing, rescheduling or deleting the post in NEFORUM takes their copy back first.',
+        value: s.delegateSchedules,
+        onChanged: (v) => n.update((x) => x.copyWith(delegateSchedules: v)),
+      ),
+      SettingRow(title: 'Every other network', description: _deviceText()),
+    ]);
+  }
+}
+
+class _TextCards extends ConsumerWidget {
+  const _TextCards();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final s = ref.watch(settingsProvider);
+    final n = ref.read(settingsProvider.notifier);
+    Widget option(TextCardTheme t) {
+      final selected = s.textCardTheme == t;
+      return Semantics(
+        button: true,
+        selected: selected,
+        label: t.label,
+        child: InkWell(
+          borderRadius: Radii.rMd,
+          onTap: s.textCards ? () => n.update((x) => x.copyWith(textCardTheme: t)) : null,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            AnimatedContainer(
+              duration: Motion.fast,
+              width: 132,
+              padding: const EdgeInsets.all(3),
+              decoration: BoxDecoration(
+                borderRadius: Radii.rMd,
+                border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1),
+              ),
+              child: ClipRRect(
+                borderRadius: Radii.rSm,
+                child: TextCardView(text: 'One app, one message, every platform.', theme: t, aspect: 4 / 5, byline: '@you'),
+              ),
+            ),
+            const SizedBox(height: Space.xs + 2),
+            Text(t.label, style: context.text.labelMedium?.copyWith(color: selected ? nf.text : nf.textMuted)),
+          ]),
+        ),
+      );
+    }
+
+    return SettingsSection(
+      title: 'Text cards',
+      icon: Icons.text_fields_rounded,
+      subtitle: 'For networks that only take photos: Instagram, Pinterest, TikTok, Snapchat.',
+      children: [
+        SettingSwitch(
+          title: 'Turn text-only posts into an image',
+          description: 'Your words, set large on a plain card with the NEFORUM signature. The caption still carries the full text, hashtags and link.',
+          value: s.textCards,
+          onChanged: (v) => n.update((x) => x.copyWith(textCards: v)),
+        ),
+        SettingRow(
+          title: 'Card style',
+          description: 'You can also switch it per post under the preview.',
+          enabled: s.textCards,
+          below: Opacity(
+            opacity: s.textCards ? 1 : 0.45,
+            child: Wrap(spacing: Space.lg, runSpacing: Space.md, children: [for (final t in TextCardTheme.values) option(t)]),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _Desktop extends ConsumerStatefulWidget {
   const _Desktop();
 
@@ -359,6 +454,12 @@ class _DataState extends ConsumerState<_Data> {
     );
     if (!ok) return;
     final s = ref.read(servicesProvider);
+    // Copies the platforms hold would otherwise still go out.
+    var stillHeld = 0;
+    for (final p in await s.posts.all()) {
+      if (!p.hasHeldTargets) continue;
+      stillHeld += (await s.publisher().releaseSchedules(p.id)).failed.length;
+    }
     for (final a in await s.accounts.all()) {
       await s.secrets.delete(a.id);
       await s.accounts.delete(a.id);
@@ -371,7 +472,11 @@ class _DataState extends ConsumerState<_Data> {
     }
     await ref.read(settingsProvider.notifier).update((x) => x.copyWith(defaultTargetIds: const []));
     if (mounted) {
-      showToast(context, 'Everything was deleted', icon: Icons.delete_outline_rounded);
+      showToast(
+        context,
+        stillHeld > 0 ? 'Everything was deleted. $stillHeld scheduled ${stillHeld == 1 ? 'copy' : 'copies'} could not be removed from the platforms; delete ${stillHeld == 1 ? 'it' : 'them'} there.' : 'Everything was deleted',
+        icon: Icons.delete_outline_rounded,
+      );
       setState(() => _mediaBytes = 0);
     }
   }
@@ -437,7 +542,7 @@ class _About extends StatelessWidget {
           FutureBuilder<PackageInfo>(
             future: PackageInfo.fromPlatform(),
             builder: (context, snap) => Text(
-              'Version ${snap.data?.version ?? '0.1.0'} · ${Env.platformName}',
+              'Version ${snap.data?.version ?? kAppVersion} · ${Env.platformName}',
               style: monoStyle(context, size: 12.5),
             ),
           ),

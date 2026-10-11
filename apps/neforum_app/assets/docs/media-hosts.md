@@ -34,8 +34,8 @@ from developers in 2025-2026):
 | **My own links** | n/a | n/a | n/a | n/a (you manage the files) | you already host your files |
 
 Settings > Media host > pick one > fill in the fields > **Test**. For the
-bucket and WebDAV hosts the test uploads a tiny text file, checks the link and
-deletes the file again.
+bucket and WebDAV hosts the test uploads a tiny text file, checks that its
+public link opens without a login, and deletes the file again.
 
 ## Litterbox and Catbox
 
@@ -76,7 +76,7 @@ your own keys, and are deleted after posting. NEFORUM signs requests itself
 | Field | Example | Notes |
 |---|---|---|
 | Endpoint | `https://s3.us-west-004.backblazeb2.com` | the S3 API address (see below) |
-| Region | `us-west-004` | leave empty to guess it: R2 = `auto`, MinIO = `us-east-1` |
+| Region | `us-west-004` | leave empty to guess it: R2 = `auto`, AWS and B2 from the endpoint (also `s3.dualstack.<region>`), MinIO = `us-east-1` |
 | Bucket | `my-neforum-media` | |
 | Access key ID | | B2: "keyID" |
 | Secret access key | | B2: "applicationKey"; stored in your device's keychain |
@@ -179,9 +179,14 @@ goes. For example, `https://files.example.com/neforum/{name}`.
 
 ## My own links
 
-NEFORUM uploads nothing. You put each file online yourself and paste its public
-`https://` link. The link must open the file directly: no web page, no login,
-no redirect. Google Drive and Dropbox share links do **not** work.
+NEFORUM uploads nothing. You put each file online yourself, under the same file
+name it has on your device, and enter the **Link pattern**: the public
+`https://` address of that folder with `{name}` where the file name goes, for
+example `https://example.com/media/{name}`. A photo called `IMG_1234.jpg` is
+then handed to the platform as `https://example.com/media/IMG_1234.jpg`
+(spaces and other special characters are URL-encoded). The link must open the
+file directly: no web page, no login, no redirect. Google Drive and Dropbox
+share links do **not** work.
 
 ## Limitations
 

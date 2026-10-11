@@ -65,7 +65,7 @@ class MediaHostRegistry {
     ..register(s3Descriptor, (c, http, {clock, log}) => S3CompatibleMediaHost.fromConfig(c, http, clock: clock, log: log))
     ..register(webDavDescriptor, (c, http, {clock, log}) => WebDavMediaHost.fromConfig(c, http, clock: clock, log: log))
     ..register(catboxDescriptor, (c, http, {clock, log}) => CatboxMediaHost.catboxFromConfig(c, http, log: log))
-    ..register(manualDescriptor, (c, http, {clock, log}) => const ManualUrlMediaHost());
+    ..register(manualDescriptor, (c, http, {clock, log}) => ManualUrlMediaHost.fromConfig(c));
 
   /// Zero-configuration default (temporary, anonymous).
   static const String defaultHostId = litterboxHostId;
@@ -165,7 +165,7 @@ const MediaHostDescriptor manualDescriptor = MediaHostDescriptor(
   id: manualHostId,
   name: 'My own links',
   description: manualDescription,
-  fields: [],
+  fields: manualFields,
   needsAccount: false,
   canDelete: false,
   setupGuide: 'docs/media-hosts.md#my-own-links',

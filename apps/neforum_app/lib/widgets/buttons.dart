@@ -14,6 +14,7 @@ class PrimaryAction extends StatefulWidget {
     this.expand = false,
     this.compact = false,
     this.trailing,
+    this.onChrome = false,
   });
 
   final String label;
@@ -22,6 +23,9 @@ class PrimaryAction extends StatefulWidget {
   final bool loading;
   final bool expand;
   final bool compact;
+
+  /// Brand yellow with ink text, for the deep-purple navigation chrome.
+  final bool onChrome;
 
   /// Small widget after the label (e.g. a count badge or a chevron).
   final Widget? trailing;
@@ -39,22 +43,26 @@ class _PrimaryActionState extends State<PrimaryAction> {
     final nf = context.nf;
     final enabled = widget.onPressed != null && !widget.loading;
     final h = widget.compact ? 40.0 : 50.0;
+    final fg = widget.onChrome ? nf.onHighlight : Colors.white;
+    final fill = widget.onChrome
+        ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [nf.highlight, Color.lerp(nf.highlight, const Color(0xFFFFB800), 0.35)!])
+        : nf.brandGradient;
 
     final content = Row(
       mainAxisSize: widget.expand ? MainAxisSize.max : MainAxisSize.min,
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         if (widget.loading)
-          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: Colors.white))
+          SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2.2, color: fg))
         else if (widget.icon != null)
-          Icon(widget.icon, size: 19, color: enabled ? Colors.white : nf.textFaint),
+          Icon(widget.icon, size: 19, color: enabled ? fg : nf.textFaint),
         if (widget.loading || widget.icon != null) const SizedBox(width: Space.sm + 2),
         Flexible(
           child: Text(
             widget.label,
             overflow: TextOverflow.ellipsis,
             style: context.text.labelLarge?.copyWith(
-              color: enabled ? Colors.white : nf.textFaint,
+              color: enabled ? fg : nf.textFaint,
               fontSize: widget.compact ? 13.5 : 15,
               fontWeight: FontWeight.w700,
               letterSpacing: 0.1,
@@ -88,10 +96,10 @@ class _PrimaryActionState extends State<PrimaryAction> {
               height: h,
               padding: EdgeInsets.symmetric(horizontal: widget.compact ? Space.lg : Space.xxl),
               decoration: BoxDecoration(
-                gradient: enabled ? nf.brandGradient : null,
+                gradient: enabled ? fill : null,
                 color: enabled ? null : nf.surfaceSunken,
                 borderRadius: BorderRadius.circular(h / 2.6),
-                boxShadow: enabled ? nf.glow(nf.accent, strength: _hover ? 1.35 : 1) : null,
+                boxShadow: enabled ? nf.glow(widget.onChrome ? nf.highlight : nf.accentFill, strength: (_hover ? 1.35 : 1) * (widget.onChrome ? 0.6 : 1)) : null,
                 border: enabled ? null : Border.all(color: nf.border),
               ),
               child: Stack(
@@ -187,7 +195,7 @@ class _ToolButtonState extends State<ToolButton> {
                       top: 3,
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                        decoration: BoxDecoration(color: nf.accent, borderRadius: Radii.rPill),
+                        decoration: BoxDecoration(color: nf.accentFill, borderRadius: Radii.rPill),
                         child: Text(widget.badge!, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: Colors.white)),
                       ),
                     ),

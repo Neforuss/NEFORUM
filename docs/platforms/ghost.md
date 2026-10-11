@@ -5,14 +5,14 @@ NEFORUM publishes to **Ghost** sites through the **Admin API**, using the key fr
 Status as of October 2026:
 
 - **Self-hosted Ghost**: the Admin API is free and unrestricted.
-- **Ghost(Pro)**: custom integrations are only included in the **Business** plan and the Custom plans (checked on ghost.org/pricing on 2026-10-07). Starter and Publisher sites can't create an Admin API key. Use **Hand-off** there.
+- **Ghost(Pro)**: custom integrations and the Admin API are included in the **Publisher**, **Business** and **Custom** plans (plan comparison on ghost.org/pricing, checked 2026-10-11). **Starter** sites can't create an Admin API key. Use **Hand-off** there.
 - You don't need a developer account, app registration or app review.
 
 ## Ways to connect
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
-| **Open API** (recommended) | Owner or Administrator access to a Ghost site that allows custom integrations | Free when self-hosted. Ghost(Pro) Business or higher. | Ghost doesn't publish an API quota. Upload size depends on your Ghost setup. |
+| **Open API** (recommended) | Owner or Administrator access to a Ghost site that allows custom integrations | Free when self-hosted. Ghost(Pro) Publisher or higher. | Ghost doesn't publish an API quota. Upload size depends on your Ghost setup. |
 | **Hand-off** | Any Ghost site you can sign in to | Free | NEFORUM copies the text to the clipboard and opens the editor. You paste it and press **Publish**. |
 
 ## Create the integration (Open API)
@@ -49,7 +49,10 @@ When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site tit
 - **Images**: each image is uploaded with `POST /ghost/api/admin/images/upload/` (multipart `file`, `purpose=image`). The **first image becomes the feature image**, and its alt text becomes `feature_image_alt`. The other images are placed in the post. Set `featuredImage: false` to put every image in the post instead. Accepted types are JPEG, PNG, GIF, WebP and SVG.
 - **Videos aren't uploaded.** Add videos in the Ghost editor.
 - **Status**: `published` or `draft`, as set for the account. You can override it per post with the option `status` (`published`, `draft` or `scheduled`).
-- **Scheduling**: if you let Ghost hold the schedule, NEFORUM sends `status: scheduled` and `published_at`. Ghost publishes the post at that time, even when your device is off.
+- **Scheduling**: if you let Ghost hold the schedule, NEFORUM sends `status: scheduled` and `published_at` (UTC). When Ghost answers `status: scheduled`, the post is shown as held by Ghost, and Ghost publishes it at that time, even when your device is off.
+  - Only posts that Ghost will publish can be held. With **Publish as** `draft`, NEFORUM keeps the schedule on your device instead.
+  - If Ghost refuses the schedule (for example a time that is too close), NEFORUM also keeps the schedule on your device.
+  - When you edit, reschedule, delete or "publish now" a held post, NEFORUM deletes the scheduled copy with `DELETE /ghost/api/admin/posts/<id>/` (Ghost answers 204). If the copy is already gone (404), that counts as done.
 - **Visibility**: Public and Unlisted are sent as `public`, and Followers and Private as `members`. The option `ghostVisibility` can set `public`, `members`, `paid` or `tiers` directly.
 - **Other options**: `excerpt` (sent as `custom_excerpt`), `canonicalUrl` (sent as `canonical_url`, useful when the post first appeared elsewhere) and `slug`.
 - **Newsletters**: NEFORUM never asks Ghost to email a post. Posts are published on the site only.
@@ -64,7 +67,7 @@ Ghost's editor can't be filled in from a link, and Ghost has no mobile app that 
 
 ## Known limitations
 
-- **Ghost(Pro) plans below Business** have no Admin API. Use Hand-off.
+- **Ghost(Pro) Starter** has no Admin API. Use Hand-off.
 - **No video, audio or file uploads.** Ghost has endpoints for these, but they aren't documented in the official API pages, so NEFORUM doesn't use them.
 - **Device clock.** The signed token is valid for at most 5 minutes, so a wrong clock causes "HTTP 401".
 - **No threads, no content warnings.** Blog posts are single posts.
@@ -76,6 +79,8 @@ Ghost's editor can't be filled in from a link, and Ghost has no mobile app that 
 - https://docs.ghost.org/admin-api/
 - https://docs.ghost.org/admin-api/posts/overview
 - https://docs.ghost.org/admin-api/posts/creating-a-post
+- https://docs.ghost.org/admin-api/posts/scheduling-a-post
+- https://docs.ghost.org/admin-api/posts/deleting-a-post
 - https://docs.ghost.org/admin-api/images/uploading-an-image
 - https://docs.ghost.org/content-api/errors
 - https://ghost.org/integrations/custom-integrations/

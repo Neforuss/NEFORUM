@@ -17,7 +17,7 @@ You can connect Pinterest in two ways:
 
 What the automatic tier **cannot** do:
 
-- **Schedule on Pinterest's side.** The API has no "publish at" field. NEFORUM's own scheduler sends the Pin at the right time, so NEFORUM has to be running then. Pinterest's developer guidelines also require you to choose every Pin yourself. NEFORUM never creates Pins you did not write.
+- **Schedule on Pinterest's side.** The API has no "publish at" field (checked against the v5 OpenAPI description and the Create Pin reference on 2026-10-11). NEFORUM's own scheduler sends the Pin at the right time, so NEFORUM has to be running then. Pinterest's developer guidelines also require you to choose every Pin yourself. NEFORUM never creates Pins you did not write.
 - **Post GIF or WebP images.** The API accepts uploaded images only as JPEG or PNG.
 - **Post to secret boards.** NEFORUM only lists your public boards and group boards.
 - **Set alt text on carousels.** Alt text is sent only for single-image Pins.
@@ -61,7 +61,8 @@ What the automatic tier **cannot** do:
 ### Staying signed in
 
 - A Pinterest sign-in lasts **30 days**. NEFORUM renews it automatically when it is close to expiring, using Pinterest's refresh token.
-- The refresh token itself lapses after **60 days without use**. Every renewal starts a new 60 days. If you do not use NEFORUM for Pinterest for two months, you have to reconnect.
+- The refresh token itself lapses after **60 days without use**. Every renewal starts a new 60 days. If you do not use NEFORUM for Pinterest for two months, you have to reconnect. (NEFORUM asks for this "continuous" refresh token also for developer apps created before 25 September 2025, which would otherwise get the legacy one-year token.)
+- If Pinterest is briefly unavailable or rate limits the renewal, NEFORUM tries again later instead of asking you to reconnect.
 
 ## What gets posted
 

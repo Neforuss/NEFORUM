@@ -57,6 +57,9 @@ class WordPressApi {
   Future<NeforumResponse> postJson(String route, Map<String, Object?> body) =>
       ctx.http.postJson(root.route(route), body, headers: _headers);
 
+  Future<NeforumResponse> delete(String route, [Map<String, String> query = const {}]) =>
+      ctx.http.delete(root.route(route, query), headers: _headers);
+
   /// `POST /wp/v2/media` with the raw file as the body and the file name in
   /// `Content-Disposition`.
   Future<NeforumResponse> uploadMedia(Uint8List bytes, {required String fileName, required String contentType}) =>
@@ -68,8 +71,31 @@ class WordPressApi {
 }
 
 /// Fetches the REST index of [site], trying `/wp-json/` then
-/// `/?rest_route=/`. Returns the root that answered and its JSON.
-Future<(WordPressRoot, Map<String, dynamic>)> discoverWordPress(Uri site, AdapterContext ctx) async {
+/// `/?rest_route=/`. Returns the root that answered, its JSON and the site
+/// address to store.
+///
+/// When the index reports a different home address (the user typed
+/// `example.com` and the site redirects to `www.example.com`, or entered the
+/// WordPress folder of a site whose address is the domain root), the API is
+/// looked up again at that address: requests that only work through a
+/// redirect fail later, because POSTs are not re-sent to the new location and
+/// credentials are not forwarded to another host.
+Future<(WordPressRoot, Map<String, dynamic>, Uri)> discoverWordPress(Uri site, AdapterContext ctx) async {
+  final (root, index) = await _probeWordPress(site, ctx);
+  final home = _canonicalHome(index, site);
+  if (home != null) {
+    try {
+      final (homeRoot, homeIndex) = await _probeWordPress(home, ctx);
+      ctx.log.info('WordPress: using the site address ${home.host}${home.path} reported by ${site.host}');
+      return (homeRoot, homeIndex, home);
+    } on ConnectException {
+      // Keep the address the user typed; it answered.
+    }
+  }
+  return (root, index, site);
+}
+
+Future<(WordPressRoot, Map<String, dynamic>)> _probeWordPress(Uri site, AdapterContext ctx) async {
   Object? lastProblem;
   for (final root in WordPressRoot.candidates(site)) {
     try {
@@ -82,8 +108,25 @@ Future<(WordPressRoot, Map<String, dynamic>)> discoverWordPress(Uri site, Adapte
       lastProblem = e;
     }
   }
+  final wpCom = site.host == 'wordpress.com' || site.host.endsWith('.wordpress.com')
+      ? ' WordPress.com sites cannot be connected this way; use Hand-off.'
+      : '';
   throw ConnectException('${site.host} does not answer like a WordPress site with the REST API enabled '
-      '($lastProblem). Check the address. If it is right, a security plugin may be blocking /wp-json/.');
+      '($lastProblem). Check the address. If it is right, a security plugin may be blocking /wp-json/.$wpCom');
+}
+
+/// The index's `home` address when it differs from [site], upgraded to
+/// https when [site] uses https; `null` when it is the same or unusable.
+Uri? _canonicalHome(Map<String, dynamic> index, Uri site) {
+  final raw = blogStr(index['home']);
+  final parsed = raw == null ? null : Uri.tryParse(raw.trim());
+  if (parsed == null || parsed.host.isEmpty || (parsed.scheme != 'https' && parsed.scheme != 'http')) return null;
+  // Sites behind a TLS proxy often report http:// as their home; never
+  // downgrade the connection the user asked for.
+  final scheme = site.scheme == 'https' ? 'https' : parsed.scheme;
+  if (scheme == 'http' && !isLocalDevHost(parsed.host)) return null;
+  final home = blogOrigin(parsed.replace(scheme: scheme));
+  return home == blogOrigin(site) ? null : home;
 }
 
 /// The Application Passwords authorization page advertised in the REST
@@ -113,6 +156,7 @@ const Set<String> _wpRoleCodes = {
   'rest_cannot_create',
   'rest_cannot_edit',
   'rest_cannot_edit_others',
+  'rest_cannot_delete',
   'rest_cannot_assign_term',
   'rest_cannot_assign_sticky',
   'rest_forbidden',

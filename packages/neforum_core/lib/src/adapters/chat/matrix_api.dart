@@ -93,8 +93,10 @@ class MatrixApi {
     return _check(res);
   }
 
-  Future<Map<String, dynamic>> post(List<String> segments, Map<String, Object?> body, {bool auth = true}) async =>
-      _check(await _ctx.http.postJson(uri(segments), body, headers: auth ? _auth : const {}, throwOnError: false));
+  Future<Map<String, dynamic>> post(List<String> segments, Map<String, Object?> body,
+          {bool auth = true, Map<String, String>? query}) async =>
+      _check(await _ctx.http
+          .postJson(uri(segments, query), body, headers: auth ? _auth : const {}, throwOnError: false));
 
   Future<Map<String, dynamic>> put(List<String> segments, Map<String, Object?> body) async =>
       _check(await _ctx.http.postJson(uri(segments), body, headers: _auth, throwOnError: false, method: 'PUT'));

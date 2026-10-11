@@ -64,9 +64,33 @@ abstract final class Fonts {
   static const String mono = 'JetBrainsMono';
 }
 
+/// The NEFORUM brand: purple carries it, yellow is the spark (the logo's
+/// source point, the main call to action on the navigation chrome,
+/// "needs you" highlights). Yellow is never used as text or as the only cue
+/// on light surfaces, where it has no contrast; it always sits on purple,
+/// on dark surfaces, or as a fill behind [ink] text.
+abstract final class Brand {
+  static const Color purple = Color(0xFF7D00FF);
+  static const Color yellow = Color(0xFFFFFF00);
+
+  /// Deep purple of the navigation chrome (sidebar, rail, bottom bar).
+  static const Color night = Color(0xFF16062F);
+
+  /// Near-black with a purple cast: text on yellow.
+  static const Color ink = Color(0xFF120424);
+
+  /// The logo tile. Fixed, whatever accent the user picks.
+  static const LinearGradient markGradient = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Color(0xFF9426FF), purple, Color(0xFF5C00C4)],
+    stops: [0.0, 0.5, 1.0],
+  );
+}
+
 /// The accent hues the user can pick in Settings → Appearance.
 enum AccentChoice {
-  violet('Violet', Color(0xFF7C5CFF), Color(0xFF9B83FF)),
+  neforum('NEFORUM purple', Brand.purple, Color(0xFF9D4DFF)),
   coral('Coral', Color(0xFFF2542D), Color(0xFFFF7A59)),
   ocean('Ocean', Color(0xFF1677FF), Color(0xFF4C9BFF)),
   jade('Jade', Color(0xFF0F9F6E), Color(0xFF2FD39A)),
@@ -76,10 +100,12 @@ enum AccentChoice {
   const AccentChoice(this.label, this.light, this.dark);
   final String label;
 
-  /// Accent used on light backgrounds.
+  /// Accent used on light backgrounds, and the fill of accent buttons in
+  /// both themes (white text on it passes WCAG AA).
   final Color light;
 
-  /// Accent used on dark backgrounds (a touch brighter for contrast).
+  /// Accent for text and icons on dark backgrounds (a touch brighter for
+  /// contrast).
   final Color dark;
 }
 
@@ -99,8 +125,15 @@ class NfColors extends ThemeExtension<NfColors> {
     required this.textMuted,
     required this.textFaint,
     required this.accent,
+    required this.accentFill,
     required this.accentSoft,
     required this.onAccent,
+    required this.highlight,
+    required this.onHighlight,
+    required this.chrome,
+    required this.chromeRaised,
+    required this.onChrome,
+    required this.onChromeMuted,
     required this.success,
     required this.successSoft,
     required this.warning,
@@ -132,11 +165,28 @@ class NfColors extends ThemeExtension<NfColors> {
   final Color text;
   final Color textMuted;
   final Color textFaint;
+  /// Accent for text, icons, focus rings.
   final Color accent;
+
+  /// Accent as a fill behind [onAccent] (buttons, switches, badges).
+  final Color accentFill;
 
   /// Tinted backgrounds for selected states and badges.
   final Color accentSoft;
   final Color onAccent;
+
+  /// Brand yellow, as a fill behind [onHighlight].
+  final Color highlight;
+  final Color onHighlight;
+
+  /// Navigation chrome (sidebar, rail, bottom bar): deep purple in both
+  /// themes, with white content and yellow for the current section.
+  final Color chrome;
+
+  /// A card or selected row on the chrome.
+  final Color chromeRaised;
+  final Color onChrome;
+  final Color onChromeMuted;
   final Color success;
   final Color successSoft;
   final Color warning;
@@ -155,19 +205,26 @@ class NfColors extends ThemeExtension<NfColors> {
   static NfColors light(AccentChoice accent) {
     final a = accent.light;
     return NfColors(
-      bg: const Color(0xFFF4F3EF),
+      bg: const Color(0xFFF6F4FA),
       surface: const Color(0xFFFFFFFF),
       surfaceRaised: const Color(0xFFFFFFFF),
-      surfaceSunken: const Color(0xFFEFEDE7),
-      surfaceHover: const Color(0xFFF7F6F2),
-      border: const Color(0xFFE4E1D9),
-      borderStrong: const Color(0xFFCFCABE),
-      text: const Color(0xFF15161B),
-      textMuted: const Color(0xFF5B606E),
-      textFaint: const Color(0xFF8D919C),
+      surfaceSunken: const Color(0xFFEFEBF6),
+      surfaceHover: const Color(0xFFF8F6FC),
+      border: const Color(0xFFE4DFEE),
+      borderStrong: const Color(0xFFCDC5DD),
+      text: const Color(0xFF170B2B),
+      textMuted: const Color(0xFF5F5674),
+      textFaint: const Color(0xFF8E87A1),
       accent: a,
-      accentSoft: Color.alphaBlend(a.withValues(alpha: 0.10), Colors.white),
+      accentFill: a,
+      accentSoft: Color.alphaBlend(a.withValues(alpha: 0.09), Colors.white),
       onAccent: Colors.white,
+      highlight: Brand.yellow,
+      onHighlight: Brand.ink,
+      chrome: Brand.night,
+      chromeRaised: const Color(0xFF241044),
+      onChrome: Colors.white,
+      onChromeMuted: const Color(0xFFB8ADD0),
       success: const Color(0xFF0E9F62),
       successSoft: const Color(0xFFE3F6EC),
       warning: const Color(0xFFC07A00),
@@ -186,19 +243,26 @@ class NfColors extends ThemeExtension<NfColors> {
   static NfColors dark(AccentChoice accent) {
     final a = accent.dark;
     return NfColors(
-      bg: const Color(0xFF0B0C10),
-      surface: const Color(0xFF13151B),
-      surfaceRaised: const Color(0xFF1B1E26),
-      surfaceSunken: const Color(0xFF0F1015),
-      surfaceHover: const Color(0xFF191B22),
-      border: const Color(0xFF252933),
-      borderStrong: const Color(0xFF343947),
-      text: const Color(0xFFF1F2F5),
-      textMuted: const Color(0xFFA2A8B6),
-      textFaint: const Color(0xFF6A7080),
+      bg: const Color(0xFF0D0916),
+      surface: const Color(0xFF15101F),
+      surfaceRaised: const Color(0xFF1D1729),
+      surfaceSunken: const Color(0xFF100C19),
+      surfaceHover: const Color(0xFF1B1526),
+      border: const Color(0xFF2A2338),
+      borderStrong: const Color(0xFF3B3250),
+      text: const Color(0xFFF4F1FA),
+      textMuted: const Color(0xFFADA5C0),
+      textFaint: const Color(0xFF766E8A),
       accent: a,
-      accentSoft: Color.alphaBlend(a.withValues(alpha: 0.16), const Color(0xFF13151B)),
+      accentFill: accent.light,
+      accentSoft: Color.alphaBlend(a.withValues(alpha: 0.16), const Color(0xFF15101F)),
       onAccent: Colors.white,
+      highlight: Brand.yellow,
+      onHighlight: Brand.ink,
+      chrome: const Color(0xFF110524),
+      chromeRaised: const Color(0xFF211040),
+      onChrome: Colors.white,
+      onChromeMuted: const Color(0xFFAA9DC6),
       success: const Color(0xFF3DD68C),
       successSoft: const Color(0xFF12291F),
       warning: const Color(0xFFFFB547),
@@ -209,18 +273,18 @@ class NfColors extends ThemeExtension<NfColors> {
       infoSoft: const Color(0xFF13233A),
       shadow: const Color(0x66000000),
       scrim: const Color(0x99000000),
-      brandGradient: _gradientFor(a),
+      brandGradient: _gradientFor(accent.light),
       isDark: true,
     );
   }
 
-  /// Accent → pink → amber: the NEFORUM "signal" gradient, anchored on the
-  /// user's accent so the whole app stays in one key.
+  /// The primary call-to-action fill: the accent with a little depth
+  /// (lighter top-left, deeper bottom-right). White text passes AA on all of it.
   static LinearGradient _gradientFor(Color accent) => LinearGradient(
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
-        colors: [accent, const Color(0xFFFF4D8D), const Color(0xFFFF9F43)],
-        stops: const [0.0, 0.55, 1.0],
+        colors: [Color.lerp(accent, Colors.white, 0.14)!, accent, Color.lerp(accent, Colors.black, 0.24)!],
+        stops: const [0.0, 0.5, 1.0],
       );
 
   @override
@@ -242,8 +306,15 @@ class NfColors extends ThemeExtension<NfColors> {
       textMuted: l(textMuted, other.textMuted),
       textFaint: l(textFaint, other.textFaint),
       accent: l(accent, other.accent),
+      accentFill: l(accentFill, other.accentFill),
       accentSoft: l(accentSoft, other.accentSoft),
       onAccent: l(onAccent, other.onAccent),
+      highlight: l(highlight, other.highlight),
+      onHighlight: l(onHighlight, other.onHighlight),
+      chrome: l(chrome, other.chrome),
+      chromeRaised: l(chromeRaised, other.chromeRaised),
+      onChrome: l(onChrome, other.onChrome),
+      onChromeMuted: l(onChromeMuted, other.onChromeMuted),
       success: l(success, other.success),
       successSoft: l(successSoft, other.successSoft),
       warning: l(warning, other.warning),

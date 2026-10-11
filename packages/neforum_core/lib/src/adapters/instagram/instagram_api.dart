@@ -153,17 +153,35 @@ class InstagramApi {
     return id;
   }
 
+  /// How often a status poll may answer "does not exist" (24 / 2207008)
+  /// before NEFORUM gives up. Meta calls it temporary: "retry 1-2 times over
+  /// 30 seconds to 2 minutes".
+  static const int maxNotYetAvailable = 5;
+
   /// Polls GET /{container-id}?fields=status_code,status until FINISHED.
   Future<void> waitUntilFinished(String containerId, String token, {String? label}) async {
     String? lastStatus;
+    var notYetAvailable = 0;
+    final what = 'checking ${label ?? 'the media'}';
     for (var i = 0; i < pollSchedule.length; i++) {
       final delay = pollSchedule[i];
       if (delay > Duration.zero) {
         ctx.progress('Instagram is processing ${label ?? 'your media'}…');
         await sleep(delay);
       }
-      final res = await _guard('checking ${label ?? 'the media'}',
-          () => ctx.http.get(graph(containerId, {'fields': 'status_code,status'}), headers: _auth(token)));
+      final NeforumResponse res;
+      try {
+        res = await ctx.http.get(graph(containerId, {'fields': 'status_code,status'}), headers: _auth(token));
+      } on HttpFailure catch (f) {
+        final err = f.response.jsonMap['error'];
+        final sub = err is Map ? _int(err['error_subcode']) : null;
+        if (sub == 2207008 && ++notYetAvailable <= maxNotYetAvailable && i < pollSchedule.length - 1) continue;
+        throw AdapterException(mapHttpFailure(f, context: what));
+      } on TimeoutException {
+        throw AdapterException(PublishError.network('Timed out while $what'));
+      } on http.ClientException catch (e) {
+        throw AdapterException(PublishError.network('Network error while $what: ${e.message}'));
+      }
       final body = res.jsonMap;
       final code = _string(body['status_code']) ?? 'IN_PROGRESS';
       lastStatus = _string(body['status']);
@@ -263,16 +281,27 @@ class InstagramApi {
 /// status code alone is not enough.
 PublishError mapHttpFailure(HttpFailure f, {String? context}) {
   final base = f.toPublishError(context: context);
-  final err = f.response.jsonMap['error'];
-  if (err is! Map) return base;
-  final e = Map<String, dynamic>.from(err);
-  final code = _int(e['code']);
-  final sub = _int(e['error_subcode']);
-  final type = e['type'] as String?;
-  final metaMsg = (e['error_user_msg'] as String?) ?? (e['message'] as String?) ?? 'Instagram error';
+  final body = f.response.jsonMap;
   final raw = base.raw;
   final status = f.statusCode;
   final prefix = context == null ? '' : 'Instagram refused $context: ';
+  final err = body['error'];
+  if (err is! Map) {
+    // api.instagram.com/oauth/access_token answers with a flat body:
+    // {"error_type": "OAuthException", "code": 400, "error_message": "..."}.
+    final flat = _text(body['error_message']);
+    if (flat == null) return base;
+    if (_text(body['error_type']) == 'OAuthException' && status < 500) {
+      return PublishError.auth('$prefix$flat', raw: raw, statusCode: status);
+    }
+    return PublishError(
+        kind: base.kind, message: '$prefix$flat', raw: raw, statusCode: status, retryable: base.retryable, retryAfter: base.retryAfter);
+  }
+  final e = Map<String, dynamic>.from(err);
+  final code = _int(e['code']);
+  final sub = _int(e['error_subcode']);
+  final type = _text(e['type']);
+  final metaMsg = _text(e['error_user_msg']) ?? _text(e['message']) ?? 'Instagram error';
   final msg = '$prefix$metaMsg';
 
   final bySub = sub == null ? null : _subcodeError(sub, msg, raw, status);
@@ -289,6 +318,7 @@ PublishError mapHttpFailure(HttpFailure f, {String? context}) {
     case 32:
     case 613:
     case 341:
+    case 80002: // Instagram Business Use Case rate limit (Graph rate-limiting doc)
       return PublishError.quota('$msg (Instagram rate limit)',
           raw: raw, statusCode: status, retryAfter: f.response.retryAfter ?? _bucRetryAfter(f.response.headers));
     case 1:
@@ -394,3 +424,9 @@ Duration? _bucRetryAfter(Map<String, String> headers) {
 }
 
 int? _int(Object? v) => v is int ? v : int.tryParse('${v ?? ''}');
+
+String? _text(Object? v) {
+  if (v == null) return null;
+  final s = '$v';
+  return s.isEmpty ? null : s;
+}

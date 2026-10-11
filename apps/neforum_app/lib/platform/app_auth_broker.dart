@@ -32,10 +32,15 @@ class AppAuthBroker implements AuthBroker {
     final preferCustom = Env.isMobile || Env.isMacOS;
     if (preferCustom && customSchemeOk) return customSchemeRedirect;
     if (loopbackOk && Env.canListenLoopback) return loopbackRedirect;
-    if (customSchemeOk && !Env.isWeb) return customSchemeRedirect;
-    // Nothing we can catch automatically: the user will paste it.
-    return loopbackRedirect;
+    // Windows and Linux builds cannot receive neforum:// links.
+    if (customSchemeOk && !Env.isWeb && !Env.isWindows && !Env.isLinux) return customSchemeRedirect;
+    // Nothing we can catch automatically: the platform shows the code (or
+    // the password) and the user pastes it.
+    return outOfBandRedirect;
   }
+
+  /// RFC-style "out of band" redirect: the platform displays the result.
+  static final Uri outOfBandRedirect = Uri.parse('urn:ietf:wg:oauth:2.0:oob');
 
   @override
   Future<Uri> authorize(Uri authorizationUrl, Uri redirectUri, {Duration timeout = const Duration(minutes: 5)}) async {

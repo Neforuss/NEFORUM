@@ -7,11 +7,32 @@ gradient reserved for the single most important action on screen.
 Everything below exists as code in `apps/neforum_app/lib/theme` and
 `apps/neforum_app/lib/widgets`. Use those, never raw values.
 
+## Brand colors
+
+NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
+`Brand.yellow`).
+
+- **Purple carries the brand**: the logo tile (`Brand.markGradient`, fixed
+  whatever accent the user picks), the default accent, primary buttons
+  (`accentFill`, white text passes WCAG AA), focus rings and links. On dark
+  backgrounds, text and icons use the lighter `accent` (#9D4DFF) for contrast.
+- **Yellow is the spark**: the logo's source point, the current section and
+  the "New post" button on the navigation chrome, badges, and the tab on text
+  cards. Use `highlight` as a fill with `onHighlight` (ink) text on it.
+  **Never** use yellow as text, or as the only cue, on light surfaces: it has
+  no contrast there.
+- **Navigation chrome** (sidebar, rail, phone bottom bar) is deep purple in
+  both themes (`chrome`, `chromeRaised`, `onChrome`, `onChromeMuted`).
+  `PrimaryAction(onChrome: true)` and `NeforumWordmark(onChrome: true)` are the
+  variants for it.
+- Neutrals carry a faint purple cast in both themes; semantic colors
+  (success, warning, danger, info) stay as they are.
+
 ## Tokens
 
 | Token | Where |
 |---|---|
-| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentSoft`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`) |
+| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentFill`, `accentSoft`, `highlight`/`onHighlight`, `chrome`/`chromeRaised`/`onChrome`/`onChromeMuted`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`) |
 | `Space.*` | 4-pt spacing scale: `xxs 2, xs 4, sm 8, md 12, lg 16, xl 20, xxl 24, x3 32, x4 40, x5 48, x6 64` |
 | `Radii.*` | `rXs 6, rSm 10, rMd 14, rLg 20, rXl 28, rPill` |
 | `Motion.*` | `fast 140ms, medium 240ms, slow 420ms`, curves `standard`, `emphasized`, `spring` |

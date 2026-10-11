@@ -188,7 +188,7 @@ class PinterestAdapter extends PlatformAdapter {
       throw const ConnectException('Connecting Pinterest needs a browser sign-in, which is not available here');
     }
     final redirect = _redirectFor(broker, specFor(PlatformTier.byokApi), input['redirectHost']);
-    final client = _oauthClient(appId, appSecret);
+    final client = _oauthClient(appId, appSecret, continuousRefresh: true);
 
     final OAuthTokens tokens;
     try {
@@ -285,10 +285,19 @@ class PinterestAdapter extends PlatformAdapter {
     throw ConnectException('No board called "$input". Your boards: $names', field: 'board');
   }
 
-  static String _slug(String s) =>
-      s.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '-').replaceAll(RegExp(r'^-+|-+$'), '');
+  /// Board URL slug: Pinterest drops apostrophes ("Mom's Recipes" ->
+  /// `moms-recipes`) and joins the remaining words with dashes.
+  static String _slug(String s) => s
+      .toLowerCase()
+      .replaceAll(RegExp('[\'’]'), '')
+      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+      .replaceAll(RegExp(r'^-+|-+$'), '');
 
-  static OAuth2Client _oauthClient(String appId, String appSecret) => OAuth2Client(
+  /// [continuousRefresh] asks apps created before 2025-09-25 for a
+  /// continuous (60-day, renewable) refresh token instead of the legacy
+  /// 365-day one; newer apps get one anyway and Pinterest ignores the flag.
+  /// It is only a code-exchange parameter.
+  static OAuth2Client _oauthClient(String appId, String appSecret, {bool continuousRefresh = false}) => OAuth2Client(
         authorizationEndpoint: PinterestApi.authorizationEndpoint,
         tokenEndpoint: PinterestApi.tokenEndpoint,
         clientId: appId,
@@ -299,6 +308,7 @@ class PinterestAdapter extends PlatformAdapter {
         // app_id:app_secret.
         usePkce: false,
         clientAuth: ClientAuth.basic,
+        extraTokenParams: continuousRefresh ? const {'continuous_refresh': 'true'} : const {},
       );
 
   /// Stores the tokens plus the refresh-token expiry Pinterest reports.
@@ -357,10 +367,12 @@ class PinterestAdapter extends PlatformAdapter {
       final fresh = await _oauthClient(appId, appSecret).refresh(ctx.http, refreshToken: refresh, now: now);
       return _secretsFrom(fresh, secrets, now);
     } on OAuthException catch (e) {
-      if (RegExp(r'HTTP 5\d\d').hasMatch(e.message)) {
-        throw AdapterException(PublishError.network('Pinterest could not renew the sign-in right now', raw: e.toString()));
+      // Rejected grant -> reconnect; 429 -> quota; outages -> retry later.
+      final err = e.toRefreshError('Pinterest');
+      if (err.kind == PublishErrorKind.auth) {
+        throw AdapterException(PublishError.auth(_expiredMessage, raw: e.toString(), statusCode: e.statusCode));
       }
-      throw AdapterException(PublishError.auth(_expiredMessage, raw: e.toString()));
+      throw AdapterException(err);
     }
   }
 
@@ -384,6 +396,14 @@ class PinterestAdapter extends PlatformAdapter {
       if (board.trim().isEmpty) {
         issues.add(const ValidationIssue.error(
             'pinterest.no_board', 'No Pinterest board chosen; reconnect Pinterest and pick a board', field: 'account'));
+      }
+      // PinCreate.board_id / board_section_id: pattern ^\d+$.
+      for (final key in const [extraBoardId, extraBoardSectionId]) {
+        final v = variant.extraAs<String>(key)?.trim() ?? '';
+        if (v.isNotEmpty && !RegExp(r'^\d+$').hasMatch(v)) {
+          issues.add(ValidationIssue.error('pinterest.bad_id', '$key must be a numeric Pinterest id, not "$v"',
+              field: 'account'));
+        }
       }
       if (account.configString(cfgAccessLevel, accessTrial) == accessTrial) {
         issues.add(const ValidationIssue.warning('pinterest.trial_private',
@@ -444,9 +464,20 @@ class PinterestAdapter extends PlatformAdapter {
       return PublishResult.failure(e.error);
     } on HttpFailure catch (e) {
       return PublishResult.failure(PinterestApi.mapFailure(e, context: 'Posting to Pinterest'));
-    } on Exception catch (e) {
+    } on Error {
+      rethrow; // programming errors only
+    } on Object catch (e) {
       ctx.log.warn('Pinterest publish failed: $e');
-      return PublishResult.failure(PublishError.network('Could not reach Pinterest', raw: e.toString()));
+      final text = e.toString();
+      if (NeforumHttp.isTransportError(e)) {
+        return PublishResult.failure(PublishError.network('Could not reach Pinterest ($text)', raw: text));
+      }
+      // dart:io is off limits here, so recognise file errors by name.
+      if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
+        return PublishResult.failure(PublishError.configuration(
+            'A media file for this Pin is missing or unreadable; re-attach it and try again ($text)'));
+      }
+      return PublishResult.failure(PublishError.platform('Pinterest publish failed: $text', raw: text));
     }
   }
 

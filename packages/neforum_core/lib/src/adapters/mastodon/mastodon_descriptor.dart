@@ -93,13 +93,15 @@ const mastodonConnectSpecs = [
         '**No developer account needed.** Type the address of your server and press Connect. NEFORUM '
         'registers itself on that server as an app called "NEFORUM", opens your browser, and you approve it '
         'there (sign in first if asked).\n\n'
-        'NEFORUM asks only to publish posts and upload media (`write:statuses write:media profile` on '
-        'Mastodon; `read write` on Pixelfed, GoToSocial, Pleroma/Akkoma and others).\n\n'
+        'On Mastodon NEFORUM asks only to publish posts and upload media (`write:statuses write:media '
+        'profile`; `read:accounts` instead of `profile` before Mastodon 4.3). Pixelfed, GoToSocial, '
+        'Pleroma/Akkoma, Friendica and Mitra get the broad `read write` permission, because Pixelfed '
+        'only accepts that; NEFORUM uses it only to publish and to manage the posts it scheduled.\n\n'
         'Works with Mastodon, Pleroma, Akkoma, GoToSocial, Friendica, Pixelfed and Mitra.',
     redirectNote:
-        'Registered automatically: http://127.0.0.1:52771/callback on desktop, neforum://callback on '
-        'mobile. If you enter your own client ID, register that same address in the app you created under '
-        'Preferences > Development on your server.',
+        'Registered automatically: http://127.0.0.1:52771/callback on Windows and Linux, neforum://callback '
+        'on Android, iOS and macOS. If you enter your own client ID, register that same address in the app '
+        'you created under Preferences > Development on your server.',
     loopbackRedirectOk: true,
     customSchemeRedirectOk: true,
     fields: [
@@ -111,8 +113,8 @@ const mastodonConnectSpecs = [
         help:
             'Only needed if your server blocks automatic app registration. Create an app under '
             'Preferences > Development > New application on your server with the scopes '
-            '`write:statuses write:media profile` and the redirect URI shown above, then paste its '
-            'Client key here.',
+            '`write:statuses write:media profile` (other servers: `read write`) and the redirect URI '
+            'shown above, then paste its Client key here.',
       ),
       ConnectField(
         key: 'client_secret',

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:uuid/uuid.dart';
 
@@ -26,8 +27,16 @@ import 'youtube_descriptor.dart';
 /// `PostVariant.extra` knobs (byokApi):
 /// * `privacyStatus`: `public`, `unlisted` or `private`. Defaults from the
 ///   post visibility (public -> public, unlisted -> unlisted, else private).
-///   Scheduled uploads (`scheduledAt`) are always sent as `private` with
-///   `publishAt`, as the API requires.
+///
+/// Server-side scheduling: when `scheduledAt` lies in the future the video
+/// is uploaded as `private` with `status.publishAt` (the API only accepts
+/// `publishAt` on private, never-published videos) and YouTube makes it
+/// PUBLIC at that time; [publish] then returns [PublishResult.scheduled] and
+/// [cancelScheduled] deletes the held video. Because YouTube's scheduler can
+/// only go public, unlisted/private posts, accounts whose sign-in cannot
+/// delete videos, and accounts flagged as locked-private keep the schedule on
+/// the device (NEFORUM uploads at the scheduled time). A `scheduledAt` that
+/// has already passed is uploaded straight away.
 /// * `categoryId`: YouTube category id, e.g. `'22'` (People & Blogs).
 /// * `notifySubscribers`: default true; false skips subscriber notifications.
 /// * `madeForKids`: default false (`status.selfDeclaredMadeForKids`).
@@ -113,7 +122,7 @@ class YouTubeAdapter extends PlatformAdapter {
     final granted = tokens.scope;
     if (granted != null && !granted.split(' ').contains(youtubeScopes.first)) {
       throw const ConnectException('Google did not grant the YouTube upload permission. Connect again and tick '
-          'both YouTube boxes on the consent screen.');
+          'every YouTube box on the consent screen.');
     }
 
     final channel = await _channel(tokens.accessToken, ctx);
@@ -138,6 +147,8 @@ class YouTubeAdapter extends PlatformAdapter {
           YouTubeConfigKeys.clientId: clientId,
           YouTubeConfigKeys.channelId: channelId,
           YouTubeConfigKeys.redirectUri: redirect.toString(),
+          // Google returns the granted scopes; users may untick boxes.
+          YouTubeConfigKeys.canDeleteVideos: granted == null || scopesAllowDelete(granted),
         },
       ),
       secrets: _tokensToSecrets(tokens, {if (clientSecret.isNotEmpty) YouTubeSecretKeys.clientSecret: clientSecret}, ctx),
@@ -231,10 +242,13 @@ class YouTubeAdapter extends PlatformAdapter {
           .refresh(ctx.http, refreshToken: refresh, now: now);
       return _tokensToSecrets(fresh, secrets, ctx);
     } on OAuthException catch (e) {
-      if ((e.error == null || e.error!.isEmpty) && e.message.contains('HTTP 5')) {
-        throw AdapterException(PublishError.network('Google sign-in service unavailable (${e.message})'));
+      // invalid_grant (revoked, unused for 6 months, 7-day Testing expiry)
+      // means reconnect; 429 and outages are retried later.
+      final err = e.toRefreshError('Google');
+      if (err.kind == PublishErrorKind.auth) {
+        throw AdapterException(PublishError.auth(_expired, raw: e.toString(), statusCode: e.statusCode));
       }
-      throw AdapterException(PublishError.auth(_expired, raw: e.toString()));
+      throw AdapterException(err);
     } on Object catch (e) {
       if (!isNetworkException(e)) rethrow;
       throw AdapterException(PublishError.network('Could not reach Google to refresh the sign-in ($e)'));
@@ -275,6 +289,13 @@ class YouTubeAdapter extends PlatformAdapter {
     if (_hasAngle(variant.text)) {
       issues.add(const ValidationIssue.warning('youtube.description_angle_brackets',
           'YouTube descriptions cannot contain < or >; they will be replaced by ‹ ›', field: 'text'));
+      // ‹ › take 3 bytes each where < > took 1, against a 5000-byte limit.
+      const max = 5000;
+      final bytes = utf8.encode(sanitizeYouTubeText(variant.text)).length;
+      if (bytes > max && utf8.encode(variant.text).length <= max) {
+        issues.add(ValidationIssue.error('youtube.description_too_long',
+            'With < and > replaced the description uses $bytes/5000 bytes on YouTube', field: 'text'));
+      }
     }
     final tagLength = youtubeTagsLength(cleanTags(variant.tags));
     if (tagLength > 500) {
@@ -296,9 +317,17 @@ class YouTubeAdapter extends PlatformAdapter {
           'youtube.privacy_invalid', 'Unknown YouTube privacy "$privacy" (use public, unlisted or private)',
           field: 'account'));
     }
-    if (variant.scheduledAt != null && privacy != null && privacy != 'private') {
-      issues.add(const ValidationIssue.info('youtube.scheduled_private',
-          'Scheduled YouTube videos are uploaded as private and go public at the scheduled time', field: 'account'));
+    // Only a schedule that is still ahead is handed to YouTube; a passed one
+    // means "upload now" (the local scheduler's fallback), so no clock-free
+    // check here could be right. Errors make the service keep the schedule
+    // on this device.
+    final at = variant.scheduledAt;
+    if (at != null && at.isAfter(DateTime.now())) {
+      final refusal = _scheduleRefusal(variant, account);
+      issues.add(refusal == null
+          ? const ValidationIssue.info('youtube.scheduled',
+              'YouTube holds the video as private and makes it public at the scheduled time', field: 'scheduledAt')
+          : ValidationIssue.error(refusal.$1, refusal.$2, field: 'scheduledAt'));
     }
     if (_privacyFor(variant) != 'private') {
       issues.add(const ValidationIssue.info('youtube.unaudited_private',
@@ -310,6 +339,43 @@ class YouTubeAdapter extends PlatformAdapter {
 
   static bool _hasAngle(String s) => s.contains('<') || s.contains('>');
 
+  /// Why YouTube must not hold this post (code, message), or `null` when it
+  /// can. [scope] is the granted OAuth scope string when known (publish);
+  /// validate only has the account config.
+  static (String, String)? _scheduleRefusal(PostVariant v, ConnectedAccount account, {String? scope}) {
+    final privacy = _privacyFor(v);
+    if (privacy != 'public') {
+      return (
+        'youtube.schedule_not_public',
+        'YouTube\'s own scheduler can only make a video public; NEFORUM uploads this $privacy video at the '
+            'scheduled time instead'
+      );
+    }
+    if (account.config[YouTubeConfigKeys.uploadsLockedPrivate] == true) {
+      return (
+        'youtube.schedule_locked_private',
+        'YouTube locks this project\'s uploads as private, so a video held for later would never go public; '
+            'NEFORUM uploads it at the scheduled time instead'
+      );
+    }
+    final canDelete = scope != null ? scopesAllowDelete(scope) : account.config[YouTubeConfigKeys.canDeleteVideos] == true;
+    if (!canDelete) {
+      return (
+        'youtube.schedule_needs_delete_permission',
+        'To let YouTube hold scheduled videos, reconnect YouTube and allow NEFORUM to manage your videos (needed to '
+            'take a held video back when you edit or cancel the post). Until then NEFORUM uploads at the scheduled time'
+      );
+    }
+    return null;
+  }
+
+  /// The time YouTube should hold the video until, or `null` to publish now
+  /// (no schedule, or one that has already passed).
+  static DateTime? heldUntil(PostVariant v, DateTime now) {
+    final at = v.scheduledAt;
+    return at != null && at.isAfter(now) ? at : null;
+  }
+
   // ---------------------------------------------------------------- publish
 
   @override
@@ -320,17 +386,28 @@ class YouTubeAdapter extends PlatformAdapter {
           'This YouTube account uses hand-off; NEFORUM opens YouTube instead of uploading through the API'));
     }
     try {
-      return await _publish(variant, secrets, ctx);
+      return await _publish(variant, account, secrets, ctx);
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
+    } on Error {
+      rethrow; // programming errors only
     } on Object catch (e) {
-      final err = youtubeNetworkError(e, 'YouTube', ctx.now());
-      if (err == null) rethrow;
-      return PublishResult.failure(err);
+      return PublishResult.failure(youtubeNetworkError(e, 'YouTube', ctx.now()) ?? _unexpected(e));
     }
   }
 
-  Future<PublishResult> _publish(PostVariant variant, Map<String, String> secrets, AdapterContext ctx) async {
+  /// Non-network exceptions: a missing/unreadable video file (recognised by
+  /// name, dart:io is off limits) or something else the user cannot fix.
+  static PublishError _unexpected(Object e) {
+    final text = e.toString();
+    if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
+      return PublishError.configuration('The video file for this post is missing or unreadable; re-attach it ($text)');
+    }
+    return PublishError.platform('YouTube upload failed: $text', raw: text);
+  }
+
+  Future<PublishResult> _publish(
+      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     final tokens = OAuthTokens.fromSecrets(secrets);
     if (tokens == null) throw const AdapterException(PublishError.auth(_notSignedIn));
     final videos = variant.media.where((m) => m.isVideo).toList();
@@ -339,7 +416,13 @@ class YouTubeAdapter extends PlatformAdapter {
       throw const AdapterException(PublishError.validation('YouTube takes exactly one video per post'));
     }
     final video = videos.single;
-    final metadata = buildMetadata(variant, now: ctx.now());
+    final now = ctx.now();
+    final holdUntil = heldUntil(variant, now);
+    if (holdUntil != null) {
+      final refusal = _scheduleRefusal(variant, account, scope: tokens.scope);
+      if (refusal != null) throw AdapterException(PublishError.unsupported(refusal.$2));
+    }
+    final metadata = buildMetadata(variant, now: now);
 
     ctx.progress('Reading video');
     final bytes = await ctx.readMedia(video);
@@ -357,12 +440,56 @@ class YouTubeAdapter extends PlatformAdapter {
       throw const AdapterException(PublishError.platform('YouTube finished the upload but returned no video id'));
     }
     _checkStatus(resource, metadata, videoId, ctx);
-    final scheduled = variant.scheduledAt;
-    return PublishResult.ok(
-      remoteId: videoId,
-      remoteUrl: 'https://youtu.be/$videoId',
-      publishedAt: scheduled != null && scheduled.isAfter(ctx.now()) ? scheduled : ctx.now(),
-    );
+    final url = 'https://youtu.be/$videoId';
+    if (holdUntil != null) {
+      if (_map(resource['status'])['publishAt'] == null) {
+        ctx.log.warn('YouTube did not echo publishAt for video $videoId; check in YouTube Studio that it is scheduled');
+      }
+      ctx.log.info('YouTube holds video $videoId as private until ${rfc3339(holdUntil)}');
+      return PublishResult.scheduled(remoteId: videoId, scheduledFor: holdUntil, remoteUrl: url);
+    }
+    return PublishResult.ok(remoteId: videoId, remoteUrl: url, publishedAt: ctx.now());
+  }
+
+  // ------------------------------------------------------------- scheduled
+
+  /// Deletes the video YouTube holds for a scheduled post (`videos.delete`,
+  /// needs `youtube.force-ssl`). A video that is already gone (404
+  /// `videoNotFound`) counts as removed.
+  @override
+  Future<void> cancelScheduled(
+      PublishResult held, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (account.tier != PlatformTier.byokApi) {
+      throw const AdapterException(PublishError.unsupported('Hand-off YouTube accounts have no scheduled uploads'));
+    }
+    final videoId = held.remoteId?.trim() ?? '';
+    if (videoId.isEmpty) {
+      throw const AdapterException(PublishError.platform(
+          'NEFORUM does not know which YouTube video holds this post; delete it in YouTube Studio'));
+    }
+    // The caller passes fresh secrets; refresh anyway if they are about to
+    // lapse (Google keeps the same refresh token, so nothing is lost).
+    final current = await refreshSecrets(account, secrets, ctx) ?? secrets;
+    final tokens = OAuthTokens.fromSecrets(current);
+    if (tokens == null) throw const AdapterException(PublishError.auth(_notSignedIn));
+    final NeforumResponse res;
+    try {
+      res = await ctx.http.delete(YouTubeEndpoints.video(videoId),
+          headers: {'Authorization': 'Bearer ${tokens.accessToken}'}, throwOnError: false);
+    } on Object catch (e) {
+      if (!isNetworkException(e)) rethrow;
+      throw AdapterException(PublishError.network('Could not reach YouTube to delete the scheduled video ($e)'));
+    }
+    if (res.ok) {
+      ctx.log.info('Deleted scheduled YouTube video $videoId');
+      return;
+    }
+    final (reason, _) = googleErrorReason(res);
+    if (res.statusCode == 404 && (reason == 'videoNotFound' || reason == 'notFound')) {
+      ctx.log.info('Scheduled YouTube video $videoId was already gone');
+      return;
+    }
+    throw AdapterException(mapYouTubeError(res, context: 'Deleting the scheduled YouTube video', now: ctx.now()));
   }
 
   /// Builds the `videos.insert` JSON body (`snippet` + `status`).
@@ -381,10 +508,9 @@ class YouTubeAdapter extends PlatformAdapter {
     if (privacyOverride != null && !privacyStatuses.contains(privacyOverride)) {
       throw AdapterException(PublishError.validation('Unknown YouTube privacy "$privacyOverride"'));
     }
-    final scheduled = v.scheduledAt;
-    if (scheduled != null && !scheduled.isAfter(now)) {
-      throw const AdapterException(PublishError.validation('The scheduled time for YouTube is in the past'));
-    }
+    // publishAt is only accepted on private videos; a time that has passed
+    // means "publish now", so it is not sent at all.
+    final scheduled = heldUntil(v, now);
     final synthetic = v.extraAs<bool>('containsSyntheticMedia');
 
     return {

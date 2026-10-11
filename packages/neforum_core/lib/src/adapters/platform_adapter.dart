@@ -20,6 +20,12 @@ abstract class PlatformAdapter {
 
   String get id => descriptor.id;
 
+  /// [descriptor] with this account's own limits applied (a Mastodon-API
+  /// server's character limit and scheduling support, a Misskey instance's
+  /// note length). Text is split and media trimmed with it, so it must be
+  /// cheap and pure.
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) => descriptor;
+
   /// One spec per supported tier. The UI shows the tiers as a choice.
   List<ConnectSpec> get connectSpecs;
 
@@ -53,6 +59,18 @@ abstract class PlatformAdapter {
   /// Builds the hand-off plan for this platform, or `null` when the platform
   /// has no sensible hand-off route.
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) => null;
+
+  /// Removes a post the platform is holding for later, i.e. one that
+  /// [publish] returned as [PublishResult.scheduled]. Completes normally when
+  /// the held copy is gone, including when it no longer exists (404). Throws
+  /// [AdapterException] when it could not be removed, so the caller never
+  /// assumes a held copy is gone while it may still go out.
+  ///
+  /// Only adapters whose descriptor sets `serverSideScheduling` implement it.
+  Future<void> cancelScheduled(
+      PublishResult held, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    throw AdapterException(PublishError.unsupported('${descriptor.name} cannot cancel scheduled posts'));
+  }
 
   /// Called when the account is removed, to revoke tokens where the platform
   /// supports it. Best effort; errors are logged, not surfaced.

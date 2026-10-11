@@ -18,25 +18,25 @@ List<PostMenuAction> postMenuActions(BuildContext context, WidgetRef ref, Post p
     if (editable) PostMenuAction('Edit', Icons.edit_outlined, () => context.go('${AppSection.compose.path}?post=${p.id}')),
     if (editable)
       PostMenuAction('Publish now', Icons.send_rounded, () async {
-        final done = await actions.publishExisting(p.id);
-        if (context.mounted) showPublishedToast(context, done);
+        final done = await guardHeldCopies(context, () => actions.publishExisting(p.id));
+        if (done != null && context.mounted) showPublishedToast(context, done);
       }),
     if (editable)
       PostMenuAction(p.status == PostStatus.scheduled ? 'Reschedule' : 'Schedule', Icons.schedule_rounded, () async {
-        final when = await showScheduleSheet(context, initial: p.scheduledAt);
+        final when = await showScheduleSheet(context, initial: p.scheduledAt, post: p);
         if (when == null || !context.mounted) return;
         if (when == kClearSchedule) {
-          await actions.unschedule(p);
-          if (context.mounted) showToast(context, 'Moved to drafts', icon: Icons.inventory_2_outlined);
+          final done = await guardHeldCopies(context, () => actions.unschedule(p));
+          if (done != null && context.mounted) showToast(context, 'Moved to drafts', icon: Icons.inventory_2_outlined);
         } else {
-          await actions.reschedule(p, when);
-          if (context.mounted) showToast(context, 'Scheduled for ${DateFormat.MMMEd().add_jm().format(when)}', icon: Icons.event_available_rounded);
+          final done = await guardHeldCopies(context, () => actions.reschedule(p, when));
+          if (done != null && context.mounted) showToast(context, 'Scheduled for ${DateFormat.MMMEd().add_jm().format(when)}', icon: Icons.event_available_rounded);
         }
       }),
     if (p.status == PostStatus.scheduled)
       PostMenuAction('Move to drafts', Icons.inventory_2_outlined, () async {
-        await actions.unschedule(p);
-        if (context.mounted) showToast(context, 'Moved to drafts', icon: Icons.inventory_2_outlined);
+        final done = await guardHeldCopies(context, () => actions.unschedule(p));
+        if (done != null && context.mounted) showToast(context, 'Moved to drafts', icon: Icons.inventory_2_outlined);
       }),
     PostMenuAction('Duplicate as new post', Icons.copy_all_rounded, () {
       ref.read(composerProvider.notifier).duplicate(p);
@@ -58,10 +58,45 @@ Future<bool> confirmDeletePost(BuildContext context, WidgetRef ref, Post p) asyn
     destructive: true,
   );
   if (!ok) return false;
-  await ref.read(postActionsProvider).delete(p);
+  final actions = ref.read(postActionsProvider);
+  try {
+    await actions.delete(p);
+  } on HeldCopiesException catch (e) {
+    if (!context.mounted) return false;
+    final anyway = await confirmDialog(
+      context,
+      title: 'Still scheduled on ${e.platforms.join(', ')}',
+      message: '${e.message}\n\nDelete it from NEFORUM anyway? The copy on ${e.platforms.length == 1 ? 'that site' : 'those sites'} will still be published.',
+      confirmLabel: 'Delete here anyway',
+      destructive: true,
+    );
+    if (!anyway) return false;
+    await actions.delete(p, force: true);
+  }
   if (context.mounted) showToast(context, 'Post deleted', icon: Icons.delete_outline_rounded);
   return true;
 }
+
+/// Runs [action]. When a platform still holds a copy NEFORUM could not take
+/// back, explains that instead of failing silently; returns null then.
+Future<T?> guardHeldCopies<T>(BuildContext context, Future<T> Function() action) async {
+  try {
+    return await action();
+  } on HeldCopiesException catch (e) {
+    if (context.mounted) await showHeldCopiesDialog(context, e);
+    return null;
+  }
+}
+
+Future<void> showHeldCopiesDialog(BuildContext context, HeldCopiesException e) => showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.cloud_off_rounded),
+        title: Text('Still scheduled on ${e.platforms.join(', ')}'),
+        content: Text(e.message),
+        actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('OK'))],
+      ),
+    );
 
 void showPublishedToast(BuildContext context, Post p) {
   final ok = p.targets.where((t) => t.status == TargetStatus.published || t.status == TargetStatus.handedOff).length;

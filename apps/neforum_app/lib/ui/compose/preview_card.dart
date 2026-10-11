@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
+import '../../media/text_card.dart';
 import '../../state/composer.dart';
+import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
@@ -172,20 +174,39 @@ class _Microblog extends StatelessWidget {
   }
 }
 
-class _Visual extends StatelessWidget {
+class _Visual extends ConsumerWidget {
   const _Visual({required this.p});
   final TargetPreview p;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final v = p.variant;
-    final aspect = _visualAspect(p.descriptor.id, v.media);
+    final card = v.media.isNotEmpty && isTextCardPlaceholder(v.media.first) ? textCardThemeOf(v.media.first) : null;
+    final cardSize = textCardSize(p.descriptor.id);
+    final aspect = card != null ? cardSize.width / cardSize.height : _visualAspect(p.descriptor.id, v.media);
     return LayoutBuilder(builder: (context, c) {
       final maxW = aspect < 1 ? (c.maxWidth * 0.62).clamp(160.0, 300.0) : c.maxWidth;
       final w = maxW.toDouble();
       final h = w / aspect;
-      final frame = v.media.isEmpty
+      final frame = card != null
+          ? SizedBox(
+              width: w,
+              child: ClipRRect(
+                borderRadius: Radii.rMd,
+                child: DecoratedBox(
+                  position: DecorationPosition.foreground,
+                  decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+                  child: TextCardView(
+                    text: textCardText(_previewPost(ref), p.target),
+                    theme: card,
+                    aspect: aspect,
+                    byline: p.account.handle ?? p.account.displayName,
+                  ),
+                ),
+              ),
+            )
+          : v.media.isEmpty
           ? Container(
               width: w,
               height: h,
@@ -215,6 +236,10 @@ class _Visual extends StatelessWidget {
             ]);
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Center(child: frame),
+        if (card != null) ...[
+          const SizedBox(height: Space.sm),
+          Center(child: _CardStylePicker(current: card)),
+        ],
         const SizedBox(height: Space.sm + 2),
         if ((v.title ?? '').isNotEmpty) ...[
           Text(v.title!, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.titleSmall),
@@ -233,6 +258,58 @@ class _Visual extends StatelessWidget {
         ),
       ]);
     });
+  }
+}
+
+/// The composer's current post, for the words on a text card.
+Post _previewPost(WidgetRef ref) => ref.read(composerProvider).toPost(id: 'preview', status: PostStatus.draft, now: DateTime.now());
+
+/// Black-on-white or white-on-black for the text card.
+class _CardStylePicker extends ConsumerWidget {
+  const _CardStylePicker({required this.current});
+  final TextCardTheme current;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    Widget option(TextCardTheme t) {
+      final selected = t == current;
+      return Tooltip(
+        message: t.label,
+        child: InkWell(
+          borderRadius: Radii.rPill,
+          onTap: () {
+            ref.read(composerProvider.notifier).setTextCardTheme(t);
+            final s = ref.read(settingsProvider);
+            if (s.textCardTheme != t) ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardTheme: t));
+          },
+          child: AnimatedContainer(
+            duration: Motion.fast,
+            padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2, vertical: Space.xs + 1),
+            decoration: BoxDecoration(
+              color: selected ? nf.accentSoft : Colors.transparent,
+              borderRadius: Radii.rPill,
+              border: Border.all(color: selected ? nf.accent : nf.border),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(color: t.background, shape: BoxShape.circle, border: Border.all(color: nf.borderStrong)),
+                alignment: Alignment.center,
+                child: Container(width: 6, height: 6, decoration: BoxDecoration(color: t.foreground, shape: BoxShape.circle)),
+              ),
+              const SizedBox(width: Space.xs + 2),
+              Text(t.label, style: context.text.labelSmall?.copyWith(color: selected ? nf.text : nf.textMuted)),
+            ]),
+          ),
+        ),
+      );
+    }
+
+    return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
+      for (final t in TextCardTheme.values) option(t),
+    ]);
   }
 }
 

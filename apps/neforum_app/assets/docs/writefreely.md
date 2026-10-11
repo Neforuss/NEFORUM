@@ -22,6 +22,8 @@ Status as of October 2026: the API is open and free. You don't need a developer 
 4. **Blog alias** (optional): the blog to post to, for example `poems` for `write.as/poems`. If you leave it empty, NEFORUM uses your first blog. NEFORUM reads your blogs with `GET /api/me/collections`.
 5. **Upload images to Snap.as**: turn this on only for a Write.as account that has Snap.as access. See *Images* below.
 
+If the server answers "User doesn't exist", check the username. NEFORUM only reports a wrong server address when the server doesn't answer like WriteFreely at all.
+
 For **anonymous posting**, leave the username empty.
 
 You don't register any redirect address: there is no OAuth.

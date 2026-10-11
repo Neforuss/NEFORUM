@@ -56,9 +56,19 @@ class FacebookAdapter extends PlatformAdapter {
     'business_management',
   ];
 
-  static const Duration _minScheduleLead = Duration(minutes: 10);
-  static const Duration _maxScheduleFeed = Duration(days: 30);
-  static const Duration _maxScheduleVideo = Duration(days: 180);
+  /// Facebook's own minimum: `scheduled_publish_time` "must be between 10
+  /// minutes and 30 days from the time of the API request" (Pages API posts
+  /// guide; the /feed reference says 75 days, NEFORUM uses the stricter 30).
+  static const Duration minScheduleLead = Duration(minutes: 10);
+
+  /// [validate] asks for this much extra lead so that a slow upload or a
+  /// skewed clock cannot push the request inside Facebook's minimum. Posts
+  /// closer than that stay on NEFORUM's own scheduler.
+  static const Duration scheduleLeadMargin = Duration(minutes: 5);
+  static const Duration maxScheduleFeed = Duration(days: 30);
+
+  /// /{page-id}/videos: "between 10 mins and 6 months" (180 days, rounded down).
+  static const Duration maxScheduleVideo = Duration(days: 180);
   static const Duration _videoTimeout = Duration(minutes: 30);
 
   @override
@@ -361,30 +371,44 @@ class FacebookAdapter extends PlatformAdapter {
       issues.add(const ValidationIssue.error('account.no_page', 'No Facebook Page selected; reconnect the account.',
           field: 'account'));
     }
-    final hasImages = variant.media.any((m) => m.isImage);
     final link = (variant.link ?? '').trim();
-    if (hasImages && link.isNotEmpty && !_textHasLink(variant.text, link)) {
+    if (variant.media.isNotEmpty && link.isNotEmpty && !_textHasLink(variant.text, link)) {
       issues.add(const ValidationIssue.info('link.in_caption',
-          'Photo posts cannot carry a link preview on Facebook; the link is added to the text.',
+          'Photo and video posts cannot carry a link preview on Facebook; the link is added to the text.',
           field: 'link'));
     }
     final at = variant.scheduledAt;
     if (at != null) {
-      final now = DateTime.now();
-      final isVideo = variant.media.any((m) => m.isVideo);
-      final max = isVideo ? _maxScheduleVideo : _maxScheduleFeed;
-      if (at.isBefore(now.add(_minScheduleLead))) {
-        issues.add(const ValidationIssue.error(
-            'schedule.too_soon', 'Facebook can only schedule posts at least 10 minutes ahead.',
-            field: 'schedule'));
-      } else if (at.isAfter(now.add(max))) {
-        issues.add(ValidationIssue.error('schedule.too_far',
-            'Facebook schedules ${isVideo ? 'videos up to 6 months' : 'posts up to 30 days'} ahead.',
-            field: 'schedule'));
-      }
+      final issue = scheduleIssue(at, isVideo: _isVideoPost(variant), now: DateTime.now());
+      if (issue != null) issues.add(issue);
     }
     return issues;
   }
+
+  /// Whether Facebook can hold a post for [at]. `null` when it can, or when
+  /// [at] is already due (the post is then simply published now).
+  static ValidationIssue? scheduleIssue(DateTime at, {required bool isVideo, required DateTime now}) {
+    if (!at.isAfter(now)) return null;
+    final minLead = minScheduleLead + scheduleLeadMargin;
+    if (at.isBefore(now.add(minLead))) {
+      return ValidationIssue.error(
+          'schedule.too_soon',
+          'Facebook can hold a post only when it is at least ${minLead.inMinutes} minutes ahead '
+              '(Facebook\'s minimum is ${minScheduleLead.inMinutes}); NEFORUM schedules this one itself.',
+          field: 'scheduledAt');
+    }
+    final max = isVideo ? maxScheduleVideo : maxScheduleFeed;
+    if (at.isAfter(now.add(max))) {
+      return ValidationIssue.error(
+          'schedule.too_far',
+          'Facebook holds ${isVideo ? 'videos up to 6 months' : 'posts up to 30 days'} ahead; '
+              'NEFORUM schedules this one itself.',
+          field: 'scheduledAt');
+    }
+    return null;
+  }
+
+  static bool _isVideoPost(PostVariant v) => v.media.any((m) => m.isVideo);
 
   // ---------------------------------------------------------------------
   // publish
@@ -406,24 +430,29 @@ class FacebookAdapter extends PlatformAdapter {
         return PublishResult.failure(const PublishError.auth('No Facebook Page token stored; reconnect the account.'));
       }
       final call = _PageCall(ctx, pageId, tokens.accessToken, secrets[secAppSecret]);
-      final schedule = _scheduleFields(variant, ctx);
+      final hold = _holdUntil(variant, ctx);
+      final schedule = hold == null ? const <String, String>{} : _scheduleFields(hold);
       final text = variant.isThread ? variant.threadParts.join('\n\n') : variant.text;
 
       final videos = variant.media.where((m) => m.isVideo).toList();
       final images = variant.media.where((m) => m.isImage).toList();
+      final _Posted posted;
       if (videos.isNotEmpty) {
         if (images.isNotEmpty || videos.length > 1) {
           return PublishResult.failure(const PublishError.validation('Facebook posts take one video and no photos alongside it.'));
         }
-        return await _publishVideo(call, videos.single, variant, _withLink(text, variant.link), schedule);
+        posted = await _publishVideo(call, videos.single, variant, _withLink(text, variant.link), schedule);
+      } else if (images.length == 1) {
+        posted = await _publishSinglePhoto(call, images.single, _withLink(text, variant.link), schedule);
+      } else if (images.length > 1) {
+        posted = await _publishMultiPhoto(call, images, _withLink(text, variant.link), schedule);
+      } else {
+        posted = await _publishFeed(call, text, variant.link, schedule);
       }
-      if (images.length == 1) {
-        return await _publishSinglePhoto(call, images.single, _withLink(text, variant.link), schedule);
+      if (hold != null) {
+        return PublishResult.scheduled(remoteId: posted.id, scheduledFor: hold, remoteUrl: posted.url);
       }
-      if (images.length > 1) {
-        return await _publishMultiPhoto(call, images, _withLink(text, variant.link), schedule);
-      }
-      return await _publishFeed(call, text, variant.link, schedule);
+      return PublishResult.ok(remoteId: posted.id, remoteUrl: posted.url, publishedAt: ctx.now());
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } on HttpFailure catch (f) {
@@ -435,17 +464,19 @@ class FacebookAdapter extends PlatformAdapter {
     }
   }
 
-  Future<PublishResult> _publishFeed(_PageCall call, String text, String? link, Map<String, String> schedule) async {
+  Future<_Posted> _publishFeed(_PageCall call, String text, String? link, Map<String, String> schedule) async {
     call.ctx.progress('Posting to Facebook');
     final json = await call.form('feed', {
       if (text.trim().isNotEmpty) 'message': text,
       if (link != null && link.trim().isNotEmpty) 'link': link.trim(),
       ...schedule,
     });
-    return _postResult(requireString(json, 'id', 'a post id'));
+    return _Posted.post(requireString(json, 'id', 'a post id'));
   }
 
-  Future<PublishResult> _publishSinglePhoto(
+  /// One photo: the post id when Facebook returns it (it is what a scheduled
+  /// post is deleted by), else the photo id, which is deletable too.
+  Future<_Posted> _publishSinglePhoto(
       _PageCall call, MediaAttachment image, String caption, Map<String, String> schedule) async {
     call.ctx.progress('Uploading image 1 of 1');
     final json = await call.upload('photos', {
@@ -454,12 +485,12 @@ class FacebookAdapter extends PlatformAdapter {
       ...schedule,
     }, image, await _read(call.ctx, image));
     final postId = optString(json, 'post_id');
-    if (postId != null) return _postResult(postId);
+    if (postId != null) return _Posted.post(postId);
     final photoId = requireString(json, 'id', 'a photo id');
-    return PublishResult.ok(remoteId: photoId, remoteUrl: 'https://www.facebook.com/$photoId', publishedAt: call.ctx.now());
+    return _Posted(photoId, 'https://www.facebook.com/$photoId');
   }
 
-  Future<PublishResult> _publishMultiPhoto(
+  Future<_Posted> _publishMultiPhoto(
       _PageCall call, List<MediaAttachment> images, String message, Map<String, String> schedule) async {
     final scheduled = schedule.isNotEmpty;
     final ids = <String>[];
@@ -467,24 +498,26 @@ class FacebookAdapter extends PlatformAdapter {
       call.ctx.progress('Uploading image ${i + 1} of ${images.length}');
       final json = await call.upload('photos', {
         'published': 'false',
-        // Unpublished uploads are deleted after ~24 h unless marked temporary;
-        // scheduled posts may go out later than that.
+        // Page photos reference: "If the photo is used in a scheduled post,
+        // temporary=true must be used."
         if (scheduled) 'temporary': 'true',
         ..._altText(images[i]),
       }, images[i], await _read(call.ctx, images[i]));
       ids.add(requireString(json, 'id', 'a photo id'));
     }
     call.ctx.progress('Creating the Facebook post');
+    // Scheduled multi-photo posts need published, scheduled_publish_time and
+    // unpublished_content_type together (Page photos reference).
     final json = await call.form('feed', {
       if (message.trim().isNotEmpty) 'message': message,
       for (var i = 0; i < ids.length; i++) 'attached_media[$i]': '{"media_fbid":"${ids[i]}"}',
       ...schedule,
       if (scheduled) 'unpublished_content_type': 'SCHEDULED',
     });
-    return _postResult(requireString(json, 'id', 'a post id'));
+    return _Posted.post(requireString(json, 'id', 'a post id'));
   }
 
-  Future<PublishResult> _publishVideo(_PageCall call, MediaAttachment video, PostVariant variant, String description,
+  Future<_Posted> _publishVideo(_PageCall call, MediaAttachment video, PostVariant variant, String description,
       Map<String, String> schedule) async {
     final bytes = await _read(call.ctx, video);
     call.ctx.progress('Uploading video (${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB)');
@@ -495,27 +528,35 @@ class FacebookAdapter extends PlatformAdapter {
       ...schedule,
     }, video, bytes, timeout: _videoTimeout);
     final id = requireString(json, 'id', 'a video id');
-    return PublishResult.ok(
-      remoteId: id,
-      remoteUrl: 'https://www.facebook.com/${call.pageId}/videos/$id',
-      publishedAt: call.ctx.now(),
-    );
+    return _Posted(id, 'https://www.facebook.com/${call.pageId}/videos/$id');
   }
 
-  /// `published=false` + `scheduled_publish_time` when the schedule was
-  /// delegated to Facebook.
-  Map<String, String> _scheduleFields(PostVariant v, AdapterContext ctx) {
+  /// The time Facebook should hold the post until, or `null` to publish now
+  /// (no schedule, or one that is already due). Throws a validation error
+  /// when Facebook would refuse the time.
+  DateTime? _holdUntil(PostVariant v, AdapterContext ctx) {
     final at = v.scheduledAt;
-    if (at == null) return const {};
-    if (at.isBefore(ctx.now().add(_minScheduleLead))) {
-      throw const AdapterException(
-          PublishError.validation('Facebook can only schedule posts at least 10 minutes ahead.'));
+    if (at == null) return null;
+    final now = ctx.now();
+    if (!at.isAfter(now)) return null;
+    if (at.isBefore(now.add(minScheduleLead))) {
+      throw AdapterException(PublishError.validation(
+          'Facebook can only schedule posts at least ${minScheduleLead.inMinutes} minutes ahead.'));
     }
-    return {
-      'published': 'false',
-      'scheduled_publish_time': '${at.toUtc().millisecondsSinceEpoch ~/ 1000}',
-    };
+    final video = _isVideoPost(v);
+    if (at.isAfter(now.add(video ? maxScheduleVideo : maxScheduleFeed))) {
+      throw AdapterException(PublishError.validation(
+          'Facebook schedules ${video ? 'videos up to 6 months' : 'posts up to 30 days'} ahead.'));
+    }
+    return at;
   }
+
+  /// `published=false` + `scheduled_publish_time` (UNIX seconds), accepted
+  /// by /feed, /photos and /videos.
+  static Map<String, String> _scheduleFields(DateTime at) => {
+        'published': 'false',
+        'scheduled_publish_time': '${at.toUtc().millisecondsSinceEpoch ~/ 1000}',
+      };
 
   Map<String, String> _altText(MediaAttachment m) {
     final alt = (m.altText ?? '').trim();
@@ -530,12 +571,49 @@ class FacebookAdapter extends PlatformAdapter {
     }
   }
 
-  PublishResult _postResult(String postId) {
-    final parts = postId.split('_');
-    final url = parts.length == 2
-        ? 'https://www.facebook.com/${parts[0]}/posts/${parts[1]}'
-        : 'https://www.facebook.com/$postId';
-    return PublishResult.ok(remoteId: postId, remoteUrl: url);
+  // ---------------------------------------------------------------------
+  // server-side scheduling
+  // ---------------------------------------------------------------------
+
+  /// Deletes the scheduled post, photo or video [held] points at
+  /// (`DELETE /{id}` with the Page token, Pages API posts guide). A post
+  /// that no longer exists (HTTP 404, or Graph error 100/33 "Object ...
+  /// does not exist") counts as removed.
+  @override
+  Future<void> cancelScheduled(
+      PublishResult held, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (account.tier != PlatformTier.byokApi) {
+      throw const AdapterException(PublishError.unsupported('This Facebook account is set up for hand-off only.'));
+    }
+    final id = (held.remoteId ?? '').trim();
+    if (id.isEmpty) {
+      throw const AdapterException(PublishError.platform(
+          'NEFORUM did not record which Facebook post is scheduled; delete it in Meta Business Suite > Planner.'));
+    }
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    if (tokens == null) {
+      throw const AdapterException(PublishError.auth('No Facebook Page token stored; reconnect the account.'));
+    }
+    final NeforumResponse res;
+    try {
+      ctx.progress('Removing the post Facebook is holding');
+      res = await ctx.http.delete(graphUri(id, withToken(const {}, tokens.accessToken, secrets[secAppSecret])),
+          throwOnError: false);
+    } on TimeoutException catch (e) {
+      throw AdapterException(PublishError.network('Facebook did not answer in time', raw: '$e'));
+    } on Exception catch (e) {
+      throw AdapterException(PublishError.network('Could not reach Facebook: $e', raw: '$e'));
+    }
+    if (res.ok) {
+      if (res.jsonMap['success'] == false) {
+        throw AdapterException(PublishError.platform('Facebook did not delete the scheduled post', raw: res.body));
+      }
+      return;
+    }
+    if (res.statusCode == 404) return;
+    final err = GraphError.parse(res.jsonMap);
+    if (err != null && err.code == 100 && err.subcode == 33) return;
+    throw AdapterException(mapGraphFailure(HttpFailure(res), context: 'Removing the scheduled post'));
   }
 
   static bool _textHasLink(String text, String link) =>
@@ -612,6 +690,26 @@ class FacebookAdapter extends PlatformAdapter {
           : null,
     );
   }
+}
+
+/// What a publishing call created: the id to report (and to delete a held
+/// post by) and its public address.
+class _Posted {
+  const _Posted(this.id, this.url);
+
+  /// A `{page-id}_{post-id}` Page post id.
+  factory _Posted.post(String postId) {
+    final parts = postId.split('_');
+    return _Posted(
+      postId,
+      parts.length == 2
+          ? 'https://www.facebook.com/${parts[0]}/posts/${parts[1]}'
+          : 'https://www.facebook.com/$postId',
+    );
+  }
+
+  final String id;
+  final String url;
 }
 
 /// Small helper bundling everything a Page-scoped Graph call needs.

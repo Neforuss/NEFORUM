@@ -18,12 +18,26 @@ import '../platform_adapter.dart';
 import 'blogs_common.dart';
 import 'micropub_api.dart';
 
-/// NEFORUM's IndieAuth client id. The page at this URL must publish an OAuth
-/// Client ID Metadata Document listing NEFORUM's redirect URIs.
+/// NEFORUM's hosted IndieAuth client id, used when the redirect is not a
+/// loopback address (mobile `neforum://callback`). Because that redirect is
+/// on another host, servers only accept it once the page at this URL
+/// publishes an OAuth Client ID Metadata Document listing it
+/// (IndieAuth §4.2.2 / §5.2). As of 2026-10 that page does not exist yet.
 const String micropubDefaultClientId = 'https://neforum.app/';
 
-/// Scopes NEFORUM asks for: create posts and upload to the media endpoint.
-const List<String> micropubScopes = ['create', 'media'];
+/// Scopes NEFORUM asks for: create posts, upload to the media endpoint, and
+/// `profile` so the token response may carry the name and photo
+/// (IndieAuth §5.3.4; servers return only `me` without it).
+const List<String> micropubScopes = ['create', 'media', 'profile'];
+
+/// The IndieAuth client id for a loopback [redirect] (`http://127.0.0.1:PORT/`),
+/// or `null` when [redirect] is not on 127.0.0.1 / [::1]. Servers must not
+/// fetch loopback client ids, and a redirect on the same scheme, host and
+/// port needs no published redirect list (IndieAuth §4.2 and §5.2).
+String? micropubLoopbackClientId(Uri redirect) {
+  if (redirect.scheme != 'http' || (redirect.host != '127.0.0.1' && redirect.host != '::1')) return null;
+  return Uri(scheme: 'http', host: redirect.host, port: redirect.hasPort ? redirect.port : null, path: '/').toString();
+}
 
 /// Micro.blog's Micropub endpoint (help.micro.blog "Posting API").
 final Uri microblogMicropubEndpoint = Uri.parse('https://micro.blog/micropub');
@@ -110,8 +124,9 @@ class MicropubAdapter extends PlatformAdapter {
               'Your site must advertise `rel="micropub"` and IndieAuth (`rel="indieauth-metadata"` or '
               '`rel="authorization_endpoint"` + `rel="token_endpoint"`). WordPress needs the IndieAuth and Micropub '
               'plugins.',
-          redirectNote: 'Nothing to register. NEFORUM identifies itself as https://neforum.app/ and returns to '
-              'http://127.0.0.1:52771/callback on desktop or neforum://callback on mobile.',
+          redirectNote: 'Nothing to register. On a computer NEFORUM identifies itself as http://127.0.0.1:52771/ and '
+              'returns to http://127.0.0.1:52771/callback. On a phone it uses https://neforum.app/ and '
+              'neforum://callback, which servers that verify redirect addresses may refuse; use an app token there.',
           fields: [
             ConnectField(
               key: 'me',
@@ -134,9 +149,10 @@ class MicropubAdapter extends PlatformAdapter {
               label: 'Client ID (advanced, optional)',
               kind: FieldKind.url,
               required: false,
-              defaultValue: micropubDefaultClientId,
-              help: 'Leave as is. On desktop you can use `http://127.0.0.1:52771/` if your server refuses '
-                  'NEFORUM\'s client id; servers do not fetch loopback client ids.',
+              placeholder: 'automatic',
+              help: 'Leave empty. NEFORUM then uses `http://127.0.0.1:52771/` on a computer (servers never fetch '
+                  'loopback client ids) and `https://neforum.app/` on a phone. Enter your own client id URL only if '
+                  'you host a client metadata page that lists NEFORUM\'s redirect address.',
             ),
           ],
         ),
@@ -169,8 +185,9 @@ class MicropubAdapter extends PlatformAdapter {
         throw ConnectException('${me.host} does not advertise IndieAuth (no authorization or token endpoint). '
             'Install IndieAuth on your site, or paste an app token.', field: 'me');
       }
-      clientId = _clientId(input['clientId']);
-      tokens = await _indieAuth(disc, clientId, ctx);
+      final (granted, usedClientId) = await _indieAuth(disc, input['clientId'], ctx);
+      tokens = granted;
+      clientId = usedClientId;
       method = 'indieauth';
       profile = blogMap(tokens.raw['profile']);
       final returned = blogStr(tokens.raw['me']);
@@ -225,9 +242,14 @@ class MicropubAdapter extends PlatformAdapter {
     );
   }
 
-  String _clientId(String? raw) {
+  /// The client id to send: the user's own one when they entered it,
+  /// otherwise the loopback id for a loopback [redirect] and NEFORUM's
+  /// hosted id for anything else.
+  String _clientId(String? raw, Uri redirect) {
     final s = (raw ?? '').trim();
-    if (s.isEmpty) return micropubDefaultClientId;
+    if (s.isEmpty || s == micropubDefaultClientId) {
+      return micropubLoopbackClientId(redirect) ?? micropubDefaultClientId;
+    }
     final u = Uri.tryParse(s);
     if (u == null || (u.scheme != 'https' && u.scheme != 'http') || u.host.isEmpty || u.hasFragment) {
       throw const ConnectException('The client id must be an http(s) URL without a #fragment', field: 'clientId');
@@ -235,9 +257,10 @@ class MicropubAdapter extends PlatformAdapter {
     return u.path.isEmpty ? u.replace(path: '/').toString() : u.toString();
   }
 
-  Future<OAuthTokens> _indieAuth(MicropubDiscovery disc, String clientId, AdapterContext ctx) async {
+  Future<(OAuthTokens, String)> _indieAuth(MicropubDiscovery disc, String? rawClientId, AdapterContext ctx) async {
     final broker = ctx.requireBroker();
     final redirect = broker.chooseRedirectUri(loopbackOk: true, customSchemeOk: true);
+    final clientId = _clientId(rawClientId, redirect);
     final client = OAuth2Client(
       authorizationEndpoint: disc.authorizationEndpoint!,
       tokenEndpoint: disc.tokenEndpoint!,
@@ -265,7 +288,7 @@ class MicropubAdapter extends PlatformAdapter {
     ctx.progress('Fetching the access token');
     try {
       final tokens = await client.exchangeCode(ctx.http, code: code, redirectUri: redirect, pkce: req.pkce, now: ctx.now());
-      return tokens;
+      return (tokens, clientId);
     } on OAuthException catch (e) {
       throw ConnectException('Your token endpoint refused the sign-in: ${e.description ?? e.error ?? e.message}');
     } on HttpFailure catch (f) {

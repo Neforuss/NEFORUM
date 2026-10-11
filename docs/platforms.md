@@ -49,7 +49,7 @@ Generated from the code on 2026-10-11.
 ### DEV Community
 
 - **Account:** Any DEV (or other Forem) account. You create a personal API key in your settings; no developer registration or review.
-- **Cost and limits:** Free. DEV allows about 10 new articles per 30 seconds and one write request per second.
+- **Cost and limits:** Free. DEV allows about 10 new articles per 30 seconds (brand-new accounts only about one per 5 minutes) and one write request per second.
 
 ### Discord
 
@@ -63,8 +63,8 @@ Generated from the code on 2026-10-11.
 
 ### Ghost
 
-- **Account:** A Ghost site where you are Owner or Administrator (to create a custom integration). Self-hosted Ghost works on any setup; on Ghost(Pro) custom integrations are only included in the Business and Custom plans.
-- **Cost and limits:** Free on self-hosted Ghost. On Ghost(Pro) the Admin API needs the Business plan or higher. Ghost does not publish an API quota.
+- **Account:** A Ghost site where you are Owner or Administrator (to create a custom integration). Self-hosted Ghost works on any setup; on Ghost(Pro) custom integrations are included in the Publisher, Business and Custom plans, not in Starter.
+- **Cost and limits:** Free on self-hosted Ghost. On Ghost(Pro) the Admin API needs the Publisher plan or higher (not Starter). Ghost does not publish an API quota.
 
 ### Google Business Profile
 

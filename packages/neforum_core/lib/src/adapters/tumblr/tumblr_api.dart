@@ -26,9 +26,26 @@ class TumblrApi {
   /// `t:...` uuid.
   static Uri postsEndpoint(String blog) => Uri.https('api.tumblr.com', '/v2/blog/$blog/posts');
 
+  /// `POST /v2/blog/{blog-identifier}/post/delete` with the form field `id`
+  /// (api.md "/post/delete – Delete a Post"; answers 200 OK).
+  static Uri deleteEndpoint(String blog) => Uri.https('api.tumblr.com', '/v2/blog/$blog/post/delete');
+
   /// Public permalink. Tumblr's API only returns the id, so the URL is built
   /// client-side.
   static String postUrl(String blogName, String id) => 'https://$blogName.tumblr.com/post/$id';
+
+  /// The blog's front page.
+  static String blogUrl(String blogName) => 'https://$blogName.tumblr.com/';
+
+  /// The shortest lead NEFORUM hands to Tumblr's scheduler. `publish_on`
+  /// must be a future time when Tumblr receives the request (api.md: "The
+  /// exact _future_ date and time"), so the upload must finish before it.
+  static const Duration minScheduleLead = Duration(minutes: 5);
+
+  /// [minScheduleLead] plus the time [uploadBytes] need on a slow
+  /// (150 KB/s) uplink, the same assumption NeforumHttp makes for uploads.
+  static Duration scheduleLead(int uploadBytes) =>
+      minScheduleLead + Duration(seconds: (uploadBytes / (150 * 1024)).ceil());
 
   /// Square avatar of a blog (public endpoint that redirects to the image).
   static String avatarUrl(String blogName) => 'https://api.tumblr.com/v2/blog/$blogName/avatar/128';

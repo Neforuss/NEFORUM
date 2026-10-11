@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/tumblr/tumblr_adapter.dart';
 import 'package:neforum_core/src/adapters/tumblr/tumblr_api.dart';
@@ -295,11 +296,49 @@ void main() {
       expect(codes(const PostVariant(text: 'x', extra: {'state': 'queue'})), isNot(contains('tumblr.state')));
       expect(codes(const PostVariant(text: 'x', tags: ['a,b'])), contains('tags.comma'));
       expect(codes(const PostVariant(text: 'x', visibility: Visibility.followers)), contains('visibility.public'));
-      expect(codes(PostVariant(text: 'x', extra: const {'state': 'draft'}, scheduledAt: testNow.add(const Duration(days: 1)))),
-          contains('schedule.ignored'));
       expect(codes(const PostVariant(text: 'x'), _account(config: const {'consumerKey': 'k'})), contains('account.no_blog'));
       final tooManyTags = List.generate(31, (i) => 't$i');
       expect(codes(PostVariant(text: 'x', tags: tooManyTags)), contains('hashtags.too_many'));
+    });
+
+    group('server-side schedule', () {
+      // validate() is synchronous and uses the wall clock.
+      DateTime inFuture(Duration d) => DateTime.now().add(d);
+      List<ValidationIssue> scheduleErrors(PostVariant v, [ConnectedAccount? a]) =>
+          adapter.validate(v, a ?? _account()).where((i) => i.isError && i.field == 'scheduledAt').toList();
+
+      test('a queued schedule a day ahead is accepted', () {
+        expect(scheduleErrors(PostVariant(text: 'x', scheduledAt: inFuture(const Duration(days: 1)))), isEmpty);
+        expect(
+            scheduleErrors(PostVariant(text: 'x', extra: const {'state': 'queue'}, scheduledAt: inFuture(const Duration(days: 3)))),
+            isEmpty);
+      });
+
+      test('drafts and private posts cannot be held by Tumblr', () {
+        final draft = scheduleErrors(
+            PostVariant(text: 'x', extra: const {'state': 'draft'}, scheduledAt: inFuture(const Duration(days: 1))));
+        expect(draft.map((i) => i.code), ['schedule.state']);
+        final private = scheduleErrors(
+            PostVariant(text: 'x', visibility: Visibility.private, scheduledAt: inFuture(const Duration(days: 1))));
+        expect(private.map((i) => i.code), ['schedule.state']);
+      });
+
+      test('too soon for the upload to arrive before publish_on', () {
+        expect(scheduleErrors(PostVariant(text: 'x', scheduledAt: inFuture(const Duration(minutes: 2)))).map((i) => i.code),
+            ['schedule.too_soon']);
+        // 500 MB at 150 KB/s takes almost an hour.
+        final video = fakeVideo(sizeBytes: 500 * 1000 * 1000);
+        expect(scheduleErrors(PostVariant(text: 'x', media: [video], scheduledAt: inFuture(const Duration(minutes: 30)))),
+            hasLength(1));
+        expect(scheduleErrors(PostVariant(text: 'x', media: [video], scheduledAt: inFuture(const Duration(hours: 2)))),
+            isEmpty);
+      });
+
+      test('a schedule that is already due is not an error (normal publish)', () {
+        final past = DateTime.now().subtract(const Duration(minutes: 1));
+        expect(scheduleErrors(PostVariant(text: 'x', extra: const {'state': 'draft'}, scheduledAt: past)), isEmpty);
+        expect(scheduleErrors(PostVariant(text: 'x', scheduledAt: past)), isEmpty);
+      });
     });
   });
 
@@ -420,20 +459,63 @@ void main() {
       expect(progress, contains('Uploading 3 files to Tumblr'));
     });
 
-    test('scheduled post goes to the queue with publish_on', () async {
+    test('scheduled post goes to the queue with publish_on and is held by Tumblr', () async {
       final calls = <http.Request>[];
       final ctx = testContext(handler: (r) async {
         calls.add(r);
-        return _created();
+        return _created('777');
       });
       final at = DateTime.utc(2026, 10, 9, 18, 30);
-      final result = await adapter.publish(PostVariant(text: 'Later', scheduledAt: at), _account(), _secrets(), ctx);
-      expect(result.success, isTrue);
-      expect(result.remoteUrl, isNull);
-      expect(result.publishedAt, at);
-      final body = _body(calls.single);
+      final result = await adapter.publish(
+          PostVariant(text: 'Later', scheduledAt: at, tags: const ['a']), _account(), _secrets(), ctx);
+      expect(result.success, isTrue, reason: '${result.error}');
+      expect(result.isHeldByPlatform, isTrue);
+      expect(result.scheduledFor, at);
+      expect(result.remoteId, '777');
+      // The id changes on publication, so the blog is linked, not a permalink.
+      expect(result.remoteUrl, 'https://myblog.tumblr.com/');
+      expect(result.publishedAt, isNull);
+      final r = calls.single;
+      expect(r.method, 'POST');
+      expect(r.url.toString(), 'https://api.tumblr.com/v2/blog/t:AbCdEf123/posts');
+      final body = _body(r);
       expect(body['state'], 'queue');
       expect(body['publish_on'], '2026-10-09T18:30:00.000Z');
+      expect(body['tags'], 'a');
+      // Released later, the result reads as published at the scheduled time.
+      expect(result.asReleased().publishedAt, at);
+    });
+
+    test('an explicit queue state with a schedule is held too; a past schedule publishes now', () async {
+      final bodies = <Map<String, dynamic>>[];
+      final ctx = testContext(handler: (r) async {
+        bodies.add(_body(r));
+        return _created();
+      });
+      final at = testNow.add(const Duration(days: 2));
+      final queued = await adapter.publish(
+          PostVariant(text: 'x', extra: const {'state': 'queue'}, scheduledAt: at), _account(), _secrets(), ctx);
+      expect(queued.scheduledFor, at);
+      final due = await adapter.publish(
+          PostVariant(text: 'x', scheduledAt: testNow.subtract(const Duration(minutes: 1))), _account(), _secrets(), ctx);
+      expect(due.isHeldByPlatform, isFalse);
+      expect(due.publishedAt, testNow);
+      expect(bodies[1]['state'], 'published');
+      expect(bodies[1].containsKey('publish_on'), isFalse);
+    });
+
+    test('unreadable media and network failures become failures, not exceptions', () async {
+      final noFile = AdapterContext(
+        http: NeforumHttp(client: MockClient((r) async => throw StateError('no HTTP expected')), maxRetries: 0),
+        clock: () => testNow,
+        readMedia: (m) async => throw const FormatException('Media not found'),
+      );
+      final missing = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), _account(), _secrets(), noFile);
+      expect(missing.error!.kind, PublishErrorKind.configuration);
+
+      final offline = testContext(handler: (r) async => throw http.ClientException('connection refused'));
+      final down = await adapter.publish(const PostVariant(text: 'x'), _account(), _secrets(), offline);
+      expect(down.error!.kind, PublishErrorKind.network);
     });
 
     test('extra state and private visibility', () async {
@@ -570,6 +652,153 @@ void main() {
         throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.network)),
       );
     });
+
+    test('a 429 during refresh is a quota problem, not a dead sign-in', () async {
+      final ctx = testContext(handler: (r) async => _json({'meta': {'status': 429, 'msg': 'Limit Exceeded'}}, 429));
+      await expectLater(
+        adapter.refreshSecrets(_account(), _secrets(expiresAt: testNow), ctx),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.quota)),
+      );
+    });
+  });
+
+  group('cancelScheduled', () {
+    PublishResult held({String id = '777', Duration ahead = const Duration(days: 1)}) =>
+        PublishResult.scheduled(remoteId: id, scheduledFor: testNow.add(ahead), remoteUrl: 'https://myblog.tumblr.com/');
+
+    test('POSTs the post id to /post/delete on the blog uuid', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({'meta': {'status': 200, 'msg': 'OK'}, 'response': {'id': '777'}});
+      });
+      await adapter.cancelScheduled(held(), _account(), _secrets(), ctx);
+      final r = calls.single;
+      expect(r.method, 'POST');
+      expect(r.url.toString(), 'https://api.tumblr.com/v2/blog/t:AbCdEf123/post/delete');
+      expect(r.headers['Authorization'], 'Bearer AT-1');
+      expect(r.headers['content-type'], contains('application/x-www-form-urlencoded'));
+      expect(bodyOf(r), {'id': '777'});
+    });
+
+    test('falls back to the blog name when no uuid is stored', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({'meta': {'status': 200, 'msg': 'OK'}});
+      });
+      await adapter.cancelScheduled(held(), _account(config: const {'consumerKey': 'k', 'blogName': 'myblog'}), _secrets(), ctx);
+      expect(calls.single.url.path, '/v2/blog/myblog/post/delete');
+    });
+
+    test('404 means the held post is already gone', () async {
+      final ctx = testContext(handler: (r) async => _json({'meta': {'status': 404, 'msg': 'Not Found'}}, 404));
+      await adapter.cancelScheduled(held(), _account(), _secrets(), ctx);
+    });
+
+    test('404 right before the publishing time may mean it is live: not reported as gone', () async {
+      final ctx = testContext(handler: (r) async => _json({'meta': {'status': 404, 'msg': 'Not Found'}}, 404));
+      await expectLater(
+        adapter.cancelScheduled(held(ahead: const Duration(minutes: 2)), _account(), _secrets(), ctx),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.platform)),
+      );
+    });
+
+    test('errors map onto the right kinds', () async {
+      Future<PublishError> errorFor(http.Response res) async {
+        final ctx = testContext(handler: (r) async => res);
+        try {
+          await adapter.cancelScheduled(held(), _account(), _secrets(), ctx);
+        } on AdapterException catch (e) {
+          return e.error;
+        }
+        fail('expected an AdapterException');
+      }
+
+      expect((await errorFor(_json({'meta': {'status': 401, 'msg': 'Unauthorized'}}, 401))).kind, PublishErrorKind.auth);
+      final rate = await errorFor(_json({'meta': {'status': 429, 'msg': 'Limit Exceeded'}}, 429, {'retry-after': '60'}));
+      expect(rate.kind, PublishErrorKind.quota);
+      expect(rate.retryAfter, const Duration(seconds: 60));
+      final down = await errorFor(http.Response('oops', 500));
+      expect(down.kind, PublishErrorKind.network);
+      expect(down.retryable, isTrue);
+    });
+
+    test('no id, no sign-in or a hand-off account: AdapterException without a request', () async {
+      final ctx = testContext(handler: (r) async => throw StateError('no HTTP expected'));
+      await expectLater(
+        adapter.cancelScheduled(PublishResult.ok(), _account(), _secrets(), ctx),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.configuration)),
+      );
+      await expectLater(
+        adapter.cancelScheduled(held(), _account(), const {}, ctx),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)),
+      );
+      await expectLater(
+        adapter.cancelScheduled(held(), _account(tier: PlatformTier.handoff), const {}, ctx),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.unsupported)),
+      );
+    });
+
+    test('a network failure is a retryable network error', () async {
+      final ctx = testContext(handler: (r) async => throw http.ClientException('connection reset'));
+      await expectLater(
+        adapter.cancelScheduled(held(), _account(), _secrets(), ctx),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.network)),
+      );
+    });
+  });
+
+  test('PublishService hands the schedule to Tumblr and takes it back', () async {
+    // Real clock: validate() checks the schedule against DateTime.now().
+    final now = DateTime.now().toUtc();
+    final at = now.add(const Duration(days: 1));
+    final calls = <http.Request>[];
+    final http0 = NeforumHttp(
+      maxRetries: 0,
+      client: MockClient((r) async {
+        calls.add(r);
+        if (r.url.path.endsWith('/post/delete')) return _json({'meta': {'status': 200, 'msg': 'OK'}});
+        return _created('555');
+      }),
+    );
+    final accounts = InMemoryAccountRepository();
+    final posts = InMemoryPostRepository();
+    final secrets = InMemorySecretStore();
+    final account = _account();
+    await accounts.upsert(account);
+    await secrets.write(account.id, _secrets(expiresAt: now.add(const Duration(hours: 1))));
+    await posts.upsert(Post(
+      id: 'p1',
+      text: 'Tomorrow',
+      createdAt: now,
+      updatedAt: now,
+      scheduledAt: at,
+      status: PostStatus.scheduled,
+      targets: [PostTarget(accountId: account.id)],
+    ));
+    final service = PublishService(
+      registry: AdapterRegistry([adapter]),
+      accounts: accounts,
+      posts: posts,
+      secrets: secrets,
+      quota: QuotaTracker(InMemoryQuotaRepository()),
+      http: http0,
+    );
+
+    final delegated = await service.delegateSchedules('p1');
+    final target = delegated.targets.single;
+    expect(target.status, TargetStatus.heldByPlatform);
+    expect(target.result!.remoteId, '555');
+    expect(target.result!.scheduledFor, at);
+    expect(_body(calls.single)['state'], 'queue');
+
+    final released = await service.releaseSchedules('p1');
+    expect(released.ok, isTrue, reason: '${released.failed}');
+    expect(released.post.targets.single.status, TargetStatus.pending);
+    expect(calls, hasLength(2));
+    expect(calls[1].url.toString(), 'https://api.tumblr.com/v2/blog/t:AbCdEf123/post/delete');
+    expect(bodyOf(calls[1]), {'id': '555'});
   });
 
   group('buildHandoff', () {

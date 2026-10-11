@@ -30,6 +30,10 @@ enum TargetStatus {
   /// the user completed it, so the user confirms manually.
   handedOff,
   skipped,
+
+  /// The platform accepted the post and publishes it itself at the
+  /// scheduled time (server-side scheduling). The device can be off.
+  heldByPlatform,
 }
 
 /// Visibility mapped onto whatever the platform supports.
@@ -100,12 +104,13 @@ class PostOverrides {
     Visibility? visibility,
     Map<String, dynamic>? extra,
     bool clearText = false,
+    bool clearMediaIds = false,
   }) =>
       PostOverrides(
         text: clearText ? null : (text ?? this.text),
         title: title ?? this.title,
         link: link ?? this.link,
-        mediaIds: mediaIds ?? this.mediaIds,
+        mediaIds: clearMediaIds ? null : (mediaIds ?? this.mediaIds),
         contentWarning: contentWarning ?? this.contentWarning,
         sensitive: sensitive ?? this.sensitive,
         visibility: visibility ?? this.visibility,
@@ -162,18 +167,21 @@ class PostTarget {
       status == TargetStatus.handedOff ||
       status == TargetStatus.skipped;
 
+  bool get isHeldByPlatform => status == TargetStatus.heldByPlatform;
+
   PostTarget copyWith({
     PostOverrides? overrides,
     TargetStatus? status,
     PublishResult? result,
     int? attempts,
     DateTime? lastAttemptAt,
+    bool clearResult = false,
   }) =>
       PostTarget(
         accountId: accountId,
         overrides: overrides ?? this.overrides,
         status: status ?? this.status,
-        result: result ?? this.result,
+        result: clearResult ? null : (result ?? this.result),
         attempts: attempts ?? this.attempts,
         lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
       );
@@ -261,6 +269,12 @@ class Post {
   final DateTime updatedAt;
 
   bool get isDue => scheduledAt != null && status == PostStatus.scheduled;
+
+  /// Some target still needs this device at the scheduled time. False when
+  /// every remaining target is held by its platform's own scheduler.
+  bool get needsDeviceAtSchedule => targets.any((t) => !t.isDone && !t.isHeldByPlatform && t.status != TargetStatus.failed);
+
+  bool get hasHeldTargets => targets.any((t) => t.isHeldByPlatform);
 
   PostTarget? targetFor(String accountId) {
     for (final t in targets) {
