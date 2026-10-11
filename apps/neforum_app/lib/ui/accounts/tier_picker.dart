@@ -90,7 +90,8 @@ class _TierPickerState extends State<TierPicker> {
     if (w.inDays >= 28) return 'month';
     if (w.inDays >= 1) return w.inDays == 1 ? 'day' : '${w.inDays} days';
     if (w.inHours >= 1) return w.inHours == 1 ? 'hour' : '${w.inHours} hours';
-    return '${w.inMinutes} min';
+    if (w.inMinutes >= 1) return '${w.inMinutes} min';
+    return '${w.inSeconds} seconds';
   }
 }
 

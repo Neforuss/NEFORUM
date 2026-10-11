@@ -143,7 +143,8 @@ class QuotaMeter extends StatelessWidget {
     if (w.inDays >= 28) return 'This month';
     if (w.inDays >= 1) return w.inDays == 1 ? 'Last 24 hours' : 'Last ${w.inDays} days';
     if (w.inHours >= 1) return 'Last ${w.inHours} h';
-    return 'Last ${w.inMinutes} min';
+    if (w.inMinutes >= 1) return 'Last ${w.inMinutes} min';
+    return 'Last ${w.inSeconds} s';
   }
 
   static String _relative(DateTime t) {

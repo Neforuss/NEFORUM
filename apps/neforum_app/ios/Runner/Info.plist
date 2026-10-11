@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Neforum App</string>
+	<string>NEFORUM</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>neforum_app</string>
+	<string>NEFORUM</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -24,8 +24,63 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<!-- Sign-in redirects come back as neforum://callback -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>org.neforum.app.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>neforum</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Apps NEFORUM can open for hand-off -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>instagram</string>
+		<string>instagram-stories</string>
+		<string>barcelona</string>
+		<string>tiktok</string>
+		<string>snssdk1233</string>
+		<string>fb</string>
+		<string>twitter</string>
+		<string>linkedin</string>
+		<string>youtube</string>
+		<string>pinterest</string>
+		<string>snapchat</string>
+		<string>whatsapp</string>
+		<string>tg</string>
+		<string>reddit</string>
+		<string>mastodon</string>
+		<string>bluesky</string>
+		<string>substack</string>
+		<string>damus</string>
+		<string>nostr</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Pick photos and videos to attach to your posts.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Save media you share so you can post it in another app.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo or video to post.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record sound with videos you post.</string>
+	<!-- Scheduled posts: background refresh (best effort) plus reminders -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>org.neforum.publish_due</string>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

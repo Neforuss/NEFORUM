@@ -11,12 +11,16 @@ import '../theme/tokens.dart';
 /// at which point it shows the overflow as a negative number. When [max] is
 /// null (unlimited platforms) it shows the plain count.
 class CharRing extends StatelessWidget {
-  const CharRing({super.key, required this.used, required this.max, this.size = 26, this.showNumber = true, this.parts = 1});
+  const CharRing({super.key, required this.used, required this.max, this.size = 26, this.showNumber = true, this.parts = 1, this.alwaysShowCount = false});
 
   final int used;
   final int? max;
   final double size;
   final bool showNumber;
+
+  /// Show the remaining count even when far from the limit (so the ring is
+  /// never mistaken for a loading spinner).
+  final bool alwaysShowCount;
 
   /// When the text will be split into a thread, the number of parts.
   final int parts;
@@ -37,7 +41,8 @@ class CharRing extends StatelessWidget {
             : ratio >= 0.9
                 ? nf.warning
                 : nf.accent;
-    final showCount = showNumber && (ratio >= 0.8 || parts > 1);
+    final showCount = showNumber && (alwaysShowCount || ratio >= 0.8 || parts > 1);
+    final countColor = parts > 1 || ratio >= 0.9 ? color : nf.textFaint;
     return Tooltip(
       message: parts > 1 ? '$used characters → $parts-part thread' : '$used / $m characters',
       child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -47,7 +52,7 @@ class CharRing extends StatelessWidget {
             child: Text(
               parts > 1 ? '$parts parts' : '$remaining',
               key: ValueKey(parts > 1 ? 'p$parts' : remaining),
-              style: monoStyle(context, size: 12, color: color, weight: FontWeight.w600),
+              style: monoStyle(context, size: 12, color: countColor, weight: FontWeight.w600),
             ),
           ),
           const SizedBox(width: Space.xs + 2),
@@ -58,7 +63,7 @@ class CharRing extends StatelessWidget {
           curve: Motion.standard,
           builder: (context, v, _) => CustomPaint(
             size: Size.square(ratio > 1 ? size * 1.15 : size),
-            painter: _RingPainter(value: v, color: color, track: nf.border, pulse: ratio > 1),
+            painter: _RingPainter(value: v, color: color, track: nf.borderStrong, pulse: ratio > 1),
           ),
         ),
       ]),

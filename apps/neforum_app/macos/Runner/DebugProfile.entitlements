@@ -4,9 +4,16 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
-	<key>com.apple.security.cs.allow-jit</key>
+	<!-- Posting to every network -->
+	<key>com.apple.security.network.client</key>
 	<true/>
+	<!-- Loopback server that catches OAuth redirects on 127.0.0.1:52771 -->
 	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- Attaching media and exporting data through the open/save panels -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
 </dict>
 </plist>

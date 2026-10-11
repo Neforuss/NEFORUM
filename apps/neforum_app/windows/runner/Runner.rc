@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "org.neforum" "\0"
-            VALUE "FileDescription", "neforum_app" "\0"
+            VALUE "CompanyName", "NEFORUM contributors" "\0"
+            VALUE "FileDescription", "NEFORUM - one message, every platform" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "neforum_app" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 org.neforum. All rights reserved." "\0"
-            VALUE "OriginalFilename", "neforum_app.exe" "\0"
-            VALUE "ProductName", "neforum_app" "\0"
+            VALUE "InternalName", "NEFORUM" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 NEFORUM contributors. GNU GPL v3." "\0"
+            VALUE "OriginalFilename", "NEFORUM.exe" "\0"
+            VALUE "ProductName", "NEFORUM" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

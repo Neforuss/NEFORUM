@@ -23,3 +23,7 @@ desktop.ini
 *.secrets.json
 neforum-secrets*
 .env
+
+# Rendered by test/screenshots_test.dart (copied to docs/screenshots)
+apps/neforum_app/test/goldens/
+

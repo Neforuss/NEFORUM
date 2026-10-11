@@ -7,6 +7,21 @@
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // One NEFORUM at a time: a second copy would run a second scheduler and
+  // could publish the same post twice. Bring the running one forward
+  // instead (it may be hidden in the tray).
+  HANDLE single_instance = ::CreateMutexW(nullptr, TRUE, L"Local\\org.neforum.NEFORUM");
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    HWND existing = ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"NEFORUM");
+    if (existing != nullptr) {
+      ::ShowWindow(existing, SW_SHOW);
+      ::ShowWindow(existing, SW_RESTORE);
+      ::SetForegroundWindow(existing);
+    }
+    if (single_instance != nullptr) ::CloseHandle(single_instance);
+    return EXIT_SUCCESS;
+  }
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
@@ -26,8 +41,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
-  if (!window.Create(L"neforum_app", origin, size)) {
+  Win32Window::Size size(1320, 860);
+  if (!window.Create(L"NEFORUM", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
@@ -39,5 +54,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
 
   ::CoUninitialize();
+  if (single_instance != nullptr) {
+    ::ReleaseMutex(single_instance);
+    ::CloseHandle(single_instance);
+  }
   return EXIT_SUCCESS;
 }

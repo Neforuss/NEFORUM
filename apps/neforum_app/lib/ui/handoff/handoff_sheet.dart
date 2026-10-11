@@ -111,7 +111,6 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final nf = context.nf;
     final d = ref.watch(registryProvider).descriptor(widget.account.platformId);
     final name = d?.name ?? widget.account.platformId;
-    final brand = brandFor(widget.account.platformId);
     final steps = _steps(plan.instructions);
     final appTarget = _appUrl();
 
@@ -257,7 +256,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                 ],
                 if (plan.mediaNote != null) ...[
                   const SizedBox(height: Space.md),
-                  _Callout(icon: Icons.info_outline_rounded, color: brand.colorFor(Theme.of(context).brightness), text: plan.mediaNote!),
+                  _Callout(icon: Icons.info_outline_rounded, color: nf.info, text: plan.mediaNote!),
                 ],
                 const SizedBox(height: Space.xl),
                 for (var i = 0; i < steps.length; i++) _Step(index: i + 1, text: steps[i]),

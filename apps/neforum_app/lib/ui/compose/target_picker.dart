@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/neforum_logo.dart';
+import '../../brand/platform_brand.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
@@ -154,7 +155,12 @@ class _AccountChipState extends State<AccountChip> {
                 border: Border.all(color: sel ? nf.accent : (_hover ? nf.borderStrong : nf.border), width: sel ? 1.5 : 1),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                AccountAvatar(a, size: 28, dimmed: !enabled || !sel),
+                // Profile photo when known; otherwise the platform's mark is
+                // clearer than initials (the label already names it).
+                if (a.avatarUrl != null && a.avatarUrl!.startsWith('http'))
+                  AccountAvatar(a, size: 28, dimmed: !enabled || !sel)
+                else
+                  PlatformTile(a.platformId, size: 28, circle: true, dimmed: !enabled || !sel),
                 const SizedBox(width: Space.sm),
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 190),

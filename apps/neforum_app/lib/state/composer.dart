@@ -257,7 +257,8 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
       issues.add(ValidationIssue.warning('validate.crash', 'Could not validate: $e'));
     }
     // Media host requirement is a configuration problem, not a text one.
-    if (adapter.descriptor.media.requiresPublicMediaUrl && a.tier != PlatformTier.handoff && variant.hasMedia && ref.read(servicesProvider).mediaHost == null) {
+    final services = ref.read(servicesProvider);
+    if (!services.demo && adapter.descriptor.media.requiresPublicMediaUrl && a.tier != PlatformTier.handoff && variant.hasMedia && services.mediaHost == null) {
       issues.add(ValidationIssue.error('media.host_missing', '${adapter.descriptor.name} needs a public media host (Settings → Media hosting)', field: 'media'));
     }
     // An empty composer is not a problem worth shouting about on every card.

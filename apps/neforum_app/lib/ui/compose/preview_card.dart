@@ -87,7 +87,7 @@ class PreviewCard extends ConsumerWidget {
                 Text(p.account.handle ?? p.account.displayName, overflow: TextOverflow.ellipsis, style: context.text.bodySmall?.copyWith(color: nf.textFaint, fontSize: 11.5)),
               ]),
             ),
-            CharRing(used: used, max: rules.maxLength, parts: v.isThread ? v.threadParts.length : 1, size: 22),
+            CharRing(used: used, max: rules.maxLength, parts: v.isThread ? v.threadParts.length : 1, size: 20, alwaysShowCount: true),
             const SizedBox(width: Space.xs),
             ToolButton(icon: Icons.tune_rounded, tooltip: 'Customize for ${d.name}', onPressed: onCustomize, size: 34, active: customized),
           ]),

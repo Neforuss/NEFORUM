@@ -1,0 +1,167 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.47.6'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Core - analyze and test
+        working-directory: packages/neforum_core
+        run: |
+          dart pub get
+          dart analyze --fatal-infos
+          dart test
+      - name: App - analyze and test
+        working-directory: apps/neforum_app
+        run: |
+          flutter pub get
+          dart run tool/sync_docs.dart
+          flutter analyze --fatal-infos
+          flutter test --exclude-tags screenshots
+
+  android:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build APK
+        working-directory: apps/neforum_app
+        run: |
+          flutter pub get
+          dart run tool/sync_docs.dart
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk ../../neforum-android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-android
+          path: neforum-android.apk
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build Windows
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
+          flutter pub get
+          dart run tool/sync_docs.dart
+          flutter build windows --release
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath ../../neforum-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-windows
+          path: neforum-windows.zip
+
+  macos:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build macOS
+        working-directory: apps/neforum_app
+        run: |
+          flutter pub get
+          dart run tool/sync_docs.dart
+          flutter build macos --release
+          cd build/macos/Build/Products/Release
+          ditto -c -k --keepParent NEFORUM.app "$GITHUB_WORKSPACE/neforum-macos.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-macos
+          path: neforum-macos.zip
+
+  ios:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build unsigned IPA
+        working-directory: apps/neforum_app
+        run: |
+          flutter pub get
+          dart run tool/sync_docs.dart
+          flutter build ios --release --no-codesign
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/
+          zip -qr "$GITHUB_WORKSPACE/neforum-ios-unsigned.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-ios-unsigned
+          path: neforum-ios-unsigned.ipa
+
+  web-preview:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Build web preview (demo workspace)
+        working-directory: apps/neforum_app
+        run: |
+          flutter pub get
+          dart run tool/sync_docs.dart
+          flutter build web --release --pwa-strategy=none
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-web-preview
+          path: apps/neforum_app/build/web
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, windows, macos, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

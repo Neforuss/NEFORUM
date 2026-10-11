@@ -74,7 +74,6 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
   Widget build(BuildContext context) {
     final nf = context.nf;
     final previews = ref.watch(composerPreviewsProvider);
-    final server = previews.where((p) => p.descriptor.serverSideScheduling && p.account.tier != PlatformTier.handoff).map((p) => p.descriptor.name).toSet();
     final handoff = previews.where((p) => p.account.tier == PlatformTier.handoff).map((p) => p.descriptor.name).toSet();
     final past = !_when.isAfter(DateTime.now());
     final tz = DateTime.now().timeZoneName;
@@ -139,7 +138,6 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
             Text('Time zone: $tz', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
             const SizedBox(height: Space.lg),
             _Note(icon: Icons.computer_rounded, text: _deviceNote()),
-            if (server.isNotEmpty) _Note(icon: Icons.cloud_done_outlined, text: '${server.join(', ')} will hold the post on its own server, so it goes out even if this device is off.'),
             if (handoff.isNotEmpty) _Note(icon: Icons.notifications_active_outlined, text: '${handoff.join(', ')} ${handoff.length == 1 ? 'is a hand-off account' : 'are hand-off accounts'}: you will get a reminder to tap Post.'),
           ]),
         ),

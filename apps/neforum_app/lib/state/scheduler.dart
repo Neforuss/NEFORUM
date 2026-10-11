@@ -98,7 +98,10 @@ class AppScheduler {
         payload: 'post:${p.id}',
       );
     }
-    if (Env.isAndroid || Env.isIOS) {
+    // One-off tasks need a per-post identifier, which iOS only allows when it
+    // is declared in Info.plist ahead of time; iOS relies on the reminder
+    // above plus the periodic refresh task instead.
+    if (Env.isAndroid) {
       final delay = when.difference(DateTime.now());
       try {
         await Workmanager().registerOneOffTask(
@@ -117,7 +120,7 @@ class AppScheduler {
 
   Future<void> cancelReminders(Post p) async {
     await NotificationService.instance.cancel('due:${p.id}');
-    if (Env.isAndroid || Env.isIOS) {
+    if (Env.isAndroid) {
       try {
         await Workmanager().cancelByUniqueName('publish-${p.id}');
       } on Object {
@@ -129,8 +132,10 @@ class AppScheduler {
 
   Future<void> _registerPeriodic() async {
     try {
+      // On iOS the unique name is the BGTaskScheduler identifier, which must
+      // match BGTaskSchedulerPermittedIdentifiers in Info.plist.
       await Workmanager().registerPeriodicTask(
-        'neforum-periodic',
+        kPublishDueTask,
         kPublishDueTask,
         frequency: const Duration(minutes: 15),
         existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
