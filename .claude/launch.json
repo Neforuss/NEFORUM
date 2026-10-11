@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "neforum-web",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tool/serve_web.js", "8765"],
+      "port": 8765
+    }
+  ]
+}
