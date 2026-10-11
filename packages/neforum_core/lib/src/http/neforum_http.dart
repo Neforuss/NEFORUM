@@ -165,16 +165,23 @@ class NeforumHttp {
     bool throwOnError = true,
     Duration? timeout,
   }) async {
+    // Uploads: give the body time to travel (assume a slow 150 KB/s uplink)
+    // and never re-send a big body automatically after a timeout or a
+    // dropped connection; the caller decides whether to retry.
+    final bodySize = (bytes?.length ?? 0) + (files ?? const <HttpFilePart>[]).fold<int>(0, (s, f) => s + f.bytes.length);
+    final base = timeout ?? this.timeout;
+    final effectiveTimeout = bodySize > 512 * 1024 ? _uploadTimeout(bodySize, base) : base;
+    final retries = bodySize > 8 * 1024 * 1024 ? 0 : maxRetries;
     var attempt = 0;
     while (true) {
       attempt++;
       try {
         final req = _build(method, url, headers, jsonBody, form, fields, files, bytes);
         _log.debug('$method $url (attempt $attempt)');
-        final streamed = await _client.send(req).timeout(timeout ?? this.timeout);
-        final res = await http.Response.fromStream(streamed);
+        final streamed = await _client.send(req).timeout(effectiveTimeout);
+        final res = await http.Response.fromStream(streamed).timeout(effectiveTimeout);
         final out = NeforumResponse(res.statusCode, _lowercase(res.headers), res.bodyBytes, url);
-        if (!out.ok && _retryable(out.statusCode) && attempt <= maxRetries) {
+        if (!out.ok && _retryable(out.statusCode) && attempt <= retries) {
           final wait = out.retryAfter ?? _backoff(attempt);
           if (wait <= const Duration(seconds: 30)) {
             _log.warn('HTTP ${out.statusCode} from ${url.host}; retrying in ${wait.inSeconds}s');
@@ -188,7 +195,7 @@ class NeforumHttp {
         rethrow;
       } on Object catch (e) {
         final transient = e is TimeoutException || e is http.ClientException || isTransientIoError(e);
-        if (transient && attempt <= maxRetries) {
+        if (transient && attempt <= retries) {
           final wait = _backoff(attempt);
           _log.warn('Network error calling ${url.host} ($e); retrying in ${wait.inSeconds}s');
           await Future<void>.delayed(wait);
@@ -232,6 +239,18 @@ class NeforumHttp {
     }
     return req;
   }
+
+  /// Time budget for sending [bytes]: the base timeout plus the time a
+  /// 150 KB/s uplink needs, capped at 45 minutes.
+  static Duration _uploadTimeout(int bytes, Duration base) {
+    final transfer = Duration(seconds: (bytes / (150 * 1024)).ceil());
+    final total = base + transfer;
+    const cap = Duration(minutes: 45);
+    return total > cap ? cap : total;
+  }
+
+  /// True for errors that mean "the network failed", not "the server said no".
+  static bool isTransportError(Object e) => e is TimeoutException || e is http.ClientException || isTransientIoError(e);
 
   static bool _retryable(int status) => status == 429 || status == 502 || status == 503 || status == 504;
 

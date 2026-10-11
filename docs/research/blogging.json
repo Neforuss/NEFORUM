@@ -1,0 +1,356 @@
+{
+  "platform": "Blog platforms: WordPress (self-hosted REST + Application Passwords), WordPress.com (OAuth2 + REST v1.1), Ghost Admin API, Micropub/IndieAuth (Micro.blog and any IndieAuth site), DEV.to (Forem API v1), Hashnode (GraphQL), Write.as/WriteFreely, Medium (deprecated), Substack (no publishing API)",
+  "verified_on": "2026-10-07",
+  "recommended_tiers": [
+    "byok_api",
+    "open_api",
+    "handoff",
+    "web_session"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Per platform: WordPress REST API (wp/v2) | WordPress.com REST API v1.1 + OAuth2 | Ghost Admin API | Micropub (W3C) + IndieAuth | Forem API v1 (DEV.to) | Hashnode Public GraphQL API | Write.as/WriteFreely API (+ Snap.as for photos) | Medium API v1 (deprecated, closed to new integrations) | Substack: NO publishing API (only a read-only profile-lookup Developer API and a read-only analytics MCP server)",
+    "docs_url": "https://developer.wordpress.org/rest-api/reference/posts/ ; https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/ ; https://developer.wordpress.com/docs/oauth2/ ; https://developer.wordpress.com/docs/api/1.1/post/sites/%24site/posts/new/ ; https://docs.ghost.org/admin-api/ ; https://micropub.spec.indieweb.org/ ; https://indieauth.spec.indieweb.org/ ; https://help.micro.blog/2017/api-posting/ ; https://developers.forem.com/api/v1 ; https://hashnode.com/announcements/graphql-api ; https://developers.write.as/docs/api/ ; https://developers.snap.as/docs/api/ ; https://github.com/Medium/medium-api-docs ; https://substack.com/api-tos",
+    "auth": "WordPress self-hosted: Application Passwords (WP >= 5.6) sent as HTTP Basic 'Authorization: Basic base64(username:app_password)' over HTTPS only (24-char password, spaces optional). Obtain interactively via GET {site}/wp-admin/authorize-application.php?app_name=Crier&app_id=<UUID>&success_url=crier://wp-auth&reject_url=... ; on approval WordPress redirects to success_url with query params site_url, user_login, password. success_url may be https:// or a custom app scheme (myapp://); plain http:// is rejected. Discover the authorize URL from GET {site}/wp-json/ -> authentication['application-passwords'].endpoints.authorization. Alternatively create a password manually in wp-admin Users > Profile. || WordPress.com: OAuth2 authorization-code flow at https://public-api.wordpress.com/oauth2/authorize (params client_id, redirect_uri, response_type=code, optional scope=global, optional blog=<id|url>) then POST https://public-api.wordpress.com/oauth2/token with client_id, client_secret (REQUIRED, no PKCE documented), code, grant_type=authorization_code, redirect_uri -> {access_token, token_type:'bearer', blog_id, blog_url, scope}. Implicit flow (response_type=token) exists but is documented as legacy; implicit tokens expire after two weeks; no expiry/refresh is documented for code-flow tokens. App registration at https://developer.wordpress.com/apps/ offers Type = Web or Native (the WordPress iOS README registers with Type Native and Redirect URL https://localhost). Community note: redirect URLs containing 'local'/'localhost' are rejected. Bearer token goes in 'Authorization: Bearer <token>'. Password grant exists but only for the app owner's own account. || Ghost: Admin API key from Ghost Admin > Settings > Integrations > Add custom integration; key is '<id>:<secret>'. Client mints a short-lived JWT: header {alg:'HS256', kid:<id>, typ:'JWT'}, payload {iat:now, exp:now+<=300s, aud:'/admin/'}, signed with the HEX-DECODED secret; send 'Authorization: Ghost <jwt>' plus 'Accept-Version: v5.x'. Alternative: user session cookie via POST /ghost/api/admin/session/ (email+password, optional 2FA at /session/verify/, needs Origin/Referer). || Micropub/IndieAuth: discover rel=indieauth-metadata (or rel=authorization_endpoint / rel=token_endpoint) and rel=micropub from the user's profile URL. IndieAuth = OAuth2 code flow, PKCE S256 MANDATORY, no pre-registration: client_id is a URL (https://crier.app/ with a path component; or 127.0.0.1/[::1] loopback with optional port, in which case the server MUST NOT fetch it); redirect_uri must share scheme/host/port with client_id or be listed in the client's published OAuth Client ID Metadata Document (redirect_uris[]), which is how custom-scheme redirects (crier://callback) and loopback redirects on a different host are permitted. Scopes: create, update, delete, media (plus profile/email). Token POST to token_endpoint with grant_type=authorization_code, code, client_id, redirect_uri, code_verifier -> {access_token, me, scope, expires_in?, refresh_token?}. Micropub accepts 'Authorization: Bearer <token>' (or access_token form param). Micro.blog also issues plain app tokens at https://micro.blog/account/apps (used as Bearer) and is an IndieAuth provider for any blog. || DEV.to: user-generated API key from Settings > Extensions > 'DEV Community API Keys'; headers 'api-key: <key>' and 'Accept: application/vnd.forem.api-v1+json'. || Hashnode: Personal Access Token from https://hashnode.com/settings/developer sent as 'Authorization: <PAT>' (no 'Bearer' prefix). || Write.as/WriteFreely: POST {base}/api/auth/login JSON {alias, pass} -> data.access_token (UUID); then 'Authorization: Token <access_token>'. Anonymous posting needs no auth. || Medium: self-issued integration token as 'Authorization: Bearer <token>' - Medium no longer issues new tokens (see unverified for date); OAuth2 closed to new integrations. || Substack: no official write auth; unofficial tools use the browser session cookie (substack.sid) or email/password/magic-link login.",
+    "oauth_scopes": [
+      "WordPress.com: global (all sites) or default single-blog scope via blog= param",
+      "IndieAuth/Micropub: create, update, delete, media, profile, email",
+      "Medium (legacy only): basicProfile, listPublications, publishPost, uploadImage"
+    ],
+    "pkce_supported": true,
+    "custom_scheme_redirect_ok": true,
+    "desktop_loopback_redirect_ok": true,
+    "endpoints": [
+      {
+        "purpose": "WordPress self-hosted: discover auth/authorize URL",
+        "method": "GET",
+        "url": "https://{site}/wp-json/",
+        "request_shape": "none",
+        "response_shape": "{..., authentication: {'application-passwords': {endpoints: {authorization: 'https://{site}/wp-admin/authorize-application.php'}}}}",
+        "notes": "Absence of the key means Application Passwords are disabled (HTTP sites disable them by default; filter wp_is_application_passwords_available can override)."
+      },
+      {
+        "purpose": "WordPress self-hosted: interactive Application Password authorization (open in system browser)",
+        "method": "GET",
+        "url": "https://{site}/wp-admin/authorize-application.php?app_name=Crier&app_id={uuid}&success_url=crier%3A%2F%2Fwp-auth&reject_url=crier%3A%2F%2Fwp-auth%3Fsuccess%3Dfalse",
+        "request_shape": "query: app_name (required), app_id (UUID recommended), success_url, reject_url",
+        "response_shape": "Redirect to success_url?site_url=...&user_login=...&password=xxxx%20xxxx%20... ; reject -> reject_url or success_url?success=false",
+        "notes": "success_url must be https:// or a custom scheme; http:// is rejected. Desktop can use a custom scheme too; loopback http://127.0.0.1 is NOT accepted here."
+      },
+      {
+        "purpose": "WordPress self-hosted: create post",
+        "method": "POST",
+        "url": "https://{site}/wp-json/wp/v2/posts",
+        "request_shape": "JSON {title, content (HTML/blocks), status: publish|future|draft|pending|private, excerpt, categories:[int], tags:[int], featured_media:int, slug, date}",
+        "response_shape": "Post object {id, link, status, title:{rendered}, ...}",
+        "notes": "Basic auth with app password. Categories/tags are term IDs (create via /wp/v2/tags, /wp/v2/categories)."
+      },
+      {
+        "purpose": "WordPress self-hosted: upload media",
+        "method": "POST",
+        "url": "https://{site}/wp-json/wp/v2/media",
+        "request_shape": "Either multipart/form-data with field 'file' (plus optional title/alt_text/caption), or raw binary body with headers Content-Type: image/jpeg and Content-Disposition: attachment; filename=\"photo.jpg\"",
+        "response_shape": "{id, source_url, media_details, ...}",
+        "notes": "Use returned id as featured_media. Max size = site's PHP upload_max_filesize. Upload mechanics were undocumented in the handbook (trac #55851)."
+      },
+      {
+        "purpose": "WordPress self-hosted: create Application Password programmatically (needs existing auth)",
+        "method": "POST",
+        "url": "https://{site}/wp-json/wp/v2/users/me/application-passwords",
+        "request_shape": "JSON {name, app_id}",
+        "response_shape": "{uuid, name, password (shown once), created}",
+        "notes": "Only useful after some other auth; the authorize-application.php flow is the normal first-run path."
+      },
+      {
+        "purpose": "WordPress.com: OAuth2 authorize",
+        "method": "GET",
+        "url": "https://public-api.wordpress.com/oauth2/authorize?client_id={id}&redirect_uri={uri}&response_type=code&scope=global&blog={optional}",
+        "request_shape": "query params",
+        "response_shape": "redirect to redirect_uri?code=...",
+        "notes": "redirect_uri must exactly match the registered one; 'localhost'/'local' reportedly rejected (community). No PKCE documented."
+      },
+      {
+        "purpose": "WordPress.com: OAuth2 token",
+        "method": "POST",
+        "url": "https://public-api.wordpress.com/oauth2/token",
+        "request_shape": "form: client_id, client_secret, code, grant_type=authorization_code, redirect_uri",
+        "response_shape": "{access_token, token_type:'bearer', blog_id, blog_url, scope}",
+        "notes": "client_secret required; a local-first app must embed it (treat as public). No refresh token documented."
+      },
+      {
+        "purpose": "WordPress.com: create post (also works for Jetpack-connected self-hosted sites)",
+        "method": "POST",
+        "url": "https://public-api.wordpress.com/rest/v1.1/sites/{site_id_or_domain}/posts/new",
+        "request_shape": "JSON or multipart: title, content (HTML), status: publish|draft|pending|private|future, excerpt, categories (array or CSV names), tags, date (ISO8601), slug, format, featured_image (attachment ID), media[] (multipart files), media_urls[] (sideload)",
+        "response_shape": "Post object {ID, URL, status, ...}; media_errors[] for failed uploads",
+        "notes": "Allowed inline media: jpg jpeg png gif pdf doc ppt odt pptx docx pps ppsx xls xlsx key. Bearer token."
+      },
+      {
+        "purpose": "WordPress.com: upload media",
+        "method": "POST",
+        "url": "https://public-api.wordpress.com/rest/v1.1/sites/{site}/media/new",
+        "request_shape": "multipart/form-data: media[] files, media_urls[], attrs[] {title, description, caption, alt, parent_id}",
+        "response_shape": "{media:[{ID, URL, ...}], errors:[], media_errors:[]}",
+        "notes": "Use media[].ID as featured_image."
+      },
+      {
+        "purpose": "Ghost: create post",
+        "method": "POST",
+        "url": "https://{admin_domain}/ghost/api/admin/posts/?source=html",
+        "request_shape": "JSON {posts:[{title (required), html (with ?source=html) | lexical (JSON string), status: draft|published|scheduled, published_at, tags:[{name}] or ['name'], authors:[{id}] or ['email'], feature_image, custom_excerpt, slug, visibility}]}",
+        "response_shape": "{posts:[{id, url, status, ...}]}",
+        "notes": "Headers: Authorization: Ghost <jwt>, Accept-Version: v5.0. HTML->Lexical is lossy; wrap raw HTML in <!--kg-card-begin: html--> ... <!--kg-card-end: html--> to preserve it. Unknown tag names are auto-created."
+      },
+      {
+        "purpose": "Ghost: upload image",
+        "method": "POST",
+        "url": "https://{admin_domain}/ghost/api/admin/images/upload/",
+        "request_shape": "multipart/form-data: file, purpose=image|profile_image|icon (default image), ref (optional, echoed back)",
+        "response_shape": "{images:[{url, ref}]}",
+        "notes": "Formats: WEBP, JPEG, GIF, PNG, SVG (ICO for icon). Size limit not documented in API docs."
+      },
+      {
+        "purpose": "Micropub: discover config / media endpoint",
+        "method": "GET",
+        "url": "{micropub_endpoint}?q=config",
+        "request_shape": "Bearer token",
+        "response_shape": "{'media-endpoint': 'https://...', destination:[{uid, name}], 'post-types':[...], 'syndicate-to':[...]}",
+        "notes": "Micro.blog endpoint: https://micro.blog/micropub ; media: https://micro.blog/micropub/media"
+      },
+      {
+        "purpose": "Micropub: create post",
+        "method": "POST",
+        "url": "{micropub_endpoint}",
+        "request_shape": "application/x-www-form-urlencoded: h=entry&content=...&name=...&category[]=a&category[]=b&photo=https://...&mp-photo-alt=...&post-status=draft|published&mp-slug=...&mp-destination={uid}&published=ISO8601  OR  application/json {type:['h-entry'], properties:{content:['...'], name:['...'], category:['a','b'], photo:['https://...'], 'post-status':['draft']}}",
+        "response_shape": "HTTP 201 Created or 202 Accepted with Location: <post URL>; Micro.blog drafts return JSON {url, preview}",
+        "notes": "Servers MUST accept form-encoded; JSON is optional. Content may be HTML via properties.content[0].html in JSON form."
+      },
+      {
+        "purpose": "Micropub: upload media",
+        "method": "POST",
+        "url": "{media-endpoint from q=config}",
+        "request_shape": "multipart/form-data with part named 'file'",
+        "response_shape": "201 (Micro.blog returns 202) with Location: <file URL>; use that URL as photo property",
+        "notes": "Micro.blog documents JPEG uploads."
+      },
+      {
+        "purpose": "IndieAuth: authorization + token",
+        "method": "POST",
+        "url": "{authorization_endpoint} (GET) and {token_endpoint} (POST) discovered from rel=indieauth-metadata on the user's URL",
+        "request_shape": "authorize: response_type=code&client_id=https://crier.app/&redirect_uri=crier://callback (must be listed in client metadata redirect_uris) &state&code_challenge&code_challenge_method=S256&scope=create media&me={user_url}; token: grant_type=authorization_code&code&client_id&redirect_uri&code_verifier",
+        "response_shape": "{access_token, me, scope, token_type:'Bearer', expires_in?, refresh_token?}",
+        "notes": "No app registration; Crier must host a client_id URL serving an OAuth Client ID Metadata Document (JSON: client_id, client_name, redirect_uris[...]) or h-app markup."
+      },
+      {
+        "purpose": "DEV.to: create article",
+        "method": "POST",
+        "url": "https://dev.to/api/articles",
+        "request_shape": "headers api-key, Accept: application/vnd.forem.api-v1+json, Content-Type: application/json; body {article:{title, body_markdown, published:bool (default false), series, main_image (absolute URL), canonical_url, description, tags:['a','b'] (max 4), organization_id}}",
+        "response_shape": "Article JSON {id, url, published, ...}",
+        "notes": "Rate limit: 10 creates per 30 s; 429 on excess. body_markdown may also carry Jekyll front matter."
+      },
+      {
+        "purpose": "DEV.to: update article",
+        "method": "PUT",
+        "url": "https://dev.to/api/articles/{id}",
+        "request_shape": "same {article:{...}} shape",
+        "response_shape": "Article JSON",
+        "notes": "30 updates per 30 s. Setting published:false reverts to draft. No image-upload endpoint in API v1 - images must be hosted elsewhere (main_image is a URL)."
+      },
+      {
+        "purpose": "Hashnode: publish post",
+        "method": "POST",
+        "url": "https://gql.hashnode.com",
+        "request_shape": "GraphQL: mutation { publishPost(input: { title, contentMarkdown, publicationId, tags:[{id | name, slug}], coverImageOptions:{coverImageURL}, slug, subtitle, publishedAt, originalArticleURL, metaTags:{title, description, image}, settings:{enableTableOfContent, delisted, slugOverridden}, seriesId, disableComments, publishAs }) { post { id url } } }  (createDraft(input: CreateDraftInput) has the same fields; updatePost for edits)",
+        "response_shape": "{data:{publishPost:{post:{id, url}}}} ; errors[].extensions.code in UNAUTHENTICATED | FORBIDDEN | BAD_USER_INPUT | NOT_FOUND | GRAPHQL_VALIDATION_FAILED",
+        "notes": "Header Authorization: <PAT> without Bearer. Since 2026-05-13 every API request (reads and mutations) requires the target publication to be on Hashnode Pro. Rate targets: 20,000 queries/min, 500 mutations/min."
+      },
+      {
+        "purpose": "Hashnode: upload image (cover/inline)",
+        "method": "POST",
+        "url": "https://gql.hashnode.com",
+        "request_shape": "mutation { createImageUploadURL(input:{contentType:'image/png'}) { presignedPut { url cdnUrl key } } } -> HTTP PUT image bytes to url with matching Content-Type -> mutation { confirmImageUpload(input:{key}) }",
+        "response_shape": "cdnUrl to use in coverImageOptions.coverImageURL or markdown",
+        "notes": "presignedPost field deprecated, removed 2026-09-07 (changelog 2026-09-01)."
+      },
+      {
+        "purpose": "Write.as / WriteFreely: login",
+        "method": "POST",
+        "url": "https://write.as/api/auth/login  (WriteFreely: https://{instance}/api/auth/login)",
+        "request_shape": "JSON {alias, pass}",
+        "response_shape": "{data:{access_token:'uuid', user:{...}}}",
+        "notes": "Password-based; no OAuth. Store token; Authorization: Token <token>."
+      },
+      {
+        "purpose": "Write.as / WriteFreely: create post in a blog (collection)",
+        "method": "POST",
+        "url": "https://write.as/api/collections/{alias}/posts  (anonymous: https://write.as/api/posts)",
+        "request_shape": "JSON {body (required, Markdown), title, font, lang, rtl, created (ISO8601), crosspost:[{twitter:'user'}] (Write.as only)}",
+        "response_shape": "{data:{id, slug, token (edit token), body, title, created, ...}}",
+        "notes": "Free accounts: daily new-post limit that starts low and grows; publishing bursts are rate-limited (429). Multiple collections need Casual/Pro."
+      },
+      {
+        "purpose": "Snap.as (Write.as photo hosting): upload photo",
+        "method": "POST",
+        "url": "https://snap.as/api/photos/upload",
+        "request_shape": "multipart/form-data 'file'; Authorization: Token <write.as access token>",
+        "response_shape": "201 {data:{id, filename, size, url:'https://i.snap.as/xxxx.jpeg'}}",
+        "notes": "Write.as only; self-hosted WriteFreely has no media upload API - host images elsewhere."
+      },
+      {
+        "purpose": "Medium (legacy tokens only): create post",
+        "method": "POST",
+        "url": "https://api.medium.com/v1/users/{authorId}/posts  (authorId from GET https://api.medium.com/v1/me)",
+        "request_shape": "JSON {title (<=100 chars), contentFormat:'html'|'markdown', content, tags:[...] (only first 3 used, <=25 chars each), canonicalUrl, publishStatus:'public'|'draft'|'unlisted', license, notifyFollowers}",
+        "response_shape": "{data:{id, url, title, publishStatus, ...}}",
+        "notes": "Medium README: 'The Medium API is no longer supported. We do not recommend using it.' and 'We don't allow any new integrations with our API.' Works only with a previously issued integration token."
+      },
+      {
+        "purpose": "Medium (legacy): upload image",
+        "method": "POST",
+        "url": "https://api.medium.com/v1/images",
+        "request_shape": "multipart/form-data field 'image' (JPEG, PNG, GIF incl. animated, TIFF)",
+        "response_shape": "{data:{url, md5}}",
+        "notes": "Medium also side-loads <img src> from post content automatically."
+      },
+      {
+        "purpose": "Substack: official Developer API (read-only, NOT for publishing)",
+        "method": "GET",
+        "url": "(documented at https://support.substack.com/hc/en-us/articles/45099095296916 - returned 403 to fetch)",
+        "request_shape": "API key; lookup of public creator/publication profile data",
+        "response_shape": "public 'Authorized Data' (names, URLs, subscriber count, bestseller status)",
+        "notes": "Terms effective 2026-01-08. Permitted uses exclude creating posts. No official write endpoint exists."
+      }
+    ],
+    "rate_limits": "WordPress self-hosted: none by core (host-dependent). WordPress.com: not documented. Ghost: not documented (Ghost(Pro) plan-gated: Admin API/custom integrations listed only on Business and Custom plans on ghost.org/pricing; self-hosted unrestricted). Micropub/Micro.blog: not documented. DEV.to: 10 article creates / 30 s, 30 updates / 30 s, HTTP 429. Hashnode: 20,000 queries/min, 500 mutations/min (published targets; apis.io notes Hashnode says not server-enforced). Write.as: free accounts have a growing daily new-post cap and burst publishing rate limit (429); paid exempt. Medium: legacy, undocumented. Substack: n/a.",
+    "free_tier": "WordPress self-hosted: free (GPL software). WordPress.com: API free; Press This handoff documented for Personal+ plans. Ghost self-hosted: free (MIT); Ghost(Pro) Starter ($18/mo yearly) and Publisher ($29/mo) do NOT list Admin API/custom integrations - Business ($199/mo) and Custom do (verified 2026-10-07 on ghost.org/pricing). Micro.blog: paid hosting required for a hosted blog; Micropub on your own site is free. DEV.to: free. Hashnode: API requires Pro (announced 2026-05-13; $5/seat/month per dev.to coverage). Write.as: free tier limited (daily post cap); WriteFreely self-host free (AGPL). Medium: closed. Substack: no publishing API at any price.",
+    "paid_tiers": "Ghost(Pro) Business/Custom for Admin API; Hashnode Pro for any API call; Write.as Casual/Pro for multiple blogs, crossposting and Snap.as; Micro.blog hosted plans for a Micro.blog-hosted blog.",
+    "personal_profile_posting": true,
+    "app_review_required": "None of the platforms require app review: WordPress Application Passwords, Ghost custom integrations, Micropub/IndieAuth (no registration at all), DEV.to API keys, Hashnode PATs and Write.as tokens are all user-self-issued. WordPress.com needs an app registered at developer.wordpress.com/apps (instant, no review). Substack's read-only Developer API is gated by an application/ToS process.",
+    "unreviewed_app_restrictions": "No reviewed/unreviewed distinction anywhere. Practical constraints instead: WordPress.com apps must ship a client_secret (public-client flow not offered); Ghost(Pro) Admin API is plan-gated; Hashnode is Pro-gated; Medium issues no new tokens; Substack has no write API.",
+    "token_lifetime_and_refresh": "WordPress Application Passwords: never expire until revoked (user can revoke in profile). WordPress.com: implicit tokens expire after 2 weeks; code-flow token lifetime and refresh not documented (treat as long-lived, re-auth on 401). Ghost: Admin API key is permanent; each request uses a freshly minted JWT valid <=5 minutes. IndieAuth: server-defined; expires_in and refresh_token optional (Micro.blog app tokens do not expire until revoked). DEV.to API key, Hashnode PAT, Write.as access token: no expiry documented (Write.as tokens can be revoked via DELETE /api/auth/me). Medium legacy tokens: no expiry, revocable.",
+    "media_upload_flow": "WordPress: POST /wp/v2/media (multipart 'file' or raw body + Content-Disposition) -> id -> featured_media / embed source_url. WordPress.com: POST sites/{site}/media/new or pass media[] directly to posts/new. Ghost: POST /images/upload/ -> url -> feature_image or <img> in html. Micropub: POST media-endpoint 'file' -> Location URL -> photo property (or inline). DEV.to: no API upload; images must already be hosted (or user pastes in web editor). Hashnode: createImageUploadURL -> PUT bytes -> confirmImageUpload -> cdnUrl. Write.as: Snap.as POST /api/photos/upload -> url embedded as Markdown; WriteFreely: external hosting only. Medium: POST /v1/images 'image' or auto side-load. Substack: unofficial only.",
+    "server_side_scheduling": "WordPress: status=future + date. WordPress.com: status=future + date. Ghost: status=scheduled + published_at. DEV.to: none (publish later via PUT). Hashnode: publishedAt in future / scheduledAt (draft scheduling) - exact field naming varies by mutation. Micropub: no standard scheduling (post-status=draft only). Write.as: none. Medium/Substack: n/a."
+  },
+  "handoff": {
+    "web_intent_url": "WordPress.com Press This: https://wordpress.com/post/?url={url}&title={title}&text={text}&v=5 | Self-hosted WordPress (Press This canonical plugin, no longer in core since 4.9): https://{site}/wp-admin/press-this.php?u={url}&t={title}&s={selection}&i={image_url} | DEV.to Share-to-DEV: https://dev.to/new?prefill={url-encoded markdown incl. optional front matter ---\\ntitle: ...\\npublished: false\\ntags: a, b\\n---} | Medium: https://medium.com/new-story (no prefill params) | Substack: https://{publication}.substack.com/publish/post?type=newsletter (no prefill params) | Ghost: https://{site}/ghost/#/editor/post (no prefill params) | Hashnode, Write.as, Micro.blog web: no documented prefill URL",
+    "web_intent_params": "wordpress.com/post: url, title, text, v=5 ; press-this.php: u, t, s, i ; dev.to/new: prefill (URL-encoded Markdown, user must be logged in)",
+    "android_share": "ACTION_SEND text/plain (and image/* where noted) to: WordPress org.wordpress.android and Jetpack com.jetpack.android (new post from shared text/URL, site picker, publish or draft); Micro.blog blog.micro.android (v2.0+ accepts system share: new post with quoted text + URL, or bookmark); Forem/DEV com.forem.android (official Forem app replaced the sunset DEV app; share-target behaviour not documented); Medium com.medium.reader (share = 'Save to Medium' reading list, NOT compose); Substack com.substack.app (has an in-app post editor since Sept 2024 but no documented share-to-compose). Hashnode: 'Hashnode: Dev Community' app exists on Play (read-oriented; package unverified).",
+    "ios_share": "WordPress / Jetpack for WordPress (id1565481562): share extension accepts text and URLs (first line becomes title), choose site, publish or draft; URL scheme only documented as wordpress://viewstats?siteId=. Micro.blog (id1253201335): URL scheme microblog://post?text={content} (Drafts action notes the app handles URL-encoding unusually) plus standard share support. Medium: share extension saves link to reading list only. Substack (iOS app): in-app editor, no documented share extension to compose. Forem (id1536933197) / DEV Community (id1439094790, sunset): no documented share target. Hashnode app: read-oriented.",
+    "desktop": "Open the web intent URL above in the default browser (url_launcher). Only WordPress.com, Press This and DEV.to actually prefill content; Medium/Substack/Ghost/Hashnode open an empty editor so Crier should copy the post body to the clipboard first.",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "notes": "Press This supports an image URL param (i=) on self-hosted; nothing accepts binary media in a URL. iOS WordPress share extension accepts images from the share sheet in recent versions (unverified). dev.to prefill supports Liquid embeds (GitHub, CodePen) rather than uploads."
+  },
+  "text_limits": {
+    "max_chars": 0,
+    "counting_rule": "No platform-wide hard cap for long-form blog platforms (WordPress, Ghost, DEV, Hashnode, Write.as, Micropub). Micro.blog: posts without a title are truncated in the timeline beyond 300 characters (600 if the short post contains a block quote); counter strips Markdown/HTML before counting; a post WITH a title is a full blog post with no limit. Medium: title <= 100 chars, tags <= 25 chars each. DEV.to: tags max 4 (lowercase alphanumeric). Hashnode tag slugs must be lowercase-hyphenated.",
+    "hashtags_max": 4,
+    "title_max": 100,
+    "notes": "title_max 100 applies to Medium; WordPress/Ghost titles effectively DB-limited (Ghost ~255, WordPress TEXT). Hashnode/DEV title caps not documented in sources read (Forem title length limit unverified). hashtags_max 4 = DEV.to tags; Medium uses first 3 tags; Hashnode tags array (no documented cap)."
+  },
+  "media_limits": {
+    "images_per_post": 0,
+    "image_formats": "WordPress: jpg/jpeg/png/gif/webp (+ pdf, doc etc.; per site upload_mimes). WordPress.com: jpg, jpeg, png, gif, pdf, doc, ppt, odt, pptx, docx, pps, ppsx, xls, xlsx, key (audio/video plan-dependent). Ghost images: WEBP, JPEG, GIF, PNG, SVG (ICO for icon). Micro.blog media endpoint: JPEG documented. Hashnode: via presigned PUT with declared contentType (image/png documented). Medium: JPEG, PNG, GIF (incl. animated), TIFF. DEV.to: no API upload (web editor hosts on Cloudinary/S3; GIF <= 200 megapixels/frame). Write.as via Snap.as: formats/size not documented.",
+    "image_max_bytes": 0,
+    "aspect_ratio": "No enforced ratios. DEV.to recommends 1000x420 cover_image; Ghost profile_image/icon must be square.",
+    "alt_text": true,
+    "video": "WordPress: video upload via /wp/v2/media subject to host limits. WordPress.com: 'audio and video may also be available' (plan-dependent). Ghost: /ghost/api/admin/media/upload/ for mp4/webm/ogv/mp3/wav/ogg/m4a (endpoint seen in Ghost source/commits; docs page not fetched). Micropub: 'video' property if server supports. DEV/Hashnode/Write.as: embed only. Substack mobile editor: text+images only ('video and podcast posts coming soon' as of 2024-07-25)."
+  },
+  "gotchas": [
+    "images_per_post and image_max_bytes are 0 = 'not applicable/undocumented' (no platform caps count; size caps are host/plan dependent: WordPress upload_max_filesize, Ghost config, etc.).",
+    "WordPress Application Passwords require HTTPS; on http:// sites the REST root omits the application-passwords key and Basic auth fails. The authorize-application.php success_url rejects http:// but accepts custom schemes (crier://) - so use custom-scheme deep links on all four Crier platforms (Windows/macOS need scheme registration), not a loopback server.",
+    "WordPress REST media: handbook does not document upload mechanics; both multipart 'file' and raw-body + Content-Disposition work. Some hosts/WAFs (e.g. 'wp-json' blocked, Cloudflare) break Basic auth - detect via 401 'rest_cannot_create' / 'rest_not_logged_in'.",
+    "WordPress.com OAuth2 requires client_secret at the token endpoint and documents no PKCE - a local-first app must embed the secret (consider the implicit flow with 2-week expiry or ask users to register their own app). Redirect URLs with 'localhost' are reportedly refused; the official mobile apps register Type=Native with redirect https://localhost. The password grant only works for the account that owns the app.",
+    "Ghost: JWT must use the hex-decoded secret, exp <= iat + 5 min, aud '/admin/', kid = key id; clock skew causes 401. Send Accept-Version. Ghost(Pro) Starter/Publisher plans do not list Admin API access (only Business/Custom) - self-hosted Ghost is unrestricted. HTML->Lexical conversion is lossy.",
+    "Micropub: servers MUST accept form-encoded; JSON optional. Create returns 201 OR 202 (Micro.blog media returns 202). Use q=config for media-endpoint and destination list; mp-destination for multi-blog accounts; post-status=draft only if advertised. Micro.blog timeline truncates untitled posts > 300 chars (600 with blockquote).",
+    "IndieAuth: PKCE S256 mandatory; client_id must be an https URL Crier hosts (serving JSON client metadata with redirect_uris including crier://callback) OR 127.0.0.1/[::1] loopback (server must not fetch it). Scopes needed: create (+ media for media endpoint).",
+    "DEV.to: must send Accept: application/vnd.forem.api-v1+json or requests hit the deprecated v0 behaviour; 10 creates per 30 s; no image upload API; tags max 4.",
+    "Hashnode: since 2026-05-13 ALL GraphQL API calls (even reads of your own publication) need Hashnode Pro on that publication; expect FORBIDDEN/paywall for free users. Authorization header carries the raw PAT without 'Bearer'. presignedPost image upload removed 2026-09-07; use presignedPut + confirmImageUpload.",
+    "Write.as: password login only (no OAuth); free accounts get a low daily post cap that grows with account age and burst rate-limiting (429); crosspost and Snap.as are Write.as-only; WriteFreely instances share the API at https://{instance}/api but have no media upload.",
+    "Medium: API officially unsupported and closed to new integrations (repo archived 2023-03-02); only users holding an old integration token can post. Crier should treat Medium as handoff-only (medium.com/new-story, clipboard) unless the user pastes an existing token.",
+    "Substack: no publishing API. Official Developer API (terms effective 2026-01-08) is read-only profile data; official MCP is read-only analytics. Substack Terms of Use (effective 2026-10-06) prohibit crawling/scraping 'through use of manual or automated means'; unofficial posting (python-substack, cookie-based) risks account action and breaks on captcha/magic-link login.",
+    "Web-session automation for Medium (sid/uid cookies against medium.com/_/graphql and /p/{id}/deltas) is undocumented and changes often (medium-ops README).",
+    "Hand-off prefill works only for WordPress.com (/post/?url&title&text), self-hosted Press This plugin, DEV (/new?prefill=markdown) and Micro.blog iOS (microblog://post?text=). Medium, Substack, Ghost, Hashnode editors accept no URL parameters - copy body to clipboard before launching."
+  ],
+  "sources": [
+    "https://developer.wordpress.org/rest-api/reference/posts/",
+    "https://developer.wordpress.org/rest-api/reference/media/",
+    "https://developer.wordpress.org/rest-api/reference/application-passwords/",
+    "https://developer.wordpress.org/rest-api/using-the-rest-api/authentication/",
+    "https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/",
+    "https://lists.wordpress.org/pipermail/wp-trac/2022-May/471914.html",
+    "https://developer.wordpress.com/docs/oauth2/",
+    "https://developer.wordpress.com/docs/api/1.1/post/sites/%24site/posts/new/",
+    "https://developer.wordpress.com/docs/api/1.1/post/sites/%24site/media/new/",
+    "https://github.com/wordpress-mobile/wordpress-ios",
+    "https://oauth-dropins.readthedocs.io/en/v2.2/_modules/oauth_dropins/wordpress_rest.html",
+    "https://wordpress.com/support/press-this/",
+    "https://docs.ghost.org/admin-api/",
+    "https://docs.ghost.org/admin-api/posts/creating-a-post.md",
+    "https://docs.ghost.org/admin-api/images/uploading-an-image.md",
+    "https://ghost.org/integrations/custom-integrations/",
+    "https://ghost.org/pricing/",
+    "https://micropub.spec.indieweb.org/",
+    "https://indieweb.org/Micropub-extensions",
+    "https://indieauth.spec.indieweb.org/",
+    "https://help.micro.blog/2017/api-posting/",
+    "https://help.micro.blog/2017/api-json/",
+    "https://manton.org/2023/02/27/rounding-up-to.html",
+    "https://www.manton.org/2023/10/30/microblog-for-android.html",
+    "https://actions.getdrafts.com/a/2UW",
+    "https://developers.forem.com/api/v1",
+    "https://dev.to/share-to-dev-button",
+    "https://dev.to/p/editor_guide",
+    "https://dev.to/msnmongare/getting-started-with-the-devto-api-a-beginners-guide-1ljo",
+    "https://dev.to/devteam/forem-for-android-is-here-38ik",
+    "https://hashnode.com/announcements/graphql-api",
+    "https://hashnode.com/changelog/2026-09-01-presigned-post-deprecated",
+    "https://hashnode.com/blog/hashnode-gql-agent-skill",
+    "https://dev.to/thefreetier/hashnodes-free-blog-platform-quietly-paywalled-its-entire-api-4f92",
+    "https://apis.io/rate-limits/hashnode/hashnode-rate-limits/",
+    "https://smithery.ai/skills/rawveg/hashnode-api",
+    "https://developers.write.as/docs/api/",
+    "https://developers.snap.as/docs/api/",
+    "https://discuss.write.as/t/new-rate-limits-on-publishing/2658",
+    "https://write.as/blog/ending-our-medium-integration",
+    "https://github.com/Medium/medium-api-docs",
+    "https://docs.n8n.io/integrations/builtin/credentials/medium/",
+    "https://docs.stackone.com/connectors/medium/guides/link-account/integration-token",
+    "https://timetopost.co/blog/medium-api-auto-post-2026/",
+    "https://github.com/06ketan/medium-ops",
+    "https://substack.com/api-tos",
+    "https://apis.io/providers/substack/",
+    "https://on.substack.com/p/mobile-editor",
+    "https://conductatlas.com/platform/substack/substack-terms-of-use/provision/CA-P-029302/prohibition-on-scraping-or-crawling-substack/",
+    "https://pypi.org/project/python-substack/",
+    "https://aiindigo.com/blog/review-unofficial-substack-posting-api-2026-edition"
+  ],
+  "unverified_claims": [
+    "Medium stopped issuing new integration tokens on 2025-01-01 (StackOne docs) - medium-ops README says 2023; Medium's own repo gives no date. Existing tokens 'still work' per third parties only.",
+    "Medium image upload 25 MB limit and 'tags: only first 3 used' - recalled from the README; the fetched summary said 'up to 3 tags, max 25 chars' but the size cap was not shown.",
+    "Micro.blog IndieAuth endpoints https://micro.blog/indieauth/auth and https://micro.blog/indieauth/token - recalled; help page returned 404.",
+    "Ghost media upload endpoint POST /ghost/api/admin/media/upload/ (mp4/webm/ogv/mp3/wav/ogg/m4a) and files endpoint /files/upload/ - seen only in Ghost source commits, docs page 404.",
+    "Android package names org.wordpress.android and com.jetpack.android (widely known, not confirmed from a store page); Hashnode Android package unknown.",
+    "Hashnode Pro price $5/seat/month - from dev.to coverage, not Hashnode's announcement page.",
+    "DEV.to article title maximum (~128 chars) - not found.",
+    "WordPress.com native/public-client handling: the WP iOS README registers Type=Native with redirect https://localhost, but the OAuth docs still require client_secret; whether a Native app can omit client_secret is unverified.",
+    "WordPress.com REST v2 proxy https://public-api.wordpress.com/wp/v2/sites/{site}/posts with Bearer token - exists per search snippets, not read from official docs.",
+    "Write.as '8 posts/day for free users' figure - only a 2019 forum proposal; 2021 announcement gives no number.",
+    "python-substack internal endpoints (/api/v1/drafts, /api/v1/drafts/{id}/publish, image upload) - recalled; PyPI page did not list paths.",
+    "Substack Developer API support article (45099095296916) returned 403; its base URL/endpoints are unverified.",
+    "iOS WordPress/Jetpack share extension accepting images - recalled, not verified in sources read."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "Only needed for Substack and (token-less) Medium; every other platform has a usable API. Flutter: open an embedded WebView (flutter_inappwebview or webview_flutter) to the platform login, let the user sign in (including captcha / magic-link), then read cookies via CookieManager (Substack: substack.sid; Medium: sid, uid, xsrf) and either (a) keep driving the real web editor inside the WebView, or (b) replay the cookies in Dio against the undocumented JSON endpoints the site itself uses (Medium: medium.com/_/graphql and POST /p/{id}/deltas; Substack: the /api/v1/drafts family used by python-substack). flutter_cookie_bridge syncs cookies between InAppWebView and Dio. Windows/macOS WebView2/WKWebView work the same.",
+    "known_libraries": [
+      "python-substack (MIT, v0.10.0 2026-10-07; email/password or cookie auth; 'uses undocumented Substack interfaces that may change without notice')",
+      "medium-ops (MIT; MEDIUM_SID/MEDIUM_UID cookies + optional legacy integration token; undocumented GraphQL/dashboard endpoints)",
+      "acedatacloud 'medium' skill (cookie jar sid/uid/xsrf against Medium's internal web API)",
+      "flutter_inappwebview / webview_flutter + CookieManager; flutter_cookie_bridge (cookie sync to Dio)"
+    ],
+    "risk": "HIGH for Substack: Terms of Use (effective 2026-10-06) forbid crawling/scraping 'through use of manual or automated means', and community reviews warn accounts using automated posting could be flagged; login frequently requires captcha or magic-link, so cookie capture via WebView is the only reliable path and sessions expire. MEDIUM-HIGH for Medium: internal endpoints change without notice (medium-ops recommends pinning versions); automation of a consumer login session is outside any supported path. For WordPress/Ghost/Micropub/DEV/Hashnode/Write.as a WebView is unnecessary and should not be used."
+  },
+  "confidence": "medium"
+}

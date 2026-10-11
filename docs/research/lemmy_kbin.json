@@ -1,0 +1,284 @@
+{
+  "platform": "Lemmy, Mbin/Kbin, PieFed (threadiverse)",
+  "verified_on": "2026-10-08",
+  "recommended_tiers": [
+    "open_api",
+    "handoff"
+  ],
+  "official_api": {
+    "exists": true,
+    "name": "Lemmy HTTP API v3/v4; Mbin REST API (OAuth2); PieFed Alpha API (/api/alpha)",
+    "docs_url": "https://join-lemmy.org/api/ (lemmy-js-client typedoc, v4) | https://join-lemmy.org/docs/contributors/09-api-v4.html | https://docs.joinmbin.org/app_developers/ + https://docs.joinmbin.org/api | https://crust.piefed.social/api/alpha/swagger (PieFed dev) / https://<instance>/api/alpha/swagger",
+    "auth": "LEMMY: POST /api/v3/user/login (0.19.x stable) or POST /api/v4/account/auth/login (1.0 beta; v3 path still works) with JSON {username_or_email, password, totp_2fa_token?} -> {jwt, registration_created, verify_email_sent}. Since 0.19 the JWT is sent as 'Authorization: Bearer <jwt>' header (or cookie named 'jwt'); the old 'auth' body/query param is gone. Username+password only; no OAuth2 for third-party apps (Lemmy 1.0's OAuth is for logging INTO Lemmy via external IdPs, not for apps). MBIN: real OAuth2 (league/oauth2-server). Register a client with POST /api/client (JSON {name, contactEmail, description, public:true/false, username? (client_credentials only), redirectUris:[...], grants:['authorization_code','refresh_token'], scopes:[...]}) -> {identifier, secret(null for public)}. Then GET /authorize (authorization_code, PKCE S256 REQUIRED for public clients: require_code_challenge_for_public_clients=true) and POST /token. Grants enabled: authorization_code, refresh_token, client_credentials; password and device_code grants disabled. PIEFED: POST /api/alpha/user/login JSON {username, password} -> {jwt}; send 'Authorization: Bearer <jwt>'. No OAuth2.",
+    "oauth_scopes": [
+      "Mbin minimum for Crier: read, write (or granular: entry:create, post:create, magazine, user:profile:read)",
+      "Mbin granular scopes exist: entry:create, entry:edit, entry:delete, entry:vote, post:create, post:edit, post:delete, magazine, magazine:subscribe, user, user:profile:read, bookmark, vote, report, ... (101 scopes total; default scope 'read')",
+      "Lemmy/PieFed: no scopes (JWT = full account)"
+    ],
+    "pkce_supported": true,
+    "custom_scheme_redirect_ok": true,
+    "desktop_loopback_redirect_ok": true,
+    "token_lifetime_and_refresh": "LEMMY: JWT has no documented expiry; logout (POST /api/v3/user/logout or /api/v4/account/auth/logout) invalidates it; GET /api/v4/account/validate_auth checks validity. MBIN: access token TTL 1 hour, refresh token TTL 1 month, auth code TTL 10 minutes (config/packages/league_oauth2_server.yaml); token response {token_type, expires_in (3600), access_token, refresh_token}; POST /api/revoke revokes. PIEFED: JWT returned from /user/login; no documented expiry.",
+    "endpoints": [
+      {
+        "purpose": "Lemmy login",
+        "method": "POST",
+        "url": "https://{instance}/api/v3/user/login  (1.0: /api/v4/account/auth/login)",
+        "request_shape": "{\"username_or_email\": \"...\", \"password\": \"...\", \"totp_2fa_token\": \"123456\"(optional)}",
+        "response_shape": "{\"jwt\": \"...\", \"registration_created\": false, \"verify_email_sent\": false}",
+        "notes": "If 2FA enabled the first call errors and you must resend with totp_2fa_token."
+      },
+      {
+        "purpose": "Lemmy create post",
+        "method": "POST",
+        "url": "https://{instance}/api/v3/post  (1.0: /api/v4/post)",
+        "request_shape": "{\"name\": \"title (required, 3-200)\", \"community_id\": 123 (required), \"url\"?: \"https://...\", \"body\"?: \"markdown\", \"alt_text\"?: \"...\", \"nsfw\"?: bool, \"language_id\"?: int, \"custom_thumbnail\"?: \"https://...\", \"honeypot\"?: \"\", \"tags\"?: [CommunityTagId] (1.0), \"scheduled_publish_time_at\"?: unix-seconds (1.0)}",
+        "response_shape": "{\"post_view\": {post: {id, name, url, body, ap_id, ...}, community, creator, ...}}",
+        "notes": "Header Authorization: Bearer <jwt>. Exactly one post per call; image posts = upload image first then put returned URL in 'url'."
+      },
+      {
+        "purpose": "Lemmy upload image (0.19.x)",
+        "method": "POST",
+        "url": "https://{instance}/pictrs/image",
+        "request_shape": "multipart/form-data, file field name images[] (one or more)",
+        "response_shape": "{\"msg\": \"ok\", \"files\": [{\"file\": \"abc.jpg\", \"delete_token\": \"...\"}]}  -> image URL = https://{instance}/pictrs/image/abc.jpg",
+        "notes": "Needs Authorization: Bearer <jwt> (or jwt cookie). Instance size limits enforced by pict-rs/nginx (pict-rs default max_file_size 40MB; stock docker nginx client_max_body_size 20M; some instances far lower, e.g. lemm.ee ~100KB)."
+      },
+      {
+        "purpose": "Lemmy upload image (1.0 / API v4)",
+        "method": "POST",
+        "url": "https://{instance}/api/v4/image",
+        "request_shape": "multipart/form-data, field images[] (lemmy-js-client uploadImage builds FormData with 'images[]')",
+        "response_shape": "{\"image_url\": \"https://.../api/v4/image/abc.jpg\", \"filename\": \"abc.jpg\"}",
+        "notes": "Images served at GET /api/v4/image/{filename}; avatars/banners moved to separate endpoints (POST /api/v4/account/avatar etc.)."
+      },
+      {
+        "purpose": "Lemmy resolve community / object by name or URL",
+        "method": "GET",
+        "url": "https://{instance}/api/v3/community?name=star_trek@xyz.tld  |  https://{instance}/api/v3/resolve_object?q=!star_trek@xyz.tld",
+        "request_shape": "GetCommunity {id?: CommunityId, name?: string 'star_trek' or 'star_trek@xyz.tld'}; ResolveObject {q: full URL or !community@host}",
+        "response_shape": "{community_view: {community: {id, name, title, actor_id/ap_id, ...}}, moderators, discussion_languages}",
+        "notes": "Use /community?name= to get community_id; resolve_object forces federated fetch for communities not yet known to the home instance. 1.0: same under /api/v4/."
+      },
+      {
+        "purpose": "Lemmy site info / languages / my_user",
+        "method": "GET",
+        "url": "https://{instance}/api/v3/site  (1.0: /api/v4/site + GET /api/v4/account for my_user)",
+        "request_shape": "none",
+        "response_shape": "{site_view, all_languages:[{id, code, name}], discussion_languages, my_user (v3 only), version}",
+        "notes": "Use all_languages to map language_id; 'version' tells you whether /api/v4 exists."
+      },
+      {
+        "purpose": "Lemmy logout / validate",
+        "method": "POST / GET",
+        "url": "POST /api/v3/user/logout (1.0: /api/v4/account/auth/logout); GET /api/v4/account/validate_auth",
+        "request_shape": "none",
+        "response_shape": "{success: true}",
+        "notes": ""
+      },
+      {
+        "purpose": "Mbin register OAuth2 client (one-time, per instance)",
+        "method": "POST",
+        "url": "https://{instance}/api/client",
+        "request_shape": "{\"name\": \"Crier\", \"contactEmail\": \"you@example.com\", \"description\": \"...\", \"public\": true, \"redirectUris\": [\"http://127.0.0.1:PORT/callback\", \"crier://callback\"], \"grants\": [\"authorization_code\", \"refresh_token\"], \"scopes\": [\"read\", \"write\"]}",
+        "response_shape": "{\"identifier\": \"<32 hex>\", \"secret\": null (public) | \"<sha512 hex>\", ...}",
+        "notes": "Unauthenticated in the default config, BUT rate limited by api_oauth_client limiter = 2 registrations per 360 minutes per IP, and instances can set KBIN_ADMIN_ONLY_OAUTH_CLIENTS so only admins may create clients (then you must ask the admin). Docs example redirectUris include 'https://localhost:3000/redirect' and 'myapp://redirect'. /api/client-with-logo is the multipart variant."
+      },
+      {
+        "purpose": "Mbin OAuth2 authorize + token",
+        "method": "GET / POST",
+        "url": "https://{instance}/authorize  and  https://{instance}/token",
+        "request_shape": "authorize: ?response_type=code&client_id=&redirect_uri=&scope=read%20write&state=&code_challenge=&code_challenge_method=S256 ; token: form-encoded grant_type=authorization_code&client_id=&code=&redirect_uri=&code_verifier= (confidential clients add client_secret); refresh: grant_type=refresh_token&refresh_token=&client_id=",
+        "response_shape": "{token_type:'Bearer', expires_in:3600, access_token, refresh_token}",
+        "notes": "PKCE mandatory for public clients. Then 'Authorization: Bearer <access_token>'."
+      },
+      {
+        "purpose": "Mbin create thread (entry) in a magazine - link",
+        "method": "POST",
+        "url": "https://{instance}/api/magazine/{magazine_id}/link",
+        "request_shape": "{\"title\": \"2-255 graphemes (required)\", \"url\": \"https://... (requires TLD)\", \"body\"?: \"markdown (max 35000 graphemes)\", \"tags\"?: [\"tag\"], \"isOc\"?: bool, \"isAdult\"?: bool, \"lang\"?: \"en\"}",
+        "response_shape": "EntryResponseDto {entryId, magazine, user, title, url, body, image, ...}",
+        "notes": "Scope entry:create. Rate limiter api_entry = 2 entries per 6 minutes (default config)! Also /article (text-only, same body minus url), /entries (newer unified multipart endpoint, optional image), /image (multipart image thread). All three legacy endpoints are marked deprecated in favour of POST /api/magazine/{magazine_id}/entries."
+      },
+      {
+        "purpose": "Mbin create image thread",
+        "method": "POST",
+        "url": "https://{instance}/api/magazine/{magazine_id}/image",
+        "request_shape": "multipart/form-data: uploadImage=<file>, title, body?, alt?, tags?, isOc?, isAdult?, lang?",
+        "response_shape": "EntryResponseDto",
+        "notes": "Scope entry:create; rate limiter api_image = 5 per 30 minutes."
+      },
+      {
+        "purpose": "Mbin create microblog post in a magazine",
+        "method": "POST",
+        "url": "https://{instance}/api/magazine/{magazine_id}/posts  |  /posts/image (multipart, uploadImage + alt)",
+        "request_shape": "{\"body\": \"markdown\", \"isAdult\"?: bool, \"lang\"?: \"en\", \"tags\"?: []}",
+        "response_shape": "PostResponseDto {postId, magazine, user, body, image, ...}",
+        "notes": "Scope post:create; api_post limiter 10 per 20 minutes. Microblog posts have no title/url - the Mastodon-style side of Mbin."
+      },
+      {
+        "purpose": "Mbin find magazine id",
+        "method": "GET",
+        "url": "https://{instance}/api/magazine/name/{name}  (also /api/magazines?q=)",
+        "request_shape": "path name e.g. 'fediverse' or 'fediverse@kbin.earth'",
+        "response_shape": "MagazineResponseDto {magazineId, name, title, ...}",
+        "notes": "Names of these lookup routes seen in magazine_api.yaml listing; exact query params not verified."
+      },
+      {
+        "purpose": "PieFed login",
+        "method": "POST",
+        "url": "https://{instance}/api/alpha/user/login",
+        "request_shape": "{\"username\": \"...\", \"password\": \"...\"}",
+        "response_shape": "{\"jwt\": \"...\"}",
+        "notes": "Rate limit 20/hour per IP (Flask-Limiter)."
+      },
+      {
+        "purpose": "PieFed create post",
+        "method": "POST",
+        "url": "https://{instance}/api/alpha/post",
+        "request_shape": "{\"title\": \"required (NOT 'name' - differs from Lemmy)\", \"community_id\": int required, \"body\"?: \"markdown\", \"url\"?: \"https://...\", \"nsfw\"?: bool, \"language_id\"?: int, \"alt_text\"?: \"...\", \"ai_generated\"?: bool, \"event\"?: {...}, \"poll\"?: {...}}  (newer swagger also lists flair, post_type, gallery[] for 1.8 gallery posts)",
+        "response_shape": "{\"post_view\": {...}} (GetPostResponse)",
+        "notes": "Authorization: Bearer <jwt>. Rate limit 3 posts/minute. Post type inferred: event -> poll -> url=Link -> Article. Web form limits: title 3-255 chars, body up to 50000 chars; API code does not re-check title length (DB column likely 255)."
+      },
+      {
+        "purpose": "PieFed upload image",
+        "method": "POST",
+        "url": "https://{instance}/api/alpha/upload/image",
+        "request_shape": "multipart/form-data, field name 'file'",
+        "response_shape": "{\"url\": \"https://.../...\"}",
+        "notes": "Rate limit 15/hour. Allowed: .gif .jpg .jpeg .png .webp .heic .mpo .avif .svg (video for eligible users); images are resized server-side; no explicit byte limit in code (nginx limits apply), GIF web form limit 10MB."
+      },
+      {
+        "purpose": "PieFed resolve community / site",
+        "method": "GET",
+        "url": "https://{instance}/api/alpha/community?name=name@host | /api/alpha/resolve_object?q=... | /api/alpha/site | /api/alpha/search",
+        "request_shape": "GetCommunity {id?, name?}; ResolveObject {q}",
+        "response_shape": "GetCommunityResponse {community_view, discussion_languages, moderators, site}",
+        "notes": "GET /site rate limited 20/minute."
+      }
+    ],
+    "personal_profile_posting": true,
+    "app_review_required": "None on any of the three. Lemmy/PieFed: any account can call the API immediately (instance may require registration application approval / email verification for the ACCOUNT). Mbin: self-service OAuth2 client registration via POST /api/client unless the instance enables KBIN_ADMIN_ONLY_OAUTH_CLIENTS.",
+    "unreviewed_app_restrictions": "No concept of app review. Only per-account restrictions (new-account rate limits, moderation, instance-level image upload disabled, Lemmy 'bot account' flag optional). Lemmy admins can disable image uploads entirely for non-admins (0.19.4+ / 1.0 'image_upload_disabled' style setting; name unverified).",
+    "free_tier": "All free / self-hosted, GPL/AGPL software; no paid API. Limits are instance-configurable defaults (2026-10): Lemmy local_site_rate_limit defaults message 180/60s, post 6/600s, register 3/3600s, image 6/3600s, comment 6/600s, search 60/600s (per IP). Mbin defaults (config/packages/rate_limiter.yaml): api_entry 2/6min, api_post 10/20min, api_image 5/30min, api_comment 20/10min, api_read 240/2min, api_update 120/2min, api_oauth_client 2/360min. PieFed: post 3/minute, upload 15/hour, login 20/hour, site 20/minute.",
+    "paid_tiers": "None.",
+    "rate_limits": "Lemmy: IP-based buckets above; 429 with error 'rate_limit_error'. Mbin: sliding-window limiters, response headers X-RateLimit-Limit / X-RateLimit-Remaining / X-RateLimit-Retry-After, 429 'You are being rate limited'. PieFed: Flask-Limiter, 429 DefaultError.",
+    "media_upload_flow": "All three: upload image first (Lemmy POST /pictrs/image or /api/v4/image multipart images[]; PieFed POST /api/alpha/upload/image field 'file'; Mbin multipart 'uploadImage' directly on the create endpoint /api/magazine/{id}/image or /entries or /posts/image), then create the post with the returned URL in 'url' (Lemmy/PieFed). One image per Lemmy/Mbin/PieFed post (PieFed 1.8 adds gallery posts with multiple images via 'gallery' array - swagger-only, unverified in code). Videos: Lemmy only via pict-rs if instance allows; PieFed video upload for eligible users only.",
+    "server_side_scheduling": "Lemmy 1.0 (beta, not yet stable as of 2026-10): CreatePost.scheduled_publish_time_at (unix seconds). Lemmy 0.19.x, Mbin, PieFed: none; Crier must schedule locally."
+  },
+  "handoff": {
+    "web_intent_url": "Lemmy (lemmy-ui): https://{instance}/create_post ; Mbin: https://{instance}/new_entry or https://{instance}/m/{magazine}/new_entry ; PieFed: https://{instance}/community/{community_name}/submit (or /submit/link)",
+    "web_intent_params": "Lemmy: title, url, body, communityId (numeric, instance-specific), languageId, nsfw (true/false), customThumbnailUrl, altText. Mbin: title, url, body, imageAlt, isNsfw, isOc, tags[] , imageHash (all read via #[MapQueryParameter]; legacy kbin also accepted /new?url=&title=). PieFed: ?link=<url>&title=<title> on /community/<actor>/submit/link (only 'link' and 'title' are read; 'source=<post_id>' cross-posts an existing post).",
+    "supports_prefilled_text": true,
+    "supports_prefilled_media": false,
+    "android_share": "No official app for any of them. Third-party clients that register ACTION_SEND: Jerboa (com.jerboa) text/plain + image/*; Thunder (com.hjiangsu.thunder, verified in manifest, package id from search) text/plain + image/* labelled 'create post'; Voyager (app.vger.voyager) text/plain only, custom scheme vger://. Interstellar (one.jwr.interstellar, Mbin/Lemmy/PieFed client) has NO ACTION_SEND filter. PieFed itself is a PWA (install from browser). Safest generic route: ACTION_VIEW on the prefilled web URL above.",
+    "ios_share": "No official apps. Jerboa is Android-only. Thunder/Voyager are on the App Store; neither documents a Share Extension that receives URLs to create a post (Thunder has a Safari extension to OPEN Lemmy links; Voyager handles go.getvoyager.app / vger:// links). Use the prefilled web URL in SFSafariViewController / UIApplication.open.",
+    "desktop": "Open the prefilled web composer URL in the default browser (Lemmy /create_post?title=&url=&body=, Mbin /new_entry?title=&url=&body=, PieFed /community/x/submit/link?link=&title=). User must already be logged in to that instance in the browser.",
+    "notes": "Instance-specific: Crier must know the user's home instance for all three. Lemmy's communityId param is a numeric id valid only on that home instance (e.g. 7133 on lemmy.world) - resolve it with GET /api/v3/community?name=. Media cannot be prefilled through any of these URLs; Lemmy will auto-generate a thumbnail from the url. Mbin and PieFed URLs with prefilled query params are verified in source (EntryCreateController #[MapQueryParameter]; pyfedi community/routes.py request.args.get('link'/'title')); lemmy-ui params verified in create-post.tsx getCreatePostQueryParams."
+  },
+  "text_limits": {
+    "max_chars": 200,
+    "title_max": 200,
+    "counting_rule": "LEMMY: title 3-200 and body <= 50,000 counted in UTF-16 code units (validation.rs uses encode_utf16().count(), matching HTML maxlength); title trimmed, no newlines, needs >=3 visible (non-invisible) chars; url <= 2000 chars, schemes http/https/magnet; alt_text <= 1500. MBIN: title 2-255 and body <= 35,000 counted in GRAPHEMES (Symfony Assert\\Length countUnit COUNT_GRAPHEMES); url must have a TLD; microblog post body limit not verified (Post::MAX_BODY_LENGTH). PIEFED: web form title 3-255, body 3-50,000 Python len() (code points); API create path has no explicit title length check but same DB column (255 assumed).",
+    "hashtags_max": 0,
+    "notes": "Hashtags are plain markdown text on all three (Mbin has a separate 'tags' array, max count unverified). Lemmy body/PieFed body are markdown; Mbin body is markdown. Lemmy requires community_id; Mbin requires magazine_id; PieFed requires community_id - Crier needs a community picker per account. Lemmy title cannot contain newlines."
+  },
+  "media_limits": {
+    "images_per_post": 1,
+    "image_formats": "Lemmy (pict-rs): png, jpeg, webp, gif, avif, jxl; video/animation if instance allows. PieFed: .gif .jpg .jpeg .png .webp .heic .mpo .avif .svg (server converts/resizes to configured JPEG/WEBP/PNG). Mbin: ImageManager::IMAGE_MIMETYPE_STR (jpeg/png/gif/webp typical; exact list unverified).",
+    "image_max_bytes": 41943040,
+    "aspect_ratio": "No constraint on any platform (Lemmy thumbnails resized to 512px max; PieFed resizes to image_max_dimension).",
+    "alt_text": true,
+    "video": "Lemmy: pict-rs can accept video/animation (mp4, webm) when the admin enables it; defaults ~10MiB/900 frames on some instances, varies. PieFed: video upload only for eligible (trusted) users; otherwise post a video URL (post_type Video). Mbin: no video upload; link posts only."
+  },
+  "gotchas": [
+    "Three different, mutually incompatible APIs behind near-identical UX: PieFed is '95% the same as Lemmy' but NOT compatible (e.g. field is 'title' not 'name', base path /api/alpha, login body {username,password} not {username_or_email,password}); Mbin is a completely different REST+OAuth2 API. Detect software via GET /nodeinfo/2.0 or GET /api/v3/site (Lemmy) / /api/alpha/site (PieFed) / /api/info (Mbin, unverified).",
+    "Lemmy is mid-transition: 0.19.20 (2026-07-21) is the latest stable and only has /api/v3; 1.0.0-beta.x (open beta since 2026-05-19, beta.1 in June 2026) adds /api/v4 and keeps /api/v3 for backwards compatibility. Target /api/v3 now and feature-detect v4 (scheduled posts, tags) via the 'version' string from /site.",
+    "Lemmy image upload path changes from /pictrs/image (v3, response {files:[{file,delete_token}]}) to /api/v4/image (response {image_url, filename}); multipart field is images[] in both.",
+    "Lemmy auth: Bearer header since 0.19; the 'auth' param in the old docs page (join-lemmy.org/docs/contributors/04-api.html) is obsolete. TOTP users need totp_2fa_token on login.",
+    "Lemmy image size limits are purely per-instance (pict-rs default 40MB, stock nginx 20MB, lemm.ee ~100KB). Expect 413 / pict-rs error; let the user fall back to a hosted URL.",
+    "Lemmy default post rate limit: 6 posts per 10 minutes per IP, image uploads 6 per hour - cross-posting one item to several communities can hit this quickly.",
+    "Mbin OAuth client registration: 2 per 6 hours per IP, and instances may restrict client creation to admins (KBIN_ADMIN_ONLY_OAUTH_CLIENTS). Because Crier has no server, each user must register their own public client on their instance (or Crier does it once per instance on first login and stores identifier locally). Client secret for public clients is null.",
+    "Mbin api_entry rate limit default is 2 thread creations per 6 minutes per user - brutal for cross-posting; api_image 5 per 30 min.",
+    "Mbin thread endpoints /article, /link, /image are marked deprecated in source in favour of multipart POST /api/magazine/{id}/entries; keep both code paths.",
+    "Mbin title counts graphemes (255), Lemmy counts UTF-16 units (200), PieFed counts code points (255): emoji-heavy titles need per-platform counters.",
+    "PieFed API is self-described 'alpha' and changes often (1.8.1 released 2026-10-08); swagger lives on each instance at /api/alpha/swagger. Rate limits: 3 posts/minute, 15 uploads/hour, 20 logins/hour.",
+    "PieFed login 20/hour per IP means do not re-login on every launch - persist the jwt.",
+    "Hand-off URLs cannot carry media on any of the three; Lemmy's communityId is instance-specific and must be resolved first.",
+    "No official mobile apps exist for Lemmy, Mbin or PieFed; share-sheet targets are third-party apps whose package names may change. Only Jerboa and Thunder accept image/* shares; Interstellar accepts none."
+  ],
+  "sources": [
+    "https://join-lemmy.org/docs/contributors/04-api.html",
+    "https://join-lemmy.org/docs/contributors/09-api-v4.html",
+    "https://join-lemmy.org/news/2026-05-19_-_Open_beta_testing_for_Lemmy_1.0.0",
+    "https://lemmy.ml/post/49561214",
+    "https://api.github.com/repos/LemmyNet/lemmy/releases/latest",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/http.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/other_types.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/types/CreatePost.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/types/Login.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/types/LoginResponse.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/types/UploadImageResponse.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/types/GetCommunity.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-js-client/main/src/types/ResolveObject.ts",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy/main/crates/utils/src/utils/validation.rs",
+    "https://raw.githubusercontent.com/LemmyNet/lemmy-ui/main/src/shared/components/post/create-post.tsx",
+    "https://raw.githubusercontent.com/LemmyNet/jerboa/main/app/src/main/AndroidManifest.xml",
+    "https://raw.githubusercontent.com/thunder-app/thunder/develop/android/app/src/main/AndroidManifest.xml",
+    "https://raw.githubusercontent.com/aeharding/voyager/main/android/app/src/main/AndroidManifest.xml",
+    "https://raw.githubusercontent.com/interstellar-app/interstellar/main/android/app/src/main/AndroidManifest.xml",
+    "https://f-droid.org/packages/com.jerboa/",
+    "https://f-droid.org/packages/app.vger.voyager",
+    "https://linuxphoneapps.org/apps/one.jwr.interstellar/",
+    "https://lemmy.amethyst.name/post/675430 (local_site_rate_limit defaults)",
+    "https://peachpie.theatl.social/post/44055 (Share to Lemmy bookmarklet)",
+    "https://docs.joinmbin.org/app_developers/",
+    "https://docs.joinmbin.org/api",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/config/packages/league_oauth2_server.yaml",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/config/packages/rate_limiter.yaml",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/config/mbin_routes/magazine_api.yaml",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/config/mbin_routes/security.yaml",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/config/mbin_routes/entry.yaml",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/src/Controller/Api/Entry/MagazineEntryCreateApi.php",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/src/Controller/Api/Post/PostsCreateApi.php",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/src/Controller/Api/OAuth2/CreateClientApi.php",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/src/Controller/Entry/EntryCreateController.php",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/src/DTO/EntryDto.php",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/src/DTO/ImageUploadDto.php",
+    "https://raw.githubusercontent.com/MbinOrg/mbin/main/src/Entity/Entry.php",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/api/alpha/routes.py",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/api/alpha/schema.py",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/api/alpha/utils/post.py",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/api/alpha/utils/upload.py",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/shared/upload.py",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/community/forms.py",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/community/routes.py",
+    "https://codeberg.org/rimu/pyfedi/raw/branch/main/app/__init__.py",
+    "https://codeberg.org/rimu/pyfedi/releases",
+    "https://crust.piefed.social/api/alpha/swagger.json",
+    "https://piefed.jeena.net/post/62754 (Lemmy image size limits discussion)",
+    "https://forum.agnos.is/post/https%3A%2F%2Flemmy.dbzer0.com%2Fcomment%2F17788573 (PieFed vs Lemmy API compatibility)"
+  ],
+  "unverified_claims": [
+    "Thunder Android applicationId is com.hjiangsu.thunder (from search snippet, not read from build.gradle).",
+    "Lemmy JWTs have no expiry and are stored in a login_token table so logout invalidates them (recollection; not read in source this session).",
+    "Lemmy-ui stores the JWT in a cookie named 'jwt' (needed for WebView session reuse) - recalled, not verified.",
+    "Mbin /authorize and /token endpoint paths come from the docs page summary; the league bundle route config was not read directly.",
+    "Mbin magazine lookup endpoints /api/magazine/name/{name} and /api/magazines?q= - recalled from API docs, route file not read.",
+    "Mbin Post::MAX_BODY_LENGTH for microblog posts (believed 35000 like entries) not verified.",
+    "pict-rs accepted image formats list (png/jpeg/webp/gif/avif/jxl) is from memory of pict-rs docs.",
+    "PieFed 'flair', 'post_type', 'gallery' fields on POST /post were reported by the swagger summary but not seen in utils/post.py (which only reads title, community_id, body, url, nsfw, ai_generated, alt_text, language_id, event, poll).",
+    "Lemmy 'image_upload_disabled' admin setting name and the exact 0.19.x version that added it.",
+    "Mbin's web composer legacy path /new?url=&title= (kbin era) may no longer exist; current route is /new_entry."
+  ],
+  "web_session": {
+    "feasible": true,
+    "how": "All three are standard server-rendered/SSR web apps with cookie sessions (lemmy-ui: 'jwt' cookie; Mbin: Symfony PHPSESSID + remember-me; PieFed: Flask session cookie). A flutter_inappwebview / webview_flutter WebView can load https://{instance}/login, let the user log in, then navigate to the prefilled composer URL (Lemmy /create_post?title=&url=&body=&communityId=, Mbin /new_entry?title=&url=&body=, PieFed /community/x/submit/link?link=&title=) and let the user press Submit. Reading the Lemmy 'jwt' cookie out of the WebView and reusing it as a Bearer token for the API is also possible (same credential as /user/login). No CAPTCHA on login by default (Lemmy captcha is registration-only; instances may add Cloudflare).",
+    "known_libraries": [
+      "No dedicated open-source WebView-driver libraries for Lemmy/Mbin/PieFed exist; generic flutter_inappwebview (cookie manager + JS injection) is what Flutter apps use.",
+      "Lemmy: lemmy-js-client (official TS), lemmy-dart / lemmy_api_client (Flutter, used by Thunder), Pythorhead (Python), lemmy-rs. Mbin: Interstellar (Flutter, AGPL) has a working OAuth2-PKCE + API client to copy from. PieFed: Interstellar, Thunder (Flutter) both implement the alpha API."
+    ],
+    "risk": "Very low. These are federated FOSS servers with real public APIs; there is no ToS against automation, no bot-detection, and instance admins mostly care about spam volume. Ban risk comes from behaviour (posting the same link to many communities at once, exceeding per-instance rate limits, not marking bot accounts) rather than from the client used. Using the API with the user's own JWT/OAuth token is the intended path; WebView driving is unnecessary except as a fallback for instances with unusual login (OAuth/SSO logins in Lemmy 1.0)."
+  },
+  "confidence": "high"
+}

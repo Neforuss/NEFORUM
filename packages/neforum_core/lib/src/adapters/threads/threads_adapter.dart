@@ -1,0 +1,663 @@
+import 'package:characters/characters.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../auth/auth_broker.dart';
+import '../../auth/oauth2_pkce.dart';
+import '../../handoff/handoff_plan.dart';
+import '../../http/neforum_http.dart';
+import '../../media_hosts/media_host.dart';
+import '../../model/account.dart';
+import '../../model/media.dart';
+import '../../model/platform_descriptor.dart';
+import '../../model/post_variant.dart';
+import '../../model/publish_result.dart';
+import '../../model/validation.dart';
+import '../../text/rules_validator.dart';
+import '../../text/url_detector.dart';
+import '../adapter_context.dart';
+import '../connect_spec.dart';
+import '../platform_adapter.dart';
+import 'threads_api.dart';
+
+/// Threads (Meta) through the official Threads API with the user's own Meta
+/// app ("bring your own keys"), plus a hand-off tier that opens the Threads
+/// web intent / app share sheet.
+///
+/// Publishing is Meta's two-step container flow: create a container
+/// (`POST /{user}/threads`), wait until its media is processed, then
+/// `POST /{user}/threads_publish`. Media must be at a public URL, so a
+/// configured [MediaHost] is required for images and video.
+class ThreadsAdapter extends PlatformAdapter {
+  /// [delay] is used between container-status polls (tests pass a no-op).
+  ThreadsAdapter({ThreadsDelay delay = threadsDefaultDelay}) : _delay = delay;
+
+  final ThreadsDelay _delay;
+
+  static const String platformId = 'threads';
+
+  /// Redirect URI NEFORUM suggests registering. Meta only accepts HTTPS
+  /// redirect URIs; https://127.0.0.1 is accepted by the dashboard even
+  /// though nothing listens there, so the user pastes the URL back.
+  static final Uri suggestedRedirectUri = Uri.parse('https://127.0.0.1:52771/callback');
+
+  static final Uri authorizationEndpoint = Uri.parse('https://threads.com/oauth/authorize');
+  static final Uri tokenEndpoint = Uri.https(threadsGraphHost, '/oauth/access_token');
+  static const List<String> scopes = ['threads_basic', 'threads_content_publish'];
+
+  /// Values Meta accepts for `reply_control` on the API.
+  static const Set<String> replyControlValues = {
+    'everyone',
+    'accounts_you_follow',
+    'mentioned_only',
+    'parent_post_author_only',
+    'followers_only',
+  };
+
+  /// Subset accepted by the web intent's `reply_control`.
+  static const Set<String> intentReplyControlValues = {
+    'everyone',
+    'accounts_you_follow',
+    'mentioned_only',
+    'followers_only',
+  };
+
+  static const int maxChars = 500;
+  static const int maxCarouselItems = 20;
+  static const int maxLinks = 5;
+  static const int maxAltText = 1000;
+  static const int maxTopicTag = 50;
+
+  /// Secret keys (besides the [OAuthTokens] ones).
+  static const String secretAppSecret = 'app_secret';
+  static const String secretIssuedAt = 'token_issued_at';
+
+  /// Config keys.
+  static const String configAppId = 'app_id';
+  static const String configUserId = 'user_id';
+  static const String configRedirectUri = 'redirect_uri';
+  static const String configUsername = 'username';
+
+  /// [PostVariant.extra] keys.
+  static const String extraReplyControl = 'reply_control';
+  static const String extraTopicTag = 'topic_tag';
+
+  static const _descriptor = PlatformDescriptor(
+    id: platformId,
+    name: 'Threads',
+    iconKey: 'threads',
+    homepage: 'https://www.threads.com',
+    tiers: {PlatformTier.byokApi, PlatformTier.handoff},
+    defaultTier: PlatformTier.byokApi,
+    text: TextRules(
+      maxLength: maxChars,
+      counting: CountingRule.utf16,
+      supportsThreads: true,
+      supportsHashtags: true,
+      linkInText: true,
+      notes: '500 characters per post; Meta counts emoji as their UTF-8 byte length. '
+          'One optional topic tag per post (extra "topic_tag"); at most 5 links.',
+    ),
+    media: MediaRules(
+      maxImages: maxCarouselItems,
+      maxVideos: maxCarouselItems,
+      allowsMixedImageVideo: true,
+      imageMaxBytes: 8 * 1024 * 1024,
+      videoMaxBytes: 1024 * 1024 * 1024,
+      videoMaxSeconds: 300,
+      imageMimeTypes: {'image/jpeg', 'image/png'},
+      videoMimeTypes: {'video/mp4', 'video/quicktime'},
+      supportsAltText: true,
+      requiresPublicMediaUrl: true,
+      notes: 'JPEG/PNG up to 8 MB (320-1440 px wide, aspect ratio up to 10:1); MP4/MOV up to 1 GB and 5 minutes. '
+          'Up to 20 items in a carousel. Meta downloads media from a public URL, so a media host is required.',
+    ),
+    defaultQuotas: [
+      QuotaRule(
+        id: 'threads.posts_per_day',
+        limit: 250,
+        window: Duration(hours: 24),
+        note: 'posts per 24 hours (Threads API publishing limit; a carousel counts once)',
+        appliesToTier: PlatformTier.byokApi,
+      ),
+    ],
+    personalAccountOk: true,
+    accountRequirements: 'Any Threads profile works. For automatic posting you create your own free Meta developer app '
+        'with the "Access the Threads API" use case; you are its admin, so no app review is needed.',
+    apiCostSummary: 'The Threads API is free. Each profile can publish up to 250 posts per day through it; '
+        'images and videos must first be uploaded to a public media host you configure.',
+    setupGuide: 'docs/platforms/threads.md',
+    serverSideScheduling: false,
+    supportsLinkField: false,
+  );
+
+  @override
+  PlatformDescriptor get descriptor => _descriptor;
+
+  @override
+  List<ConnectSpec> get connectSpecs => [_byokSpec, _handoffSpec];
+
+  static final ConnectSpec _byokSpec = ConnectSpec(
+    tier: PlatformTier.byokApi,
+    usesBrowser: true,
+    loopbackRedirectOk: false,
+    customSchemeRedirectOk: false,
+    fixedRedirectUri: suggestedRedirectUri,
+    redirectNote: 'Register exactly https://127.0.0.1:52771/callback as a Redirect Callback URL '
+        '(Use cases > Access the Threads API > Customize > Settings).',
+    intro: '''
+**Connect Threads with your own free Meta app** (about 10 minutes, once).
+
+1. Go to <https://developers.facebook.com/apps> and click **Create app**. Pick the use case
+   **Access the Threads API** (it adds the Threads API product).
+2. Open **Use cases > Access the Threads API > Customize > Permissions** and make sure
+   **threads_basic** and **threads_content_publish** are added.
+3. Open **Use cases > Access the Threads API > Customize > Settings** and fill in:
+   - **Redirect Callback URLs:** `https://127.0.0.1:52771/callback`
+     (type it, then click the suggestion so it turns into a grey chip).
+   - **Uninstall Callback URL** and **Delete Callback URL:** the same URL is fine.
+   Click **Save**. Meta only accepts HTTPS redirect addresses, so NEFORUM cannot catch the
+   redirect itself.
+4. On the same Settings page copy the **Threads app ID** and **Threads app secret** (not the
+   Facebook app ID under App settings) into the fields below.
+5. Click Connect, sign in to Threads and allow access. Your browser then lands on a page that
+   does not load (`https://127.0.0.1:52771/callback?code=...`). **Copy the whole address from the
+   address bar and paste it into NEFORUM.**
+
+You are the app's admin, so no app review is needed. To post from a second Threads profile, add it
+under **App roles > Roles** as a Threads Tester and accept the invite in the Threads app
+(Settings > Account > Website permissions > Invites).
+''',
+    fields: [
+      ConnectField(
+        key: 'app_id',
+        label: 'Threads app ID',
+        placeholder: '1234567890123456',
+        help: 'Use cases > Access the Threads API > Customize > Settings > Threads app ID.',
+      ),
+      ConnectField(
+        key: 'app_secret',
+        label: 'Threads app secret',
+        kind: FieldKind.password,
+        secret: true,
+        help: 'Shown next to the Threads app ID. Stays on this device.',
+      ),
+      ConnectField(
+        key: 'redirect_uri',
+        label: 'Redirect URI you registered',
+        kind: FieldKind.url,
+        required: false,
+        defaultValue: 'https://127.0.0.1:52771/callback',
+        help: 'Must match the Redirect Callback URL in your app exactly (watch for a trailing slash). Must start with https://.',
+      ),
+    ],
+  );
+
+  static const ConnectSpec _handoffSpec = ConnectSpec(
+    tier: PlatformTier.handoff,
+    intro: '''
+**Hand-off: no developer app needed.** NEFORUM opens the Threads composer with your text already
+filled in (web intent on desktop, the Threads app on phones) and you tap **Post** yourself.
+Images and videos cannot be prefilled on the web; on a phone they go through the share sheet.
+''',
+    fields: [
+      ConnectField(
+        key: 'username',
+        label: 'Threads username (optional)',
+        required: false,
+        placeholder: 'yourname',
+        help: 'Only used to label this account in NEFORUM.',
+      ),
+    ],
+  );
+
+  // ---- connect -----------------------------------------------------------
+
+  @override
+  Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
+    if (tier == PlatformTier.handoff) return _connectHandoff(input, ctx);
+    if (tier != PlatformTier.byokApi) {
+      throw ConnectException('Threads does not support the ${tier.label} tier');
+    }
+    final appId = (input['app_id'] ?? '').trim();
+    final appSecret = (input['app_secret'] ?? '').trim();
+    if (appId.isEmpty) throw const ConnectException('Enter your Threads app ID', field: 'app_id');
+    if (!RegExp(r'^\d+$').hasMatch(appId)) {
+      throw const ConnectException('The Threads app ID is a number (copy it from Use cases > Access the Threads API > Settings)',
+          field: 'app_id');
+    }
+    if (appSecret.isEmpty) throw const ConnectException('Enter your Threads app secret', field: 'app_secret');
+    final redirectInput = (input['redirect_uri'] ?? '').trim();
+    final registered = redirectInput.isEmpty ? suggestedRedirectUri : Uri.tryParse(redirectInput);
+    if (registered == null || registered.scheme != 'https' || registered.host.isEmpty) {
+      throw const ConnectException('Meta only accepts redirect URIs that start with https://', field: 'redirect_uri');
+    }
+    if (ctx.broker == null) {
+      throw const ConnectException('Connecting Threads needs a browser sign-in, which is not available here');
+    }
+    final broker = ctx.requireBroker();
+    final redirect = broker.chooseRedirectUri(loopbackOk: false, customSchemeOk: false, fixed: registered);
+
+    final client = OAuth2Client(
+      authorizationEndpoint: authorizationEndpoint,
+      tokenEndpoint: tokenEndpoint,
+      clientId: appId,
+      clientSecret: appSecret,
+      scopes: scopes,
+      scopeSeparator: ',',
+      usePkce: false,
+      clientAuth: ClientAuth.body,
+    );
+    final request = client.buildAuthorizationUrl(redirectUri: redirect);
+    final back = await broker.authorize(request.url, redirect, timeout: const Duration(minutes: 10));
+    final code = _extractCode(back, request);
+
+    final now = ctx.now();
+    final OAuthTokens short;
+    try {
+      short = await client.exchangeCode(ctx.http, code: code, redirectUri: redirect, now: now);
+    } on OAuthException catch (e) {
+      throw ConnectException('Threads refused the sign-in code (${e.description ?? e.error ?? e.message}). '
+          'Check the app ID/secret and that the redirect URI matches exactly, then try again with a fresh code.');
+    }
+    final OAuthTokens long;
+    final Map<String, dynamic> me;
+    try {
+      long = await ThreadsApi.exchangeForLongLived(ctx.http,
+          clientSecret: appSecret, shortLivedToken: short.accessToken, now: now);
+      me = await ThreadsApi(ctx.http, long.accessToken, delay: _delay, log: ctx.log).me();
+    } on HttpFailure catch (f) {
+      throw ConnectException('Threads did not accept the token: ${threadsErrorFrom(f).message}');
+    } on AdapterException catch (e) {
+      throw ConnectException('Threads did not accept the token: ${e.error.message}');
+    }
+
+    final userId = '${me['id'] ?? short.raw['user_id'] ?? ''}';
+    if (userId.isEmpty) throw const ConnectException('Threads did not return your user id');
+    final username = me['username'] as String?;
+    final account = ConnectedAccount(
+      id: 'threads:$userId',
+      platformId: platformId,
+      tier: PlatformTier.byokApi,
+      displayName: username == null ? 'Threads' : '@$username (Threads)',
+      handle: username == null ? null : '@$username',
+      avatarUrl: me['threads_profile_picture_url'] as String?,
+      profileUrl: username == null ? null : 'https://www.threads.com/@$username',
+      createdAt: now,
+      config: {
+        configAppId: appId,
+        configUserId: userId,
+        configRedirectUri: redirect.toString(),
+        if (username != null) configUsername: username,
+      },
+    );
+    return ConnectResult(
+      account: account,
+      secrets: long.toSecrets({
+        secretAppSecret: appSecret,
+        secretIssuedAt: now.toUtc().toIso8601String(),
+      }),
+    );
+  }
+
+  Future<ConnectResult> _connectHandoff(Map<String, String> input, AdapterContext ctx) async {
+    final username = (input['username'] ?? '').trim().replaceFirst(RegExp('^@'), '');
+    return ConnectResult(
+      account: ConnectedAccount(
+        id: 'threads-handoff:${username.isEmpty ? const Uuid().v4() : username.toLowerCase()}',
+        platformId: platformId,
+        tier: PlatformTier.handoff,
+        displayName: username.isEmpty ? 'Threads (hand-off)' : '@$username (Threads hand-off)',
+        handle: username.isEmpty ? null : '@$username',
+        profileUrl: username.isEmpty ? null : 'https://www.threads.com/@$username',
+        createdAt: ctx.now(),
+        config: {if (username.isNotEmpty) configUsername: username},
+      ),
+    );
+  }
+
+  /// Reads the code from the redirect. Meta appends `#_`, which is not part
+  /// of the code. A bare pasted code carries no state; that is accepted.
+  static String _extractCode(Uri back, AuthorizationRequest request) {
+    final q = {...back.queryParameters};
+    if (q.isEmpty && back.fragment.isNotEmpty) q.addAll(Uri.splitQueryString(back.fragment));
+    final error = q['error'];
+    if (error != null) {
+      if (error == 'access_denied') throw const AuthCancelled('You declined access on Threads');
+      throw ConnectException('Threads refused the sign-in: ${q['error_description'] ?? q['error_reason'] ?? error}');
+    }
+    final state = q['state'];
+    if (state != null && state != request.state) {
+      throw const ConnectException('The pasted address belongs to a different sign-in attempt; please try again');
+    }
+    var code = (q['code'] ?? '').trim();
+    if (code.endsWith('#_')) code = code.substring(0, code.length - 2);
+    if (code.isEmpty) {
+      throw const ConnectException('No sign-in code found. Paste the whole address your browser landed on.');
+    }
+    return code;
+  }
+
+  // ---- refresh -----------------------------------------------------------
+
+  @override
+  Future<Map<String, String>?> refreshSecrets(
+      ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (account.tier != PlatformTier.byokApi) return null;
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    if (tokens == null) {
+      throw const AdapterException(PublishError.auth('Threads is not connected; reconnect the account'));
+    }
+    final now = ctx.now();
+    if (tokens.isExpired(now: now, leeway: Duration.zero)) {
+      throw const AdapterException(PublishError.auth(
+          'Your Threads sign-in expired (tokens last 60 days without use); reconnect the account'));
+    }
+    final issuedAt = DateTime.tryParse(secrets[secretIssuedAt] ?? '');
+    // Meta only refreshes tokens that are at least 24 hours old.
+    if (issuedAt != null && now.difference(issuedAt) < const Duration(hours: 24)) return null;
+    try {
+      ctx.log.debug('Refreshing Threads long-lived token');
+      final fresh = await ThreadsApi.refreshLongLived(ctx.http, longLivedToken: tokens.accessToken, now: now);
+      return fresh.toSecrets({...secrets, secretIssuedAt: now.toUtc().toIso8601String()});
+    } on HttpFailure catch (f) {
+      final err = threadsErrorFrom(f, context: 'Refreshing the Threads token');
+      if (err.kind == PublishErrorKind.auth) throw AdapterException(err);
+      ctx.log.warn('Threads token refresh failed; using the current token: ${err.message}');
+      return null;
+    } on AdapterException catch (e) {
+      ctx.log.warn('Threads token refresh failed; using the current token: ${e.error.message}');
+      return null;
+    } on Exception catch (e) {
+      ctx.log.warn('Threads token refresh failed; using the current token: $e');
+      return null;
+    }
+  }
+
+  // ---- validate ----------------------------------------------------------
+
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
+    final issues = RulesValidator.validate(variant, descriptor, tier: account.tier);
+    final parts = variant.isThread ? variant.threadParts : [variant.text];
+
+    if (variant.media.length > maxCarouselItems) {
+      issues.add(ValidationIssue.error('threads.too_many_items',
+          '${variant.media.length} media items; a Threads carousel holds at most $maxCarouselItems', field: 'media'));
+    }
+    for (final m in variant.media) {
+      final ratio = m.aspectRatio;
+      final name = m.fileName ?? m.id;
+      if (ratio != null) {
+        final bad = m.isVideo ? (ratio > 10 || ratio < 0.01) : (ratio > 10 || ratio < 0.1);
+        if (bad) {
+          issues.add(ValidationIssue.error('threads.aspect_ratio',
+              '$name has an aspect ratio Threads does not accept (limit 10:1)', field: 'media'));
+        }
+      }
+      if (m.isImage && m.width != null && m.width! < 320) {
+        issues.add(ValidationIssue.warning('threads.image_narrow',
+            '$name is ${m.width} px wide; Threads scales images narrower than 320 px up', field: 'media'));
+      }
+      if ((m.altText ?? '').length > maxAltText) {
+        issues.add(ValidationIssue.error('threads.alt_too_long',
+            'Alt text for $name is ${m.altText!.length}/$maxAltText characters', field: 'media'));
+      }
+    }
+
+    for (var i = 0; i < parts.length; i++) {
+      final label = parts.length > 1 ? 'Part ${i + 1}' : 'The post';
+      final links = _uniqueLinks(parts[i], i == _linkPartIndex(variant, parts) ? variant.link : null);
+      if (links > maxLinks) {
+        issues.add(ValidationIssue.error('threads.too_many_links',
+            '$label has $links links; Threads allows at most $maxLinks', field: 'text'));
+      }
+      final strict = metaCount(parts[i]);
+      if (strict > maxChars && parts[i].length <= maxChars) {
+        issues.add(ValidationIssue.warning('threads.emoji_bytes',
+            '$label counts as $strict/$maxChars on Threads, which counts each emoji as its UTF-8 bytes; it may be rejected',
+            field: 'text'));
+      }
+    }
+
+    final replyControl = variant.extraAs<String>(extraReplyControl);
+    if (replyControl != null && !replyControlValues.contains(replyControl)) {
+      issues.add(ValidationIssue.error('threads.reply_control',
+          'Unknown reply setting "$replyControl" (use ${replyControlValues.join(', ')})', field: 'extra'));
+    }
+    final topic = variant.extraAs<String>(extraTopicTag);
+    if (topic != null && topicTagProblem(topic) != null) {
+      issues.add(ValidationIssue.error('threads.topic_tag', topicTagProblem(topic)!, field: 'extra'));
+    }
+    if (variant.isThread && variant.hasMedia && account.tier == PlatformTier.byokApi) {
+      issues.add(const ValidationIssue.info('threads.thread_media', 'Media will be attached to the first post of the thread',
+          field: 'media'));
+    }
+    return issues;
+  }
+
+  /// Why [tag] is not a valid topic tag, or `null` when it is.
+  static String? topicTagProblem(String tag) {
+    if (tag.isEmpty || tag.length > maxTopicTag) return 'Topic tags must be 1-$maxTopicTag characters';
+    if (RegExp(r'[.&\n\t]').hasMatch(tag)) return 'Topic tags cannot contain ".", "&", tabs or line breaks';
+    return null;
+  }
+
+  /// Conservative reading of Meta's rule: every character counts once,
+  /// except emoji, which count as their UTF-8 byte length.
+  static int metaCount(String text) {
+    var n = 0;
+    for (final cluster in text.characters) {
+      n += _isEmoji(cluster) ? cluster.runes.fold<int>(0, (a, r) => a + _utf8Len(r)) : cluster.length;
+    }
+    return n;
+  }
+
+  static bool _isEmoji(String cluster) => cluster.runes.any((r) =>
+      r >= 0x1F000 ||
+      (r >= 0x2600 && r <= 0x27BF) ||
+      r == 0xFE0F ||
+      r == 0x200D ||
+      r == 0x20E3);
+
+  static int _utf8Len(int r) => r < 0x80 ? 1 : r < 0x800 ? 2 : r < 0x10000 ? 3 : 4;
+
+  static int _uniqueLinks(String text, String? attachment) {
+    final urls = UrlDetector.find(text).map((u) => u.normalized).toSet();
+    if (attachment != null && attachment.isNotEmpty) urls.add(attachment);
+    return urls.length;
+  }
+
+  /// Index of the thread part that should carry `link_attachment`.
+  static int _linkPartIndex(PostVariant v, List<String> parts) {
+    final link = v.link;
+    if (link == null || link.isEmpty) return -1;
+    final i = parts.indexWhere((p) => p.contains(link));
+    return i < 0 ? 0 : i;
+  }
+
+  // ---- publish -----------------------------------------------------------
+
+  @override
+  Future<PublishResult> publish(
+      PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final hosted = <HostedMedia>[];
+    // Outside the try so a failure halfway through a thread can say which
+    // parts are already live (and must not be retried).
+    final ids = <String>[];
+    final total = variant.isThread ? variant.threadParts.length : 1;
+    PublishResult fail(PublishError e) => PublishResult.failure(e.asPartialThread(postedIds: ids, total: total));
+    try {
+      if (account.tier == PlatformTier.handoff) {
+        throw const AdapterException(
+            PublishError.unsupported('This Threads account uses hand-off; NEFORUM opens the composer instead'));
+      }
+      final tokens = OAuthTokens.fromSecrets(secrets);
+      if (tokens == null) {
+        throw const AdapterException(PublishError.auth('Threads is not connected; reconnect the account'));
+      }
+      final userId = account.configString(configUserId);
+      if (userId.isEmpty) {
+        throw const AdapterException(PublishError.auth('The Threads user id is missing; reconnect the account'));
+      }
+      if (variant.hasMedia && ctx.mediaHost == null) {
+        throw const AdapterException(PublishError.configuration(
+            'Threads downloads images and videos from a public web address. Set up a media host in '
+            'Settings > Media hosting, or post text only.'));
+      }
+      final api = ThreadsApi(ctx.http, tokens.accessToken, delay: _delay, log: ctx.log);
+      final parts = variant.isThread ? variant.threadParts : [variant.text];
+      final linkPart = _linkPartIndex(variant, parts);
+      String? replyTo;
+      for (var i = 0; i < parts.length; i++) {
+        final base = <String, String>{
+          if (parts[i].trim().isNotEmpty) 'text': parts[i],
+          if (replyTo != null) 'reply_to_id': replyTo,
+          if (i == 0) ..._rootParams(variant),
+        };
+        final String containerId;
+        if (i == 0 && variant.hasMedia) {
+          containerId = await _mediaContainer(api, userId, variant, base, hosted, ctx);
+        } else {
+          containerId = await api.createContainer(userId, {
+            'media_type': 'TEXT',
+            ...base,
+            if (i == linkPart) 'link_attachment': variant.link!,
+          });
+        }
+        ctx.progress(parts.length > 1 ? 'Publishing part ${i + 1} of ${parts.length}' : 'Publishing to Threads');
+        final id = await api.publishContainer(userId, containerId);
+        ids.add(id);
+        replyTo = id;
+      }
+      final url = await api.permalink(ids.first);
+      return PublishResult.ok(
+        remoteId: ids.first,
+        remoteUrl: url,
+        threadRemoteIds: parts.length > 1 ? ids : const [],
+        publishedAt: ctx.now(),
+      );
+    } on AdapterException catch (e) {
+      return fail(e.error);
+    } on HttpFailure catch (f) {
+      return fail(threadsErrorFrom(f));
+    } on MediaHostException catch (e) {
+      return fail(PublishError.configuration('Uploading media to your media host failed: ${e.message}'));
+    } on Exception catch (e) {
+      return fail(PublishError.network('Could not reach Threads: $e'));
+    } finally {
+      await _cleanup(hosted, ctx);
+    }
+  }
+
+  /// Parameters that only apply to the first post of a thread.
+  static Map<String, String> _rootParams(PostVariant v) {
+    final rc = v.extraAs<String>(extraReplyControl);
+    final topic = v.extraAs<String>(extraTopicTag);
+    return {
+      if (rc != null && replyControlValues.contains(rc)) 'reply_control': rc,
+      if (topic != null && topicTagProblem(topic) == null) 'topic_tag': topic,
+    };
+  }
+
+  Future<String> _mediaContainer(ThreadsApi api, String userId, PostVariant v, Map<String, String> base,
+      List<HostedMedia> hosted, AdapterContext ctx) async {
+    if (v.media.length == 1) {
+      final m = v.media.single;
+      final url = await _host(m, 1, 1, hosted, ctx);
+      final id = await api.createContainer(userId, {..._mediaParams(m, url, v), ...base});
+      await api.waitUntilReady(id, onWait: ctx.progress, mediaUrl: url);
+      return id;
+    }
+    final children = <String>[];
+    for (var i = 0; i < v.media.length; i++) {
+      final m = v.media[i];
+      final url = await _host(m, i + 1, v.media.length, hosted, ctx);
+      // The spoiler flag belongs on the CAROUSEL container, not its items.
+      final id = await api.createContainer(userId, {..._mediaParams(m, url, v, spoiler: false), 'is_carousel_item': 'true'});
+      await api.waitUntilReady(id, onWait: ctx.progress, mediaUrl: url);
+      children.add(id);
+    }
+    final id = await api.createContainer(userId, {
+      'media_type': 'CAROUSEL',
+      'children': children.join(','),
+      if (v.sensitive) 'is_spoiler_media': 'true',
+      ...base,
+    });
+    await api.waitUntilReady(id, onWait: ctx.progress);
+    return id;
+  }
+
+  static Map<String, String> _mediaParams(MediaAttachment m, String url, PostVariant v, {bool spoiler = true}) => {
+        'media_type': m.isVideo ? 'VIDEO' : 'IMAGE',
+        if (m.isVideo) 'video_url': url else 'image_url': url,
+        if ((m.altText ?? '').trim().isNotEmpty) 'alt_text': m.altText!.trim(),
+        if (spoiler && v.sensitive) 'is_spoiler_media': 'true',
+      };
+
+  Future<String> _host(MediaAttachment m, int n, int total, List<HostedMedia> hosted, AdapterContext ctx) async {
+    final host = ctx.mediaHost!;
+    final kind = m.isVideo ? 'video' : 'image';
+    ctx.progress('Uploading $kind $n of $total to ${host.name}');
+    final bytes = await ctx.readMedia(m);
+    final h = await host.upload(m, bytes, ttl: const Duration(hours: 6));
+    hosted.add(h);
+    return h.url.toString();
+  }
+
+  static Future<void> _cleanup(List<HostedMedia> hosted, AdapterContext ctx) async {
+    final host = ctx.mediaHost;
+    if (host == null) return;
+    for (final h in hosted) {
+      if (h.deleteHandle == null) continue;
+      try {
+        await host.delete(h);
+      } on Exception catch (e) {
+        ctx.log.warn('Could not delete ${h.url} from ${host.name}', e);
+      }
+    }
+  }
+
+  // ---- hand-off ----------------------------------------------------------
+
+  @override
+  HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
+    final full = variant.isThread ? variant.threadParts.join('\n\n') : variant.text;
+    final link = variant.link;
+    final linkInText = link == null || link.isEmpty || variant.text.contains(link);
+    final topic = variant.extraAs<String>(extraTopicTag);
+    final rc = variant.extraAs<String>(extraReplyControl);
+    final query = <String>[
+      'text=${Uri.encodeComponent(variant.text)}',
+      if (!linkInText) 'url=${Uri.encodeComponent(link)}',
+      if (topic != null && topicTagProblem(topic) == null) 'tag=${Uri.encodeComponent(topic)}',
+      if (rc != null && intentReplyControlValues.contains(rc)) 'reply_control=${Uri.encodeComponent(rc)}',
+    ];
+    final intent = Uri.parse('https://www.threads.com/intent/post?${query.join('&')}');
+    final hasMedia = variant.hasMedia;
+    return HandoffPlan(
+      platformId: platformId,
+      webIntent: intent,
+      clipboardText: full,
+      shareText: variant.text,
+      shareFiles: variant.media,
+      androidPackage: 'com.instagram.barcelona',
+      iosScheme: 'barcelona://',
+      desktopUrl: 'https://www.threads.com/',
+      preferred: hasMedia ? HandoffMethod.shareSheet : HandoffMethod.webIntent,
+      instructions: hasMedia
+          ? '1. Pick **Threads** in the share sheet (your media is attached).\n'
+              '2. If the caption is empty, long-press the text box and paste (it is on your clipboard).\n'
+              '3. Tap **Post**.'
+          : variant.isThread
+              ? '1. The Threads composer opens with the first part filled in.\n'
+                  '2. Tap **Add to thread** and paste the remaining parts from your clipboard.\n'
+                  '3. Tap **Post**.'
+              : '1. The Threads composer opens with your text filled in (sign in if asked).\n'
+                  '2. Check the text and tap **Post**.',
+      mediaNote: hasMedia
+          ? 'Threads cannot prefill images or videos from a link. On a phone they travel through the share sheet; '
+              'on a computer, drag the files into the composer. Your text is on the clipboard.'
+          : null,
+    );
+  }
+}

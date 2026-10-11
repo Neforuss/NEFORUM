@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 import '../http/neforum_http.dart';
+import '../model/publish_result.dart';
 import 'auth_broker.dart';
 
 /// PKCE verifier/challenge pair (RFC 7636, S256).
@@ -109,10 +110,31 @@ class AuthorizationRequest {
 }
 
 class OAuthException implements Exception {
-  const OAuthException(this.message, {this.error, this.description});
+  const OAuthException(this.message, {this.error, this.description, this.statusCode});
   final String message;
   final String? error;
   final String? description;
+
+  /// HTTP status of the token endpoint response, when there was one.
+  final int? statusCode;
+
+  /// True when the platform really rejected the grant or the client (the
+  /// user must reconnect), as opposed to an outage or a rate limit.
+  bool get isGrantRejected {
+    const fatal = {'invalid_grant', 'invalid_request', 'invalid_client', 'unauthorized_client', 'unsupported_grant_type', 'access_denied'};
+    if (error != null && fatal.contains(error)) return true;
+    final s = statusCode;
+    return s == 400 || s == 401 || s == 403;
+  }
+
+  /// Maps a failed token refresh onto the right [PublishError]: auth for a
+  /// rejected grant, quota for 429, a retryable network error otherwise.
+  PublishError toRefreshError(String platform) {
+    final detail = description ?? error ?? message;
+    if (statusCode == 429) return PublishError.quota('$platform is rate limiting sign-in renewals; will retry', statusCode: 429);
+    if (isGrantRejected) return PublishError.auth('$platform refused to renew the sign-in ($detail); reconnect the account', statusCode: statusCode);
+    return PublishError.network('$platform could not renew the sign-in right now ($detail); will retry', statusCode: statusCode);
+  }
   @override
   String toString() => 'OAuthException($message${error == null ? '' : ' [$error]'}${description == null ? '' : ': $description'})';
 }
@@ -225,7 +247,9 @@ class OAuth2Client {
     final json = res.jsonMap;
     if (!res.ok || json['access_token'] == null) {
       throw OAuthException('Token endpoint returned HTTP ${res.statusCode}',
-          error: json['error']?.toString(), description: json['error_description']?.toString() ?? (res.body.length > 300 ? res.body.substring(0, 300) : res.body));
+          statusCode: res.statusCode,
+          error: json['error']?.toString(),
+          description: json['error_description']?.toString() ?? (res.body.length > 300 ? res.body.substring(0, 300) : res.body));
     }
     return OAuthTokens.fromTokenResponse(json, now: now);
   }

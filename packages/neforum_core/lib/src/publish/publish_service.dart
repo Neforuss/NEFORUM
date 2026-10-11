@@ -273,7 +273,17 @@ class PublishService {
       return _fail(attempt, e.error, account: account);
     } on AuthCancelled {
       return _fail(attempt, const PublishError(kind: PublishErrorKind.cancelled, message: 'Sign-in cancelled'));
+    } on HttpFailure catch (e) {
+      // A 5xx/429 from the token endpoint is the platform having a bad
+      // moment, not a revoked login.
+      final err = e.statusCode >= 500 || e.statusCode == 429
+          ? e.toPublishError(context: '${adapter.descriptor.name} sign-in renewal')
+          : PublishError.auth('Could not renew the ${adapter.descriptor.name} sign-in (HTTP ${e.statusCode}); reconnect the account', raw: e.body, statusCode: e.statusCode);
+      return _fail(attempt, err, account: account);
     } on Object catch (e) {
+      if (NeforumHttp.isTransportError(e)) {
+        return _fail(attempt, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: $e'));
+      }
       return _fail(attempt, PublishError.auth('Could not refresh credentials: $e'), account: account);
     }
 
@@ -301,9 +311,11 @@ class PublishService {
     } on AuthCancelled {
       result = PublishResult.failure(const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'));
     } on Object catch (e, st) {
-      log.error('Unexpected error publishing to ${account.displayName}', e);
-      log.debug('$st');
-      result = PublishResult.failure(PublishError.platform('Unexpected error: $e'));
+      result = PublishResult.failure(_classifyUnexpected(e, adapter.descriptor.name));
+      if (result.error!.kind == PublishErrorKind.platform) {
+        log.error('Unexpected error publishing to ${account.displayName}', e);
+        log.debug('$st');
+      }
     }
 
     if (result.success) {
@@ -381,6 +393,22 @@ class PublishService {
     }
     if (anyWaiting || (anyFailed && ts.any((t) => t.isDone))) return p.copyWith(status: PostStatus.partial);
     return p.copyWith(status: PostStatus.failed);
+  }
+
+  /// Maps an exception that escaped an adapter onto a sensible error kind.
+  static PublishError _classifyUnexpected(Object e, String platform) {
+    if (NeforumHttp.isTransportError(e)) {
+      return PublishError.network('Could not reach $platform: $e');
+    }
+    final text = e.toString();
+    // dart:io is off limits here (web builds), so recognise file errors by name.
+    if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException') || text.contains('Media not found')) {
+      return PublishError.configuration('A media file for this post is missing or unreadable. Re-attach it and try again. ($text)');
+    }
+    if (e is FormatException || e is TypeError) {
+      return PublishError.platform('$platform sent a response NEFORUM did not understand: $text');
+    }
+    return PublishError.platform('Unexpected error: $text');
   }
 
   Future<Post> _require(String postId) async {

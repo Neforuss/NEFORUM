@@ -6,6 +6,7 @@ library;
 
 export 'src/adapters/adapter_context.dart';
 export 'src/adapters/adapter_registry.dart';
+export 'src/adapters/builtin_adapters.dart';
 export 'src/adapters/connect_spec.dart';
 export 'src/adapters/platform_adapter.dart';
 export 'src/auth/auth_broker.dart';
@@ -13,7 +14,7 @@ export 'src/auth/loopback_auth_broker_stub.dart' if (dart.library.io) 'src/auth/
 export 'src/auth/oauth2_pkce.dart';
 export 'src/handoff/handoff_plan.dart';
 export 'src/http/neforum_http.dart';
-export 'src/media_hosts/media_host.dart';
+export 'src/media_hosts/media_hosts.dart';
 export 'src/model/account.dart';
 export 'src/model/media.dart';
 export 'src/model/platform_descriptor.dart';

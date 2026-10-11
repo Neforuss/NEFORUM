@@ -98,6 +98,20 @@ class PublishError {
   final String? raw;
   final Duration? retryAfter;
 
+  /// Wraps an error that happened after some parts of a thread were already
+  /// posted. Never retryable: a retry would post the earlier parts again.
+  PublishError asPartialThread({required List<String> postedIds, required int total}) {
+    if (postedIds.isEmpty) return this;
+    return PublishError(
+      kind: kind,
+      message: 'Part ${postedIds.length + 1} of $total failed: $message. '
+          'Parts already posted (${postedIds.join(', ')}) stay live; finish the thread by hand.',
+      retryable: false,
+      statusCode: statusCode,
+      raw: raw,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
         'kind': kind.name,
         'message': message,

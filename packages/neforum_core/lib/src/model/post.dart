@@ -35,6 +35,10 @@ enum TargetStatus {
 /// Visibility mapped onto whatever the platform supports.
 enum Visibility { public, unlisted, followers, private }
 
+/// Alias for Flutter code, where `Visibility` collides with the widget of
+/// the same name: `import 'package:neforum_core/neforum_core.dart' hide Visibility;`
+typedef PostVisibility = Visibility;
+
 /// Per-target overrides of the master post. Every field is optional; `null`
 /// means "use the master value".
 @immutable

@@ -1,0 +1,161 @@
+{
+  "gaps": [
+    {
+      "topic": "X OAuth redirect URIs (BYOK Native App)",
+      "question": "On the new X Developer Console (console.x.com, Feb 2026) for an app of type 'Native App', does the Callback URL field accept (a) a custom scheme such as crier://callback and (b) http://127.0.0.1:8765/callback (fixed port) — and does X reject the hostname 'localhost'? Cite docs.x.com/resources/fundamentals/developer-apps or a 2026 post showing a saved callback of each form.",
+      "why": "The X researcher marked custom-scheme acceptance as unverified and loopback as 'pick fixed ports'; Crier's entire mobile and desktop login flow for X depends on which of these two redirect shapes can actually be registered."
+    },
+    {
+      "topic": "Meta (Threads + Instagram Login) redirect URI rules",
+      "question": "For the Threads 'Redirect Callback URLs' field (Use cases > Access the Threads API > Settings) and the Instagram 'Business login settings' OAuth redirect field, exactly which of these are accepted in 2026: http://localhost:PORT/..., https://localhost:PORT/ (self-signed), http://127.0.0.1:PORT/..., and a custom scheme? Find Meta docs or a 2026 developer thread showing the validation error text for a rejected localhost entry.",
+      "why": "Threads researcher reports a direct conflict (Postiz docs list http://localhost:4200 while Meta's fbsamples README says localhost is unsupported); Instagram researcher cites CData's https://localhost:33333 only as untested. Without a definitive answer Crier cannot decide between a loopback listener, a relay page, or copy-paste-the-code UX for Meta."
+    },
+    {
+      "topic": "flutter_web_auth_2 5.1.0 desktop loopback and options",
+      "question": "From the flutter_web_auth_2 5.1.0 README/API docs: what is the exact FlutterWebAuth2Options constructor parameter list, and in desktop 'legacy' mode (useWebview:false) must callbackUrlScheme be literally 'http://localhost:PORT' or is 'http://127.0.0.1:PORT' also accepted by the built-in listener?",
+      "why": "The Flutter researcher flagged the options list as recollection and only 'localhost' as documented, but Bluesky's OAuth spec forbids the hostname 'localhost' (127.0.0.1/[::1] only), LinkedIn's native PKCE flow requires a loopback IP, Google discourages 'localhost', and Mastodon's Doorkeeper leniency is keyed on loopback hosts — so the package's accepted loopback form decides whether Crier can use it at all on Windows/macOS."
+    },
+    {
+      "topic": "LinkedIn self-serve redirect URIs and Posts API rate cap",
+      "question": "(1) Does the LinkedIn Developer Portal Auth tab currently accept http://localhost:PORT/callback (and/or http://127.0.0.1:PORT) for the standard authorization-code flow despite the 'via HTTPS' wording? (2) Does the 150 requests/member/day limit documented for /v2/ugcPosts also apply to POST /rest/posts (check the Posts API or Share on LinkedIn page updated 2026)?",
+      "why": "LinkedIn researcher lists both as unverified; the redirect answer determines whether desktop login works without a hosted https page, and the per-member cap determines batching/scheduling limits for the only permitted (self-serve) LinkedIn path."
+    },
+    {
+      "topic": "TikTok unreviewed app self-authorization",
+      "question": "With a TikTok developer app that has Login Kit + Content Posting API added but NOT yet submitted/approved for app review (and no sandbox), can the app owner's own TikTok account complete the /v2/auth/authorize flow and receive a token, or is authorization blocked for everyone except sandbox target users? What exact error/screen appears? Cite developers.tiktok.com (app review or sandbox docs) or a 2025-2026 developer forum post.",
+      "why": "The TikTok researcher inferred that unreviewed production apps block authorization for all accounts; if true, every BYOK Crier user must pass TikTok app review just to post privately, which would make the byok_api tier for TikTok effectively dead and change the recommended tiers to handoff-only."
+    },
+    {
+      "topic": "X OAuth 2.0 refresh-token rotation and credit-exhausted error",
+      "question": "Per docs.x.com (OAuth 2.0 authorization code / refresh token page) and the pay-per-use docs: (1) is a refresh token single-use/rotated on every POST /2/oauth2/token refresh, and how long does the old one remain valid? (2) What exact HTTP status and problem 'type'/'title' does POST /2/tweets return when the project's credit balance is zero, and is there any endpoint exposing remaining credits?",
+      "why": "Both are listed as unverified; refresh rotation determines whether Crier must persist the new token atomically (losing a session otherwise), and the billing error shape determines how the UI distinguishes 'out of credits' from 403 duplicate/429 rate-limit."
+    },
+    {
+      "topic": "Bluesky granular OAuth scopes for video upload and legacy token lifetimes",
+      "question": "(1) Under AT Protocol granular permission scopes, what exact rpc: scope string must a client request so that com.atproto.server.getServiceAuth (aud=did:web:<pds>, lxm=com.atproto.repo.uploadBlob) and app.bsky.video.uploadVideo/getJobStatus/getUploadLimits succeed on bsky.social, and does bsky.social still accept transition:generic in Oct 2026? (2) What are the actual lifetimes of the legacy createSession accessJwt and refreshJwt?",
+      "why": "Bluesky researcher marked the rpc scope string and JWT lifetimes as unverified; a wrong scope silently breaks video posting under OAuth, and the JWT lifetimes drive the app-password fallback's refresh scheduling."
+    },
+    {
+      "topic": "Meta media fetch behaviour for image_url/video_url",
+      "question": "For Instagram (graph.instagram.com /media) and Threads (/threads) container creation: do Meta's servers accept (a) presigned S3-style URLs with query-string signatures, and (b) URLs that 301/302 redirect to the final file, and at what moment is the file fetched (container creation vs media_publish)? Find Meta's own statement or 2025-2026 developer-community evidence (error 2207052 cases) covering query strings and redirects.",
+      "why": "The media_hosting topic says Meta docs state no redirect rule and treats presigned GET as 'probably works but risky'; this decides whether Crier can use presigned URLs (no public bucket) and when it is safe to delete the uploaded object."
+    },
+    {
+      "topic": "Pinterest redirect URIs and Trial-pending behaviour",
+      "question": "(1) Does the Pinterest developer app 'Redirect URIs' field accept http://127.0.0.1:PORT/callback and custom schemes (e.g. crier://callback), or only http://localhost:PORT/ as used by pinterest/api-quickstart? (2) What exact HTTP status and message does api.pinterest.com return for an app whose Trial access is still pending/denied (reported as 401 'Your application consumer type is not supported')?",
+      "why": "Pinterest researcher lists both as unverified; the redirect answer sets the login design for mobile, and the pending-app error must be recognised so Crier can show 'waiting for Pinterest approval' instead of a generic auth failure."
+    },
+    {
+      "topic": "Facebook Pages BYOK: device login scopes, dev-mode localhost, Live switch",
+      "question": "From Meta docs or 2025-2026 developer posts: (1) does Facebook Login for Devices (POST /device/login) accept scope=pages_manage_posts,pages_read_engagement,pages_show_list for an app-role user of an unreviewed app; (2) are http://localhost redirect URIs auto-allowed only while the app is in Development mode; (3) what exactly is required to switch a Business-type app to Live (privacy policy URL, icon, category) without App Review so that Page posts become publicly visible?",
+      "why": "The Facebook researcher marked all three as unverified; together they define the only viable no-review path for a desktop user to post to their own Page with public visibility."
+    },
+    {
+      "topic": "Reddit text-post prefill and refresh-token rotation",
+      "question": "(1) Do https://www.reddit.com/r/{sub}/submit?type=TEXT&title=...&text=... (new Reddit) or https://old.reddit.com/r/{sub}/submit?selftext=true&title=...&text=... actually prefill the post body for a logged-in user in 2026? (2) Does Reddit rotate refresh tokens (is the old refresh_token invalidated after grant_type=refresh_token)? Cite reddit-archive OAuth2 wiki, PRAW source/docs, or a current community thread.",
+      "why": "Both are unverified; the prefill question determines whether Reddit hand-off can carry a text body or only link+title, and rotation semantics determine token persistence logic."
+    },
+    {
+      "topic": "Mastodon-compatible forks: PKCE and scheduled statuses",
+      "question": "For Pleroma/Akkoma, Pixelfed and GoToSocial: do their /oauth/authorize + /oauth/token endpoints honour PKCE code_challenge/code_verifier end-to-end (S256), do they reject or ignore unknown PKCE params, and which of them implement POST /api/v1/statuses with scheduled_at (and GET/DELETE /api/v1/scheduled_statuses)? Check Pleroma's OAuth controller source, Pixelfed's Passport config/routes, and the GoToSocial release that added scheduled statuses.",
+      "why": "Mastodon researcher could not read Pleroma/Akkoma/Pixelfed OAuth code; Crier will send PKCE by default and offer server-side scheduling, so it needs a per-server quirk table to avoid broken logins and silently-ignored schedules."
+    },
+    {
+      "topic": "Misskey scheduled notes parameter",
+      "question": "In Misskey 2025.10.0+ (and Sharkey/CherryPick if they adopted it), what is the exact API for scheduled notes: is it a parameter on POST /api/notes/create (name and format, e.g. scheduledAt ms epoch) or a separate endpoint, and how are pending scheduled notes listed/cancelled? Read the 2025.10.0 CHANGELOG entry and the relevant endpoint file in misskey-dev/misskey.",
+      "why": "Misskey researcher confirmed server-side scheduling exists (policy scheduledNoteLimit) but not the parameter name; Crier cannot implement the feature without the request shape."
+    },
+    {
+      "topic": "Flutter package API snippets flagged unverified (tray_manager 0.7, android_alarm_manager_plus manifest)",
+      "question": "(1) From the tray_manager 0.7.0 example/README: what are the exact class/factory and event-handler names (TrayIcon.create, MenuItem.createWithLabelAndType, onClicked vs onClick, setContextMenu) for the new nativeapi-based API? (2) From the android_alarm_manager_plus 5.1.2 README: what are the fully-qualified service/receiver class names and attributes that must be declared in AndroidManifest.xml?",
+      "why": "Both snippets in the flutter_packages and background_scheduling topics were written from recollection; wrong identifiers here break the desktop tray build and the Android exact-alarm path at compile/runtime."
+    }
+  ],
+  "contradictions": [
+    {
+      "topic": "Loopback redirect hostname (localhost vs 127.0.0.1)",
+      "claim_a": "flutter_packages: flutter_web_auth_2 desktop legacy mode 'requires callbackUrlScheme to start with http://localhost:{port}'; '127.0.0.1 is not documented; use localhost'.",
+      "claim_b": "Bluesky: 'hostname localhost itself is NOT allowed in redirect URIs' (must be http://127.0.0.1 or [::1]); LinkedIn native PKCE: redirect 'MUST be a loopback IP (http://127.0.0.1:{port}/...)'; YouTube: 'localhost hostname is discouraged'; X docs: 'use http://127.0.0.1 (not localhost)'; Mastodon researcher recommends registering http://127.0.0.1/callback."
+    },
+    {
+      "topic": "Threads redirect URI localhost support",
+      "claim_a": "Threads researcher (Meta fbsamples README, 2024): 'Threads apps do not support redirect URLs with using localhost' and HTTPS is required; an Aug 2026 community write-up agrees.",
+      "claim_b": "Postiz docs (2025-26) list http://localhost:4200/... as a working Threads dev redirect URI."
+    },
+    {
+      "topic": "Instagram 24h publishing quota",
+      "claim_a": "Instagram content-publishing guide (read 2026-10-07): 100 API-published posts per rolling 24h.",
+      "claim_b": "content_publishing_limit field reference: quota_total 'currently 50' (and the 2021 value was 25)."
+    },
+    {
+      "topic": "Facebook scheduled_publish_time window",
+      "claim_a": "Graph API Page/feed reference: scheduled_publish_time must be 10 minutes to 75 days in the future.",
+      "claim_b": "Pages API posts guide: 10 minutes to 30 days."
+    },
+    {
+      "topic": "LinkedIn standard-flow redirect URI scheme",
+      "claim_a": "Official authorization-code-flow doc (updated 2026-05-15): redirect URIs 'via HTTPS', absolute, exact match.",
+      "claim_b": "Postiz (http://localhost:4200), CData (http://localhost:33333) and other 2025-2026 community docs register plain http://localhost:PORT successfully."
+    },
+    {
+      "topic": "Pinterest OAuth mechanics and Trial approval timing",
+      "claim_a": "Official Pinterest auth docs/OpenAPI: no PKCE, access token expires_in 2592000 (30 days), continuous refresh tokens 60 days; Trial requests are 'reviewed each business day' with 2025-26 forum reports of multi-week waits.",
+      "claim_b": "Ayrshare (2026-08) claims v5 'requires PKCE' and issues 1-hour access tokens; Blotato (2026-09) claims Trial approval is 'immediate'."
+    },
+    {
+      "topic": "Pinterest video limits",
+      "claim_a": "Pinterest Help Center pin specs: video 4 s minimum, 5 minutes maximum.",
+      "claim_b": "Third-party scheduler API docs: 15 minutes / 2 GB via the v5 API."
+    },
+    {
+      "topic": "Discord per-file upload limit",
+      "claim_a": "Discord developer docs read 2026-10-07: 'default limit is 20 MiB for all users' per file; Create Message page states a 25 MiB total request limit.",
+      "claim_b": "Community sources 2024-2025 report 10 MB per file for free users (after the late-2024 reduction from 25 MB)."
+    },
+    {
+      "topic": "YouTube custom-scheme redirect support",
+      "claim_a": "YouTube entry sets custom_scheme_redirect_ok: false and says 'A custom scheme like crier://callback is NOT accepted'.",
+      "claim_b": "Same entry: the required iOS/Android redirect is a reverse-DNS custom scheme ('scheme must contain a period', e.g. com.googleusercontent.apps.<ID>:/oauth2redirect or com.example.crier:/oauth2redirect), i.e. custom schemes are accepted if reverse-DNS."
+    },
+    {
+      "topic": "Bluesky desktop loopback redirect",
+      "claim_a": "Bluesky entry sets desktop_loopback_redirect_ok: true.",
+      "claim_b": "Same entry: 'A hosted-https client_id may NOT use http://127.0.0.1 loopback'; loopback exists only via the literal http://localhost client_id which official tutorials call 'for local development... won't work in production'."
+    },
+    {
+      "topic": "X app type required for OAuth 1.0a posting",
+      "claim_a": "Prior art (Postiz docs): X app must be 'Native App' type with Read+Write for OAuth 1.0a, 'other app types fail with error 32'.",
+      "claim_b": "Prior art (Mixpost docs, read 2026-10-07): X app type must be 'Web App, Automated App or Bot' with OAuth 1.0a keys; X researcher: 'Native App / Single Page App = public client (no secret, PKCE only)', implying no consumer secret for OAuth 1.0a on Native apps."
+    },
+    {
+      "topic": "Threads 500-character counting rule",
+      "claim_a": "Official Threads doc: 'Emojis are counted as the number of UTF-8 bytes' (while linking grapheme-splitter); nothing about URLs.",
+      "claim_b": "postproxy.dev: inline URLs also count by their byte length; Threads researcher's own 'safest rule' counts plain ASCII as code points — three different units for one limit."
+    },
+    {
+      "topic": "Instagram Stories account eligibility",
+      "claim_a": "Instagram overview / Instagram-Login content-publishing docs: Stories publishing (media_type=STORIES) available to professional accounts (Business or Creator).",
+      "claim_b": "Older note on the Facebook-Login flavor page: Stories publishing is 'only available to business accounts' (not creator)."
+    },
+    {
+      "topic": "Instagram Reels API limits",
+      "claim_a": "Current IG User Media reference summary: reels up to 15 minutes and 300 MB.",
+      "claim_b": "Older Meta docs: 90 seconds / 1 GB (researcher flags the live value as needing verification before hard-coding)."
+    },
+    {
+      "topic": "Reddit refresh-token rotation",
+      "claim_a": "Reddit researcher recollection: refresh tokens do not rotate (same refresh_token keeps working after each refresh).",
+      "claim_b": "PRAW documentation wording describes refresh tokens as 'single use'."
+    },
+    {
+      "topic": "Tumblr queue limits",
+      "claim_a": "Tumblr Help Center: queue holds max 1,000 posts and publishes max 50 posts/day.",
+      "claim_b": "Tumblr Premium marketing page: 'queued posts per day (2,000)' (tumblr/docs #144, unanswered)."
+    },
+    {
+      "topic": "X character-weight ranges (researcher's own text)",
+      "claim_a": "X text_limits counting_rule mid-sentence: 'Cyrillic is weight 1 actually? - no: Cyrillic U+0400-U+04FF falls inside U+0000-U+10FF so weight 1' — the sentence first implies Cyrillic may be weight 2.",
+      "claim_b": "twitter-text v3 config (as the same entry concludes): code points 0-4351 (U+0000-U+10FF) weigh 1, which includes Cyrillic; only the final reading is correct and the unverified_claims note that the exact ranges were recalled, not re-read."
+    }
+  ]
+}
