@@ -128,6 +128,34 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+  testWidgets('YouTube Posts: text and images go out by hand-off, separate from YouTube videos', (tester) async {
+    final (services, c) = await boot(tester);
+    c.read(routerProvider).go('/compose');
+    await settle(tester);
+    final yt = c.read(accountListProvider).firstWhere((a) => a.platformId == 'youtube_posts');
+    final editor = find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController);
+    await tester.enterText(editor, 'New video drops Friday. Which thumbnail should I use? #behindthescenes');
+    c.read(composerProvider.notifier).selectAccounts([yt.id]);
+    await settle(tester);
+
+    final preview = c.read(composerPreviewsProvider).single;
+    expect(preview.descriptor.name, 'YouTube Posts');
+    expect(preview.issues.hasErrors, isFalse);
+    expect(preview.variant.media, isEmpty, reason: 'no text card: posts can be text only');
+    expect(preview.variant.text, contains('#behindthescenes'));
+    expect(c.read(composerReadinessProvider).handoff, 1);
+    expect(find.text('YouTube Posts'), findsWidgets);
+
+    final post = (await tester.runAsync(() => c.read(postActionsProvider).saveDraft()))!;
+    final plan = (await tester.runAsync(() => services.publisher().planHandoff(post, yt.id)))!;
+    expect(plan.desktopUrl, 'https://www.youtube.com/');
+    expect(plan.clipboardText, contains('Which thumbnail'));
+    expect(plan.instructions, contains('Create post'));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   // Found on a real Windows window: with a schedule set, the composer's
   // action bar overflowed when the compose column was ~560 px wide.
   testWidgets('composer with a schedule fits at in-between window widths', (tester) async {

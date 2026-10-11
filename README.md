@@ -27,7 +27,7 @@ Every connected account uses one of these. You can connect the same platform mor
 |---|---|---|
 | **Auto** | Posts automatically through the platform's open API. No developer keys, no fees, no review. | Mastodon and the fediverse, Bluesky, Nostr, Misskey, Lemmy, Matrix, Telegram, Discord, WordPress, Ghost, DEV, Micropub |
 | **Your keys** | Posts automatically through the official API, using a developer app you create once. NEFORUM tracks the platform's quota and warns you before you hit it. | X, Threads, LinkedIn, YouTube, Reddit, Pinterest, Tumblr, Facebook Pages, Instagram professional accounts, TikTok, Hashnode |
-| **Hand-off** | NEFORUM prepares everything: caption on the clipboard, photos in the share sheet, the composer opened with your text. You tap Post. | Any personal account anywhere: Instagram, TikTok, Facebook profiles, Snapchat, WhatsApp, Google Business Profile, Substack Notes, and every platform above when you'd rather not set up keys |
+| **Hand-off** | NEFORUM prepares everything: caption on the clipboard, photos in the share sheet, the composer opened with your text. You tap Post. | Any personal account anywhere: Instagram, TikTok, Facebook profiles, YouTube Posts, Snapchat, WhatsApp, Google Business Profile, Substack Notes, and every platform above when you'd rather not set up keys |
 
 If an API account runs out of quota (for example X's monthly cap), NEFORUM can fall back to hand-off for that post instead of failing.
 
@@ -51,11 +51,11 @@ Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an i
 
 ## Supported platforms
 
-28 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
+29 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
 
 - **Open networks:** Mastodon and compatible servers (Pleroma, Akkoma, GoToSocial, Friendica, Pixelfed, Mitra), Bluesky, Misskey / Sharkey / Firefish / Iceshrimp, Nostr, Lemmy, Matrix
 - **Big platforms:** X, Threads, Facebook, LinkedIn, Reddit, Tumblr
-- **Photo and video:** Instagram, TikTok, YouTube, Pinterest, Snapchat
+- **Photo and video:** Instagram, TikTok, YouTube (videos and Shorts), YouTube Posts (text and image posts on your channel's Posts tab), Pinterest, Snapchat
 - **Messaging:** Telegram channels and groups, Discord (webhooks), WhatsApp
 - **Blogs and newsletters:** WordPress, Ghost, WriteFreely / Write.as, Micropub (IndieWeb, Micro.blog), DEV, Hashnode, Substack Notes
 - **Business:** Google Business Profile
@@ -68,6 +68,7 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **Instagram and Threads (API mode):** Instagram needs a professional (creator or business) account. Both fetch media from a public web address, so you pick a media host in Settings (a free temporary one is built in). Hand-off works with any account and needs none of this.
 - **Facebook:** the API only posts to Pages you manage. Personal profiles use hand-off.
 - **TikTok:** apps TikTok has not audited can only post privately. Hand-off posts publicly from the TikTok app.
+- **YouTube Posts** (the text and image posts on a channel's Posts tab) have no API at all, so they always use hand-off. Your channel needs YouTube's advanced features turned on.
 - **YouTube:** uploads from apps that have not passed Google's verification may be locked to private. Google's own pages disagree on whether that still applies, and NEFORUM cannot detect it. Hand-off always posts publicly.
 - **Micropub (IndieAuth):** sign-in works on Windows and macOS. On phones, servers that check the app's client page can refuse it until the project publishes that page.
 - **Hand-off** always needs one tap from you in the other app, so it cannot run unattended.
@@ -140,7 +141,7 @@ flutter build ios --release
 ## Project layout
 
 ```
-packages/neforum_core   Pure-Dart core: data model, 28 platform adapters, text
+packages/neforum_core   Pure-Dart core: data model, 29 platform adapters, text
                         adaptation (counting, threads), quota tracking, OAuth,
                         media hosts, publish service, scheduler. No Flutter.
 apps/neforum_app        Flutter app: design system, screens, keychain storage,

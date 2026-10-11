@@ -68,6 +68,8 @@ const Map<String, PlatformBrand> platformBrands = {
   'linkedin': PlatformBrand(color: Color(0xFF0A66C2), icon: FontAwesomeIcons.linkedin),
   'tiktok': PlatformBrand(color: Color(0xFF010101), darkColor: Color(0xFF1F1F1F), icon: FontAwesomeIcons.tiktok, gradient: _tiktokGradient),
   'youtube': PlatformBrand(color: Color(0xFFFF0033), icon: FontAwesomeIcons.youtube),
+  // Text and image posts on the channel's Posts tab: same red, square glyph.
+  'youtube_posts': PlatformBrand(color: Color(0xFFFF0033), icon: FontAwesomeIcons.squareYoutube),
   'pinterest': PlatformBrand(color: Color(0xFFE60023), icon: FontAwesomeIcons.pinterest),
   'reddit': PlatformBrand(color: Color(0xFFFF4500), icon: FontAwesomeIcons.reddit),
   'telegram': PlatformBrand(color: Color(0xFF26A5E4), icon: FontAwesomeIcons.telegram),

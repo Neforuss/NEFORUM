@@ -14,7 +14,7 @@ enum _Filter { all, personal, noKeys, automatic }
 const _groups = <String, List<String>>{
   'Open networks': ['mastodon', 'bluesky', 'misskey', 'nostr', 'lemmy', 'matrix'],
   'Big platforms': ['x', 'threads', 'facebook', 'linkedin', 'reddit', 'tumblr'],
-  'Photo & video': ['instagram', 'tiktok', 'youtube', 'pinterest', 'snapchat'],
+  'Photo & video': ['instagram', 'tiktok', 'youtube', 'youtube_posts', 'pinterest', 'snapchat'],
   'Messaging': ['telegram', 'discord', 'whatsapp'],
   'Blogs & newsletters': ['wordpress', 'ghost', 'writefreely', 'micropub', 'devto', 'hashnode', 'substack'],
   'Business': ['google_business'],

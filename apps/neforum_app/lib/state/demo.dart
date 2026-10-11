@@ -164,6 +164,7 @@ Future<void> seedDemo({
   await add('reddit', PlatformTier.openApi, 'u/robinmakes', 'r/selfhosted');
   await add('telegram', PlatformTier.openApi, 'Robin\'s Workshop', '@robinsworkshop');
   await add('tiktok', PlatformTier.handoff, 'robin.makes', '@robin.makes');
+  await add('youtube_posts', PlatformTier.handoff, 'Robin Makes', '@robinmakes');
   await add('nostr', PlatformTier.openApi, 'Robin', 'npub1robin…k2x');
 
   String? id(String platform) => made.where((a) => a.platformId == platform).map((a) => a.id).firstOrNull;

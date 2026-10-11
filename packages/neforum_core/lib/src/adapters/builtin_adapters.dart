@@ -28,6 +28,7 @@ import 'tiktok/tiktok_adapter.dart';
 import 'tumblr/tumblr_adapter.dart';
 import 'x/x_adapter.dart';
 import 'youtube/youtube_adapter.dart';
+import 'youtube/youtube_posts_adapter.dart';
 
 /// Every platform adapter shipped with NEFORUM.
 List<PlatformAdapter> builtinAdapters() => [
@@ -49,6 +50,7 @@ List<PlatformAdapter> builtinAdapters() => [
       InstagramAdapter(),
       TikTokAdapter(),
       YouTubeAdapter(),
+      YouTubePostsAdapter(),
       PinterestAdapter(),
       SnapchatAdapter(),
       // Messaging

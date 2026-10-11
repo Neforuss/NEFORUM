@@ -38,6 +38,7 @@ Generated from the code on 2026-10-11.
 | Write.as / WriteFreely | Auto, Hand-off | Yes | No limit | 20 images, needs media host for API | - | - | [writefreely.md](platforms/writefreely.md) |
 | X (Twitter) | Your keys, Hand-off | Yes | 280 weighted (links = 23), threads | 4 images or 1 video | 100/15 min, 10000/day, 500/month | - | [x.md](platforms/x.md) |
 | YouTube | Your keys, Hand-off | Yes | 5000 bytes | 1 video (required) | 100/day | Yes | [youtube.md](platforms/youtube.md) |
+| YouTube Posts | Hand-off | Yes | No limit | 10 images | - | - | [youtube_posts.md](platforms/youtube_posts.md) |
 
 ## Cost and account notes
 
@@ -180,4 +181,9 @@ Generated from the code on 2026-10-11.
 
 - **Account:** A Google account with a YouTube channel. "Your own API keys" also needs a free Google Cloud project with an OAuth client that you create yourself (about 10 minutes); hand-off only needs the YouTube app or website.
 - **Cost and limits:** Free: Google gives every project 100 uploads a day and sells no paid plan. Uploads from a project Google has not audited (yours) may be locked to PRIVATE by YouTube; if that happens, use hand-off for public videos.
+
+### YouTube Posts
+
+- **Account:** Any channel with advanced features turned on (YouTube Studio > Settings > Channel > Feature eligibility) that is not set as "Made for Kids". There is no subscriber minimum. NEFORUM never signs in to YouTube; you post on youtube.com or in the YouTube app.
+- **Cost and limits:** Free. YouTube's API can upload videos but cannot create posts, so NEFORUM uses hand-off: it copies your text and opens YouTube, where you choose Create > Create post. For videos, connect "YouTube".
 
