@@ -9,6 +9,7 @@ import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
+import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
@@ -308,6 +309,11 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
   // ---------------------------------------------------------------------
   // Validation
   // ---------------------------------------------------------------------
+
+  /// Photos up to 5 MB (GIFs keep the descriptor's larger limit).
+  @override
+  PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) =>
+      super.photoFit(account, variant)?.copyWith(maxBytes: _photoMaxBytes);
 
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {

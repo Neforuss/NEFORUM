@@ -1,4 +1,5 @@
 import '../../model/media.dart';
+import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/validation.dart';
@@ -208,6 +209,20 @@ class InstagramRules {
           'Instagram does not take alt text for Reels; it will be dropped', field: 'media'));
     }
     return out;
+  }
+
+  /// The photos Instagram takes. The API: JPEG up to 8 MB, and feed and
+  /// carousel photos between 4:5 and 1.91:1 (stories take any shape). The
+  /// share sheet (hand-off): JPEG, PNG or GIF; the app crops by itself.
+  static PhotoFit photoFit(PlatformTier tier, PostVariant v) {
+    if (tier == PlatformTier.handoff) return const PhotoFit(mimeTypes: handoffImageTypes, label: 'Instagram');
+    return PhotoFit(
+      minAspect: isStory(v) ? null : minFeedRatio,
+      maxAspect: isStory(v) ? null : maxFeedRatio,
+      mimeTypes: const {'image/jpeg'},
+      maxBytes: imageMaxBytes,
+      label: isStory(v) ? 'Instagram stories' : 'Instagram feed photos',
+    );
   }
 
   /// `extra['storyMode'] == true` posts the media as a story.

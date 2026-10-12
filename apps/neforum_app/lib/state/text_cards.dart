@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/text_card.dart';
+import 'fitted_photos.dart';
 import 'services.dart';
 import 'settings.dart';
 
@@ -17,7 +18,7 @@ import 'settings.dart';
 /// a target keeps the choice its current card was made with, else the
 /// Settings default.
 Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {TextCardTheme? theme, Map<String, bool> branded = const {}}) async {
-  final cards = {for (final m in post.media.where((m) => m.generated)) m.id: m};
+  final cards = {for (final m in post.media.where((m) => m.isTextCard)) m.id: m};
   if (!settings.textCards && cards.isEmpty) return post;
   final style = theme ?? textCardThemeOfPost(post) ?? settings.textCardTheme;
   final resolver = VariantResolver(settings.resolverOptions);
@@ -85,23 +86,24 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {Te
   for (final m in cards.values) {
     if (!used.contains(m.id)) await s.media.discard(m);
   }
-  return p.copyWith(media: [...p.media.where((m) => !m.generated), ...keep.values]);
+  return p.copyWith(media: [...p.media.where((m) => !m.isTextCard), ...keep.values]);
 }
 
 /// The style of the cards already on [post], if any.
 TextCardTheme? textCardThemeOfPost(Post post) {
   for (final m in post.media) {
-    if (!m.generated) continue;
+    if (!m.isTextCard) continue;
     final t = textCardThemeOf(m);
     if (t != null) return t;
   }
   return null;
 }
 
-/// [post] as the composer should show it: generated cards removed (they
-/// are rebuilt from the words on save).
+/// [post] as the composer should show it: generated cards and fitted photos
+/// removed (they are rebuilt on save), the original photos listed again.
 Post withoutTextCards(Post post) {
-  final ids = {for (final m in post.media.where((m) => m.generated)) m.id};
+  post = withoutFittedPhotos(post);
+  final ids = {for (final m in post.media.where((m) => m.isTextCard)) m.id};
   if (ids.isEmpty) return post;
   return post.copyWith(
     media: post.media.where((m) => !m.generated).toList(),
@@ -122,7 +124,7 @@ Post withoutTextCards(Post post) {
 /// Platform id -> whether its card on [post] carries the signature, for the
 /// composer when a saved post is edited again.
 Map<String, bool> textCardBrandingOfPost(Post post, String? Function(String accountId) platformOf) {
-  final cards = {for (final m in post.media.where((m) => m.generated)) m.id: m};
+  final cards = {for (final m in post.media.where((m) => m.isTextCard)) m.id: m};
   final out = <String, bool>{};
   for (final t in post.targets) {
     final card = t.overrides.mediaIds?.map((id) => cards[id]).whereType<MediaAttachment>().firstOrNull;

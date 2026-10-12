@@ -8,9 +8,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:neforum_app/media/photo_fitter.dart';
 import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
+import 'package:neforum_app/state/fitted_photos.dart';
+import 'package:neforum_app/state/text_cards.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/ui/compose/preview_card.dart';
@@ -124,6 +127,111 @@ void main() {
     expect(c.read(composerProvider).media, isEmpty);
     expect(c.read(composerProvider).overrides[ig.id], isNull);
     expect(c.read(composerProvider).textCardTheme, TextCardTheme.light);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  test('fitting a photo: borders from its own colours, or cropped; a JPEG within the size', () async {
+    // 300x400 (3:4): red left half, blue right half.
+    final src = img.Image(width: 300, height: 400);
+    img.fillRect(src, x1: 0, y1: 0, x2: 149, y2: 399, color: img.ColorRgb8(220, 20, 20));
+    img.fillRect(src, x1: 150, y1: 0, x2: 299, y2: 399, color: img.ColorRgb8(20, 20, 220));
+    final jpeg = img.encodeJpg(src, quality: 95);
+    const instagram = PhotoFit(minAspect: 0.8, maxAspect: 1.91, mimeTypes: {'image/jpeg'}, maxBytes: 8 * 1024 * 1024);
+
+    final padded = (await fitPhoto(jpeg, 'image/jpeg', instagram, PhotoFitMode.pad))!;
+    expect((padded.width, padded.height, padded.mimeType), (320, 400, 'image/jpeg'));
+    final p = img.decodeJpg(padded.bytes)!;
+    expect(p.getPixel(3, 200).r, greaterThan(p.getPixel(3, 200).b), reason: 'the left border is a blur of the red side');
+    expect(p.getPixel(316, 200).b, greaterThan(p.getPixel(316, 200).r), reason: 'the right border a blur of the blue side');
+    expect(p.getPixel(60, 200).r, greaterThan(180), reason: 'the photo itself is untouched in the middle');
+
+    final cropped = (await fitPhoto(jpeg, 'image/jpeg', instagram, PhotoFitMode.crop))!;
+    expect((cropped.width, cropped.height), (300, 375));
+
+    // A PNG becomes a JPEG; a size limit is met.
+    final png = img.encodePng(img.Image(width: 900, height: 900)..clear(img.ColorRgb8(90, 140, 200)));
+    final jpegOnly = (await fitPhoto(png, 'image/png', instagram, PhotoFitMode.pad))!;
+    expect((jpegOnly.mimeType, jpegOnly.width, jpegOnly.height), ('image/jpeg', 900, 900));
+    final noisy = img.Image(width: 800, height: 800);
+    for (final px in noisy) {
+      px.setRgb((px.x * 37 + px.y * 11) % 256, (px.x * 13) % 256, (px.y * 29) % 256);
+    }
+    final small = (await fitPhoto(img.encodePng(noisy), 'image/png', const PhotoFit(mimeTypes: {'image/jpeg'}, maxBytes: 40000), PhotoFitMode.pad))!;
+    expect(small.bytes.length, lessThanOrEqualTo(40000));
+    expect(await fitPhoto(Uint8List.fromList([1, 2, 3]), 'image/heic', instagram, PhotoFitMode.pad), isNull, reason: 'unreadable: left alone');
+  });
+
+  testWidgets('photos a network refuses get a fitted copy for that network only (Instagram 4:5 to 1.91:1)', (tester) async {
+    final (services, c) = await boot(tester);
+    // An Instagram account on the API (the demo one is a hand-off account).
+    final ig = ConnectedAccount(id: 'ig-api', platformId: 'instagram', tier: PlatformTier.byokApi, displayName: 'neforus', createdAt: DateTime(2026, 10, 12));
+    await tester.runAsync(() => services.accounts.upsert(ig));
+    final masto = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon');
+    final art = (await tester.runAsync(() => services.media.importBytes(
+          img.encodeJpg(img.Image(width: 300, height: 400)..clear(img.ColorRgb8(200, 160, 40))),
+          fileName: 'art.jpg',
+        )))!;
+    expect((art.width, art.height), (300, 400));
+    final now = DateTime(2026, 10, 12);
+    var post = Post(
+      id: 'p-fit',
+      text: 'One of the many pieces of art I own',
+      media: [art.copyWith(altText: 'A painting')],
+      targets: [PostTarget(accountId: ig.id), PostTarget(accountId: masto.id)],
+      createdAt: now,
+      updatedAt: now,
+    );
+    var settings = c.read(settingsProvider);
+    expect(settings.photoFit, PhotoFitMode.pad, reason: 'borders by default');
+
+    post = (await tester.runAsync(() => attachFittedPhotos(services, post, settings)))!;
+    final copy = post.media.singleWhere((m) => m.derivedFrom != null);
+    expect((copy.width, copy.height, copy.mimeType, copy.generated, copy.derivedFrom), (320, 400, 'image/jpeg', true, art.id));
+    expect(copy.altText, 'A painting');
+    expect(copy.fileName, 'art (fitted).jpg');
+    expect(post.targetFor(ig.id)!.overrides.mediaIds, [copy.id]);
+    expect(post.targetFor(masto.id)!.overrides.mediaIds, isNull, reason: 'Mastodon takes the photo as it is');
+    final variant = const VariantResolver().resolve(post, post.targetFor(ig.id)!, services.registry.byId('instagram')!.descriptor, account: ig);
+    expect(services.registry.byId('instagram')!.validate(variant, ig).where((i) => i.code == 'instagram.aspect_ratio'), isEmpty);
+
+    // Again: the same copy is kept.
+    post = (await tester.runAsync(() => attachFittedPhotos(services, post, settings)))!;
+    expect(post.media.where((m) => m.derivedFrom != null).single.id, copy.id);
+
+    // Cropping instead: a new copy, the old one deleted.
+    settings = settings.copyWith(photoFit: PhotoFitMode.crop);
+    post = (await tester.runAsync(() => attachFittedPhotos(services, post, settings)))!;
+    final cropped = post.media.singleWhere((m) => m.derivedFrom != null);
+    expect((cropped.width, cropped.height), (300, 375));
+    expect(await tester.runAsync(() async {
+      try {
+        await services.media.read(copy);
+        return 'still there';
+      } on Object {
+        return 'deleted';
+      }
+    }), 'deleted');
+
+    // Editing shows the original again.
+    final shown = withoutTextCards(post);
+    expect(shown.media.map((m) => m.id), [art.id]);
+    expect(shown.targetFor(ig.id)!.overrides.mediaIds, isNull);
+
+    // Off: no copies, and Instagram says why.
+    post = (await tester.runAsync(() => attachFittedPhotos(services, post, settings.copyWith(photoFit: PhotoFitMode.off))))!;
+    expect(post.media.map((m) => m.id), [art.id]);
+    expect(post.targetFor(ig.id)!.overrides.mediaIds, isNull);
+
+    // The composer: an info note instead of the error.
+    c.read(composerProvider.notifier).load(post);
+    c.read(composerProvider.notifier).selectAccounts([ig.id, masto.id]);
+    await settle(tester);
+    final previews = {for (final p in c.read(composerPreviewsProvider)) p.account.id: p};
+    expect(previews[ig.id]!.issues.where((i) => i.code == 'instagram.aspect_ratio'), isEmpty);
+    expect(previews[ig.id]!.issues.where((i) => i.code == 'media.photo_fit').single.message, 'art.jpg will be given borders to 4:5 for Instagram');
+    expect(previews[masto.id]!.issues.where((i) => i.code == 'media.photo_fit'), isEmpty);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));

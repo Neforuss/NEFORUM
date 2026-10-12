@@ -178,6 +178,18 @@ class _Posting extends ConsumerWidget {
           (OverflowStrategy.error, 'Never change my text', 'You customize the text for networks where it does not fit.'),
         ],
       ),
+      SettingChoice<PhotoFitMode>(
+        title: 'When a photo does not fit a network',
+        description: 'Instagram takes photos from 4:5 (portrait) to 1.91:1 (wide), some networks only JPEG or files up to a size. '
+            'That network gets an adjusted copy; your photo stays as it is everywhere else.',
+        value: s.photoFit,
+        onChanged: (v) => n.update((x) => x.copyWith(photoFit: v)),
+        options: const [
+          (PhotoFitMode.pad, 'Add borders', 'Recommended. The whole photo stays, on a soft blur of its own colours.'),
+          (PhotoFitMode.crop, 'Crop it to fit', 'Cuts the edges, keeping the middle.'),
+          (PhotoFitMode.off, 'Never change my photos', 'The network shows an error and you replace the photo yourself.'),
+        ],
+      ),
       SettingSwitch(title: 'Number thread parts', description: 'Adds (1/3), (2/3)… to each part.', value: s.threadNumbering, onChanged: (v) => n.update((x) => x.copyWith(threadNumbering: v))),
       SettingSwitch(title: 'Add my hashtags to the text', description: 'Where the network has no separate tags field.', value: s.appendHashtags, onChanged: (v) => n.update((x) => x.copyWith(appendHashtags: v))),
       SettingSwitch(title: 'Add my link to the text', description: 'Where the network has no link field and the link is not in the text yet.', value: s.appendLink, onChanged: (v) => n.update((x) => x.copyWith(appendLink: v))),

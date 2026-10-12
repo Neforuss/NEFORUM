@@ -8,6 +8,7 @@ import 'package:workmanager/workmanager.dart';
 import '../platform/desktop.dart';
 import '../platform/env.dart';
 import '../platform/notifications.dart';
+import 'fitted_photos.dart';
 import 'providers.dart';
 import 'services.dart';
 
@@ -53,6 +54,7 @@ class AppScheduler {
       final due = await _s.posts.due(DateTime.now());
       final out = <Post>[];
       for (final p in due) {
+        await fitPhotosOfSavedPost(_s, p.id);
         final done = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false);
         out.add(done);
         await _announce(done);
@@ -207,6 +209,7 @@ Future<void> announcePublishResult(AppServices s, Post p) async {
 Future<int> publishDueHeadless(AppServices s) async {
   final due = await s.posts.due(DateTime.now());
   for (final p in due) {
+    await fitPhotosOfSavedPost(s, p.id);
     final done = await s.publisher().publish(p.id, interactive: false, retryFailed: false);
     await announcePublishResult(s, done);
   }

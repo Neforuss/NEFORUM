@@ -10,6 +10,7 @@ import 'platform/desktop.dart';
 import 'platform/env.dart';
 import 'platform/notifications.dart';
 import 'platform/storage.dart';
+import 'state/fitted_photos.dart';
 import 'state/scheduler.dart';
 import 'state/services.dart';
 import 'ui/root.dart';
@@ -51,6 +52,7 @@ Future<void> _publishInBackground(String postId) async {
     final services = await AppServices.create(demo: false);
     final post = await services.posts.get(postId);
     if (post != null && post.status == PostStatus.scheduled) {
+      await fitPhotosOfSavedPost(services, postId);
       final done = await services.publisher().publish(postId, interactive: false, retryFailed: false);
       await announcePublishResult(services, done);
     }

@@ -5,6 +5,7 @@ import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart';
 import '../../model/post_variant.dart';
@@ -329,6 +330,11 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
   static const String _reconnectMessage = 'LinkedIn is not signed in. Reconnect LinkedIn in Accounts.';
 
   // ------------------------------------------------------------ validate
+
+  /// Photos must have fewer than [maxImagePixels] pixels.
+  @override
+  PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) =>
+      super.photoFit(account, variant)?.copyWith(maxPixels: maxImagePixels);
 
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {

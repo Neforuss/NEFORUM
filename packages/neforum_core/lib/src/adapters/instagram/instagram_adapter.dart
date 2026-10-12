@@ -10,6 +10,7 @@ import '../../http/neforum_http.dart';
 import '../../media_hosts/media_host.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
+import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
@@ -331,6 +332,9 @@ class InstagramAdapter extends PlatformAdapter {
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) =>
       InstagramRules.check(variant, account.tier, super.validate(variant, account));
+
+  @override
+  PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) => InstagramRules.photoFit(account.tier, variant);
 
   // --- publishing ----------------------------------------------------------------
 

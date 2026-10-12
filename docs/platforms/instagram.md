@@ -119,6 +119,18 @@ All numbers are from the IG User Media reference, the content publishing guide a
 - Carousels: 2 to 10 items, photos and videos mixed; "Carousels count as a single post".
 - Publishing quota: see the next section.
 
+### Photos that don't fit are adjusted for you
+
+A photo outside 4:5 to 1.91:1 (a 3:4 phone photo, a tall screenshot, a panorama), a PNG or WebP, or a file over 8 MB does not stop the post. When you save or post, NEFORUM makes an adjusted copy for Instagram only; every other network gets your photo as it is:
+
+- **Add borders** (the default): the whole photo stays, on a soft blur of its own colours, widened to 4:5 or heightened to 1.91:1.
+- **Crop it to fit**: the edges are cut, keeping the middle.
+- **Never change my photos**: Instagram shows the error and you replace the photo yourself.
+
+Choose under **Settings > Posting > When a photo does not fit a network**. The composer says what will happen ("art.jpg will be given borders to 4:5 for Instagram"). The copy is a JPEG within 8 MB and keeps the photo's alt text. GIFs and videos are never changed; a HEIC photo cannot be read, so convert it to JPEG first. The same applies to other networks' limits: Threads (1:10 to 10:1), Telegram (width + height up to 10000), LinkedIn (under 36 million pixels), X (photos up to 5 MB) and file types a network refuses.
+
+Hand-off posts go through the Instagram app, which crops by itself, so only file types it cannot open are converted there.
+
 ### Where Meta's documentation disagrees
 
 - **Posts per 24 hours.** The content publishing guide's overview says "Instagram accounts are limited to 100 API-published posts within a 24-hour moving period". The carousel section of the same guide says "50 published posts within a 24-hour period", and the `content_publishing_limit` reference gives `quota_total` as "currently `50`". NEFORUM's own counter allows 100; if Instagram's real limit is lower, Instagram answers with error 9 / 2207042, which NEFORUM reports as a quota problem (fall back to Hand-off, or wait a day).
@@ -142,7 +154,7 @@ All numbers are from the IG User Media reference, the content publishing guide a
 | Error 4 / 2207051 | Instagram's spam filter flagged the action (activity restricted to protect the community). Wait before posting again. |
 | Error 25 / 2207050 | The account is inactive, checkpointed or restricted. Open the Instagram app and complete what it asks. |
 | Error 9004 / 2207052 | Instagram could not download from your media host. Check that the link is public, not behind bot protection or a redirect, not expired, and returns the file itself. |
-| Error 36003 / 2207009 | Aspect ratio outside 4:5 to 1.91:1. Crop the photo. |
+| Error 36003 / 2207009 | Aspect ratio outside 4:5 to 1.91:1. NEFORUM normally fits photos itself (see above); check that **Settings > Posting > When a photo does not fit a network** is not set to *Never change my photos*. |
 | Error 36000 / 2207004 | Image larger than 8 MB. |
 | Error 352 / 2207026 | Unsupported video: use MP4 or MOV. |
 | Errors 4, 17, 80002 | Rate limit ("Calls within 24 hours = 4800 * Number of Impressions"). A brand-new account with almost no views can be throttled after a few posts. NEFORUM waits and retries later. |

@@ -1,5 +1,7 @@
 import 'package:meta/meta.dart';
 
+import 'photo_fit.dart' show PhotoFit;
+
 enum MediaKind { image, gif, video }
 
 /// A media file attached to a post. The bytes live on disk at [path]; NEFORUM
@@ -17,6 +19,8 @@ class MediaAttachment {
     this.altText,
     this.fileName,
     this.generated = false,
+    this.derivedFrom,
+    this.fitKey,
   });
 
   factory MediaAttachment.fromJson(Map<String, dynamic> json) => MediaAttachment(
@@ -30,6 +34,8 @@ class MediaAttachment {
         altText: json['altText'] as String?,
         fileName: json['fileName'] as String?,
         generated: json['generated'] as bool? ?? false,
+        derivedFrom: json['derivedFrom'] as String?,
+        fitKey: json['fitKey'] as String?,
       );
 
   final String id;
@@ -46,6 +52,17 @@ class MediaAttachment {
   /// that require an image. Generated media only reaches the targets that
   /// list it in [PostOverrides.mediaIds]; everyone else ignores it.
   final bool generated;
+
+  /// For a photo NEFORUM fitted to a platform's rules (also [generated]): the
+  /// id of the photo it was made from. Null for anything else.
+  final String? derivedFrom;
+
+  /// For a fitted photo: the rules and mode it was made for
+  /// ([PhotoFit.keyFor]), so it can be reused.
+  final String? fitKey;
+
+  /// A NEFORUM text card (generated, not made from a photo).
+  bool get isTextCard => generated && derivedFrom == null;
 
   MediaKind get kind {
     if (mimeType == 'image/gif') return MediaKind.gif;
@@ -70,6 +87,8 @@ class MediaAttachment {
         altText: clearAltText ? null : (altText ?? this.altText),
         fileName: fileName,
         generated: generated,
+        derivedFrom: derivedFrom,
+        fitKey: fitKey,
       );
 
   Map<String, dynamic> toJson() => {
@@ -83,5 +102,7 @@ class MediaAttachment {
         if (altText != null) 'altText': altText,
         if (fileName != null) 'fileName': fileName,
         if (generated) 'generated': true,
+        if (derivedFrom != null) 'derivedFrom': derivedFrom,
+        if (fitKey != null) 'fitKey': fitKey,
       };
 }

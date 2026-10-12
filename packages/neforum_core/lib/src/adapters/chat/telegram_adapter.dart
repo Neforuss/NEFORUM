@@ -2,6 +2,7 @@ import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
+import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
@@ -258,6 +259,13 @@ class TelegramAdapter extends PlatformAdapter {
   }
 
   // --------------------------------------------------------------- validate
+
+  /// Bot photos: width + height up to 10000 and a ratio up to 20. The share
+  /// sheet (hand-off) takes files as they are.
+  @override
+  PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) => account.tier == PlatformTier.handoff
+      ? null
+      : super.photoFit(account, variant)?.copyWith(minAspect: 1 / 20, maxAspect: 20, maxSideSum: 10000);
 
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {

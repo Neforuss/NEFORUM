@@ -34,6 +34,7 @@ class AppSettings {
     this.browserExtension = true,
     this.browserQuickPost = true,
     this.browserOpenInFirst = true,
+    this.photoFit = PhotoFitMode.pad,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -63,6 +64,7 @@ class AppSettings {
         browserExtension: j['browserExtension'] as bool? ?? true,
         browserQuickPost: j['browserQuickPost'] as bool? ?? true,
         browserOpenInFirst: j['browserOpenInFirst'] as bool? ?? true,
+        photoFit: PhotoFitMode.values.asNameMap()[j['photoFit']] ?? PhotoFitMode.pad,
       );
 
   final ThemeMode themeMode;
@@ -129,6 +131,11 @@ class AppSettings {
   /// user's priority order) instead of the system's default browser.
   final bool browserOpenInFirst;
 
+  /// What NEFORUM does with a photo a network does not take as it is (a shape,
+  /// file type or size it refuses): a fitted copy for that network, with
+  /// borders or cropped, or nothing (the post shows an error).
+  final PhotoFitMode photoFit;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -167,6 +174,7 @@ class AppSettings {
     bool? browserExtension,
     bool? browserQuickPost,
     bool? browserOpenInFirst,
+    PhotoFitMode? photoFit,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -195,6 +203,7 @@ class AppSettings {
         browserExtension: browserExtension ?? this.browserExtension,
         browserQuickPost: browserQuickPost ?? this.browserQuickPost,
         browserOpenInFirst: browserOpenInFirst ?? this.browserOpenInFirst,
+        photoFit: photoFit ?? this.photoFit,
       );
 
   Map<String, dynamic> toJson() => {
@@ -224,5 +233,6 @@ class AppSettings {
         'browserExtension': browserExtension,
         'browserQuickPost': browserQuickPost,
         'browserOpenInFirst': browserOpenInFirst,
+        'photoFit': photoFit.name,
       };
 }

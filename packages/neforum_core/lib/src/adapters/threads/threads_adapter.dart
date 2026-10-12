@@ -8,6 +8,7 @@ import '../../http/neforum_http.dart';
 import '../../media_hosts/media_host.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
+import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
@@ -474,6 +475,11 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
   }
 
   // ---- validate ----------------------------------------------------------
+
+  /// Photos from 1:10 to 10:1 besides the file types and size.
+  @override
+  PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) =>
+      super.photoFit(account, variant)?.copyWith(minAspect: 0.1, maxAspect: 10);
 
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {

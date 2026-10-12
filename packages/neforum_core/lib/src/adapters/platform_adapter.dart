@@ -1,5 +1,6 @@
 import '../handoff/handoff_plan.dart';
 import '../model/account.dart';
+import '../model/photo_fit.dart';
 import '../model/platform_descriptor.dart';
 import '../model/post_variant.dart';
 import '../model/publish_result.dart';
@@ -44,6 +45,17 @@ abstract class PlatformAdapter {
   Future<Map<String, String>?> refreshSecrets(
           ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
       null;
+
+  /// The photos this platform takes through [account] for [variant], as rules a photo can be
+  /// changed to meet (shape, file type, size, pixels). The app makes a fitted
+  /// copy of a photo that breaks them, for this platform only, instead of
+  /// failing the post. Null: photos go as they are. Defaults to the
+  /// descriptor's file types and size; override for more (Instagram's 4:5 to
+  /// 1.91:1) or for tiers that take anything (a share sheet).
+  PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) {
+    final d = descriptorForAccount(account);
+    return PhotoFit.fromRules(d.media).copyWith(label: d.name);
+  }
 
   /// Platform-specific validation on top of the generic rules check. Called
   /// by the composer live, so keep it synchronous and cheap.

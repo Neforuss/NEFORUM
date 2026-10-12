@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../media/text_card.dart';
 import '../platform/notifications.dart';
+import 'fitted_photos.dart';
 import 'providers.dart';
 import 'scheduler.dart';
 import 'text_cards.dart';
@@ -333,6 +334,21 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
       variant = variant.copyWith(media: [textCardPlaceholder(d.id, c.textCardTheme ?? settings.textCardTheme, branded: signed)]);
       issues.add(ValidationIssue.info('media.text_card', '${d.name} needs an image, so your words go out as ${signed ? 'a NEFORUM' : 'a plain'} text card', field: 'media'));
     }
+    // Photos this network does not take as they are get a fitted copy on
+    // save; check what that copy will be.
+    final fit = settings.photoFit == PhotoFitMode.off ? null : adapter.photoFit(a, variant);
+    if (fit != null) {
+      final fitted = [
+        for (final m in variant.media)
+          if (!m.generated && fit.problemsOf(m).isNotEmpty) m,
+      ];
+      if (fitted.isNotEmpty) {
+        variant = variant.copyWith(media: [for (final m in variant.media) fitted.contains(m) ? fit.standIn(m, settings.photoFit) : m]);
+        for (final m in fitted) {
+          issues.add(ValidationIssue.info('media.photo_fit', '${m.fileName ?? 'A photo'} will be ${fit.describe(m, settings.photoFit)} for ${d.name}', field: 'media'));
+        }
+      }
+    }
     try {
       issues.addAll(adapter.validate(variant, a));
     } on Object catch (e) {
@@ -420,9 +436,11 @@ class PostActions {
     final existing = c.editingPostId == null ? null : await s.posts.get(c.editingPostId!);
     if (existing != null) await _releaseHeld(existing.id);
     var post = c.toPost(id: c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
-    // Hand the old cards over so unchanged ones are reused, stale ones deleted.
+    // Hand the old cards and fitted photos over so unchanged ones are reused,
+    // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
     post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme, branded: c.textCardBranded);
+    post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     await s.posts.upsert(post);
     return post;
   }
@@ -498,6 +516,7 @@ class PostActions {
     // Posts saved before text cards existed, or drafts published from a
     // list, get their cards here.
     post = await attachTextCards(s, post, ref.read(settingsProvider));
+    post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     await s.posts.upsert(post);
     final run = ref.read(publishRunProvider.notifier);
     run.start(postId, accountIds ?? post.targets.map((t) => t.accountId));

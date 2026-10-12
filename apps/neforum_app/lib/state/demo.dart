@@ -34,6 +34,9 @@ class DemoAdapter extends PlatformAdapter {
       .toList();
 
   @override
+  PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) => inner.photoFit(account, variant);
+
+  @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) => inner.buildHandoff(variant, account: account);
 
   @override
