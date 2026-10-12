@@ -1,7 +1,8 @@
 // The real browser extension background script (extensions/browser/src/
-// background.js, run by Node) against the real NEFORUM bridge server, on the
-// real ports: pairing with a code, the job, a 1.5 MB file in chunks, the
-// result, and unpairing. Skipped when Node is not installed.
+// background.js, run by Node) against the real NEFORUM bridge server over
+// real HTTP: pairing with a code, the job, a 1.5 MB file in chunks, the
+// result, and unpairing. On a port of its own, so a NEFORUM running on
+// this computer is not in the way. Skipped when Node is not installed.
 
 import 'dart:convert';
 import 'dart:io';
@@ -22,10 +23,11 @@ void main() {
 
   test('the real extension pairs, gets the job and its file, reports back and unpairs', () async {
     final secrets = InMemorySecretStore();
-    final bridge = BrowserBridge.create(secrets: secrets);
+    const port = 52795;
+    final bridge = BrowserBridge.create(secrets: secrets, ports: const [port]);
     await bridge.start();
     addTearDown(bridge.dispose);
-    expect(bridge.status.value.listening, isTrue, reason: 'one of ports 52772-52779 must be free');
+    expect(bridge.status.value.listening, isTrue, reason: 'port $port must be free');
 
     final bytes = Uint8List.fromList(List.generate(1500000, (i) => i % 251));
     bytes[0] = 1;
@@ -44,7 +46,7 @@ void main() {
     addTearDown(sub.cancel);
     final code = bridge.startPairing().code;
 
-    final run = await Process.run('node', ['../../extensions/browser/test/e2e.mjs', code, 'www.tiktok.com']);
+    final run = await Process.run('node', ['../../extensions/browser/test/e2e.mjs', code, 'www.tiktok.com', '$port']);
     final lines = const LineSplitter().convert('${run.stdout}').where((l) => l.trim().startsWith('{'));
     expect(run.exitCode, 0, reason: '${run.stdout}\n${run.stderr}');
     final out = jsonDecode(lines.last) as Map<String, dynamic>;

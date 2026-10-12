@@ -34,91 +34,164 @@ Future<String?> revealExtensionFiles() async {
   }
 }
 
-// ---- opening a page in a chosen browser ------------------------------------
+// ---- installed browsers ------------------------------------------------------
 
-/// How to start each browser family: the Windows executable and its usual
-/// folders (under Program Files, Program Files (x86) and Local AppData), the
-/// macOS app name, and the Linux commands.
-const Map<String, ({String exe, List<String> dirs, String mac, List<String> linux})> _browserApps = {
-  'chrome': (exe: 'chrome.exe', dirs: [r'Google\Chrome\Application'], mac: 'Google Chrome', linux: ['google-chrome', 'google-chrome-stable']),
-  'firefox': (exe: 'firefox.exe', dirs: ['Mozilla Firefox'], mac: 'Firefox', linux: ['firefox']),
-  'edge': (exe: 'msedge.exe', dirs: [r'Microsoft\Edge\Application'], mac: 'Microsoft Edge', linux: ['microsoft-edge', 'microsoft-edge-stable']),
-  'brave': (exe: 'brave.exe', dirs: [r'BraveSoftware\Brave-Browser\Application'], mac: 'Brave Browser', linux: ['brave-browser', 'brave']),
-  'opera': (exe: 'opera.exe', dirs: [r'Programs\Opera', 'Opera'], mac: 'Opera', linux: ['opera']),
-  'vivaldi': (exe: 'vivaldi.exe', dirs: [r'Vivaldi\Application'], mac: 'Vivaldi', linux: ['vivaldi', 'vivaldi-stable']),
-  'chromium': (exe: 'chromium.exe', dirs: [r'Chromium\Application'], mac: 'Chromium', linux: ['chromium', 'chromium-browser']),
-};
+/// Browser apps looked for on macOS, in /Applications and ~/Applications.
+const List<String> _macBrowsers = [
+  'Google Chrome', 'Google Chrome Beta', 'Google Chrome Dev', 'Google Chrome Canary', 'Chromium', 'Microsoft Edge', 'Brave Browser', //
+  'Opera', 'Opera GX', 'Vivaldi', 'Arc', 'Helium', 'Thorium', 'Orion', //
+  'Firefox', 'Firefox Developer Edition', 'Firefox Nightly', 'Zen', 'Zen Browser', 'LibreWolf', 'Waterfox', 'Floorp',
+];
 
-/// What starts each family that was found (an exe path, a macOS app name or
-/// a Linux command). Only hits are kept, so a browser installed later is found.
-final Map<String, String> _launchers = {};
+/// Browser commands looked for on Linux, with their names.
+const List<(String, String)> _linuxBrowsers = [
+  ('google-chrome', 'Google Chrome'), ('google-chrome-stable', 'Google Chrome'), ('chromium', 'Chromium'), ('chromium-browser', 'Chromium'),
+  ('microsoft-edge', 'Microsoft Edge'), ('microsoft-edge-stable', 'Microsoft Edge'), ('brave-browser', 'Brave'), ('brave', 'Brave'),
+  ('vivaldi', 'Vivaldi'), ('vivaldi-stable', 'Vivaldi'), ('opera', 'Opera'), ('helium', 'Helium'), ('helium-browser', 'Helium'),
+  ('firefox', 'Mozilla Firefox'), ('librewolf', 'LibreWolf'), ('zen-browser', 'Zen'), ('floorp', 'Floorp'), ('waterfox', 'Waterfox'),
+];
 
-Future<String?> _launcher(String family) async {
-  final known = _launchers[family];
-  if (known != null) return known;
-  final b = _browserApps[family];
-  if (b == null) return null;
-  String? found;
+List<InstalledBrowser>? _installed;
+
+Future<List<InstalledBrowser>> installedBrowsers({bool refresh = false}) async {
+  final cached = _installed;
+  if (!refresh && cached != null) return cached;
+  var found = <InstalledBrowser>[];
   try {
     if (Platform.isWindows) {
-      found = await _windowsExe(b.exe, b.dirs);
+      found = await _windowsBrowsers();
     } else if (Platform.isMacOS) {
-      // -R: find the app without opening it.
-      found = (await Process.run('open', ['-Ra', b.mac])).exitCode == 0 ? b.mac : null;
+      found = await _macInstalled();
     } else if (Platform.isLinux) {
-      for (final cmd in b.linux) {
-        if ((await Process.run('which', [cmd])).exitCode == 0) {
-          found = cmd;
-          break;
-        }
-      }
+      found = await _linuxInstalled();
     }
   } on Object catch (e) {
-    debugPrint('Could not look for $family: $e');
+    debugPrint('Could not list the installed browsers: $e');
   }
-  if (found != null) _launchers[family] = found;
-  return found;
+  final seen = <String>{};
+  found = [for (final b in found) if (seen.add(b.id.toLowerCase())) b]..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+  return _installed = List.unmodifiable(found);
 }
 
-/// The registry's App Paths entry for [exe] (per user, then per machine),
-/// else the usual install folders.
-Future<String?> _windowsExe(String exe, List<String> dirs) async {
-  for (final hive in const ['HKCU', 'HKLM']) {
-    final r = await Process.run('reg', ['query', '$hive\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\$exe', '/ve']);
-    if (r.exitCode != 0) continue;
-    final m = RegExp(r'REG_(?:EXPAND_)?SZ\s+(.+)$', multiLine: true).firstMatch('${r.stdout}');
-    if (m == null) continue;
-    final path = _expandEnv(m.group(1)!.trim().replaceAll('"', ''));
-    if (await File(path).exists()) return path;
+/// The browsers registered with Windows (Clients\StartMenuInternet: the list
+/// Default Apps shows; per user first), each with its program.
+Future<List<InstalledBrowser>> _windowsBrowsers() async {
+  final out = <InstalledBrowser>[];
+  for (final root in const [r'HKCU\SOFTWARE\Clients\StartMenuInternet', r'HKLM\SOFTWARE\Clients\StartMenuInternet', r'HKLM\SOFTWARE\WOW6432Node\Clients\StartMenuInternet']) {
+    final r = await Process.run('reg', ['query', root, '/s']);
+    if (r.exitCode == 0) out.addAll(parseStartMenuInternet('${r.stdout}'));
   }
-  final env = Platform.environment;
-  final roots = [env['ProgramFiles'], env['ProgramFiles(x86)'], env['LOCALAPPDATA']].whereType<String>();
-  for (final root in roots) {
-    for (final dir in dirs) {
-      final path = p.join(root, dir, exe);
-      if (await File(path).exists()) return path;
+  return [for (final b in out) if (await File(b.id).exists()) b];
+}
+
+/// Reads the output of `reg query ...\Clients\StartMenuInternet /s`: each
+/// browser key's default value is its name, and its shell\open\command the
+/// program. A default value's name is in parentheses in every language
+/// ("(Default)", "(Standard)"). Internet Explorer is left out.
+@visibleForTesting
+List<InstalledBrowser> parseStartMenuInternet(String output) {
+  final names = <String, String>{};
+  final commands = <String, String>{};
+  final order = <String>[];
+  const marker = r'\startmenuinternet\';
+  final value = RegExp(r'^\s+(\(.*?\))\s+REG_(?:EXPAND_)?SZ(?:\s+(.*?))?\s*$');
+  String? key;
+  for (final line in const LineSplitter().convert(output)) {
+    if (line.startsWith('HKEY_')) {
+      key = line.trim();
+      continue;
     }
+    final m = value.firstMatch(line);
+    final at = key?.toLowerCase().indexOf(marker) ?? -1;
+    if (m == null || key == null || at < 0) continue;
+    final parts = key.substring(at + marker.length).split(r'\');
+    final id = parts.first;
+    final data = m.group(2) ?? '';
+    if (parts.length == 1) {
+      names[id] = data;
+    } else if (parts.length == 4 && parts.skip(1).map((s) => s.toLowerCase()).join('/') == 'shell/open/command') {
+      commands[id] = data;
+    } else {
+      continue;
+    }
+    if (!order.contains(id)) order.add(id);
   }
-  return null;
+  final out = <InstalledBrowser>[];
+  for (final id in order) {
+    if (id.toLowerCase() == 'iexplore.exe') continue;
+    final exe = _exeOf(commands[id] ?? '');
+    if (exe == null) continue;
+    var name = (names[id] ?? '').trim();
+    // "(value not set)", in whatever language.
+    if (name.startsWith('(') && name.endsWith(')')) name = '';
+    out.add(InstalledBrowser(id: exe, name: name.isEmpty ? p.windows.basenameWithoutExtension(exe) : name));
+  }
+  return out;
+}
+
+/// The program of a command line: `"C:\x\chrome.exe" --flag` → `C:\x\chrome.exe`.
+String? _exeOf(String command) {
+  final c = command.trim();
+  String? path;
+  if (c.startsWith('"')) {
+    final end = c.indexOf('"', 1);
+    if (end > 1) path = c.substring(1, end);
+  } else {
+    path = RegExp(r'^(.+?\.exe)\b', caseSensitive: false).firstMatch(c)?.group(1);
+  }
+  return path == null ? null : _expandEnv(path);
 }
 
 String _expandEnv(String s) => s.replaceAllMapped(RegExp('%([^%]+)%'), (m) => Platform.environment[m.group(1)!] ?? m.group(0)!);
 
-Future<bool> browserInstalled(String family) async => await _launcher(family) != null;
-
-Future<bool> openInBrowser(String family, Uri url) async {
-  if (!(url.isScheme('http') || url.isScheme('https'))) return false;
-  final launcher = await _launcher(family);
-  if (launcher == null) return false;
-  try {
-    if (Platform.isMacOS) {
-      return (await Process.run('open', ['-a', launcher, url.toString()])).exitCode == 0;
+Future<List<InstalledBrowser>> _macInstalled() async {
+  final home = Platform.environment['HOME'];
+  final out = <InstalledBrowser>[];
+  for (final name in _macBrowsers) {
+    for (final dir in ['/Applications', if (home != null) '$home/Applications']) {
+      final path = '$dir/$name.app';
+      if (await Directory(path).exists()) {
+        out.add(InstalledBrowser(id: path, name: name));
+        break;
+      }
     }
-    await Process.start(launcher, [url.toString()], mode: ProcessStartMode.detached);
+  }
+  return out;
+}
+
+Future<List<InstalledBrowser>> _linuxInstalled() async {
+  final out = <InstalledBrowser>[];
+  final names = <String>{};
+  for (final (cmd, name) in _linuxBrowsers) {
+    if (names.contains(name)) continue;
+    if ((await Process.run('which', [cmd])).exitCode == 0) {
+      out.add(InstalledBrowser(id: cmd, name: name));
+      names.add(name);
+    }
+  }
+  return out;
+}
+
+Future<bool> browserAvailable(String id) async {
+  if ((await installedBrowsers()).any((b) => b.id.toLowerCase() == id.toLowerCase())) return true;
+  try {
+    // A program the user picked in Settings.
+    if (Platform.isMacOS) return await Directory(id).exists();
+    if (p.isAbsolute(id)) return await File(id).exists();
+    return Platform.isLinux && (await Process.run('which', [id])).exitCode == 0;
+  } on Object {
+    return false;
+  }
+}
+
+Future<bool> openInBrowser(String id, Uri url) async {
+  if (!(url.isScheme('http') || url.isScheme('https'))) return false;
+  try {
+    if (Platform.isMacOS) return (await Process.run('open', ['-a', id, url.toString()])).exitCode == 0;
+    await Process.start(id, [url.toString()], mode: ProcessStartMode.detached);
     return true;
   } on Object catch (e) {
-    debugPrint('Could not open $family: $e');
-    _launchers.remove(family);
+    debugPrint('Could not open $id: $e');
     return false;
   }
 }
@@ -255,9 +328,28 @@ class IoBrowserBridge extends BrowserBridge {
           PairedBrowser.fromJson(m.cast<String, dynamic>()),
       ].where((b) => b.token.isNotEmpty).toList();
       _browsers.value = List.unmodifiable(list);
+      unawaited(_guessPrograms());
     } on Object catch (e) {
       debugPrint('Browser bridge: could not read the paired browsers: $e');
     }
+  }
+
+  /// Gives each paired browser without a program its likely one ("Chrome" is
+  /// Google Chrome). The user can change it in Settings.
+  Future<void> _guessPrograms() async {
+    if (!_browsers.value.any((b) => b.app == null)) return;
+    final List<InstalledBrowser> installed;
+    try {
+      installed = await BrowserBridge.installedBrowsers();
+    } on Object {
+      return;
+    }
+    if (_disposed) return;
+    final before = _browsers.value;
+    final next = [for (final b in before) b.app == null ? b.copyWith(app: guessInstalledBrowser(b.label, installed)) : b];
+    if ([for (var i = 0; i < next.length; i++) next[i].app == before[i].app].every((same) => same)) return;
+    _browsers.value = List.unmodifiable(next);
+    await _persist();
   }
 
   Future<void> _persist() {
@@ -299,6 +391,14 @@ class IoBrowserBridge extends BrowserBridge {
     final i = list.indexWhere((b) => b.token == token);
     if (i <= 0) return;
     _browsers.value = List.unmodifiable([list[i], ...list.take(i), ...list.skip(i + 1)]);
+    await _persist();
+  }
+
+  @override
+  Future<void> setProgram(String token, InstalledBrowser program) async {
+    await _load();
+    if (!_browsers.value.any((b) => b.token == token)) return;
+    _browsers.value = List.unmodifiable([for (final b in _browsers.value) b.token == token ? b.copyWith(app: program) : b]);
     await _persist();
   }
 
@@ -375,6 +475,7 @@ class IoBrowserBridge extends BrowserBridge {
     _browsers.value = List.unmodifiable([..._browsers.value, browser]);
     cancelPairing();
     await _persist();
+    unawaited(_guessPrograms());
     return _send(req, 200, {'token': browser.token});
   }
 
@@ -414,7 +515,7 @@ class IoBrowserBridge extends BrowserBridge {
       media: List.unmodifiable(media),
       steps: steps,
       quickPost: quickPost,
-      target: target == null ? null : browserFamily(target),
+      target: target,
       createdAt: now,
       expiresAt: now.add(kBrowserJobLifetime),
     );
@@ -438,7 +539,7 @@ class IoBrowserBridge extends BrowserBridge {
     final j = job;
     if (j == null || !j.matchesHost(host)) return _send(req, 204);
     _jobHost = host.toLowerCase();
-    return _send(req, 200, {...j.toJson(), 'preferred': j.prefers(browser.label)});
+    return _send(req, 200, {...j.toJson(), 'preferred': j.prefers(browser)});
   }
 
   Future<void> _media(HttpRequest req, String id, String index) async {

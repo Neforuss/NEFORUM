@@ -83,9 +83,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   Uri? _jobUrl;
   BrowserFillResult? _fill;
 
-  /// The browser family the page was opened in ("firefox"); null for the
-  /// system's default browser.
-  String? _openedIn;
+  /// The browser program the page was opened in; null for the system's
+  /// default browser.
+  InstalledBrowser? _openedIn;
 
   @override
   void initState() {
@@ -133,7 +133,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       ],
       steps: plan.instructions,
       quickPost: ref.read(settingsProvider).browserQuickPost,
-      target: _openedIn,
+      target: _openedIn?.id,
     );
     if (job == null) return;
     setState(() {
@@ -169,7 +169,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final host = r == null || bareHost(r.host).isEmpty ? 'the page' : bareHost(r.host);
     final what = r == null ? '' : _filledWhat(r);
     final message = r?.message == null ? '' : ' ${_sentence(r!.message!)}';
-    final where = _openedIn == null ? '' : ' in ${_familyName(_openedIn!)}';
+    final where = _openedIn == null ? '' : ' in ${_openedIn!.name}';
     final post = _job!.quickPost ? 'Check it, then press $_postKeys on the page (or Post).' : 'Check it and press Post.';
     final (IconData icon, Color color, String text) = switch ((r?.status, r?.posted)) {
       (_, BrowserPostState.confirmed) => (Icons.check_circle_rounded, nf.success, 'Posted on $host. Marking this hand-off as done…'),
@@ -260,29 +260,25 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   /// Ctrl+Enter, or ⌘+Enter on a Mac: the extension's Post shortcut.
   static String get _postKeys => Env.isMacOS ? '⌘+Enter' : 'Ctrl+Enter';
 
-  /// "Firefox" for `firefox`: the label of the first paired browser of that
-  /// family.
-  String _familyName(String family) =>
-      _bridge.browsers.value.where((b) => browserFamily(b.label) == family).firstOrNull?.label ?? family;
-
-  /// The first paired browser (in the user's order) that is installed, when
-  /// hand-offs should open there; null for the system's default browser.
-  Future<String?> _firstChoice(Uri url) async {
+  /// The program of the first paired browser (in the user's order) that can
+  /// be started, when hand-offs should open there; null for the system's
+  /// default browser.
+  Future<InstalledBrowser?> _firstChoice(Uri url) async {
     if (!Env.isDesktop || !_bridge.canFill || !ref.read(settingsProvider).browserOpenInFirst) return null;
     if (!(url.isScheme('http') || url.isScheme('https'))) return null;
-    return BrowserBridge.firstInstalled(_bridge.browserOrder);
+    return (await _bridge.firstChoice())?.program;
   }
 
   Future<void> _openUrl(Uri url) async {
     await _copy(quiet: true);
-    final family = await _firstChoice(url);
+    final program = await _firstChoice(url);
     if (!mounted) return;
     // The job first (for the browser it opens in), so the page finds it.
-    _openedIn = family;
+    _openedIn = program;
     _sendToExtension(url);
-    var ok = family != null && await BrowserBridge.openInBrowser(family, url);
+    var ok = program != null && await BrowserBridge.openInBrowser(program.id, url);
     if (!ok) {
-      if (family != null && mounted) {
+      if (program != null && mounted) {
         // That browser would not start: the default one, and any browser fills in.
         _openedIn = null;
         _sendToExtension(url);

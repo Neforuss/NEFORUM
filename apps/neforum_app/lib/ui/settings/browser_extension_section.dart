@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:path/path.dart' as p;
 
 import '../../platform/browser_bridge.dart';
 import '../../platform/env.dart';
@@ -34,11 +36,43 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
   PairingCode? _shown;
   int _pairedBefore = 0;
 
+  /// The browsers installed on this computer, for "Opens in".
+  List<InstalledBrowser> _installed = const [];
+
   @override
   void initState() {
     super.initState();
     _bridge = ref.read(servicesProvider).browserBridge;
     _bridge.pairing.addListener(_onPairing);
+    // Looked up again each time, so a browser installed since shows up.
+    unawaited(_loadInstalled(refresh: true));
+  }
+
+  Future<void> _loadInstalled({bool refresh = false}) async {
+    final list = await BrowserBridge.installedBrowsers(refresh: refresh);
+    if (mounted) setState(() => _installed = list);
+  }
+
+  /// A paired browser's name as the user knows it: its program's name.
+  static String _nameOf(PairedBrowser b) => b.appName ?? b.label;
+
+  Future<void> _setProgram(PairedBrowser b, InstalledBrowser program) async {
+    await _bridge.setProgram(b.token, program);
+    if (mounted) showToast(context, 'Hand-offs for this browser open in ${program.name}', icon: Icons.check_circle_rounded);
+  }
+
+  /// "Other program…": a browser Windows doesn't list (a portable one).
+  Future<void> _pickProgram(PairedBrowser b) async {
+    final picked = await FilePicker.pickFiles(
+      dialogTitle: 'Choose the browser program',
+      type: Env.isWindows ? FileType.custom : FileType.any,
+      allowedExtensions: Env.isWindows ? const ['exe'] : null,
+    );
+    final path = picked.singleOrNull?.path;
+    if (path == null || !mounted) return;
+    var name = p.basenameWithoutExtension(path);
+    if (name.isNotEmpty) name = name[0].toUpperCase() + name.substring(1);
+    await _setProgram(b, InstalledBrowser(id: path, name: name));
   }
 
   @override
@@ -99,15 +133,19 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
 
   static String _postKeys() => Env.isMacOS ? '⌘+Enter' : 'Ctrl+Enter';
 
+  /// How many different programs the paired browsers are (two Chrome
+  /// profiles are one).
+  static int _programs(List<PairedBrowser> list) => {for (final b in list) (b.app ?? browserFamily(b.label)).toLowerCase()}.length;
+
   Future<void> _swap() async {
     await _bridge.swapFirstTwo();
     final first = _bridge.browsers.value.firstOrNull;
-    if (mounted && first != null) showToast(context, '${first.label} is now your first choice', icon: Icons.swap_vert_rounded);
+    if (mounted && first != null) showToast(context, '${_nameOf(first)} is now your first choice', icon: Icons.swap_vert_rounded);
   }
 
   Future<void> _remove(PairedBrowser b) async {
     await _bridge.remove(b.token);
-    if (mounted) showToast(context, '${b.label} can no longer fill in posts. Pair it again to use it.', icon: Icons.link_off_rounded);
+    if (mounted) showToast(context, '${_nameOf(b)} can no longer fill in posts. Pair it again to use it.', icon: Icons.link_off_rounded);
   }
 
   @override
@@ -158,10 +196,9 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
               title: 'Paired browsers',
               description: browsers.isEmpty
                   ? 'None yet.'
-                  : _bridge.browserOrder.length > 1
-                      ? 'In order of choice. Hand-offs open in the first one that is installed, and only that one fills them in on its own.'
-                      : null,
-              trailing: _bridge.browserOrder.length > 1
+                  : '${_programs(browsers) > 1 ? 'In order of choice. Hand-offs open in the first one, and only that one fills them in on its own. ' : ''}'
+                      '"Opens in" is the program each browser is. Chromium browsers (Chrome, Helium, Vivaldi, Brave...) can look alike, so change it if it is wrong.',
+              trailing: _programs(browsers) > 1
                   ? OutlinedButton.icon(onPressed: _swap, icon: const Icon(Icons.swap_vert_rounded, size: 18), label: const Text('Swap'))
                   : null,
               stackOnCompact: true,
@@ -175,6 +212,9 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
                           first: i == 0 && browsers.length > 1,
                           onMakeFirst: i == 0 ? null : () => _bridge.makeFirst(browsers[i].token),
                           onRemove: () => _remove(browsers[i]),
+                          installed: _installed,
+                          onProgram: (program) => _setProgram(browsers[i], program),
+                          onPickProgram: Env.isWindows || Env.isLinux ? () => _pickProgram(browsers[i]) : null,
                         ),
                     ]),
             ),
@@ -182,7 +222,7 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
               title: 'Open hand-offs in my first-choice browser',
               description: browsers.isEmpty
                   ? 'Once a browser is paired, hand-offs open in it instead of your default browser.'
-                  : 'Hand-offs open in ${browsers.first.label}${browsers.length > 1 ? ' (the first one above that is installed)' : ''}, not your default browser.',
+                  : 'Hand-offs open in ${_nameOf(browsers.first)}${browsers.length > 1 ? ' (the first one above that is installed)' : ''}, not your default browser.',
               value: s.browserOpenInFirst,
               onChanged: (v) => n.update((x) => x.copyWith(browserOpenInFirst: v)),
             ),
@@ -248,7 +288,16 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
 }
 
 class _BrowserTile extends StatelessWidget {
-  const _BrowserTile({required this.browser, required this.now, required this.onRemove, this.first = false, this.onMakeFirst});
+  const _BrowserTile({
+    required this.browser,
+    required this.now,
+    required this.onRemove,
+    required this.installed,
+    required this.onProgram,
+    this.onPickProgram,
+    this.first = false,
+    this.onMakeFirst,
+  });
   final PairedBrowser browser;
   final DateTime now;
   final VoidCallback onRemove;
@@ -258,6 +307,49 @@ class _BrowserTile extends StatelessWidget {
 
   /// Moves this browser to the top (null for the first one).
   final VoidCallback? onMakeFirst;
+
+  /// The installed browsers "Opens in" offers.
+  final List<InstalledBrowser> installed;
+  final ValueChanged<InstalledBrowser> onProgram;
+
+  /// "Other program…" (null where it is not offered).
+  final VoidCallback? onPickProgram;
+
+  static const _other = '\u0000other';
+
+  Widget _opensIn(BuildContext context) {
+    final nf = context.nf;
+    final current = browser.app;
+    final listed = current != null && installed.any((b) => b.id.toLowerCase() == current.toLowerCase());
+    final items = <DropdownMenuItem<String>>[
+      for (final b in installed) DropdownMenuItem(value: b.id, child: Text(b.name, overflow: TextOverflow.ellipsis)),
+      if (current != null && !listed)
+        DropdownMenuItem(value: current, child: Text(browser.appName ?? current, overflow: TextOverflow.ellipsis)),
+      if (onPickProgram != null) const DropdownMenuItem(value: _other, child: Text('Other program…')),
+    ];
+    final value = current == null ? null : (listed ? installed.firstWhere((b) => b.id.toLowerCase() == current.toLowerCase()).id : current);
+    return Row(children: [
+      Text('Opens in ', style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+      Flexible(
+        child: DropdownButton<String>(
+          key: ValueKey('opens-in-${browser.token}'),
+          value: value,
+          hint: Text('Choose the browser', style: context.text.bodySmall?.copyWith(color: nf.warning)),
+          isDense: true,
+          isExpanded: true,
+          underline: const SizedBox.shrink(),
+          style: context.text.bodySmall?.copyWith(color: nf.text, fontWeight: FontWeight.w600),
+          items: items,
+          onChanged: (id) {
+            if (id == null || id == current) return;
+            if (id == _other) return onPickProgram?.call();
+            final program = installed.where((b) => b.id == id).firstOrNull;
+            if (program != null) onProgram(program);
+          },
+        ),
+      ),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -276,13 +368,14 @@ class _BrowserTile extends StatelessWidget {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
-              Flexible(child: Text(browser.label, style: context.text.titleSmall, overflow: TextOverflow.ellipsis)),
+              Flexible(child: Text(browser.appName ?? browser.label, style: context.text.titleSmall, overflow: TextOverflow.ellipsis)),
               if (first) ...[const SizedBox(width: Space.sm), const StatusPill('First choice', tone: Tone.success, icon: Icons.star_rounded)],
             ]),
             Text(
               'Paired ${DateFormat('d MMM y').format(browser.createdAt.toLocal())} · Last used ${used == 'now' ? 'just now' : used}',
               style: context.text.bodySmall?.copyWith(color: nf.textMuted),
             ),
+            _opensIn(context),
           ]),
         ),
         if (onMakeFirst != null)

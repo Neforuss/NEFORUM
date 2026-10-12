@@ -1,18 +1,19 @@
 // End-to-end check against the REAL NEFORUM app server (started by
 // apps/neforum_app/test/browser_extension_e2e_test.dart):
-//   node extensions/browser/test/e2e.mjs <pairing code> <expected host>
+//   node extensions/browser/test/e2e.mjs <pairing code> <expected host> [port]
+// [port]: where the test's app listens (default: the real ports).
 // Prints one JSON line with what happened; exits 1 on any failure.
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const [code, host] = process.argv.slice(2);
+const [code, host, appPort] = process.argv.slice(2);
 const store = {};
 const listeners = {};
 const chrome = {
   storage: { local: { get: async (k) => (k in store ? { [k]: store[k] } : {}), set: async (o) => Object.assign(store, o), remove: async (k) => delete store[k] } },
   runtime: { onMessage: { addListener: (f) => (listeners.message = f) }, onConnect: { addListener: (f) => (listeners.connect = f) } },
 };
-const sandbox = { chrome, fetch, AbortSignal, URL, navigator: { userAgent: 'Mozilla/5.0 Firefox/140.0' }, btoa, atob, module: { exports: {} }, console };
+const sandbox = { chrome, fetch, AbortSignal, URL, navigator: { userAgent: 'Mozilla/5.0 Firefox/140.0' }, btoa, atob, module: { exports: {} }, console, ...(appPort ? { NEFORUM_PORTS: [Number(appPort)] } : {}) };
 vm.runInNewContext(readFileSync(new URL('../src/background.js', import.meta.url), 'utf8'), sandbox);
 const send = (msg) => new Promise((resolve) => listeners.message(msg, {}, resolve));
 const out = {};

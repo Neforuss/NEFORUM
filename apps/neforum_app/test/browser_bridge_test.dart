@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_app/platform/browser_bridge.dart';
+import 'package:neforum_app/platform/browser_bridge_io.dart' show parseStartMenuInternet;
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/platform/ui_bridge.dart';
 import 'package:neforum_app/state/providers.dart';
@@ -108,6 +109,8 @@ void main() {
         )!;
 
     setUp(() async {
+      _launcher = _FakeLauncher();
+      BrowserBridge.launcher = _launcher;
       now = DateTime.utc(2026, 10, 12, 10);
       secrets = InMemorySecretStore();
       bridge = BrowserBridge.create(secrets: secrets, clock: () => now, ports: const [0]);
@@ -120,6 +123,7 @@ void main() {
     tearDown(() async {
       client.close(force: true);
       await bridge.dispose();
+      BrowserBridge.launcher = const BrowserLauncher();
     });
 
     test('hello says who it is, and whether the token is good', () async {
@@ -278,27 +282,43 @@ void main() {
       });
     });
 
-    test('preferred: only the browser the page was opened in fills it in on its own', () async {
+    test('preferred: only browsers set to the program the page was opened in fill it in on their own', () async {
       final chrome = await pair('Chrome');
       final firefox = await pair('Firefox');
-      final edge = await pair('Microsoft Edge');
+      // Helium is Chromium too, and its extension may well say "Chrome".
+      final helium = await pair('Chrome');
+      await pumpEventQueue();
+      expect([for (final b in bridge.browsers.value) b.app], [_chrome.id, _firefox.id, _chrome.id], reason: 'guessed at pairing: "Chrome" is Google Chrome');
+      await bridge.setProgram(helium, _helium);
+      expect(bridge.browsers.value.last.appName, 'Helium');
       Future<Object?> preferred(String token) async => (await call('GET', '/v1/job?host=youtube.com', token: token)).json['preferred'];
+      void openedIn(InstalledBrowser? program) =>
+          bridge.createJob(platformId: 'youtube_posts', platformName: 'YouTube Posts', url: 'https://www.youtube.com/@a/posts', hosts: const ['www.youtube.com'], text: 'Hi', target: program?.id);
 
-      bridge.createJob(platformId: 'youtube_posts', platformName: 'YouTube Posts', url: 'https://www.youtube.com/@a/posts', hosts: const ['www.youtube.com'], text: 'Hi', target: 'Firefox');
-      expect(bridge.job!.target, 'firefox');
-      expect(await preferred(firefox), isTrue);
-      expect(await preferred(chrome), isFalse);
-      expect(await preferred(edge), isFalse);
-
-      bridge.createJob(platformId: 'youtube_posts', platformName: 'YouTube Posts', url: 'https://www.youtube.com/@a/posts', hosts: const ['www.youtube.com'], text: 'Hi', target: 'edge');
-      expect(await preferred(edge), isTrue);
-      expect(await preferred(chrome), isFalse, reason: 'Edge is not Chrome');
-
+      openedIn(_chrome);
+      expect([await preferred(chrome), await preferred(firefox), await preferred(helium)], [true, false, false]);
+      openedIn(_helium);
+      expect([await preferred(chrome), await preferred(firefox), await preferred(helium)], [false, false, true], reason: 'same chrome.exe name, another program');
+      openedIn(_firefox);
+      expect([await preferred(chrome), await preferred(firefox), await preferred(helium)], [false, true, false]);
       // Opened in the default browser: any paired browser fills in.
-      youtubeJob();
-      for (final t in [chrome, firefox, edge]) {
-        expect(await preferred(t), isTrue);
-      }
+      openedIn(null);
+      expect([await preferred(chrome), await preferred(firefox), await preferred(helium)], [true, true, true]);
+    });
+
+    test('first choice: the first paired browser whose program can start, in the user\'s order', () async {
+      final helium = await pair('Chromium-based browser');
+      await pair('Chrome');
+      await pumpEventQueue();
+      expect(bridge.browsers.value.first.app, isNull, reason: 'no program called Chromium here: the user picks');
+      expect((await bridge.firstChoice())!.program, _chrome, reason: 'the Helium one has no program yet');
+
+      await bridge.setProgram(helium, _helium);
+      expect((await bridge.firstChoice())!.program, _helium);
+      _launcher.gone.add(_helium.id);
+      expect((await bridge.firstChoice())!.program, _chrome, reason: 'Helium uninstalled: the next one');
+      _launcher.gone.add(_chrome.id);
+      expect(await bridge.firstChoice(), isNull);
     });
 
     test('posted: reported only for jobs that allow posting from the page', () async {
@@ -333,12 +353,11 @@ void main() {
       await pair('Chrome'); // a second Chrome profile
       final firefox = await pair('Firefox');
       List<String> labels() => [for (final b in bridge.browsers.value) b.label];
-      expect(bridge.browserOrder, ['chrome', 'firefox']);
+      await pumpEventQueue();
 
-      // Swap trades Chrome for the next browser of another family.
+      // Swap trades Chrome for the next browser that is another program.
       await bridge.swapFirstTwo();
       expect(labels(), ['Firefox', 'Chrome', 'Chrome']);
-      expect(bridge.browserOrder, ['firefox', 'chrome']);
       await bridge.swapFirstTwo();
       expect(labels().first, 'Chrome');
 
@@ -502,7 +521,62 @@ void main() {
     expect(browserFamily('Firefox'), 'firefox');
     expect(browserFamily('Brave'), 'brave');
     expect(browserFamily('Chromium'), 'chromium');
+    expect(browserFamily('Chromium-based browser'), 'chromium');
+    expect(browserFamily('Helium'), 'helium');
     expect(browserFamily('Browser'), 'browser');
+  });
+
+  test('guessing the program: "Chrome" is Google Chrome, never another Chromium browser', () {
+    const installed = [_firefox, _chrome, _helium, _edge];
+    expect(guessInstalledBrowser('Chrome', installed), _chrome);
+    expect(guessInstalledBrowser('Chrome', const [_helium]), isNull, reason: 'Helium is not Chrome, even with chrome.exe');
+    expect(guessInstalledBrowser('Firefox', installed), _firefox);
+    expect(guessInstalledBrowser('Microsoft Edge', installed), _edge);
+    expect(guessInstalledBrowser('Chromium-based browser', installed), isNull, reason: 'the user picks');
+  });
+
+  test('Windows: the registered browsers, each with its own program (Helium\'s chrome.exe is not Chrome\'s)', () {
+    const out = r'''
+
+HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\Helium.OO6APRPCII42OYXWF2EY5HUQ6A
+    (Default)    REG_SZ    Helium
+
+HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\Helium.OO6APRPCII42OYXWF2EY5HUQ6A\Capabilities
+    ApplicationName    REG_SZ    Helium
+
+HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\Helium.OO6APRPCII42OYXWF2EY5HUQ6A\DefaultIcon
+    (Default)    REG_SZ    C:\Users\me\AppData\Local\imput\Helium\Application\chrome.exe,0
+
+HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\Helium.OO6APRPCII42OYXWF2EY5HUQ6A\shell\open\command
+    (Default)    REG_SZ    "C:\Users\me\AppData\Local\imput\Helium\Application\chrome.exe"
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\Google Chrome
+    (Standard)    REG_SZ    Google Chrome
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\Google Chrome\shell\open\command
+    (Standard)    REG_SZ    "C:\Program Files\Google\Chrome\Application\chrome.exe" --flag
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\IEXPLORE.EXE
+    (Default)    REG_SZ    Internet Explorer
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Clients\StartMenuInternet\IEXPLORE.EXE\shell\open\command
+    (Default)    REG_SZ    C:\Program Files\Internet Explorer\iexplore.exe
+
+HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\WebThing
+    (Default)    REG_SZ    (value not set)
+
+HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\WebThing\shell\open\command
+    (Default)    REG_SZ    C:\Apps\WebThing.exe
+
+HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
+    (Default)    REG_SZ    Broken
+''';
+    final found = parseStartMenuInternet(out);
+    expect([for (final b in found) (b.name, b.id)], [
+      ('Helium', r'C:\Users\me\AppData\Local\imput\Helium\Application\chrome.exe'),
+      ('Google Chrome', r'C:\Program Files\Google\Chrome\Application\chrome.exe'),
+      ('WebThing', r'C:\Apps\WebThing.exe'),
+    ]);
   });
 
   testWidgets('Settings > Browser extension: status, pairing code, paired list', variant: TargetPlatformVariant.only(TargetPlatform.windows), timeout: const Timeout(Duration(minutes: 1)), (tester) async {
@@ -511,6 +585,8 @@ void main() {
     tester.view.physicalSize = const Size(388, 2000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    BrowserBridge.launcher = _FakeLauncher();
+    addTearDown(() => BrowserBridge.launcher = const BrowserLauncher());
 
     // Made off the fake clock: the server answers real requests.
     final bridge = (await tester.runAsync(() async => BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0])))!;
@@ -546,12 +622,27 @@ void main() {
       final r = await _call(client, port, 'POST', '/v1/pair', body: {'code': code, 'browser': 'Chrome'}, origin: 'chrome-extension://abc');
       expect(r.status, 200);
       client.close(force: true);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
     });
     await tester.pump();
     expect(find.text('Cancel'), findsNothing);
-    expect(find.text('Chrome'), findsOneWidget);
-    expect(find.textContaining('Last used just now'), findsOneWidget);
     expect(find.text('Paired with Chrome'), findsOneWidget);
+    expect(find.textContaining('Last used just now'), findsOneWidget);
+    // "Chrome" was guessed to be Google Chrome; it can be changed.
+    final token = bridge.browsers.value.single.token;
+    expect(find.text('Opens in '), findsOneWidget);
+    expect(find.descendant(of: find.byKey(ValueKey('opens-in-$token')), matching: find.text('Google Chrome')), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('opens-in-$token')));
+    await tester.pumpAndSettle();
+    expect(find.text('Other program…'), findsOneWidget);
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Helium').last);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    });
+    await tester.pumpAndSettle();
+    expect(bridge.browsers.value.single.app, _helium.id);
+    expect(find.descendant(of: find.byKey(ValueKey('opens-in-$token')), matching: find.text('Helium')), findsOneWidget);
+    expect(bridge.browsers.value.single.appName, 'Helium', reason: 'the tile is now called Helium');
 
     // A new code, cancelled.
     await tester.tap(find.widgetWithText(OutlinedButton, 'Pair a browser'));
@@ -594,7 +685,7 @@ void main() {
     });
 
     // No browser found: pages open in the default browser, as before.
-    BrowserBridge.launcher = _FakeLauncher(const {});
+    BrowserBridge.launcher = _FakeLauncher(installed: const []);
     addTearDown(() => BrowserBridge.launcher = const BrowserLauncher());
 
     final photoBytes = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 9]);
@@ -707,7 +798,7 @@ void main() {
       return true;
     });
     messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async => null);
-    final launcher = _FakeLauncher({'chrome', 'firefox'});
+    final launcher = _FakeLauncher();
     BrowserBridge.launcher = launcher;
     addTearDown(() {
       messenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/url_launcher'), null);
@@ -723,11 +814,17 @@ void main() {
     addTearDown(() => client.close(force: true));
     Future<String> pairAs(String label) async => (await tester.runAsync(() async {
           final code = bridge.startPairing().code;
-          return (await _call(client, port, 'POST', '/v1/pair', body: {'code': code, 'browser': label})).json['token'] as String;
+          final token = (await _call(client, port, 'POST', '/v1/pair', body: {'code': code, 'browser': label})).json['token'] as String;
+          await Future<void>.delayed(const Duration(milliseconds: 30));
+          return token;
         }))!;
+    // Google Chrome and Helium: both extensions say "Chrome".
     final chrome = await pairAs('Chrome');
-    final firefox = await pairAs('Firefox');
-    await tester.runAsync(() => bridge.makeFirst(firefox));
+    final helium = await pairAs('Chrome');
+    await tester.runAsync(() async {
+      await bridge.setProgram(helium, _helium);
+      await bridge.makeFirst(helium);
+    });
 
     const url = 'https://www.youtube.com/@examplechannel/posts';
     final plan = HandoffPlan(platformId: 'youtube_posts', instructions: '1. Press Post.', clipboardText: 'Hello', desktopUrl: url, preferred: HandoffMethod.manual);
@@ -751,25 +848,28 @@ void main() {
     Future<void> open() async {
       await tester.tap(find.text('Show'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Open YouTube Posts'));
+      await tester.runAsync(() async {
+        await tester.tap(find.text('Open YouTube Posts'));
+        await Future<void>.delayed(const Duration(milliseconds: 30));
+      });
       await tester.pump();
       await tester.pump();
     }
 
     await open();
-    expect(launcher.opened, [('firefox', url)], reason: 'Firefox is the first choice');
+    expect(launcher.opened, [(_helium.id, url)], reason: 'Helium is the first choice, not whatever chrome.exe is');
     expect(launched, isEmpty, reason: 'not the default browser');
-    expect(bridge.job!.target, 'firefox');
-    expect(find.text('The NEFORUM extension in Firefox is filling this in…'), findsOneWidget);
+    expect(bridge.job!.target, _helium.id);
+    expect(find.text('The NEFORUM extension in Helium is filling this in…'), findsOneWidget);
 
     final jobId = bridge.job!.id;
     await tester.runAsync(() async {
       final c = await _call(client, port, 'GET', '/v1/job?host=www.youtube.com', token: chrome);
-      expect(c.json['preferred'], isFalse, reason: 'Chrome stays out of it');
-      final f = await _call(client, port, 'GET', '/v1/job?host=www.youtube.com', token: firefox);
-      expect(f.json['preferred'], isTrue);
-      expect(f.json['quickPost'], isTrue);
-      final r = await _call(client, port, 'POST', '/v1/job/$jobId/result', token: firefox, body: {'status': 'filled', 'text': true, 'media': 0, 'posted': 'confirmed'});
+      expect(c.json['preferred'], isFalse, reason: 'Google Chrome stays out of it');
+      final h = await _call(client, port, 'GET', '/v1/job?host=www.youtube.com', token: helium);
+      expect(h.json['preferred'], isTrue);
+      expect(h.json['quickPost'], isTrue);
+      final r = await _call(client, port, 'POST', '/v1/job/$jobId/result', token: helium, body: {'status': 'filled', 'text': true, 'media': 0, 'posted': 'confirmed'});
       expect(r.status, 204);
     });
     await tester.pump();
@@ -779,16 +879,16 @@ void main() {
     expect(choice, HandoffChoice.posted, reason: 'the sheet closed itself as posted');
     expect(bridge.job, isNull);
 
-    // Firefox gone: the next one in the order.
-    launcher.families.remove('firefox');
+    // Helium gone: the next one in the order, Google Chrome itself.
+    launcher.gone.add(_helium.id);
     await open();
-    expect(launcher.opened.last, ('chrome', url));
-    expect(bridge.job!.target, 'chrome');
+    expect(launcher.opened.last, (_chrome.id, url));
+    expect(bridge.job!.target, _chrome.id);
     await tester.tap(find.text('Later'));
     await tester.pumpAndSettle();
 
-    // None installed: the default browser, and any paired browser fills in.
-    launcher.families.clear();
+    // None can start: the default browser, and any paired browser fills in.
+    launcher.gone.add(_chrome.id);
     await open();
     expect(launched, [url]);
     expect(bridge.job!.target, isNull);
@@ -801,19 +901,31 @@ void main() {
   });
 }
 
-/// Pretends [families] are installed and records what it opened.
+// Browsers as Windows lists them; Helium's program is chrome.exe too.
+const _chrome = InstalledBrowser(id: r'C:\Program Files\Google\Chrome\Application\chrome.exe', name: 'Google Chrome');
+const _helium = InstalledBrowser(id: r'C:\Users\me\AppData\Local\imput\Helium\Application\chrome.exe', name: 'Helium');
+const _firefox = InstalledBrowser(id: r'C:\Program Files\Mozilla Firefox\firefox.exe', name: 'Mozilla Firefox');
+const _edge = InstalledBrowser(id: r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe', name: 'Microsoft Edge');
+
+late _FakeLauncher _launcher;
+
+/// Pretends [installed] are installed (minus [gone]) and records what it opened.
 class _FakeLauncher extends BrowserLauncher {
-  _FakeLauncher(Set<String> families) : families = {...families};
-  final Set<String> families;
+  _FakeLauncher({this.installed = const [_chrome, _edge, _firefox, _helium]});
+  final List<InstalledBrowser> installed;
+  final Set<String> gone = {};
   final List<(String, String)> opened = [];
 
   @override
-  Future<bool> installed(String family) async => families.contains(family);
+  Future<List<InstalledBrowser>> list({bool refresh = false}) async => [for (final b in installed) if (!gone.contains(b.id)) b];
 
   @override
-  Future<bool> open(String family, Uri url) async {
-    if (!families.contains(family)) return false;
-    opened.add((family, '$url'));
+  Future<bool> available(String id) async => installed.any((b) => b.id == id) && !gone.contains(id);
+
+  @override
+  Future<bool> open(String id, Uri url) async {
+    if (!await available(id)) return false;
+    opened.add((id, '$url'));
     return true;
   }
 }

@@ -11,9 +11,11 @@ BrowserBridge createBrowserBridge({required SecretStore secrets, required DateTi
 
 Future<String?> revealExtensionFiles() async => null;
 
-Future<bool> browserInstalled(String family) async => false;
+Future<List<InstalledBrowser>> installedBrowsers({bool refresh = false}) async => const [];
 
-Future<bool> openInBrowser(String family, Uri url) async => false;
+Future<bool> browserAvailable(String id) async => false;
+
+Future<bool> openInBrowser(String id, Uri url) async => false;
 
 class _NoBrowserBridge extends BrowserBridge {
   _NoBrowserBridge(this._clock);
@@ -49,6 +51,8 @@ class _NoBrowserBridge extends BrowserBridge {
   Future<void> forgetAll() async {}
   @override
   Future<void> makeFirst(String token) async {}
+  @override
+  Future<void> setProgram(String token, InstalledBrowser program) async {}
   @override
   BrowserJob? createJob({
     required String platformId,

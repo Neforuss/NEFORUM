@@ -59,32 +59,83 @@ class BrowserBridgeStatus {
 /// system keychain.
 @immutable
 class PairedBrowser {
-  const PairedBrowser({required this.label, required this.token, required this.createdAt, required this.lastSeen});
+  const PairedBrowser({required this.label, required this.token, required this.createdAt, required this.lastSeen, this.app, this.appName});
 
   factory PairedBrowser.fromJson(Map<String, dynamic> j) {
     final created = DateTime.tryParse(j['createdAt'] as String? ?? '') ?? DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    final app = j['app'] as String?;
     return PairedBrowser(
       label: j['label'] as String? ?? 'Browser',
       token: j['token'] as String? ?? '',
       createdAt: created,
       lastSeen: DateTime.tryParse(j['lastSeen'] as String? ?? '') ?? created,
+      app: app == null || app.isEmpty ? null : app,
+      appName: j['appName'] as String?,
     );
   }
 
-  /// What the extension called itself: "Chrome", "Firefox", "Microsoft Edge".
+  /// What the extension called itself: "Chrome", "Firefox", "Microsoft Edge",
+  /// "Chromium-based browser". Chromium browsers can look alike, so [app]
+  /// says which program it really is.
   final String label;
   final String token;
   final DateTime createdAt;
   final DateTime lastSeen;
 
-  PairedBrowser copyWith({DateTime? lastSeen}) => PairedBrowser(label: label, token: token, createdAt: createdAt, lastSeen: lastSeen ?? this.lastSeen);
+  /// The installed program this browser is ([InstalledBrowser.id]): where
+  /// NEFORUM opens hand-offs for it. Guessed at pairing, set by the user in
+  /// Settings; null when unknown.
+  final String? app;
+
+  /// That program's name ("Google Chrome", "Helium"), for showing.
+  final String? appName;
+
+  PairedBrowser copyWith({DateTime? lastSeen, InstalledBrowser? app, bool clearApp = false}) => PairedBrowser(
+        label: label,
+        token: token,
+        createdAt: createdAt,
+        lastSeen: lastSeen ?? this.lastSeen,
+        app: clearApp ? null : (app?.id ?? this.app),
+        appName: clearApp ? null : (app?.name ?? appName),
+      );
 
   Map<String, dynamic> toJson() => {
         'label': label,
         'token': token,
         'createdAt': createdAt.toUtc().toIso8601String(),
         'lastSeen': lastSeen.toUtc().toIso8601String(),
+        if (app != null) 'app': app,
+        if (app != null && appName != null) 'appName': appName,
       };
+}
+
+/// A web browser installed on this computer.
+@immutable
+class InstalledBrowser {
+  const InstalledBrowser({required this.id, required this.name});
+
+  /// What starts it: the program's path on Windows (`...\chrome.exe`), the
+  /// app's path on macOS (`/Applications/Helium.app`), a command on Linux.
+  /// Two browsers can share a file name (Helium's is chrome.exe too), never
+  /// a path.
+  final String id;
+
+  /// "Google Chrome", "Helium", "Mozilla Firefox".
+  final String name;
+
+  @override
+  bool operator ==(Object other) => other is InstalledBrowser && other.id.toLowerCase() == id.toLowerCase();
+
+  @override
+  int get hashCode => id.toLowerCase().hashCode;
+}
+
+/// The installed program a browser labelled [label] most likely is: the
+/// first of [installed] of the same [browserFamily] ("Chrome" is Google
+/// Chrome, not another Chromium browser). Null when none matches.
+InstalledBrowser? guessInstalledBrowser(String label, List<InstalledBrowser> installed) {
+  final family = browserFamily(label);
+  return installed.where((b) => browserFamily(b.name) == family).firstOrNull;
 }
 
 /// The 6-digit code shown in Settings while a browser pairs.
@@ -145,17 +196,17 @@ class BrowserJob {
   /// its Post now button.
   final bool quickPost;
 
-  /// The browser NEFORUM opened the page in (a [browserFamily]), which fills
-  /// it in on its own; other paired browsers fill in only when asked. Null:
-  /// any browser.
+  /// The program NEFORUM opened the page in ([InstalledBrowser.id]): paired
+  /// browsers set to that program fill it in on their own, others only when
+  /// asked. Null: any browser.
   final String? target;
   final DateTime createdAt;
   final DateTime expiresAt;
 
   bool isExpiredAt(DateTime now) => !now.isBefore(expiresAt);
 
-  /// Is a browser labelled [label] the one meant to fill this in on its own?
-  bool prefers(String label) => target == null || browserFamily(label) == target;
+  /// Is [browser] the one meant to fill this in on its own?
+  bool prefers(PairedBrowser browser) => target == null || browser.app?.toLowerCase() == target!.toLowerCase();
 
   /// [host] (a page's `location.host`) without a leading `www.` equals one
   /// of [hosts] without `www.`.
@@ -235,12 +286,13 @@ class BrowserFillResult {
   final DateTime at;
 }
 
-/// A browser label ("Chrome", "Microsoft Edge", "Firefox") as one lowercase
-/// word: `chrome`, `edge`, `firefox`, `opera`, `brave`, or the label itself.
-/// Two profiles of one browser are the same family.
+/// A browser label or program name ("Chrome", "Google Chrome", "Microsoft
+/// Edge", "Mozilla Firefox") as one lowercase word: `chrome`, `edge`,
+/// `firefox`, `opera`, `brave`, `helium`..., or the label itself.
 String browserFamily(String label) {
   final l = label.trim().toLowerCase();
-  for (final f in const ['firefox', 'edge', 'opera', 'brave', 'vivaldi', 'chrome', 'chromium']) {
+  if (l.contains('chromium')) return 'chromium';
+  for (final f in const ['firefox', 'edge', 'opera', 'brave', 'vivaldi', 'helium', 'thorium', 'chrome']) {
     if (l.contains(f)) return f;
   }
   return l;
@@ -284,14 +336,22 @@ List<String> browserJobHosts(Uri url) {
   return out.toList();
 }
 
-/// Finds installed browsers and opens pages in a chosen one (the registry's
-/// App Paths on Windows, `open -a` on macOS, the PATH on Linux).
+/// Finds installed browsers and opens pages in a chosen one. Windows: the
+/// browsers registered with Windows (the list Default Apps shows); macOS:
+/// browser apps in the Applications folders; Linux: browser commands on the
+/// PATH.
 class BrowserLauncher {
   const BrowserLauncher();
 
-  Future<bool> installed(String family) => impl.browserInstalled(family);
+  /// The installed browsers, by name. Looked up once, then cached; [refresh]
+  /// looks again.
+  Future<List<InstalledBrowser>> list({bool refresh = false}) => impl.installedBrowsers(refresh: refresh);
 
-  Future<bool> open(String family, Uri url) => impl.openInBrowser(family, url);
+  /// Can [id] be started (listed, or a program the user picked that exists)?
+  Future<bool> available(String id) => impl.browserAvailable(id);
+
+  /// Opens [url] in [id]. False when it would not start.
+  Future<bool> open(String id, Uri url) => impl.openInBrowser(id, url);
 }
 
 /// The local server the NEFORUM browser extension talks to
@@ -311,18 +371,30 @@ abstract class BrowserBridge {
   /// Finds and starts installed browsers; tests put a stand-in here.
   static BrowserLauncher launcher = const BrowserLauncher();
 
-  /// Is a browser of [family] (see [browserFamily]) installed here? Desktop
-  /// only; false elsewhere.
-  static Future<bool> browserInstalled(String family) => launcher.installed(family);
+  /// The browsers installed here (desktop only; empty elsewhere).
+  static Future<List<InstalledBrowser>> installedBrowsers({bool refresh = false}) => launcher.list(refresh: refresh);
 
-  /// Opens [url] in a browser of [family]. False when it is not installed or
-  /// would not start.
-  static Future<bool> openInBrowser(String family, Uri url) => launcher.open(family, url);
+  /// Opens [url] in the installed browser [id]. False when it would not start.
+  static Future<bool> openInBrowser(String id, Uri url) => launcher.open(id, url);
 
-  /// The first family of [order] that is installed, or null.
-  static Future<String?> firstInstalled(List<String> order) async {
-    for (final f in order) {
-      if (await browserInstalled(f)) return f;
+  /// The program [browser] opens in: the one chosen in Settings, else a
+  /// guess from its label among [installed].
+  static InstalledBrowser? programFor(PairedBrowser browser, List<InstalledBrowser> installed) {
+    final app = browser.app;
+    if (app == null) return guessInstalledBrowser(browser.label, installed);
+    return installed.where((b) => b.id.toLowerCase() == app.toLowerCase()).firstOrNull ?? InstalledBrowser(id: app, name: browser.appName ?? browser.label);
+  }
+
+  /// The first paired browser, in the user's order, whose program can be
+  /// started, with that program. Null when none can.
+  Future<({PairedBrowser browser, InstalledBrowser program})?> firstChoice() async {
+    final installed = await installedBrowsers();
+    for (final b in browsers.value) {
+      final program = programFor(b, installed);
+      if (program == null || !await launcher.available(program.id)) continue;
+      // Keep the guess, so the bridge knows this browser is that program.
+      if (b.app == null) await setProgram(b.token, program);
+      return (browser: b, program: program);
     }
     return null;
   }
@@ -363,25 +435,26 @@ abstract class BrowserBridge {
   /// Forgets every paired browser.
   Future<void> forgetAll();
 
-  /// The paired browsers' families in priority order (the list order), once
-  /// each: hand-offs open in the first one that is installed.
-  List<String> get browserOrder => [...{for (final b in browsers.value) browserFamily(b.label)}];
-
   /// Moves the browser with [token] to the top: the first choice.
   Future<void> makeFirst(String token);
 
-  /// Swaps the first choice with the next browser of another family (Chrome
-  /// and Firefox trade places).
+  /// Sets the program the browser with [token] is (where hand-offs for it
+  /// open, and which pages it fills in on its own).
+  Future<void> setProgram(String token, InstalledBrowser program);
+
+  /// Swaps the first choice with the next browser that is a different
+  /// program (Chrome and Firefox trade places; two Chrome profiles don't).
   Future<void> swapFirstTwo() async {
     final list = browsers.value;
     if (list.length < 2) return;
-    final first = browserFamily(list.first.label);
-    final next = list.skip(1).where((b) => browserFamily(b.label) != first).firstOrNull ?? list[1];
+    String key(PairedBrowser b) => (b.app ?? browserFamily(b.label)).toLowerCase();
+    final first = key(list.first);
+    final next = list.skip(1).where((b) => key(b) != first).firstOrNull ?? list[1];
     await makeFirst(next.token);
   }
 
   /// Makes the hand-off the extension gets next, replacing any other.
-  /// [target]: the browser family the page was opened in (see [BrowserJob.target]).
+  /// [target]: the program the page was opened in (see [BrowserJob.target]).
   BrowserJob? createJob({
     required String platformId,
     required String platformName,

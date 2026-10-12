@@ -6,7 +6,10 @@ import http from 'node:http';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const PORT = 52779; // the last port the extension tries, so discovery walks the list
+// Ports of their own (not 52772-52779), so a NEFORUM running on this computer is not in the way.
+// The stand-in listens on the last one, so discovery walks the list.
+const PORTS = [52790, 52791, 52792];
+const PORT = PORTS.at(-1);
 const TOKEN = 'tok_0123456789abcdefghijklmnopqrstuvwxyzABCD';
 const media = Buffer.alloc(2 * 1024 * 1024 + 123, 7); // > 2 chunks
 media[0] = 1;
@@ -82,7 +85,7 @@ function loadBackground() {
       onConnect: { addListener: (f) => (listeners.connect = f) },
     },
   };
-  const sandbox = { chrome, fetch, AbortSignal, URL, navigator: { userAgent: 'Mozilla/5.0 Chrome/141.0' }, btoa, atob, module: { exports: {} }, console };
+  const sandbox = { chrome, fetch, AbortSignal, URL, navigator: { userAgent: 'Mozilla/5.0 Chrome/141.0' }, btoa, atob, module: { exports: {} }, console, NEFORUM_PORTS: PORTS };
   vm.runInNewContext(readFileSync(new URL('../src/background.js', import.meta.url), 'utf8'), sandbox);
   const send = (msg) => new Promise((resolve) => listeners.message(msg, {}, resolve));
   return { store, send, listeners };
@@ -142,6 +145,22 @@ test('pairing, status, job, media in chunks, result, and a revoked token', async
   assert.equal(r.ok, false);
   assert.equal(r.code, 'not-paired');
   assert.equal(bg.store.token, undefined);
+});
+
+test('browser name: only Google Chrome says Chrome; other Chromium browsers say so', () => {
+  const nameFor = (navigator) => {
+    const sandbox = { module: { exports: {} }, chrome: { storage: { local: {} }, runtime: { onMessage: { addListener() {} }, onConnect: { addListener() {} } } }, btoa, navigator };
+    vm.runInNewContext(readFileSync(new URL('../src/background.js', import.meta.url), 'utf8'), sandbox);
+    return sandbox.module.exports.browserName();
+  };
+  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+  const brands = (...names) => ({ brands: names.map((brand) => ({ brand, version: '141' })) });
+  assert.equal(nameFor({ userAgent: ua, userAgentData: brands('Google Chrome', 'Chromium', 'Not.A/Brand') }), 'Chrome');
+  assert.equal(nameFor({ userAgent: ua, userAgentData: brands('Chromium', 'Not.A/Brand') }), 'Chromium-based browser', 'Helium, Vivaldi...');
+  assert.equal(nameFor({ userAgent: `${ua} Edg/141.0`, userAgentData: brands('Microsoft Edge', 'Chromium') }), 'Microsoft Edge');
+  assert.equal(nameFor({ userAgent: ua, userAgentData: brands('Brave', 'Chromium') }), 'Brave');
+  assert.equal(nameFor({ userAgent: 'Mozilla/5.0 (Windows NT 10.0; rv:140.0) Gecko/20100101 Firefox/140.0' }), 'Firefox');
+  assert.equal(nameFor({ userAgent: ua }), 'Chrome', 'no brands to go on');
 });
 
 test('the base64 helper matches Node', () => {

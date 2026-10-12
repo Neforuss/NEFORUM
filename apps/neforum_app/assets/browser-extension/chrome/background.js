@@ -5,8 +5,12 @@
 
 const api = globalThis.browser ?? globalThis.chrome;
 
-/** Ports the app may listen on, in the order it tries them. */
-const PORTS = [52772, 52773, 52774, 52775, 52776, 52777, 52778, 52779];
+/**
+ * Ports the app may listen on, in the order it tries them. Tests set
+ * NEFORUM_PORTS in their sandbox, so they don't meet a NEFORUM that is
+ * running on this computer.
+ */
+const PORTS = globalThis.NEFORUM_PORTS ?? [52772, 52773, 52774, 52775, 52776, 52777, 52778, 52779];
 
 /** Raw bytes per media chunk sent to a content script (base64 makes it ~1 MB). */
 const CHUNK = 768 * 1024;
@@ -80,12 +84,20 @@ async function call(path, { method = 'GET', body } = {}) {
   return r;
 }
 
+/**
+ * What this browser is, as well as it can tell: Chromium browsers (Chrome,
+ * Helium, Vivaldi...) share a user agent, but only Google Chrome lists the
+ * "Google Chrome" brand. NEFORUM guesses the program from this, and the user
+ * can correct it there ("Opens in").
+ */
 function browserName() {
   const ua = navigator.userAgent;
+  const brands = (navigator.userAgentData?.brands ?? []).map((b) => b.brand);
   if (ua.includes('Firefox/')) return 'Firefox';
-  if (ua.includes('Edg/')) return 'Microsoft Edge';
-  if (ua.includes('OPR/')) return 'Opera';
-  if (ua.includes('Brave')) return 'Brave';
+  if (brands.includes('Microsoft Edge') || ua.includes('Edg/')) return 'Microsoft Edge';
+  if (brands.includes('Opera') || ua.includes('OPR/')) return 'Opera';
+  if (brands.includes('Brave') || navigator.brave) return 'Brave';
+  if (brands.length && !brands.includes('Google Chrome')) return 'Chromium-based browser';
   return 'Chrome';
 }
 
@@ -195,4 +207,4 @@ api.runtime.onConnect.addListener((port) => {
 });
 
 // For tests in Node (no effect in the browser).
-if (typeof module !== 'undefined') module.exports = { handlers, findApp, toBase64, BridgeError, PORTS };
+if (typeof module !== 'undefined') module.exports = { handlers, findApp, toBase64, browserName, BridgeError, PORTS };

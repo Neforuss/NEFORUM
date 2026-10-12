@@ -34,12 +34,19 @@ When the page is filled in, the panel shows **Post now** and says "press Ctrl+En
 
 A word of caution: the click is still made by the extension, and some platforms count scripted clicks as automation. NEFORUM keeps you in control of every single post, which is the difference between this and a posting bot, but if you'd rather click Post yourself, turn off **Settings > Browser extension > Post with Ctrl+Enter**.
 
+## Which browser is which ("Opens in")
+
+Each paired browser in **Settings > Browser extension** has **Opens in**: the program it really is, and where NEFORUM opens hand-offs for it. The list is the browsers Windows knows about (the same list as Default Apps), the browser apps on a Mac, or the browser commands on Linux.
+
+NEFORUM guesses it when you pair: "Firefox" is Mozilla Firefox, "Chrome" is Google Chrome. Many browsers are built on Chromium (Helium, Vivaldi, Thorium, ungoogled Chromium...) and can look just like Chrome to the extension; some even use the same program file name, `chrome.exe`. So if you paired one of those, pick it under **Opens in**. On Windows and Linux, **Other program…** lets you choose a browser that isn't listed, such as a portable one.
+
 ## Chrome and Firefox on one computer
 
-Pair both if you use both. The paired browsers are listed in order of choice, and the first one gets **First choice**:
+Pair both if you use both (or any two browsers: Chrome and Helium, Edge and Firefox). The paired browsers are listed in order of choice, and the first one gets **First choice**:
 
 - Hand-offs open in your first choice (not your system's default browser), and only that browser fills them in on its own. The other one stays quiet, so the post isn't filled in twice. You can still use **Fill in this page** in it.
 - **Swap** trades the first two places (Chrome and Firefox swap). With more browsers, the arrow next to one makes it the first choice.
+- Only the browser set to the program NEFORUM opened fills the page in on its own, so Chrome and Helium never both fill in the same post.
 - If the first choice isn't installed any more or won't start, the next one is used; if none, your default browser, and any paired browser fills in.
 - Turn off **Open hand-offs in my first-choice browser** to always use your default browser.
 

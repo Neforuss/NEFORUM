@@ -68,11 +68,15 @@ A job matches when `host`, without a leading `www.`, equals one of the job's `ho
 
 There is at most one job at a time (the newest). It expires 10 minutes after it was made.
 
-`preferred` is per request: when NEFORUM opened the page in a particular browser (the first
-installed one in the user's order of paired browsers), only browsers of that kind (Chrome,
-Firefox, Edge...) get `true`. Others must not fill the page in on their own; they still may when
-the user asks (the popup's **Fill in this page**). When NEFORUM used the system's default browser,
-every paired browser gets `true`.
+`preferred` is per request: when NEFORUM opened the page in a particular program (the one set
+under **Opens in** for the first paired browser, in the user's order, that can start), only paired
+browsers set to that same program get `true`. Others must not fill the page in on their own; they
+still may when the user asks (the popup's **Fill in this page**). When NEFORUM used the system's
+default browser, every paired browser gets `true`.
+
+The `browser` sent when pairing is the extension's best guess at what it runs in: `Firefox`,
+`Microsoft Edge`, `Opera`, `Brave`, `Chrome` (only when the "Google Chrome" brand is listed), or
+`Chromium-based browser`. The app guesses the program from it; the user can change it.
 
 ### `GET /v1/job/<id>/media/<index>` (token)
 
