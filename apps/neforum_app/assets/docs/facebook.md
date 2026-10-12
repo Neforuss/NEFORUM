@@ -195,6 +195,10 @@ secret store. NEFORUM sends `appsecret_proof` with every call, so you can switch
   Meta's developer policy forbids prefilling. NEFORUM always puts your text on the clipboard.
   On a phone with photos or a video, the share sheet attaches them for you. With a link, the share window
   opens. Otherwise facebook.com (or your Page address) opens.
+* **On a computer with the NEFORUM browser extension** none of that applies: your Page (or facebook.com)
+  opens instead of the share window, and the extension opens **What's on your mind?**, types your text with
+  the post's link at the end (Facebook turns it into a preview card) and attaches the photos or video, so
+  Facebook gets the same post as every other network. See [Browser extension](../browser-extension.md).
 * **Reels** are not published yet (they need a separate 3-step upload; Meta caps them at 30 per Page per
   24 h). Videos are posted as regular Page videos.
 * **Large videos** are sent in one request and held in memory. The resumable upload API is not used yet.

@@ -1110,6 +1110,82 @@ void main() {
       expect(plan!.webIntent!.queryParameters['content'], 'https://cdn.example.test/img1');
     });
   });
+  group('quote, chat and audio posts', () {
+    PostVariant typed(String type, {String text = '', String? title, String? link, Map<String, dynamic> extra = const {}}) =>
+        PostVariant(text: text, title: title, link: link, tags: const ['music'], extra: {'tumblrPostType': type, ...extra});
+
+    test('quote: the words as a quote block, then the source', () {
+      final v = typed('quote', text: 'Simplicity is the ultimate sophistication.', extra: {'tumblrQuoteSource': 'Leonardo da Vinci'});
+      expect(TumblrAdapter.buildContent(v, const []), [
+        {'type': 'text', 'subtype': 'quote', 'text': 'Simplicity is the ultimate sophistication.'},
+        {'type': 'text', 'text': '— Leonardo da Vinci'},
+      ]);
+      // Without a source field, the title is the source.
+      expect(TumblrAdapter.quoteSource(typed('quote', text: 'x', title: 'Someone')), 'Someone');
+    });
+
+    test('chat: a title, then one chat line per line with the speaker in bold', () {
+      final v = typed('chat', title: 'At the shop', text: 'Me: Do you have it in purple?\n\nClerk: Only in yellow.\nno label here');
+      final content = TumblrAdapter.buildContent(v, const []);
+      expect(content.first, {'type': 'text', 'subtype': 'heading1', 'text': 'At the shop'});
+      expect(content[1], {
+        'type': 'text',
+        'subtype': 'chat',
+        'text': 'Me: Do you have it in purple?',
+        'formatting': [
+          {'start': 0, 'end': 3, 'type': 'bold'},
+        ],
+      });
+      expect(content[2]['text'], 'Clerk: Only in yellow.');
+      expect(content[3], {'type': 'text', 'subtype': 'chat', 'text': 'no label here'});
+      expect(content, hasLength(4));
+    });
+
+    test('audio: the track as an audio block from the link (or the text), then the rest of the text', () {
+      final fromLink = typed('audio', text: 'New single out today', link: 'https://soundcloud.com/me/track');
+      expect(TumblrAdapter.buildContent(fromLink, const []), [
+        {'type': 'audio', 'url': 'https://soundcloud.com/me/track'},
+        {'type': 'text', 'text': 'New single out today'},
+      ]);
+      final fromText = typed('audio', text: 'Listen: https://open.spotify.com/track/abc\n\nOn repeat all week');
+      final content = TumblrAdapter.buildContent(fromText, const []);
+      expect(content.first, {'type': 'audio', 'url': 'https://open.spotify.com/track/abc'});
+      expect(content.skip(1).map((b) => b['text']), ['Listen:', 'On repeat all week'], reason: 'the URL is the player, not text');
+    });
+
+    test('checks: an audio post needs a track, quote and chat posts need text, unknown types are named', () {
+      List<String> codes(PostVariant v) => adapter.validate(v, _account()).map((i) => i.code).toList();
+      expect(codes(typed('audio', text: 'no link')), contains('tumblr.audio_url'));
+      expect(codes(typed('audio', text: 'x', link: 'https://bandcamp.com/x')), isNot(contains('tumblr.audio_url')));
+      expect(codes(typed('quote')), contains('tumblr.quote_empty'));
+      expect(codes(typed('chat')), contains('tumblr.chat_empty'));
+      expect(codes(typed('poem', text: 'x')), contains('tumblr.post_type'));
+      expect(codes(const PostVariant(text: 'x')), isNot(contains('tumblr.post_type')));
+    });
+
+    test('hand-off: quote and chat fill the share tool; audio opens the audio post with the track to paste', () {
+      final quote = adapter.buildHandoff(typed('quote', text: 'Be kind.', extra: {'tumblrQuoteSource': 'Mum'}))!;
+      expect(quote.webIntent!.queryParameters, {'posttype': 'quote', 'content': 'Be kind.', 'caption': 'Mum', 'tags': 'music'});
+      expect(quote.composerUrl.toString(), 'https://www.tumblr.com/new/quote');
+      expect(quote.snippets.map((s) => s.label), ['Quote source', 'Tags']);
+      expect(quote.composerInstructions, contains('adds the quote'));
+      expect(quote.composerInstructions, contains('Insert** next to Quote source'));
+
+      final chat = adapter.buildHandoff(typed('chat', title: 'Shop', text: 'A: hi\nB: hello'))!;
+      expect(chat.webIntent!.queryParameters, {'posttype': 'chat', 'content': 'A: hi\nB: hello', 'title': 'Shop', 'tags': 'music'});
+      expect(chat.composerUrl.toString(), 'https://www.tumblr.com/new/chat');
+
+      final audio = adapter.buildHandoff(typed('audio', text: 'New single', link: 'https://soundcloud.com/me/t'))!;
+      expect(audio.webIntent, isNull, reason: 'the share tool has no audio posts');
+      expect(audio.desktopUrl, 'https://www.tumblr.com/new/audio');
+      expect(audio.composerUrl.toString(), 'https://www.tumblr.com/new/audio');
+      expect(audio.preferred, HandoffMethod.manual);
+      expect(audio.clipboardText, 'New single');
+      expect(audio.snippets.first.label, 'Track link');
+      expect(audio.snippets.first.text, 'https://soundcloud.com/me/t');
+      expect(audio.composerInstructions, contains("adds the track's link and the text"));
+    });
+  });
 }
 
 /// A [FakeMediaHost] that records the requested lifetime, can refuse the

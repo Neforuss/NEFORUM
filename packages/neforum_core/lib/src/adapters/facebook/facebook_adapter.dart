@@ -807,6 +807,19 @@ class FacebookAdapter extends PlatformAdapter {
           '2. Facebook opens; click **What\'s on your mind?** (on your Page if you post as a Page).\n'
           '3. Paste and press **Post**.';
     }
+    // With the browser extension: the normal composer on your Page (or feed),
+    // which takes the whole text with the link (Facebook makes the link
+    // preview from it) and the photos; the sharer above takes only the link.
+    final what = [
+      if (full.trim().isNotEmpty) explicit.isNotEmpty ? 'your text with the link' : 'your text',
+      if (hasMedia) variant.media.length == 1 ? 'your ${variant.media.single.isVideo ? 'video' : 'photo'}' : 'your ${variant.media.length} files',
+    ].join(' and ');
+    final composerSteps = [
+      '1. Facebook opens ${configured.isNotEmpty ? 'your Page' : 'your feed'} (sign in if asked), and the NEFORUM browser extension opens '
+          '**What\'s on your mind?** and adds ${what.isEmpty ? 'your post' : what}.',
+      if (explicit.isNotEmpty) '2. Facebook turns the link into a preview card below the text.',
+      '${explicit.isNotEmpty ? 3 : 2}. To post as your Page, check that the composer shows the Page, then press **Post**.',
+    ].join('\n');
     return HandoffPlan(
       platformId: platformId,
       instructions: instructions,
@@ -821,6 +834,8 @@ class FacebookAdapter extends PlatformAdapter {
       mediaNote: hasMedia
           ? 'Facebook never accepts a caption from other apps; NEFORUM put your text on the clipboard so you can paste it.'
           : null,
+      composerUrl: Uri.parse(desktopUrl),
+      composerInstructions: composerSteps,
     );
   }
 }

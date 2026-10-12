@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
@@ -411,6 +412,23 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
           'tags.comma', 'Tumblr tags cannot contain commas; they will be replaced by spaces', field: 'tags'));
     }
 
+    final rawType = variant.extra['tumblrPostType'];
+    if (rawType != null && '$rawType'.trim().isNotEmpty && postType(variant) == null) {
+      issues.add(ValidationIssue.error('tumblr.post_type',
+          'Unknown Tumblr post type "$rawType"; choose quote, chat or audio (or leave it automatic)', field: 'extra'));
+    }
+    switch (postType(variant)) {
+      case 'quote' when bodyText(variant).trim().isEmpty:
+        issues.add(const ValidationIssue.error('tumblr.quote_empty', 'A Tumblr quote post needs the quote as its text', field: 'text'));
+      case 'chat' when bodyText(variant).trim().isEmpty:
+        issues.add(const ValidationIssue.error('tumblr.chat_empty',
+            'A Tumblr chat post needs its lines as the text ("Alex: hi", one per line)', field: 'text'));
+      case 'audio' when audioUrl(variant) == null:
+        issues.add(const ValidationIssue.error('tumblr.audio_url',
+            'A Tumblr audio post needs a link to the track (SoundCloud, Spotify, Bandcamp...) in the Link field or the text',
+            field: 'link'));
+    }
+
     final rawState = variant.extra['state'];
     if (rawState != null && _stateValue(rawState) == null) {
       issues.add(ValidationIssue.error('tumblr.state',
@@ -592,12 +610,76 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
     );
   }
 
-  /// NPF content: title heading, media, text paragraphs, link card.
+  /// Post types chosen per post (`extra['tumblrPostType']`) beyond the ones
+  /// NEFORUM picks by itself (text, photo, video, link).
+  static const List<String> extraPostTypes = ['quote', 'chat', 'audio'];
+
+  /// `quote`, `chat` or `audio` when the user chose one, else null.
+  static String? postType(PostVariant v) {
+    final t = v.extraAs<String>('tumblrPostType')?.trim().toLowerCase();
+    return extraPostTypes.contains(t) ? t : null;
+  }
+
+  /// Who said it, for a quote post: `extra['tumblrQuoteSource']`, else the
+  /// title.
+  static String? quoteSource(PostVariant v) {
+    final s = (v.extraAs<String>('tumblrQuoteSource') ?? v.title)?.trim();
+    return s == null || s.isEmpty ? null : s;
+  }
+
+  /// The track of an audio post: the post's link, else the first URL in the
+  /// text.
+  static String? audioUrl(PostVariant v) {
+    final link = _link(v);
+    if (link != null) return link;
+    final found = UrlDetector.find(bodyText(v));
+    return found.isEmpty ? null : found.first.normalized;
+  }
+
+  /// [text] without [url] (an audio post's track is its player, not text).
+  static String _withoutUrl(String text, String url) {
+    var out = text.replaceAll(url, '');
+    for (final u in UrlDetector.find(text).where((u) => u.normalized == url)) {
+      out = out.replaceAll(u.text, '');
+    }
+    return out.replaceAll(RegExp(r'[ \t]+\n'), '\n').replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+  }
+
+  /// NPF content: title heading, media, text paragraphs, link card. Quote
+  /// posts: the words as a quote, then "— source". Chat posts: a title, then
+  /// one chat line per line ("Alex: hi"). Audio posts: the track's player,
+  /// then the rest of the text.
   static List<Map<String, Object?>> buildContent(PostVariant v, List<Map<String, Object?>> mediaBlocks) {
     final budget = LinkBudget();
     final text = bodyText(v);
     final title = v.title?.trim();
     final link = _link(v);
+    switch (postType(v)) {
+      case 'quote':
+        final source = quoteSource(v);
+        return [
+          ...mediaBlocks,
+          ...TumblrApi.textBlocks(text, linkBudget: budget, subtype: 'quote'),
+          if (source != null) TumblrApi.textBlock('— $source', linkBudget: budget),
+          if (link != null && !_textHasLink(text, link)) TumblrApi.linkBlock(link),
+        ];
+      case 'chat':
+        return [
+          if (title != null && title.isNotEmpty) TumblrApi.textBlock(title, subtype: 'heading1'),
+          for (final line in const LineSplitter().convert(text))
+            if (line.trim().isNotEmpty) TumblrApi.chatBlock(line),
+          ...mediaBlocks,
+          if (link != null && !_textHasLink(text, link)) TumblrApi.linkBlock(link),
+        ];
+      case 'audio':
+        final track = audioUrl(v);
+        return [
+          if (title != null && title.isNotEmpty) TumblrApi.textBlock(title, subtype: 'heading1'),
+          if (track != null) TumblrApi.audioBlock(track),
+          ...mediaBlocks,
+          ...TumblrApi.textBlocks(track == null ? text : _withoutUrl(text, track), linkBudget: budget),
+        ];
+    }
     return [
       if (title != null && title.isNotEmpty) TumblrApi.textBlock(title, subtype: 'heading1'),
       ...mediaBlocks,
@@ -707,18 +789,29 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
   /// `tags` (comma-separated) and `canonicalUrl`.
   static const String shareToolPath = '/widgets/share/tool';
 
-  /// Tumblr's full web composer for a new post of each kind (there are also
-  /// /new/quote, /new/chat and /new/audio, which NEFORUM posts never are).
-  /// No URL can prefill it, but the NEFORUM browser extension fills it in,
-  /// files included, which the share tool cannot take.
+  /// Tumblr's full web composer for a new post of each kind. No URL can
+  /// prefill it, but the NEFORUM browser extension fills it in, files
+  /// included, which the share tool cannot take.
   static const String newTextUrl = 'https://www.tumblr.com/new/text';
   static const String newPhotoUrl = 'https://www.tumblr.com/new/photo';
   static const String newVideoUrl = 'https://www.tumblr.com/new/video';
   static const String newLinkUrl = 'https://www.tumblr.com/new/link';
+  static const String newQuoteUrl = 'https://www.tumblr.com/new/quote';
+  static const String newChatUrl = 'https://www.tumblr.com/new/chat';
+  static const String newAudioUrl = 'https://www.tumblr.com/new/audio';
 
-  /// The full composer for [v]: a photo post when it has photos, a video post
-  /// for a video, a link post for a link without media, else a text post.
+  /// The full composer for [v]: the post type the user chose (quote, chat,
+  /// audio), else a photo post when it has photos, a video post for a video,
+  /// a link post for a link without media, else a text post.
   static Uri composerFor(PostVariant v) {
+    switch (postType(v)) {
+      case 'quote':
+        return Uri.parse(newQuoteUrl);
+      case 'chat':
+        return Uri.parse(newChatUrl);
+      case 'audio':
+        return Uri.parse(newAudioUrl);
+    }
     if (v.media.any((m) => m.isImage)) return Uri.parse(newPhotoUrl);
     if (v.media.isNotEmpty) return Uri.parse(newVideoUrl);
     if (_link(v) != null) return Uri.parse(newLinkUrl);
@@ -734,12 +827,21 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       if (photos > 0) photos == 1 ? 'your photo' : 'your $photos photos',
       if (photos == 0 && v.media.isNotEmpty) v.media.length == 1 ? 'your video' : 'your videos',
       if (composer == 'link') 'the link',
-      if (hasText) composer == 'text' ? 'your text' : 'the text',
+      if (composer == 'audio') 'the track\'s link',
+      if (hasText)
+        switch (composer) {
+          'text' => 'your text',
+          'quote' => 'the quote',
+          'chat' => 'the chat lines',
+          _ => 'the text',
+        },
     ];
     final filled = what.length < 2 ? what.join() : '${what.sublist(0, what.length - 1).join(', ')} and ${what.last}';
     final tags = TumblrApi.tagsField(v.tags) != null;
     return _numbered([
       'Tumblr opens a new $composer post (sign in if asked), and the NEFORUM browser extension adds $filled.',
+      if (composer == 'quote' && quoteSource(v) != null)
+        'Add the source: click Tumblr\'s source field, then **Insert** next to Quote source in the NEFORUM panel.',
       if (tags) 'Add the tags: click Tumblr\'s tags field, then **Insert** next to Tags in the NEFORUM panel (they are also listed below).',
       if (_hasAltText(v)) 'Add the alt text listed below to ${photos == 1 ? 'the photo' : 'each photo'}.',
       'Check the post, then click **Post now**.',
@@ -754,8 +856,10 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
   static const String _tumblrPackage = 'com.tumblr';
 
   @override
-  HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) =>
-      variant.hasMedia ? _mediaHandoff(variant) : _textHandoff(variant);
+  HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
+    if (postType(variant) != null) return _typedHandoff(variant);
+    return variant.hasMedia ? _mediaHandoff(variant) : _textHandoff(variant);
+  }
 
   /// With photos and a media host configured, the photos are put on the host
   /// first, because the share tool takes photos only as links. It then opens
@@ -770,7 +874,7 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
     final photos = [for (final m in variant.media) if (m.isImage) m];
     // The browser extension puts the files straight into Tumblr's full
     // composer: nothing to put on the host.
-    if (host == null || photos.isEmpty || ctx.browserFills) return buildHandoff(variant, account: account);
+    if (host == null || photos.isEmpty || ctx.browserFills || postType(variant) != null) return buildHandoff(variant, account: account);
 
     final limit = host.maxBytes;
     final tooBig = limit == null ? null : photos.where((m) => m.sizeBytes > limit).firstOrNull;
@@ -876,6 +980,61 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       desktopUrl: newTextUrl,
       preferred: HandoffMethod.webIntent,
       snippets: _snippets(variant),
+      composerUrl: composerFor(variant),
+      composerInstructions: _composerSteps(variant),
+    );
+  }
+
+  /// A quote, chat or audio post. Quote and chat posts open the share tool
+  /// filled in (a quote with its source as the caption; chat lines with the
+  /// title). The share tool has no audio posts: Tumblr's new audio post
+  /// opens, and the track's link goes into it.
+  HandoffPlan _typedHandoff(PostVariant variant) {
+    final type = postType(variant)!;
+    final text = bodyText(variant).trimRight();
+    final title = variant.title?.trim() ?? '';
+    final tags = TumblrApi.tagsField(variant.tags);
+    final source = quoteSource(variant);
+    final track = audioUrl(variant);
+    final intent = switch (type) {
+      'quote' => _shareTool({'posttype': 'quote', 'content': text, if (source != null) 'caption': source, if (tags != null) 'tags': tags}),
+      'chat' => _shareTool({'posttype': 'chat', 'content': text, if (title.isNotEmpty) 'title': title, if (tags != null) 'tags': tags}),
+      _ => null,
+    };
+    final clipboard = type == 'audio' && track != null ? _withoutUrl(text, track) : text;
+    final snippets = [
+      if (type == 'quote' && source != null) HandoffSnippet('Quote source', source),
+      if (type == 'audio' && track != null) HandoffSnippet('Track link', track),
+      ..._snippets(variant),
+    ];
+    final filled = switch (type) {
+      'quote' => 'your quote${source == null ? '' : ' and its source'}',
+      _ => 'your chat lines${title.isEmpty ? '' : ' and title'}',
+    };
+    final steps = intent != null
+        ? [
+            'Tumblr opens a new $type post with $filled${tags == null ? '' : ' and tags'} filled in (sign in if asked).',
+            'If anything is missing, paste it: the text is on the clipboard${snippets.isEmpty ? '' : ', the rest is listed below'}.',
+            'Click **Post now**.',
+          ]
+        : [
+            'Tumblr opens a new audio post (sign in if asked).',
+            if (track != null) 'Paste the track\'s link (listed below) into it; Tumblr shows the player.',
+            if (clipboard.isNotEmpty) 'Then paste your text below it: it is on the clipboard.',
+            if (tags != null) 'Add the tags listed below.',
+            'Click **Post now**.',
+          ];
+    return HandoffPlan(
+      platformId: id,
+      instructions: _numbered(steps),
+      webIntent: intent,
+      clipboardText: clipboard.isEmpty ? null : clipboard,
+      shareText: clipboard.isEmpty ? null : clipboard,
+      shareFiles: variant.media,
+      androidPackage: _tumblrPackage,
+      desktopUrl: composerFor(variant).toString(),
+      preferred: intent != null ? HandoffMethod.webIntent : HandoffMethod.manual,
+      snippets: snippets,
       composerUrl: composerFor(variant),
       composerInstructions: _composerSteps(variant),
     );

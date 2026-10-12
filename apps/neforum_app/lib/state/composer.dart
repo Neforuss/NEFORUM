@@ -198,7 +198,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
     state = state.copyWith(overrides: next.isEmpty ? ({...state.overrides}..remove(accountId)) : {...state.overrides, accountId: next});
   }
 
-  /// Applies several versions at once (Auto-differentiate).
+  /// Sets several versions at once (null: back to the main post).
   void setVersionTexts(Map<String, String?> texts) {
     final overrides = {...state.overrides};
     for (final e in texts.entries) {

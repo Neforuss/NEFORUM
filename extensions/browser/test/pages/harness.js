@@ -20,7 +20,7 @@
     // A page can set its own text, or no photo, before loading this.
     text: window.NEFORUM_TEST_TEXT ?? 'Hello from NEFORUM #test',
     title: null,
-    snippets: [],
+    snippets: window.NEFORUM_TEST_SNIPPETS ?? [],
     media: window.NEFORUM_TEST_MEDIA === false ? [] : [{ index: 0, name: 'card.png', mimeType: 'image/png', size: atob(png).length, kind: 'image' }],
     steps: '',
     quickPost: q.get('qp') !== '0',

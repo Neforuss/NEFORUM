@@ -12,11 +12,15 @@ import '../../widgets/media_thumb.dart';
 
 /// Platform-specific knobs adapters read from `PostOverrides.extra`.
 class _Extra {
-  const _Extra(this.key, this.label, {this.hint, this.options, this.boolean = false, this.help});
+  const _Extra(this.key, this.label, {this.hint, this.options, this.optionLabels, this.defaultLabel = 'Default', this.boolean = false, this.help});
   final String key;
   final String label;
   final String? hint;
   final List<String>? options;
+
+  /// Words to show for [options] (otherwise the raw values, in mono).
+  final Map<String, String>? optionLabels;
+  final String defaultLabel;
   final bool boolean;
   final String? help;
 }
@@ -36,7 +40,15 @@ const Map<String, List<_Extra>> _extrasByPlatform = {
         options: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'],
         help: 'Apps TikTok has not audited can only post privately (SELF_ONLY).'),
   ],
-  'tumblr': [_Extra('state', 'Publish as', options: ['published', 'queue', 'draft'])],
+  'tumblr': [
+    _Extra('tumblrPostType', 'Post type',
+        options: ['quote', 'chat', 'audio'],
+        optionLabels: {'quote': 'Quote', 'chat': 'Chat', 'audio': 'Audio (a SoundCloud, Spotify or Bandcamp link)'},
+        defaultLabel: 'Automatic (text, photo, video or link)',
+        help: 'Quote: the text is the quote. Chat: one line per speaker, like "Alex: hi". Audio: the post\'s link is the track.'),
+    _Extra('tumblrQuoteSource', 'Quote source', hint: 'Who said it (for quote posts; otherwise the title is used)'),
+    _Extra('state', 'Publish as', options: ['published', 'queue', 'draft']),
+  ],
   'instagram': [_Extra('storyMode', 'Post as a story', boolean: true)],
 };
 
@@ -269,10 +281,15 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       final current = _extra[e.key] as String?;
       return DropdownButtonFormField<String?>(
         initialValue: e.options!.contains(current) ? current : null,
-        decoration: InputDecoration(labelText: e.label, helperText: e.help, helperMaxLines: 2),
+        isExpanded: true,
+        decoration: InputDecoration(labelText: e.label, helperText: e.help, helperMaxLines: 3),
         items: [
-          const DropdownMenuItem(value: null, child: Text('Default')),
-          for (final o in e.options!) DropdownMenuItem(value: o, child: Text(o, style: monoStyle(context, color: nf.text))),
+          DropdownMenuItem(value: null, child: Text(e.defaultLabel)),
+          for (final o in e.options!)
+            DropdownMenuItem(
+              value: o,
+              child: e.optionLabels?[o] != null ? Text(e.optionLabels![o]!, overflow: TextOverflow.ellipsis) : Text(o, style: monoStyle(context, color: nf.text)),
+            ),
         ],
         onChanged: (v) => setState(() => _extra[e.key] = v),
       );

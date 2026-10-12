@@ -175,7 +175,13 @@ class VariantResolver {
     var images = 0, videos = 0, dropped = 0;
     for (final x in media) {
       final isVideo = x.isVideo;
-      final typeOk = isVideo ? m.videoMimeTypes.contains(x.mimeType) : m.imageMimeTypes.contains(x.mimeType);
+      // A still photo of a type the platform refuses (a PNG for Instagram's
+      // API) stays: the app turns it into one it takes (PhotoFit), and
+      // otherwise the check says why. Dropping it would leave the target
+      // without the photo the user picked for it.
+      final typeOk = isVideo
+          ? m.videoMimeTypes.contains(x.mimeType)
+          : m.imageMimeTypes.contains(x.mimeType) || x.kind == MediaKind.image;
       final countOk = isVideo ? videos < m.maxVideos : images < m.maxImages;
       if (!typeOk || !countOk) {
         if (!options.dropUnsupportedMedia) {

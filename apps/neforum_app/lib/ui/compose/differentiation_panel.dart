@@ -79,28 +79,6 @@ class DifferentiationPanel extends ConsumerWidget {
       );
     }
 
-    Future<void> auto() async {
-      if (own > 0) {
-        final ok = await confirmDialog(
-          context,
-          title: 'Rewrite every version?',
-          message: 'Auto-differentiate starts each network again from the main post and applies its conventions. '
-              'The $own ${own == 1 ? 'version' : 'versions'} you edited will be replaced.',
-          confirmLabel: 'Rewrite all',
-        );
-        if (!ok) return;
-      }
-      final current = ref.read(composerProvider);
-      notifier.setVersionTexts({
-        for (final p in previews)
-          p.account.id: () {
-            final base = baseVersionText(current, p, settings);
-            final v = autoVersion(base, p.descriptor);
-            return v.trim() == base.trim() ? null : v;
-          }(),
-      });
-    }
-
     Future<void> close() async {
       if (own > 0) {
         final ok = await confirmDialog(
@@ -132,16 +110,17 @@ class DifferentiationPanel extends ConsumerWidget {
         ),
         IconButton(tooltip: 'Close Differentiation', onPressed: close, icon: const Icon(Icons.close_rounded)),
       ]),
-      const SizedBox(height: Space.sm),
-      Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
-        FilledButton.icon(onPressed: auto, icon: const Icon(Icons.auto_fix_high_rounded, size: 18), label: const Text('Auto-differentiate')),
-        if (own > 0)
-          OutlinedButton.icon(
+      if (own > 0) ...[
+        const SizedBox(height: Space.sm),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
             onPressed: () => notifier.setVersionTexts({for (final p in previews) p.account.id: null}),
             icon: const Icon(Icons.restart_alt_rounded, size: 18),
             label: const Text('Reset all to the main post'),
           ),
-      ]),
+        ),
+      ],
       const SizedBox(height: Space.md),
       for (final p in previews) ...[
         _VersionEditor(key: ValueKey('version-${p.account.id}'), preview: p, base: baseVersionText(c, p, settings), own: c.overrides[p.account.id]?.text),

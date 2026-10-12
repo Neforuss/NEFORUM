@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: Tumblr audio post test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  .post { border: 1px solid #bbb; border-radius: 10px; padding: 10px; max-width: 520px; display: grid; gap: 8px; }
+  .card { border: 1px solid #ccc; border-radius: 8px; padding: 8px; background: #f4f4f4; }
+  .block { min-height: 1.4em; outline: 1px dashed #ddd; padding: 2px 4px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <!--
+    Like Tumblr's /new/audio: a search-or-URL field that turns into a player
+    on Enter, and the text blocks below. Served under .../new/audio.html so
+    the extension's audio-post steps run. The track comes as a snippet.
+  -->
+  <div role="dialog" aria-label="New audio post">
+    <div class="post">
+      <input id="url" type="text" placeholder="Search for a song or paste a URL">
+      <div id="card" class="card" hidden></div>
+      <div id="blocks"><div class="block" contenteditable="true" aria-label="Go ahead, put anything."></div></div>
+      <button type="button">Post now</button>
+    </div>
+  </div>
+  <script>
+    const url = document.getElementById('url');
+    const makeCard = () => {
+      if (!url.value.trim() || !document.getElementById('card').hidden) return;
+      document.getElementById('card').textContent = `Player: ${url.value.trim()}`;
+      document.getElementById('card').hidden = false;
+      url.hidden = true;
+    };
+    url.addEventListener('keydown', (e) => e.key === 'Enter' && makeCard());
+    url.addEventListener('blur', makeCard);
+    window.result = () => ({
+      card: document.getElementById('card').hidden ? null : document.getElementById('card').textContent,
+      text: [...document.querySelectorAll('.block')].map((b) => b.innerText).join('\n\n'),
+    });
+    window.NEFORUM_TEST_TEXT = 'New single out today';
+    window.NEFORUM_TEST_SNIPPETS = [{ label: 'Track link', text: 'https://soundcloud.com/me/track' }];
+    window.NEFORUM_TEST_MEDIA = false;
+  </script>
+  <script src="../harness.js"></script>
+  <script src="../../../src/content/fill.js"></script>
+  <script src="../../../src/content/recipes.js"></script>
+  <script src="../../../src/content/panel.js"></script>
+  <script src="../../../src/content/main.js"></script>
+</body>
+</html>

@@ -42,15 +42,24 @@
     reddit: { postSelectors: ['#inner-post-submit-button', '#submit-post-button'] },
     tumblr: {
       // NEFORUM opens the full composer (/new/text, /new/photo, /new/video,
-      // /new/link), not the text-only share tool. In a link post the link
-      // goes into Tumblr's URL field, which makes the link card; the rest of
-      // the text goes below it.
+      // /new/link, /new/quote, /new/chat, /new/audio), not the text-only
+      // share tool. In a link or audio post the link (the track: the "Track
+      // link" snippet) goes into Tumblr's URL field, which makes the link
+      // card or the player; the rest of the text goes below it. A quote's
+      // source is a snippet to Insert.
       async open(job) {
         tumblrLinkDone = false;
-        const link = /\/new\/link\b/.test(location.pathname) && /https?:\/\/[^\s<>"]+/.exec(job.text ?? '')?.[0];
+        const audio = /\/new\/audio\b/.test(location.pathname);
+        const link = audio
+          ? (job.snippets ?? []).find((s) => s.label === 'Track link')?.text ?? /https?:\/\/[^\s<>"]+/.exec(job.text ?? '')?.[0]
+          : /\/new\/link\b/.test(location.pathname) && /https?:\/\/[^\s<>"]+/.exec(job.text ?? '')?.[0];
         if (!link) return;
         const field = await waitFor(
-          () => document.querySelector('input[type="url"], input[placeholder*="URL" i], input[aria-label*="URL" i], input[placeholder*="link" i], [contenteditable="true"][aria-label*="URL" i]'),
+          () =>
+            document.querySelector(
+              'input[type="url"], input[placeholder*="URL" i], input[aria-label*="URL" i], input[placeholder*="link" i], [contenteditable="true"][aria-label*="URL" i]' +
+                (audio ? ', input[placeholder*="song" i], input[placeholder*="search" i], input[aria-label*="song" i]' : ''),
+            ),
           { timeout: 8000 },
         );
         if (!field || !(await NF.fill.insertText(field, link))) return;

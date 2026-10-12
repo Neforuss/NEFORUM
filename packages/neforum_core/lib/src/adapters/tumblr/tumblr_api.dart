@@ -64,18 +64,35 @@ class TumblrApi {
   /// Turns plain text into NPF text blocks: one block per non-empty line,
   /// lines longer than 4,096 code points split at a space. URLs get `link`
   /// formatting (code-point offsets) until [linkBudget] runs out.
-  static List<Map<String, Object?>> textBlocks(String text, {LinkBudget? linkBudget}) {
+  static List<Map<String, Object?>> textBlocks(String text, {LinkBudget? linkBudget, String? subtype}) {
     final budget = linkBudget ?? LinkBudget();
     final out = <Map<String, Object?>>[];
     for (final line in const LineSplitter().convert(text)) {
       final trimmed = line.trimRight();
       if (trimmed.trim().isEmpty) continue;
       for (final chunk in splitCodePoints(trimmed, maxTextBlockCodePoints)) {
-        out.add(textBlock(chunk, linkBudget: budget));
+        out.add(textBlock(chunk, subtype: subtype, linkBudget: budget));
       }
     }
     return out;
   }
+
+  /// One line of a chat post (NPF text subtype `chat`), with the speaker's
+  /// label ("Alex:") in bold the way Tumblr's chat posts show it.
+  static Map<String, Object?> chatBlock(String line) {
+    final block = textBlock(line.trim(), subtype: 'chat');
+    final label = RegExp(r'^[^:\n]{1,40}:').firstMatch(line.trim());
+    if (label != null) {
+      block['formatting'] = [
+        {'start': 0, 'end': label.group(0)!.runes.length, 'type': 'bold'},
+      ];
+    }
+    return block;
+  }
+
+  /// Audio block for a track on a service Tumblr embeds (SoundCloud,
+  /// Spotify, Bandcamp...): Tumblr fetches the player from the URL.
+  static Map<String, Object?> audioBlock(String url) => {'type': 'audio', 'url': url};
 
   static Map<String, Object?> textBlock(String text, {String? subtype, LinkBudget? linkBudget}) {
     final formatting = <Map<String, Object?>>[];

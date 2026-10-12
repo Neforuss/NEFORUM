@@ -77,7 +77,21 @@ With a browser paired ([Browser extension](../browser-extension.md)), NEFORUM op
 | A video | `https://www.tumblr.com/new/video` |
 | A link and text, no media | `https://www.tumblr.com/new/link`: the link goes into Tumblr's URL field (Tumblr turns it into a link card) and your text below it |
 
-This replaces the share tool described below, which is a simplified page that takes text only (photos only as links on a media host), and nothing is put on your media host. Tags go in with **Insert** in the extension's panel. Tumblr also has `/new/quote`, `/new/chat` and `/new/audio` posts; a NEFORUM post is never one of those.
+This replaces the share tool described below, which is a simplified page that takes text only (photos only as links on a media host), and nothing is put on your media host. Tags go in with **Insert** in the extension's panel.
+
+## Quote, chat and audio posts
+
+NEFORUM picks text, photo, video or link posts by itself. For the other kinds, open the post's **Customize for Tumblr** (the sliders button next to Tumblr in the composer) and choose **Post type**:
+
+| Post type | What you write | What Tumblr gets |
+|---|---|---|
+| **Quote** | The quote as the text; who said it in **Quote source** (or the title) | The words in Tumblr's large quote style, then "— source" |
+| **Chat** | One line per speaker: `Alex: Did you see it?` | Each line as a chat line, the speaker in bold; the title on top |
+| **Audio** | The track's link (SoundCloud, Spotify, Bandcamp...) in the Link field or the text, plus anything you want to say | Tumblr's player for the track, then your text |
+
+With your own API keys NEFORUM posts them directly. Without keys (hand-off): quote and chat posts open Tumblr's share tool filled in; audio posts open `https://www.tumblr.com/new/audio`, with the track's link listed to paste. With the browser extension, Tumblr's full editor opens (`/new/quote`, `/new/chat`, `/new/audio`): the extension puts the track into the audio post's link field and the text below; a quote's source is listed in its panel with **Insert**.
+
+An audio post needs a link to a service Tumblr can play; NEFORUM does not upload audio files.
 
 ### Text and link posts
 

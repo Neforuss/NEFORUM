@@ -50,18 +50,9 @@ void main() {
     expect(usefulTransforms(post, d('instagram')), containsAll([VersionTransform.hashtagsToEnd, VersionTransform.linkInBio, VersionTransform.noLink]));
   });
 
-  test('auto-differentiate gives each network its own shape', () {
-    final ig = autoVersion(post, d('instagram'));
-    final li = autoVersion(post, d('linkedin'));
-    final rd = autoVersion(post, d('reddit'));
-    final x = autoVersion(post, d('x'));
-    expect(ig, contains('Link in bio.'));
-    expect(rd, isNot(contains('#')));
-    expect(x, endsWith('#keyboard #opensource'));
-    expect({ig, li, rd, x}, hasLength(4), reason: 'four different versions');
+  test('every network has a tip', () {
     for (final id in reg.all.map((a) => a.id)) {
       expect(styleFor(id).tip, isNotEmpty, reason: id);
-      expect(() => autoVersion(post, d(id)), returnsNormally, reason: id);
     }
   });
 

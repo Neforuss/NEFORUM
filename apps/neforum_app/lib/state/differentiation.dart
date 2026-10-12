@@ -3,8 +3,8 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 /// DIFFERENTIATION: one post, a version tuned for each network.
 ///
 /// What works on X rarely works on LinkedIn or Instagram. These are the
-/// one-tap changes the composer offers per version, each network's
-/// conventions, and "Auto-differentiate", which applies them all at once.
+/// one-tap changes the composer offers per version and each network's
+/// conventions.
 /// Everything here is plain text work on the user's own words: nothing is
 /// generated or sent anywhere.
 enum VersionTransform {
@@ -22,60 +22,43 @@ enum VersionTransform {
 
 /// How posts usually look on one network.
 class NetworkStyle {
-  const NetworkStyle(this.tip, {this.auto = const [], this.maxHashtags = 3});
+  const NetworkStyle(this.tip, {this.maxHashtags = 3});
 
   /// One line of guidance shown above the version.
   final String tip;
-
-  /// Changes Auto-differentiate applies, in order.
-  final List<VersionTransform> auto;
 
   /// What "Fewer hashtags" keeps.
   final int maxHashtags;
 }
 
-const _chat = NetworkStyle('A message to people who joined your channel: conversational, no hashtags needed.', auto: [VersionTransform.noHashtags]);
+const _chat = NetworkStyle('A message to people who joined your channel: conversational, no hashtags needed.');
 const _blog = NetworkStyle(
   'Long form: a clear title, a strong first paragraph. Tags go in the tags field, not the text.',
-  auto: [VersionTransform.noHashtags],
 );
 
 /// Network conventions (platform id).
 NetworkStyle styleFor(String platformId) => switch (platformId) {
-      'x' => const NetworkStyle('Short and punchy; lead with the hook. One or two hashtags at most.',
-          auto: [VersionTransform.fewerHashtags], maxHashtags: 2),
+      'x' => const NetworkStyle('Short and punchy; lead with the hook. One or two hashtags at most.', maxHashtags: 2),
       'linkedin' => const NetworkStyle(
-          'Professional and personal: hook in the first two lines (the rest hides behind "…see more"), short paragraphs, up to 3 hashtags at the end.',
-          auto: [VersionTransform.airy, VersionTransform.fewerHashtags]),
+          'Professional and personal: hook in the first two lines (the rest hides behind "…see more"), short paragraphs, up to 3 hashtags at the end.'),
       'instagram' => const NetworkStyle(
-          'The caption supports the picture: front-load the first line, hashtags at the end. Links in captions are not clickable, so say "link in bio".',
-          auto: [VersionTransform.hashtagsToEnd, VersionTransform.linkInBio], maxHashtags: 5),
-      'tiktok' => const NetworkStyle('Short caption, a few relevant hashtags; links are not clickable, so point to your bio.',
-          auto: [VersionTransform.hashtagsToEnd, VersionTransform.linkInBio], maxHashtags: 5),
-      'threads' => const NetworkStyle('Conversational, like talking to friends. Threads shows one topic tag per post.',
-          auto: [VersionTransform.fewerHashtags], maxHashtags: 1),
-      'facebook' => const NetworkStyle('Friendly and conversational; a question invites comments. Hashtags matter little here.',
-          auto: [VersionTransform.fewerHashtags], maxHashtags: 2),
-      'bluesky' => const NetworkStyle('Casual and direct, 300 characters. A hashtag or two at most.',
-          auto: [VersionTransform.fewerHashtags], maxHashtags: 2),
+          'The caption supports the picture: front-load the first line, hashtags at the end. Links in captions are not clickable, so say "link in bio".', maxHashtags: 5),
+      'tiktok' => const NetworkStyle('Short caption, a few relevant hashtags; links are not clickable, so point to your bio.', maxHashtags: 5),
+      'threads' => const NetworkStyle('Conversational, like talking to friends. Threads shows one topic tag per post.', maxHashtags: 1),
+      'facebook' => const NetworkStyle('Friendly and conversational; a question invites comments. Hashtags matter little here.', maxHashtags: 2),
+      'bluesky' => const NetworkStyle('Casual and direct, 300 characters. A hashtag or two at most.', maxHashtags: 2),
       'mastodon' || 'misskey' => const NetworkStyle(
-          'Hashtags are how people find posts here (there is no algorithm), so keep a few at the end; write them in CamelCase for screen readers.',
-          auto: [VersionTransform.hashtagsToEnd], maxHashtags: 5),
-      'nostr' => const NetworkStyle('Plain notes; hashtags at the end help relays index them.', auto: [VersionTransform.hashtagsToEnd]),
+          'Hashtags are how people find posts here (there is no algorithm), so keep a few at the end; write them in CamelCase for screen readers.', maxHashtags: 5),
+      'nostr' => const NetworkStyle('Plain notes; hashtags at the end help relays index them.'),
       'reddit' || 'lemmy' => const NetworkStyle(
-          'The title carries the post; write for that community, no hashtags, no marketing tone.',
-          auto: [VersionTransform.noHashtags]),
+          'The title carries the post; write for that community, no hashtags, no marketing tone.'),
       'youtube_posts' => const NetworkStyle(
-          'Talk to your subscribers: a question or a poll works well. About 280 characters show before "Read more".',
-          auto: [VersionTransform.fewerHashtags]),
-      'youtube' => const NetworkStyle('The description: first two lines matter most; hashtags at the end.', auto: [VersionTransform.hashtagsToEnd]),
-      'pinterest' => const NetworkStyle('Describe what people will find, with the words they would search for.',
-          auto: [VersionTransform.hashtagsToEnd]),
-      'snapchat' => const NetworkStyle('A short caption on top of the picture.', auto: [VersionTransform.noHashtags, VersionTransform.noLink]),
-      'tumblr' => const NetworkStyle('Tags go in the tags field, and people browse by them; the post can be playful.',
-          auto: [VersionTransform.noHashtags]),
-      'google_business' => const NetworkStyle('What customers need: an offer, an event, opening hours. No hashtags.',
-          auto: [VersionTransform.noHashtags]),
+          'Talk to your subscribers: a question or a poll works well. About 280 characters show before "Read more".'),
+      'youtube' => const NetworkStyle('The description: first two lines matter most; hashtags at the end.'),
+      'pinterest' => const NetworkStyle('Describe what people will find, with the words they would search for.'),
+      'snapchat' => const NetworkStyle('A short caption on top of the picture.'),
+      'tumblr' => const NetworkStyle('Tags go in the tags field, and people browse by them; the post can be playful.'),
+      'google_business' => const NetworkStyle('What customers need: an offer, an event, opening hours. No hashtags.'),
       'telegram' || 'discord' || 'matrix' || 'whatsapp' => _chat,
       'wordpress' || 'ghost' || 'writefreely' || 'micropub' || 'devto' || 'hashnode' || 'substack' => _blog,
       _ => const NetworkStyle('Write it the way people there talk.'),
@@ -190,14 +173,3 @@ List<VersionTransform> usefulTransforms(String text, PlatformDescriptor d) => [
         if (t != VersionTransform.fit || !d.text.supportsThreads)
           if (applyTransform(t, text, d).trim() != text.trim()) t,
     ];
-
-/// Auto-differentiate: the network's conventions applied to [text], then
-/// fitted to its limit when it cannot thread.
-String autoVersion(String text, PlatformDescriptor d) {
-  var out = text;
-  for (final t in styleFor(d.id).auto) {
-    out = applyTransform(t, out, d);
-  }
-  if (!d.text.supportsThreads) out = applyTransform(VersionTransform.fit, out, d);
-  return out;
-}

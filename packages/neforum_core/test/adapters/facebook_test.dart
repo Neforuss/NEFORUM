@@ -1073,6 +1073,20 @@ void main() {
       expect(plan.clipboardText, 'Just words');
     });
 
+    test('with the browser extension: the normal composer, which takes the text with the link and the photos', () {
+      final account = fakeAccount('facebook', tier: PlatformTier.handoff, config: {'page_url': 'https://www.facebook.com/MyPage'});
+      final img = fakeImage();
+      final plan = adapter.buildHandoff(PostVariant(text: 'Read this', link: 'https://example.com/x', media: [img]), account: account)!;
+      expect(plan.composerUrl.toString(), 'https://www.facebook.com/MyPage', reason: 'not the sharer, which takes only the link');
+      expect(plan.clipboardText, 'Read this\n\nhttps://example.com/x', reason: 'what the extension types: the link included');
+      expect(plan.composerInstructions, contains('adds your text with the link and your photo'));
+      expect(plan.composerInstructions, contains('preview card'));
+      final plain = adapter.buildHandoff(const PostVariant(text: 'Just words'))!;
+      expect(plain.composerUrl.toString(), 'https://www.facebook.com/');
+      expect(plain.composerInstructions, contains('opens your feed'));
+      expect(plain.composerInstructions, isNot(contains('preview card')));
+    });
+
     test('very long text drops the quote parameter', () {
       final plan = adapter.buildHandoff(PostVariant(text: 'y' * 5000, link: 'https://example.com'))!;
       expect(plan.webIntent!.queryParameters.containsKey('quote'), isFalse);

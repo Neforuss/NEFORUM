@@ -79,6 +79,31 @@ void main() {
     });
   });
 
+  test('picking only the second photo for a network keeps it, even as a type the network refuses as is', () {
+    // The report: two photos, only the second (a PNG) ticked for Instagram,
+    // and Instagram got a text card because the PNG was dropped.
+    final first = photo(id: 'jpeg');
+    final second = photo(id: 'png', mime: 'image/png', w: 1000, h: 1000);
+    final gif = photo(id: 'gif', mime: 'image/gif');
+    final now = DateTime(2026, 10, 12);
+    final post = Post(
+      id: 'p',
+      text: 'Hi',
+      media: [first, second, gif],
+      targets: const [PostTarget(accountId: 'ig', overrides: PostOverrides(mediaIds: ['png']))],
+      createdAt: now,
+      updatedAt: now,
+    );
+    final ig = builtinRegistry().descriptor('instagram')!;
+    final v = const VariantResolver().resolve(post, post.targets.single, ig);
+    expect(v.media.map((m) => m.id), ['png']);
+    expect(v.issues.where((i) => i.code == 'media.dropped'), isEmpty);
+    // A GIF of a type the network refuses is still dropped: it cannot be
+    // changed without losing its animation.
+    final withGif = post.withTarget(const PostTarget(accountId: 'ig', overrides: PostOverrides(mediaIds: ['gif'])));
+    expect(const VariantResolver().resolve(withGif, withGif.targets.single, ig).media, isEmpty);
+  });
+
   group('each network\'s photo rules', () {
     final registry = builtinRegistry();
     PhotoFit? fitFor(String id, PlatformTier tier, [PostVariant v = const PostVariant(text: 'x')]) =>

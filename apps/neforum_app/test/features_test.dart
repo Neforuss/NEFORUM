@@ -20,6 +20,7 @@ import 'package:neforum_app/ui/compose/preview_card.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
+import 'package:neforum_app/widgets/surfaces.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 class _MemoryStorage implements AppStorage {
@@ -237,6 +238,45 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
   });
 
+  testWidgets('a network can get only the second photo of an album, even a PNG Instagram\'s API would refuse as is', (tester) async {
+    final (services, c) = await boot(tester);
+    final ig = ConnectedAccount(id: 'ig-api', platformId: 'instagram', tier: PlatformTier.byokApi, displayName: 'neforus', createdAt: DateTime(2026, 10, 12));
+    await tester.runAsync(() => services.accounts.upsert(ig));
+    final masto = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon');
+    Future<MediaAttachment> add(String name, List<int> bytes) async => (await tester.runAsync(() => services.media.importBytes(Uint8List.fromList(bytes), fileName: name)))!;
+    final first = await add('first.jpg', img.encodeJpg(img.Image(width: 400, height: 500)..clear(img.ColorRgb8(30, 30, 30))));
+    final second = await add('second.png', img.encodePng(img.Image(width: 500, height: 500)..clear(img.ColorRgb8(240, 200, 220))));
+    final now = DateTime(2026, 10, 12);
+    final post = Post(
+      id: 'p-pick',
+      text: 'I do want this vibe coded product to have perfect vibes',
+      media: [first, second],
+      targets: [PostTarget(accountId: ig.id, overrides: PostOverrides(mediaIds: [second.id])), PostTarget(accountId: masto.id)],
+      createdAt: now,
+      updatedAt: now,
+    );
+    c.read(composerProvider.notifier).load(post);
+    await settle(tester);
+
+    final previews = {for (final p in c.read(composerPreviewsProvider)) p.account.id: p};
+    final igPreview = previews[ig.id]!;
+    expect(igPreview.variant.media.single.derivedFrom, second.id, reason: 'the photo picked for Instagram, not a text card');
+    expect(igPreview.issues.map((i) => i.code), isNot(contains('media.text_card')));
+    expect(igPreview.issues.map((i) => i.code), isNot(contains('media.dropped')));
+    expect(igPreview.issues.where((i) => i.code == 'media.photo_fit').single.message, 'second.png will be made a JPEG for Instagram');
+    expect(previews[masto.id]!.variant.media.map((m) => m.id), [first.id, second.id]);
+
+    // Saved: Instagram gets a JPEG of the second photo; Mastodon both originals.
+    final saved = (await tester.runAsync(() => c.read(postActionsProvider).saveDraft()))!;
+    final copy = saved.media.singleWhere((m) => m.derivedFrom != null);
+    expect((copy.derivedFrom, copy.mimeType), (second.id, 'image/jpeg'));
+    expect(saved.targetFor(ig.id)!.overrides.mediaIds, [copy.id]);
+    expect(saved.media.where((m) => m.isTextCard), isEmpty);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
   testWidgets('YouTube Posts: text and images go out by hand-off, separate from YouTube videos', (tester) async {
     final (services, c) = await boot(tester);
     c.read(routerProvider).go('/compose');
@@ -355,14 +395,29 @@ void main() {
     expect(find.text('A version for each network'), findsOneWidget);
     expect(find.text('Main post'), findsNWidgets(4));
 
-    await tester.ensureVisible(find.text('Auto-differentiate'));
-    await tester.tap(find.text('Auto-differentiate'));
+    expect(find.text('Auto-differentiate'), findsNothing, reason: 'removed: versions are made by hand and with the one-tap changes');
+
+    // One-tap changes per network.
+    Finder versionCard(String name) => find.ancestor(
+          of: find.byWidgetPredicate((w) => w is TextField && w.decoration?.hintText == 'The $name version'),
+          matching: find.byType(NfCard),
+        ).first;
+    final igCard = versionCard('Instagram');
+    await tester.ensureVisible(igCard);
+    await tester.tap(find.descendant(of: igCard, matching: find.text('"Link in bio"')));
+    await settle(tester);
+    final redditCard = versionCard('Reddit');
+    await tester.ensureVisible(redditCard);
+    await tester.tap(find.descendant(of: redditCard, matching: find.text('No hashtags')));
+    await settle(tester);
+    final linkedinCard = versionCard('LinkedIn');
+    await tester.ensureVisible(linkedinCard);
+    await tester.tap(find.descendant(of: linkedinCard, matching: find.text('Airy paragraphs')));
     await settle(tester);
     final o = c.read(composerProvider).overrides;
     expect(o[idOf('instagram')]!.text, contains('Link in bio.'));
     expect(o[idOf('reddit')]!.text, isNot(contains('#')));
     expect(o[idOf('linkedin')]!.text!.split('\n\n').length, greaterThan(3));
-    expect(o[idOf('x')]!.text, endsWith('#opensource #keyboards'));
     final previews = {for (final p in c.read(composerPreviewsProvider)) p.account.platformId: p};
     expect(previews['instagram']!.variant.text, contains('Link in bio.'));
 

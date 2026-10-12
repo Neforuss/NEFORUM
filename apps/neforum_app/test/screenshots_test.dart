@@ -171,8 +171,6 @@ void main() {
             .map((a) => a.id));
         c.read(composerProvider.notifier).setDifferentiate(true);
         await tester.pump(const Duration(milliseconds: 300));
-        await tester.tap(find.text('Auto-differentiate'));
-        await tester.pump(const Duration(milliseconds: 300));
         await tester.drag(find.byType(Scrollable).first, const Offset(0, -520));
       }));
 
