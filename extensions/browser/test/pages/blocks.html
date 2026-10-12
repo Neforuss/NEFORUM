@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: block editor test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  .post { border: 1px solid #bbb; border-radius: 10px; padding: 10px; max-width: 520px; }
+  .block { min-height: 1.4em; outline: none; padding: 2px 0; white-space: pre-wrap; }
+  .block:empty::before { content: attr(data-placeholder); color: #999; }
+</style>
+</head>
+<body>
+  <!--
+    Like Tumblr's post editor: every paragraph is its own editable block.
+    A paste is split into blocks (a moment later, as React would), the
+    typing commands can't make paragraphs, and the tags field sits below.
+    The extension must put the text in once.
+  -->
+  <div role="dialog" aria-label="New post">
+    <div class="post">
+      <div id="blocks">
+        <div class="block" contenteditable="true" aria-label="Go ahead, put anything." data-placeholder="Go ahead, put anything."></div>
+      </div>
+      <input id="tags" placeholder="#add tags">
+      <button id="post" type="button">Post now</button>
+    </div>
+  </div>
+  <script>
+    const blocks = document.getElementById('blocks');
+    const makeBlock = (text) => Object.assign(document.createElement('div'), { className: 'block', contentEditable: 'true', textContent: text });
+    blocks.addEventListener('paste', (e) => {
+      const text = e.clipboardData?.getData('text/plain');
+      if (!text) return;
+      e.preventDefault();
+      const at = e.target.closest('.block');
+      setTimeout(() => {
+        const paras = text.split(/\n{2,}/);
+        at.textContent += paras[0];
+        let after = at;
+        for (const p of paras.slice(1)) {
+          const b = makeBlock(p);
+          after.after(b);
+          after = b;
+        }
+      }, 60);
+    });
+    // Paragraphs come only from Enter in the real editor, not from execCommand.
+    blocks.addEventListener('beforeinput', (e) => {
+      if (e.inputType === 'insertParagraph') e.preventDefault();
+    });
+    window.postText = () => [...blocks.querySelectorAll('.block')].map((b) => b.innerText).join('\n\n');
+    window.NEFORUM_TEST_TEXT = 'I HAVE GONE INSANE\n\nI AM MENTAL\nI AM MAD\nI NEED HELP\n\n[Neforum test post]';
+    window.NEFORUM_TEST_MEDIA = false;
+  </script>
+  <script src="harness.js"></script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>

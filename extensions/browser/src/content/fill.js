@@ -122,6 +122,32 @@
   const holdsOnly = (el, text) => contentOf(el) === norm(text);
 
   /**
+   * Where the rest of [el]'s post can be: block editors (Tumblr) keep every
+   * paragraph in an editable of its own, so a paste into one block adds
+   * blocks next to it. The open dialog or form, else a few levels up.
+   */
+  function composerOf(el) {
+    const box = el.closest('[role="dialog"], dialog, form');
+    if (box) return box;
+    let node = el;
+    for (let i = 0; i < 3 && node.parentElement && node.parentElement !== document.body; i++) node = node.parentElement;
+    return node;
+  }
+
+  /** The text of every field in [scope] (not its buttons or counters). */
+  function fieldsText(scope) {
+    const seen = new Set();
+    const parts = [];
+    for (const f of scope.querySelectorAll(EDITABLE)) {
+      const e = editableOf(f);
+      if (!e || seen.has(e)) continue;
+      seen.add(e);
+      parts.push(e.matches('textarea, input') ? e.value : e.innerText ?? e.textContent);
+    }
+    return norm(parts.join('\n'));
+  }
+
+  /**
    * Waits up to [ms] for [el] to show [text] (or, with [exact], to hold only
    * [text]): editors such as Lexical and React-driven ones update a moment later.
    */
@@ -146,6 +172,16 @@
     range.collapse(false);
     sel.removeAllRanges();
     sel.addRange(range);
+    tellSelection(el);
+  }
+
+  /**
+   * React editors (Draft.js) take a new selection from React's select event,
+   * which a selection set by script doesn't raise; a key-up (of Shift, which
+   * types nothing) does.
+   */
+  function tellSelection(el) {
+    el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Shift', code: 'ShiftLeft', bubbles: true, composed: true }));
   }
 
   function selectAll(el) {
@@ -154,11 +190,27 @@
       el.select();
       return;
     }
+    // From the first character to the last, not around the editor box:
+    // Draft.js maps a selection to its blocks only from inside their text,
+    // so a box-wide one over several paragraphs replaces just the last.
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let first = null;
+    let last = null;
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      first ??= n;
+      last = n;
+    }
     const sel = getSelection();
     const range = document.createRange();
-    range.selectNodeContents(el);
+    if (first && last) {
+      range.setStart(first, 0);
+      range.setEnd(last, last.length);
+    } else {
+      range.selectNodeContents(el);
+    }
     sel.removeAllRanges();
     sel.addRange(range);
+    tellSelection(el);
   }
 
   /** Fires a paste carrying [data] (a DataTransfer) at [el]. True if the page took it. */
@@ -183,7 +235,10 @@
    */
   async function insertText(el, text, { replace = false } = {}) {
     if (!el || !text) return null;
-    if (!replace && hasText(el, text)) return 'already';
+    const scope = composerOf(el);
+    if (!replace && (hasText(el, text) || fieldsText(scope).includes(norm(text).slice(0, 40)))) return 'already';
+    // Exactly this text already, over the composer's blocks: nothing to replace.
+    if (replace && !el.matches('textarea, input') && fieldsText(scope) === norm(text)) return 'already';
     const textField = el.matches('textarea, input');
 
     if (textField) {
@@ -217,11 +272,24 @@
       if (contentOf(el)) return null;
     }
 
+    // Once a try has changed the composer, no other try follows, even when
+    // the text can't be read back whole: a second one would put it in twice.
+    const before = fieldsText(scope);
+    const want = norm(text).slice(0, 40);
+    const landed = () => hasText(el, text) || fieldsText(scope) !== before;
+    const settle = async (ms) => {
+      if (!(await waitFor(landed, { timeout: ms, interval: 50 }))) return false;
+      // Give a paste that is landing in steps a moment to finish.
+      await waitFor(() => fieldsText(scope).includes(want), { timeout: 600, interval: 50 });
+      return true;
+    };
+
     await select();
     const data = new DataTransfer();
     data.setData('text/plain', text);
+    // An editor that took the paste (preventDefault) may apply it a moment later.
     const taken = firePaste(el, data);
-    if (await shows(el, text, taken ? 1500 : 400)) return 'paste';
+    if (await settle(taken ? 3000 : 400)) return 'paste';
 
     await select();
     const lines = text.split('\n');
@@ -229,11 +297,11 @@
       if (i > 0) document.execCommand('insertParagraph');
       if (line) document.execCommand('insertText', false, line);
     });
-    if (await shows(el, text, 800)) return 'insertText';
+    if (await settle(800)) return 'insertText';
 
     placeCaretAtEnd(el);
     el.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true, composed: true }));
-    return (await shows(el, text, 800)) ? 'beforeinput' : null;
+    return (await settle(800)) ? 'beforeinput' : null;
   }
 
   function dataTransferOf(files) {
