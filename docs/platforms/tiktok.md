@@ -17,7 +17,7 @@ Status as of October 2026.
 Nothing to set up. When you publish:
 
 - **Phone:** NEFORUM copies your caption to the clipboard and opens the share sheet with your video/photos. Pick **TikTok**, long-press the caption box, paste, choose who can watch, tap **Post**.
-- **Desktop:** NEFORUM copies the caption and opens the [TikTok Studio upload page](https://www.tiktok.com/tiktokstudio/upload). Drag the file in, paste the caption, post.
+- **Desktop:** NEFORUM copies the caption and opens TikTok Studio's upload page on the right tab: [photo](https://www.tiktok.com/tiktokstudio/upload?tab=photo) for photo posts, including the text card NEFORUM makes from a words-only post, and [video](https://www.tiktok.com/tiktokstudio/upload?tab=video) otherwise. Use **Save media to Downloads**, drag the files in, press Ctrl+V in the caption box, post.
 
 Why the clipboard? TikTok ignores text handed to it with shared files, and it has no web link that opens a prefilled composer (nothing like X's "intent" links).
 

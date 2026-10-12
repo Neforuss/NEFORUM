@@ -1,8 +1,89 @@
 #include "flutter_window.h"
 
+#include <flutter/standard_method_codec.h>
+#include <shlobj.h>
+
+#include <cstring>
 #include <optional>
+#include <string>
+#include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+
+// Copies |bytes| into a movable global block for SetClipboardData.
+HGLOBAL GlobalCopy(const void* bytes, size_t size, size_t extra_zeroes = 0) {
+  HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, size + extra_zeroes);
+  if (!mem) return nullptr;
+  void* p = GlobalLock(mem);
+  if (!p) {
+    GlobalFree(mem);
+    return nullptr;
+  }
+  if (size > 0) memcpy(p, bytes, size);
+  GlobalUnlock(mem);
+  return mem;
+}
+
+bool SetData(UINT format, HGLOBAL mem) {
+  if (!mem) return false;
+  if (SetClipboardData(format, mem)) return true;
+  GlobalFree(mem);
+  return false;
+}
+
+const std::vector<uint8_t>* Bytes(const flutter::EncodableMap& args, const char* key) {
+  auto it = args.find(flutter::EncodableValue(key));
+  return it == args.end() ? nullptr : std::get_if<std::vector<uint8_t>>(&it->second);
+}
+
+// Puts a picture on the clipboard: "PNG" (what browsers read on paste),
+// CF_DIB (for apps that only take bitmaps) and, when |path| names a file,
+// CF_HDROP (the original file, for places that accept pasted files).
+bool CopyImage(HWND owner, const flutter::EncodableMap& args) {
+  const auto* png = Bytes(args, "png");
+  const auto* dib = Bytes(args, "dib");
+  std::wstring path;
+  auto p = args.find(flutter::EncodableValue("path"));
+  if (p != args.end()) {
+    if (const auto* s = std::get_if<std::string>(&p->second); s && !s->empty()) {
+      int n = MultiByteToWideChar(CP_UTF8, 0, s->c_str(), -1, nullptr, 0);
+      if (n > 1) {
+        path.resize(n - 1);
+        MultiByteToWideChar(CP_UTF8, 0, s->c_str(), -1, path.data(), n);
+      }
+      if (GetFileAttributesW(path.c_str()) == INVALID_FILE_ATTRIBUTES) path.clear();
+    }
+  }
+  if ((!png || png->empty()) && (!dib || dib->empty()) && path.empty()) return false;
+
+  // Another program may hold the clipboard for a moment.
+  bool open = false;
+  for (int i = 0; i < 10 && !(open = OpenClipboard(owner) != FALSE); i++) Sleep(25);
+  if (!open) return false;
+  EmptyClipboard();
+  bool any = false;
+  if (png && !png->empty()) {
+    any |= SetData(RegisterClipboardFormatW(L"PNG"), GlobalCopy(png->data(), png->size()));
+  }
+  if (dib && !dib->empty()) {
+    any |= SetData(CF_DIB, GlobalCopy(dib->data(), dib->size()));
+  }
+  if (!path.empty()) {
+    // DROPFILES, then the path, then two terminating zeroes (from ZEROINIT).
+    std::vector<uint8_t> drop(sizeof(DROPFILES) + path.size() * sizeof(wchar_t));
+    auto* df = reinterpret_cast<DROPFILES*>(drop.data());
+    df->pFiles = sizeof(DROPFILES);
+    df->fWide = TRUE;
+    memcpy(drop.data() + sizeof(DROPFILES), path.c_str(), path.size() * sizeof(wchar_t));
+    any |= SetData(CF_HDROP, GlobalCopy(drop.data(), drop.size(), 2 * sizeof(wchar_t)));
+  }
+  CloseClipboard();
+  return any;
+}
+
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -27,6 +108,20 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  clipboard_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "neforum/clipboard",
+      &flutter::StandardMethodCodec::GetInstance());
+  clipboard_channel_->SetMethodCallHandler(
+      [this](const flutter::MethodCall<flutter::EncodableValue>& call,
+             std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+        if (call.method_name() != "copyImage" || !args) {
+          result->NotImplemented();
+          return;
+        }
+        result->Success(flutter::EncodableValue(CopyImage(GetHandle(), *args)));
+      });
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -40,6 +135,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  clipboard_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

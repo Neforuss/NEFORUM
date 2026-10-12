@@ -9,12 +9,13 @@ import 'handoff_common.dart';
 ///
 /// Substack has no publishing API at all: its official Developer API is
 /// read-only profile data, and unofficial tools drive undocumented endpoints
-/// with a browser cookie, which Substack's terms forbid. The Notes composer
-/// accepts no URL parameters, so NEFORUM copies the text and opens Substack;
-/// the user pastes it into "What's on your mind?" and taps Post.
+/// with a browser cookie, which Substack's terms forbid. No link opens the
+/// Notes composer (none is documented; Substack's help only describes
+/// Create > Note), so NEFORUM copies the text and opens the Notes page; the
+/// user clicks the composer at the top and pastes.
 class SubstackAdapter extends HandoffOnlyAdapter {
-  /// The signed-in home feed, which has the Notes composer on top.
-  static const String desktopUrl = 'https://substack.com/home';
+  /// The Notes page, with the note composer at the top for signed-in users.
+  static const String desktopUrl = 'https://substack.com/notes';
 
   /// Android package of the Substack app (its Google Play listing,
   /// play.google.com/store/apps/details?id=com.substack.app).
@@ -66,8 +67,9 @@ Substack has **no API for posting**. Its official Developer API only reads publi
 tools that post for you use your browser login on undocumented parts of the site, which Substack's terms of use do not
 allow. NEFORUM does not do that.
 
-When you publish, NEFORUM copies your text and opens [substack.com](https://substack.com/home). Click
-**What's on your mind?** (or **+** in the Notes tab), paste, add your images and click **Post**.''';
+When you publish, NEFORUM copies your text and opens [Substack Notes](https://substack.com/notes). Click
+**What's on your mind?** at the top (or **Create** > **Note**), press Ctrl+V (⌘V on a Mac), add your images and click
+**Post**. Substack has no link that opens the composer by itself, so that one click is yours.''';
 
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
@@ -94,11 +96,13 @@ When you publish, NEFORUM copies your text and opens [substack.com](https://subs
       shareFiles: variant.media,
       androidPackage: androidPackage,
       desktopUrl: desktopUrl,
-      instructions: '1. On Substack, click **What\'s on your mind?** at the top of Home (app: Notes tab, then **+**).\n'
-          '2. Paste your text: it is on the clipboard.\n'
-          '${hasMedia ? '3. Add your images or video with the photo icon.\n4. Click **Post**.' : '3. Click **Post**.'}',
-      mediaNote: 'Substack has no link that opens a prefilled note, so your text is on the clipboard'
-          '${hasMedia ? ' and you attach the media yourself' : ''}.',
+      instructions: '1. On Substack Notes, click **What\'s on your mind?** at the top (or **Create** > **Note**; in the app: '
+          'the Notes tab, then **+**).\n'
+          '2. Press Ctrl+V (⌘V on a Mac): your text is on the clipboard.\n'
+          '${hasMedia ? '3. Add your images: copy each with its button in NEFORUM and paste it into the note if the '
+              'composer takes pasted images, or use the photo icon (after **Save media to Downloads**).\n4. Click **Post**.' : '3. Click **Post**.'}',
+      mediaNote: 'Substack has no link that opens the note composer or fills it in, so your text is on the clipboard'
+          '${hasMedia ? ' and you add the media yourself' : ''}.',
     );
   }
 }

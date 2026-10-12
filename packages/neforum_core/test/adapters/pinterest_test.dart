@@ -670,7 +670,7 @@ void main() {
       expect(q['description']!.length, 500);
       expect(plan.clipboardText, long);
       expect(plan.mediaNote, contains('already online'));
-      expect(plan.desktopUrl, 'https://www.pinterest.com/pin-builder/');
+      expect(plan.desktopUrl, 'https://www.pinterest.com/pin-creation-tool/');
     });
   });
 }

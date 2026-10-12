@@ -116,7 +116,8 @@ and must not be set as Made for Kids. There is no subscriber minimum.''';
               key: 'channel',
               label: 'Your channel',
               required: false,
-              help: 'Optional. Your handle (@name) or channel link, so NEFORUM can show which channel this is.',
+              help: 'Recommended. Your handle (@name) or channel link: NEFORUM then opens your channel\'s **Posts** tab, '
+                  'where the post box is, instead of YouTube\'s home page.',
               placeholder: '@yourchannel',
             ),
             ConnectField(
@@ -207,6 +208,14 @@ and must not be set as Made for Kids. There is no subscriber minimum.''';
     return issues;
   }
 
+  /// The channel's Posts tab (where YouTube puts the post box) for the
+  /// account's stored `channel` (`@handle` or `channel/UC…`, both checked to
+  /// open the tab), or null when the account has none.
+  static String? postsTabUrl(ConnectedAccount? account) {
+    final channel = account?.configString('channel') ?? '';
+    return channel.isEmpty ? null : 'https://www.youtube.com/$channel/posts';
+  }
+
   @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
     final text = handoffFullText(variant);
@@ -216,13 +225,24 @@ and must not be set as Made for Kids. There is no subscriber minimum.''';
     // its answers.
     final media = poll == null || poll.imageOptions ? variant.media : const <MediaAttachment>[];
     final images = media.length;
-    final saveHint = 'On a computer use **Save media to Downloads** and drag ${images == 1 ? 'it' : 'them'} in; on a phone '
-        'use **Share with media** to save ${images == 1 ? 'it' : 'them'} to your photos first.';
+    final it = images == 1 ? 'it' : 'them';
+    final saveHint = 'On a computer copy each with its button in NEFORUM and press Ctrl+V (⌘V on a Mac) if the post box '
+        'takes pasted images, or use **Save media to Downloads** and drag $it in; on a phone use **Share with media** to '
+        'save $it to your photos first.';
+    final postsTab = postsTabUrl(account);
 
     final steps = <String>[
-      'On youtube.com select **Create** > **Create post** at the top of the page. In the YouTube app tap **+** '
-          '(Create), then **Post**.',
-      if (text.isNotEmpty) poll == null ? 'Paste your text: it is on the clipboard.' : 'Paste your question: it is on the clipboard.',
+      if (postsTab != null)
+        'NEFORUM opens your channel\'s **Posts** tab: click the post box at the top (or **Create** > **Create post**). In '
+            'the YouTube app tap **+** (Create), then **Post**.'
+      else
+        'On youtube.com select **Create** > **Create post** at the top of the page. In the YouTube app tap **+** '
+            '(Create), then **Post**. (Add your channel to this account in NEFORUM and it opens your Posts tab '
+            'directly.)',
+      if (text.isNotEmpty)
+        poll == null
+            ? 'Press Ctrl+V (⌘V on a Mac) to paste your text: it is on the clipboard.'
+            : 'Press Ctrl+V (⌘V on a Mac) to paste your question: it is on the clipboard.',
       if (poll == null && images > 0)
         'Choose the image option and add your ${images == 1 ? 'image' : '$images images'}. $saveHint',
       if (poll != null && poll.imageOptions)
@@ -256,7 +276,7 @@ and must not be set as Made for Kids. There is no subscriber minimum.''';
       shareFiles: media,
       androidPackage: androidPackage,
       iosScheme: iosScheme,
-      desktopUrl: desktopUrl,
+      desktopUrl: postsTab ?? desktopUrl,
       instructions: [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n'),
       snippets: snippets,
       mediaNote: 'YouTube has no link that opens a prefilled post, so your ${poll == null ? 'text is' : 'question is'} on the '

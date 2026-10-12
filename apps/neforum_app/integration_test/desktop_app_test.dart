@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:integration_test/integration_test.dart';
 import 'package:neforum_app/media/text_card.dart';
+import 'package:neforum_app/platform/clipboard_media.dart';
 import 'package:neforum_app/platform/desktop.dart';
 import 'package:neforum_app/platform/notifications.dart';
 import 'package:neforum_app/platform/storage.dart';
@@ -112,6 +113,10 @@ void main() {
     final saved = (await demo.posts.get(post.id))!;
     expect(saved.targetFor(masto.id)!.status, TargetStatus.heldByPlatform);
     expect(saved.targetFor(ig.id)!.overrides.mediaIds, [card.id]);
+
+    // The hand-off "Copy photo" path through the runner's native clipboard
+    // channel: the card goes onto the clipboard as a picture and a file.
+    expect(await ClipboardMedia.copyImage(file.readAsBytesSync(), path: card.path), isTrue);
 
     // The queue shows it.
     await tester.tap(find.text('Queue').first);

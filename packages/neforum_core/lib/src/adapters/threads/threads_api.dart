@@ -31,6 +31,16 @@ const List<Duration> threadsPollDelays = [
   Duration(seconds: 60),
 ];
 
+/// Status-check schedule for text containers. Meta usually reports them
+/// FINISHED at once (one GET, no wait), so the first waits are short before
+/// falling back to the media schedule.
+const List<Duration> threadsTextPollDelays = [Duration(seconds: 2), Duration(seconds: 5), ...threadsPollDelays];
+
+/// Waits before trying a call again that Meta refused with "media not found"
+/// (code 24, subcode 4279009): the container, or the post a reply points at,
+/// is not visible to that endpoint yet, even if its status said FINISHED.
+const List<Duration> threadsNotFoundRetryDelays = [Duration(seconds: 3), Duration(seconds: 10), Duration(seconds: 30)];
+
 /// Status of a Threads media container (`GET /{container-id}?fields=status,error_message`).
 class ThreadsContainerStatus {
   const ThreadsContainerStatus(this.status, this.errorMessage);
@@ -68,48 +78,129 @@ class ThreadsApi {
     return res.jsonMap;
   }
 
-  /// `POST /v1.0/{user-id}/threads` → container id.
-  Future<String> createContainer(String userId, Map<String, String> params) async {
-    final res = await _guard('Creating the Threads post',
-        () => _http.postForm(graphUri('$userId/threads'), {...params, 'access_token': _accessToken}));
+  /// `POST /v1.0/{user-id}/threads` → container id. A "media not found"
+  /// answer (typically a reply whose `reply_to_id` was published seconds
+  /// ago) is retried on [threadsNotFoundRetryDelays]; a refused create
+  /// leaves nothing behind, so trying again is safe.
+  Future<String> createContainer(String userId, Map<String, String> params,
+      {void Function(String message)? onWait}) async {
+    final res = await _retryNotFound('Creating the Threads post',
+        () => _http.postForm(graphUri('$userId/threads'), {...params, 'access_token': _accessToken}),
+        onWait: onWait);
     return _idOf(res, 'container');
   }
 
   /// `POST /v1.0/{user-id}/threads_publish` → published media id.
-  Future<String> publishContainer(String userId, String creationId) async {
-    final res = await _guard('Publishing the Threads post',
+  ///
+  /// When Meta answers "media not found" (code 24, subcode 4279009) the
+  /// container is not visible to the publish endpoint yet: NEFORUM waits on
+  /// [threadsNotFoundRetryDelays], re-checks the container's status and tries
+  /// again. Publishing the same `creation_id` again is safe (Meta publishes it
+  /// once or refuses), and only an explicit refusal is retried, never a
+  /// dropped connection.
+  Future<String> publishContainer(String userId, String creationId, {void Function(String message)? onWait}) async {
+    final res = await _retryNotFound(
+        'Publishing the Threads post',
         () => _http.postForm(graphUri('$userId/threads_publish'), {
               'creation_id': creationId,
               'access_token': _accessToken,
-            }));
+            }),
+        onWait: onWait,
+        beforeRetry: () => _checkBeforeRepublish(creationId));
     return _idOf(res, 'post');
   }
 
+  static const String _statusContext = 'Checking the Threads post status';
+
   /// `GET /v1.0/{container-id}?fields=status,error_message`.
-  Future<ThreadsContainerStatus> status(String containerId) async {
-    final res = await _guard('Checking media processing',
-        () => _http.get(graphUri(containerId, {'fields': 'status,error_message', 'access_token': _accessToken})));
+  Future<ThreadsContainerStatus> status(String containerId) async =>
+      _statusOf(await _guard(_statusContext, () => _statusRequest(containerId)));
+
+  Future<NeforumResponse> _statusRequest(String containerId) =>
+      _http.get(graphUri(containerId, {'fields': 'status,error_message', 'access_token': _accessToken}));
+
+  static ThreadsContainerStatus _statusOf(NeforumResponse res) {
     final j = res.jsonMap;
     return ThreadsContainerStatus((j['status'] as String?) ?? 'IN_PROGRESS', j['error_message'] as String?);
   }
 
-  /// Polls [containerId] until Meta has fetched and processed its media.
-  Future<void> waitUntilReady(String containerId, {void Function(String message)? onWait, String? mediaUrl}) async {
+  /// Like [status], but `null` when Meta answers that the container does not
+  /// exist (yet): it was created moments ago, so that is propagation delay.
+  Future<ThreadsContainerStatus?> _statusOrNull(String containerId) async {
+    try {
+      return _statusOf(await _statusRequest(containerId));
+    } on HttpFailure catch (f) {
+      if (!threadsMediaNotFound(f)) throw AdapterException(threadsErrorFrom(f, context: _statusContext));
+      _log.debug('Threads does not see container $containerId yet');
+      return null;
+    }
+  }
+
+  /// Polls [containerId] until Meta reports it ready to publish (FINISHED),
+  /// checking once before the first wait. [delays] is the schedule
+  /// ([threadsPollDelays] for media, [threadsTextPollDelays] for text) and
+  /// [what] names the content in progress messages.
+  Future<void> waitUntilReady(String containerId,
+      {void Function(String message)? onWait,
+      String? mediaUrl,
+      List<Duration> delays = threadsPollDelays,
+      String what = 'the media'}) async {
     for (var i = 0;; i++) {
-      final st = await status(containerId);
-      if (st.isReady) return;
-      if (st.status == 'ERROR') throw AdapterException(containerError(st.errorMessage, mediaUrl: mediaUrl));
-      if (st.status == 'EXPIRED') {
-        throw const AdapterException(
-            PublishError.platform('The Threads media container expired before it could be published', retryable: true));
+      final st = await _statusOrNull(containerId);
+      if (st != null && st.isReady) return;
+      if (st != null) _throwIfFailed(st, mediaUrl: mediaUrl);
+      if (i >= delays.length) {
+        final total = delays.fold<int>(0, (a, d) => a + d.inSeconds);
+        final took = total >= 120 ? '${total ~/ 60} minutes' : '$total seconds';
+        throw AdapterException(PublishError.network('Threads is still processing $what after $took; try again later'));
       }
-      if (i >= threadsPollDelays.length) {
-        throw const AdapterException(PublishError.network(
-            'Threads is still processing the media after 5 minutes; try again later'));
-      }
-      final wait = threadsPollDelays[i];
-      onWait?.call('Threads is processing the media (waiting ${wait.inSeconds}s)');
+      final wait = delays[i];
+      onWait?.call('Threads is processing $what (waiting ${wait.inSeconds}s)');
       await _delay(wait);
+    }
+  }
+
+  static void _throwIfFailed(ThreadsContainerStatus st, {String? mediaUrl}) {
+    if (st.status == 'ERROR') throw AdapterException(containerError(st.errorMessage, mediaUrl: mediaUrl));
+    if (st.status == 'EXPIRED') {
+      throw const AdapterException(
+          PublishError.platform('The Threads media container expired before it could be published', retryable: true));
+    }
+  }
+
+  /// Between publish attempts: surfaces a container that failed or expired
+  /// meanwhile. A container that turns out PUBLISHED went live although Meta
+  /// answered with an error, so its post id is unknown; that error is not
+  /// retryable, because retrying the whole post would create a duplicate.
+  Future<void> _checkBeforeRepublish(String containerId) async {
+    final st = await _statusOrNull(containerId);
+    if (st == null) return;
+    if (st.status == 'PUBLISHED') {
+      throw const AdapterException(PublishError.platform(
+          'Publishing the Threads post: Threads says the post went live but did not return its id. Check your '
+          'Threads profile before posting it again.'));
+    }
+    _throwIfFailed(st);
+  }
+
+  /// Runs [call]; when Meta answers "media not found" it waits on
+  /// [threadsNotFoundRetryDelays], runs [beforeRetry] and tries again. Other
+  /// failures, and the last "not found", are thrown as [AdapterException].
+  Future<NeforumResponse> _retryNotFound(String context, Future<NeforumResponse> Function() call,
+      {void Function(String message)? onWait, Future<void> Function()? beforeRetry}) async {
+    for (var attempt = 0;; attempt++) {
+      try {
+        return await call();
+      } on HttpFailure catch (f) {
+        if (!threadsMediaNotFound(f) || attempt >= threadsNotFoundRetryDelays.length) {
+          throw AdapterException(threadsErrorFrom(f, context: context));
+        }
+        final wait = threadsNotFoundRetryDelays[attempt];
+        _log.warn('$context: Threads reported the media as not found; trying again in ${wait.inSeconds}s');
+        onWait?.call('Threads is still preparing the post (trying again in ${wait.inSeconds}s)');
+        await _delay(wait);
+        await beforeRetry?.call();
+      }
     }
   }
 
@@ -239,6 +330,11 @@ abstract final class ThreadsErrorCodes {
   static const appRateLimit = 4;
   static const permissionDenied = 10;
   static const userRateLimit = 17;
+
+  /// "The requested resource does not exist"; with [mediaNotFoundSubcode]
+  /// ("Media Not Found") it names a container or post Meta cannot see yet.
+  static const notFound = 24;
+  static const mediaNotFoundSubcode = 4279009;
   static const pageRateLimit = 32;
   static const invalidParameter = 100;
   static const sessionKey = 102;
@@ -265,6 +361,15 @@ PublishError threadsErrorFrom(HttpFailure f, {String? context}) {
 
   if (metaMsg.contains('LINK_LIMIT_EXCEEDED')) {
     return PublishError.validation('${prefix}Threads allows at most 5 links per post', raw: raw, statusCode: status);
+  }
+  // Only reaches here once [ThreadsApi] has waited and retried; nothing is
+  // wrong with the post itself, so this is a retryable network-type error.
+  if (threadsMediaNotFound(f)) {
+    return PublishError.network(
+        "${prefix}Threads hadn't finished preparing the post (it reported it as not found). NEFORUM waited and "
+        'tried again; try again in a minute.',
+        raw: raw,
+        statusCode: status);
   }
   switch (code) {
     case ThreadsErrorCodes.invalidToken:
@@ -310,6 +415,17 @@ PublishError threadsErrorFrom(HttpFailure f, {String? context}) {
     raw: raw,
     retryAfter: base.retryAfter,
   );
+}
+
+/// True when Meta answered "media not found" (code 24 with subcode 4279009,
+/// or `error_user_title` "Media Not Found"): the container, or the post a
+/// reply points at, is not visible to that endpoint yet.
+bool threadsMediaNotFound(HttpFailure f) {
+  final err = f.response.jsonMap['error'];
+  if (err is! Map) return false;
+  return (_asInt(err['code']) == ThreadsErrorCodes.notFound &&
+          _asInt(err['error_subcode']) == ThreadsErrorCodes.mediaNotFoundSubcode) ||
+      err['error_user_title'] == 'Media Not Found';
 }
 
 /// Maps a container `error_message` (status ERROR) onto a [PublishError].

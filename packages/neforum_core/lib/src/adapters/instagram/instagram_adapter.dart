@@ -510,11 +510,14 @@ class InstagramAdapter extends PlatformAdapter {
     final hasCaption = caption.isNotEmpty && !story;
     final steps = <String>[
       if (hasCaption) 'Your caption is already on the clipboard.',
-      'Choose **Instagram** in the share sheet (on a computer: open instagram.com, click **Create** and pick the files).',
+      'On a phone choose **Instagram** in the share sheet. On a computer NEFORUM opens instagram.com: click **Create** '
+          '(+) > **Post**, then use **Save media to Downloads** and drag the files into the upload window (or click '
+          '**Select from computer**).',
       if (story)
         'Pick **Story** and add stickers or text if you like.'
       else if (hasCaption)
-        'Pick Feed or Reel, then long-press the caption box and tap **Paste**.'
+        'Pick Feed or Reel, then paste the caption: long-press the caption box and tap **Paste** (computer: click it '
+            'and press Ctrl+V, or ⌘V on a Mac).'
       else
         'Pick Feed or Reel.',
       'Tap **Share**.',

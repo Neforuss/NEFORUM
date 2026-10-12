@@ -21,9 +21,9 @@ Status as of October 2026.
 
 ## What happens when you publish
 
-1. NEFORUM copies your text to the clipboard and opens <https://substack.com/home>. Sign in there once if you are not signed in yet.
-2. Click **What's on your mind?** at the top. In the app, open the **Notes** tab and tap **+**.
-3. Paste your text and add your images with the photo icon.
+1. NEFORUM copies your text to the clipboard and opens Substack Notes, <https://substack.com/notes>. Sign in there once if you are not signed in yet.
+2. Click **What's on your mind?** at the top (or **Create** > **Note**). In the app, open the **Notes** tab and tap **+**. Substack has no link that opens the composer by itself, so this click is yours.
+3. Press Ctrl+V (⌘V on a Mac) to paste your text. Add images with the photo icon, or copy each with its button in NEFORUM and paste it if the composer takes pasted images.
 4. Click **Post**.
 
 ## Limits

@@ -455,10 +455,18 @@ class TikTokAdapter extends PlatformAdapter {
 
   // ------------------------------------------------------------ hand-off
 
+  /// TikTok Studio's upload page on its video and photo tabs.
+  static const String studioVideoUploadUrl = 'https://www.tiktok.com/tiktokstudio/upload?tab=video';
+  static const String studioPhotoUploadUrl = 'https://www.tiktok.com/tiktokstudio/upload?tab=photo';
+
   @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
     final caption = variant.text.trim();
     final hasMedia = variant.media.isNotEmpty;
+    // Photos, including the text card made for a words-only post, go on the
+    // photo tab; anything with a video on the video tab.
+    final photoPost = hasMedia && variant.media.every((m) => m.isImage);
+    final kind = photoPost ? (variant.media.length == 1 ? 'photo' : 'photos') : 'video';
     return HandoffPlan(
       platformId: descriptor.id,
       preferred: hasMedia ? HandoffMethod.shareSheet : HandoffMethod.manual,
@@ -467,11 +475,14 @@ class TikTokAdapter extends PlatformAdapter {
       shareFiles: variant.media,
       androidPackage: 'com.zhiliaoapp.musically',
       iosScheme: 'snssdk1233://',
-      desktopUrl: 'https://www.tiktok.com/tiktokstudio/upload',
+      desktopUrl: photoPost ? studioPhotoUploadUrl : studioVideoUploadUrl,
       instructions: hasMedia
-          ? '1. Pick **TikTok** in the share sheet (on desktop, drop the file onto the TikTok Studio upload page).\n'
-              '2. Your caption is on the clipboard: long-press the caption box and paste it.\n'
-              '3. Choose who can watch, then tap **Post**.'
+          ? '1. On a phone pick **TikTok** in the share sheet. On a computer NEFORUM opens TikTok Studio\'s '
+              '${photoPost ? 'photo' : 'video'} upload: use **Save media to Downloads** and drag the $kind onto it '
+              '(or click **Select** and pick ${variant.media.length == 1 ? 'it' : 'them'}).\n'
+              '2. Your caption is on the clipboard: click the caption box and press Ctrl+V (⌘V on a Mac; on a phone '
+              'long-press and paste).\n'
+              '3. Choose who can watch, then **Post**.'
           : '1. TikTok posts need a video or photos; add one in NEFORUM or in TikTok.\n'
               '2. Your caption is on the clipboard: paste it into the caption box.\n'
               '3. Tap **Post**.',

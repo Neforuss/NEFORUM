@@ -630,9 +630,24 @@ void main() {
       expect(plan.shareFiles, v.media);
       expect(plan.androidPackage, 'com.zhiliaoapp.musically');
       expect(plan.iosScheme, 'snssdk1233://');
-      expect(plan.desktopUrl, 'https://www.tiktok.com/tiktokstudio/upload');
+      expect(plan.desktopUrl, 'https://www.tiktok.com/tiktokstudio/upload?tab=video');
       expect(plan.instructions, startsWith('1. '));
+      expect(plan.instructions, contains('video upload'));
       expect(plan.mediaNote, contains('clipboard'));
+    });
+
+    test('photos, including a text card, open the photo tab', () {
+      final card = MediaAttachment(id: 'card', path: 'card.jpg', mimeType: 'image/jpeg', sizeBytes: 1000, generated: true);
+      for (final media in [
+        [card],
+        [fakeImage(), fakeImage(id: 'img2')],
+      ]) {
+        final plan = adapter.buildHandoff(PostVariant(text: 'Words only', media: media))!;
+        expect(plan.desktopUrl, 'https://www.tiktok.com/tiktokstudio/upload?tab=photo');
+        expect(plan.instructions, contains('photo upload'));
+      }
+      // A video anywhere in the post means the video tab.
+      expect(adapter.buildHandoff(PostVariant(text: 'x', media: [fakeImage(), fakeVideo()]))!.desktopUrl, endsWith('tab=video'));
     });
 
     test('no media -> manual', () {

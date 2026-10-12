@@ -26,13 +26,13 @@ Status as of October 2026.
 ## Setting it up
 
 1. In NEFORUM, add an account and choose **YouTube Posts**.
-2. Optionally type your channel handle (`@yourchannel`) or channel link, so NEFORUM shows which channel this is, and a label. Tap **Connect**. That's it.
+2. Type your channel handle (`@yourchannel`) or channel link (recommended: NEFORUM then opens your channel's **Posts** tab, where the post box is), and optionally a label. Tap **Connect**. That's it.
 
 ## What happens when you publish
 
-1. NEFORUM copies your text to the clipboard and opens youtube.com (on a phone: the YouTube app).
-2. Select **Create** > **Create post** at the top of the page. In the app, tap **+** (Create), then **Post**.
-3. Paste your text. To add images, choose the image option. On a computer, **Save media to Downloads** in NEFORUM saves them with clear names and opens the folder so you can drag them in; on a phone, tap **Share with media** first and save the images to your photos.
+1. NEFORUM copies your text to the clipboard and opens your channel's Posts tab, for example `https://www.youtube.com/@yourchannel/posts` (without a channel: youtube.com; on a phone: the YouTube app).
+2. Click the post box at the top of the Posts tab (or **Create** > **Create post**). In the app, tap **+** (Create), then **Post**.
+3. Press Ctrl+V (⌘V on a Mac) to paste your text. To add images, choose the image option: on a computer, copy each image with its button in NEFORUM and paste it if the post box takes pasted images, or use **Save media to Downloads** (it saves them with clear names and opens the folder) and drag them in; on a phone, tap **Share with media** first and save the images to your photos.
 4. Select **Post**, or the arrow next to it and **Schedule post** to let YouTube publish it later.
 
 If you schedule the post in NEFORUM, it reminds you at the scheduled time.

@@ -89,7 +89,7 @@ Advanced settings for each post (in the post's per-platform options):
 NEFORUM copies the description to the clipboard and then does one of two things:
 
 - If your image is already online (for example through a media host), it opens Pinterest's Pin builder at `https://www.pinterest.com/pin/create/button/` with the image, link and description filled in. Pinterest fills in only the first 500 characters of the description, and the title cannot be filled in this way.
-- Otherwise, on a phone NEFORUM opens the share sheet with your image so you can choose **Pinterest**. On a computer, it opens <https://www.pinterest.com/pin-builder/> so you can upload the image yourself. The Pinterest app treats shared text as a link, so paste the description from the clipboard.
+- Otherwise, on a phone NEFORUM opens the share sheet with your image so you can choose **Pinterest**. On a computer, it opens Pinterest's Pin creation tool, <https://www.pinterest.com/pin-creation-tool/> (the old `/pin-builder/` address redirects there), so you can drag the image in after **Save media to Downloads**. The Pinterest app treats shared text as a link, so paste the description from the clipboard.
 
 Then you choose a board and press **Save**.
 

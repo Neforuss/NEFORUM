@@ -31,6 +31,8 @@ Every connected account uses one of these. You can connect the same platform mor
 
 If an API account runs out of quota (for example X's monthly cap), NEFORUM can fall back to hand-off for that post instead of failing.
 
+On a computer a hand-off is click here, paste there: NEFORUM opens the right page (a prefilled composer where the network has one, your channel's Posts tab on YouTube, the photo upload on TikTok), with your text already copied. Each photo has a **Copy photo** button, so you add it with Ctrl+V (⌘V on a Mac) wherever the composer takes pasted pictures, and **Copy next** hands out the text, any poll answers and each photo in turn. Websites don't let other apps type into them or drop files on them, so the paste itself stays yours.
+
 ### Text cards for photo-only networks
 
 Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an image. When a post is only words, NEFORUM sets them on a plain card, white on black or black on white, with the same signature every time: a purple rule with a yellow tab along the top, and the NEFORUM mark, wordmark and your handle at the bottom. The card is made on your device when you save or schedule the post. It goes only to the networks that need it (the others get plain text) and carries the words as alt text. The caption still has the full text, hashtags and link. Pick the style per post under the preview, or turn cards off in Settings.

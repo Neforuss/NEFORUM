@@ -615,7 +615,8 @@ class PinterestAdapter extends PlatformAdapter {
 
     final instructions = preferShare
         ? '1. Your description is on the clipboard.\n'
-            '2. In the share sheet pick **Pinterest** (on a computer, open the Pin builder and upload the image).\n'
+            '2. In the share sheet pick **Pinterest**. On a computer NEFORUM opens the Pin creation tool: use '
+            '**Save media to Downloads** and drag the image onto it.\n'
             '3. Paste the description${title.isEmpty ? '' : ', type the title'}${link.isEmpty ? '' : ' and add the link'}.\n'
             '4. Choose a board and tap **Save**.'
         : '1. Pinterest opens with your image${link.isEmpty ? '' : ', link'} and description filled in '
@@ -632,16 +633,17 @@ class PinterestAdapter extends PlatformAdapter {
       shareFiles: media,
       androidPackage: 'com.pinterest',
       iosScheme: 'pinterest://',
-      desktopUrl: 'https://www.pinterest.com/pin-builder/',
+      // The old /pin-builder/ address now redirects here (checked 2026-10-12).
+      desktopUrl: 'https://www.pinterest.com/pin-creation-tool/',
       preferred: preferShare ? HandoffMethod.shareSheet : HandoffMethod.webIntent,
       mediaNote: media.isEmpty
           ? null
           : mediaUrl == null
               ? 'Pinterest\'s website can only prefill an image that is already online. On a phone the image goes '
-                  'through the share sheet; on a computer upload it yourself in the Pin builder. Pinterest treats '
+                  'through the share sheet; on a computer upload it yourself in the Pin creation tool. Pinterest treats '
                   'shared text as a link, so paste the description from the clipboard.'
               : 'Pinterest loads the image from its public web address; videos must be uploaded in the app or '
-                  'Pin builder.',
+                  'the Pin creation tool.',
     );
   }
 

@@ -195,6 +195,21 @@ void main() {
       expect(plan.instructions, isNot(contains('images')));
     });
 
+    test('with a channel on the account it opens that channel\'s Posts tab', () {
+      ConnectedAccount account(String channel) => ConnectedAccount(
+          id: 'yp', platformId: 'youtube_posts', tier: PlatformTier.handoff, displayName: 'YouTube Posts', createdAt: DateTime(2026, 10, 12), config: {'channel': channel});
+      final byHandle = adapter.buildHandoff(const PostVariant(text: 'New post'), account: account('@examplechannel'))!;
+      expect(byHandle.desktopUrl, 'https://www.youtube.com/@examplechannel/posts');
+      expect(byHandle.instructions, contains("your channel's **Posts** tab"));
+      expect(byHandle.instructions, contains('Ctrl+V'));
+      final byId = adapter.buildHandoff(const PostVariant(text: 'New post'), account: account('channel/UCBR8-60-B28hp2BmDPdntcQ'))!;
+      expect(byId.desktopUrl, 'https://www.youtube.com/channel/UCBR8-60-B28hp2BmDPdntcQ/posts');
+      // Without a channel: YouTube's home page and a pointer to the setting.
+      final none = adapter.buildHandoff(const PostVariant(text: 'New post'), account: acct)!;
+      expect(none.desktopUrl, 'https://www.youtube.com/');
+      expect(none.instructions, contains('opens your Posts tab directly'));
+    });
+
     test('images travel with the plan and the steps say how to add them', () {
       final plan = adapter.buildHandoff(PostVariant(text: 'Two shots', media: [fakeImage(), fakeImage(id: 'img2')]))!;
       expect(plan.shareFiles, hasLength(2));

@@ -312,11 +312,12 @@ void main() {
           contains('media.mixed'));
     });
 
-    test('hand-off opens substack.com/home with text on the clipboard', () {
+    test('hand-off opens Substack Notes with text on the clipboard', () {
       final plan = a.buildHandoff(const PostVariant(text: 'A note'))!;
       expect(plan.preferred, HandoffMethod.manual);
       expect(plan.webIntent, isNull);
-      expect(plan.desktopUrl, 'https://substack.com/home');
+      expect(plan.desktopUrl, 'https://substack.com/notes');
+      expect(plan.instructions, contains('Ctrl+V'));
       expect(plan.androidPackage, 'com.substack.app');
       expect(plan.iosScheme, isNull);
       expect(plan.clipboardText, 'A note');

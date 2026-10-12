@@ -24,11 +24,13 @@ import 'threads_api.dart';
 /// web intent / app share sheet.
 ///
 /// Publishing is Meta's two-step container flow: create a container
-/// (`POST /{user}/threads`), wait until its media is processed, then
-/// `POST /{user}/threads_publish`. Media must be at a public URL, so a
-/// configured [MediaHost] is required for images and video.
+/// (`POST /{user}/threads`), wait until Meta reports it FINISHED (text
+/// containers too), then `POST /{user}/threads_publish`, retrying a few
+/// times when Meta answers "media not found". Media must be at a public URL,
+/// so a configured [MediaHost] is required for images and video.
 class ThreadsAdapter extends PlatformAdapter {
-  /// [delay] is used between container-status polls (tests pass a no-op).
+  /// [delay] is used between container-status polls and "media not found"
+  /// retries (tests pass a no-op).
   ThreadsAdapter({ThreadsDelay delay = threadsDefaultDelay}) : _delay = delay;
 
   final ThreadsDelay _delay;
@@ -614,16 +616,21 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
         };
         final String containerId;
         if (i == 0 && variant.hasMedia) {
+          // Waits until the (carousel) container is FINISHED.
           containerId = await _mediaContainer(api, userId, variant, base, hosted, ctx);
         } else {
           containerId = await api.createContainer(userId, {
             'media_type': 'TEXT',
             ...base,
             if (i == linkPart) 'link_attachment': variant.link!,
-          });
+          }, onWait: ctx.progress);
+          // Meta wants every container checked before publishing; publishing
+          // one it has not finished fails with "media not found". A text
+          // container is usually FINISHED at once (one GET, no wait).
+          await api.waitUntilReady(containerId, onWait: ctx.progress, delays: threadsTextPollDelays, what: 'the post');
         }
         ctx.progress(parts.length > 1 ? 'Publishing part ${i + 1} of ${parts.length}' : 'Publishing to Threads');
-        final id = await api.publishContainer(userId, containerId);
+        final id = await api.publishContainer(userId, containerId, onWait: ctx.progress);
         ids.add(id);
         replyTo = id;
       }

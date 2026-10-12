@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/platform_brand.dart';
+import '../../platform/clipboard_media.dart';
 import '../../platform/env.dart';
 import '../../platform/file_export.dart';
 import '../../platform/ui_bridge.dart';
@@ -70,8 +71,65 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   Future<void> _copy({bool quiet = false}) async {
     await Clipboard.setData(ClipboardData(text: _text));
     if (!mounted) return;
-    setState(() => _copied = true);
+    setState(() {
+      _copied = true;
+      // The text is the first thing "Copy next" hands out.
+      if (_next == 0 && _text.isNotEmpty) _next = 1;
+    });
     if (!quiet) showToast(context, 'Text copied. Paste it when the composer opens.', icon: Icons.check_circle_rounded);
+  }
+
+  /// Ctrl+V, or ⌘V on a Mac.
+  static String get _pasteKeys => Env.isMacOS ? '⌘V' : 'Ctrl+V';
+
+  /// Photos that can go on the clipboard (videos are dragged in instead).
+  List<MediaAttachment> get _photos => [for (final m in plan.shareFiles) if (m.isImage) m];
+
+  final Set<String> _copiedPhotos = {};
+
+  /// Puts photo [m] on the clipboard for pasting into the composer.
+  Future<bool> _copyPhoto(MediaAttachment m) async {
+    final bytes = await ref.read(servicesProvider).media.read(m);
+    final ok = await ClipboardMedia.copyImage(bytes, path: m.path);
+    if (!mounted) return ok;
+    if (ok) setState(() => _copiedPhotos.add(m.id));
+    showToast(
+      context,
+      ok ? 'Photo copied. Press $_pasteKeys in the composer.' : 'Could not copy the photo. Use Save media to Downloads and drag it in.',
+      icon: ok ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+    );
+    return ok;
+  }
+
+  /// Index into [_pasteItems] of what "Copy next" copies.
+  int _next = 0;
+
+  /// Everything there is to paste, in order: the text, the snippets (poll
+  /// answers and the like), then each photo.
+  List<({String label, Future<void> Function() copy})> get _pasteItems {
+    final photos = _photos;
+    return [
+      if (_text.isNotEmpty) (label: 'Text', copy: () => _copy()),
+      for (final s in plan.snippets)
+        (
+          label: s.label,
+          copy: () async {
+            await Clipboard.setData(ClipboardData(text: s.text));
+            if (mounted) showToast(context, '${s.label} copied. Press $_pasteKeys.', icon: Icons.check_circle_rounded);
+          },
+        ),
+      if (ClipboardMedia.supported)
+        for (var i = 0; i < photos.length; i++)
+          (label: photos.length == 1 ? 'Photo' : 'Photo ${i + 1} of ${photos.length}', copy: () => _copyPhoto(photos[i]).then((_) {})),
+    ];
+  }
+
+  Future<void> _copyNext() async {
+    final items = _pasteItems;
+    if (items.isEmpty) return;
+    final i = _next % items.length;
+    await items[i].copy();
+    if (mounted) setState(() => _next = i + 1);
   }
 
   Future<void> _openUrl(Uri url) async {
@@ -186,6 +244,17 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     } else if (appTarget != null && (plan.webIntent == null || shareFirst)) {
       addAction(OutlinedButton.icon(onPressed: () => _openUrl(appTarget), icon: const Icon(Icons.open_in_new_rounded, size: 18), label: Text('Open $name')));
     }
+    // On a computer: hand out the text, snippets and photos one per click,
+    // so posting is click here, paste there, repeat.
+    final pasteItems = _pasteItems;
+    if (Env.isDesktop && pasteItems.length > 1) {
+      final done = _next >= pasteItems.length;
+      addAction(OutlinedButton.icon(
+        onPressed: _copyNext,
+        icon: Icon(done ? Icons.replay_rounded : Icons.content_paste_go_rounded, size: 18),
+        label: Text(done ? 'All copied. Start again with the text' : 'Copy next: ${pasteItems[_next].label}'),
+      ));
+    }
     if (plan.hasMedia && (Env.isDesktop || Env.isWeb)) {
       addAction(OutlinedButton.icon(
         onPressed: () => _saveMedia(name),
@@ -284,9 +353,44 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                       scrollDirection: Axis.horizontal,
                       itemCount: plan.shareFiles.length,
                       separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
-                      itemBuilder: (_, i) => MediaThumb(plan.shareFiles[i], size: 72),
+                      itemBuilder: (_, i) {
+                        final m = plan.shareFiles[i];
+                        final thumb = MediaThumb(m, size: 72);
+                        if (!ClipboardMedia.supported || !m.isImage) return thumb;
+                        final n = _photos.indexOf(m) + 1;
+                        final copied = _copiedPhotos.contains(m.id);
+                        return Stack(children: [
+                          thumb,
+                          Positioned(
+                            right: 3,
+                            bottom: 3,
+                            child: Material(
+                              color: copied ? nf.success : Colors.black.withValues(alpha: 0.62),
+                              shape: const CircleBorder(),
+                              child: IconButton(
+                                tooltip: _photos.length == 1 ? 'Copy photo' : 'Copy photo $n',
+                                iconSize: 15,
+                                visualDensity: VisualDensity.compact,
+                                constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+                                padding: EdgeInsets.zero,
+                                color: Colors.white,
+                                icon: Icon(copied ? Icons.check_rounded : Icons.copy_rounded),
+                                onPressed: () => _copyPhoto(m),
+                              ),
+                            ),
+                          ),
+                        ]);
+                      },
                     ),
                   ),
+                  if (ClipboardMedia.supported && _photos.isNotEmpty) ...[
+                    const SizedBox(height: Space.xs + 2),
+                    Text(
+                      'Copy a photo with its button, then press $_pasteKeys in the composer. If the site does not take '
+                      'pasted photos, use Save media to Downloads and drag them in.',
+                      style: context.text.bodySmall?.copyWith(color: nf.textMuted),
+                    ),
+                  ],
                 ],
                 if (plan.mediaNote != null) ...[
                   const SizedBox(height: Space.md),

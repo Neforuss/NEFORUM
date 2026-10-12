@@ -40,6 +40,20 @@ final Map<String, String> _secrets = {
   'token_issued_at': testNow.subtract(const Duration(hours: 2)).toIso8601String(),
 };
 
+/// Meta's answer (HTTP 400) when it cannot see a container or post yet.
+Map<String, Object> _mediaNotFound(String id) => {
+      'error': {
+        'message': 'The requested resource does not exist',
+        'type': 'OAuthException',
+        'code': 24,
+        'error_subcode': 4279009,
+        'is_transient': false,
+        'error_user_title': 'Media Not Found',
+        'error_user_msg': 'The media with id $id cannot be found.',
+        'fbtrace_id': 'AbC123',
+      }
+    };
+
 void main() {
   final delays = <Duration>[];
   late ThreadsAdapter adapter;
@@ -376,8 +390,10 @@ void main() {
       router.on('GET', '/v1.0/${publishIds.first}', {'permalink': 'https://www.threads.com/@alice/post/ABC'});
     }
 
-    test('text post: create container, publish, permalink', () async {
-      router.on('POST', '/v1.0/123/threads', {'id': 'c1'});
+    test('text post: create container, check status, publish, permalink', () async {
+      router
+        ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+        ..on('GET', '/v1.0/c1', {'status': 'FINISHED', 'id': 'c1'});
       stubPublish();
       final r = await adapter.publish(
           const PostVariant(text: 'Hello Threads', extra: {'reply_control': 'followers_only', 'topic_tag': 'Dart'}),
@@ -389,6 +405,7 @@ void main() {
 
       expect(router.calls.map((c) => '${c.method} ${c.url.path}'), [
         'POST /v1.0/123/threads',
+        'GET /v1.0/c1',
         'POST /v1.0/123/threads_publish',
         'GET /v1.0/900',
       ]);
@@ -400,12 +417,51 @@ void main() {
         'topic_tag': 'Dart',
         'access_token': 'LONG',
       });
-      expect(bodyOf(router.calls[1]), {'creation_id': 'c1', 'access_token': 'LONG'});
-      expect(router.calls[2].url.queryParameters['fields'], 'permalink');
+      expect(router.calls[1].url.queryParameters, {'fields': 'status,error_message', 'access_token': 'LONG'});
+      expect(bodyOf(router.calls[2]), {'creation_id': 'c1', 'access_token': 'LONG'});
+      expect(router.calls[3].url.queryParameters['fields'], 'permalink');
+      // FINISHED on the first check: no waiting at all.
+      expect(delays, isEmpty);
+    });
+
+    test('text container still IN_PROGRESS: short waits (2 s, 5 s) before publishing', () async {
+      router
+        ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+        ..on('GET', '/v1.0/c1', {'status': 'IN_PROGRESS'})
+        ..on('GET', '/v1.0/c1', {'status': 'IN_PROGRESS'})
+        ..on('GET', '/v1.0/c1', {'status': 'FINISHED'});
+      stubPublish();
+      final progress = <String>[];
+      final c = testContext(handler: router.handle).copyWith(onProgress: progress.add);
+      final r = await adapter.publish(const PostVariant(text: 'Hello'), _account(), _secrets, c);
+      expect(r.success, isTrue, reason: '${r.error}');
+      expect(router.calls.where((c) => c.url.path == '/v1.0/c1'), hasLength(3));
+      expect(delays, [const Duration(seconds: 2), const Duration(seconds: 5)]);
+      expect(progress, contains('Threads is processing the post (waiting 2s)'));
+    });
+
+    test('a text container Meta does not see yet is polled like IN_PROGRESS', () async {
+      router
+        ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+        ..on('GET', '/v1.0/c1', _mediaNotFound('c1'), status: 400)
+        ..on('GET', '/v1.0/c1', {'status': 'FINISHED'});
+      stubPublish();
+      final r = await adapter.publish(const PostVariant(text: 'Hello'), _account(), _secrets, ctx());
+      expect(r.success, isTrue, reason: '${r.error}');
+      expect(delays, [const Duration(seconds: 2)]);
+      expect(router.calls.map((c) => '${c.method} ${c.url.path}'), [
+        'POST /v1.0/123/threads',
+        'GET /v1.0/c1',
+        'GET /v1.0/c1',
+        'POST /v1.0/123/threads_publish',
+        'GET /v1.0/900',
+      ]);
     });
 
     test('text post with a link sets link_attachment', () async {
-      router.on('POST', '/v1.0/123/threads', {'id': 'c1'});
+      router
+        ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+        ..on('GET', '/v1.0/c1', {'status': 'FINISHED'});
       stubPublish();
       final r = await adapter.publish(
           const PostVariant(text: 'Read this\n\nhttps://example.com/a', link: 'https://example.com/a'),
@@ -508,8 +564,10 @@ void main() {
       router
         ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
         ..on('POST', '/v1.0/123/threads', {'id': 'c2'})
-        ..on('POST', '/v1.0/123/threads', {'id': 'c3'})
-        ..on('GET', '/v1.0/c1', {'status': 'FINISHED'});
+        ..on('POST', '/v1.0/123/threads', {'id': 'c3'});
+      for (final id in ['c1', 'c2', 'c3']) {
+        router.on('GET', '/v1.0/$id', {'status': 'FINISHED'});
+      }
       stubPublish(publishIds: ['p1', 'p2', 'p3']);
       final r = await adapter.publish(
           PostVariant(text: 'one', threadParts: const ['one', 'two', 'three'], media: [fakeImage()]),
@@ -524,11 +582,169 @@ void main() {
       expect(creates[2], {'media_type': 'TEXT', 'text': 'three', 'reply_to_id': 'p2', 'access_token': 'LONG'});
       final publishes = router.calls.where((c) => c.url.path == '/v1.0/123/threads_publish').map(bodyOf).toList();
       expect(publishes.map((b) => b['creation_id']), ['c1', 'c2', 'c3']);
+      // Every part's container is checked before it is published.
+      expect(router.calls.map((c) => '${c.method} ${c.url.path}'), [
+        'POST /v1.0/123/threads',
+        'GET /v1.0/c1',
+        'POST /v1.0/123/threads_publish',
+        'POST /v1.0/123/threads',
+        'GET /v1.0/c2',
+        'POST /v1.0/123/threads_publish',
+        'POST /v1.0/123/threads',
+        'GET /v1.0/c3',
+        'POST /v1.0/123/threads_publish',
+        'GET /v1.0/p1',
+      ]);
     });
 
     test('hand-off accounts are not published through the API', () async {
       final r = await adapter.publish(const PostVariant(text: 'x'), _account(tier: PlatformTier.handoff), _secrets, ctx());
       expect(r.error!.kind, PublishErrorKind.unsupported);
+    });
+
+    group('"media not found" (code 24 / 4279009)', () {
+      const permalink = {'permalink': 'https://www.threads.com/@alice/post/ABC'};
+      List<String> sequence() => router.calls.map((c) => '${c.method} ${c.url.path}').toList();
+      Iterable<http.Request> publishes() => router.calls.where((c) => c.url.path == '/v1.0/123/threads_publish');
+
+      test('on the first publish: waits 3 s, re-checks the status, publishes again', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('POST', '/v1.0/123/threads_publish', _mediaNotFound('c1'), status: 400)
+          ..on('POST', '/v1.0/123/threads_publish', {'id': '900'})
+          ..on('GET', '/v1.0/900', permalink);
+        final progress = <String>[];
+        final c = testContext(handler: router.handle).copyWith(onProgress: progress.add);
+        final r = await adapter.publish(const PostVariant(text: 'Hello'), _account(), _secrets, c);
+        expect(r.success, isTrue, reason: '${r.error}');
+        expect(r.remoteId, '900');
+        expect(r.remoteUrl, 'https://www.threads.com/@alice/post/ABC');
+        expect(sequence(), [
+          'POST /v1.0/123/threads',
+          'GET /v1.0/c1',
+          'POST /v1.0/123/threads_publish',
+          'GET /v1.0/c1',
+          'POST /v1.0/123/threads_publish',
+          'GET /v1.0/900',
+        ]);
+        expect(publishes().map((p) => bodyOf(p)['creation_id']), ['c1', 'c1']);
+        expect(delays, [const Duration(seconds: 3)]);
+        expect(progress, contains('Threads is still preparing the post (trying again in 3s)'));
+      });
+
+      test('every time: gives up after 3 retries with a retryable network error and a readable message', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('POST', '/v1.0/123/threads_publish', _mediaNotFound('c1'), status: 400);
+        final r = await adapter.publish(const PostVariant(text: 'Hello'), _account(), _secrets, ctx());
+        expect(r.success, isFalse);
+        final e = r.error!;
+        expect(e.kind, PublishErrorKind.network);
+        expect(e.retryable, isTrue);
+        expect(e.statusCode, 400);
+        expect(e.message,
+            "Publishing the Threads post: Threads hadn't finished preparing the post (it reported it as not found). "
+            'NEFORUM waited and tried again; try again in a minute.');
+        expect(e.raw, contains('4279009'));
+        expect(publishes(), hasLength(4));
+        expect(sequence().where((s) => s == 'GET /v1.0/c1'), hasLength(4));
+        expect(delays, [const Duration(seconds: 3), const Duration(seconds: 10), const Duration(seconds: 30)]);
+      });
+
+      test('container turns ERROR while retrying: that error is surfaced and nothing is published again', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('GET', '/v1.0/c1', {'status': 'ERROR', 'error_message': 'UNKNOWN'})
+          ..on('POST', '/v1.0/123/threads_publish', _mediaNotFound('c1'), status: 400);
+        final r = await adapter.publish(const PostVariant(text: 'Hello'), _account(), _secrets, ctx());
+        expect(r.error!.kind, PublishErrorKind.platform);
+        expect(r.error!.message, contains('(UNKNOWN)'));
+        expect(publishes(), hasLength(1));
+        expect(delays, [const Duration(seconds: 3)]);
+      });
+
+      test('container turns EXPIRED while retrying: expired error is surfaced', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('GET', '/v1.0/c1', {'status': 'EXPIRED'})
+          ..on('POST', '/v1.0/123/threads_publish', _mediaNotFound('c1'), status: 400);
+        final r = await adapter.publish(const PostVariant(text: 'Hello'), _account(), _secrets, ctx());
+        expect(r.error!.message, contains('expired'));
+        expect(publishes(), hasLength(1));
+      });
+
+      test('container PUBLISHED after all: stops without a retryable error (a retry would post twice)', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('GET', '/v1.0/c1', {'status': 'PUBLISHED'})
+          ..on('POST', '/v1.0/123/threads_publish', _mediaNotFound('c1'), status: 400);
+        final r = await adapter.publish(const PostVariant(text: 'Hello'), _account(), _secrets, ctx());
+        expect(r.success, isFalse);
+        expect(r.error!.retryable, isFalse);
+        expect(r.error!.message, contains('Check your Threads profile'));
+        expect(publishes(), hasLength(1));
+      });
+
+      test('thread: part 2 not found once is retried and the thread completes', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('POST', '/v1.0/123/threads', {'id': 'c2'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('GET', '/v1.0/c2', {'status': 'FINISHED'})
+          ..on('POST', '/v1.0/123/threads_publish', {'id': 'p1'})
+          ..on('POST', '/v1.0/123/threads_publish', _mediaNotFound('c2'), status: 400)
+          ..on('POST', '/v1.0/123/threads_publish', {'id': 'p2'})
+          ..on('GET', '/v1.0/p1', permalink);
+        final r = await adapter.publish(
+            const PostVariant(text: 'one', threadParts: ['one', 'two']), _account(), _secrets, ctx());
+        expect(r.success, isTrue, reason: '${r.error}');
+        expect(r.threadRemoteIds, ['p1', 'p2']);
+        expect(publishes().map((p) => bodyOf(p)['creation_id']), ['c1', 'c2', 'c2']);
+        expect(delays, [const Duration(seconds: 3)]);
+      });
+
+      test('thread: part 2 never found keeps the partial-thread report (not retryable)', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('POST', '/v1.0/123/threads', {'id': 'c2'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('GET', '/v1.0/c2', {'status': 'FINISHED'})
+          ..on('POST', '/v1.0/123/threads_publish', {'id': 'p1'})
+          ..on('POST', '/v1.0/123/threads_publish', _mediaNotFound('c2'), status: 400);
+        final r = await adapter.publish(
+            const PostVariant(text: 'one', threadParts: ['one', 'two']), _account(), _secrets, ctx());
+        final e = r.error!;
+        expect(e.kind, PublishErrorKind.network);
+        expect(e.retryable, isFalse);
+        expect(e.message, startsWith('Part 2 of 2 failed: Publishing the Threads post: Threads hadn\'t finished'));
+        expect(e.message, contains('(p1) stay live'));
+        expect(publishes(), hasLength(5));
+      });
+
+      test('reply container refused because the part it replies to is not visible yet is created again', () async {
+        router
+          ..on('POST', '/v1.0/123/threads', {'id': 'c1'})
+          ..on('POST', '/v1.0/123/threads', _mediaNotFound('p1'), status: 400)
+          ..on('POST', '/v1.0/123/threads', {'id': 'c2'})
+          ..on('GET', '/v1.0/c1', {'status': 'FINISHED'})
+          ..on('GET', '/v1.0/c2', {'status': 'FINISHED'})
+          ..on('POST', '/v1.0/123/threads_publish', {'id': 'p1'})
+          ..on('POST', '/v1.0/123/threads_publish', {'id': 'p2'})
+          ..on('GET', '/v1.0/p1', permalink);
+        final r = await adapter.publish(
+            const PostVariant(text: 'one', threadParts: ['one', 'two']), _account(), _secrets, ctx());
+        expect(r.success, isTrue, reason: '${r.error}');
+        final creates = router.calls.where((c) => c.url.path == '/v1.0/123/threads').map(bodyOf).toList();
+        expect(creates, hasLength(3));
+        expect(creates[1]['reply_to_id'], 'p1');
+        expect(creates[2]['reply_to_id'], 'p1');
+        expect(delays, [const Duration(seconds: 3)]);
+      });
     });
   });
 
@@ -569,6 +785,22 @@ void main() {
         'error': {'message': 'THREADS_API__LINK_LIMIT_EXCEEDED', 'code': 1}
       });
       expect(e.kind, PublishErrorKind.validation);
+    });
+
+    test('"Media Not Found" (code 24 / 4279009) -> retryable network error, not validation', () {
+      PublishError map(Object body) => threadsErrorFrom(
+          HttpFailure(NeforumResponse(400, const {}, utf8.encode(jsonEncode(body)),
+              Uri.https('graph.threads.net', '/v1.0/123/threads_publish'))),
+          context: 'Publishing the Threads post');
+      final e = map(_mediaNotFound('18129628837818203'));
+      expect(e.kind, PublishErrorKind.network);
+      expect(e.retryable, isTrue);
+      expect(e.message, startsWith("Publishing the Threads post: Threads hadn't finished preparing the post"));
+      expect(e.raw, contains('18129628837818203'));
+      expect(map({'error': {'message': 'x', 'error_user_title': 'Media Not Found'}}).kind, PublishErrorKind.network);
+      // Other code-24 answers keep the generic mapping.
+      expect(map({'error': {'message': 'The requested resource does not exist', 'code': 24}}).kind,
+          PublishErrorKind.validation);
     });
 
     test('code 10 permission -> auth; 500 -> network', () async {

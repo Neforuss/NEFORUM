@@ -128,7 +128,9 @@ String _advice(PublishError? e) => switch (e?.kind) {
       PublishErrorKind.auth => 'The sign-in expired or was revoked. Reconnect the account in Accounts, then retry.',
       PublishErrorKind.quota => 'A posting limit was reached. Retry after it resets, or post this one by hand-off.',
       PublishErrorKind.validation => 'The platform rejected the content. Customize the post for this network and retry.',
-      PublishErrorKind.network => 'Could not reach the platform. Check your connection and retry.',
+      // Connection drops, platform or media host outages, and posts the
+      // platform had not finished preparing all land here.
+      PublishErrorKind.network => 'This is usually temporary: a connection problem or the platform being busy. Retry in a minute.',
       PublishErrorKind.configuration => 'Something needs setting up first (see the message above).',
       PublishErrorKind.unsupported => 'This account type cannot do that. Try a different tier for this platform.',
       _ => 'Retry, and if it keeps failing, copy the details above when reporting the problem.',
