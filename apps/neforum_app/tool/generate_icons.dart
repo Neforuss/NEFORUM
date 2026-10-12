@@ -12,6 +12,7 @@
 
 import 'dart:io';
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:image/image.dart' as img;
 import 'package:neforum_app/brand/mark_geometry.dart';
@@ -126,9 +127,38 @@ void _png(String path, img.Image image) {
   stdout.writeln('  $path (${image.width}x${image.height})');
 }
 
+/// Writes a classic 24-bit BMP (BITMAPINFOHEADER, no compression, rows
+/// bottom-up). package:image writes a V5 header with bit fields, which Inno
+/// Setup rejects at run time ("Bitmap image is not valid").
 void _bmp(String path, img.Image image) {
-  File(path).writeAsBytesSync(img.encodeBmp(image));
-  stdout.writeln('  $path (${image.width}x${image.height})');
+  final w = image.width, h = image.height;
+  final stride = (w * 3 + 3) & ~3;
+  final size = 54 + stride * h;
+  final out = ByteData(size)
+    ..setUint8(0, 0x42) // 'B'
+    ..setUint8(1, 0x4D) // 'M'
+    ..setUint32(2, size, Endian.little)
+    ..setUint32(10, 54, Endian.little)
+    ..setUint32(14, 40, Endian.little)
+    ..setInt32(18, w, Endian.little)
+    ..setInt32(22, h, Endian.little)
+    ..setUint16(26, 1, Endian.little)
+    ..setUint16(28, 24, Endian.little)
+    ..setUint32(34, stride * h, Endian.little)
+    ..setInt32(38, 2835, Endian.little) // 72 dpi
+    ..setInt32(42, 2835, Endian.little);
+  for (var y = 0; y < h; y++) {
+    var o = 54 + (h - 1 - y) * stride;
+    for (var x = 0; x < w; x++) {
+      final p = image.getPixel(x, y);
+      out
+        ..setUint8(o++, p.b.toInt())
+        ..setUint8(o++, p.g.toInt())
+        ..setUint8(o++, p.r.toInt());
+    }
+  }
+  File(path).writeAsBytesSync(out.buffer.asUint8List());
+  stdout.writeln('  $path (${w}x$h)');
 }
 
 /// [image] composited over white, without alpha.
