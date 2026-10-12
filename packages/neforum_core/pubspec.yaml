@@ -4,7 +4,7 @@ description: >-
   data model, platform adapters, text adaptation, quota tracking, scheduling
   logic and hand-off (share intent) planning. Pure Dart, no Flutter dependency.
 version: 0.1.0
-repository: https://github.com/neforum-app/neforum
+repository: https://github.com/Neforuss/NEFORUM
 publish_to: none
 
 environment:

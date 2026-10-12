@@ -156,7 +156,7 @@ class MastodonApi {
     required Uri redirectUri,
     required String scopes,
     String clientName = 'NEFORUM',
-    String website = 'https://github.com/neforum-app/neforum',
+    String website = 'https://github.com/Neforuss/NEFORUM',
   }) async {
     final res = await ctx.http.postForm(
       url('/api/v1/apps'),

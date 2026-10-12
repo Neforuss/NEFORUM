@@ -27,7 +27,7 @@ Each NEFORUM user registers their **own** client ID. That means you get your own
 3. Fill in the form:
    - **name:** `NEFORUM` (or anything you like)
    - **type:** choose **installed app**. Don't choose *script*: a script app can only sign in with your password. Don't choose *web app*: it needs a secret that NEFORUM can't keep.
-   - **description / about url:** optional. For example `https://github.com/neforum-app/neforum`
+   - **description / about url:** optional. For example `https://github.com/Neforuss/NEFORUM`
    - **redirect uri:** enter exactly
      - `http://127.0.0.1:52771/callback` for NEFORUM on **Windows and macOS**, or
      - `neforum://callback` for NEFORUM on **Android and iOS**.

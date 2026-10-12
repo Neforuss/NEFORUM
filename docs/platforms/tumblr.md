@@ -25,7 +25,7 @@ Tumblr's daily limits reset once per calendar day on Tumblr's server clock. Tumb
 1. Sign in to Tumblr in your browser and open <https://www.tumblr.com/oauth/apps>. Click **Register application**.
 2. Fill in:
    - **Application Name**: anything, e.g. `NEFORUM for Ada`.
-   - **Application Website**: any web address, for example `https://github.com/neforum-app/neforum`.
+   - **Application Website**: any web address, for example `https://github.com/Neforuss/NEFORUM`.
    - **Application Description**: e.g. `Posting from my own NEFORUM app`.
    - **Administrative contact email**: your e-mail address.
    - **Default callback URL**:

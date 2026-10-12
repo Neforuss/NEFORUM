@@ -32,7 +32,7 @@ NEFORUM keeps its own count of the posts it sends so it can warn you before X re
      - `neforum://callback` (used by NEFORUM on Android and iOS)
 
      X compares them exactly: no trailing slash, and `localhost` is **not** accepted (use `127.0.0.1`). An app can have up to 10 callback URLs.
-   - **Website URL:** any page about you, or `https://github.com/neforum-app/neforum`.
+   - **Website URL:** any page about you, or `https://github.com/Neforuss/NEFORUM`.
 5. Save. Then open **Keys and tokens** and copy the **OAuth 2.0 Client ID**. If you chose a confidential app type, copy the **Client Secret** as well.
 6. In NEFORUM: **Add account → X → Your own API keys**, paste the Client ID, and press **Connect**. Your browser opens X and asks you to authorise the app. After you approve, NEFORUM shows your name and @handle.
 

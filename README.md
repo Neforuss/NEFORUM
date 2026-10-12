@@ -43,7 +43,11 @@ The signature is optional per network: turn it off (for example only for Instagr
 
 ### DIFFERENTIATION: a version for each network
 
-What works on X rarely works on LinkedIn or Instagram. Under the editor, **Differentiate** opens one editable version per network, side by side, each with that network's counter and conventions. One-tap changes per version: fit to the limit, hashtags to the end, fewer or no hashtags, "link in bio", remove the link, airy paragraphs. **Auto-differentiate** applies every network's conventions at once (LinkedIn gets short paragraphs and three hashtags, X two hashtags, Instagram "link in bio", Reddit no hashtags, …). Versions you don't touch keep following the main post; all of it is plain text work on your own words, nothing is generated or sent anywhere.
+What works on X rarely works on LinkedIn or Instagram. Under the editor, **Differentiate** opens one editable version per network, side by side, each with that network's counter and a tip on its conventions. One-tap changes per version: fit to the limit, hashtags to the end, fewer or no hashtags, "link in bio", remove the link, airy paragraphs. Each network can also get its own title, link and choice of photos from the album (one photo may suit one network's rules and not another's). Versions you don't touch keep following the main post; all of it is plain text work on your own words, nothing is generated or sent anywhere.
+
+### Photos that fit every network
+
+Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks have their own size and pixel limits. Instead of refusing the post, NEFORUM makes an adjusted copy for the network that needs it, with soft borders from the photo's own colours (or cropped, your choice in Settings), and every other network gets the original.
 
 <p align="center">
   <img src="docs/screenshots/differentiation-dark.png" alt="DIFFERENTIATION: one version per network, side by side" width="900">
@@ -86,7 +90,7 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **Instagram and Threads (API mode):** Instagram needs a professional (creator or business) account. Both fetch media from a public web address, so you pick a media host in Settings (a free temporary one is built in). An optional fallback host takes over when the main one is down. Hand-off works with any account and needs none of this.
 - **Facebook:** the API only posts to Pages you manage. Personal profiles use hand-off.
 - **Connecting Meta (Facebook Pages, Instagram, Threads):** paste a token from Meta's own tools (Graph API Explorer, Instagram's **Generate token**, the Threads User Token Generator), so no redirect address has to be registered. NEFORUM turns it into a long-lived token and renews it. The setup guides follow Meta's documentation and its App Dashboard as of October 2026, step by step. Publishing your Meta app needs a privacy policy URL: enter NEFORUM's or publish your own from a template ([docs/meta-privacy-policy.md](docs/meta-privacy-policy.md)).
-- **Tumblr without API keys:** text and link posts open Tumblr's composer prefilled. Photo posts open prefilled too on a computer when you have set up a media host; otherwise NEFORUM opens a new photo post and saves the photos to Downloads to drag in.
+- **Tumblr without API keys:** text, link, quote and chat posts open Tumblr's share tool prefilled. Photo posts open prefilled too on a computer when you have set up a media host; otherwise NEFORUM opens a new photo post and saves the photos to Downloads to drag in. With the browser extension, Tumblr's full editor opens and is filled in, files included. Quote, chat and audio posts are a per-post choice.
 - **TikTok:** apps TikTok has not audited can only post privately. Hand-off posts publicly from the TikTok app.
 - **YouTube Posts** (the text and image posts on a channel's Posts tab) have no API at all, so they always use hand-off. Your channel needs YouTube's advanced features turned on.
 - **YouTube:** uploads from apps that have not passed Google's verification may be locked to private. Google's own pages disagree on whether that still applies, and NEFORUM cannot detect it. Hand-off always posts publicly.
@@ -113,7 +117,9 @@ Light and dark themes, six accent colors, and layouts for phones, tablets and wi
 
 ## Install
 
-Builds for every platform are produced by [GitHub Actions](.github/workflows/build.yml) on each push.
+**Windows:** download the installer from **[neforus.com/neforum](https://neforus.com/neforum/)**. The browser extension for Chrome and Firefox comes with the app (Settings → Browser extension → Show extension files) and is also on that page.
+
+Builds for every platform are produced by [GitHub Actions](.github/workflows/build.yml) on each push (open a run, then download its artifacts).
 
 | Platform | Artifact | Notes |
 |---|---|---|
@@ -127,11 +133,11 @@ Builds for every platform are produced by [GitHub Actions](.github/workflows/bui
 You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, or Visual Studio 2022 with "Desktop development with C++" for Windows.
 
 ```bash
-git clone https://github.com/neforum-app/neforum.git
+git clone https://github.com/Neforuss/NEFORUM.git
 ```
 
 ```bash
-cd neforum/apps/neforum_app && flutter pub get && dart run tool/sync_docs.dart
+cd NEFORUM/apps/neforum_app && flutter pub get && dart run tool/sync_docs.dart
 ```
 
 Then one of:

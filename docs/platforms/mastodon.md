@@ -54,7 +54,7 @@ create the app yourself:
 
 1. On your server open **Preferences → Development → New application** (Mastodon). Other software has a
    similar page, e.g. Pixelfed **Settings → Applications**.
-2. Name it `NEFORUM` and set the website to `https://github.com/neforum-app/neforum`.
+2. Name it `NEFORUM` and set the website to `https://github.com/Neforuss/NEFORUM`.
 3. Under **Redirect URI** enter the address for your device from the list above. To use one app on both desktop
    and phone, put both on separate lines.
 4. Tick the scopes `write:statuses`, `write:media` and `profile` (on older Mastodon, `read:accounts` instead of

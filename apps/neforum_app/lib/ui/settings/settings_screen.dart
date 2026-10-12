@@ -591,9 +591,9 @@ class _About extends StatelessWidget {
           Text('Free and open-source software under the GNU General Public License v3.', style: context.text.bodyMedium?.copyWith(color: nf.textMuted)),
           const SizedBox(height: Space.lg),
           Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
-            OutlinedButton.icon(onPressed: () => open('https://github.com/neforum-app/neforum'), icon: const Icon(Icons.code_rounded, size: 18), label: const Text('Source code')),
+            OutlinedButton.icon(onPressed: () => open('https://github.com/Neforuss/NEFORUM'), icon: const Icon(Icons.code_rounded, size: 18), label: const Text('Source code')),
             OutlinedButton.icon(onPressed: () => showGuideSheet(context, 'platforms', asset: 'platforms.md'), icon: const Icon(Icons.table_chart_outlined, size: 18), label: const Text('Platform guide')),
-            OutlinedButton.icon(onPressed: () => open('https://github.com/neforum-app/neforum/issues'), icon: const Icon(Icons.bug_report_outlined, size: 18), label: const Text('Report a problem')),
+            OutlinedButton.icon(onPressed: () => open('https://github.com/Neforuss/NEFORUM/issues'), icon: const Icon(Icons.bug_report_outlined, size: 18), label: const Text('Report a problem')),
           ]),
           const SizedBox(height: Space.xl),
           Text('Credits', style: context.text.titleSmall),

@@ -166,7 +166,7 @@ class TumblrAdapter extends PlatformAdapter {
 **Post to your Tumblr blog automatically.** You need your own (free, instant) Tumblr app:
 
 1. Sign in to Tumblr in your browser, open <https://www.tumblr.com/oauth/apps> and click **Register application**.
-2. Fill in an application name (e.g. "NEFORUM for <your name>"), a website (for example `https://github.com/neforum-app/neforum`), a short description and your e-mail address.
+2. Fill in an application name (e.g. "NEFORUM for <your name>"), a website (for example `https://github.com/Neforuss/NEFORUM`), a short description and your e-mail address.
 3. As **Default callback URL** enter `http://127.0.0.1:52771/callback`.
 4. As **OAuth2 redirect URLs** enter `http://127.0.0.1:52771/callback neforum://callback/` (two addresses separated by a space; keep the slash at the end of the second one). Save.
 5. Copy the **OAuth Consumer Key** and, after clicking **Show secret key**, the **Secret Key** into the fields below. Click Connect and allow access in the browser.

@@ -122,7 +122,7 @@ class XAdapter extends PlatformAdapter {
    - App permissions: **Read and write**
    - Type of app: **Native App** (a public client, no secret needed)
    - Callback URI / Redirect URL: add **both** `$_desktopRedirect` and `$_mobileRedirect` exactly as written (no trailing slash; X does not accept `localhost`)
-   - Website URL: any page about you or `https://github.com/neforum-app/neforum`
+   - Website URL: any page about you or `https://github.com/Neforuss/NEFORUM`
 5. Save, then copy the **OAuth 2.0 Client ID** from the app's *Keys and tokens* page and paste it below.
 6. Press **Connect**: X opens in your browser, you approve NEFORUM, and you are done.
 

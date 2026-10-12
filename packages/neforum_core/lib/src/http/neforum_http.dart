@@ -10,7 +10,7 @@ import '../util/logger.dart';
 import 'transient_stub.dart' if (dart.library.io) 'transient_io.dart';
 
 const String neforumVersion = '0.1.0';
-const String defaultUserAgent = 'NEFORUM/$neforumVersion (+https://github.com/neforum-app/neforum)';
+const String defaultUserAgent = 'NEFORUM/$neforumVersion (+https://github.com/Neforuss/NEFORUM)';
 
 /// A file part of a multipart request. Bytes are held in memory so that the
 /// request can be retried.
