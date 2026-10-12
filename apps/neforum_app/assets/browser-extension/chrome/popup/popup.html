@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>NEFORUM</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="../icons/icon32.png" alt="" width="24" height="24">
+    <div>
+      <h1>NEFORUM</h1>
+      <p class="tag">Fills in your hand-offs</p>
+    </div>
+  </header>
+
+  <p id="status" class="status" role="status" aria-live="polite">Looking for NEFORUM…</p>
+
+  <section id="pair" hidden>
+    <h2>Pair with NEFORUM</h2>
+    <ol>
+      <li>In NEFORUM open <b>Settings &gt; Browser extension</b>.</li>
+      <li>Click <b>Pair a browser</b> and type the 6-digit code here.</li>
+    </ol>
+    <form id="pair-form">
+      <input id="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="123456" aria-label="Pairing code" required>
+      <button type="submit" class="primary">Pair</button>
+    </form>
+  </section>
+
+  <section id="ready" hidden>
+    <p>When you click <b>Open</b> in a NEFORUM hand-off, this browser fills in the post on the platform's page. You check it and press Post.</p>
+    <button id="fill" class="primary">Fill in this page</button>
+    <p class="hint">For sites the extension does not open by itself (for example your Mastodon server), or to fill in again.</p>
+  </section>
+
+  <section id="access" hidden>
+    <p>Allow the extension on the platforms' sites so it can fill in posts there.</p>
+    <button id="grant" class="primary">Allow on supported sites</button>
+  </section>
+
+  <footer>
+    <button id="unpair" class="link" hidden>Unpair this browser</button>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

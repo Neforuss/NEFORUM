@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -34,6 +36,9 @@ class NeforumRootState extends State<NeforumRoot> {
     final old = _services;
     final next = await AppServices.create(demo: demo, storage: old.storage);
     await old.storage.writeJson('mode.json', {'demo': demo});
+    // Hand the browser extension's port over to the new workspace.
+    await old.browserBridge.stop();
+    unawaited(next.startBrowserBridge());
     setState(() {
       _services = next;
       _switching = false;

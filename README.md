@@ -31,7 +31,9 @@ Every connected account uses one of these. You can connect the same platform mor
 
 If an API account runs out of quota (for example X's monthly cap), NEFORUM can fall back to hand-off for that post instead of failing.
 
-On a computer a hand-off is click here, paste there: NEFORUM opens the right page (a prefilled composer where the network has one, your channel's Posts tab on YouTube, the photo upload on TikTok), with your text already copied. Each photo has a **Copy photo** button, so you add it with Ctrl+V (⌘V on a Mac) wherever the composer takes pasted pictures, and **Copy next** hands out the text, any poll answers and each photo in turn. Websites don't let other apps type into them or drop files on them, so the paste itself stays yours.
+On a computer a hand-off is click here, paste there: NEFORUM opens the right page (a prefilled composer where the network has one, your channel's Posts tab on YouTube, the photo upload on TikTok), with your text already copied. Each photo has a **Copy photo** button, so you add it with Ctrl+V (⌘V on a Mac) wherever the composer takes pasted pictures, and **Copy next** hands out the text, any poll answers and each photo in turn. Websites don't let other apps type into them or drop files on them, so the paste itself stays yours, unless you add the browser extension.
+
+**NEFORUM browser extension (Chrome and Firefox).** Pair it once in Settings → Browser extension, and **Open** in a hand-off fills in the post on the platform's page: text, poll answers, photos and videos, on YouTube Posts, TikTok Studio, Instagram, Substack, Facebook, X, Bluesky, Threads, LinkedIn, Pinterest and more. You check it and press Post. It talks only to NEFORUM on your computer. See [docs/browser-extension.md](docs/browser-extension.md).
 
 ### Text cards for photo-only networks
 

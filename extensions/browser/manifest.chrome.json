@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "NEFORUM",
+  "short_name": "NEFORUM",
+  "version": "1.0.0",
+  "description": "Fills in your NEFORUM hand-offs on each platform's site: text, poll answers, photos and videos. You check the post and press Post.",
+  "homepage_url": "https://neforus.com/neforum/",
+  "minimum_chrome_version": "116",
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": {
+    "default_title": "NEFORUM",
+    "default_popup": "popup/popup.html",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png" }
+  },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage", "scripting", "activeTab"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://x.com/*", "https://twitter.com/*", "https://bsky.app/*",
+        "https://www.threads.com/*", "https://www.threads.net/*", "https://threads.com/*", "https://threads.net/*",
+        "https://www.linkedin.com/*", "https://www.facebook.com/*", "https://m.facebook.com/*",
+        "https://www.youtube.com/*", "https://substack.com/*", "https://www.tiktok.com/*", "https://www.instagram.com/*",
+        "https://*.pinterest.com/*", "https://www.reddit.com/*", "https://www.tumblr.com/*",
+        "https://web.whatsapp.com/*", "https://business.google.com/*", "https://www.snapchat.com/*"
+      ],
+      "js": ["content/fill.js", "content/recipes.js", "content/panel.js", "content/main.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

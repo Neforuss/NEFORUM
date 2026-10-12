@@ -24,6 +24,7 @@ import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
 import '../accounts/guide_sheet.dart';
 import '../root.dart';
+import 'browser_extension_section.dart';
 import 'media_host_section.dart';
 import 'setting_row.dart';
 
@@ -50,6 +51,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       ('Text cards', Icons.text_fields_rounded, const _TextCards()),
       ('Media hosting', Icons.cloud_upload_outlined, const MediaHostSection()),
       if (Env.isDesktop) ('Desktop', Icons.desktop_windows_outlined, const _Desktop()),
+      if (Env.isDesktop) ('Browser extension', Icons.extension_outlined, const BrowserExtensionSection()),
       ('Notifications', Icons.notifications_none_rounded, const _Notifications()),
       ('Workspace', Icons.science_outlined, const _Workspace()),
       ('Data & privacy', Icons.shield_outlined, const _Data()),
@@ -496,6 +498,8 @@ class _DataState extends ConsumerState<_Data> {
     next = await clearMediaHost(next, s.secrets);
     await ref.read(settingsProvider.notifier).update((_) => next.copyWith(defaultTargetIds: const []));
     await s.refreshMediaHost();
+    // Paired browsers' tokens are keys too (the demo shares the real ones).
+    if (!s.demo) await s.browserBridge.forgetAll();
     if (mounted) {
       showToast(
         context,

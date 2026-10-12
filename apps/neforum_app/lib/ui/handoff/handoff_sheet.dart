@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/platform_brand.dart';
+import '../../platform/browser_bridge.dart';
 import '../../platform/clipboard_media.dart';
 import '../../platform/env.dart';
 import '../../platform/file_export.dart';
@@ -20,6 +23,7 @@ import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
+import '../accounts/guide_sheet.dart';
 
 /// Shows the hand-off sheet (bottom sheet on phones, dialog elsewhere).
 Future<HandoffChoice> showHandoffSheet(
@@ -67,6 +71,109 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   HandoffPlan get plan => widget.plan;
 
   String get _text => plan.clipboardText ?? plan.shareText ?? widget.variant.text;
+
+  // ---- NEFORUM browser extension -------------------------------------------
+
+  late final BrowserBridge _bridge;
+  StreamSubscription<BrowserFillResult>? _fillSub;
+
+  /// The hand-off the extension was given, the page it is for, and what it
+  /// reported back.
+  BrowserJob? _job;
+  Uri? _jobUrl;
+  BrowserFillResult? _fill;
+
+  @override
+  void initState() {
+    super.initState();
+    _bridge = ref.read(servicesProvider).browserBridge;
+    _fillSub = _bridge.results.listen((r) {
+      if (mounted && r.jobId == _job?.id) setState(() => _fill = r);
+    });
+  }
+
+  @override
+  void dispose() {
+    unawaited(_fillSub?.cancel());
+    // Closed sheet, finished hand-off: the page must not be filled in again.
+    final job = _job;
+    if (job != null) _bridge.clearJob(job.id);
+    super.dispose();
+  }
+
+  /// Gives the post to the browser extension, which fills in the composer
+  /// at [url] (when a browser is paired and [url] is a web page).
+  void _sendToExtension(Uri url) {
+    if (!_bridge.canFill || !(url.isScheme('http') || url.isScheme('https'))) return;
+    final media = ref.read(servicesProvider).media;
+    final d = ref.read(registryProvider).descriptor(widget.account.platformId);
+    final job = _bridge.createJob(
+      platformId: widget.account.platformId,
+      platformName: d?.name ?? widget.account.platformId,
+      url: url.toString(),
+      hosts: browserJobHosts(url),
+      text: _text,
+      title: widget.variant.title,
+      snippets: plan.snippets,
+      media: [
+        for (final m in plan.shareFiles)
+          BrowserJobMedia(name: _fileName(m), mimeType: m.mimeType, size: m.sizeBytes, isVideo: m.isVideo, read: () => media.read(m)),
+      ],
+      steps: plan.instructions,
+    );
+    if (job == null) return;
+    setState(() {
+      _job = job;
+      _jobUrl = url;
+      _fill = null;
+    });
+  }
+
+  static String _fileName(MediaAttachment m) {
+    if ((m.fileName ?? '').isNotEmpty) return m.fileName!;
+    final ext = p.extension(m.path).isEmpty ? (m.isVideo ? '.mp4' : '.jpg') : p.extension(m.path);
+    return m.generated ? 'NEFORUM card$ext' : '${m.id}$ext';
+  }
+
+  /// "text and 2 photos", "1 video", "" for nothing.
+  String _filledWhat(BrowserFillResult r) {
+    final files = _job?.media ?? const <BrowserJobMedia>[];
+    final noun = files.isNotEmpty && files.every((m) => m.isVideo)
+        ? (r.media == 1 ? 'video' : 'videos')
+        : files.any((m) => m.isVideo)
+            ? (r.media == 1 ? 'file' : 'files')
+            : (r.media == 1 ? 'photo' : 'photos');
+    return [if (r.text) 'text', if (r.media > 0) '${r.media} $noun'].join(' and ');
+  }
+
+  static String _sentence(String s) => RegExp(r'[.!?…]$').hasMatch(s) ? s : '$s.';
+
+  /// "The NEFORUM extension is filling this in…", then what it reported.
+  Widget? _extensionStatus(NfColors nf) {
+    if (_job == null) return null;
+    final r = _fill;
+    final host = r == null || bareHost(r.host).isEmpty ? 'the page' : bareHost(r.host);
+    final what = r == null ? '' : _filledWhat(r);
+    final message = r?.message == null ? '' : ' ${_sentence(r!.message!)}';
+    final (IconData icon, Color color, String text) = switch (r?.status) {
+      null => (Icons.extension_outlined, nf.info, 'The NEFORUM extension is filling this in…'),
+      BrowserFillStatus.filled => (Icons.check_circle_rounded, nf.success, 'Filled in on $host${what.isEmpty ? '' : ': $what'}. Check it and press Post.'),
+      BrowserFillStatus.partial => (Icons.warning_amber_rounded, nf.warning, 'Partly filled in on $host${what.isEmpty ? '' : ': $what'}.$message Do the rest with the steps below.'),
+      BrowserFillStatus.failed => (Icons.error_outline_rounded, nf.danger, 'The extension could not fill in $host.$message Use the steps below.'),
+    };
+    return _Callout(
+      icon: icon,
+      color: color,
+      text: text,
+      action: _jobUrl == null
+          ? null
+          : TextButton.icon(
+              onPressed: () => _sendToExtension(_jobUrl!),
+              icon: const Icon(Icons.replay_rounded, size: 16),
+              label: const Text('Fill in again'),
+            ),
+    );
+  }
 
   Future<void> _copy({bool quiet = false}) async {
     await Clipboard.setData(ClipboardData(text: _text));
@@ -134,6 +241,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
 
   Future<void> _openUrl(Uri url) async {
     await _copy(quiet: true);
+    if (mounted) _sendToExtension(url);
     final ok = await launchUrl(url, mode: LaunchMode.externalApplication);
     if (!mounted) return;
     setState(() => _launched = ok || _launched);
@@ -195,6 +303,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final name = d?.name ?? widget.account.platformId;
     final steps = _steps(plan.instructions);
     final appTarget = _appUrl();
+    final extensionStatus = _extensionStatus(nf);
+    // Listening, nobody paired, and something to open: say the extension exists.
+    final extensionHint = Env.isDesktop && _job == null && _bridge.status.value.listening && _bridge.browsers.value.isEmpty && (plan.webIntent != null || appTarget != null);
 
     final actions = <Widget>[];
     void addAction(Widget w) => actions.add(
@@ -396,10 +507,33 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                   const SizedBox(height: Space.md),
                   _Callout(icon: Icons.info_outline_rounded, color: nf.info, text: plan.mediaNote!),
                 ],
+                if (extensionStatus != null) ...[
+                  const SizedBox(height: Space.md),
+                  AnimatedSwitcher(
+                    duration: Motion.medium,
+                    child: KeyedSubtree(key: ValueKey('${_job?.id} ${_fill?.status}'), child: extensionStatus),
+                  ),
+                ],
                 const SizedBox(height: Space.xl),
                 for (var i = 0; i < steps.length; i++) _Step(index: i + 1, text: steps[i]),
                 const SizedBox(height: Space.lg),
                 ...actions,
+                if (extensionHint)
+                  Row(children: [
+                    Icon(Icons.extension_outlined, size: 16, color: nf.textFaint),
+                    const SizedBox(width: Space.sm),
+                    Expanded(
+                      child: Text(
+                        'Get the NEFORUM browser extension to fill this in for you: Settings > Browser extension.',
+                        style: context.text.bodySmall?.copyWith(color: nf.textFaint),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: () => showGuideSheet(context, 'browser-extension', asset: 'browser-extension.md'),
+                      style: TextButton.styleFrom(foregroundColor: nf.textMuted, visualDensity: VisualDensity.compact),
+                      child: const Text('Guide'),
+                    ),
+                  ]),
               ],
             ),
           ),
@@ -459,10 +593,13 @@ class _Step extends StatelessWidget {
 }
 
 class _Callout extends StatelessWidget {
-  const _Callout({required this.icon, required this.color, required this.text});
+  const _Callout({required this.icon, required this.color, required this.text, this.action});
   final IconData icon;
   final Color color;
   final String text;
+
+  /// A button under the text (e.g. "Fill in again").
+  final Widget? action;
 
   @override
   Widget build(BuildContext context) {
@@ -480,7 +617,13 @@ class _Callout extends StatelessWidget {
           Icon(icon, size: 18, color: color),
           const SizedBox(width: Space.sm + 2),
           Expanded(
-            child: Text(text, style: context.text.bodySmall?.copyWith(color: nf.text)),
+            child: action == null
+                ? Text(text, style: context.text.bodySmall?.copyWith(color: nf.text))
+                : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(text, style: context.text.bodySmall?.copyWith(color: nf.text)),
+                    const SizedBox(height: Space.xs),
+                    action!,
+                  ]),
           ),
         ],
       ),

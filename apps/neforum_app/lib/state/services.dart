@@ -5,6 +5,8 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../platform/app_auth_broker.dart';
+import '../platform/browser_bridge.dart';
+import '../platform/env.dart';
 import '../platform/media_library.dart';
 import '../platform/secure_secret_store.dart';
 import '../platform/storage.dart';
@@ -27,6 +29,7 @@ class AppServices {
     required this.media,
     required this.broker,
     required this.handoff,
+    required this.browserBridge,
     required this.demo,
     required this._settings,
   }) : quota = QuotaTracker(quotaRepo);
@@ -43,6 +46,13 @@ class AppServices {
   final AppHandoffLauncher handoff;
   final QuotaTracker quota;
 
+  /// The local server the NEFORUM browser extension fills hand-offs from.
+  /// Runs on desktop while Settings > Browser extension is on, once
+  /// [startBrowserBridge] was called.
+  final BrowserBridge browserBridge;
+  bool _bridgeWanted = false;
+  bool _disposed = false;
+
   /// Demo workspace: simulated adapters, in-memory data.
   final bool demo;
 
@@ -54,7 +64,8 @@ class AppServices {
   /// Targets the user skipped in a hand-off sheet during the current run.
   final Set<String> _skipped = {};
 
-  static Future<AppServices> create({required bool demo, AppStorage? storage}) async {
+  /// [browserBridge] replaces the real one in tests.
+  static Future<AppServices> create({required bool demo, AppStorage? storage, BrowserBridge? browserBridge}) async {
     final st = storage ?? await openAppStorage();
     final settings = AppSettings.fromJson(await st.readJson('settings.json') ?? const {});
     final real = builtinRegistry();
@@ -99,6 +110,10 @@ class AppServices {
         askPaste: (url, redirect) => UiBridge.instance.askPaste(url, redirect),
       ),
       handoff: handoff,
+      // Paired browsers belong to this computer, not to a workspace: the demo
+      // keeps them in the real keychain too, so trying the demo does not
+      // unpair the extension.
+      browserBridge: browserBridge ?? BrowserBridge.create(secrets: demo && Env.isDesktop ? SecureSecretStore() : secrets),
       demo: demo,
       settings: settings,
     );
@@ -111,9 +126,26 @@ class AppServices {
         !mapEquals(s.mediaHostConfig, _settings.mediaHostConfig) ||
         s.fallbackMediaHostId != _settings.fallbackMediaHostId ||
         !mapEquals(s.fallbackMediaHostConfig, _settings.fallbackMediaHostConfig);
+    final bridgeChanged = s.browserExtension != _settings.browserExtension;
     _settings = s;
     await storage.writeJson('settings.json', s.toJson());
     if (hostChanged) await _rebuildMediaHost();
+    if (bridgeChanged) await _syncBrowserBridge();
+  }
+
+  /// Starts the browser-extension bridge when this is a computer and the
+  /// setting is on. Call when the UI starts (background runs leave it off).
+  Future<void> startBrowserBridge() async {
+    _bridgeWanted = true;
+    await _syncBrowserBridge();
+  }
+
+  Future<void> _syncBrowserBridge() async {
+    if (_bridgeWanted && !_disposed && Env.isDesktop && _settings.browserExtension) {
+      await browserBridge.start();
+    } else {
+      await browserBridge.stop();
+    }
   }
 
   Future<void> _rebuildMediaHost() async {
@@ -174,6 +206,8 @@ class AppServices {
   }
 
   void dispose() {
+    _disposed = true;
+    unawaited(browserBridge.dispose());
     http.close();
   }
 }

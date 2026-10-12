@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: editor test bench</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 16px; display: grid; gap: 14px; max-width: 760px; }
+  section { border: 1px solid #ccc; border-radius: 8px; padding: 10px; }
+  h2 { font-size: 13px; margin: 0 0 6px; }
+  .ed { min-height: 60px; border: 1px solid #999; padding: 6px; border-radius: 6px; white-space: pre-wrap; }
+  textarea { width: 100%; min-height: 60px; }
+  #drop { height: 60px; border: 2px dashed #999; display: grid; place-items: center; }
+</style>
+<!-- Real editor libraries, the same ones big sites use. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/immutable/3.8.2/immutable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/draft-js/0.11.7/Draft.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/draft-js/0.11.7/Draft.min.css">
+</head>
+<body>
+<h1 style="font-size:16px">Editor test bench</h1>
+<section><h2>React controlled textarea</h2><div id="react"></div></section>
+<section><h2>Draft.js (TikTok, X)</h2><div id="draft" class="ed"></div></section>
+<section><h2>Lexical (Facebook, Threads, Instagram)</h2><div id="lexical" class="ed" contenteditable="true" aria-label="Lexical"></div></section>
+<section><h2>ProseMirror (Substack, Bluesky)</h2><div id="pm"></div></section>
+<section><h2>File input</h2><input id="file" type="file" accept="image/*,video/*" multiple><div id="file-got"></div></section>
+<section><h2>Composer that takes pasted images</h2><div id="paste" class="ed" contenteditable="true" aria-label="Paste images here"></div><div id="paste-got"></div></section>
+<section><h2>Drop zone</h2><div id="drop">Drag and drop files here</div><div id="drop-got"></div></section>
+
+<script>
+  // React controlled textarea: the value lives in React state.
+  window.reactValue = '';
+  function App() {
+    const [v, setV] = React.useState('');
+    window.reactValue = v;
+    return React.createElement('textarea', { id: 'react-ta', value: v, placeholder: "What's happening?", onChange: (e) => setV(e.target.value) });
+  }
+  ReactDOM.createRoot(document.getElementById('react')).render(React.createElement(App));
+
+  // Draft.js editor: the text lives in its EditorState.
+  window.draftText = '';
+  function DraftApp() {
+    const [state, setState] = React.useState(() => Draft.EditorState.createEmpty());
+    window.draftText = state.getCurrentContent().getPlainText('\n');
+    return React.createElement(Draft.Editor, { editorState: state, onChange: setState, placeholder: 'Add a caption' });
+  }
+  ReactDOM.createRoot(document.getElementById('draft')).render(React.createElement(DraftApp));
+
+  // Files received by each kind of target.
+  const names = (files) => [...files].map((f) => `${f.name}:${f.type}:${f.size}`).join(',');
+  document.getElementById('file').addEventListener('change', (e) => (document.getElementById('file-got').textContent = names(e.target.files)));
+  document.getElementById('paste').addEventListener('paste', (e) => {
+    const files = e.clipboardData.files;
+    if (files.length) {
+      e.preventDefault();
+      document.getElementById('paste-got').textContent = names(files);
+    }
+  });
+  const drop = document.getElementById('drop');
+  drop.addEventListener('dragover', (e) => e.preventDefault());
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    document.getElementById('drop-got').textContent = names(e.dataTransfer.files);
+  });
+</script>
+<script type="module">
+  import { createEditor, $getRoot } from 'https://esm.sh/lexical@0.17.1';
+  import { registerPlainText } from 'https://esm.sh/@lexical/plain-text@0.17.1';
+  const lexical = createEditor({ namespace: 'test', onError: (e) => console.error(e) });
+  lexical.setRootElement(document.getElementById('lexical'));
+  registerPlainText(lexical);
+  window.lexicalText = () => lexical.getEditorState().read(() => $getRoot().getTextContent());
+
+  import { EditorState } from 'https://esm.sh/prosemirror-state@1.4.3';
+  import { EditorView } from 'https://esm.sh/prosemirror-view@1.33.8';
+  import { schema } from 'https://esm.sh/prosemirror-schema-basic@1.2.3';
+  const view = new EditorView(document.getElementById('pm'), { state: EditorState.create({ schema }) });
+  view.dom.setAttribute('aria-label', "What's on your mind?");
+  window.pmText = () => view.state.doc.textBetween(0, view.state.doc.content.size, '\n');
+  window.benchReady = true;
+</script>
+</body>
+</html>

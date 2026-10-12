@@ -54,6 +54,8 @@ dependencies:
   uuid: ^4.6.0
 
 dev_dependencies:
+  # tool/build_extension.dart zips the browser extension.
+  archive: ^4.4.0
   flutter_test:
     sdk: flutter
   integration_test:
@@ -67,6 +69,16 @@ flutter:
     - assets/brand/
     - assets/tray/
     - assets/docs/
+    # The browser extension, built by tool/build_extension.dart, shipped so
+    # Settings > Browser extension can show its folder for installing.
+    - assets/browser-extension/chrome/
+    - assets/browser-extension/chrome/content/
+    - assets/browser-extension/chrome/icons/
+    - assets/browser-extension/chrome/popup/
+    - assets/browser-extension/firefox/
+    - assets/browser-extension/firefox/content/
+    - assets/browser-extension/firefox/icons/
+    - assets/browser-extension/firefox/popup/
   fonts:
     - family: Inter
       fonts:

@@ -115,6 +115,11 @@ void main() {
   _png(at('web/icons/Icon-maskable-512.png'), _render(512, tile: _Tile.square, radius: 0.33, opaque: true));
   _png(at('web/favicon.png'), _render(64, tile: _Tile.rounded));
 
+  // ---- Browser extension (extensions/browser, built by tool/build_extension.dart) ---
+  for (final s in [16, 32, 48, 128]) {
+    _png(at('../../extensions/browser/src/icons/icon$s.png'), _render(s, tile: _Tile.rounded, inset: s <= 16 ? 0.0 : 0.04));
+  }
+
   stdout.writeln('Icons written.');
 }
 

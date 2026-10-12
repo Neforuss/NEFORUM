@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: composer flow test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  .composer { border: 1px solid #bbb; border-radius: 10px; padding: 10px; max-width: 520px; }
+  .ProseMirror { min-height: 80px; outline: none; white-space: pre-wrap; }
+  #open { padding: 10px 14px; border: 1px solid #bbb; border-radius: 20px; cursor: pointer; display: inline-block; }
+  #thumbs img { width: 60px; height: 60px; object-fit: cover; margin: 4px; }
+</style>
+</head>
+<body>
+  <!-- Like Substack: a "What's on your mind?" button opens the note composer. -->
+  <div id="open" role="button" tabindex="0">What's on your mind?</div>
+  <div id="dialog" role="dialog" hidden>
+    <div class="composer">
+      <div id="pm"></div>
+      <label>Add photos <input id="photos" type="file" accept="image/*" multiple hidden></label>
+      <div id="thumbs"></div>
+      <button id="post" type="button">Post</button>
+    </div>
+  </div>
+  <p>Posted: <span id="posted">no</span></p>
+<script type="module">
+  import { EditorState } from 'https://esm.sh/prosemirror-state@1.4.3';
+  import { EditorView } from 'https://esm.sh/prosemirror-view@1.33.8';
+  import { schema } from 'https://esm.sh/prosemirror-schema-basic@1.2.3';
+  let view;
+  document.getElementById('open').addEventListener('click', () => {
+    document.getElementById('dialog').hidden = false;
+    view ??= new EditorView(document.getElementById('pm'), { state: EditorState.create({ schema }) });
+    view.dom.setAttribute('aria-label', 'Write a note');
+  });
+  window.noteText = () => (view ? view.state.doc.textBetween(0, view.state.doc.content.size, '\n') : '');
+  window.photos = [];
+  document.getElementById('photos').addEventListener('change', (e) => {
+    window.photos = [...e.target.files].map((f) => `${f.name}:${f.type}:${f.size}`);
+    for (const f of e.target.files) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(f);
+      document.getElementById('thumbs').append(img);
+    }
+  });
+  document.getElementById('post').addEventListener('click', () => (document.getElementById('posted').textContent = 'YES'));
+  window.composerReady = true;
+</script>
+</body>
+</html>

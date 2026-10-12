@@ -31,6 +31,7 @@ class AppSettings {
     this.textCardTheme = TextCardTheme.dark,
     this.textCardPlainPlatforms = const [],
     this.delegateSchedules = true,
+    this.browserExtension = true,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -57,6 +58,7 @@ class AppSettings {
         textCardTheme: TextCardTheme.values.asNameMap()[j['textCardTheme']] ?? TextCardTheme.dark,
         textCardPlainPlatforms: (j['textCardPlainPlatforms'] as List? ?? const []).cast<String>(),
         delegateSchedules: j['delegateSchedules'] as bool? ?? true,
+        browserExtension: j['browserExtension'] as bool? ?? true,
       );
 
   final ThemeMode themeMode;
@@ -111,6 +113,10 @@ class AppSettings {
   /// device is off.
   final bool delegateSchedules;
 
+  /// Desktop only: let the NEFORUM browser extension fill in hand-offs
+  /// (a server on 127.0.0.1 that only paired browsers can use).
+  final bool browserExtension;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -146,6 +152,7 @@ class AppSettings {
     TextCardTheme? textCardTheme,
     List<String>? textCardPlainPlatforms,
     bool? delegateSchedules,
+    bool? browserExtension,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -171,6 +178,7 @@ class AppSettings {
         textCardTheme: textCardTheme ?? this.textCardTheme,
         textCardPlainPlatforms: textCardPlainPlatforms ?? this.textCardPlainPlatforms,
         delegateSchedules: delegateSchedules ?? this.delegateSchedules,
+        browserExtension: browserExtension ?? this.browserExtension,
       );
 
   Map<String, dynamic> toJson() => {
@@ -197,5 +205,6 @@ class AppSettings {
         'textCardTheme': textCardTheme.name,
         'textCardPlainPlatforms': textCardPlainPlatforms,
         'delegateSchedules': delegateSchedules,
+        'browserExtension': browserExtension,
       };
 }

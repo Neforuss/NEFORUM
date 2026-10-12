@@ -78,6 +78,7 @@ Future<void> main(List<String> args) async {
   final services = await AppServices.create(demo: demo, storage: storage);
 
   await DesktopIntegration.instance.setCloseToTray(services.settings.minimizeToTray);
+  unawaited(services.startBrowserBridge());
 
   runApp(NeforumRoot(initial: services));
 }
