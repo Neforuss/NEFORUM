@@ -329,7 +329,7 @@ const List<MediaHostField> s3Fields = [
     placeholder: 'us-east-1',
     help: 'Leave empty to guess from the endpoint (R2 uses "auto", MinIO "us-east-1").',
   ),
-  MediaHostField(key: 'bucket', label: 'Bucket', placeholder: 'my-neforum-media'),
+  MediaHostField(key: 'bucket', label: 'Bucket', placeholder: 'my-post-media'),
   MediaHostField(key: 'accessKeyId', label: 'Access key ID', help: 'B2 calls this the "keyID".'),
   MediaHostField(
     key: 'secretAccessKey',

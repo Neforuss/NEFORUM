@@ -79,7 +79,7 @@ The **Poll** button adds a text poll, an image poll or a quiz for networks that 
 These come from the platforms, not from NEFORUM. The setup guides explain each one.
 
 - **X:** new developer accounts are pay-per-use (about $0.015 per post, $0.20 for a post containing a link). No free tier. Hand-off is free.
-- **Instagram and Threads (API mode):** Instagram needs a professional (creator or business) account. Both fetch media from a public web address, so you pick a media host in Settings (a free temporary one is built in). Hand-off works with any account and needs none of this.
+- **Instagram and Threads (API mode):** Instagram needs a professional (creator or business) account. Both fetch media from a public web address, so you pick a media host in Settings (a free temporary one is built in). An optional fallback host takes over when the main one is down. Hand-off works with any account and needs none of this.
 - **Facebook:** the API only posts to Pages you manage. Personal profiles use hand-off.
 - **Connecting Meta (Facebook Pages, Instagram, Threads):** paste a token from Meta's own tools (Graph API Explorer, Instagram's **Generate token**, the Threads User Token Generator), so no redirect address has to be registered. NEFORUM turns it into a long-lived token and renews it. The setup guides follow Meta's documentation and its App Dashboard as of October 2026, step by step. Publishing your Meta app needs a privacy policy URL: enter NEFORUM's or publish your own from a template ([docs/meta-privacy-policy.md](docs/meta-privacy-policy.md)).
 - **Tumblr without API keys:** text and link posts open Tumblr's composer prefilled. Photo posts open prefilled too on a computer when you have set up a media host; otherwise NEFORUM opens a new photo post and saves the photos to Downloads to drag in.
@@ -187,7 +187,7 @@ The core has over 1,000 tests that pin every adapter's requests and error handli
 
 ## Privacy
 
-NEFORUM has no backend. It stores accounts, posts and settings in your app data folder and secrets in the OS keychain (Keychain on Apple platforms, Keystore on Android, DPAPI on Windows). Network traffic goes only to the platforms you post to and, if you pick one, the media host you configure. Settings, then Data and privacy, lets you export or delete everything.
+NEFORUM has no backend. It stores accounts, posts and settings in your app data folder and secrets in the OS keychain (Keychain on Apple platforms, Keystore on Android, DPAPI on Windows). Network traffic goes only to the platforms you post to and, if you pick them, the media host and fallback host you configure. Settings, then Data and privacy, lets you export or delete everything.
 
 ## License
 

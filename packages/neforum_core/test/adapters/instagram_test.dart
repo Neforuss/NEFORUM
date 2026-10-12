@@ -364,6 +364,31 @@ void main() {
       expect(calls[3].url.queryParameters['fields'], 'permalink');
     });
 
+    test('a fallback media host takes over when the main one is down', () async {
+      final calls = <http.Request>[];
+      final backup = FakeMediaHost();
+      final reports = <String>[];
+      final ctx = testContext(
+        mediaHost: FallbackMediaHost(_DownHost(), backup, onFallback: reports.add),
+        handler: (r) async {
+          calls.add(r);
+          final p = r.url.path;
+          if (p == '/v25.0/1784100/media') return _json({'id': 'C1'});
+          if (p == '/v25.0/C1') return _json({'status_code': 'FINISHED', 'id': 'C1'});
+          if (p == '/v25.0/1784100/media_publish') return _json({'id': 'M1'});
+          if (p == '/v25.0/M1') return _json({'permalink': 'https://www.instagram.com/p/abc/', 'id': 'M1'});
+          return _json({}, 404);
+        },
+      );
+      final v = PostVariant(text: 'Hello', media: [fakeImage(width: 1080, height: 1080)]);
+      final res = await adapter.publish(v, apiAccount(), apiSecrets, ctx);
+
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(bodyOf(calls.first)['image_url'], 'https://cdn.example.test/img1');
+      expect(backup.deleted.single.deleteHandle, 'img1', reason: 'cleanup reaches the host that stored the file');
+      expect(reports.single, contains('Litterbox failed, so Fake host stored'));
+    });
+
     test('carousel of image + video: children, polling, parent, publish', () async {
       final calls = <http.Request>[];
       var videoPolls = 0;
@@ -681,4 +706,14 @@ class _FailingHost extends FakeMediaHost {
 
   @override
   Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async => throw error;
+}
+
+/// Litterbox having an outage.
+class _DownHost extends _FailingHost {
+  _DownHost()
+      : super(const MediaHostException("Litterbox couldn't store the file: its server answered HTTP 500 (Internal Server Error).",
+            hostId: 'litterbox', temporary: true));
+
+  @override
+  String get name => 'Litterbox';
 }

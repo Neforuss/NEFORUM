@@ -3,6 +3,7 @@
 library;
 
 export 'catbox_media_host.dart';
+export 'fallback_media_host.dart';
 export 'manual_url_media_host.dart';
 export 'media_host.dart';
 export 'media_host_registry.dart';

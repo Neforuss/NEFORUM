@@ -16,6 +16,7 @@ import '../../media/text_card.dart';
 import '../../platform/env.dart';
 import '../../platform/media_library.dart';
 import '../../platform/notifications.dart';
+import '../../state/media_host_config.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -490,7 +491,11 @@ class _DataState extends ConsumerState<_Data> {
       }
       await s.posts.delete(p.id);
     }
-    await ref.read(settingsProvider.notifier).update((x) => x.copyWith(defaultTargetIds: const []));
+    // Media host keys are keys too: remove both hosts and their secrets.
+    var next = await clearMediaHost(ref.read(settingsProvider), s.secrets, slot: MediaHostSlot.fallback);
+    next = await clearMediaHost(next, s.secrets);
+    await ref.read(settingsProvider.notifier).update((_) => next.copyWith(defaultTargetIds: const []));
+    await s.refreshMediaHost();
     if (mounted) {
       showToast(
         context,

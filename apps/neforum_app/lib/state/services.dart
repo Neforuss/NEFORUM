@@ -107,15 +107,23 @@ class AppServices {
   }
 
   Future<void> saveSettings(AppSettings s) async {
-    final hostChanged = s.mediaHostId != _settings.mediaHostId || !mapEquals(s.mediaHostConfig, _settings.mediaHostConfig);
+    final hostChanged = s.mediaHostId != _settings.mediaHostId ||
+        !mapEquals(s.mediaHostConfig, _settings.mediaHostConfig) ||
+        s.fallbackMediaHostId != _settings.fallbackMediaHostId ||
+        !mapEquals(s.fallbackMediaHostConfig, _settings.fallbackMediaHostConfig);
     _settings = s;
     await storage.writeJson('settings.json', s.toJson());
     if (hostChanged) await _rebuildMediaHost();
   }
 
   Future<void> _rebuildMediaHost() async {
-    _mediaHost = await buildMediaHost(_settings, secrets, http);
+    _mediaHost = await buildMediaHost(_settings, secrets, http,
+        onFallback: (m) => lastMediaHostFallback.value = (at: DateTime.now(), message: m));
   }
+
+  /// The last time the fallback media host stepped in during this session,
+  /// and why (shown under Settings > Media hosting).
+  final ValueNotifier<({DateTime at, String message})?> lastMediaHostFallback = ValueNotifier(null);
 
   MediaHost? get mediaHost => _mediaHost;
 

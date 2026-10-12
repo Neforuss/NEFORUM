@@ -22,6 +22,8 @@ class AppSettings {
     this.notifyOnPublish = true,
     this.mediaHostId,
     this.mediaHostConfig = const {},
+    this.fallbackMediaHostId,
+    this.fallbackMediaHostConfig = const {},
     this.defaultTargetIds = const [],
     this.onboarded = false,
     this.compactPreviews = false,
@@ -46,6 +48,8 @@ class AppSettings {
         notifyOnPublish: j['notifyOnPublish'] as bool? ?? true,
         mediaHostId: j['mediaHostId'] as String?,
         mediaHostConfig: Map<String, String>.from(j['mediaHostConfig'] as Map? ?? const {}),
+        fallbackMediaHostId: j['fallbackMediaHostId'] as String?,
+        fallbackMediaHostConfig: Map<String, String>.from(j['fallbackMediaHostConfig'] as Map? ?? const {}),
         defaultTargetIds: (j['defaultTargetIds'] as List? ?? const []).cast<String>(),
         onboarded: j['onboarded'] as bool? ?? false,
         compactPreviews: j['compactPreviews'] as bool? ?? false,
@@ -80,6 +84,12 @@ class AppSettings {
 
   /// Non-secret host settings; secret fields live in the keychain.
   final Map<String, String> mediaHostConfig;
+
+  /// Optional second host, tried when the main one can't store a file.
+  final String? fallbackMediaHostId;
+
+  /// Non-secret settings of the fallback host.
+  final Map<String, String> fallbackMediaHostConfig;
 
   /// Accounts pre-selected in a fresh composer.
   final List<String> defaultTargetIds;
@@ -126,6 +136,9 @@ class AppSettings {
     String? mediaHostId,
     bool clearMediaHost = false,
     Map<String, String>? mediaHostConfig,
+    String? fallbackMediaHostId,
+    bool clearFallbackMediaHost = false,
+    Map<String, String>? fallbackMediaHostConfig,
     List<String>? defaultTargetIds,
     bool? onboarded,
     bool? compactPreviews,
@@ -149,6 +162,8 @@ class AppSettings {
         notifyOnPublish: notifyOnPublish ?? this.notifyOnPublish,
         mediaHostId: clearMediaHost ? null : (mediaHostId ?? this.mediaHostId),
         mediaHostConfig: clearMediaHost ? const {} : (mediaHostConfig ?? this.mediaHostConfig),
+        fallbackMediaHostId: clearFallbackMediaHost ? null : (fallbackMediaHostId ?? this.fallbackMediaHostId),
+        fallbackMediaHostConfig: clearFallbackMediaHost ? const {} : (fallbackMediaHostConfig ?? this.fallbackMediaHostConfig),
         defaultTargetIds: defaultTargetIds ?? this.defaultTargetIds,
         onboarded: onboarded ?? this.onboarded,
         compactPreviews: compactPreviews ?? this.compactPreviews,
@@ -173,6 +188,8 @@ class AppSettings {
         'notifyOnPublish': notifyOnPublish,
         if (mediaHostId != null) 'mediaHostId': mediaHostId,
         'mediaHostConfig': mediaHostConfig,
+        if (fallbackMediaHostId != null) 'fallbackMediaHostId': fallbackMediaHostId,
+        'fallbackMediaHostConfig': fallbackMediaHostConfig,
         'defaultTargetIds': defaultTargetIds,
         'onboarded': onboarded,
         'compactPreviews': compactPreviews,

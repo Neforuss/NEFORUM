@@ -37,7 +37,8 @@ from developers in 2025-2026):
 For regular posting, set up your own **bucket** (Backblaze B2 or Cloudflare R2,
 both have free tiers). Litterbox is run by one volunteer and is sometimes
 down or refuses uploads for a while; a bucket you own doesn't depend on
-anyone else's server.
+anyone else's server. You can also keep Litterbox and add a bucket as the
+[fallback host](#fallback-host).
 
 Settings > Media host > pick one > fill in the fields > **Test connection**.
 What the test does depends on the host, and the result says what was tested:
@@ -58,6 +59,26 @@ couldn't store the file: its server answered HTTP 500 (Internal Server Error).
 This is a problem on Litterbox's side; try again later or choose another media
 host in Settings."* A 4xx answer (the host turned the file or your settings
 down) is not retried, because sending the same thing again won't help.
+
+## Fallback host
+
+Once a main host is saved, **Settings > Media hosting** offers an optional
+**fallback host**. When the main host can't store a file, after its own retry,
+NEFORUM uploads the file to the fallback instead, so the post still goes out.
+That covers outages (Litterbox answering HTTP 500), settings problems and files
+larger than the main host accepts (those go straight to the fallback).
+
+- **Pick a different provider.** Litterbox and Catbox are run by the same
+  people, so an outage often hits both. A good pair is Litterbox as the main
+  host with your own bucket as the fallback, or the other way round.
+- **You're told when it steps in.** The Media hosting section shows the last
+  time the fallback was used this session, and why the main host failed.
+- **If both fail**, the post's error explains both problems. It counts as
+  temporary (try again later) when either host only had an outage.
+- **Clean-up** reaches the host that stored the file, even when both are the
+  same kind (for example two buckets).
+- **Removing the main host** makes the fallback the main host.
+- **Test connection** under the fallback tests the fallback only.
 
 ## Litterbox and Catbox
 
