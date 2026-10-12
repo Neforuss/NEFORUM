@@ -28,6 +28,13 @@ void main() {
   // ---- Shared sources -------------------------------------------------------
   _png(at('assets/brand/icon.png'), _render(1024, tile: _Tile.rounded));
   _png(at('assets/brand/icon_foreground.png'), _render(1024, tile: _Tile.none, radius: 0.30));
+  // Windows notifications show this next to the text (registered as the
+  // app's IconUri, see lib/platform/notifications.dart).
+  _png(at('assets/brand/notify_icon.png'), _render(256, tile: _Tile.rounded, inset: 0.02));
+  // Vector copy of the logo (web splash, websites, documents).
+  final svg = _svg(1024);
+  File(at('assets/brand/logo.svg')).writeAsStringSync(svg);
+  File(at('web/icons/logo.svg')).writeAsStringSync(svg);
 
   // ---- Android ----------------------------------------------------------------
   const densities = {'mdpi': 1.0, 'hdpi': 1.5, 'xhdpi': 2.0, 'xxhdpi': 3.0, 'xxxhdpi': 4.0};
@@ -42,6 +49,10 @@ void main() {
     _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_background.png'), _render(adaptive, tile: _Tile.square, markless: true));
     // Monochrome layer for Android 13 themed icons.
     _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_monochrome.png'), _render(adaptive, tile: _Tile.none, radius: 0.29, mono: true));
+    // Status bar icon for notifications (24dp, white; Android uses only the alpha).
+    _png(at('android/app/src/main/res/drawable-${e.key}/ic_stat_neforum.png'), _render((24 * e.value).round(), tile: _Tile.none, radius: 0.44, mono: true, white: true));
+    // Launch screen before Android 12 (later versions show the launcher icon).
+    _png(at('android/app/src/main/res/drawable-${e.key}/splash_mark.png'), _render((96 * e.value).round(), tile: _Tile.rounded));
   }
   final anydpi = File(at('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml'));
   anydpi.parent.createSync(recursive: true);
@@ -67,6 +78,11 @@ void main() {
   for (final e in iosSizes.entries) {
     _png(at('ios/Runner/Assets.xcassets/AppIcon.appiconset/${e.key}'), _render(e.value, tile: _Tile.square, opaque: true));
   }
+  // Launch screen: the tile at 120 pt on the deep purple background set in
+  // LaunchScreen.storyboard.
+  for (final (suffix, scale) in [('', 1), ('@2x', 2), ('@3x', 3)]) {
+    _png(at('ios/Runner/Assets.xcassets/LaunchImage.imageset/LaunchImage$suffix.png'), _render(120 * scale, tile: _Tile.rounded));
+  }
 
   // ---- macOS (Big Sur grid: 824/1024 body, soft shadow) ------------------------
   for (final s in [16, 32, 64, 128, 256, 512, 1024]) {
@@ -76,6 +92,13 @@ void main() {
   // ---- Windows ------------------------------------------------------------------
   final winFrames = [for (final s in [16, 24, 32, 48, 64, 128, 256]) _render(s, tile: _Tile.rounded, inset: s <= 24 ? 0.0 : 0.03)];
   File(at('windows/runner/resources/app_icon.ico')).writeAsBytesSync(img.IcoEncoder().encodeImages(winFrames));
+  // Installer artwork (24-bit BMP, which every Inno Setup 6 accepts), at
+  // 100/150/200/250 % display scaling: the tile on the inner pages' white
+  // header, and a purple side panel on the welcome and finish pages.
+  for (final (pct, small, wide, tall) in [(100, 55, 164, 314), (150, 83, 246, 459), (200, 110, 328, 628), (250, 138, 410, 797)]) {
+    _bmp(at('installer/wizard_small_$pct.bmp'), _onWhite(_render(small, tile: _Tile.rounded, inset: 0.04)));
+    _bmp(at('installer/wizard_large_$pct.bmp'), _panel(wide, tall));
+  }
 
   // ---- Tray ---------------------------------------------------------------------
   final trayFrames = [for (final s in [16, 20, 24, 32, 48]) _render(s, tile: _Tile.rounded)];
@@ -103,13 +126,90 @@ void _png(String path, img.Image image) {
   stdout.writeln('  $path (${image.width}x${image.height})');
 }
 
+void _bmp(String path, img.Image image) {
+  File(path).writeAsBytesSync(img.encodeBmp(image));
+  stdout.writeln('  $path (${image.width}x${image.height})');
+}
+
+/// [image] composited over white, without alpha.
+img.Image _onWhite(img.Image image) {
+  final out = img.Image(width: image.width, height: image.height);
+  for (final p in image) {
+    final a = p.a / 255;
+    out.setPixelRgb(p.x, p.y, (p.r * a + 255 * (1 - a)).round(), (p.g * a + 255 * (1 - a)).round(), (p.b * a + 255 * (1 - a)).round());
+  }
+  return out;
+}
+
+/// The purple gradient [w] x [h] with the mark in the upper part (installer
+/// side panel).
+img.Image _panel(int w, int h) {
+  final out = img.Image(width: w, height: h);
+  final mark = MarkGeometry(w.toDouble(), cx: w / 2, cy: h * 0.40, radius: 0.30);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      final (gr, gg, gb) = _gradient(((x + 0.5) / w + (y + 0.5) / h) / 2);
+      final c = _markCov(x + 0.5, y + 0.5, mark);
+      out.setPixelRgb(x, y, _mix(gr, _yellow.$1, c).round(), _mix(gg, _yellow.$2, c).round(), _mix(gb, _yellow.$3, c).round());
+    }
+  }
+  return out;
+}
+
+/// The logo on its tile as SVG, [size] units square, from the same geometry.
+String _svg(int size) {
+  final s = size.toDouble();
+  final m = MarkGeometry(s, cx: s / 2, cy: s / 2);
+  String n(double v) {
+    final t = v.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+    return t.isEmpty ? '0' : t;
+  }
+
+  final (cx, cy, r, ri) = (m.cx, m.cy, m.r, m.roofInner);
+  final roof = 'M${n(cx - r)} ${n(cy)}L${n(cx)} ${n(cy - r)}L${n(cx + r)} ${n(cy)}L${n(cx + ri)} ${n(cy)}'
+      'A${n(ri)} ${n(ri)} 0 0 0 ${n(cx - ri)} ${n(cy)}Z';
+  final (a, b) = m.arc!;
+  final arc = 'M${n(cx - b)} ${n(cy)}A${n(b)} ${n(b)} 0 0 1 ${n(cx + b)} ${n(cy)}L${n(cx + a)} ${n(cy)}'
+      'A${n(a)} ${n(a)} 0 0 0 ${n(cx - a)} ${n(cy)}Z';
+  // Each bar is the slice of the lower triangle between its top and bottom.
+  final bars = [
+    for (final (top, bottom) in m.bars)
+      'M${n(cx - (r - top))} ${n(cy + top)}L${n(cx + (r - top))} ${n(cy + top)}'
+          'L${n(cx + (r - bottom))} ${n(cy + bottom)}L${n(cx - (r - bottom))} ${n(cy + bottom)}Z',
+  ].join();
+  String hex((int, int, int) c) => '#${[c.$1, c.$2, c.$3].map((v) => v.toRadixString(16).padLeft(2, '0').toUpperCase()).join()}';
+  return '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 $size $size" width="$size" height="$size" role="img" aria-label="NEFORUM">
+  <title>NEFORUM</title>
+  <defs>
+    <linearGradient id="nf-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${hex(_c0)}"/>
+      <stop offset="0.5" stop-color="${hex(_c1)}"/>
+      <stop offset="1" stop-color="${hex(_c2)}"/>
+    </linearGradient>
+    <mask id="nf-window" maskUnits="userSpaceOnUse" x="0" y="0" width="$size" height="$size">
+      <rect width="$size" height="$size" fill="#fff"/>
+      <circle cx="${n(cx)}" cy="${n(cy)}" r="${n(m.windowRadius)}" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="$size" height="$size" rx="${n(s * 0.30)}" fill="url(#nf-tile)"/>
+  <g fill="${hex(_yellow)}">
+    <path d="$roof"/>
+    <path d="$arc"/>
+    <path d="$bars" mask="url(#nf-window)"/>
+    <circle cx="${n(cx)}" cy="${n(cy)}" r="${n(m.pointRadius)}"/>
+  </g>
+</svg>
+''';
+}
+
 /// Renders the icon at [size] px.
 ///
 /// [inset] shrinks the tile inside the canvas (fraction of size), [radius]
 /// is the diamond's half-diagonal as a fraction of the tile (or of the
 /// canvas without a tile), [markless] draws only the tile, [mono] draws the
 /// mark in black on transparency (template / monochrome icons), [opaque]
-/// fills transparent pixels (iOS forbids alpha).
+/// fills transparent pixels (iOS forbids alpha), [white] makes a [mono]
+/// mark white instead of black (Android status bar icons).
 img.Image _render(
   int size, {
   _Tile tile = _Tile.rounded,
@@ -117,6 +217,7 @@ img.Image _render(
   double radius = MarkGeometry.defaultRadius,
   bool markless = false,
   bool mono = false,
+  bool white = false,
   bool opaque = false,
   bool shadow = false,
 }) {
@@ -169,10 +270,8 @@ img.Image _render(
       if (!markless) {
         final markCov = _markCov(px, py, mark);
         if (mono) {
-          // Black shapes; alpha carries the shape.
-          r = 0;
-          g = 0;
-          b = 0;
+          // One colour; alpha carries the shape.
+          r = g = b = white ? 255 : 0;
           a = math.max(a, markCov);
         } else if (markCov > 0) {
           // Yellow over the tile, mixed in linear light so the edges stay

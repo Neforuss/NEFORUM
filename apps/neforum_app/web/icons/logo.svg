@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="NEFORUM">
+  <title>NEFORUM</title>
+  <defs>
+    <linearGradient id="nf-tile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9426FF"/>
+      <stop offset="0.5" stop-color="#7D00FF"/>
+      <stop offset="1" stop-color="#5C00C4"/>
+    </linearGradient>
+    <mask id="nf-window" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <circle cx="512" cy="512" r="116.74" fill="#000"/>
+    </mask>
+  </defs>
+  <rect width="1024" height="1024" rx="307.2" fill="url(#nf-tile)"/>
+  <g fill="#FFFF00">
+    <path d="M122.88 512L512 122.88L901.12 512L729.91 512A217.91 217.91 0 0 0 294.09 512Z"/>
+    <path d="M329.11 512A182.89 182.89 0 0 1 694.89 512L628.74 512A116.74 116.74 0 0 0 395.26 512Z"/>
+    <path d="M155.31 544.43L868.69 544.43L836.27 576.85L187.73 576.85ZM220.16 609.28L803.84 609.28L771.41 641.71L252.59 641.71ZM285.01 674.13L738.99 674.13L706.56 706.56L317.44 706.56ZM349.87 738.99L674.13 738.99L641.71 771.41L382.29 771.41ZM414.72 803.84L609.28 803.84L576.85 836.27L447.15 836.27ZM479.57 868.69L544.43 868.69L512 901.12L512 901.12Z" mask="url(#nf-window)"/>
+    <circle cx="512" cy="512" r="50.59"/>
+  </g>
+</svg>

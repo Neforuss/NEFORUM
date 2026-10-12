@@ -27,4 +27,8 @@ abstract class DesktopIntegration {
   bool get launchAtLoginSupported;
   Future<bool> isLaunchAtLoginEnabled();
   Future<bool> setLaunchAtLogin(bool enabled);
+
+  /// The NEFORUM icon file Windows shows on notifications (the bundled
+  /// assets/brand/notify_icon.png), or null elsewhere or when it is missing.
+  String? get notificationIconPath;
 }

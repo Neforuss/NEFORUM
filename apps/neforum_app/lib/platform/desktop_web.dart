@@ -23,4 +23,6 @@ class _NoDesktop implements DesktopIntegration {
   Future<bool> isLaunchAtLoginEnabled() async => false;
   @override
   Future<bool> setLaunchAtLogin(bool enabled) async => false;
+  @override
+  String? get notificationIconPath => null;
 }

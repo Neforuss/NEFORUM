@@ -43,6 +43,9 @@ UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 LicenseFile=..\..\..\LICENSE
 WizardStyle=modern
+; NEFORUM artwork (tool/generate_icons.dart) at 100/150/200/250 % scaling.
+WizardImageFile=wizard_large_100.bmp,wizard_large_150.bmp,wizard_large_200.bmp,wizard_large_250.bmp
+WizardSmallImageFile=wizard_small_100.bmp,wizard_small_150.bmp,wizard_small_200.bmp,wizard_small_250.bmp
 Compression=lzma2/max
 SolidCompression=yes
 ; NEFORUM keeps running in the tray; make sure it is closed before files are

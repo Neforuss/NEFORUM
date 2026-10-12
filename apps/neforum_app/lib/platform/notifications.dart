@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
+import 'desktop.dart';
 import 'env.dart';
 
 /// What a tapped notification asks the app to do.
@@ -48,6 +50,10 @@ class PublishDueIntent extends NotificationIntent {
 
 /// Action id of the "Publish now" button on due-post reminders.
 const String kPublishAction = 'publish';
+
+/// The NEFORUM mark as Android's notification (status bar) icon, made by
+/// tool/generate_icons.dart and kept from resource shrinking by res/raw/keep.xml.
+const String kAndroidNotificationIcon = '@drawable/ic_stat_neforum';
 
 /// Set by main.dart: runs when a notification action is used while the app
 /// is not running (iOS background action). Must be a top-level function.
@@ -112,8 +118,10 @@ class NotificationService {
         ]),
       ],
     );
+    // Apple platforms show the app icon (AppIcon in the asset catalog) on
+    // notifications by themselves; Android and Windows need to be told.
     final settings = InitializationSettings(
-      android: const AndroidInitializationSettings('@mipmap/ic_launcher'),
+      android: const AndroidInitializationSettings(kAndroidNotificationIcon),
       iOS: darwin,
       macOS: darwin,
       linux: LinuxInitializationSettings(defaultActionName: 'Open NEFORUM'),
@@ -121,6 +129,9 @@ class NotificationService {
         appName: 'NEFORUM',
         appUserModelId: 'org.neforum.NEFORUM',
         guid: '6f2b9c8e-4a51-4d7e-9b3c-1e0a7d5f2c94',
+        // Registered as the app's notification icon (IconUri); without it
+        // Windows shows a blank square.
+        iconPath: DesktopIntegration.instance.notificationIconPath,
       ),
     );
     try {
@@ -173,6 +184,8 @@ class NotificationService {
           importance: channel.importance,
           priority: channel.importance == Importance.high ? Priority.high : Priority.defaultPriority,
           category: AndroidNotificationCategory.reminder,
+          icon: kAndroidNotificationIcon,
+          color: const Color(0xFF7D00FF),
         ),
         iOS: DarwinNotificationDetails(categoryIdentifier: category, interruptionLevel: category == 'neforum.due' ? InterruptionLevel.timeSensitive : null),
         macOS: DarwinNotificationDetails(categoryIdentifier: category),

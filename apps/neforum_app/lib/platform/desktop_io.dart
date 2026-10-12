@@ -176,4 +176,12 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
       return false;
     }
   }
+
+  @override
+  String? get notificationIconPath {
+    if (!Env.isWindows) return null;
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final icon = File('$exeDir\\data\\flutter_assets\\assets\\brand\\notify_icon.png');
+    return icon.existsSync() ? icon.path : null;
+  }
 }

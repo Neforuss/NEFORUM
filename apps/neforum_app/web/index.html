@@ -22,26 +22,20 @@
     :root { color-scheme: dark light; }
     html, body { margin: 0; height: 100%; background: #0D0916; }
     @media (prefers-color-scheme: light) { html, body { background: #F6F4FA; } }
-    /* Shown until Flutter paints its first frame. */
+    /* Shown until Flutter paints its first frame: the NEFORUM logo
+       (icons/logo.svg, made by tool/generate_icons.dart). */
     #splash { position: fixed; inset: 0; display: grid; place-items: center; }
     #splash .mark {
-      width: 72px; height: 72px; border-radius: 22px;
-      position: relative;
-      background: linear-gradient(135deg, #9426FF 0%, #7D00FF 50%, #5C00C4 100%);
-      box-shadow: 0 18px 40px -16px rgba(125, 0, 255, .6);
+      width: 72px; height: 72px; display: block;
+      filter: drop-shadow(0 14px 20px rgba(125, 0, 255, .45));
       animation: pulse 1.6s ease-in-out infinite;
-    }
-    /* The yellow source point of the mark. */
-    #splash .mark::after {
-      content: ''; position: absolute; width: 10px; height: 10px; border-radius: 50%;
-      left: 19px; top: 31px; background: #FFFF00;
     }
     @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.94); opacity: .8; } }
     @media (prefers-reduced-motion: reduce) { #splash .mark { animation: none; } }
   </style>
 </head>
 <body>
-  <div id="splash" aria-label="Loading NEFORUM"><div class="mark"></div></div>
+  <div id="splash" aria-label="Loading NEFORUM"><img class="mark" src="icons/logo.svg" alt=""></div>
   <script>
     // Remove the splash once Flutter has drawn its first frame.
     window.addEventListener('flutter-first-frame', function () {
