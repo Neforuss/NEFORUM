@@ -18,6 +18,7 @@
 
   const CSS = `
     :host { all: initial; }
+    [hidden] { display: none !important; }
     .p { position: fixed; right: 16px; bottom: 16px; z-index: 2147483647; width: 320px; max-width: calc(100vw - 32px);
       font: 13px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #f4efff; background: #16062F;
       border: 1px solid #3b1d6e; border-radius: 14px; box-shadow: 0 18px 50px rgba(20, 0, 50, .45); overflow: hidden; }
@@ -37,7 +38,14 @@
     .snip { display: flex; align-items: center; gap: 6px; background: #22094a; border-radius: 9px; padding: 5px 6px 5px 9px; }
     .snip span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e8dcff; }
     .note { color: #a995d9; font-size: 12px; }
+    kbd { font: 600 11px/1 ui-monospace, "Cascadia Mono", Menlo, monospace; padding: 2px 5px; border-radius: 5px; background: rgba(22, 6, 47, .18); }
+    button.a:not(.primary) kbd { background: #16062F; color: #e8dcff; }
   `;
+
+  const IS_MAC = /Mac|iPhone|iPad/.test(navigator.userAgentData?.platform ?? navigator.platform ?? navigator.userAgent);
+
+  /** Ctrl+Enter, or ⌘+Enter on a Mac. */
+  NF.postKeys = IS_MAC ? '⌘+Enter' : 'Ctrl+Enter';
 
   function el(tag, attrs = {}, ...children) {
     const e = document.createElement(tag);
@@ -52,7 +60,7 @@
 
   /**
    * Shows the panel for [job]. [actions] = { fill, insertText, attach,
-   * insertSnippet(text) }. Returns { set, done, close }.
+   * insertSnippet(text), post, stop }. Returns { set, done, setPost, close }.
    */
   function mount(job, actions) {
     document.getElementById('neforum-ext-panel')?.remove();
@@ -70,6 +78,14 @@
         el('button', { class: 'a', onclick: () => actions.insertSnippet(s.text) }, 'Insert')),
     );
 
+    // Post now: only a real click (a script's click is not trusted) posts.
+    const postBtn = el('button', { class: 'a primary', hidden: '', title: `Press the site's Post button (${NF.postKeys})`, onclick: (e) => e.isTrusted && actions.post?.() },
+      'Post now ', el('kbd', {}, NF.postKeys));
+    const stopBtn = el('button', { class: 'a', hidden: '', onclick: (e) => e.isTrusted && actions.stop?.() }, 'Stop');
+    const fillBtn = el('button', { class: 'a primary', onclick: () => actions.fill() }, 'Fill in again');
+    const note = el('div', { class: 'note' },
+      job.quickPost ? `Check the post, then press ${NF.postKeys} (or Post now) to post it.` : 'NEFORUM fills in the post. Check it, then press Post yourself.');
+
     const box = el('div', { class: 'p', role: 'dialog', 'aria-label': `NEFORUM: post to ${job.platformName}` },
       el('div', { class: 'h' }, logo.firstChild, el('b', {}, 'NEFORUM'), el('span', {}, job.platformName),
         el('button', { class: 'x', title: 'Hide', 'aria-label': 'Hide', onclick: close }, '×')),
@@ -77,11 +93,13 @@
         status,
         list,
         el('div', { class: 'row' },
-          el('button', { class: 'a primary', onclick: () => actions.fill() }, 'Fill in again'),
+          postBtn,
+          stopBtn,
+          fillBtn,
           job.text ? el('button', { class: 'a', title: 'Into the box you clicked last', onclick: () => actions.insertText() }, 'Insert text') : '',
           job.media?.length ? el('button', { class: 'a', onclick: () => actions.attach() }, job.media.length === 1 ? 'Attach file' : `Attach ${job.media.length} files`) : ''),
         ...snippets,
-        el('div', { class: 'note' }, 'NEFORUM fills in the post. Check it, then press Post yourself.')));
+        note));
 
     root.append(el('style', {}, CSS), box);
     document.documentElement.append(host);
@@ -96,6 +114,17 @@
         status.className = `s ${tone}`;
         status.textContent = headline;
         list.replaceChildren(...lines.map((l) => el('li', {}, l)));
+      },
+      /**
+       * The Post now part: 'off' (not offered), 'ready' (Post now shown),
+       * 'busy' (waiting or posting: Stop shown), 'done' (posted).
+       */
+      setPost(state) {
+        postBtn.hidden = state !== 'ready';
+        stopBtn.hidden = state !== 'busy';
+        fillBtn.className = state === 'ready' ? 'a' : 'a primary';
+        fillBtn.hidden = state === 'busy' || state === 'done';
+        if (state === 'done') note.textContent = 'Posted from this page. NEFORUM marks the hand-off as done.';
       },
       close,
     };

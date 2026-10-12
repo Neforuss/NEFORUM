@@ -1,7 +1,8 @@
 // NEFORUM browser extension: content script entry. When NEFORUM has a
 // hand-off waiting for this site, it shows the panel, fetches the media
 // through the background script, fills in the composer with the site's
-// recipe and tells NEFORUM how it went.
+// recipe and tells NEFORUM how it went. When the job allows it, the user's
+// own Ctrl+Enter (⌘+Enter) or Post now click presses the site's Post button.
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -9,7 +10,7 @@
   NF.main = true;
 
   const api = globalThis.browser ?? globalThis.chrome;
-  const { waitFor, findEditor, editableOf, insertText, attachFiles, setInputFiles, sleep } = NF.fill;
+  const { waitFor, findEditor, editableOf, insertText, attachFiles, setInputFiles, sleep, enabled, findPostButton, waitPosted, pressPost } = NF.fill;
 
   async function ask(type, extra = {}) {
     const r = await api.runtime.sendMessage({ type, ...extra });
@@ -67,6 +68,10 @@
   let busy = false;
   let files = null;
 
+  /** The editor the text went into, and what the last fill reported. */
+  let lastEditor = null;
+  let lastResult = null;
+
   /** The files already attached on this page (names and sizes), so a refill does not add them twice. */
   let attached = null;
   const mediaKey = (job) => JSON.stringify((job.media ?? []).map((m) => [m.name, m.size]));
@@ -97,6 +102,7 @@
           done.problems.push('Could not find the text box: click into it, then Insert text.');
           return;
         }
+        lastEditor = editor;
         done.text = !!(await insertText(editor, job.text, { replace: !!recipe.replaceText || refill }));
         if (!done.text) done.problems.push('The text box did not take the text: click into it, then Insert text (or paste with Ctrl+V).');
       };
@@ -152,13 +158,152 @@
     lines.push(...done.notes, ...done.problems);
     const all = done.text && (!job.media?.length || done.media > 0);
     const status = all && !done.problems.length ? 'filled' : done.text || done.media ? 'partial' : 'failed';
+    const check = job.quickPost ? `Check it, then press ${NF.postKeys} to post.` : 'Check it and press Post.';
     panel.done({
-      headline: status === 'filled' ? 'Filled in. Check it and press Post.' : status === 'partial' ? 'Partly filled in.' : 'Could not fill this page in.',
+      headline: status === 'filled' ? `Filled in. ${check}` : status === 'partial' ? 'Partly filled in.' : 'Could not fill this page in.',
       tone: status === 'filled' ? 'ok' : status === 'partial' ? 'warn' : 'err',
       lines,
     });
-    ask('result', { jobId: job.id, result: { status, text: done.text, media: done.media, message: done.problems.join(' ') } }).catch(() => {});
+    lastResult = { status, text: done.text, media: done.media, message: done.problems.join(' ') };
+    if (!posted) panel.setPost(job.quickPost ? 'ready' : 'off');
+    ask('result', { jobId: job.id, result: lastResult }).catch(() => {});
   }
+
+  // ---- posting: only for the user's own key press or click ------------------
+
+  /** The job and panel on this page; [ready]: filling is over, posting may start. */
+  let current = null;
+  let posting = false;
+  let posted = false;
+  let stopRequested = false;
+
+  /** Where this job's Post button is: { button, scope, before } or null. */
+  function locate(job) {
+    const recipe = NF.recipeFor(job.platformId);
+    const root = recipe.postRoot?.() ?? recipe.root?.() ?? document;
+    const editor = lastEditor?.isConnected ? lastEditor : findEditor(root);
+    const found = findPostButton({ from: editor, root, selectors: recipe.postSelectors ?? [], words: recipe.postWords });
+    if (found) return { ...found, editor };
+    // A Next screen before Post (Facebook): pressing Next is part of posting.
+    const next = recipe.beforePostWords && findPostButton({ from: editor, root, words: recipe.beforePostWords });
+    return next ? { ...next, editor, before: true } : null;
+  }
+
+  /** Is the user typing somewhere else on the page (a search box, a chat)? */
+  function focusedElsewhere(scope) {
+    const ae = document.activeElement;
+    if (!ae || ae === document.body || ae === document.documentElement || ae.id === 'neforum-ext-panel') return false;
+    return !scope.contains(ae);
+  }
+
+  /**
+   * Presses Post for the user: waits while it is greyed out (an upload still
+   * running), goes through a Next screen if there is one, presses Post once,
+   * then watches for the composer to close and tells NEFORUM.
+   */
+  async function postNow(target) {
+    const c = current;
+    if (!c || posting || posted) return;
+    const { job, panel } = c;
+    posting = true;
+    stopRequested = false;
+    panel.setPost('busy');
+    const stopped = () => stopRequested;
+    try {
+      let t = target ?? locate(job);
+      for (let step = 0; step < 3 && t; step++) {
+        if (!enabled(t.button)) {
+          panel.set(`Waiting for ${job.platformName} to be ready (an upload may still be running)… Esc stops.`);
+          t = await waitFor(() => {
+            if (stopped()) return 'stop';
+            const again = locate(job);
+            return again && enabled(again.button) ? again : null;
+          }, { timeout: 180000, interval: 300 });
+          if (t === 'stop' || !t) {
+            panel.set(t ? 'Stopped. Nothing was posted.' : 'The Post button stayed greyed out. Check the page, then press Post yourself.', 'warn');
+            panel.setPost('ready');
+            return;
+          }
+        }
+        if (stopped()) {
+          panel.set('Stopped. Nothing was posted.', 'warn');
+          panel.setPost('ready');
+          return;
+        }
+        if (!t.before) break;
+        // The Next screen: press it, then find Post on the next screen.
+        pressPost(t.button);
+        panel.set('Going to the last screen…');
+        const after = await waitFor(() => (stopped() ? 'stop' : (() => {
+          const x = locate(job);
+          return x && !x.before ? x : null;
+        })()), { timeout: 10000 });
+        t = after === 'stop' ? null : after;
+        if (!t) {
+          panel.set(after === 'stop' ? 'Stopped. Nothing was posted.' : 'Could not find the Post button on the next screen: press it yourself.', 'warn');
+          panel.setPost(after === 'stop' ? 'ready' : 'off');
+          return;
+        }
+      }
+      if (!t) {
+        panel.set('Could not find the Post button: press it yourself.', 'warn');
+        panel.setPost('ready');
+        return;
+      }
+
+      // Once per hand-off, even if the page is reloaded.
+      posted = true;
+      try {
+        sessionStorage.setItem(`neforum-posted-${job.id}`, '1');
+      } catch {
+        // Storage blocked: [posted] still stops a second press on this page.
+      }
+      panel.set('Posting…');
+      pressPost(t.button);
+      const ok = await waitPosted({ button: t.button, editor: t.editor, text: job.text });
+      panel.done({
+        headline: ok ? `Posted on ${job.platformName}.` : 'Pressed Post.',
+        tone: ok ? 'ok' : 'warn',
+        lines: ok ? [] : [`${job.platformName} did not close the composer. Check the page: it may want something else first. If the post did not go, press its Post button.`],
+      });
+      panel.setPost(ok ? 'done' : 'off');
+      const result = lastResult ?? { status: 'filled', text: !!job.text, media: job.media?.length ?? 0, message: '' };
+      ask('result', { jobId: job.id, result: { ...result, posted: ok ? 'confirmed' : 'pressed' } }).catch(() => {});
+    } finally {
+      posting = false;
+    }
+  }
+
+  // Ctrl+Enter (⌘+Enter): a real key press only (scripts' events are not trusted).
+  addEventListener('keydown', (e) => {
+    if (!e.isTrusted || e.repeat || e.isComposing) return;
+    if (e.key === 'Escape' && posting) {
+      stopRequested = true;
+      return;
+    }
+    if (e.key !== 'Enter' || !(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+    const c = current;
+    if (!c?.ready || !c.job.quickPost || posted) return;
+    const swallow = () => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    if (posting) return swallow();
+    if (busy) {
+      swallow();
+      c.panel.set(`Still filling in. Press ${NF.postKeys} again when it is done.`, 'warn');
+      return;
+    }
+    const target = locate(c.job);
+    // No button found: leave the key to the site (some post on Ctrl+Enter themselves).
+    if (!target) {
+      c.panel.set('Could not find this site\'s Post button: press it yourself.', 'warn');
+      return;
+    }
+    if (focusedElsewhere(target.scope)) return;
+    swallow();
+    postNow(target);
+  }, true);
 
   /** The newest job for this page (NEFORUM's "Fill in again" makes a new one). */
   async function latest(job) {
@@ -186,7 +331,17 @@
       if (trigger === 'popup') alert('NEFORUM: nothing is waiting for this site. In NEFORUM, open the hand-off and click Open.');
       return;
     }
+    // NEFORUM opened the page in another browser (the user's first choice):
+    // that one fills it in. Here only "Fill in this page" does.
+    if (trigger === 'auto' && job.preferred === false) return;
 
+    posted = (() => {
+      try {
+        return !!sessionStorage.getItem(`neforum-posted-${job.id}`);
+      } catch {
+        return false;
+      }
+    })();
     const panel = NF.panel.mount(job, {
       fill: async () => {
         job = await latest(job);
@@ -209,12 +364,27 @@
         const ok = target && (await insertText(target, text));
         panel.set(ok ? 'Inserted.' : 'Click into the field first, then Insert.', ok ? 'ok' : 'warn');
       },
+      post: () => {
+        if (busy) return panel.set(`Still filling in. Press Post now again when it is done.`, 'warn');
+        postNow(null);
+      },
+      stop: () => {
+        stopRequested = true;
+      },
     });
+    current = { job, panel, ready: false };
+    if (posted) {
+      panel.set('Already posted from this page.', 'ok');
+      panel.setPost('done');
+      return;
+    }
 
     // Fill in once per hand-off automatically; again only when asked.
     const key = `neforum-filled-${job.id}`;
     if (trigger === 'auto' && sessionStorage.getItem(key)) {
-      panel.set('Already filled in once. Use Fill in again if something is missing.');
+      panel.set(job.quickPost ? `Already filled in once. Press ${NF.postKeys} to post, or Fill in again if something is missing.` : 'Already filled in once. Use Fill in again if something is missing.');
+      current.ready = true;
+      panel.setPost(job.quickPost ? 'ready' : 'off');
       return;
     }
     try {
@@ -225,6 +395,7 @@
     if (document.readyState !== 'complete') await new Promise((r) => addEventListener('load', r, { once: true }));
     await sleep(800); // let the site's own scripts build the composer
     await fill(job, panel);
+    current.ready = true;
   }
 
   api.runtime.onMessage.addListener((msg) => {

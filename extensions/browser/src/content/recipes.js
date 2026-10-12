@@ -4,7 +4,9 @@
 // handle falls back to the generic helpers in fill.js, so a site redesign
 // degrades to "click the box, the rest still works" instead of breaking.
 //
-// Recipes never press Post / Share / Publish.
+// Recipes never press Post / Share / Publish themselves. They only say where
+// that button is (postSelectors, postWords, beforePostWords for a "Next"
+// screen first), for the user's own Ctrl+Enter or Post now (main.js).
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -25,14 +27,19 @@
 
   const recipes = {
     // Composer links already carry the text; media goes into the composer.
-    x: { root: dialog, fileInput: () => document.querySelector('input[data-testid="fileInput"]') },
-    bluesky: { root: dialog, prefer: ['paste', 'input', 'drop'] },
+    x: {
+      root: dialog,
+      fileInput: () => document.querySelector('input[data-testid="fileInput"]'),
+      postSelectors: ['[data-testid="tweetButton"]', '[data-testid="tweetButtonInline"]'],
+      postWords: ['post', 'post all', 'reply'],
+    },
+    bluesky: { root: dialog, prefer: ['paste', 'input', 'drop'], postSelectors: ['[data-testid="composerPublishBtn"]'], postWords: ['post', 'publish post', 'reply'] },
     threads: { root: dialog },
-    linkedin: { root: dialog },
-    reddit: {},
-    tumblr: {},
-    mastodon: {},
-    misskey: {},
+    linkedin: { root: dialog, postSelectors: ['.share-actions__primary-action'] },
+    reddit: { postSelectors: ['#inner-post-submit-button', '#submit-post-button'] },
+    tumblr: { postWords: ['post now', 'post'] },
+    mastodon: { postSelectors: ['.compose-form__publish button'], postWords: ['post', 'publish', 'publish!', 'toot!'] },
+    misskey: { postWords: ['note', 'post'] },
 
     facebook: {
       // Page or profile: open "What's on your mind?" when the composer is not open yet.
@@ -41,6 +48,8 @@
         await openWith(() => findByText('[role="button"], div[tabindex="0"]', /what.?s on your mind|create (a )?post|write something/i));
       },
       root: dialog,
+      // Some composers have a Next screen (audience, boost) before Post.
+      beforePostWords: ['next'],
     },
 
     youtube_posts: {
@@ -54,6 +63,7 @@
         );
       },
       editor: () => document.querySelector('ytd-backstage-post-dialog-renderer #contenteditable-root, #contenteditable-root[contenteditable="true"]'),
+      postSelectors: ['ytd-backstage-post-dialog-renderer #submit-button button', 'ytd-backstage-post-dialog-renderer #submit-button'],
       // Images need the image option chosen first.
       async beforeMedia() {
         const imageButton = findByText('button, [role="button"], yt-button-shape button', /^\s*(image|images|add image|photo)\s*$/i);
@@ -90,6 +100,8 @@
           { timeout: 30000 },
         ),
       prefer: ['input', 'drop'],
+      // Greyed out until the upload is done; Post now waits for it.
+      postSelectors: ['button[data-e2e="post_video_button"]', '[data-e2e="post_video_button"]'],
     },
 
     instagram: {
@@ -118,6 +130,8 @@
         }
       },
       editor: () => waitFor(() => document.querySelector('[role="dialog"] [aria-label^="Write a caption"]') ?? findEditor(dialog() ?? document, /caption/i), { timeout: 15000 }),
+      postRoot: dialog,
+      postWords: ['share'],
     },
 
     pinterest: {
@@ -125,11 +139,16 @@
       prefer: ['input', 'drop'],
       title: () => findEditor(document, /add a title|title/i),
       editor: () => findEditor(document, /description|tell everyone|detailed description/i),
+      postWords: ['publish'],
     },
 
-    google_business: {},
+    google_business: { postWords: ['post', 'publish'] },
     snapchat: { prefer: ['input', 'drop'] },
-    whatsapp: { prefer: ['paste', 'input'] },
+    whatsapp: {
+      prefer: ['paste', 'input'],
+      postSelectors: ['button[aria-label="Send"]', '[data-icon="send"]', '[data-icon="wds-ic-send-filled"]'],
+      postWords: ['send'],
+    },
   };
 
   /** The recipe for a job (platform id), falling back to the generic one. */

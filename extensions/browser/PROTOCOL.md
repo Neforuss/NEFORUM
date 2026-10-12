@@ -59,12 +59,20 @@ A job matches when `host`, without a leading `www.`, equals one of the job's `ho
   "snippets": [{"label": "Answer 1", "text": "Yes"}],
   "media": [{"index": 0, "name": "photo.jpg", "mimeType": "image/jpeg", "size": 123456, "kind": "image"}],
   "steps": "The hand-off's numbered steps (markdown), shown in the extension's panel",
+  "quickPost": true,                // the user may post from the page (Ctrl+Enter / Post now)
   "createdAt": "2026-10-12T10:00:00Z",
-  "expiresAt": "2026-10-12T10:10:00Z"
+  "expiresAt": "2026-10-12T10:10:00Z",
+  "preferred": true                 // this browser is the one NEFORUM opened the page in
 }
 ```
 
 There is at most one job at a time (the newest). It expires 10 minutes after it was made.
+
+`preferred` is per request: when NEFORUM opened the page in a particular browser (the first
+installed one in the user's order of paired browsers), only browsers of that kind (Chrome,
+Firefox, Edge...) get `true`. Others must not fill the page in on their own; they still may when
+the user asks (the popup's **Fill in this page**). When NEFORUM used the system's default browser,
+every paired browser gets `true`.
 
 ### `GET /v1/job/<id>/media/<index>` (token)
 
@@ -73,12 +81,21 @@ The file's bytes with its `Content-Type`. `404` for an unknown or expired job or
 ### `POST /v1/job/<id>/result` (token)
 
 What the extension managed to do, so the app's hand-off sheet can say so.
-Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "..."}`.
+Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed"}`.
 `204`. The job stays available until it expires, so the user can fill the page in again.
+
+`posted` (optional, only for jobs with `quickPost`): the user posted with the shortcut.
+`confirmed` means the composer closed or emptied afterwards (or the page moved on), and the app
+then marks the hand-off as posted; `pressed` means Post was pressed but the page gave no sign.
+The app ignores `posted` for jobs without `quickPost`.
 
 ## Rules for the extension
 
-- Never press the platform's Post / Share / Publish button. Filling the composer is the job;
-  the user reviews and posts.
+- Never press the platform's Post / Share / Publish button on its own. Only when the job has
+  `quickPost` and the user, after the page was filled in, presses **Ctrl+Enter** (**⌘+Enter**)
+  with a real key press (`isTrusted`) while not typing elsewhere on the page, or clicks the
+  panel's **Post now**. Once per job. When the button is greyed out (an upload still running),
+  wait for it; Esc or Stop cancels. Two candidate buttons at the same distance from the composer
+  means no click.
 - Never send anything from the page back to the app other than the result above.
 - Keep the token in `storage.local`; forget it on `401`.

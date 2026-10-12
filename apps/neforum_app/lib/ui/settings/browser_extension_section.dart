@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../platform/browser_bridge.dart';
+import '../../platform/env.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -96,6 +97,14 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
     showToast(context, 'This copy of NEFORUM has no extension files. The guide says where to get them.', icon: Icons.info_outline_rounded);
   }
 
+  static String _postKeys() => Env.isMacOS ? '⌘+Enter' : 'Ctrl+Enter';
+
+  Future<void> _swap() async {
+    await _bridge.swapFirstTwo();
+    final first = _bridge.browsers.value.firstOrNull;
+    if (mounted && first != null) showToast(context, '${first.label} is now your first choice', icon: Icons.swap_vert_rounded);
+  }
+
   Future<void> _remove(PairedBrowser b) async {
     await _bridge.remove(b.token);
     if (mounted) showToast(context, '${b.label} can no longer fill in posts. Pair it again to use it.', icon: Icons.link_off_rounded);
@@ -112,7 +121,7 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
         builder: (context, browsers, _) => SettingsSection(
           title: 'Browser extension',
           icon: Icons.extension_outlined,
-          subtitle: 'Fills in hand-offs on the website for you. You still press Post.',
+          subtitle: 'Fills in hand-offs on the website for you. You check the post, then post it.',
           children: [
             SettingSwitch(
               title: 'Let the extension fill in posts',
@@ -147,12 +156,42 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
             ),
             SettingRow(
               title: 'Paired browsers',
-              description: browsers.isEmpty ? 'None yet.' : null,
+              description: browsers.isEmpty
+                  ? 'None yet.'
+                  : _bridge.browserOrder.length > 1
+                      ? 'In order of choice. Hand-offs open in the first one that is installed, and only that one fills them in on its own.'
+                      : null,
+              trailing: _bridge.browserOrder.length > 1
+                  ? OutlinedButton.icon(onPressed: _swap, icon: const Icon(Icons.swap_vert_rounded, size: 18), label: const Text('Swap'))
+                  : null,
+              stackOnCompact: true,
               below: browsers.isEmpty
                   ? null
                   : Column(children: [
-                      for (final b in browsers) _BrowserTile(browser: b, now: _bridge.now(), onRemove: () => _remove(b)),
+                      for (var i = 0; i < browsers.length; i++)
+                        _BrowserTile(
+                          browser: browsers[i],
+                          now: _bridge.now(),
+                          first: i == 0 && browsers.length > 1,
+                          onMakeFirst: i == 0 ? null : () => _bridge.makeFirst(browsers[i].token),
+                          onRemove: () => _remove(browsers[i]),
+                        ),
                     ]),
+            ),
+            SettingSwitch(
+              title: 'Open hand-offs in my first-choice browser',
+              description: browsers.isEmpty
+                  ? 'Once a browser is paired, hand-offs open in it instead of your default browser.'
+                  : 'Hand-offs open in ${browsers.first.label}${browsers.length > 1 ? ' (the first one above that is installed)' : ''}, not your default browser.',
+              value: s.browserOpenInFirst,
+              onChanged: (v) => n.update((x) => x.copyWith(browserOpenInFirst: v)),
+            ),
+            SettingSwitch(
+              title: 'Post with ${_postKeys()}',
+              description: 'After filling in a page, the extension presses the site\'s Post button when you press ${_postKeys()} '
+                  'or its Post now button. Never on its own. Sites may count scripted clicks as automation, so check the post first.',
+              value: s.browserQuickPost,
+              onChanged: (v) => n.update((x) => x.copyWith(browserQuickPost: v)),
             ),
           ],
         ),
@@ -209,10 +248,16 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
 }
 
 class _BrowserTile extends StatelessWidget {
-  const _BrowserTile({required this.browser, required this.now, required this.onRemove});
+  const _BrowserTile({required this.browser, required this.now, required this.onRemove, this.first = false, this.onMakeFirst});
   final PairedBrowser browser;
   final DateTime now;
   final VoidCallback onRemove;
+
+  /// Shows the "First choice" badge.
+  final bool first;
+
+  /// Moves this browser to the top (null for the first one).
+  final VoidCallback? onMakeFirst;
 
   @override
   Widget build(BuildContext context) {
@@ -230,13 +275,18 @@ class _BrowserTile extends StatelessWidget {
         const SizedBox(width: Space.md),
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(browser.label, style: context.text.titleSmall),
+            Row(children: [
+              Flexible(child: Text(browser.label, style: context.text.titleSmall, overflow: TextOverflow.ellipsis)),
+              if (first) ...[const SizedBox(width: Space.sm), const StatusPill('First choice', tone: Tone.success, icon: Icons.star_rounded)],
+            ]),
             Text(
               'Paired ${DateFormat('d MMM y').format(browser.createdAt.toLocal())} · Last used ${used == 'now' ? 'just now' : used}',
               style: context.text.bodySmall?.copyWith(color: nf.textMuted),
             ),
           ]),
         ),
+        if (onMakeFirst != null)
+          IconButton(onPressed: onMakeFirst, tooltip: 'Make first choice', icon: const Icon(Icons.arrow_upward_rounded, size: 18), color: nf.textMuted),
         TextButton(onPressed: onRemove, style: TextButton.styleFrom(foregroundColor: nf.danger), child: const Text('Remove')),
       ]),
     );

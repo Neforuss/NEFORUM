@@ -32,6 +32,8 @@ class AppSettings {
     this.textCardPlainPlatforms = const [],
     this.delegateSchedules = true,
     this.browserExtension = true,
+    this.browserQuickPost = true,
+    this.browserOpenInFirst = true,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -59,6 +61,8 @@ class AppSettings {
         textCardPlainPlatforms: (j['textCardPlainPlatforms'] as List? ?? const []).cast<String>(),
         delegateSchedules: j['delegateSchedules'] as bool? ?? true,
         browserExtension: j['browserExtension'] as bool? ?? true,
+        browserQuickPost: j['browserQuickPost'] as bool? ?? true,
+        browserOpenInFirst: j['browserOpenInFirst'] as bool? ?? true,
       );
 
   final ThemeMode themeMode;
@@ -117,6 +121,14 @@ class AppSettings {
   /// (a server on 127.0.0.1 that only paired browsers can use).
   final bool browserExtension;
 
+  /// After filling in a page, the extension posts when the user presses
+  /// Ctrl+Enter (⌘+Enter) or its Post now button. Never on its own.
+  final bool browserQuickPost;
+
+  /// Open hand-off pages in the first paired browser that is installed (the
+  /// user's priority order) instead of the system's default browser.
+  final bool browserOpenInFirst;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -153,6 +165,8 @@ class AppSettings {
     List<String>? textCardPlainPlatforms,
     bool? delegateSchedules,
     bool? browserExtension,
+    bool? browserQuickPost,
+    bool? browserOpenInFirst,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -179,6 +193,8 @@ class AppSettings {
         textCardPlainPlatforms: textCardPlainPlatforms ?? this.textCardPlainPlatforms,
         delegateSchedules: delegateSchedules ?? this.delegateSchedules,
         browserExtension: browserExtension ?? this.browserExtension,
+        browserQuickPost: browserQuickPost ?? this.browserQuickPost,
+        browserOpenInFirst: browserOpenInFirst ?? this.browserOpenInFirst,
       );
 
   Map<String, dynamic> toJson() => {
@@ -206,5 +222,7 @@ class AppSettings {
         'textCardPlainPlatforms': textCardPlainPlatforms,
         'delegateSchedules': delegateSchedules,
         'browserExtension': browserExtension,
+        'browserQuickPost': browserQuickPost,
+        'browserOpenInFirst': browserOpenInFirst,
       };
 }

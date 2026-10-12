@@ -124,6 +124,8 @@ class BrowserJob {
     this.snippets = const [],
     this.media = const [],
     this.steps = '',
+    this.quickPost = false,
+    this.target,
     required this.createdAt,
     required this.expiresAt,
   });
@@ -138,10 +140,22 @@ class BrowserJob {
   final List<HandoffSnippet> snippets;
   final List<BrowserJobMedia> media;
   final String steps;
+
+  /// The extension may post when the user presses Ctrl+Enter (⌘+Enter) or
+  /// its Post now button.
+  final bool quickPost;
+
+  /// The browser NEFORUM opened the page in (a [browserFamily]), which fills
+  /// it in on its own; other paired browsers fill in only when asked. Null:
+  /// any browser.
+  final String? target;
   final DateTime createdAt;
   final DateTime expiresAt;
 
   bool isExpiredAt(DateTime now) => !now.isBefore(expiresAt);
+
+  /// Is a browser labelled [label] the one meant to fill this in on its own?
+  bool prefers(String label) => target == null || browserFamily(label) == target;
 
   /// [host] (a page's `location.host`) without a leading `www.` equals one
   /// of [hosts] without `www.`.
@@ -164,6 +178,7 @@ class BrowserJob {
             {'index': i, 'name': media[i].name, 'mimeType': media[i].mimeType, 'size': media[i].size, 'kind': media[i].kind},
         ],
         'steps': steps,
+        'quickPost': quickPost,
         'createdAt': _isoSeconds(createdAt),
         'expiresAt': _isoSeconds(expiresAt),
       };
@@ -174,11 +189,33 @@ class BrowserJob {
 
 enum BrowserFillStatus { filled, partial, failed }
 
+/// Whether the user posted from the page with the extension's shortcut.
+enum BrowserPostState {
+  /// Not posted with the shortcut (the user may still press Post themselves).
+  none,
+
+  /// The extension pressed Post but could not see the post go out.
+  pressed,
+
+  /// The extension pressed Post and the composer closed or emptied.
+  confirmed,
+}
+
 /// What the extension reported after filling in a page
 /// (`POST /v1/job/<id>/result`).
 @immutable
 class BrowserFillResult {
-  const BrowserFillResult({required this.jobId, required this.host, required this.status, this.text = false, this.media = 0, this.message, required this.at});
+  const BrowserFillResult({
+    required this.jobId,
+    required this.host,
+    required this.status,
+    this.text = false,
+    this.media = 0,
+    this.message,
+    this.posted = BrowserPostState.none,
+    this.browser,
+    required this.at,
+  });
   final String jobId;
 
   /// The site that asked for the job (or the job's own host).
@@ -191,7 +228,22 @@ class BrowserFillResult {
   /// How many files went in.
   final int media;
   final String? message;
+  final BrowserPostState posted;
+
+  /// The label of the browser that reported ("Firefox").
+  final String? browser;
   final DateTime at;
+}
+
+/// A browser label ("Chrome", "Microsoft Edge", "Firefox") as one lowercase
+/// word: `chrome`, `edge`, `firefox`, `opera`, `brave`, or the label itself.
+/// Two profiles of one browser are the same family.
+String browserFamily(String label) {
+  final l = label.trim().toLowerCase();
+  for (final f in const ['firefox', 'edge', 'opera', 'brave', 'vivaldi', 'chrome', 'chromium']) {
+    if (l.contains(f)) return f;
+  }
+  return l;
 }
 
 /// [host] in lower case, without a leading `www.`.
@@ -232,6 +284,16 @@ List<String> browserJobHosts(Uri url) {
   return out.toList();
 }
 
+/// Finds installed browsers and opens pages in a chosen one (the registry's
+/// App Paths on Windows, `open -a` on macOS, the PATH on Linux).
+class BrowserLauncher {
+  const BrowserLauncher();
+
+  Future<bool> installed(String family) => impl.browserInstalled(family);
+
+  Future<bool> open(String family, Uri url) => impl.openInBrowser(family, url);
+}
+
 /// The local server the NEFORUM browser extension talks to
 /// (extensions/browser/PROTOCOL.md): 127.0.0.1 only, on the first free port
 /// of [kBrowserBridgePorts]. Desktop only; a no-op on the web.
@@ -245,6 +307,25 @@ abstract class BrowserBridge {
   /// (`assets/browser-extension/chrome` and `.../firefox`). Returns the
   /// folder, or null when this build has none.
   static Future<String?> revealExtensionFiles() => impl.revealExtensionFiles();
+
+  /// Finds and starts installed browsers; tests put a stand-in here.
+  static BrowserLauncher launcher = const BrowserLauncher();
+
+  /// Is a browser of [family] (see [browserFamily]) installed here? Desktop
+  /// only; false elsewhere.
+  static Future<bool> browserInstalled(String family) => launcher.installed(family);
+
+  /// Opens [url] in a browser of [family]. False when it is not installed or
+  /// would not start.
+  static Future<bool> openInBrowser(String family, Uri url) => launcher.open(family, url);
+
+  /// The first family of [order] that is installed, or null.
+  static Future<String?> firstInstalled(List<String> order) async {
+    for (final f in order) {
+      if (await browserInstalled(f)) return f;
+    }
+    return null;
+  }
 
   ValueListenable<BrowserBridgeStatus> get status;
 
@@ -282,7 +363,25 @@ abstract class BrowserBridge {
   /// Forgets every paired browser.
   Future<void> forgetAll();
 
+  /// The paired browsers' families in priority order (the list order), once
+  /// each: hand-offs open in the first one that is installed.
+  List<String> get browserOrder => [...{for (final b in browsers.value) browserFamily(b.label)}];
+
+  /// Moves the browser with [token] to the top: the first choice.
+  Future<void> makeFirst(String token);
+
+  /// Swaps the first choice with the next browser of another family (Chrome
+  /// and Firefox trade places).
+  Future<void> swapFirstTwo() async {
+    final list = browsers.value;
+    if (list.length < 2) return;
+    final first = browserFamily(list.first.label);
+    final next = list.skip(1).where((b) => browserFamily(b.label) != first).firstOrNull ?? list[1];
+    await makeFirst(next.token);
+  }
+
   /// Makes the hand-off the extension gets next, replacing any other.
+  /// [target]: the browser family the page was opened in (see [BrowserJob.target]).
   BrowserJob? createJob({
     required String platformId,
     required String platformName,
@@ -293,6 +392,8 @@ abstract class BrowserBridge {
     List<HandoffSnippet> snippets = const [],
     List<BrowserJobMedia> media = const [],
     String steps = '',
+    bool quickPost = false,
+    String? target,
   });
 
   /// Drops the job (only if it is still [id], when given).

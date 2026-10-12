@@ -2,7 +2,8 @@
 // Text goes in the way a person's paste would, so the site's own editor
 // (React inputs, Draft.js, Lexical, ProseMirror, Quill) takes it as real
 // input. Files go into the site's file input, or are pasted or dropped onto
-// the composer. Nothing here ever submits a form or presses Post.
+// the composer. Only pressPost presses a Post button, and main.js calls it
+// only for the user's own Ctrl+Enter (⌘+Enter) or Post now click.
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -306,5 +307,83 @@
     return null;
   }
 
-  NF.fill = { sleep, visible, waitFor, label, findByText, press, findEditor, editableOf, hasText, insertText, attachFiles, findFileInput, setInputFiles, dropOn, firePaste, accepts };
+  // ---- the Post button ------------------------------------------------------
+
+  const BUTTONS = 'button, [role="button"], input[type="submit"]';
+
+  /** What a button says: its label, its text, its value (lower case). */
+  const namesOf = (el) =>
+    [el.getAttribute('aria-label'), el.matches('input') ? el.value : el.innerText ?? el.textContent].map((s) => norm(s).toLowerCase()).filter(Boolean);
+
+  /** Can a person press [el] now (not greyed out or busy)? */
+  function enabled(el) {
+    if (!visible(el)) return false;
+    if (el.disabled || el.closest('fieldset[disabled]')) return false;
+    if (el.closest('[aria-disabled="true"]') || el.getAttribute('aria-busy') === 'true') return false;
+    return getComputedStyle(el).pointerEvents !== 'none';
+  }
+
+  /**
+   * Of [candidates], the one nearest [from] (the editor): the search widens
+   * one ancestor at a time and takes the first level holding exactly one.
+   * Two at the same distance is ambiguous, so null: better no click than the
+   * wrong one. Returns { button, scope } (scope: the ancestor holding both).
+   */
+  function nearest(candidates, from, root) {
+    // A [role=button] wrapping a <button> is one button: keep the inner one.
+    const list = candidates.filter((c) => !candidates.some((o) => o !== c && c.contains(o)));
+    if (!list.length) return null;
+    if (from && from.isConnected) {
+      for (let node = from; node && node !== document.documentElement; node = node.parentElement) {
+        const near = list.filter((b) => node.contains(b));
+        if (near.length === 1) return { button: near[0], scope: node };
+        if (near.length > 1) return null;
+        if (node === root) break;
+      }
+    }
+    return list.length === 1 ? { button: list[0], scope: root === document ? document.body : root } : null;
+  }
+
+  /**
+   * The composer's Post button: the first of [selectors] that finds one,
+   * else a button that says exactly one of [words]; the one nearest [from]
+   * either way. Greyed-out buttons count (they may be waiting for an upload).
+   */
+  function findPostButton({ from = null, root = document, selectors = [], words = ['post', 'post now', 'publish'] } = {}) {
+    root ??= document;
+    for (const sel of selectors) {
+      const hits = [...root.querySelectorAll(sel)].map((e) => e.closest(BUTTONS) ?? e).filter(visible);
+      const found = nearest(hits, from, root);
+      if (found) return found;
+    }
+    const want = new Set(words.map((w) => w.toLowerCase()));
+    const hits = [...root.querySelectorAll(BUTTONS)].filter((b) => visible(b) && namesOf(b).some((n) => want.has(n)));
+    return nearest(hits, from, root);
+  }
+
+  /**
+   * After Post was pressed: did the post go? Yes when the page moved on, the
+   * composer closed, or the editor emptied (inline composers stay open).
+   */
+  async function waitPosted({ button, editor = null, text = '', timeout = 25000 }) {
+    const from = location.href;
+    const end = Date.now() + timeout;
+    while (Date.now() < end) {
+      await sleep(250);
+      if (location.href !== from) return true;
+      const buttonGone = !button.isConnected || !visible(button);
+      const editorGone = !editor || !editor.isConnected || !visible(editor);
+      if (buttonGone && editorGone) return true;
+      if (editor && !editorGone && text && contentOf(editor) === '') return true;
+    }
+    return false;
+  }
+
+  /** Presses the Post button (main.js calls this only for the user's own key press or click). */
+  const pressPost = (button) => press(button);
+
+  NF.fill = {
+    sleep, visible, waitFor, label, findByText, press, findEditor, editableOf, hasText, insertText, attachFiles, findFileInput, setInputFiles, dropOn, firePaste, accepts,
+    enabled, findPostButton, waitPosted, pressPost,
+  };
 })();

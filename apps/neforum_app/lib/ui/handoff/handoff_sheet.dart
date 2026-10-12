@@ -83,12 +83,24 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   Uri? _jobUrl;
   BrowserFillResult? _fill;
 
+  /// The browser family the page was opened in ("firefox"); null for the
+  /// system's default browser.
+  String? _openedIn;
+
   @override
   void initState() {
     super.initState();
     _bridge = ref.read(servicesProvider).browserBridge;
     _fillSub = _bridge.results.listen((r) {
-      if (mounted && r.jobId == _job?.id) setState(() => _fill = r);
+      if (!mounted || r.jobId != _job?.id) return;
+      setState(() => _fill = r);
+      // Posted from the page with the extension's shortcut, and the composer
+      // closed: this hand-off is done, so move on (to the next one, if any).
+      if (r.posted == BrowserPostState.confirmed) {
+        Future<void>.delayed(const Duration(milliseconds: 1600), () {
+          if (mounted && _fill?.jobId == r.jobId) Navigator.pop(context, HandoffChoice.posted);
+        });
+      }
     });
   }
 
@@ -120,6 +132,8 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
           BrowserJobMedia(name: _fileName(m), mimeType: m.mimeType, size: m.sizeBytes, isVideo: m.isVideo, read: () => media.read(m)),
       ],
       steps: plan.instructions,
+      quickPost: ref.read(settingsProvider).browserQuickPost,
+      target: _openedIn,
     );
     if (job == null) return;
     setState(() {
@@ -155,11 +169,15 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final host = r == null || bareHost(r.host).isEmpty ? 'the page' : bareHost(r.host);
     final what = r == null ? '' : _filledWhat(r);
     final message = r?.message == null ? '' : ' ${_sentence(r!.message!)}';
-    final (IconData icon, Color color, String text) = switch (r?.status) {
-      null => (Icons.extension_outlined, nf.info, 'The NEFORUM extension is filling this in…'),
-      BrowserFillStatus.filled => (Icons.check_circle_rounded, nf.success, 'Filled in on $host${what.isEmpty ? '' : ': $what'}. Check it and press Post.'),
-      BrowserFillStatus.partial => (Icons.warning_amber_rounded, nf.warning, 'Partly filled in on $host${what.isEmpty ? '' : ': $what'}.$message Do the rest with the steps below.'),
-      BrowserFillStatus.failed => (Icons.error_outline_rounded, nf.danger, 'The extension could not fill in $host.$message Use the steps below.'),
+    final where = _openedIn == null ? '' : ' in ${_familyName(_openedIn!)}';
+    final post = _job!.quickPost ? 'Check it, then press $_postKeys on the page (or Post).' : 'Check it and press Post.';
+    final (IconData icon, Color color, String text) = switch ((r?.status, r?.posted)) {
+      (_, BrowserPostState.confirmed) => (Icons.check_circle_rounded, nf.success, 'Posted on $host. Marking this hand-off as done…'),
+      (_, BrowserPostState.pressed) => (Icons.info_outline_rounded, nf.info, 'Pressed Post on $host, but the page did not close the composer. Check it there; if the post went up, click I posted it.'),
+      (null, _) => (Icons.extension_outlined, nf.info, 'The NEFORUM extension$where is filling this in…'),
+      (BrowserFillStatus.filled, _) => (Icons.check_circle_rounded, nf.success, 'Filled in on $host${what.isEmpty ? '' : ': $what'}. $post'),
+      (BrowserFillStatus.partial, _) => (Icons.warning_amber_rounded, nf.warning, 'Partly filled in on $host${what.isEmpty ? '' : ': $what'}.$message Do the rest with the steps below.'),
+      (BrowserFillStatus.failed, _) => (Icons.error_outline_rounded, nf.danger, 'The extension could not fill in $host.$message Use the steps below.'),
     };
     return _Callout(
       icon: icon,
@@ -239,10 +257,38 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     if (mounted) setState(() => _next = i + 1);
   }
 
+  /// Ctrl+Enter, or ⌘+Enter on a Mac: the extension's Post shortcut.
+  static String get _postKeys => Env.isMacOS ? '⌘+Enter' : 'Ctrl+Enter';
+
+  /// "Firefox" for `firefox`: the label of the first paired browser of that
+  /// family.
+  String _familyName(String family) =>
+      _bridge.browsers.value.where((b) => browserFamily(b.label) == family).firstOrNull?.label ?? family;
+
+  /// The first paired browser (in the user's order) that is installed, when
+  /// hand-offs should open there; null for the system's default browser.
+  Future<String?> _firstChoice(Uri url) async {
+    if (!Env.isDesktop || !_bridge.canFill || !ref.read(settingsProvider).browserOpenInFirst) return null;
+    if (!(url.isScheme('http') || url.isScheme('https'))) return null;
+    return BrowserBridge.firstInstalled(_bridge.browserOrder);
+  }
+
   Future<void> _openUrl(Uri url) async {
     await _copy(quiet: true);
-    if (mounted) _sendToExtension(url);
-    final ok = await launchUrl(url, mode: LaunchMode.externalApplication);
+    final family = await _firstChoice(url);
+    if (!mounted) return;
+    // The job first (for the browser it opens in), so the page finds it.
+    _openedIn = family;
+    _sendToExtension(url);
+    var ok = family != null && await BrowserBridge.openInBrowser(family, url);
+    if (!ok) {
+      if (family != null && mounted) {
+        // That browser would not start: the default one, and any browser fills in.
+        _openedIn = null;
+        _sendToExtension(url);
+      }
+      ok = await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
     if (!mounted) return;
     setState(() => _launched = ok || _launched);
     if (!ok) showToast(context, 'Could not open $url', icon: Icons.error_outline_rounded);

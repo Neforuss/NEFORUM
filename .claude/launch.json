@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["tool/serve_web.js", "8765"],
       "port": 8765
+    },
+    {
+      "name": "extension-tests",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["tool/serve_web.js", "8766", "extensions/browser"],
+      "port": 8766
     }
   ]
 }

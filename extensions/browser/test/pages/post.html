@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: Post shortcut test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  nav { display: flex; gap: 8px; margin-bottom: 16px; }
+  .composer { border: 1px solid #bbb; border-radius: 10px; padding: 10px; max-width: 520px; }
+  .editor { min-height: 80px; outline: 1px dashed #ccc; padding: 6px; white-space: pre-wrap; }
+  button[disabled] { opacity: .4; }
+</style>
+</head>
+<body>
+  <!--
+    Like a real site: a Post button in the navigation (opens a composer: must
+    never be pressed), a search box, and the composer with its own Post button,
+    greyed out until the photo has "uploaded".
+      ?next=1    a Next screen comes before Post (Facebook)
+      ?inline=1  the composer stays open and empties after posting (Mastodon)
+  -->
+  <nav><button id="decoy" type="button">Post</button><input id="search" placeholder="Search"></nav>
+  <div id="dialog" role="dialog" aria-label="Create post">
+    <div class="composer">
+      <div id="editor" class="editor" contenteditable="true" aria-label="What's happening?"></div>
+      <label>Photos <input id="photos" type="file" accept="image/*" multiple hidden></label>
+      <span id="upload">no photo</span>
+      <div id="actions"></div>
+    </div>
+  </div>
+  <p>Composer Post clicks: <span id="clicks">0</span> · decoy clicks: <span id="decoys">0</span></p>
+  <script>
+    const q = new URLSearchParams(location.search);
+    window.postClicks = 0;
+    window.decoyClicks = 0;
+    window.untrustedClicks = 0;
+    document.getElementById('decoy').addEventListener('click', () => (document.getElementById('decoys').textContent = ++window.decoyClicks));
+    const actions = document.getElementById('actions');
+    const post = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Post', disabled: true, id: 'post' });
+    post.addEventListener('click', (e) => {
+      document.getElementById('clicks').textContent = ++window.postClicks;
+      if (!e.isTrusted) window.untrustedClicks++;
+      setTimeout(() => {
+        if (q.get('inline')) document.getElementById('editor').textContent = '';
+        else document.getElementById('dialog').hidden = true;
+      }, 400);
+    });
+    if (q.get('next')) {
+      const next = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Next', id: 'next' });
+      next.addEventListener('click', () => {
+        next.remove();
+        actions.append(post);
+      });
+      actions.append(next);
+    } else {
+      actions.append(post);
+    }
+    document.getElementById('photos').addEventListener('change', (e) => {
+      document.getElementById('upload').textContent = `uploading ${e.target.files.length}…`;
+      setTimeout(() => {
+        document.getElementById('upload').textContent = 'uploaded';
+        post.disabled = false;
+      }, 2500);
+    });
+  </script>
+  <script src="harness.js"></script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>

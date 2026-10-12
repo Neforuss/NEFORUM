@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_app/platform/browser_bridge.dart';
 import 'package:neforum_app/platform/storage.dart';
+import 'package:neforum_app/platform/ui_bridge.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
@@ -270,9 +271,90 @@ void main() {
         ],
         'media': <Object>[],
         'steps': '1. Check the post.\n2. Press Post.',
+        'quickPost': false,
         'createdAt': '2026-10-12T10:00:00Z',
         'expiresAt': '2026-10-12T10:10:00Z',
+        'preferred': true,
       });
+    });
+
+    test('preferred: only the browser the page was opened in fills it in on its own', () async {
+      final chrome = await pair('Chrome');
+      final firefox = await pair('Firefox');
+      final edge = await pair('Microsoft Edge');
+      Future<Object?> preferred(String token) async => (await call('GET', '/v1/job?host=youtube.com', token: token)).json['preferred'];
+
+      bridge.createJob(platformId: 'youtube_posts', platformName: 'YouTube Posts', url: 'https://www.youtube.com/@a/posts', hosts: const ['www.youtube.com'], text: 'Hi', target: 'Firefox');
+      expect(bridge.job!.target, 'firefox');
+      expect(await preferred(firefox), isTrue);
+      expect(await preferred(chrome), isFalse);
+      expect(await preferred(edge), isFalse);
+
+      bridge.createJob(platformId: 'youtube_posts', platformName: 'YouTube Posts', url: 'https://www.youtube.com/@a/posts', hosts: const ['www.youtube.com'], text: 'Hi', target: 'edge');
+      expect(await preferred(edge), isTrue);
+      expect(await preferred(chrome), isFalse, reason: 'Edge is not Chrome');
+
+      // Opened in the default browser: any paired browser fills in.
+      youtubeJob();
+      for (final t in [chrome, firefox, edge]) {
+        expect(await preferred(t), isTrue);
+      }
+    });
+
+    test('posted: reported only for jobs that allow posting from the page', () async {
+      final token = await pair('Firefox');
+      final results = <BrowserFillResult>[];
+      final sub = bridge.results.listen(results.add);
+      addTearDown(sub.cancel);
+
+      var job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload?tab=photo', hosts: const ['www.tiktok.com'], text: 'Hi', quickPost: true)!;
+      expect((await call('GET', '/v1/job?host=www.tiktok.com', token: token)).json['quickPost'], isTrue);
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'media': 1, 'posted': 'confirmed'});
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'posted': 'pressed'});
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'posted': 'maybe'});
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true});
+
+      job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload?tab=photo', hosts: const ['www.tiktok.com'], text: 'Hi')!;
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'posted': 'confirmed'});
+      await pumpEventQueue();
+
+      expect(results.map((r) => r.posted), [
+        BrowserPostState.confirmed,
+        BrowserPostState.pressed,
+        BrowserPostState.none,
+        BrowserPostState.none,
+        BrowserPostState.none, // this job did not allow it
+      ]);
+      expect(results.first.browser, 'Firefox');
+    });
+
+    test('priority: make first and swap reorder the browsers and are kept in the keychain', () async {
+      await pair('Chrome');
+      await pair('Chrome'); // a second Chrome profile
+      final firefox = await pair('Firefox');
+      List<String> labels() => [for (final b in bridge.browsers.value) b.label];
+      expect(bridge.browserOrder, ['chrome', 'firefox']);
+
+      // Swap trades Chrome for the next browser of another family.
+      await bridge.swapFirstTwo();
+      expect(labels(), ['Firefox', 'Chrome', 'Chrome']);
+      expect(bridge.browserOrder, ['firefox', 'chrome']);
+      await bridge.swapFirstTwo();
+      expect(labels().first, 'Chrome');
+
+      await bridge.makeFirst(firefox);
+      expect(labels(), ['Firefox', 'Chrome', 'Chrome']);
+      await bridge.makeFirst(firefox);
+      expect(labels(), ['Firefox', 'Chrome', 'Chrome'], reason: 'already first');
+      await pumpEventQueue();
+      final stored = jsonDecode((await secrets.read(kBrowserSecretsKey))!['browsers']!) as List;
+      expect([for (final b in stored) b['label']], ['Firefox', 'Chrome', 'Chrome']);
+
+      // A new bridge reads the same order.
+      final again = BrowserBridge.create(secrets: secrets, clock: () => now, ports: const [0]);
+      await again.start();
+      addTearDown(again.dispose);
+      expect([for (final b in again.browsers.value) b.label], ['Firefox', 'Chrome', 'Chrome']);
     });
 
     test('job hosts include the known aliases', () {
@@ -399,13 +481,28 @@ void main() {
     });
   });
 
-  test('settings: the browser extension flag survives JSON and defaults to on', () {
+  test('settings: the browser extension flags survive JSON and default to on', () {
     expect(const AppSettings().browserExtension, isTrue);
     expect(AppSettings.fromJson(const {}).browserExtension, isTrue);
     final off = const AppSettings().copyWith(browserExtension: false);
     expect(off.toJson()['browserExtension'], isFalse);
     expect(AppSettings.fromJson(off.toJson()).browserExtension, isFalse);
     expect(AppSettings.fromJson(off.copyWith(browserExtension: true).toJson()).browserExtension, isTrue);
+
+    expect(AppSettings.fromJson(const {}).browserQuickPost, isTrue);
+    expect(AppSettings.fromJson(const {}).browserOpenInFirst, isTrue);
+    final s = AppSettings.fromJson(const AppSettings().copyWith(browserQuickPost: false, browserOpenInFirst: false).toJson());
+    expect((s.browserQuickPost, s.browserOpenInFirst), (false, false));
+  });
+
+  test('browser families: profiles and brands of one browser match', () {
+    expect(browserFamily('Chrome'), 'chrome');
+    expect(browserFamily('Google Chrome'), 'chrome');
+    expect(browserFamily('Microsoft Edge'), 'edge');
+    expect(browserFamily('Firefox'), 'firefox');
+    expect(browserFamily('Brave'), 'brave');
+    expect(browserFamily('Chromium'), 'chromium');
+    expect(browserFamily('Browser'), 'browser');
   });
 
   testWidgets('Settings > Browser extension: status, pairing code, paired list', variant: TargetPlatformVariant.only(TargetPlatform.windows), timeout: const Timeout(Duration(minutes: 1)), (tester) async {
@@ -496,6 +593,10 @@ void main() {
       messenger.setMockMethodCallHandler(SystemChannels.platform, null);
     });
 
+    // No browser found: pages open in the default browser, as before.
+    BrowserBridge.launcher = _FakeLauncher(const {});
+    addTearDown(() => BrowserBridge.launcher = const BrowserLauncher());
+
     final photoBytes = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 9]);
     final bridge = (await tester.runAsync(() async => BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0])))!;
     final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(photoBytes), browserBridge: bridge)))!;
@@ -547,6 +648,8 @@ void main() {
     await tester.pump();
     expect(launched, ['https://www.youtube.com/@examplechannel/posts']);
     final job = bridge.job!;
+    expect(job.target, isNull, reason: 'the default browser: any paired browser fills in');
+    expect(job.quickPost, isTrue);
     expect(job.platformId, 'youtube_posts');
     expect(job.platformName, 'YouTube Posts');
     expect(job.hosts, ['www.youtube.com', 'youtube.com', 'm.youtube.com']);
@@ -569,7 +672,7 @@ void main() {
     });
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
-    expect(find.text('Filled in on youtube.com: text and 1 photo. Check it and press Post.'), findsOneWidget);
+    expect(find.text('Filled in on youtube.com: text and 1 photo. Check it, then press Ctrl+Enter on the page (or Post).'), findsOneWidget);
 
     await tester.tap(find.text('Fill in again'));
     await tester.pump();
@@ -590,4 +693,127 @@ void main() {
     await tester.runAsync(bridge.dispose);
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('hand-off: opens in the first-choice browser; a post confirmed from the page finishes the hand-off',
+      variant: TargetPlatformVariant.only(TargetPlatform.windows), timeout: const Timeout(Duration(minutes: 1)), (tester) async {
+    tester.view.physicalSize = const Size(900, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final launched = <String>[];
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/url_launcher'), (call) async {
+      if (call.method == 'launch') launched.add((call.arguments as Map)['url'] as String);
+      return true;
+    });
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async => null);
+    final launcher = _FakeLauncher({'chrome', 'firefox'});
+    BrowserBridge.launcher = launcher;
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/url_launcher'), null);
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+      BrowserBridge.launcher = const BrowserLauncher();
+    });
+
+    final bridge = (await tester.runAsync(() async => BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0])))!;
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(), browserBridge: bridge)))!;
+    await tester.runAsync(services.startBrowserBridge);
+    final port = bridge.status.value.port!;
+    final client = (await tester.runAsync(() async => _client()))!;
+    addTearDown(() => client.close(force: true));
+    Future<String> pairAs(String label) async => (await tester.runAsync(() async {
+          final code = bridge.startPairing().code;
+          return (await _call(client, port, 'POST', '/v1/pair', body: {'code': code, 'browser': label})).json['token'] as String;
+        }))!;
+    final chrome = await pairAs('Chrome');
+    final firefox = await pairAs('Firefox');
+    await tester.runAsync(() => bridge.makeFirst(firefox));
+
+    const url = 'https://www.youtube.com/@examplechannel/posts';
+    final plan = HandoffPlan(platformId: 'youtube_posts', instructions: '1. Press Post.', clipboardText: 'Hello', desktopUrl: url, preferred: HandoffMethod.manual);
+    final account = ConnectedAccount(id: 'yp', platformId: 'youtube_posts', tier: PlatformTier.handoff, displayName: 'YouTube Posts', createdAt: DateTime(2026, 10, 12));
+    final post = Post(id: 'p1', text: 'Hello', createdAt: DateTime(2026, 10, 12), updatedAt: DateTime(2026, 10, 12));
+    HandoffChoice? choice;
+    await tester.pumpWidget(ProviderScope(
+      overrides: [servicesProvider.overrideWithValue(services)],
+      child: MaterialApp(
+        theme: buildTheme(Brightness.light, AccentChoice.neforum),
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => TextButton(
+              onPressed: () async => choice = await showHandoffSheet(context, plan: plan, post: post, account: account, variant: PostVariant(text: 'Hello')),
+              child: const Text('Show'),
+            ),
+          ),
+        ),
+      ),
+    ));
+    Future<void> open() async {
+      await tester.tap(find.text('Show'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open YouTube Posts'));
+      await tester.pump();
+      await tester.pump();
+    }
+
+    await open();
+    expect(launcher.opened, [('firefox', url)], reason: 'Firefox is the first choice');
+    expect(launched, isEmpty, reason: 'not the default browser');
+    expect(bridge.job!.target, 'firefox');
+    expect(find.text('The NEFORUM extension in Firefox is filling this in…'), findsOneWidget);
+
+    final jobId = bridge.job!.id;
+    await tester.runAsync(() async {
+      final c = await _call(client, port, 'GET', '/v1/job?host=www.youtube.com', token: chrome);
+      expect(c.json['preferred'], isFalse, reason: 'Chrome stays out of it');
+      final f = await _call(client, port, 'GET', '/v1/job?host=www.youtube.com', token: firefox);
+      expect(f.json['preferred'], isTrue);
+      expect(f.json['quickPost'], isTrue);
+      final r = await _call(client, port, 'POST', '/v1/job/$jobId/result', token: firefox, body: {'status': 'filled', 'text': true, 'media': 0, 'posted': 'confirmed'});
+      expect(r.status, 204);
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Posted on youtube.com. Marking this hand-off as done…'), findsOneWidget);
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+    expect(choice, HandoffChoice.posted, reason: 'the sheet closed itself as posted');
+    expect(bridge.job, isNull);
+
+    // Firefox gone: the next one in the order.
+    launcher.families.remove('firefox');
+    await open();
+    expect(launcher.opened.last, ('chrome', url));
+    expect(bridge.job!.target, 'chrome');
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+
+    // None installed: the default browser, and any paired browser fills in.
+    launcher.families.clear();
+    await open();
+    expect(launched, [url]);
+    expect(bridge.job!.target, isNull);
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+
+    await tester.runAsync(bridge.dispose);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 5));
+  });
+}
+
+/// Pretends [families] are installed and records what it opened.
+class _FakeLauncher extends BrowserLauncher {
+  _FakeLauncher(Set<String> families) : families = {...families};
+  final Set<String> families;
+  final List<(String, String)> opened = [];
+
+  @override
+  Future<bool> installed(String family) async => families.contains(family);
+
+  @override
+  Future<bool> open(String family, Uri url) async {
+    if (!families.contains(family)) return false;
+    opened.add((family, '$url'));
+    return true;
+  }
 }

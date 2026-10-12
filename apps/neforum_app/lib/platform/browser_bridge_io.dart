@@ -34,6 +34,95 @@ Future<String?> revealExtensionFiles() async {
   }
 }
 
+// ---- opening a page in a chosen browser ------------------------------------
+
+/// How to start each browser family: the Windows executable and its usual
+/// folders (under Program Files, Program Files (x86) and Local AppData), the
+/// macOS app name, and the Linux commands.
+const Map<String, ({String exe, List<String> dirs, String mac, List<String> linux})> _browserApps = {
+  'chrome': (exe: 'chrome.exe', dirs: [r'Google\Chrome\Application'], mac: 'Google Chrome', linux: ['google-chrome', 'google-chrome-stable']),
+  'firefox': (exe: 'firefox.exe', dirs: ['Mozilla Firefox'], mac: 'Firefox', linux: ['firefox']),
+  'edge': (exe: 'msedge.exe', dirs: [r'Microsoft\Edge\Application'], mac: 'Microsoft Edge', linux: ['microsoft-edge', 'microsoft-edge-stable']),
+  'brave': (exe: 'brave.exe', dirs: [r'BraveSoftware\Brave-Browser\Application'], mac: 'Brave Browser', linux: ['brave-browser', 'brave']),
+  'opera': (exe: 'opera.exe', dirs: [r'Programs\Opera', 'Opera'], mac: 'Opera', linux: ['opera']),
+  'vivaldi': (exe: 'vivaldi.exe', dirs: [r'Vivaldi\Application'], mac: 'Vivaldi', linux: ['vivaldi', 'vivaldi-stable']),
+  'chromium': (exe: 'chromium.exe', dirs: [r'Chromium\Application'], mac: 'Chromium', linux: ['chromium', 'chromium-browser']),
+};
+
+/// What starts each family that was found (an exe path, a macOS app name or
+/// a Linux command). Only hits are kept, so a browser installed later is found.
+final Map<String, String> _launchers = {};
+
+Future<String?> _launcher(String family) async {
+  final known = _launchers[family];
+  if (known != null) return known;
+  final b = _browserApps[family];
+  if (b == null) return null;
+  String? found;
+  try {
+    if (Platform.isWindows) {
+      found = await _windowsExe(b.exe, b.dirs);
+    } else if (Platform.isMacOS) {
+      // -R: find the app without opening it.
+      found = (await Process.run('open', ['-Ra', b.mac])).exitCode == 0 ? b.mac : null;
+    } else if (Platform.isLinux) {
+      for (final cmd in b.linux) {
+        if ((await Process.run('which', [cmd])).exitCode == 0) {
+          found = cmd;
+          break;
+        }
+      }
+    }
+  } on Object catch (e) {
+    debugPrint('Could not look for $family: $e');
+  }
+  if (found != null) _launchers[family] = found;
+  return found;
+}
+
+/// The registry's App Paths entry for [exe] (per user, then per machine),
+/// else the usual install folders.
+Future<String?> _windowsExe(String exe, List<String> dirs) async {
+  for (final hive in const ['HKCU', 'HKLM']) {
+    final r = await Process.run('reg', ['query', '$hive\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths\\$exe', '/ve']);
+    if (r.exitCode != 0) continue;
+    final m = RegExp(r'REG_(?:EXPAND_)?SZ\s+(.+)$', multiLine: true).firstMatch('${r.stdout}');
+    if (m == null) continue;
+    final path = _expandEnv(m.group(1)!.trim().replaceAll('"', ''));
+    if (await File(path).exists()) return path;
+  }
+  final env = Platform.environment;
+  final roots = [env['ProgramFiles'], env['ProgramFiles(x86)'], env['LOCALAPPDATA']].whereType<String>();
+  for (final root in roots) {
+    for (final dir in dirs) {
+      final path = p.join(root, dir, exe);
+      if (await File(path).exists()) return path;
+    }
+  }
+  return null;
+}
+
+String _expandEnv(String s) => s.replaceAllMapped(RegExp('%([^%]+)%'), (m) => Platform.environment[m.group(1)!] ?? m.group(0)!);
+
+Future<bool> browserInstalled(String family) async => await _launcher(family) != null;
+
+Future<bool> openInBrowser(String family, Uri url) async {
+  if (!(url.isScheme('http') || url.isScheme('https'))) return false;
+  final launcher = await _launcher(family);
+  if (launcher == null) return false;
+  try {
+    if (Platform.isMacOS) {
+      return (await Process.run('open', ['-a', launcher, url.toString()])).exitCode == 0;
+    }
+    await Process.start(launcher, [url.toString()], mode: ProcessStartMode.detached);
+    return true;
+  } on Object catch (e) {
+    debugPrint('Could not open $family: $e');
+    _launchers.remove(family);
+    return false;
+  }
+}
+
 /// Raised while reading a request body that is larger than the bridge takes.
 class _TooLarge implements Exception {
   const _TooLarge();
@@ -203,6 +292,16 @@ class IoBrowserBridge extends BrowserBridge {
     await _persist();
   }
 
+  @override
+  Future<void> makeFirst(String token) async {
+    await _load();
+    final list = _browsers.value;
+    final i = list.indexWhere((b) => b.token == token);
+    if (i <= 0) return;
+    _browsers.value = List.unmodifiable([list[i], ...list.take(i), ...list.skip(i + 1)]);
+    await _persist();
+  }
+
   /// The paired browser whose token is in the `Authorization` header.
   /// Compares against every token in constant time.
   PairedBrowser? _authenticate(HttpRequest req) {
@@ -298,6 +397,8 @@ class IoBrowserBridge extends BrowserBridge {
     List<HandoffSnippet> snippets = const [],
     List<BrowserJobMedia> media = const [],
     String steps = '',
+    bool quickPost = false,
+    String? target,
   }) {
     final now = _clock();
     final id = 'j_${List<String>.generate(16, (_) => _random.nextInt(256).toRadixString(16).padLeft(2, '0')).join()}';
@@ -312,6 +413,8 @@ class IoBrowserBridge extends BrowserBridge {
       snippets: List.unmodifiable(snippets),
       media: List.unmodifiable(media),
       steps: steps,
+      quickPost: quickPost,
+      target: target == null ? null : browserFamily(target),
       createdAt: now,
       expiresAt: now.add(kBrowserJobLifetime),
     );
@@ -327,13 +430,15 @@ class IoBrowserBridge extends BrowserBridge {
     _jobHost = null;
   }
 
-  Future<void> _getJob(HttpRequest req) {
+  /// The job for `?host=`, with `preferred`: whether [browser] is the one
+  /// NEFORUM opened the page in (only that one fills in on its own).
+  Future<void> _getJob(HttpRequest req, PairedBrowser browser) {
     final host = req.uri.queryParameters['host']?.trim() ?? '';
     if (host.isEmpty) return _send(req, 400, {'error': 'Add ?host=<location.host>.'});
     final j = job;
     if (j == null || !j.matchesHost(host)) return _send(req, 204);
     _jobHost = host.toLowerCase();
-    return _send(req, 200, j.toJson());
+    return _send(req, 200, {...j.toJson(), 'preferred': j.prefers(browser.label)});
   }
 
   Future<void> _media(HttpRequest req, String id, String index) async {
@@ -360,7 +465,7 @@ class IoBrowserBridge extends BrowserBridge {
     await res.close();
   }
 
-  Future<void> _result(HttpRequest req, String id) async {
+  Future<void> _result(HttpRequest req, String id, PairedBrowser browser) async {
     final body = await _readJson(req);
     final j = job;
     if (j == null || j.id != id) return _send(req, 404, {'error': 'That hand-off has expired.'});
@@ -377,6 +482,9 @@ class IoBrowserBridge extends BrowserBridge {
       text: body['text'] == true,
       media: media is num ? media.toInt().clamp(0, 999) : 0,
       message: message.isEmpty ? null : message,
+      // Only a job that allowed it can be posted from the page.
+      posted: j.quickPost ? BrowserPostState.values.asNameMap()[body['posted']] ?? BrowserPostState.none : BrowserPostState.none,
+      browser: browser.label,
       at: _clock(),
     ));
     return _send(req, 204);
@@ -413,7 +521,7 @@ class IoBrowserBridge extends BrowserBridge {
       }
       if (path == '/v1/job') {
         if (method != 'GET') return await _send(req, 405, {'error': 'Use GET.'});
-        return await _getJob(req);
+        return await _getJob(req, browser);
       }
       if (seg.length == 5 && seg[0] == 'v1' && seg[1] == 'job' && seg[3] == 'media') {
         if (method != 'GET') return await _send(req, 405, {'error': 'Use GET.'});
@@ -421,7 +529,7 @@ class IoBrowserBridge extends BrowserBridge {
       }
       if (seg.length == 4 && seg[0] == 'v1' && seg[1] == 'job' && seg[3] == 'result') {
         if (method != 'POST') return await _send(req, 405, {'error': 'Use POST.'});
-        return await _result(req, seg[2]);
+        return await _result(req, seg[2], browser);
       }
       return await _send(req, 404, {'error': 'Not found.'});
     } on _TooLarge {

@@ -3,7 +3,7 @@
   "name": "NEFORUM",
   "short_name": "NEFORUM",
   "version": "1.0.0",
-  "description": "Fills in your NEFORUM hand-offs on each platform's site: text, poll answers, photos and videos. You check the post and press Post.",
+  "description": "Fills in NEFORUM hand-offs on each platform's site (text, polls, photos, videos). You check it, then post with Ctrl+Enter.",
   "homepage_url": "https://neforus.com/neforum/",
   "browser_specific_settings": {
     "gecko": {
