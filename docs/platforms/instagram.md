@@ -46,7 +46,7 @@ Limitations:
 3. **A media host, even if you only post text.** Instagram does not take photo uploads: "the media must be hosted on a publicly accessible server at the time of the attempt." Every Instagram post needs a photo or video, so NEFORUM turns a text-only post into a text card (an image of your words), and that image goes through the host too. Without a host the composer says "Instagram needs a public media host (Settings → Media hosting)". NEFORUM uploads each file to your host just before posting and deletes it right after, where the host allows it.
    - **To start:** pick **Litterbox** under *Settings > Media hosting*. It needs no account and no setup. It is a free service run by a volunteer, with no guarantee: uploads can fail when its server has problems.
    - **For regular posting:** use a storage bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) or a Nextcloud/WebDAV share. A bucket is the most reliable choice.
-   - The media hosting guide explains each host step by step. In NEFORUM it is the **Guide** button under *Settings > Media hosting*; in the repository it is `docs/media-hosts.md`.
+   - The [media hosting guide](../media-hosts.md) explains each host step by step (in NEFORUM also under *Settings > Media hosting > Guide*).
 
 ### Step 1: create your Meta app (about 5 minutes)
 
@@ -136,7 +136,7 @@ All numbers are from the IG User Media reference, the content publishing guide a
 | Instagram refuses the pasted token (error 190) | The token expired or was cut off. Click **Generate token** again and paste all of it. |
 | "Instagram did not grant permission to publish" | `instagram_business_content_publish` was not added (step 1.5) or was switched off during sign-in. Add it, then generate a new token or sign in again. |
 | "Instagram needs a public media host (Settings → Media hosting)" | No media host is set. Pick one under *Settings > Media hosting*. Text-only posts need one too, because they are posted as a text card image. |
-| "... couldn't store the file" or "... refused to store the file" | NEFORUM could not put the file on your media host, even after trying twice. "Couldn't store" (HTTP 500 and similar) is a problem on the host's side, often Litterbox's: try again later, or switch to a bucket you own (see the media hosting guide). "Refused" means the host turned this file or your settings down; the message says why. |
+| "... couldn't store the file" or "... refused to store the file" | NEFORUM could not put the file on your media host, even after trying twice. "Couldn't store" (HTTP 500 and similar) is a problem on the host's side, often Litterbox's: try again later, or switch to a bucket you own (see the [media hosting guide](../media-hosts.md)). "Refused" means the host turned this file or your settings down; the message says why. |
 | "Error validating verification code ... redirect_uri is identical" | The redirect URI in NEFORUM does not match the one under *Business login settings* character for character (watch the trailing slash), or the code was older than 1 hour / used twice. |
 | Error 9 / 2207042 | Daily publishing limit reached; try again the next day. |
 | Error 4 / 2207051 | Instagram's spam filter flagged the action (activity restricted to protect the community). Wait before posting again. |
@@ -147,7 +147,7 @@ All numbers are from the IG User Media reference, the content publishing guide a
 | Error 352 / 2207026 | Unsupported video: use MP4 or MOV. |
 | Errors 4, 17, 80002 | Rate limit ("Calls within 24 hours = 4800 * Number of Impressions"). A brand-new account with almost no views can be throttled after a few posts. NEFORUM waits and retries later. |
 | Error 24 / 2207008 right after creating the post | Normal for a few seconds; NEFORUM retries as the error-code reference recommends (1–2 retries over 30 seconds to 2 minutes). |
-| Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu). As of October 2026 the only required item was a **Privacy policy URL**; an app icon and a data deletion URL were optional. |
+| Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu). As of October 2026 the only required item was a **Privacy policy URL**; an app icon and a data deletion URL were optional. You can enter NEFORUM's, `https://neforus.com/neforum/privacy/`, or your own: see [A privacy policy URL for your Meta app](../meta-privacy-policy.md). |
 | Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. Reconnect. |
 
 ### Known limitations

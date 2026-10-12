@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
+import 'guide_sheet.dart';
 
 /// Markdown styled to match the app (connect intros, setup guides).
 MarkdownStyleSheet neforumMarkdown(BuildContext context, {bool small = false}) {
@@ -51,6 +52,18 @@ void openMarkdownLink(String text, String? href, String title) {
   launchUrl(uri, mode: LaunchMode.externalApplication);
 }
 
+/// The bundled guide a relative link in a guide points to, as a file name
+/// under assets/docs (`../media-hosts.md` gives `media-hosts.md`), or null
+/// for any other link. The guides sit in one folder in the app, so the same
+/// links work on GitHub and in NEFORUM.
+String? guideAssetForLink(String? href) {
+  if (href == null) return null;
+  final uri = Uri.tryParse(href);
+  if (uri == null || uri.hasScheme || uri.hasAuthority || uri.pathSegments.isEmpty) return null;
+  final name = uri.pathSegments.last;
+  return RegExp(r'^[a-z0-9_-]+\.md$').hasMatch(name) ? name : null;
+}
+
 /// Convenience widget. Selectable by default: setup steps are full of
 /// addresses, scopes and redirect URIs people copy into other sites, so the
 /// whole block can be drag-selected (across paragraphs) and copied, while
@@ -66,7 +79,11 @@ class NfMarkdown extends StatelessWidget {
     final body = MarkdownBody(
       data: data,
       styleSheet: neforumMarkdown(context, small: small),
-      onTapLink: openMarkdownLink,
+      onTapLink: (text, href, title) {
+        final guide = guideAssetForLink(href);
+        if (guide == null) return openMarkdownLink(text, href, title);
+        showGuideSheet(context, guide.substring(0, guide.length - 3));
+      },
     );
     return selectable ? SelectionArea(child: body) : body;
   }

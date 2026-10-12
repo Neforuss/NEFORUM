@@ -82,7 +82,7 @@ const String _byokIntro = '''
 4. Open <https://developers.facebook.com/tools/explorer/>. Check that **Meta App** shows your app: the Explorer remembers the last app you used. Leave **User or Page** as it is (it may say **Get Token**); don't pick a Page there. Add the four permissions above. If one is missing from the Explorer's list, it isn't added to your app yet: go back to step 2.
 5. Click **Generate Access Token**. It makes a User token, which is what NEFORUM needs. In the pop-up, approve the app and pick the Pages to share (picking only the Page you post to is enough). Copy the token into the **User access token** field.
 6. Press **Connect**. NEFORUM turns the token into a Page token that does not expire.
-7. So that people other than you see the posts, **Publish** the app (left menu). As of October 2026 Meta only requires a privacy policy URL; an app icon and a data deletion URL are optional.
+7. So that people other than you see the posts, **Publish** the app (left menu). As of October 2026 Meta only requires a privacy policy URL; an app icon and a data deletion URL are optional. No policy of your own? Enter NEFORUM's, `https://neforus.com/neforum/privacy/`, or publish yours from the template in the setup guide.
 
 **Browser sign-in (not recommended):** if you leave the token field empty, NEFORUM opens Facebook's sign-in page instead. It returns to `https://www.facebook.com/connect/login_success.html`, and Meta won't let you register that address ("This can't be a Facebook URL"), so it may not work. If Facebook's sign-in page says the URL is blocked, use the token steps above.
 ''';

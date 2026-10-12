@@ -123,6 +123,11 @@ only be seen by role users." So, once the connection works:
 2. Fill in what the page lists as required. As of October 2026 that is only a **Privacy policy URL**. Once
    it's filled in, the page says "All required app settings are complete". An app icon, a data deletion URL
    and a category are optional.
+   - **No privacy policy of your own?** Enter NEFORUM's: `https://neforus.com/neforum/privacy/` (data
+     deletion instructions: `https://neforus.com/neforum/privacy/#data-deletion`).
+   - **Or publish your own** from the template in
+     [A privacy policy URL for your Meta app](../meta-privacy-policy.md), which also explains when NEFORUM's
+     page fits.
 3. Click **Publish**. Afterwards the Alert Inbox says the app switched to live mode.
 
 App Review is a separate step (*Review > App Review*) and only matters for Advanced Access (see above).

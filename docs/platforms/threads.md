@@ -92,7 +92,7 @@ The Threads API has no upload endpoint. Meta downloads every image and video fro
 
 - **To start:** pick **Litterbox**. It needs no account and no setup. It is a free service run by a volunteer, with no guarantee: uploads can fail when its server has problems.
 - **For regular posting:** use a storage bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) or a Nextcloud/WebDAV share. A bucket is the most reliable choice.
-- The media hosting guide explains each host step by step. In NEFORUM it is the **Guide** button under *Settings > Media hosting*; in the repository it is `docs/media-hosts.md`.
+- The [media hosting guide](../media-hosts.md) explains each host step by step (in NEFORUM also under *Settings > Media hosting > Guide*).
 
 When you post media, NEFORUM:
 
@@ -145,7 +145,7 @@ All numbers are from the Threads *Posts* guide and the *Troubleshooting* page:
 | Container status `ERROR` with `FAILED_DOWNLOADING_VIDEO` | Meta could not fetch the file from your media host. Make it public, direct and HTTPS. |
 | `INVALID_ASPEC_RATIO`, `INVALID_DURATION`, `INVALID_FRAME_RATE`, `INVALID_BIT_RATE`, ... | The video breaks one of the specs above. Re-encode it. |
 | Container status `EXPIRED` | "The container was not published within 24 hours". Try again. |
-| Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu). As of October 2026 the only required item was a **Privacy policy URL**; an app icon and a data deletion URL were optional. |
+| Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu). As of October 2026 the only required item was a **Privacy policy URL**; an app icon and a data deletion URL were optional. You can enter NEFORUM's, `https://neforus.com/neforum/privacy/`, or your own: see [A privacy policy URL for your Meta app](../meta-privacy-policy.md). |
 | Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. Reconnect. |
 
 ## Known limitations

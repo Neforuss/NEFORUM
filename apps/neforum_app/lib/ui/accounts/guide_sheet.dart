@@ -7,7 +7,9 @@ import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import 'markdown_style.dart';
 
-/// Shows the bundled setup guide for [platformId] (`docs/platforms/<id>.md`).
+/// Shows the bundled setup guide for [platformId] (`docs/platforms/<id>.md`),
+/// or another bundled guide when [platformId] is not a platform (for example
+/// `media-hosts` for `docs/media-hosts.md`).
 Future<void> showGuideSheet(BuildContext context, String platformId, {String? asset}) {
   final sheet = GuideSheet(platformId: platformId, asset: asset);
   if (context.isCompact) {
@@ -35,12 +37,13 @@ class GuideSheet extends ConsumerWidget {
     final d = ref.watch(registryProvider).descriptor(platformId);
     final name = d?.name ?? platformId;
     final file = asset ?? '$platformId.md';
+    final platformGuide = asset == null && d != null;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.md, Space.md),
         child: Row(children: [
-          if (asset == null) ...[PlatformTile(platformId, size: 36), const SizedBox(width: Space.md)],
-          Expanded(child: Text(asset == null ? '$name setup guide' : 'Guide', style: context.text.headlineSmall)),
+          if (platformGuide) ...[PlatformTile(platformId, size: 36), const SizedBox(width: Space.md)],
+          Expanded(child: Text(platformGuide ? '$name setup guide' : 'Guide', style: context.text.headlineSmall)),
           IconButton(onPressed: () => Navigator.pop(context), tooltip: 'Close', icon: const Icon(Icons.close_rounded)),
         ]),
       ),
@@ -53,7 +56,10 @@ class GuideSheet extends ConsumerWidget {
             if (snap.hasError || (snap.data ?? '').isEmpty) {
               return Padding(
                 padding: const EdgeInsets.all(Space.xxl),
-                child: Text('The setup guide for $name is in docs/platforms/$file in the NEFORUM repository.', style: context.text.bodyMedium),
+                child: Text(
+                  platformGuide ? 'The setup guide for $name is in docs/platforms/$file in the NEFORUM repository.' : 'This guide is $file in the docs folder of the NEFORUM repository.',
+                  style: context.text.bodyMedium,
+                ),
               );
             }
             return Scrollbar(
