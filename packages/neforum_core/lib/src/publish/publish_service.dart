@@ -113,6 +113,7 @@ class PublishService {
     required this.quota,
     required this.http,
     this.mediaHostProvider,
+    this.browserFills,
     this.broker,
     this.handoffLauncher,
     this.resolver = const VariantResolver(),
@@ -133,6 +134,10 @@ class PublishService {
 
   /// Returns the currently configured public media host (or `null`).
   final MediaHost? Function()? mediaHostProvider;
+
+  /// Whether the NEFORUM browser extension will fill in hand-offs now (see
+  /// [AdapterContext.browserFills]).
+  final bool Function()? browserFills;
   final AuthBroker? broker;
   final HandoffLauncher? handoffLauncher;
   final VariantResolver resolver;
@@ -148,6 +153,7 @@ class PublishService {
         log: log ?? _log,
         clock: _now,
         onProgress: onProgress,
+        browserFills: browserFills?.call() ?? false,
         readMedia: _readMedia,
       );
 

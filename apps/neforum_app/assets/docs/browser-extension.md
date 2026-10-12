@@ -13,7 +13,8 @@ It works in Google Chrome and Mozilla Firefox (and other Chromium browsers such 
 | Instagram (web) | Create > Post, uploads the files, goes through the two Next screens and types the caption. |
 | Substack Notes | Opens "What's on your mind?" (or Create > Note), types the text and adds the images. |
 | Facebook | Opens "What's on your mind?" when needed, types the text and adds the media. |
-| X, Bluesky, Threads, LinkedIn, Reddit, Tumblr | Their composer links already carry the text; the extension adds the photos and videos. |
+| Tumblr | Opens Tumblr's full editor for the kind of post (`/new/text`, `/new/photo`, `/new/video` or `/new/link`, not the text-only share tool), types the text and adds the photos or video. In a link post the link goes into Tumblr's URL field and becomes a link card. |
+| X, Bluesky, Threads, LinkedIn, Reddit | Their composer links already carry the text; the extension adds the photos and videos. |
 | Pinterest | Uploads the image, then fills in the title and description. |
 | WhatsApp Web, Snapchat, Google Business Profile | Types the text and adds the media where the page allows. |
 | Any other site (your Mastodon server, a blog) | Click the extension's icon, then **Fill in this page**. |

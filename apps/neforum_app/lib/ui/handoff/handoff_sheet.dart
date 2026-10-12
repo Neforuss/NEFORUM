@@ -343,7 +343,10 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final nf = context.nf;
     final d = ref.watch(registryProvider).descriptor(widget.account.platformId);
     final name = d?.name ?? widget.account.platformId;
-    final steps = _steps(plan.instructions);
+    // With the extension, the platform's full composer (it fills in files
+    // too) instead of a simplified text-only intent page.
+    final composer = Env.isDesktop && _bridge.canFill ? plan.composerUrl : null;
+    final steps = _steps(composer != null ? plan.composerInstructions ?? plan.instructions : plan.instructions);
     final appTarget = _appUrl();
     final extensionStatus = _extensionStatus(nf);
     // Listening, nobody paired, and something to open: say the extension exists.
@@ -360,7 +363,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     // Phones put the share sheet first; a computer's share menu rarely has
     // the network's app, so there the composer link or manual steps lead.
     final shareFirst = plan.preferred == HandoffMethod.shareSheet && Env.isMobile;
-    if (shareFirst) {
+    if (composer != null) {
+      addAction(PrimaryAction(label: 'Open $name composer', icon: Icons.open_in_new_rounded, expand: true, onPressed: () => _openUrl(composer)));
+    } else if (shareFirst) {
       addAction(
         Builder(
           builder: (bc) => PrimaryAction(
@@ -372,7 +377,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
         ),
       );
     }
-    if (plan.webIntent != null) {
+    if (composer == null && plan.webIntent != null) {
       final w = PrimaryAction(label: 'Open $name composer', icon: Icons.open_in_new_rounded, expand: true, onPressed: () => _openUrl(plan.webIntent!));
       addAction(
         shareFirst
@@ -392,9 +397,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
         ),
       );
     }
-    if (appTarget != null && plan.webIntent == null && !shareFirst) {
+    if (composer == null && appTarget != null && plan.webIntent == null && !shareFirst) {
       addAction(PrimaryAction(label: 'Open $name', icon: Icons.open_in_new_rounded, expand: true, onPressed: () => _openUrl(appTarget)));
-    } else if (appTarget != null && (plan.webIntent == null || shareFirst)) {
+    } else if (composer == null && appTarget != null && (plan.webIntent == null || shareFirst)) {
       addAction(OutlinedButton.icon(onPressed: () => _openUrl(appTarget), icon: const Icon(Icons.open_in_new_rounded, size: 18), label: Text('Open $name')));
     }
     // On a computer: hand out the text, snippets and photos one per click,
@@ -545,7 +550,8 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                     ),
                   ],
                 ],
-                if (plan.mediaNote != null) ...[
+                // The note is about doing it by hand; the extension adds the files itself.
+                if (plan.mediaNote != null && composer == null) ...[
                   const SizedBox(height: Space.md),
                   _Callout(icon: Icons.info_outline_rounded, color: nf.info, text: plan.mediaNote!),
                 ],

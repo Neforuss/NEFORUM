@@ -66,6 +66,19 @@ Your Secret Key is stored only in this device's secure storage, next to the sign
 
 No setup is needed. You check the post and click **Post now** yourself. Your text (title, text and link) is always on the clipboard too, and values that go into separate fields (tags, alt text) are listed in the hand-off window so you can copy them one by one.
 
+### On a computer with the NEFORUM browser extension
+
+With a browser paired ([Browser extension](../browser-extension.md)), NEFORUM opens Tumblr's **full post editor** for the kind of post, and the extension fills it in, files included:
+
+| Your post | Tumblr opens |
+|---|---|
+| Text | `https://www.tumblr.com/new/text` |
+| Photos (with or without text) | `https://www.tumblr.com/new/photo` |
+| A video | `https://www.tumblr.com/new/video` |
+| A link and text, no media | `https://www.tumblr.com/new/link`: the link goes into Tumblr's URL field (Tumblr turns it into a link card) and your text below it |
+
+This replaces the share tool described below, which is a simplified page that takes text only (photos only as links on a media host), and nothing is put on your media host. Tags go in with **Insert** in the extension's panel. Tumblr also has `/new/quote`, `/new/chat` and `/new/audio` posts; a NEFORUM post is never one of those.
+
 ### Text and link posts
 
 NEFORUM opens Tumblr's official share tool (`https://www.tumblr.com/widgets/share/tool`), filled in with your text, title and tags. A post with a link uses Tumblr's link layout: the link is the post, your text is its caption. If you are not signed in, Tumblr asks you to sign in first and then opens the filled-in post.

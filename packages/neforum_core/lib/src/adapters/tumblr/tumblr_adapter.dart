@@ -707,11 +707,44 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
   /// `tags` (comma-separated) and `canonicalUrl`.
   static const String shareToolPath = '/widgets/share/tool';
 
-  /// Tumblr's web composer for a new post of each kind. Nothing can be
-  /// prefilled there; it is where files are dragged in on a computer.
+  /// Tumblr's full web composer for a new post of each kind (there are also
+  /// /new/quote, /new/chat and /new/audio, which NEFORUM posts never are).
+  /// No URL can prefill it, but the NEFORUM browser extension fills it in,
+  /// files included, which the share tool cannot take.
   static const String newTextUrl = 'https://www.tumblr.com/new/text';
   static const String newPhotoUrl = 'https://www.tumblr.com/new/photo';
   static const String newVideoUrl = 'https://www.tumblr.com/new/video';
+  static const String newLinkUrl = 'https://www.tumblr.com/new/link';
+
+  /// The full composer for [v]: a photo post when it has photos, a video post
+  /// for a video, a link post for a link without media, else a text post.
+  static Uri composerFor(PostVariant v) {
+    if (v.media.any((m) => m.isImage)) return Uri.parse(newPhotoUrl);
+    if (v.media.isNotEmpty) return Uri.parse(newVideoUrl);
+    if (_link(v) != null) return Uri.parse(newLinkUrl);
+    return Uri.parse(newTextUrl);
+  }
+
+  /// The steps when the browser extension fills in the full composer.
+  static String _composerSteps(PostVariant v) {
+    final photos = v.media.where((m) => m.isImage).length;
+    final composer = composerFor(v).path.split('/').last;
+    final hasText = _fullText(v).isNotEmpty;
+    final what = [
+      if (photos > 0) photos == 1 ? 'your photo' : 'your $photos photos',
+      if (photos == 0 && v.media.isNotEmpty) v.media.length == 1 ? 'your video' : 'your videos',
+      if (composer == 'link') 'the link',
+      if (hasText) composer == 'text' ? 'your text' : 'the text',
+    ];
+    final filled = what.length < 2 ? what.join() : '${what.sublist(0, what.length - 1).join(', ')} and ${what.last}';
+    final tags = TumblrApi.tagsField(v.tags) != null;
+    return _numbered([
+      'Tumblr opens a new $composer post (sign in if asked), and the NEFORUM browser extension adds $filled.',
+      if (tags) 'Add the tags: click Tumblr\'s tags field, then **Insert** next to Tags in the NEFORUM panel (they are also listed below).',
+      if (_hasAltText(v)) 'Add the alt text listed below to ${photos == 1 ? 'the photo' : 'each photo'}.',
+      'Check the post, then click **Post now**.',
+    ]);
+  }
 
   /// How long hand-off photos stay on the user's media host when the host can
   /// expire files: long enough to finish the post, without leaving copies
@@ -735,7 +768,9 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
   Future<HandoffPlan?> prepareHandoff(PostVariant variant, ConnectedAccount account, AdapterContext ctx) async {
     final host = ctx.mediaHost;
     final photos = [for (final m in variant.media) if (m.isImage) m];
-    if (host == null || photos.isEmpty) return buildHandoff(variant, account: account);
+    // The browser extension puts the files straight into Tumblr's full
+    // composer: nothing to put on the host.
+    if (host == null || photos.isEmpty || ctx.browserFills) return buildHandoff(variant, account: account);
 
     final limit = host.maxBytes;
     final tooBig = limit == null ? null : photos.where((m) => m.sizeBytes > limit).firstOrNull;
@@ -841,6 +876,8 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       desktopUrl: newTextUrl,
       preferred: HandoffMethod.webIntent,
       snippets: _snippets(variant),
+      composerUrl: composerFor(variant),
+      composerInstructions: _composerSteps(variant),
     );
   }
 
@@ -893,6 +930,8 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       preferred: HandoffMethod.shareSheet,
       mediaNote: note.toString(),
       snippets: _snippets(variant),
+      composerUrl: composerFor(variant),
+      composerInstructions: _composerSteps(variant),
     );
   }
 
@@ -951,6 +990,8 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       preferred: HandoffMethod.shareSheet,
       mediaNote: note.toString(),
       snippets: _snippets(variant),
+      composerUrl: composerFor(variant),
+      composerInstructions: _composerSteps(variant),
     );
   }
 }

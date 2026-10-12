@@ -17,6 +17,7 @@ class AdapterContext {
     Logger? log,
     Clock? clock,
     this.onProgress,
+    this.browserFills = false,
     Future<Uint8List> Function(MediaAttachment media)? readMedia,
   })  : log = log ?? Logger('adapter'),
         now = clock ?? systemClock,
@@ -34,6 +35,12 @@ class AdapterContext {
 
   /// Optional progress callback ("Uploading image 2 of 3…").
   final void Function(String message)? onProgress;
+
+  /// The NEFORUM browser extension will fill in hand-offs on the platform's
+  /// web composer ([HandoffPlan.composerUrl]), files included: work only the
+  /// plain hand-off needs (putting photos on the media host for an intent
+  /// URL) can be skipped.
+  final bool browserFills;
   final Future<Uint8List> Function(MediaAttachment media)? _readMedia;
 
   void progress(String message) {
@@ -58,6 +65,7 @@ class AdapterContext {
         log: log ?? this.log,
         clock: now,
         onProgress: onProgress ?? this.onProgress,
+        browserFills: browserFills,
         readMedia: _readMedia,
       );
 }

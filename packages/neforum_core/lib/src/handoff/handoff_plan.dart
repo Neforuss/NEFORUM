@@ -44,6 +44,8 @@ class HandoffPlan {
     this.preferred = HandoffMethod.webIntent,
     this.mediaNote,
     this.snippets = const [],
+    this.composerUrl,
+    this.composerInstructions,
   });
 
   final String platformId;
@@ -82,6 +84,16 @@ class HandoffPlan {
   /// Extra values to copy one by one, beyond [clipboardText].
   final List<HandoffSnippet> snippets;
 
+  /// The platform's full web composer for this kind of post (Tumblr's
+  /// `/new/photo`), which the NEFORUM browser extension fills in with the
+  /// text and the files. Opened instead of [webIntent] / [desktopUrl] when a
+  /// browser with the extension is paired: an intent URL is often a
+  /// simplified page that takes text only.
+  final Uri? composerUrl;
+
+  /// The steps to show instead of [instructions] when [composerUrl] is used.
+  final String? composerInstructions;
+
   bool get hasMedia => shareFiles.isNotEmpty;
 
   HandoffPlan copyWith({HandoffMethod? preferred, String? instructions, Uri? webIntent}) => HandoffPlan(
@@ -97,5 +109,7 @@ class HandoffPlan {
         preferred: preferred ?? this.preferred,
         mediaNote: mediaNote,
         snippets: snippets,
+        composerUrl: composerUrl,
+        composerInstructions: composerInstructions,
       );
 }

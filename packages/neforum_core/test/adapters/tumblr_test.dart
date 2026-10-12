@@ -865,6 +865,35 @@ void main() {
       expect(desktop([fakeImage(), fakeVideo()]), 'https://www.tumblr.com/new/photo');
     });
 
+    test('the full composer for the browser extension follows the kind of post (not the text-only share tool)', () {
+      String composer(PostVariant v) => adapter.buildHandoff(v)!.composerUrl.toString();
+      expect(composer(const PostVariant(text: 'Hello')), 'https://www.tumblr.com/new/text');
+      expect(composer(PostVariant(text: 'Pic', media: [fakeImage()])), 'https://www.tumblr.com/new/photo');
+      expect(composer(PostVariant(text: 'Gif', media: [fakeImage(mimeType: 'image/gif')])), 'https://www.tumblr.com/new/photo');
+      expect(composer(PostVariant(text: 'Clip', media: [fakeVideo()])), 'https://www.tumblr.com/new/video');
+      expect(composer(PostVariant(text: 'Both', media: [fakeImage(), fakeVideo()])), 'https://www.tumblr.com/new/photo');
+      expect(composer(const PostVariant(text: 'Read this', link: 'https://example.com/a')), 'https://www.tumblr.com/new/link');
+      expect(composer(PostVariant(text: 'Pic and link', link: 'https://example.com/a', media: [fakeImage()])), 'https://www.tumblr.com/new/photo');
+    });
+
+    test('the full composer\'s steps say what the extension adds', () {
+      final photo = adapter.buildHandoff(PostVariant(text: 'Pic', media: [fakeImage(altText: 'Cat'), fakeImage(id: 'img2')], tags: const ['cats']))!;
+      expect(photo.composerInstructions, startsWith('1. Tumblr opens a new photo post'));
+      expect(photo.composerInstructions, contains('adds your 2 photos and the text'));
+      expect(photo.composerInstructions, contains('**Insert** next to Tags'));
+      expect(photo.composerInstructions, contains('alt text listed below to each photo'));
+      expect(photo.composerInstructions, isNot(contains('Save media to Downloads')));
+      final text = adapter.buildHandoff(const PostVariant(text: 'Hello'))!;
+      expect(text.composerInstructions, '1. Tumblr opens a new text post (sign in if asked), and the NEFORUM browser extension adds your text.\n'
+          '2. Check the post, then click **Post now**.');
+      final link = adapter.buildHandoff(const PostVariant(text: 'Read this', link: 'https://example.com/a'))!;
+      expect(link.composerInstructions, contains('new link post'));
+      expect(link.composerInstructions, contains('adds the link and the text'));
+      final video = adapter.buildHandoff(PostVariant(text: '', media: [fakeVideo()]))!;
+      expect(video.composerInstructions, contains('new video post'));
+      expect(video.composerInstructions, contains('adds your video.'));
+    });
+
     test('a video post does not suggest a media host and names the video', () {
       final plan = adapter.buildHandoff(PostVariant(text: 'Clip', media: [fakeVideo()]))!;
       expect(plan.webIntent, isNull);
@@ -896,6 +925,21 @@ void main() {
           readMedia: read ?? (m) async => fakeJpegBytes,
         );
     final account = _account(tier: PlatformTier.handoff);
+
+    test('with the browser extension ready, nothing goes to the media host: it adds the files itself', () async {
+      final host = _RecordingHost();
+      final ctx = AdapterContext(
+        http: NeforumHttp(client: MockClient((r) async => throw StateError('no HTTP expected')), maxRetries: 0),
+        mediaHost: host,
+        clock: () => testNow,
+        browserFills: true,
+        readMedia: (m) async => fakeJpegBytes,
+      );
+      final plan = (await adapter.prepareHandoff(PostVariant(text: 'Pic', media: [fakeImage()]), account, ctx))!;
+      expect(host.uploaded, isEmpty);
+      expect(plan.composerUrl.toString(), 'https://www.tumblr.com/new/photo');
+      expect(plan.webIntent, isNull);
+    });
 
     test('with a media host: photos are uploaded for a day and the share tool opens a prefilled photoset', () async {
       final host = _RecordingHost();

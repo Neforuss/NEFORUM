@@ -173,6 +173,7 @@ class AppServices {
         broker: broker,
         handoffLauncher: handoff,
         mediaHostProvider: () => _mediaHost,
+        browserFills: () => Env.isDesktop && browserBridge.canFill,
         resolver: VariantResolver(_settings.resolverOptions),
         options: _settings.publishOptions,
         readMedia: media.read,

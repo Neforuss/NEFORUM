@@ -88,14 +88,17 @@
     const done = { text: !job.text, media: 0, title: !job.title, problems: [], notes: [] };
     try {
       panel.set('Opening the composer…');
-      await recipe.open?.();
+      await recipe.open?.(job);
+      // What goes into the text box (a recipe may have put part of it elsewhere).
+      const text = recipe.textFor?.(job) ?? job.text;
+      if (!text) done.text = true;
 
       if (job.media?.length && !files) {
         files = await loadMedia(job, (i) => panel.set(`Getting ${job.media.length === 1 ? 'the file' : `file ${i + 1} of ${job.media.length}`} from NEFORUM…`));
       }
 
       const doText = async () => {
-        if (!job.text) return;
+        if (!text) return;
         panel.set('Filling in the text…');
         const editor = (await recipe.editor?.()) ?? (await waitFor(() => findEditor(root()), { timeout: 8000 }));
         if (!editor) {
@@ -103,7 +106,7 @@
           return;
         }
         lastEditor = editor;
-        done.text = !!(await insertText(editor, job.text, { replace: !!recipe.replaceText || refill }));
+        done.text = !!(await insertText(editor, text, { replace: !!recipe.replaceText || refill }));
         if (!done.text) done.problems.push('The text box did not take the text: click into it, then Insert text (or paste with Ctrl+V).');
       };
 

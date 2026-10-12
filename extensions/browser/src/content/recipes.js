@@ -13,6 +13,9 @@
   if (NF.recipes) return;
   const { waitFor, findByText, press, findEditor, visible } = NF.fill;
 
+  /** The link a Tumblr link post's URL field took, if any (see recipes.tumblr). */
+  let tumblrLinkDone = false;
+
   /** The open dialog, if a composer opened in one. */
   const dialog = () => [...document.querySelectorAll('[role="dialog"], dialog[open]')].filter(visible).pop() ?? null;
 
@@ -37,7 +40,32 @@
     threads: { root: dialog },
     linkedin: { root: dialog, postSelectors: ['.share-actions__primary-action'] },
     reddit: { postSelectors: ['#inner-post-submit-button', '#submit-post-button'] },
-    tumblr: { postWords: ['post now', 'post'] },
+    tumblr: {
+      // NEFORUM opens the full composer (/new/text, /new/photo, /new/video,
+      // /new/link), not the text-only share tool. In a link post the link
+      // goes into Tumblr's URL field, which makes the link card; the rest of
+      // the text goes below it.
+      async open(job) {
+        tumblrLinkDone = false;
+        const link = /\/new\/link\b/.test(location.pathname) && /https?:\/\/[^\s<>"]+/.exec(job.text ?? '')?.[0];
+        if (!link) return;
+        const field = await waitFor(
+          () => document.querySelector('input[type="url"], input[placeholder*="URL" i], input[aria-label*="URL" i], input[placeholder*="link" i], [contenteditable="true"][aria-label*="URL" i]'),
+          { timeout: 8000 },
+        );
+        if (!field || !(await NF.fill.insertText(field, link))) return;
+        // Tumblr fetches the preview on Enter (or when the field loses focus).
+        field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true, cancelable: true }));
+        field.blur();
+        tumblrLinkDone = link;
+        await NF.fill.sleep(1500);
+      },
+      textFor(job) {
+        if (!tumblrLinkDone) return job.text;
+        return (job.text ?? '').split(tumblrLinkDone).join('').replace(/\n{3,}/g, '\n\n').trim();
+      },
+      postWords: ['post now', 'post'],
+    },
     mastodon: { postSelectors: ['.compose-form__publish button'], postWords: ['post', 'publish', 'publish!', 'toot!'] },
     misskey: { postWords: ['note', 'post'] },
 

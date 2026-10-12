@@ -899,6 +899,79 @@ HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 5));
   });
+
+  testWidgets('hand-off: with a paired browser, Tumblr opens its full composer instead of the text-only share tool',
+      variant: TargetPlatformVariant.only(TargetPlatform.windows), timeout: const Timeout(Duration(minutes: 1)), (tester) async {
+    tester.view.physicalSize = const Size(900, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final launched = <String>[];
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/url_launcher'), (call) async {
+      if (call.method == 'launch') launched.add((call.arguments as Map)['url'] as String);
+      return true;
+    });
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async => null);
+    final launcher = _FakeLauncher();
+    BrowserBridge.launcher = launcher;
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/url_launcher'), null);
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+      BrowserBridge.launcher = const BrowserLauncher();
+    });
+
+    final bridge = (await tester.runAsync(() async => BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0])))!;
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(Uint8List(3)), browserBridge: bridge)))!;
+    await tester.runAsync(services.startBrowserBridge);
+    final port = bridge.status.value.port!;
+
+    final photo = MediaAttachment(id: 'one', path: 'C:/media/one.jpg', mimeType: 'image/jpeg', sizeBytes: 3, fileName: 'cat.jpg');
+    final account = ConnectedAccount(id: 'tb', platformId: 'tumblr', tier: PlatformTier.handoff, displayName: 'Tumblr', createdAt: DateTime(2026, 10, 12));
+    final post = Post(id: 'p1', text: 'A cat', createdAt: DateTime(2026, 10, 12), updatedAt: DateTime(2026, 10, 12));
+    final variant = PostVariant(text: 'A cat', media: [photo]);
+    final plan = services.registry.byId('tumblr')!.buildHandoff(variant, account: account)!;
+    Future<void> show() async {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [servicesProvider.overrideWithValue(services)],
+        child: MaterialApp(
+          theme: buildTheme(Brightness.light, AccentChoice.neforum),
+          home: Scaffold(body: HandoffSheet(plan: plan, post: post, account: account, variant: variant)),
+        ),
+      ));
+      await tester.pump();
+    }
+
+    // Nobody paired: the hand-off as before (a new photo post, files dragged in by hand).
+    await show();
+    expect(find.textContaining('Save media to Downloads'), findsWidgets);
+    expect(find.textContaining('the NEFORUM browser extension adds'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+
+    await tester.runAsync(() async {
+      final client = _client();
+      final code = bridge.startPairing().code;
+      await _call(client, port, 'POST', '/v1/pair', body: {'code': code, 'browser': 'Chrome'});
+      client.close(force: true);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+    await show();
+    expect(find.text('Tumblr opens a new photo post (sign in if asked), and the NEFORUM browser extension adds your photo and the text.'), findsOneWidget);
+    expect(find.textContaining("Tumblr's website cannot take files"), findsNothing, reason: 'the by-hand note is not shown');
+    await tester.runAsync(() async {
+      await tester.tap(find.text('Open Tumblr composer'));
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+    });
+    await tester.pump();
+    expect(launcher.opened, [(_chrome.id, 'https://www.tumblr.com/new/photo')]);
+    expect(launched, isEmpty);
+    expect(bridge.job!.url, 'https://www.tumblr.com/new/photo');
+    expect(bridge.job!.hosts, contains('www.tumblr.com'));
+    expect(bridge.job!.media.single.name, 'cat.jpg');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(bridge.dispose);
+    await tester.pump(const Duration(seconds: 5));
+  });
 }
 
 // Browsers as Windows lists them; Helium's program is chrome.exe too.
