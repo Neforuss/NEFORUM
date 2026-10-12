@@ -107,16 +107,17 @@ class InstagramAdapter extends PlatformAdapter {
               required: false,
               secret: true,
               help: 'App Dashboard > **API setup with Instagram login** > **Generate access tokens** > '
-                  '**Generate token** next to your account. Lasts 60 days; NEFORUM renews it automatically. '
-                  'With a token, leave the fields below empty.',
+                  '**Generate token** next to your account (listed once it has accepted its Instagram Tester '
+                  'invite). Lasts 60 days; NEFORUM renews it automatically. With a token, leave the fields below '
+                  'empty.',
             ),
             ConnectField(
               key: 'app_id',
               label: 'Instagram app ID',
               required: false,
               placeholder: '1234567890123456',
-              help: 'Only for browser sign-in. Top of **API setup with Instagram login** (not the Meta App ID '
-                  'under App settings > Basic).',
+              help: 'Only for browser sign-in. Top of **API setup with Instagram login**: the ID of the `-IG` '
+                  'app Meta created for you (not the Meta App ID under App settings > Basic).',
             ),
             ConnectField(
               key: 'app_secret',
@@ -460,7 +461,7 @@ class InstagramAdapter extends PlatformAdapter {
         hosted.add(h);
         urls.add(h.url.toString());
       } on MediaHostException catch (e) {
-        throw AdapterException(PublishError.configuration('Your media host (${host.name}) failed: ${e.message}'));
+        throw AdapterException(e.toPublishError());
       } on HttpFailure catch (f) {
         final message = 'Your media host (${host.name}) refused the upload: HTTP ${f.statusCode}';
         throw AdapterException(f.statusCode >= 500 || f.statusCode == 429
@@ -548,10 +549,10 @@ When you post, NEFORUM copies your caption to the clipboard and hands the photo 
 const String _apiIntro = '''
 **Automatic posting needs a professional Instagram account (Business or Creator), your own free Meta app and a media host.** Personal accounts cannot use the API: use Hand-off, or switch for free in Instagram (**Settings > Account type and tools > Switch to professional account**). No Facebook Page and no App Review needed.
 
-1. Open <https://developers.facebook.com/apps/creation/> and create an app with the use case **Manage messaging and content on Instagram** (if asked for an app type, pick **Business**).
-2. **Use cases > Customize**: click **Add** next to `instagram_business_content_publish` (`instagram_business_basic` is added for you).
-3. Open **API setup with Instagram login** (left menu). Under **Generate access tokens** click **Add account** and log in to your Instagram account. If Instagram shows a tester invite, accept it (**Settings > Apps and websites > Tester invites**).
-4. Click **Generate token** next to your account, log in, copy the token and paste it into the first field below. Done: it lasts 60 days and NEFORUM renews it automatically.
-5. Set up a **media host** (NEFORUM **Settings > Media hosting**): Instagram downloads every photo and video from a public link; NEFORUM deletes the copy after posting.
+1. Open <https://developers.facebook.com/apps/creation/> and create an app with the use case **Manage messaging & content on Instagram** (if asked for an app type, pick **Business**). No business portfolio? Pick **I don't want to connect a business portfolio yet**.
+2. **Use cases > Customize > Permissions and features**: click **+ Add** next to both `instagram_business_basic` and `instagram_business_content_publish` (neither is on by default). The list cuts the names off; each row's description shows the full name.
+3. **App roles > Roles > Add People > Instagram Tester**, enter your Instagram username, then accept the invite in Instagram: **Settings > Apps and websites > Tester invites**. Tokens can't be made without this.
+4. Open **API setup with Instagram login** (left menu). Your account now shows under **Generate access tokens**: click **Generate token**, log in in the pop-up, copy the token and paste it into the first field below. It lasts 60 days and NEFORUM renews it automatically.
+5. Pick a **media host** in NEFORUM **Settings > Media hosting**, even for text-only posts (they go out as a text card image). **Litterbox** needs no setup and is fine to start; for regular posting a bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) is more reliable. The **Guide** button there explains each host.
 
-**Browser sign-in instead of a token:** copy the **Instagram app ID** and **Instagram app secret** from the top of the same page (not the Meta App ID), add `https://localhost:52771/callback` under **Set up Instagram business login > Business login settings > OAuth redirect URIs**, press **Sign in**, then paste the whole address of the page that fails to load.''';
+**Browser sign-in instead of a token:** copy the **Instagram app ID** and **Instagram app secret** from the top of the same page (the `-IG` app Meta made for you, not the Meta App ID), add `https://localhost:52771/callback` under **Set up Instagram business login > Business login settings > OAuth redirect URIs**, press **Sign in**, then paste the whole address of the page that fails to load.''';

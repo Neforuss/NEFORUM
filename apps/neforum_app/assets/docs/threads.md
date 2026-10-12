@@ -1,8 +1,8 @@
 # Threads (Meta)
 
 *Last checked against Meta's developer documentation (the new `developers.facebook.com/documentation/threads`
-pages and their `llms.txt` index) on 11 October 2026. NEFORUM calls `graph.threads.net/v1.0`; since 6 June 2025
-`graph.threads.com` works too.*
+pages and their `llms.txt` index) on 11 October 2026, and against Meta's App Dashboard during a real setup on the
+same day. NEFORUM calls `graph.threads.net/v1.0`; since 6 June 2025 `graph.threads.com` works too.*
 
 NEFORUM can post to Threads in two ways:
 
@@ -22,8 +22,9 @@ Status as of October 2026:
 ### 1. Create the app
 
 1. Open <https://developers.facebook.com/apps/creation/> and log in with the Facebook/Meta account you use for development. If asked, register as a developer (free).
-2. Choose the use case **Access the Threads API**. This adds the Threads API to the app. You do not need a business portfolio.
-3. Finish the wizard.
+2. Choose the use case **Access the Threads API**. This adds the Threads API to the app. Want Instagram too? Also tick **Manage messaging & content on Instagram**: one app can serve both Threads and Instagram (see the Instagram guide).
+3. If the wizard asks *Which business portfolio do you want to connect to this app?*, you can pick **I don't want to connect a business portfolio yet**. That is fine for posting to your own profile.
+4. Finish the wizard. The left menu may also list *Facebook Login for Business* even though you did not choose it. You can ignore it.
 
 ### 2. Permissions
 
@@ -31,13 +32,13 @@ In the left menu open **Use cases**, click **Access the Threads API** (or its pe
 
 - `threads_content_publish` (lets NEFORUM publish).
 
-`threads_basic` is required and always on. NEFORUM asks for nothing else.
+`threads_basic` is required and already shows "Ready for testing", so it needs no click. NEFORUM asks for nothing else.
 
 ### 3. Make your Threads profile a Threads Tester
 
 Your developer login is a Facebook account; your Threads profile is a separate identity, so it needs its own role:
 
-1. In the left menu open **App roles > Roles** (the Threads **Settings** page also has a button **Add or Remove Threads Test Users** that leads there).
+1. In the left menu open **App roles > Roles** (the button **Add or Remove Threads Testers** on the use case's **Settings** page leads there too).
 2. Click **Add People**, choose **Threads Tester** and enter your Threads username.
 3. Open Threads (app or website), go to **Settings > Account > Website permissions > Invites** and **accept** the invite (*Get Started*: the invite is accepted under Website permissions in the account settings of the Threads website or app, after signing in).
 
@@ -45,29 +46,30 @@ Repeat for every extra Threads profile you want to post to.
 
 ### 4a. Quickest: paste a token from the User Token Generator
 
-The Threads **Settings** page of the use case may offer a **User Token Generator** for your Threads Testers. Meta's current documentation does not describe this tool, so if you do not see it, use 4b.
-
-1. Generate a token for your profile there and copy it.
-2. In NEFORUM: **Add account > Threads > Your own API keys**, paste it into **Or: access token from the User Token Generator**. The app ID and secret can stay empty.
-3. Press the connect button. NEFORUM:
+1. In the left menu open the use case's **Settings** (*Use cases > Access the Threads API > Settings*). This is a different page from *App settings > Basic*.
+2. Below the Threads app ID and secret is the **User Token Generator**. It says it makes long-lived access tokens for the app's Threads Testers, and only for **public** Threads accounts. It lists every tester who accepted the invite.
+3. Make sure your Threads profile is public, then click **Generate Access Token** next to it. A pop-up opens: sign in to Threads if asked, allow access and copy the token.
+4. In NEFORUM: **Add account > Threads > Your own API keys**, paste it into **Access token from the User Token Generator** (the first field). Leave the app ID, secret and redirect fields as they are.
+5. Press the connect button. NEFORUM:
    - checks the token with `GET /v1.0/me` (your id and username);
    - asks Meta about it with `GET /v1.0/debug_token` (valid? which permissions? when does it expire?) and stops with a clear message if `threads_content_publish` is missing;
-   - if the token is a 1-hour token, swaps it for a 60-day token with `GET /access_token?grant_type=th_exchange_token`. That call needs the **Threads app secret**, so NEFORUM then asks you to fill it in;
+   - keeps a long-lived token as it is. Tokens from the User Token Generator are long-lived, so **no Threads app secret is needed**;
+   - only if Meta reports a 1-hour token (for example one made with another tool) does NEFORUM ask for the **Threads app secret**, which it needs to swap the token for a 60-day one with `GET /access_token?grant_type=th_exchange_token`. If `debug_token` gives no answer, NEFORUM keeps the token as it is, unless you filled in the app secret: then it tries the swap first and keeps the pasted token if Meta refuses;
    - stores the token and renews it automatically (see "Tokens" below).
 
 ### 4b. Alternative: sign in through the browser
 
 1. In the left menu open the use case's **Settings**. (This is a different page from *App settings > Basic*.)
-2. Under **Client OAuth Settings** (older screens: **Redirect Callback URLs**) add
+2. Under **Redirect Callback URLs** (Meta's docs and some dashboards: **Client OAuth Settings**) add
 
    ```
    https://127.0.0.1:52771/callback
    ```
 
    Type it in, then **click the suggestion that appears** so the address turns into a grey "chip". Otherwise the page shows "Please enter an OAuth redirect URI".
-3. Put the same address in **Deauthorize callback URL** and **Data Deletion Requests URL** (older screens: *Uninstall Callback URL* and *Delete Callback URL*). Older dashboards do not save until all three are filled in.
+3. Put the same address in **Uninstall Callback URL** and **Delete Callback URL** (Meta's docs and some dashboards: *Deauthorize callback URL* and *Data Deletion Requests URL*). Some dashboards do not save until all three are filled in.
 4. Click **Save**.
-5. Copy the **Threads app ID** and **Threads app secret** shown on that page. Meta creates two app ID/secret pairs for a Threads app; use the Threads app ID and its matching secret, **not** the Facebook App ID.
+5. Copy the **Threads app ID** and **Threads app secret** shown on that page (*App settings > Basic* shows them too, next to *Threads display name*). Meta creates two app ID/secret pairs for a Threads app; use the Threads app ID and its matching secret, **not** the Facebook App ID.
 6. In NEFORUM paste both, leave the redirect URI as `https://127.0.0.1:52771/callback` (unless you registered something else) and press **Sign in with Threads**.
 7. Threads opens in your browser. Sign in and allow access.
 8. The browser lands on a page that does not load. Copy the **whole address** from the address bar. It looks like `https://127.0.0.1:52771/callback?code=AQB...#_` ("`#_` will be appended to the end of the redirect URI, but it is not part of the code itself"; NEFORUM strips it). Paste it into NEFORUM. A bare code also works.
@@ -86,13 +88,19 @@ Why this address? NEFORUM's desktop sign-in normally listens on `http://127.0.0.
 
 ### Images and videos need a media host
 
-The Threads API has no upload endpoint. Meta downloads every image and video from a **public HTTPS address** when the post is created, so it must be on a publicly accessible server at that moment (*Get Started*). Before you post media, configure a media host in NEFORUM (**Settings > Media hosting**, e.g. an S3/R2/Backblaze bucket or a WebDAV/Nextcloud share). NEFORUM:
+The Threads API has no upload endpoint. Meta downloads every image and video from a **public HTTPS address** when the post is created, so it must be on a publicly accessible server at that moment (*Get Started*). Before you post media, configure a media host in NEFORUM under **Settings > Media hosting**:
+
+- **To start:** pick **Litterbox**. It needs no account and no setup. It is a free service run by a volunteer, with no guarantee: uploads can fail when its server has problems.
+- **For regular posting:** use a storage bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) or a Nextcloud/WebDAV share. A bucket is the most reliable choice.
+- The media hosting guide explains each host step by step. In NEFORUM it is the **Guide** button under *Settings > Media hosting*; in the repository it is `docs/media-hosts.md`.
+
+When you post media, NEFORUM:
 
 1. uploads each file to your host,
 2. hands Meta the address,
 3. waits until Meta reports the media as processed (Meta suggests waiting about 30 seconds on average and querying the status "once per minute, for no more than 5 minutes"; NEFORUM checks for up to 5 minutes),
 4. publishes, and
-5. deletes the files from your host again (best effort).
+5. deletes the files from your host again (best effort; Litterbox files expire by themselves instead).
 
 The host must serve the file directly. Redirects, link shorteners, "are you a bot?" pages and links that expire within minutes all make Meta's download fail. Text-only posts need no media host.
 
@@ -125,18 +133,19 @@ All numbers are from the Threads *Posts* guide and the *Troubleshooting* page:
 | What you see | What it means and what to do |
 |---|---|
 | The Threads sign-in window shows an error, or "The user has not accepted the invite to test the app" (error 1349245, reported by developers) | Your Threads profile is not a Threads Tester yet, or the invite is not accepted. Do step 3. |
-| "Threads refused the sign-in code ... Invalid redirect_uri" | The redirect URI in NEFORUM does not match the one under **Client OAuth Settings** exactly (watch the trailing `/`), or you used the Facebook App ID instead of the Threads app ID. |
+| The User Token Generator does not list your profile, or **Generate Access Token** fails | Accept the Threads Tester invite (step 3) and make your Threads profile public. The generator only makes tokens for public profiles. |
+| "Threads refused the sign-in code ... Invalid redirect_uri" | The redirect URI in NEFORUM does not match the one under **Redirect Callback URLs** (or **Client OAuth Settings**) exactly (watch the trailing `/`), or you used the Facebook App ID instead of the Threads app ID. |
 | "Error validating client secret" / session key errors | You pasted the Facebook App Secret. Use the **Threads app secret** from the use case's Settings page. |
 | "The code has been used" / "code not found" | Codes work once and for 1 hour. Start the connection again. |
 | "This token cannot publish: add threads_content_publish" | Add the permission (section 2), then generate a new token. |
-| "This token only lasts about an hour" | Also fill in the Threads app secret so NEFORUM can swap it for a 60-day token. |
+| "This token only lasts about an hour" | Also fill in the Threads app secret so NEFORUM can swap it for a 60-day token, or paste a token from the User Token Generator instead (those are long-lived). |
 | Error 190 ("Error validating access token") | The token expired or was revoked (or cut off when pasting). Reconnect. |
 | Error 10 or 200–299 | A permission is missing. Reconnect and allow `threads_content_publish`. |
 | Errors 4, 17, 32, 613 or HTTP 429 | Rate limit. NEFORUM waits and retries. `GET /{user-id}/threads_publishing_limit` shows the quota (250 posts, 1,000 replies, 100 deletes per 86,400 s). |
 | Container status `ERROR` with `FAILED_DOWNLOADING_VIDEO` | Meta could not fetch the file from your media host. Make it public, direct and HTTPS. |
 | `INVALID_ASPEC_RATIO`, `INVALID_DURATION`, `INVALID_FRAME_RATE`, `INVALID_BIT_RATE`, ... | The video breaks one of the specs above. Re-encode it. |
 | Container status `EXPIRED` | "The container was not published within 24 hours". Try again. |
-| Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu; needs an app icon, a Privacy Policy URL and a data deletion URL). |
+| Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu). As of October 2026 the only required item was a **Privacy policy URL**; an app icon and a data deletion URL were optional. |
 | Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. Reconnect. |
 
 ## Known limitations
@@ -150,13 +159,13 @@ All numbers are from the Threads *Posts* guide and the *Troubleshooting* page:
 
 ## Where Meta's documentation disagrees
 
-- **Settings field names.** The *Create an app* / *Threads use case* pages name the fields **Client OAuth Settings**, **Deauthorize callback URL** and **Data Deletion Requests URL**; older dashboards (and older NEFORUM guides) show *Redirect Callback URLs*, *Uninstall Callback URL* and *Delete Callback URL*. Same fields.
-- **Where the Threads app secret is.** The use-case pages show it under the use case's **Settings**; the *Long-lived tokens* page says *App Dashboard > App settings > Basic > Threads App secret*. Both places show the same secret.
+- **Settings field names.** Both naming styles exist. The *Create an app* / *Threads use case* pages name the fields **Client OAuth Settings**, **Deauthorize callback URL** and **Data Deletion Requests URL**. The dashboard in October 2026 showed *Redirect Callback URLs*, *Uninstall Callback URL* and *Delete Callback URL*, next to *Threads app ID*, *Threads app secret* and *Threads Display Name*. Same fields.
+- **Where the Threads app secret is.** The use-case pages show it under the use case's **Settings**; the *Long-lived tokens* page says *App Dashboard > App settings > Basic > Threads App secret*. In October 2026 both places showed it (*App settings > Basic* lists the Threads app ID, Threads app secret and Threads display name).
 - **Token exchange host.** The *Get access tokens* page uses `https://graph.threads.com/oauth/access_token`, the *Long-lived tokens* page `https://graph.threads.net/access_token`. The changelog (6 June 2025) says both hosts work; NEFORUM uses `graph.threads.net`.
 - **HTTPS redirects.** The access-token pages only say the redirect must match exactly and use HTTPS examples; the HTTPS-only rule comes from Meta's sample app and its issue tracker.
 - **Testers.** The changelog says the API "is open to all developers" since 18 June 2024; the *Get Started* page still says people without a role need App Review. For your own profile the Threads Tester role covers both readings.
 - **Private profiles.** *Get Started* says permission grants from private profiles cannot be extended and must be granted again; *Long-lived tokens* says private-profile tokens can now be refreshed and their permissions are valid for 90 days.
-- **User Token Generator.** Many developer guides describe it on the use case's Settings page, but none of Meta's current Threads pages mention it. NEFORUM therefore checks every pasted token itself (`/me` and `debug_token`) instead of assuming how long it lasts.
+- **User Token Generator.** None of Meta's current Threads pages mention it, but it was on the use case's Settings page in October 2026 (step 4a), making long-lived tokens for public profiles. NEFORUM still checks every pasted token itself (`/me` and `debug_token`) instead of assuming how long it lasts.
 
 ## Official documentation
 

@@ -29,7 +29,10 @@ enum S3AddressingStyle {
 /// The public link is `publicBaseUrl/key` when the bucket is public-read (the
 /// recommended setup). Without a public base URL the host hands out a
 /// presigned GET link instead, valid for the requested TTL (at most 7 days).
-class S3CompatibleMediaHost implements MediaHost {
+///
+/// A PUT that fails with HTTP 5xx, a timeout or a network error is tried once
+/// more after [mediaHostRetryPause] (see [guardedUpload]).
+class S3CompatibleMediaHost implements MediaHost, DescribesVerify {
   S3CompatibleMediaHost({
     required NeforumHttp http,
     required Uri endpoint,
@@ -44,7 +47,9 @@ class S3CompatibleMediaHost implements MediaHost {
     Clock? clock,
     Logger? log,
     String Function()? newId,
+    MediaHostDelay? retryDelay,
   })  : _http = http,
+        _retryDelay = retryDelay ?? mediaHostDefaultDelay,
         endpoint = _stripTrailingSlash(endpoint),
         pathPrefix = _normalizePrefix(pathPrefix),
         _signer = SigV4Signer(
@@ -58,7 +63,7 @@ class S3CompatibleMediaHost implements MediaHost {
 
   /// Builds a host from the settings form (see [s3Fields] for the keys).
   factory S3CompatibleMediaHost.fromConfig(Map<String, String> config, NeforumHttp http,
-      {Clock? clock, Logger? log, String Function()? newId}) {
+      {Clock? clock, Logger? log, String Function()? newId, MediaHostDelay? retryDelay}) {
     const id = s3HostId;
     final publicBase = configValue(config, 'publicBaseUrl');
     return S3CompatibleMediaHost(
@@ -75,10 +80,12 @@ class S3CompatibleMediaHost implements MediaHost {
       clock: clock,
       log: log,
       newId: newId,
+      retryDelay: retryDelay,
     );
   }
 
   final NeforumHttp _http;
+  final MediaHostDelay _retryDelay;
   final Uri endpoint;
   final String bucket;
   final Uri? publicBaseUrl;
@@ -199,19 +206,27 @@ class S3CompatibleMediaHost implements MediaHost {
     }
   }
 
+  @override
+  String get verifiedMessage => publicBaseUrl == null
+      ? 'Upload works: a tiny test file was uploaded, opened through a signed link and deleted again. '
+          '(Meta does not document whether Instagram and Threads accept signed links.)'
+      : 'Upload works: a tiny test file was uploaded, opened through its public link and deleted again.';
+
   Future<void> _put(String key, Uint8List bytes, String contentType) async {
     final uri = objectUri(key);
-    final signed = _signer.sign(
-      method: 'PUT',
-      uri: uri,
-      now: _now(),
-      headers: {'content-type': contentType},
-      payloadHash: sha256Hex(bytes),
-    );
     _log.debug('PUT $uri (${bytes.length} bytes)');
-    final r = await guardedCall(id, 'reach ${endpoint.host}', () => _http.putBytes(uri, bytes,
-        headers: {'Content-Type': contentType, ...signed.headers}, throwOnError: false));
-    if (!r.ok) throw _error(r, 'upload the file');
+    // Signed per attempt: the retry may come seconds later.
+    final r = await guardedUpload(id, 'reach ${endpoint.host}', () {
+      final signed = _signer.sign(
+        method: 'PUT',
+        uri: uri,
+        now: _now(),
+        headers: {'content-type': contentType},
+        payloadHash: sha256Hex(bytes),
+      );
+      return _http.putBytes(uri, bytes, headers: {'Content-Type': contentType, ...signed.headers}, throwOnError: false);
+    }, delay: _retryDelay, log: _log);
+    if (!r.ok) throw _error(r, 'upload the file', action: 'store the file');
   }
 
   Future<void> _delete(String key) async {
@@ -222,8 +237,18 @@ class S3CompatibleMediaHost implements MediaHost {
     if (!r.ok && r.statusCode != 404) throw _error(r, 'delete ${_encodeKey(key)}');
   }
 
-  MediaHostException _error(NeforumResponse r, String what) {
+  /// [what] completes "Could not ..." for 4xx answers; [action] is used for
+  /// 5xx answers ("Your bucket couldn't [action]"), defaulting to [what].
+  MediaHostException _error(NeforumResponse r, String what, {String? action}) {
     final (code, message) = _parseError(r.body);
+    if (r.statusCode >= 500) {
+      final detail = [code, message].whereType<String>().join(': ');
+      return MediaHostException(
+          hostHttpFailure('Your bucket', r,
+              action: action ?? what, side: "the storage provider's", detail: detail.isEmpty ? null : detail),
+          hostId: id,
+          temporary: isTemporaryStatus(r.statusCode));
+    }
     final hint = switch (code) {
       'InvalidAccessKeyId' => 'the access key ID is not recognised',
       'SignatureDoesNotMatch' => 'the secret access key is wrong (or does not belong to this access key)',
@@ -235,14 +260,18 @@ class S3CompatibleMediaHost implements MediaHost {
       'PermanentRedirect' => 'the bucket lives in another region; use its regional endpoint',
       _ => null,
     };
-    final detail = hint ?? [code, message].whereType<String>().join(': ');
+    var detail = hint ?? [code, message].whereType<String>().join(': ');
+    // Not an S3 XML error (a proxy's HTML page, plain text): say what it was.
+    if (detail.isEmpty && r.body.trim().isNotEmpty) {
+      detail = looksLikeHtml(r.body) ? (statusReason(r) ?? bodySnippet(r)) : bodySnippet(r);
+    }
     return MediaHostException(
         'Could not $what (HTTP ${r.statusCode})${detail.isEmpty ? '' : ': $detail'}',
         hostId: id);
   }
 
   static (String?, String?) _parseError(String body) {
-    if (!body.trimLeft().startsWith('<')) return (null, null);
+    if (!body.trimLeft().startsWith('<') || looksLikeHtml(body)) return (null, null);
     try {
       final doc = XmlDocument.parse(body);
       String? text(String tag) {

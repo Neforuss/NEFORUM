@@ -238,8 +238,7 @@ class TikTokAdapter extends PlatformAdapter {
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } on MediaHostException catch (e) {
-      return PublishResult.failure(PublishError(
-          kind: PublishErrorKind.configuration, message: 'Media host failed: ${e.message}', retryable: true));
+      return PublishResult.failure(PublishError(kind: e.temporary ? PublishErrorKind.network : PublishErrorKind.configuration, message: e.message, retryable: true));
     } on Object catch (e) {
       final err = networkErrorFor(e, 'TikTok');
       if (err == null) rethrow;

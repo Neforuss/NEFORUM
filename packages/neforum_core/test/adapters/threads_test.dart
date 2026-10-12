@@ -92,6 +92,9 @@ void main() {
       final token = byok.fields.firstWhere((f) => f.key == 'access_token');
       expect(token.secret, isTrue);
       expect(token.required, isFalse);
+      // The User Token Generator is the recommended route, so its field comes first.
+      expect(byok.fields.first.key, 'access_token');
+      expect(token.help, startsWith('**Recommended.**'));
       // App ID and secret are optional because a pasted token needs neither.
       expect(byok.fields.firstWhere((f) => f.key == 'app_id').required, isFalse);
       expect(byok.fields.firstWhere((f) => f.key == 'app_secret').required, isFalse);

@@ -26,7 +26,10 @@ enum NextcloudLinkStyle {
 /// * Any other WebDAV server: the user gives a public URL template such as
 ///   `https://files.example.com/neforum/{name}` that maps the WebDAV folder
 ///   to a public web address.
-class WebDavMediaHost implements MediaHost {
+///
+/// A PUT that fails with HTTP 5xx, a timeout or a network error is tried once
+/// more after [mediaHostRetryPause] (see [guardedUpload]).
+class WebDavMediaHost implements MediaHost, DescribesVerify {
   WebDavMediaHost({
     required NeforumHttp http,
     required Uri folderUrl,
@@ -37,7 +40,9 @@ class WebDavMediaHost implements MediaHost {
     Clock? clock,
     Logger? log,
     String Function()? newId,
+    MediaHostDelay? retryDelay,
   })  : _http = http,
+        _retryDelay = retryDelay ?? mediaHostDefaultDelay,
         folderUrl = _withTrailingSlash(folderUrl),
         _auth = basicAuth(username, password),
         _now = clock ?? systemClock,
@@ -53,7 +58,7 @@ class WebDavMediaHost implements MediaHost {
 
   /// Builds a host from the settings form (see [webDavFields] for the keys).
   factory WebDavMediaHost.fromConfig(Map<String, String> config, NeforumHttp http,
-      {Clock? clock, Logger? log, String Function()? newId}) {
+      {Clock? clock, Logger? log, String Function()? newId, MediaHostDelay? retryDelay}) {
     const id = webDavHostId;
     return WebDavMediaHost(
       http: http,
@@ -66,10 +71,12 @@ class WebDavMediaHost implements MediaHost {
       clock: clock,
       log: log,
       newId: newId,
+      retryDelay: retryDelay,
     );
   }
 
   final NeforumHttp _http;
+  final MediaHostDelay _retryDelay;
 
   /// The WebDAV folder files are PUT into (always ends with `/`).
   final Uri folderUrl;
@@ -203,9 +210,16 @@ class WebDavMediaHost implements MediaHost {
     }
   }
 
+  @override
+  String get verifiedMessage => 'Upload works: a tiny test file was uploaded, opened through its public link without a '
+      'login and deleted again.';
+
+  /// The server as the subject of a sentence in error messages.
+  String get _service => isNextcloud && publicUrlTemplate == null ? 'Nextcloud' : 'Your WebDAV host';
+
   Future<void> _put(Uri fileUrl, Uint8List bytes, String contentType) async {
-    Future<NeforumResponse> put() => guardedCall(id, 'reach ${folderUrl.host}', () => _http.putBytes(fileUrl, bytes,
-        headers: {'Authorization': _auth, 'Content-Type': contentType}, throwOnError: false));
+    Future<NeforumResponse> put() => guardedUpload(id, 'reach ${folderUrl.host}', () => _http.putBytes(fileUrl, bytes,
+        headers: {'Authorization': _auth, 'Content-Type': contentType}, throwOnError: false), delay: _retryDelay, log: _log);
     var r = await put();
     if (r.statusCode == 404 || r.statusCode == 409) {
       // The folder does not exist yet: create it (one level) and retry.
@@ -215,7 +229,7 @@ class WebDavMediaHost implements MediaHost {
       if (!mk.ok && mk.statusCode != 405) throw _davError(mk, 'create the folder $folderUrl');
       r = await put();
     }
-    if (!r.ok) throw _davError(r, 'upload the file');
+    if (!r.ok) throw _davError(r, 'upload the file', action: 'store the file');
   }
 
   Future<void> _deleteFile(Uri fileUrl) async {
@@ -272,21 +286,30 @@ class WebDavMediaHost implements MediaHost {
     final meta = ocs is Map ? ocs['meta'] : null;
     final msg = meta is Map ? meta['message'] : null;
     if (r.statusCode == 401) return MediaHostException('Could not $what: username or app password is wrong', hostId: id);
-    final detail = msg is String && msg.isNotEmpty ? msg : bodySnippet(r);
-    return MediaHostException('Could not $what (HTTP ${r.statusCode}): $detail', hostId: id);
+    final detail = msg is String && msg.isNotEmpty ? msg : null;
+    if (r.statusCode >= 500) return _serverError(r, what, detail: detail);
+    return MediaHostException('Could not $what (HTTP ${r.statusCode}): ${detail ?? bodySnippet(r)}', hostId: id);
   }
 
-  MediaHostException _davError(NeforumResponse r, String what) {
+  /// [what] completes "Could not ..."; [action] is used for 5xx answers
+  /// ("Nextcloud couldn't [action]"), defaulting to [what].
+  MediaHostException _davError(NeforumResponse r, String what, {String? action}) {
     final hint = switch (r.statusCode) {
       401 => 'username or app password is wrong',
       403 => 'this account may not write to $folderUrl',
       404 || 409 => 'the folder $folderUrl does not exist',
       413 => 'the server refused a file this large',
       507 => 'the account is out of storage space',
-      _ => bodySnippet(r),
+      _ => null,
     };
-    return MediaHostException('Could not $what (HTTP ${r.statusCode}): $hint', hostId: id);
+    if (hint == null && r.statusCode >= 500) return _serverError(r, action ?? what);
+    return MediaHostException('Could not $what (HTTP ${r.statusCode}): ${hint ?? bodySnippet(r)}', hostId: id);
   }
+
+  MediaHostException _serverError(NeforumResponse r, String action, {String? detail}) => MediaHostException(
+      hostHttpFailure(_service, r, action: action, side: "your server's", detail: detail),
+      hostId: id,
+      temporary: isTemporaryStatus(r.statusCode));
 
   static Uri _withTrailingSlash(Uri u) => Uri(
       scheme: u.scheme,

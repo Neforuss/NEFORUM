@@ -16,9 +16,10 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
   whatever accent the user picks), the default accent, primary buttons
   (`accentFill`, white text passes WCAG AA), focus rings and links. On dark
   backgrounds, text and icons use the lighter `accent` (#9D4DFF) for contrast.
-- **Yellow is the spark**: the logo's source point, the current section and
-  the "New post" button on the navigation chrome, badges, and the tab on text
-  cards. Use `highlight` as a fill with `onHighlight` (ink) text on it.
+- **Yellow is the spark**: the logo (a yellow diamond on the purple tile: a
+  solid roof breaking into bars, the message in a window at its heart; see
+  `lib/brand/mark_geometry.dart`), the current section and the "New post"
+  button on the navigation chrome, badges, and the tab on text cards. Use `highlight` as a fill with `onHighlight` (ink) text on it.
   **Never** use yellow as text, or as the only cue, on light surfaces: it has
   no contrast there.
 - **Navigation chrome** (sidebar, rail, phone bottom bar) is deep purple in

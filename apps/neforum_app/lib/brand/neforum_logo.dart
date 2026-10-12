@@ -3,11 +3,15 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
+import 'mark_geometry.dart';
 
-/// The NEFORUM mark: one yellow point broadcasting outward in three white
-/// arcs, on the purple tile. "One message, every platform."
+/// The NEFORUM mark, yellow on the purple tile: a diamond whose top half is
+/// the broadcast sign (a point, an arc over it, the roof as the outer arc)
+/// and whose bottom half breaks into bars, one for every platform.
+/// "One message, every platform." Geometry: [MarkGeometry].
 ///
-/// With [animate] the arcs pulse outward in sequence (used while publishing).
+/// With [animate] the arc and then each bar light up in turn, the message
+/// travelling out (used while publishing).
 class NeforumMark extends StatefulWidget {
   const NeforumMark({super.key, this.size = 40, this.animate = false, this.gradient});
 
@@ -63,8 +67,8 @@ class _NeforumMarkState extends State<NeforumMark> with SingleTickerProviderStat
   }
 }
 
-/// Paints the full mark (tile, yellow point, white arcs) into [rect], for
-/// canvases that are not widgets (generated text cards).
+/// Paints the full mark (tile and diamond) into [rect], for canvases that are
+/// not widgets (generated text cards).
 void paintNeforumMark(Canvas canvas, Rect rect) {
   final tile = RRect.fromRectAndRadius(rect, Radius.circular(rect.width * 0.3));
   canvas.drawRRect(tile, Paint()..shader = Brand.markGradient.createShader(rect));
@@ -80,34 +84,41 @@ class _MarkPainter extends CustomPainter {
   /// 0..1 animation phase, or null for the static mark.
   final double? progress;
 
-  /// Mark size relative to the tile (matches tool/generate_icons.dart).
-  static const double k = 0.82;
+  /// Opacity of the [i]th moving part (0 = the arc, then each bar).
+  double _alpha(int i) {
+    if (progress == null) return 1;
+    // Each part lights up a little after the one before it.
+    final phase = (progress! - i * 0.12) % 1.0;
+    return 0.3 + 0.7 * (phase < 0.5 ? math.sin(phase * math.pi * 2).clamp(0.0, 1.0) : 0.0);
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
-    final w = size.width * k;
-    final origin = Offset(size.width * 0.5 - w * 0.20, size.height * 0.5);
-    final dot = Paint()..color = Brand.yellow;
-    canvas.drawCircle(origin, w * 0.085, dot);
+    final g = MarkGeometry(size.width, cx: size.width / 2, cy: size.height / 2);
+    final centre = Offset(g.cx, g.cy);
+    final yellow = Paint()..color = Brand.yellow;
+    final diamond = Path()..addPolygon([for (final (x, y) in g.diamond) Offset(x, y)], true);
+    final topHalf = Path()..addRect(Rect.fromLTRB(g.cx - g.r, g.cy - g.r, g.cx + g.r, g.cy));
+    Path circle(double radius) => Path()..addOval(Rect.fromCircle(center: centre, radius: radius));
 
-    const sweep = 100 * math.pi / 180;
-    final radii = [0.21, 0.355, 0.50];
-    final baseAlpha = [1.0, 0.82, 0.62];
-    for (var i = 0; i < radii.length; i++) {
-      var alpha = baseAlpha[i];
-      if (progress != null) {
-        // Each arc lights up a third of a cycle after the previous one.
-        final phase = (progress! - i * 0.22) % 1.0;
-        alpha = 0.35 + 0.65 * (phase < 0.5 ? math.sin(phase * math.pi * 2).clamp(0.0, 1.0) : 0.0);
-      }
-      final p = Paint()
-        ..color = Colors.white.withValues(alpha: alpha)
-        ..style = PaintingStyle.stroke
-        ..strokeCap = StrokeCap.round
-        ..strokeWidth = w * 0.078;
-      final r = w * radii[i];
-      canvas.drawArc(Rect.fromCircle(center: origin, radius: r), -sweep / 2, sweep, false, p);
+    // Top half: the roof (outer arc), then the arc over the point.
+    final roof = Path.combine(PathOperation.difference, Path.combine(PathOperation.intersect, diamond, topHalf), circle(g.roofInner));
+    canvas.drawPath(roof, yellow);
+    if (g.arc case (final inner, final outer)) {
+      final band = Path.combine(PathOperation.difference, circle(outer), circle(inner));
+      canvas.drawPath(Path.combine(PathOperation.intersect, band, topHalf), Paint()..color = Brand.yellow.withValues(alpha: _alpha(0)));
     }
+
+    // Bottom half: bars clipped to the diamond, around the point's window.
+    canvas.save();
+    canvas.clipPath(Path.combine(PathOperation.difference, diamond, circle(g.windowRadius)));
+    for (var i = 0; i < g.bars.length; i++) {
+      final (top, bottom) = g.bars[i];
+      canvas.drawRect(Rect.fromLTRB(g.cx - g.r, g.cy + top, g.cx + g.r, g.cy + bottom), Paint()..color = Brand.yellow.withValues(alpha: _alpha(i + 1)));
+    }
+    canvas.restore();
+
+    canvas.drawCircle(centre, g.pointRadius, yellow);
   }
 
   @override

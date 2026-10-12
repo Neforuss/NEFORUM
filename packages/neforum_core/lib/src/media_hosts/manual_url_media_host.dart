@@ -11,7 +11,7 @@ import 'media_host_support.dart';
 /// `https://example.com/media/{name}` where `{name}` is the attachment's file
 /// name. Any media without a link makes [upload] throw a
 /// [MediaHostException] that tells the user what to fill in.
-class ManualUrlMediaHost implements MediaHost {
+class ManualUrlMediaHost implements MediaHost, DescribesVerify {
   const ManualUrlMediaHost({this.urls = const {}, this.urlTemplate});
 
   /// Builds the host from the settings form ([manualFields]).
@@ -77,6 +77,10 @@ class ManualUrlMediaHost implements MediaHost {
 
   @override
   Future<void> verify() async {}
+
+  @override
+  String get verifiedMessage => '${urlTemplate == null ? 'Nothing to test' : 'The link pattern is valid'}: NEFORUM '
+      'uploads nothing here, so open one of your links in a browser to check it.';
 }
 
 /// Registry id of [ManualUrlMediaHost].

@@ -36,6 +36,7 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
   String? _error;
   String? _progress;
   bool _busy = false;
+  bool _showRedirect = false;
 
   PlatformAdapter get _adapter => ref.read(registryProvider).require(widget.platformId);
   ConnectSpec get _spec => _adapter.specFor(widget.tier);
@@ -74,6 +75,16 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
       c.dispose();
     }
     super.dispose();
+  }
+
+  /// The user changed a field, so the last attempt's errors no longer
+  /// describe what's on screen.
+  void _edited(String key) {
+    if (_error == null && !_fieldErrors.containsKey(key)) return;
+    setState(() {
+      _error = null;
+      _fieldErrors.remove(key);
+    });
   }
 
   Map<String, String> get _values => {
@@ -183,7 +194,19 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         const SizedBox(height: Space.xl),
         if (spec.intro.trim().isNotEmpty)
           NfCard(padding: const EdgeInsets.all(Space.xl), child: NfMarkdown(spec.intro)),
-        if (redirect != null) ...[
+        // With a token field, pasting a token is the main route and the
+        // redirect only matters for browser sign-in, so it starts folded.
+        if (redirect != null && !_showRedirect && spec.fields.any(_isTokenField)) ...[
+          const SizedBox(height: Space.sm),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => setState(() => _showRedirect = true),
+              icon: const Icon(Icons.expand_more_rounded, size: 18),
+              label: const Text('Browser sign-in instead? Show the redirect URI'),
+            ),
+          ),
+        ] else if (redirect != null) ...[
           const SizedBox(height: Space.lg),
           Text('Redirect URI', style: context.text.titleSmall),
           const SizedBox(height: Space.xs),
@@ -272,14 +295,20 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
           contentPadding: EdgeInsets.zero,
           title: Text(f.label, style: context.text.bodyMedium),
           value: _bool[f.key] ?? false,
-          onChanged: (v) => setState(() => _bool[f.key] = v),
+          onChanged: (v) {
+            setState(() => _bool[f.key] = v);
+            _edited(f.key);
+          },
         );
       case FieldKind.select:
         input = DropdownButtonFormField<String>(
           initialValue: _choice[f.key],
           decoration: InputDecoration(labelText: f.label, errorText: _fieldErrors[f.key]),
           items: [for (final o in f.options ?? const <String>[]) DropdownMenuItem(value: o, child: Text(o))],
-          onChanged: (v) => setState(() => _choice[f.key] = v),
+          onChanged: (v) {
+            setState(() => _choice[f.key] = v);
+            _edited(f.key);
+          },
           validator: (v) => f.required && v == null ? '${f.label} is required' : null,
         );
       default:
@@ -298,12 +327,14 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
             _ => TextInputType.text,
           },
           style: f.secret || f.kind == FieldKind.password ? monoStyle(context, size: 14, color: nf.text) : null,
+          onChanged: (_) => _edited(f.key),
           validator: validate,
           decoration: InputDecoration(
             labelText: f.required || f.label.toLowerCase().contains('optional') ? f.label : '${f.label} (optional)',
             hintText: f.placeholder,
             errorText: _fieldErrors[f.key],
-            errorMaxLines: 3,
+            // Token errors explain which step to redo; don't cut them off.
+            errorMaxLines: 8,
             alignLabelWithHint: f.kind == FieldKind.multiline,
             prefixIcon: f.secret ? const Icon(Icons.key_rounded, size: 20) : null,
             suffixIcon: (f.kind == FieldKind.password || f.secret) && f.kind != FieldKind.multiline

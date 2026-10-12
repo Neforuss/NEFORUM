@@ -135,11 +135,14 @@ class FacebookAdapter extends PlatformAdapter {
         userTokens = await _longLivedToken(appId, appSecret, shortToken, ctx);
       } on HttpFailure catch (f) {
         final err = GraphError.parse(f.response.jsonMap);
+        if (err != null && isWrongAppError(err)) {
+          throw ConnectException(wrongAppMessage(appId, err, await _tokenApp(ctx, shortToken, appId, appSecret)));
+        }
         if (pasted.isEmpty || err?.code != 190) rethrow;
         throw ConnectException(
             'Facebook did not accept the pasted token (${err!.display}). Explorer tokens expire after one to two '
-            'hours: generate a fresh one for this same app (Meta App: your app; User or Page: User Token) and paste '
-            'all of it.',
+            'hours: generate a fresh one with Meta App set to this same app (leave User or Page as it is), click '
+            'Generate Access Token and paste all of it.',
             field: secUserToken);
       }
       final user = await _getJson(ctx, 'me', {'fields': 'id,name'}, userTokens.accessToken, appSecret);
@@ -176,22 +179,31 @@ class FacebookAdapter extends PlatformAdapter {
         secrets: secrets,
       );
     } on HttpFailure catch (f) {
-      throw ConnectException(_connectMessage(f));
+      throw ConnectException(_connectMessage(f, appId));
     } on OAuthException catch (e) {
-      throw ConnectException('Facebook sign-in failed: ${e.description ?? e.error ?? e.message}');
+      throw ConnectException('${_sentence('Facebook sign-in failed: ${e.description ?? e.error ?? e.message}')} '
+          '$_useTokenHint');
     }
   }
 
-  /// Runs Facebook Login in the browser. Facebook only redirects to
-  /// registered HTTPS URIs, so the broker (a paste-the-address broker in
-  /// practice) is asked for [facebookLoginSuccessUri]. Meta's desktop guidance
-  /// is `response_type=token`, which puts the user token in the fragment; a
-  /// pasted `code` is exchanged as a fallback.
+  static const String _useTokenHint =
+      'Pasting a token from the Graph API Explorer is the recommended way to connect (see the steps above).';
+
+  static String _sentence(String s) => RegExp(r'[.!?]$').hasMatch(s.trimRight()) ? s.trimRight() : '${s.trimRight()}.';
+
+  /// Runs Facebook Login in the browser, the secondary route. The broker (a
+  /// paste-the-address broker in practice) is asked for
+  /// [facebookLoginSuccessUri], which Meta's dashboard will not let users
+  /// register, so this may be refused; the Graph API Explorer token is the
+  /// documented route. Meta's desktop guidance is `response_type=token`,
+  /// which puts the user token in the fragment; a pasted `code` is exchanged
+  /// as a fallback.
   Future<String> _browserLogin(String appId, String appSecret, List<String> scopes, AdapterContext ctx) async {
     final broker = ctx.broker;
     if (broker == null) {
       throw const ConnectException(
-          'Sign-in needs a browser here. Alternatively paste a user access token from the Graph API Explorer.',
+          'Paste a user access token from the Graph API Explorer (steps 4 and 5); browser sign-in is not available '
+          'here.',
           field: secUserToken);
     }
     final redirect = broker.chooseRedirectUri(loopbackOk: false, customSchemeOk: false, fixed: facebookLoginSuccessUri);
@@ -212,7 +224,7 @@ class FacebookAdapter extends PlatformAdapter {
     final p = redirectParams(back);
     if (p['error'] != null || p['error_code'] != null) {
       final why = p['error_description'] ?? p['error_message'] ?? p['error_reason'] ?? p['error'] ?? p['error_code'];
-      throw ConnectException('Facebook refused the sign-in: $why');
+      throw ConnectException('${_sentence('Facebook refused the sign-in: $why')} $_useTokenHint');
     }
     final state = p['state'];
     if (state != null && state != req.state) {
@@ -310,15 +322,20 @@ class FacebookAdapter extends PlatformAdapter {
     if (missing.isEmpty) return;
     throw ConnectException(fromExplorer
         ? 'The token is missing ${missing.join(', ')}. In the Graph API Explorer add them under Permissions, click '
-            'Generate Access Token again, allow everything and select your Page.'
+            'Generate Access Token again, allow everything and select your Page. If one is not in the Explorer\'s '
+            'list, it is not added to your app yet: add it under Use cases > Customize first.'
         : 'Facebook did not grant ${missing.join(', ')}. Make sure they are added to your app '
             '(Use cases > Customize), connect again and keep every permission switched on.',
         field: fromExplorer ? secUserToken : null);
   }
 
+  /// Fields read for each Page in `GET /me/accounts`; `username` and `link`
+  /// let the Page field match a Page by its web address.
+  static const String pageFields = 'id,name,access_token,tasks,link,username';
+
   Future<List<FacebookPage>> _listPages(AdapterContext ctx, String userToken, String appSecret) async {
     final pages = <FacebookPage>[];
-    Uri? next = graphUri('me/accounts', withToken({'fields': 'id,name,access_token,tasks,link', 'limit': '100'}, userToken, appSecret));
+    Uri? next = graphUri('me/accounts', withToken({'fields': pageFields, 'limit': '100'}, userToken, appSecret));
     var guard = 0;
     while (next != null && guard++ < 10) {
       final NeforumResponse res;
@@ -329,8 +346,9 @@ class FacebookAdapter extends PlatformAdapter {
         // "(#100) Tried accessing nonexisting field (accounts) on node type (Page)".
         if (err != null && err.code == 100 && err.message.contains('(Page)')) {
           throw const ConnectException(
-              'This is a Page access token. In the Graph API Explorer choose User Token under "User or Page", '
-              'generate the token again and paste that one; NEFORUM finds your Pages itself.',
+              'This is a Page access token; NEFORUM needs a User token and finds your Pages itself. In the Graph API '
+              'Explorer don\'t pick a Page under "User or Page" (choose User Token if it is listed), click Generate '
+              'Access Token and paste that token.',
               field: secUserToken);
         }
         rethrow;
@@ -354,14 +372,24 @@ class FacebookAdapter extends PlatformAdapter {
     if (pages.isEmpty) {
       throw const ConnectException(
           'Facebook returned no Pages. NEFORUM can only post to Pages you manage (personal profiles cannot be posted to '
-          'through the API). In the Facebook dialog make sure you select your Page(s), and that your role on the Page '
-          'includes creating content.');
+          'through the API). In the Generate Access Token pop-up (or the Facebook sign-in dialog) make sure you pick '
+          'your Page(s), and that your role on the Page includes creating content.');
     }
     final w = (wanted ?? '').trim();
     if (w.isNotEmpty) {
-      final match = pages.where((p) => p.id == w || p.name.toLowerCase() == w.toLowerCase()).toList();
+      // Name, username, id or a pasted Page address; ids first, then
+      // usernames (also read from the Page's link), then names.
+      final key = facebookPageKey(w).toLowerCase();
+      bool sameText(String? a, String b) => a != null && a.toLowerCase() == b;
+      final match = [
+        ...pages.where((p) => p.id == key),
+        ...pages.where((p) => sameText(p.username, key) || (p.link != null && sameText(facebookPageKey(p.link!), key))),
+        ...pages.where((p) => sameText(p.name, w.toLowerCase()) || sameText(p.name, key)),
+      ];
       if (match.isEmpty) {
-        throw ConnectException('No Page called "$w". Your Pages: ${pages.map((p) => '${p.name} (${p.id})').join(', ')}',
+        final list = pages.map((p) => '${p.name} (${[if (p.username != null) p.username, p.id].join(', ')})').join('; ');
+        throw ConnectException(
+            'No Page matches "$w". Enter a Page name, username, ID or link, or leave the field empty. Your Pages: $list',
             field: 'page');
       }
       if (!match.first.canCreateContent) {
@@ -378,10 +406,56 @@ class FacebookAdapter extends PlatformAdapter {
     return s.isEmpty ? defaultScopes : s;
   }
 
-  static String _connectMessage(HttpFailure f) {
+  /// Graph's answer when a token belongs to another Meta app, typically a
+  /// Graph API Explorer token made while the Explorer's **Meta App** showed a
+  /// different app: `The access token does not belong to application <id>`
+  /// (error 1, from the `fb_exchange_token` call).
+  static bool isWrongAppError(GraphError err) => err.message.toLowerCase().contains('does not belong to application');
+
+  /// Explains a token made for another Meta app without blaming the App ID or
+  /// App Secret. [tokenApp] is what `debug_token` said about the token, when
+  /// it answered.
+  static String wrongAppMessage(String appId, GraphError err, FacebookTokenApp? tokenApp) {
+    final fix = 'In the Graph API Explorer set Meta App to the app whose App ID is $appId, click Generate Access '
+        'Token again and paste the new token.';
+    if (tokenApp != null && tokenApp.appId != appId) {
+      final which = tokenApp.name == null ? 'App ID ${tokenApp.appId}' : '"${tokenApp.name}" (App ID ${tokenApp.appId})';
+      return 'This token was made for a different Meta app, $which. The App ID you entered is $appId. $fix '
+          '(Facebook said: ${err.display})';
+    }
+    return 'This token was made for a different Meta app. $fix The App ID and App Secret can stay as they are. '
+        '(Facebook said: ${err.display})';
+  }
+
+  /// Asks `GET /debug_token` which app [token] belongs to, so the error can
+  /// name it. Tries the app's own access token (`<app id>|<app secret>`)
+  /// first and then the token itself, since Meta may refuse to describe
+  /// another app's token to this app. Best effort: `null` when neither works.
+  Future<FacebookTokenApp?> _tokenApp(AdapterContext ctx, String token, String appId, String appSecret) async {
+    for (final caller in ['$appId|$appSecret', token]) {
+      try {
+        final res = await ctx.http.get(graphUri('debug_token', {'input_token': token, 'access_token': caller}),
+            throwOnError: false);
+        final data = res.jsonMap['data'];
+        if (!res.ok || data is! Map) continue;
+        final info = Map<String, dynamic>.from(data);
+        final id = optString(info, 'app_id');
+        if (id != null) return FacebookTokenApp(id, optString(info, 'application'));
+      } on Exception catch (e) {
+        ctx.log.debug('Facebook debug_token failed: $e');
+      }
+    }
+    return null;
+  }
+
+  static String _connectMessage(HttpFailure f, String appId) {
     final err = GraphError.parse(f.response.jsonMap);
     if (err == null) return 'Facebook returned HTTP ${f.statusCode} while connecting';
-    if (err.code == 101 || err.code == 1) return 'Facebook rejected the App ID/App Secret: ${err.display}';
+    if (isWrongAppError(err)) return wrongAppMessage(appId, err, null);
+    if (err.code == 101 || err.code == 1) {
+      return 'Facebook rejected the App ID/App Secret: ${err.display}. Copy both again from App settings > Basic '
+          '(click Show for the secret).';
+    }
     if (err.code == 190) return 'The Facebook token is invalid or expired: ${err.display}';
     return 'Facebook error while connecting: ${err.display}';
   }

@@ -1,16 +1,20 @@
-// Renders the NEFORUM mark (one yellow point broadcasting in three white arcs
-// on the purple tile) into every icon the platforms need. Colors match
-// Brand.markGradient and Brand.yellow in lib/theme/tokens.dart.
+// Renders the NEFORUM mark (a yellow diamond on the purple tile: the
+// broadcast sign, a point with an arc and the roof over it, on top; bars
+// below) into every icon the platforms need. Colors match Brand.markGradient and Brand.yellow in
+// lib/theme/tokens.dart; the shape comes from lib/brand/mark_geometry.dart,
+// the same geometry the app paints.
 //
 //   dart run tool/generate_icons.dart
 //
-// Pure Dart (package:image), anti-aliased with signed distance fields, so
-// the icons are reproducible from source and need no design tool.
+// Pure Dart (package:image), anti-aliased with signed distance fields and
+// blended in linear light, so the icons are reproducible from source and
+// need no design tool.
 
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:image/image.dart' as img;
+import 'package:neforum_app/brand/mark_geometry.dart';
 
 const _c0 = (0x94, 0x26, 0xFF); // light purple
 const _c1 = (0x7D, 0x00, 0xFF); // NEFORUM purple
@@ -23,7 +27,7 @@ void main() {
 
   // ---- Shared sources -------------------------------------------------------
   _png(at('assets/brand/icon.png'), _render(1024, tile: _Tile.rounded));
-  _png(at('assets/brand/icon_foreground.png'), _render(1024, tile: _Tile.none, scale: 0.62));
+  _png(at('assets/brand/icon_foreground.png'), _render(1024, tile: _Tile.none, radius: 0.30));
 
   // ---- Android ----------------------------------------------------------------
   const densities = {'mdpi': 1.0, 'hdpi': 1.5, 'xhdpi': 2.0, 'xxhdpi': 3.0, 'xxxhdpi': 4.0};
@@ -33,11 +37,11 @@ void main() {
     _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher.png'), _render(legacy, tile: _Tile.rounded, inset: 0.04));
     _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_round.png'), _render(legacy, tile: _Tile.circle, inset: 0.02));
     // Adaptive icon layers: the foreground mark must sit inside the central
-    // 72dp of the 108dp canvas.
-    _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_foreground.png'), _render(adaptive, tile: _Tile.none, scale: 0.58));
+    // 72dp circle of the 108dp canvas (radius 0.333; the tips reach 0.29).
+    _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_foreground.png'), _render(adaptive, tile: _Tile.none, radius: 0.29));
     _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_background.png'), _render(adaptive, tile: _Tile.square, markless: true));
     // Monochrome layer for Android 13 themed icons.
-    _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_monochrome.png'), _render(adaptive, tile: _Tile.none, scale: 0.58, mono: true));
+    _png(at('android/app/src/main/res/mipmap-${e.key}/ic_launcher_monochrome.png'), _render(adaptive, tile: _Tile.none, radius: 0.29, mono: true));
   }
   final anydpi = File(at('android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml'));
   anydpi.parent.createSync(recursive: true);
@@ -77,13 +81,14 @@ void main() {
   final trayFrames = [for (final s in [16, 20, 24, 32, 48]) _render(s, tile: _Tile.rounded)];
   File(at('assets/tray/tray_icon.ico')).writeAsBytesSync(img.IcoEncoder().encodeImages(trayFrames));
   // macOS menu bar: template image (black + alpha), 22pt @2x.
-  _png(at('assets/tray/tray_icon.png'), _render(44, tile: _Tile.none, scale: 0.92, mono: true));
+  _png(at('assets/tray/tray_icon.png'), _render(44, tile: _Tile.none, radius: 0.46, mono: true));
 
   // ---- Web ----------------------------------------------------------------------
+  // Maskable icons keep the mark inside the central circle of radius 0.4.
   _png(at('web/icons/Icon-192.png'), _render(192, tile: _Tile.rounded, inset: 0.04));
   _png(at('web/icons/Icon-512.png'), _render(512, tile: _Tile.rounded, inset: 0.04));
-  _png(at('web/icons/Icon-maskable-192.png'), _render(192, tile: _Tile.square, scale: 0.8, opaque: true));
-  _png(at('web/icons/Icon-maskable-512.png'), _render(512, tile: _Tile.square, scale: 0.8, opaque: true));
+  _png(at('web/icons/Icon-maskable-192.png'), _render(192, tile: _Tile.square, radius: 0.33, opaque: true));
+  _png(at('web/icons/Icon-maskable-512.png'), _render(512, tile: _Tile.square, radius: 0.33, opaque: true));
   _png(at('web/favicon.png'), _render(64, tile: _Tile.rounded));
 
   stdout.writeln('Icons written.');
@@ -100,15 +105,16 @@ void _png(String path, img.Image image) {
 
 /// Renders the icon at [size] px.
 ///
-/// [inset] shrinks the tile inside the canvas (fraction of size), [scale]
-/// scales the mark relative to the tile, [markless] draws only the tile,
-/// [mono] draws the mark in black on transparency (template / monochrome
-/// icons), [opaque] fills transparent pixels (iOS forbids alpha).
+/// [inset] shrinks the tile inside the canvas (fraction of size), [radius]
+/// is the diamond's half-diagonal as a fraction of the tile (or of the
+/// canvas without a tile), [markless] draws only the tile, [mono] draws the
+/// mark in black on transparency (template / monochrome icons), [opaque]
+/// fills transparent pixels (iOS forbids alpha).
 img.Image _render(
   int size, {
   _Tile tile = _Tile.rounded,
   double inset = 0,
-  double scale = 0.82,
+  double radius = MarkGeometry.defaultRadius,
   bool markless = false,
   bool mono = false,
   bool opaque = false,
@@ -119,17 +125,10 @@ img.Image _render(
   final pad = s * inset;
   final tileSize = s - pad * 2;
   final tl = pad;
-  final radius = tileSize * 0.30;
+  final cornerRadius = tileSize * 0.30;
   final cx = s / 2, cy = s / 2;
 
-  // Mark geometry, relative to the tile.
-  final markScale = scale * tileSize;
-  final origin = (cx - markScale * 0.20, cy);
-  final dotR = markScale * 0.085;
-  final stroke = markScale * 0.078;
-  const sweep = 100 * math.pi / 180;
-  const radii = [0.21, 0.355, 0.50];
-  const alphas = [1.0, 0.82, 0.62];
+  final mark = MarkGeometry(tileSize, cx: cx, cy: cy, radius: radius);
 
   for (var y = 0; y < size; y++) {
     for (var x = 0; x < size; x++) {
@@ -145,7 +144,7 @@ img.Image _render(
         case _Tile.circle:
           tileCov = _cov(math.sqrt(math.pow(px - cx, 2) + math.pow(py - cy, 2)) - tileSize / 2);
         case _Tile.rounded:
-          tileCov = _cov(_roundedRectSdf(px, py, tl, tl, tileSize, tileSize, radius));
+          tileCov = _cov(_roundedRectSdf(px, py, tl, tl, tileSize, tileSize, cornerRadius));
       }
 
       // Gradient along the diagonal of the tile.
@@ -156,7 +155,7 @@ img.Image _render(
 
       if (shadow && tile == _Tile.rounded && tileCov < 1) {
         // Soft drop shadow under the macOS tile.
-        final d = _roundedRectSdf(px, py - s * 0.012, tl, tl, tileSize, tileSize, radius);
+        final d = _roundedRectSdf(px, py - s * 0.012, tl, tl, tileSize, tileSize, cornerRadius);
         final sh = (1 - (d / (s * 0.035)).clamp(0.0, 1.0)) * 0.28;
         final outA = a + sh * (1 - a);
         if (outA > 0) {
@@ -168,32 +167,20 @@ img.Image _render(
       }
 
       if (!markless) {
-        final dotCov = _cov(math.sqrt(math.pow(px - origin.$1, 2) + math.pow(py - origin.$2, 2)) - dotR);
-        var arcCov = 0.0;
-        for (var i = 0; i < radii.length; i++) {
-          final d = _arcSdf(px, py, origin.$1, origin.$2, markScale * radii[i], sweep) - stroke / 2;
-          arcCov = math.max(arcCov, _cov(d) * alphas[i]);
-        }
+        final markCov = _markCov(px, py, mark);
         if (mono) {
           // Black shapes; alpha carries the shape.
           r = 0;
           g = 0;
           b = 0;
-          a = math.max(a, math.max(dotCov, arcCov));
-        } else {
-          // White arcs, then the yellow point on top.
-          if (arcCov > 0) {
-            r = r + (255 - r) * arcCov;
-            g = g + (255 - g) * arcCov;
-            b = b + (255 - b) * arcCov;
-            a = a + arcCov * (1 - a);
-          }
-          if (dotCov > 0) {
-            r = r + (_yellow.$1 - r) * dotCov;
-            g = g + (_yellow.$2 - g) * dotCov;
-            b = b + (_yellow.$3 - b) * dotCov;
-            a = a + dotCov * (1 - a);
-          }
+          a = math.max(a, markCov);
+        } else if (markCov > 0) {
+          // Yellow over the tile, mixed in linear light so the edges stay
+          // clean instead of going brown (yellow and purple are opposites).
+          r = _mix(r, _yellow.$1, markCov);
+          g = _mix(g, _yellow.$2, markCov);
+          b = _mix(b, _yellow.$3, markCov);
+          a = a + markCov * (1 - a);
         }
       }
 
@@ -221,20 +208,32 @@ double _roundedRectSdf(double px, double py, double x, double y, double w, doubl
   return math.sqrt(ox * ox + oy * oy) + math.min(math.max(qx, qy), 0.0) - r;
 }
 
-/// Distance to an arc of radius [r] centred at (cx, cy) spanning ±sweep/2
-/// around the +x axis (round caps come from subtracting the stroke).
-double _arcSdf(double px, double py, double cx, double cy, double r, double sweep) {
-  final dx = px - cx, dy = py - cy;
-  final ang = math.atan2(dy, dx);
-  if (ang.abs() <= sweep / 2) {
-    return (math.sqrt(dx * dx + dy * dy) - r).abs();
+/// Coverage of the mark at (px, py), from signed distances (negative inside):
+/// roof, arc, bars and point, as laid out by [MarkGeometry].
+double _markCov(double px, double py, MarkGeometry m) {
+  final dx = px - m.cx, dy = py - m.cy;
+  final rho = math.sqrt(dx * dx + dy * dy);
+  // Signed distance to a diamond of half-diagonal h is (|x| + |y| - h) / √2.
+  final dDiamond = (dx.abs() + dy.abs() - m.r) / math.sqrt2;
+  // Top half of the diamond, outside the roof's inner circle.
+  var d = math.max(math.max(dDiamond, dy), m.roofInner - rho);
+  if (m.arc case (final inner, final outer)) {
+    d = math.min(d, math.max(math.max(inner - rho, rho - outer), dy));
   }
-  final ex = cx + r * math.cos(sweep / 2);
-  final ey1 = cy + r * math.sin(sweep / 2);
-  final ey2 = cy - r * math.sin(sweep / 2);
-  final d1 = math.sqrt(math.pow(px - ex, 2) + math.pow(py - ey1, 2));
-  final d2 = math.sqrt(math.pow(px - ex, 2) + math.pow(py - ey2, 2));
-  return math.min(d1, d2);
+  var dBars = double.infinity;
+  for (final (top, bottom) in m.bars) {
+    dBars = math.min(dBars, math.max(top - dy, dy - bottom));
+  }
+  d = math.min(d, math.max(math.max(dDiamond, dBars), m.windowRadius - rho));
+  d = math.min(d, rho - m.pointRadius);
+  return _cov(d);
+}
+
+/// Mixes sRGB channel [from] toward [to] by [t] in linear light.
+double _mix(double from, int to, double t) {
+  double lin(double c) => (c /= 255) <= 0.04045 ? c / 12.92 : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
+  final l = lin(from) + (lin(to.toDouble()) - lin(from)) * t;
+  return 255 * (l <= 0.0031308 ? l * 12.92 : 1.055 * math.pow(l, 1 / 2.4) - 0.055);
 }
 
 (double, double, double) _gradient(double t) {

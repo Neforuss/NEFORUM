@@ -1,8 +1,8 @@
 # Facebook in NEFORUM
 
 *Last checked against Meta's developer documentation (the new `developers.facebook.com/documentation` pages
-and their `llms.txt` index) on 11 October 2026. NEFORUM calls Graph API v25.0, the version the Pages API
-guides use in their examples.*
+and their `llms.txt` index) and the live App Dashboard on 11 October 2026. NEFORUM calls Graph API v25.0, the
+version the Pages API guides use in their examples.*
 
 ## What works, in one paragraph
 
@@ -34,15 +34,22 @@ No app, NEFORUM included, can post to your own timeline or to a group for you. F
 
 1. Open <https://developers.facebook.com/apps/creation/> (log in with the Facebook account that manages the
    Page; register as a developer if asked, it is free).
-2. Pick the use case **Manage everything on your Page** and finish the wizard. If Meta asks for a business
-   portfolio you may skip it, or pick the one that owns your Page.
+2. Pick the use case **Manage everything on your Page** and finish the wizard.
+3. The wizard asks "Which business portfolio do you want to connect to this app?". To post to your own Page,
+   **I don't want to connect a business portfolio yet** is fine. You can also pick the portfolio that owns
+   your Page.
 
 ### 2. Add the permissions
 
 1. In the left menu open **Use cases**, then **Customize** next to *Manage everything on your Page*.
-2. `business_management`, `pages_show_list` and `public_profile` are added by default and cannot be removed.
-3. Click **Add** next to **`pages_manage_posts`** and **`pages_read_engagement`**.
+2. `business_management` and `pages_show_list` are added by default and cannot be removed. On 11 October 2026
+   a new app also started with `pages_manage_posts` and `pages_manage_engagement`.
+3. **`pages_read_engagement` is not added by default.** Click **Add** next to it, and next to
+   **`pages_manage_posts`** if that one also shows **Add**.
    (`pages_manage_posts` needs `pages_read_engagement` and `pages_show_list`; permissions reference.)
+
+The Graph API Explorer (step 4a) only offers permissions your app already has. If one is missing there, come
+back here and add it.
 
 ### 3. Copy the App ID and App Secret
 
@@ -50,18 +57,29 @@ Open **App settings > Basic**. Copy the **App ID** (the long number, also shown 
 and the **App Secret** (click **Show**; Facebook may ask for your password). Paste both into NEFORUM
 (*Add account > Facebook > Your own API keys*).
 
-### 4a. Quickest: paste a token from the Graph API Explorer (no redirect setup)
+### 4a. Recommended: paste a token from the Graph API Explorer
+
+This is the way to connect. It needs no redirect setup.
 
 1. Open <https://developers.facebook.com/tools/explorer/>.
-2. In the **Meta App** dropdown (top right) choose **your** app, not "Graph API Explorer".
-3. In the **User or Page** dropdown choose **User Token**.
+2. Look at the **Meta App** dropdown (top right). The Explorer remembers the last app you used, so check that
+   it shows **your** app, not another app and not "Graph API Explorer". A token made for another app fails
+   with "This token was made for a different Meta app".
+3. Leave the **User or Page** dropdown as it is. Before you have a token it says **Get Token** and has no
+   "User Token" item; that's fine. **Generate Access Token** creates a User token, which is what NEFORUM
+   needs. Don't pick a Page there.
 4. Under **Permissions** add `pages_show_list`, `pages_read_engagement`, `pages_manage_posts` and
-   `business_management`.
-5. Click **Generate Access Token** (some screens say *Get Access Token*). Facebook asks you to log in and
-   approve: **select the Page(s)** NEFORUM may use (or "all current and future Pages").
+   `business_management`. If a permission is missing from the Explorer's list (typing its name shows no
+   suggestion), it isn't added to your app yet: go back to *2. Add the permissions* (**Use cases > Customize >
+   Add**), then reload the Explorer.
+5. Click **Generate Access Token** (some screens say *Get Access Token*). A pop-up opens: log in if asked,
+   approve the app and pick which Pages to share. Picking only the Page you want to post to works.
 6. Copy the token from the **Access Token** box and paste it into NEFORUM's
-   **User access token from the Graph API Explorer** field. Optionally type your Page's name or ID.
-7. Press the connect button. NEFORUM:
+   **User access token from the Graph API Explorer** field.
+7. Optionally fill in the **Page** field. Its name, username, ID or link all work, for example
+   `Example Bakery`, `examplebakery` or `https://www.facebook.com/examplebakery`. Leave it empty to use the
+   first Page you can post to.
+8. Press **Connect**. NEFORUM:
    * exchanges the token for a long-lived user token (`GET /oauth/access_token?grant_type=fb_exchange_token`,
      needs the App ID and App Secret; "A long-lived token generally lasts about 60 days");
    * reads your name (`GET /me`) and the permissions you granted (`GET /me/permissions`), and stops with a
@@ -69,29 +87,31 @@ and the **App Secret** (click **Show**; Facebook may ask for your password). Pas
    * lists your Pages (`GET /me/accounts`) and stores the Page token of the chosen Page. Page tokens obtained
      with a long-lived user token "do not have an expiration date".
 
-Do **not** pick your Page in the *User or Page* dropdown: that gives a Page token, which NEFORUM cannot turn
-into a long-lived one. NEFORUM recognises it and asks for the User Token instead.
+If you pick your Page in the *User or Page* dropdown, the Explorer gives a Page token, which NEFORUM cannot turn
+into a long-lived one. NEFORUM recognises it and asks for a User token instead.
 
-### 4b. Alternative: sign in through the browser
+### 4b. Not recommended: sign in through the browser
 
-Leave the token field empty to sign in with Facebook Login instead. This needs one extra setting:
+If you leave the token field empty, NEFORUM opens Facebook Login in your browser instead. Facebook is meant to
+send you back to this Facebook page, which Meta's manual login flow names for desktop apps:
 
-1. In the left menu open **Facebook Login for Business > Settings**.
-2. Under **Client OAuth settings** switch on **Client OAuth login** and **Web OAuth login** (and
-   **Embedded browser OAuth login** if shown), and add this exact address to **Valid OAuth Redirect URIs**
-   (newer screens show a **Redirect URI** box with a **Check URI** button):
+```
+https://www.facebook.com/connect/login_success.html
+```
 
-   ```
-   https://www.facebook.com/connect/login_success.html
-   ```
+**Meta won't let you register that address.** Both **Facebook Login for Business > Settings > Valid OAuth
+Redirect URIs** and **App settings > Advanced > Authorize callback URL** answer "This can't be a Facebook URL"
+(seen on 11 October 2026). Don't try to add it. Whether Facebook accepts it without registering is not
+confirmed, so browser sign-in may not work. To try it anyway:
 
-3. Click **Save changes**.
-4. In NEFORUM press **Sign in with Facebook**, log in, approve and **select your Page(s)**. You land on a
-   nearly blank page that says *Success*. Copy the **whole address** from the address bar (it contains
-   `#access_token=...`) and paste it into NEFORUM.
+1. In NEFORUM leave the token field empty and press **Sign in with Facebook**.
+2. Log in, approve and **select your Page(s)**.
+3. If you land on a nearly blank page that says *Success*, copy the **whole address** from the address bar (it
+   contains `#access_token=...`) and paste it into NEFORUM.
+4. If Facebook's sign-in page says the URL is blocked or not allowed, use the token from step 4a instead.
 
-Facebook Login only redirects to registered HTTPS addresses, so `http://127.0.0.1:52771/callback` and
-`neforum://callback` do not work here. Meta's manual login flow says desktop apps must use
+Facebook Login does not take `http://127.0.0.1:52771/callback` or `neforum://callback`, so NEFORUM cannot use
+its usual redirects here. Meta's manual login flow says desktop apps must use
 `https://www.facebook.com/connect/login_success.html` with `response_type=token`, which is what NEFORUM does.
 
 ### 5. Publish the app so others can see your posts
@@ -100,10 +120,10 @@ Meta's App modes page says: "Any data generated while an app is in Development m
 only be seen by role users." So, once the connection works:
 
 1. Click **Publish** in the left menu.
-2. Provide what Meta asks for: an app icon (512 x 512 to 1024 x 1024 px, under 5 MB), a **Privacy Policy URL**,
-   a **data deletion** URL (instructions or a callback) and, if you do business in the EU, a Data Protection
-   Officer contact.
-3. Click **Publish** in the lower-right corner.
+2. Fill in what the page lists as required. As of October 2026 that is only a **Privacy policy URL**. Once
+   it's filled in, the page says "All required app settings are complete". An app icon, a data deletion URL
+   and a category are optional.
+3. Click **Publish**. Afterwards the Alert Inbox says the app switched to live mode.
 
 App Review is a separate step (*Review > App Review*) and only matters for Advanced Access (see above).
 
@@ -141,13 +161,16 @@ secret store. NEFORUM sends `appsecret_proof` with every call, so you can switch
 
 | What you see | What it means and what to do |
 |---|---|
+| A permission is missing from the Explorer's Permissions list | It isn't added to your app yet; the Explorer only offers permissions the app has. Add it under **Use cases > Customize > Add** (`pages_read_engagement` is not added by default), then reload the Explorer and generate the token again. |
 | "The token is missing pages_manage_posts ..." | The token was generated without that permission. Add it under **Use cases > Customize** if it is not there, add it in the Explorer's Permissions list, click **Generate Access Token** again and paste the new token. |
 | "Facebook did not accept the pasted token" (error 190) | Explorer tokens are short-lived ("about one to two hours"). Generate a fresh one, for **your** app (Meta App dropdown), and paste all of it. |
-| "This is a Page access token" | You chose your Page in *User or Page*. Choose **User Token**, generate again, paste. |
-| "Facebook rejected the App ID/App Secret" (error 101 or 1) | Copy both again from **App settings > Basic**; the token must come from the same app. |
-| "Facebook returned no Pages" | In the Facebook dialog you did not select a Page, or you have no Page role that can create content (task `CREATE_CONTENT`). Generate the token again and tick your Page. |
+| "This is a Page access token" | You picked your Page in *User or Page*. Don't pick a Page there: choose **User Token** if it's listed (before your first token the dropdown only says *Get Token*), click **Generate Access Token** and paste that token. |
+| "This token was made for a different Meta app" (Facebook: "The access token does not belong to application ...", error 1) | Usually the App ID and App Secret are fine. The Explorer made the token for another app: it remembers the last **Meta App** you used, and "Graph API Explorer" is an app of its own. If NEFORUM could find out, the message names that app. Set **Meta App** to the app whose App ID you entered, click **Generate Access Token** again and paste the new token. If the token's app is actually the one you meant to use, enter that app's App ID and App Secret instead. |
+| "Facebook rejected the App ID/App Secret" (error 101, or error 1 with another message) | The App ID or App Secret really is wrong, or the secret was reset. Copy both again from **App settings > Basic** (click **Show** for the secret). |
+| "Facebook returned no Pages" | In the Generate Access Token pop-up you did not pick a Page, or you have no Page role that can create content (task `CREATE_CONTENT`). Generate the token again and tick your Page. |
+| "No Page matches ..." | None of your Pages has that name, username, ID or link. The message lists your Pages with their usernames and IDs; use one of those, or leave the **Page** field empty. |
 | "Invalid Scopes: business_management" | Remove `business_management` from NEFORUM's *Permissions (advanced)* field. |
-| The browser says the redirect URI is not allowed | Add `https://www.facebook.com/connect/login_success.html` under **Facebook Login for Business > Settings** (step 4b) and save. Or use the Explorer token (step 4a). |
+| Facebook's sign-in page says the URL is blocked or not allowed | Browser sign-in returns to `login_success.html`, which Meta won't let you register (step 4b). Use the Explorer token instead (step 4a). |
 | Posts appear for you but nobody else sees them | The app is still in Development mode. **Publish** it (step 5). |
 | Error 190 with subcode 458, 460, 463, 464 or 467 | App removed, password changed, token expired, unconfirmed account or invalid token. Reconnect. |
 | Error 190 / 2069032 "A Page access token is required for this call" | The account was connected with a user token only. Reconnect so NEFORUM can store the Page token. |
@@ -194,10 +217,16 @@ secret store. NEFORUM sends `appsecret_proof` with every call, so you can switch
 * **Going live.** *App modes* says to switch to Live "after you have completed ... App Review", while the use-case
   *Publish* steps list only the icon, privacy policy, data deletion URL and DPO contact, and *Access levels* says
   Business apps get Standard Access automatically. For your own Page (you have a role on the app) the
-  publish steps are enough.
+  publish steps are enough. On 11 October 2026 the live *Publish* page listed only the **Privacy policy URL**
+  as required; no icon or data deletion URL was needed.
 * **Graph API Explorer labels.** The Explorer guide mentions the **Meta App** and **User or Page** dropdowns, a
   "Permission dropdown menu" and once says "Click **Get Access Token**"; the live tool's button reads
-  **Generate Access Token**.
+  **Generate Access Token**. Guides also say to choose **User Token** under *User or Page*, but on
+  11 October 2026 that dropdown showed **Get Token** and no "User Token" item before the first token existed.
+  Generate Access Token made a User token anyway.
+* **Desktop redirect.** Meta's manual login flow tells desktop apps to use
+  `https://www.facebook.com/connect/login_success.html`, but the App Dashboard refuses to register it ("This
+  can't be a Facebook URL"). NEFORUM therefore recommends the Explorer token.
 
 ## Official documentation
 

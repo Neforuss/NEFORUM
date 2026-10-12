@@ -740,7 +740,7 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
     final limit = host.maxBytes;
     final tooBig = limit == null ? null : photos.where((m) => m.sizeBytes > limit).firstOrNull;
     if (tooBig != null) {
-      final problem = '${_mediaLabel(tooBig)} is larger than ${host.name} accepts';
+      final problem = 'The photo ${_mediaLabel(tooBig)} is larger than ${host.name} accepts';
       ctx.log.warn('Tumblr hand-off: $problem; the photos are not filled in');
       return _mediaHandoff(variant, hostProblem: problem);
     }
@@ -756,7 +756,7 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       ctx.log.warn('Tumblr hand-off: could not put the photos on ${host.name}; using the plain hand-off', e);
       await _discardHosted(host, hosted, ctx);
       return _mediaHandoff(variant,
-          hostProblem: e is MediaHostException ? e.message : 'the upload to ${host.name} failed');
+          hostProblem: e is MediaHostException ? e.message : 'The upload to ${host.name} failed');
     }
     return _photoToolHandoff(variant, photos, [for (final h in hosted) h.url], host.name);
   }
@@ -873,8 +873,10 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
         '$files there. On a phone the share sheet hands them to the Tumblr app. On a computer NEFORUM opens a new '
         'Tumblr $kind post; use "Save media to Downloads" and drag the files in.');
     if (hostProblem != null) {
-      note.write(' NEFORUM could not put the photos on your media host ($hostProblem), so they are not filled in '
-          'this time.');
+      // Host messages are full sentences (sometimes several), so they go last.
+      final problem = hostProblem.trimRight();
+      note.write(' NEFORUM could not put the photos on your media host, so they are not filled in this time. '
+          '$problem${RegExp(r'[.!?]$').hasMatch(problem) ? '' : '.'}');
     } else if (!videoOnly) {
       note.write(' With a media host set up in Settings, NEFORUM fills in photo posts on computers too (photos, '
           'text and tags).');

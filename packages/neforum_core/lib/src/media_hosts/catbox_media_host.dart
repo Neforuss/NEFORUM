@@ -46,15 +46,19 @@ enum LitterboxTime {
 ///   deleted after posting; anonymous files cannot be deleted.
 ///
 /// Both answer the upload with the bare file URL as plain text.
-class CatboxMediaHost implements MediaHost {
+///
+/// An upload that fails with HTTP 5xx, a timeout or a network error is tried
+/// once more after [mediaHostRetryPause] (see [guardedUpload]).
+class CatboxMediaHost implements MediaHost, DescribesVerify {
   /// Permanent catbox.moe uploads, optionally tied to an account.
-  CatboxMediaHost.catbox({required NeforumHttp http, String? userhash, Logger? log})
+  CatboxMediaHost.catbox({required NeforumHttp http, String? userhash, Logger? log, MediaHostDelay? retryDelay})
       : _http = http,
         temporary = false,
         userhash = (userhash == null || userhash.trim().isEmpty) ? null : userhash.trim(),
         minimumTime = LitterboxTime.hour1,
         _now = systemClock,
-        _log = log ?? Logger('media.catbox');
+        _log = log ?? Logger('media.catbox'),
+        _retryDelay = retryDelay ?? mediaHostDefaultDelay;
 
   /// Temporary litterbox uploads that expire after at least [minimumTime].
   CatboxMediaHost.litterbox({
@@ -62,25 +66,29 @@ class CatboxMediaHost implements MediaHost {
     this.minimumTime = LitterboxTime.hour1,
     Clock? clock,
     Logger? log,
+    MediaHostDelay? retryDelay,
   })  : _http = http,
         temporary = true,
         userhash = null,
         _now = clock ?? systemClock,
-        _log = log ?? Logger('media.litterbox');
+        _log = log ?? Logger('media.litterbox'),
+        _retryDelay = retryDelay ?? mediaHostDefaultDelay;
 
   /// Builds the permanent host from the settings form ([catboxFields]).
-  factory CatboxMediaHost.catboxFromConfig(Map<String, String> config, NeforumHttp http, {Logger? log}) =>
-      CatboxMediaHost.catbox(http: http, userhash: configValue(config, 'userhash'), log: log);
+  factory CatboxMediaHost.catboxFromConfig(Map<String, String> config, NeforumHttp http,
+          {Logger? log, MediaHostDelay? retryDelay}) =>
+      CatboxMediaHost.catbox(http: http, userhash: configValue(config, 'userhash'), log: log, retryDelay: retryDelay);
 
   /// Builds the temporary host from the settings form ([litterboxFields]).
   factory CatboxMediaHost.litterboxFromConfig(Map<String, String> config, NeforumHttp http,
-      {Clock? clock, Logger? log}) {
+      {Clock? clock, Logger? log, MediaHostDelay? retryDelay}) {
     final raw = configValue(config, 'time');
     final time = LitterboxTime.parse(raw);
     if (raw != null && time == null) {
       throw MediaHostException('"Keep files for" must be 1h, 12h, 24h or 72h (got "$raw")', hostId: litterboxHostId);
     }
-    return CatboxMediaHost.litterbox(http: http, minimumTime: time ?? LitterboxTime.hour1, clock: clock, log: log);
+    return CatboxMediaHost.litterbox(
+        http: http, minimumTime: time ?? LitterboxTime.hour1, clock: clock, log: log, retryDelay: retryDelay);
   }
 
   /// catbox.moe API endpoint (catbox.moe/tools.php).
@@ -109,11 +117,15 @@ class CatboxMediaHost implements MediaHost {
   final LitterboxTime minimumTime;
   final Clock _now;
   final Logger _log;
+  final MediaHostDelay _retryDelay;
 
   @override
   String get id => temporary ? litterboxHostId : catboxHostId;
   @override
   String get name => temporary ? 'Litterbox (temporary)' : 'Catbox';
+
+  /// The service name as the subject of a sentence.
+  String get _service => temporary ? 'Litterbox' : 'Catbox';
   @override
   String get description => temporary ? litterboxDescription : catboxDescription;
   @override
@@ -129,26 +141,37 @@ class CatboxMediaHost implements MediaHost {
   }
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) =>
+      _upload(media, bytes, timeFor(ttl));
+
+  /// Uploads with an explicit litterbox [time] (ignored for catbox).
+  Future<HostedMedia> _upload(MediaAttachment media, Uint8List bytes, LitterboxTime time) async {
     checkSize(this, media, bytes.length);
     final ext = extensionFor(media);
     if (!temporary) _checkCatboxRules(media, ext, bytes.length);
-    final time = timeFor(ttl);
     final fields = <String, String>{
       'reqtype': 'fileupload',
       if (temporary) 'time': time.apiValue,
       if (!temporary && userhash != null) 'userhash': userhash!,
     };
     final fileName = _uploadName(media, ext);
-    final r = await guardedCall(id, 'reach ${temporary ? 'litterbox.catbox.moe' : 'catbox.moe'}',
+    final r = await guardedUpload(id, 'reach ${temporary ? 'litterbox.catbox.moe' : 'catbox.moe'}',
         () => _http.multipart(temporary ? litterboxApi : catboxApi,
             fields: fields,
             files: [HttpFilePart(field: 'fileToUpload', bytes: bytes, fileName: fileName, contentType: media.mimeType)],
-            throwOnError: false));
+            throwOnError: false),
+        delay: _retryDelay,
+        log: _log);
     final body = r.body.trim();
     final url = Uri.tryParse(body);
-    if (!r.ok || url == null || url.scheme != 'https' || url.host.isEmpty || body.contains(RegExp(r'\s'))) {
-      throw MediaHostException('$name refused the upload (HTTP ${r.statusCode}): ${bodySnippet(r)}', hostId: id);
+    if (!r.ok) {
+      throw MediaHostException(hostHttpFailure(_service, r), hostId: id, temporary: isTemporaryStatus(r.statusCode));
+    }
+    if (url == null || url.scheme != 'https' || url.host.isEmpty || body.contains(RegExp(r'\s'))) {
+      final said = bodySnippet(r);
+      throw MediaHostException(
+          "$_service couldn't store the file: it answered ${said.isEmpty ? 'with nothing' : '"$said"'} instead of a link to the file.",
+          hostId: id);
     }
     if (temporary) {
       return HostedMedia(hostId: id, url: url, expiresAt: _now().add(time.duration));
@@ -171,16 +194,52 @@ class CatboxMediaHost implements MediaHost {
         () => _http.multipart(catboxApi,
             fields: {'reqtype': 'deletefiles', 'userhash': hash, 'files': file}, throwOnError: false));
     if (!r.ok) {
-      throw MediaHostException('Catbox did not delete $file (HTTP ${r.statusCode}): ${bodySnippet(r)}', hostId: id);
+      throw MediaHostException(hostHttpFailure('Catbox', r, action: 'delete $file'),
+          hostId: id, temporary: isTemporaryStatus(r.statusCode));
     }
   }
 
-  /// Checks that the service answers; uploads nothing.
+  /// * Litterbox: uploads the tiny probe file with `time=1h`, so it expires
+  ///   by itself an hour later.
+  /// * Catbox with a userhash: uploads the probe and deletes it again (which
+  ///   also checks the userhash).
+  /// * Anonymous Catbox: only checks that catbox.moe answers, because an
+  ///   anonymous test file could never be deleted.
   @override
   Future<void> verify() async {
-    final home = temporary ? Uri.parse('https://litterbox.catbox.moe/') : Uri.parse('https://catbox.moe/');
+    final probe = probeAttachment();
+    final bytes = Uint8List.fromList(probeBytes());
+    if (temporary) {
+      await _upload(probe, bytes, LitterboxTime.hour1);
+      return;
+    }
+    if (userhash != null) {
+      final hosted = await _upload(probe, bytes, LitterboxTime.hour1);
+      try {
+        await delete(hosted);
+      } on MediaHostException catch (e) {
+        throw MediaHostException(
+            'Uploading works, but deleting the test file failed, so NEFORUM could not delete files after posting '
+            'either. Check the account hash (userhash). ${e.message} The test file stays at ${hosted.url}.',
+            hostId: id,
+            temporary: e.temporary);
+      }
+      return;
+    }
+    final home = Uri.parse('https://catbox.moe/');
     final r = await guardedCall(id, 'reach ${home.host}', () => _http.get(home, throwOnError: false));
-    if (!r.ok) throw MediaHostException('${home.host} answered HTTP ${r.statusCode}; try again later', hostId: id);
+    if (!r.ok) {
+      throw MediaHostException(hostHttpFailure('Catbox', r, action: 'show its home page'),
+          hostId: id, temporary: isTemporaryStatus(r.statusCode));
+    }
+  }
+
+  @override
+  String get verifiedMessage {
+    if (temporary) return 'Upload works: Litterbox stored a tiny test file, which deletes itself after 1 hour.';
+    if (userhash != null) return 'Upload works: Catbox stored a tiny test file and NEFORUM deleted it again with your account hash.';
+    return 'catbox.moe is reachable, but uploads were not tested: an anonymous test file could never be deleted. '
+        'Add your account hash to test uploads too.';
   }
 
   void _checkCatboxRules(MediaAttachment media, String ext, int length) {

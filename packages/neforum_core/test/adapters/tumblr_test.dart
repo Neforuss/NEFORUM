@@ -991,7 +991,7 @@ void main() {
       expect(plan.desktopUrl, 'https://www.tumblr.com/new/photo');
       expect(plan.preferred, HandoffMethod.shareSheet);
       expect(plan.shareFiles, hasLength(2));
-      expect(plan.mediaNote, contains('could not put the photos on your media host (Host is full)'));
+      expect(plan.mediaNote, contains('could not put the photos on your media host, so they are not filled in this time. Host is full.'));
       expect(plan.mediaNote, isNot(contains('media host set up in Settings')));
       expect(host.deleted.map((h) => h.url.toString()), ['https://cdn.example.test/img1']);
       final warnings = log.where((l) => l.startsWith('[warn]')).toList();
@@ -1006,7 +1006,7 @@ void main() {
           ctxWith(host, read: (m) async => throw const FormatException('Media not found')));
       expect(plan!.webIntent, isNull);
       expect(host.uploaded, isEmpty);
-      expect(plan.mediaNote, contains('the upload to Fake host failed'));
+      expect(plan.mediaNote, contains('The upload to Fake host failed.'));
     });
 
     test('a photo larger than the host accepts is not uploaded', () async {
@@ -1016,7 +1016,7 @@ void main() {
       final plan = (await adapter.prepareHandoff(variant, account, ctxWith(host, log: log)))!;
       expect(host.uploaded, isEmpty);
       expect(plan.webIntent, isNull);
-      expect(plan.mediaNote, contains('big.jpg is larger than Fake host accepts'));
+      expect(plan.mediaNote, contains('The photo big.jpg is larger than Fake host accepts.'));
       expect(log.where((l) => l.startsWith('[warn]')), hasLength(1));
     });
 

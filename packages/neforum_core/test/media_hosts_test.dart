@@ -4,7 +4,8 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
-import 'package:neforum_core/src/media_hosts/media_host_support.dart' show checkSize;
+import 'package:neforum_core/src/media_hosts/media_host_support.dart'
+    show bodySnippet, checkSize, decodeHtmlEntities, hostHttpFailure, isTemporaryStatus, looksLikeHtml, mediaHostRetryPause;
 import 'package:test/test.dart';
 
 import 'support/test_context.dart';
@@ -533,6 +534,195 @@ void main() {
       final parts = registry.split('s3', {'bucket': 'b', 'secretAccessKey': 's'});
       expect(parts.plain, {'bucket': 'b'});
       expect(parts.secrets, {'secretAccessKey': 's'});
+    });
+  });
+
+  group('Readable host errors, retry once, Test button', () {
+    final bytes = Uint8List.fromList(fakeJpegBytes);
+    // The body Litterbox really sent on 11 October 2026 (shortened).
+    const litterbox500 = '<!doctype html><html lang="en"><meta charset="UTF-8"><meta content="nofollow,noarchive,noindex" '
+        'name="robots"><title>500 | Internal Server Error</title><body><h1>Oops</h1></body></html>';
+    const readable500 = "Litterbox couldn't store the file: its server answered HTTP 500 (Internal Server Error). "
+        "This is a problem on Litterbox's side; try again later or choose another media host in Settings.";
+
+    NeforumResponse resp(int status, String body) =>
+        NeforumResponse(status, const {}, Uint8List.fromList(utf8.encode(body)), Uri.parse('https://host.example/api'));
+
+    late List<Duration> waits;
+    Future<void> noSleep(Duration d) async => waits.add(d);
+    setUp(() => waits = []);
+
+    test('bodySnippet turns an HTML page into its title, or "an error page"', () {
+      expect(bodySnippet(resp(500, litterbox500)), '500 | Internal Server Error');
+      expect(bodySnippet(resp(502, '<HTML>\r\n<HEAD><TITLE>\n  Service &amp; Status &#8211; down&#x21; &nbsp;</TITLE></HEAD></HTML>')),
+          'Service & Status – down!');
+      expect(bodySnippet(resp(503, '<!DOCTYPE html><html><body><p>Down for maintenance</p></body></html>')), 'an error page');
+      expect(bodySnippet(resp(500, '<html><head><title>   </title></head></html>')), 'an error page');
+      expect(bodySnippet(resp(412, '  No files given  ')), 'No files given');
+      expect(bodySnippet(resp(500, 'x' * 300)), '${'x' * 200}…');
+      const s3Xml = '<?xml version="1.0"?><Error><Code>InternalError</Code></Error>';
+      expect(looksLikeHtml(s3Xml), isFalse);
+      expect(bodySnippet(resp(500, s3Xml)), s3Xml);
+      expect(looksLikeHtml('<?xml version="1.0"?>\n<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0//EN"><html>'), isTrue);
+      expect(decodeHtmlEntities('&lt;b&gt; &quot;x&quot; &#39;y&#39; &bogus; &#0; &#xD800;'), '<b> "x" \'y\' &bogus; &#0; &#xD800;');
+    });
+
+    test('5xx is blamed on the host, 4xx on the request', () {
+      expect(hostHttpFailure('Litterbox', resp(500, litterbox500)), readable500);
+      expect(hostHttpFailure('Litterbox', resp(502, '<html><head><title>502 Bad Gateway</title></head></html>')),
+          startsWith("Litterbox couldn't store the file: its server answered HTTP 502 (Bad Gateway). This is a problem"));
+      expect(hostHttpFailure('Catbox', resp(503, 'Server busy.')),
+          startsWith("Catbox couldn't store the file: its server answered HTTP 503 (Service Unavailable): Server busy. "));
+      final refused = hostHttpFailure('Catbox', resp(412, 'No files given'));
+      expect(refused, startsWith('Catbox refused to store the file: it answered HTTP 412 (Precondition Failed): No files given. '));
+      expect(refused, allOf(contains("won't help"), isNot(contains("Catbox's side"))));
+      expect(hostHttpFailure('Litterbox', resp(413, '<html><title>413 Request Entity Too Large</title></html>')),
+          'Litterbox refused to store the file: it answered HTTP 413 (Request Entity Too Large). '
+          'The file is too large for Litterbox.');
+      expect([500, 502, 503, 504, 522].every(isTemporaryStatus), isTrue);
+      expect([400, 404, 429, 501, 507].any(isTemporaryStatus), isFalse);
+    });
+
+    test('Litterbox: HTTP 5xx is retried once and then reported readably', () async {
+      final rec = Recorder((r, i) => http.Response(litterbox500, 500, headers: {'content-type': 'text/html'}));
+      final host = CatboxMediaHost.litterbox(http: rec.client, retryDelay: noSleep);
+      await expectLater(
+          host.upload(fakeImage(), bytes),
+          throwsA(isA<MediaHostException>()
+              .having((e) => e.message, 'message', readable500)
+              .having((e) => e.temporary, 'temporary', isTrue)
+              .having((e) => e.hostId, 'hostId', 'litterbox')));
+      expect(rec.calls, hasLength(2));
+      expect(waits, [mediaHostRetryPause]);
+    });
+
+    test('Litterbox: a 5xx followed by success uploads normally', () async {
+      final rec = Recorder((r, i) => i == 0 ? http.Response(litterbox500, 503) : http.Response('https://litter.catbox.moe/ok.jpg', 200));
+      final hosted = await CatboxMediaHost.litterbox(http: rec.client, retryDelay: noSleep).upload(fakeImage(), bytes);
+      expect(hosted.url.toString(), 'https://litter.catbox.moe/ok.jpg');
+      expect(rec.calls, hasLength(2));
+      expect(multipartFieldsOf(rec.calls[1]), multipartFieldsOf(rec.calls[0]), reason: 'the retry sends the same upload');
+      expect(waits, [mediaHostRetryPause]);
+    });
+
+    test('4xx answers are not retried', () async {
+      final rec = Recorder((r, i) => http.Response('<html><title>413 Request Entity Too Large</title></html>', 413));
+      await expectLater(
+          CatboxMediaHost.catbox(http: rec.client, retryDelay: noSleep).upload(fakeImage(), bytes),
+          throwsA(isA<MediaHostException>()
+              .having((e) => e.message, 'message', allOf(startsWith('Catbox refused to store the file'), contains('too large')))
+              .having((e) => e.temporary, 'temporary', isFalse)));
+      expect(rec.calls, hasLength(1));
+      expect(waits, isEmpty);
+    });
+
+    test('network errors are retried once; a second one is reported as temporary', () async {
+      var n = 0;
+      NeforumHttp flaky(int failures) => NeforumHttp(
+          client: MockClient((r) async {
+            if (n++ < failures) throw http.ClientException('Connection reset by peer');
+            return http.Response('https://litter.catbox.moe/net.jpg', 200);
+          }),
+          maxRetries: 0);
+      final hosted = await CatboxMediaHost.litterbox(http: flaky(1), retryDelay: noSleep).upload(fakeImage(), bytes);
+      expect(hosted.url.toString(), 'https://litter.catbox.moe/net.jpg');
+      expect(waits, [mediaHostRetryPause]);
+
+      n = 0;
+      await expectLater(
+          CatboxMediaHost.litterbox(http: flaky(2), retryDelay: noSleep).upload(fakeImage(), bytes),
+          throwsA(isA<MediaHostException>()
+              .having((e) => e.message, 'message', allOf(contains('Connection reset by peer'), contains('tried twice')))
+              .having((e) => e.temporary, 'temporary', isTrue)));
+      expect(n, 2);
+    });
+
+    test('S3: a 5xx PUT is retried and explained with the S3 error code', () async {
+      final rec = Recorder((r, i) => http.Response(
+          '<?xml version="1.0"?><Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>',
+          500));
+      final host = S3CompatibleMediaHost.fromConfig({
+        'endpoint': 'https://acc123.r2.cloudflarestorage.com',
+        'bucket': 'posts',
+        'accessKeyId': 'AKID',
+        'secretAccessKey': 'SECRET',
+      }, rec.client, clock: () => testNow, newId: () => 'abc123', retryDelay: noSleep);
+      await expectLater(
+          host.upload(fakeImage(), bytes),
+          throwsA(isA<MediaHostException>()
+              .having((e) => e.message, 'message',
+                  "Your bucket couldn't store the file: its server answered HTTP 500 (Internal Server Error): InternalError: "
+                  "We encountered an internal error. Please try again. This is a problem on the storage provider's side; "
+                  'try again later or choose another media host in Settings.')
+              .having((e) => e.temporary, 'temporary', isTrue)));
+      expect(rec.calls.map((c) => c.method), ['PUT', 'PUT']);
+      expect(waits, [mediaHostRetryPause]);
+    });
+
+    test('S3: an HTML page from a proxy is reduced to its title', () async {
+      final rec = Recorder((r, i) => http.Response('<html><head><title>403 Forbidden</title></head><body>nginx</body></html>', 403));
+      final host = S3CompatibleMediaHost(
+          http: rec.client,
+          endpoint: Uri.parse('https://minio.example.com'),
+          bucket: 'b',
+          accessKeyId: 'a',
+          secretAccessKey: 's',
+          retryDelay: noSleep);
+      await expectLater(host.upload(fakeImage(), bytes),
+          throwsA(isA<MediaHostException>().having((e) => e.message, 'message', 'Could not upload the file (HTTP 403): Forbidden')));
+      expect(rec.calls, hasLength(1));
+    });
+
+    test('WebDAV: a proxy 502 is retried and explained without markup', () async {
+      final rec = Recorder((r, i) => http.Response('<html>\r\n<head><title>502 Bad Gateway</title></head>\r\n<body>nginx</body></html>', 502));
+      final host = WebDavMediaHost.fromConfig({
+        'webdavUrl': 'https://cloud.example.com/remote.php/dav/files/alice/NEFORUM',
+        'username': 'alice',
+        'password': 'app-pass',
+      }, rec.client, newId: () => 'f00d', retryDelay: noSleep);
+      await expectLater(
+          host.upload(fakeImage(), bytes),
+          throwsA(isA<MediaHostException>().having((e) => e.message, 'message',
+              "Nextcloud couldn't store the file: its server answered HTTP 502 (Bad Gateway). This is a problem on your "
+              "server's side; try again later or choose another media host in Settings.")));
+      expect(rec.calls.map((c) => c.method), ['PUT', 'PUT']);
+    });
+
+    test('Litterbox Test uploads the probe file with time=1h, whatever "Keep files for" says', () async {
+      final rec = Recorder((r, i) => http.Response('https://litter.catbox.moe/probe.txt', 200));
+      final host = CatboxMediaHost.litterboxFromConfig({'time': '72h'}, rec.client, retryDelay: noSleep);
+      await host.verify();
+      final req = rec.calls.single;
+      expect(req.method, 'POST');
+      expect(req.url, CatboxMediaHost.litterboxApi);
+      expect(multipartFieldsOf(req), {'reqtype': 'fileupload', 'time': '1h', 'fileToUpload': '<neforum-probe.txt>'});
+      expect(verifySuccessMessage(host), allOf(startsWith('Upload works'), contains('1 hour')));
+    });
+
+    test('Litterbox Test fails readably when the upload fails', () async {
+      final rec = Recorder((r, i) => http.Response(litterbox500, 500));
+      await expectLater(CatboxMediaHost.litterbox(http: rec.client, retryDelay: noSleep).verify(),
+          throwsA(isA<MediaHostException>().having((e) => e.message, 'message', readable500)));
+      expect(rec.calls, hasLength(2));
+    });
+
+    test('Catbox Test: upload + delete with a userhash, reachability only without one', () async {
+      final withHash = Recorder((r, i) => http.Response(i == 0 ? 'https://files.catbox.moe/pr0be.txt' : 'Files successfully deleted.', 200));
+      final account = CatboxMediaHost.catbox(http: withHash.client, userhash: 'HASH', retryDelay: noSleep);
+      await account.verify();
+      expect(multipartFieldsOf(withHash.calls[0]), {'reqtype': 'fileupload', 'userhash': 'HASH', 'fileToUpload': '<neforum-probe.txt>'});
+      expect(multipartFieldsOf(withHash.calls[1]), {'reqtype': 'deletefiles', 'userhash': 'HASH', 'files': 'pr0be.txt'});
+      expect(verifySuccessMessage(account), contains('deleted it again'));
+
+      final anon = Recorder((r, i) => http.Response('<!doctype html><title>Catbox</title>', 200));
+      final anonymous = CatboxMediaHost.catbox(http: anon.client, retryDelay: noSleep);
+      await anonymous.verify();
+      expect(anon.calls.map((c) => '${c.method} ${c.url}'), ['GET https://catbox.moe/'], reason: 'no permanent anonymous probe file');
+      expect(verifySuccessMessage(anonymous), contains('uploads were not tested'));
+    });
+
+    test('hosts without a description keep the generic success text', () {
+      expect(verifySuccessMessage(FakeMediaHost()), 'Connection works');
     });
   });
 }

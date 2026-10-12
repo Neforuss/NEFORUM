@@ -76,14 +76,15 @@ const PlatformDescriptor facebookDescriptor = PlatformDescriptor(
 const String _byokIntro = '''
 **Posts to a Facebook Page you manage** (no app can post to personal profiles or groups). You need your own free Meta app; you are its admin, so no App Review.
 
-1. Open <https://developers.facebook.com/apps/creation/>, pick the use case **Manage everything on your Page** and finish the wizard.
-2. **Use cases > Manage everything on your Page > Customize**: click **Add** next to `pages_manage_posts` and `pages_read_engagement` (`pages_show_list` and `business_management` are already there).
+1. Open <https://developers.facebook.com/apps/creation/>, pick the use case **Manage everything on your Page** and finish the wizard. If it asks for a business portfolio, **I don't want to connect a business portfolio yet** is fine for posting to your own Page.
+2. **Use cases > Manage everything on your Page > Customize**: click **Add** next to `pages_read_engagement` (it is not there by default) and next to `pages_manage_posts` if it shows **Add**. `pages_show_list` and `business_management` are already there.
 3. **App settings > Basic**: copy the **App ID** and the **App Secret** (click **Show**) into the fields below.
-4. Open <https://developers.facebook.com/tools/explorer/>. Under **Meta App** pick your app, under **User or Page** pick **User Token**, add the four permissions above and click **Generate Access Token**. Allow it and **select your Page**. Copy the token into the **User access token** field.
-5. Press **Sign in**. NEFORUM turns the token into a Page token that does not expire.
-6. So that people other than you see the posts, **Publish** the app (left menu; needs an app icon, a privacy policy URL and a data deletion URL).
+4. Open <https://developers.facebook.com/tools/explorer/>. Check that **Meta App** shows your app: the Explorer remembers the last app you used. Leave **User or Page** as it is (it may say **Get Token**); don't pick a Page there. Add the four permissions above. If one is missing from the Explorer's list, it isn't added to your app yet: go back to step 2.
+5. Click **Generate Access Token**. It makes a User token, which is what NEFORUM needs. In the pop-up, approve the app and pick the Pages to share (picking only the Page you post to is enough). Copy the token into the **User access token** field.
+6. Press **Connect**. NEFORUM turns the token into a Page token that does not expire.
+7. So that people other than you see the posts, **Publish** the app (left menu). As of October 2026 Meta only requires a privacy policy URL; an app icon and a data deletion URL are optional.
 
-**Without a token** NEFORUM opens Facebook to sign in. First add `https://www.facebook.com/connect/login_success.html` under **Facebook Login for Business > Settings > Valid OAuth Redirect URIs** (with **Client OAuth login** and **Web OAuth login** on); at the end copy the whole address of the "Success" page into NEFORUM.
+**Browser sign-in (not recommended):** if you leave the token field empty, NEFORUM opens Facebook's sign-in page instead. It returns to `https://www.facebook.com/connect/login_success.html`, and Meta won't let you register that address ("This can't be a Facebook URL"), so it may not work. If Facebook's sign-in page says the URL is blocked, use the token steps above.
 ''';
 
 const String _handoffIntro = '''
@@ -99,9 +100,10 @@ final List<ConnectSpec> facebookConnectSpecs = [
     tier: PlatformTier.byokApi,
     usesBrowser: true,
     intro: _byokIntro,
-    redirectNote: 'Only for browser sign-in (not needed when you paste a token): register exactly '
-        'https://www.facebook.com/connect/login_success.html under Facebook Login for Business > Settings > '
-        'Valid OAuth Redirect URIs. Facebook Login rejects http://127.0.0.1 and neforum:// redirects.',
+    redirectNote: 'Only used by browser sign-in, which is not the recommended route; pasting a token (steps 4 and 5) '
+        'needs no redirect. Meta won\'t let you register this address (its dashboard answers "This can\'t be a '
+        'Facebook URL" in Valid OAuth Redirect URIs and Authorize callback URL), so there is nothing to register. '
+        'If Facebook\'s sign-in page says the URL is blocked, paste a token from the Graph API Explorer instead.',
     loopbackRedirectOk: false,
     customSchemeRedirectOk: false,
     fixedRedirectUri: facebookLoginSuccessUri,
@@ -127,15 +129,17 @@ final List<ConnectSpec> facebookConnectSpecs = [
         kind: FieldKind.password,
         required: false,
         secret: true,
-        help: 'developers.facebook.com/tools/explorer > **Meta App**: your app > **User or Page**: User Token > '
-            '**Generate Access Token** (step 4). Leave empty to sign in through the browser instead.',
+        help: '**Recommended.** developers.facebook.com/tools/explorer > check that **Meta App** shows your app > '
+            'leave **User or Page** as it is > **Generate Access Token** (steps 4 and 5). Leave empty only to try '
+            'browser sign-in, which Meta may block.',
       ),
       ConnectField(
         key: 'page',
-        label: 'Page name or ID',
+        label: 'Page name, username, ID or link',
         required: false,
-        help: 'Leave empty to use the first Page you can post to. All your Pages are listed in the account '
-            'details after connecting; reconnect with another name to switch Pages.',
+        help: 'Any of these works: the Page\'s name, its username, its ID or its link (for example '
+            '`facebook.com/examplebakery`). Leave empty to use the first Page you can post to. To switch Pages, '
+            'connect again with another one.',
       ),
       ConnectField(
         key: 'scopes',

@@ -106,7 +106,7 @@ class _MediaHostSectionState extends ConsumerState<MediaHostSection> {
       await host.verify();
       if (mounted) {
         setState(() {
-          _result = 'Connection works';
+          _result = verifySuccessMessage(host);
           _resultOk = true;
         });
       }

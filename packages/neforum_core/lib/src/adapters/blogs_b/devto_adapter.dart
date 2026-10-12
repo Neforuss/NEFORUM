@@ -331,7 +331,7 @@ class DevtoAdapter extends PlatformAdapter {
         final hosted = await host.upload(m, await ctx.readMedia(m));
         urls.add(hosted.url.toString());
       } on MediaHostException catch (e) {
-        throw AdapterException(PublishError.configuration('Media host upload failed: ${e.message}'));
+        throw AdapterException(e.toPublishError());
       }
     }
     return urls;

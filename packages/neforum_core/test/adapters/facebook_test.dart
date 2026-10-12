@@ -85,6 +85,43 @@ void main() {
       expect(handoff.tier, PlatformTier.handoff);
       expect(handoff.usesBrowser, isFalse);
     });
+
+    test('the Explorer token is the recommended route; login_success is never to be registered', () {
+      final api = adapter.specFor(PlatformTier.byokApi);
+      // Meta's dashboard refuses the address ("This can't be a Facebook URL"):
+      // nothing may tell users to register it.
+      for (final text in [api.intro, api.redirectNote!, for (final f in api.fields) f.help ?? '']) {
+        expect(text, isNot(contains('Valid OAuth Redirect URIs under')));
+        expect(text, isNot(contains('add `https://www.facebook.com/connect/login_success.html`')));
+        expect(text, isNot(contains('register exactly')));
+      }
+      expect(api.redirectNote, contains("Meta won't let you register this address"));
+      expect(api.redirectNote, contains("This can't be a Facebook URL"));
+      expect(api.intro, contains("Meta won't let you register that address"));
+      expect(api.intro.indexOf('Generate Access Token'), lessThan(api.intro.indexOf('Browser sign-in (not recommended)')));
+      final keys = api.fields.map((f) => f.key).toList();
+      expect(keys.indexOf('user_access_token'), lessThan(keys.indexOf('page')));
+      expect(api.fields.firstWhere((f) => f.key == 'user_access_token').help, startsWith('**Recommended.**'));
+    });
+
+    test('intro follows the October 2026 dashboard', () {
+      final intro = adapter.specFor(PlatformTier.byokApi).intro;
+      // No "User Token" item exists before the first token.
+      expect(intro, isNot(contains('pick **User Token**')));
+      expect(intro, contains('Leave **User or Page** as it is (it may say **Get Token**)'));
+      expect(intro, contains("don't pick a Page there"));
+      expect(intro, contains('the Explorer remembers the last app you used'));
+      expect(intro, contains("If one is missing from the Explorer's list, it isn't added to your app yet"));
+      expect(intro, contains('`pages_read_engagement` (it is not there by default)'));
+      expect(intro, contains('pop-up'));
+      expect(intro, contains("**I don't want to connect a business portfolio yet**"));
+      // Publishing needs only a privacy policy URL.
+      expect(intro, contains('Meta only requires a privacy policy URL; an app icon and a data deletion URL are optional'));
+      expect(intro, isNot(contains('needs an app icon')));
+      final page = adapter.specFor(PlatformTier.byokApi).fields.firstWhere((f) => f.key == 'page');
+      expect(page.label, 'Page name, username, ID or link');
+      expect(page.help, allOf(contains('username'), contains('ID'), contains('link'), contains('examplebakery')));
+    });
   });
 
   group('connect', () {
@@ -171,7 +208,7 @@ void main() {
       expect(calls[3].url.queryParameters['appsecret_proof'], appSecretProof('EAALONG', 'APPSECRET'));
       // 5. /me/accounts
       expect(calls[4].url.path, '/v25.0/me/accounts');
-      expect(calls[4].url.queryParameters['fields'], 'id,name,access_token,tasks,link');
+      expect(calls[4].url.queryParameters['fields'], 'id,name,access_token,tasks,link,username');
 
       // First Page with CREATE_CONTENT is chosen.
       expect(r.account.id, 'facebook-123');
@@ -275,7 +312,8 @@ void main() {
               {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAOLD'}, ctx),
           throwsA(isA<ConnectException>()
               .having((e) => e.field, 'field', 'user_access_token')
-              .having((e) => e.message, 'message', contains('User Token'))));
+              .having((e) => e.message, 'message', contains('Meta App set to this same app'))
+              .having((e) => e.message, 'message', contains('Generate Access Token'))));
     });
 
     test('a pasted Page token is recognised and explained', () async {
@@ -321,11 +359,198 @@ void main() {
     });
 
     test('Facebook error during exchange becomes a ConnectException', () async {
-      final ctx = testContext(handler: (req) async => _graphError(101), broker: FakeAuthBroker());
-      await expectLater(
-          adapter.connect(PlatformTier.byokApi,
-              {'app_id': '987654321', 'app_secret': 'S', 'user_access_token': 'EAAX'}, ctx),
-          throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('App ID'))));
+      for (final code in [101, 1]) {
+        final ctx = testContext(handler: (req) async => _graphError(code), broker: FakeAuthBroker());
+        await expectLater(
+            adapter.connect(PlatformTier.byokApi,
+                {'app_id': '987654321', 'app_secret': 'S', 'user_access_token': 'EAAX'}, ctx),
+            throwsA(isA<ConnectException>()
+                .having((e) => e.message, 'message', contains('rejected the App ID/App Secret'))
+                .having((e) => e.message, 'message', contains('App settings > Basic'))),
+            reason: 'code $code');
+      }
+    });
+
+    group('token made for another Meta app', () {
+      final wrongApp = _json({
+        'error': {'message': 'The access token does not belong to application 123', 'code': 1}
+      }, 400);
+      const input = {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAOTHER'};
+
+      test('names the app debug_token reports, falling back to the token itself as caller', () async {
+        final calls = <http.Request>[];
+        final ctx = testContext(handler: (req) async {
+          calls.add(req);
+          if (req.url.path.endsWith('/oauth/access_token')) return wrongApp;
+          if (req.url.path.endsWith('/debug_token')) {
+            // Meta may refuse to describe another app's token to this app.
+            if (req.url.queryParameters['access_token'] == '987654321|APPSECRET') {
+              return _json({
+                'error': {'message': '(#100) The App_id in the input_token did not match the Viewing App', 'code': 100}
+              }, 400);
+            }
+            return _json({
+              'data': {'app_id': '555000111', 'application': 'Graph API Explorer', 'type': 'USER', 'is_valid': true}
+            });
+          }
+          return http.Response('unexpected ${req.url}', 404);
+        });
+        await expectLater(
+            adapter.connect(PlatformTier.byokApi, input, ctx),
+            throwsA(isA<ConnectException>()
+                .having((e) => e.field, 'field', isNull)
+                .having((e) => e.message, 'message', startsWith('This token was made for a different Meta app'))
+                .having((e) => e.message, 'message', contains('"Graph API Explorer" (App ID 555000111)'))
+                .having((e) => e.message, 'message', contains('The App ID you entered is 987654321'))
+                .having((e) => e.message, 'message',
+                    contains('set Meta App to the app whose App ID is 987654321, click Generate Access Token again'))
+                .having((e) => e.message, 'message', isNot(contains('rejected')))));
+        expect(calls.map((c) => c.url.path), [
+          '/v25.0/oauth/access_token',
+          '/v25.0/debug_token',
+          '/v25.0/debug_token',
+        ]);
+        expect(calls[1].url.queryParameters, {'input_token': 'EAAOTHER', 'access_token': '987654321|APPSECRET'});
+        expect(calls[2].url.queryParameters, {'input_token': 'EAAOTHER', 'access_token': 'EAAOTHER'});
+      });
+
+      test('without a debug_token answer the message is generic and does not blame the keys', () async {
+        final calls = <http.Request>[];
+        final ctx = testContext(handler: (req) async {
+          calls.add(req);
+          if (req.url.path.endsWith('/oauth/access_token')) return wrongApp;
+          return _graphError(190, status: 400);
+        });
+        await expectLater(
+            adapter.connect(PlatformTier.byokApi, input, ctx),
+            throwsA(isA<ConnectException>()
+                .having((e) => e.message, 'message', startsWith('This token was made for a different Meta app. '))
+                .having((e) => e.message, 'message', contains('the app whose App ID is 987654321'))
+                .having((e) => e.message, 'message', contains('Generate Access Token again'))
+                .having((e) => e.message, 'message', contains('The App ID and App Secret can stay as they are'))
+                .having((e) => e.message, 'message', contains('does not belong to application 123 (#1)'))
+                .having((e) => e.message, 'message', isNot(contains('rejected')))));
+        expect(calls.where((c) => c.url.path.endsWith('/debug_token')), hasLength(2));
+        expect(calls.where((c) => c.url.path.endsWith('/me')), isEmpty);
+      });
+
+      test('a debug_token that names this same app gives the generic message', () async {
+        final ctx = testContext(handler: (req) async {
+          if (req.url.path.endsWith('/oauth/access_token')) return wrongApp;
+          return _json({
+            'data': {'app_id': '987654321', 'application': 'My NEFORUM app'}
+          });
+        });
+        await expectLater(
+            adapter.connect(PlatformTier.byokApi, input, ctx),
+            throwsA(isA<ConnectException>()
+                .having((e) => e.message, 'message', startsWith('This token was made for a different Meta app. '))
+                .having((e) => e.message, 'message', isNot(contains('My NEFORUM app')))));
+      });
+
+      test('the same Graph error from a later call is explained too', () {
+        final err = GraphError.parse({
+          'error': {'message': 'The access token does not belong to application 123', 'code': 1}
+        })!;
+        expect(FacebookAdapter.isWrongAppError(err), isTrue);
+        expect(FacebookAdapter.isWrongAppError(GraphError.parse({
+          'error': {'message': 'Error validating client secret.', 'code': 1}
+        })!), isFalse);
+        expect(FacebookAdapter.wrongAppMessage('987654321', err, null), contains('App ID is 987654321'));
+        expect(FacebookAdapter.wrongAppMessage('987654321', err, const FacebookTokenApp('42424242', null)),
+            contains('a different Meta app, App ID 42424242.'));
+      });
+    });
+
+    group('choosing the Page', () {
+      final pages = <Map<String, Object>>[
+        {'id': '111', 'name': 'Moderated Page', 'access_token': 'PT111', 'tasks': ['MODERATE']},
+        {'id': '123', 'name': 'My Page', 'access_token': 'PT123', 'tasks': ['CREATE_CONTENT'], 'username': 'mypage'},
+        {
+          'id': '777',
+          'name': 'Example Bakery',
+          'access_token': 'PT777',
+          'tasks': ['CREATE_CONTENT'],
+          'username': 'examplebakery',
+          'link': 'https://www.facebook.com/examplebakery',
+        },
+        {
+          'id': '888',
+          'name': 'Corner Shop',
+          'access_token': 'PT888',
+          'tasks': ['CREATE_CONTENT'],
+          'link': 'https://www.facebook.com/profile.php?id=888',
+        },
+        {
+          'id': '999',
+          'name': 'Link Only',
+          'access_token': 'PT999',
+          'tasks': ['CREATE_CONTENT'],
+          'link': 'https://www.facebook.com/linkonly',
+        },
+      ];
+
+      Future<ConnectResult> connectWith(String page) => adapter.connect(
+          PlatformTier.byokApi,
+          {'app_id': '987654321', 'app_secret': 'APPSECRET', 'user_access_token': 'EAAEXPLORER', 'page': page},
+          testContext(handler: connectHandler(<http.Request>[], pages: pages)));
+
+      test('by name, username, ID or pasted Page address', () async {
+        const expected = {
+          'Example Bakery': '777',
+          'example bakery': '777',
+          'examplebakery': '777',
+          'ExampleBakery': '777',
+          '@examplebakery': '777',
+          'https://www.facebook.com/examplebakery/': '777',
+          'https://www.facebook.com/examplebakery': '777',
+          'facebook.com/ExampleBakery?ref=bookmarks': '777',
+          'http://facebook.com/examplebakery/?ref=page_internal#posts': '777',
+          'm.facebook.com/examplebakery': '777',
+          'https://m.facebook.com/examplebakery/posts/12345': '777',
+          'https://www.facebook.com/profile.php?id=888': '888',
+          'www.facebook.com/profile.php?id=888&sk=about': '888',
+          'https://www.facebook.com/pages/Corner-Shop/888': '888',
+          '888': '888',
+          'facebook.com/linkonly': '999',
+          'mypage': '123',
+        };
+        for (final e in expected.entries) {
+          final r = await connectWith(e.key);
+          expect(r.account.config['page_id'], e.value, reason: e.key);
+        }
+      });
+
+      test('an unknown Page lists names, usernames and ids', () async {
+        await expectLater(
+            connectWith('https://www.facebook.com/nosuchpage/'),
+            throwsA(isA<ConnectException>()
+                .having((e) => e.field, 'field', 'page')
+                .having((e) => e.message, 'message', contains('No Page matches "https://www.facebook.com/nosuchpage/"'))
+                .having((e) => e.message, 'message', contains('Example Bakery (examplebakery, 777)'))
+                .having((e) => e.message, 'message', contains('Corner Shop (888)'))));
+      });
+
+      test('the stored Page list includes usernames', () async {
+        final r = await connectWith('examplebakery');
+        expect(r.account.config['available_pages'],
+            contains(equals({'id': '777', 'name': 'Example Bakery', 'username': 'examplebakery'})));
+        expect(r.account.profileUrl, 'https://www.facebook.com/examplebakery');
+      });
+
+      test('facebookPageKey strips scheme, host, query and trailing slash', () {
+        expect(facebookPageKey(' https://www.facebook.com/examplebakery/ '), 'examplebakery');
+        expect(facebookPageKey('https://web.facebook.com/examplebakery?ref=x'), 'examplebakery');
+        expect(facebookPageKey('fb.com/examplebakery'), 'examplebakery');
+        expect(facebookPageKey('https://www.facebook.com/profile.php?id=100012345'), '100012345');
+        expect(facebookPageKey('https://www.facebook.com/people/Example-Bakery/100012345/'), '100012345');
+        expect(facebookPageKey('https://www.facebook.com/pg/examplebakery/posts/'), 'examplebakery');
+        expect(facebookPageKey('@examplebakery'), 'examplebakery');
+        expect(facebookPageKey('Example Bakery'), 'Example Bakery');
+        expect(facebookPageKey('Facebook.com fans'), 'Facebook.com fans');
+        expect(facebookPageKey('https://example.com/examplebakery'), 'https://example.com/examplebakery');
+        expect(facebookPageKey('https://www.facebook.com/'), 'https://www.facebook.com/');
+      });
     });
 
     test('hand-off tier needs no credentials', () async {

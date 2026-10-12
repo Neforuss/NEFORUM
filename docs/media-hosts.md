@@ -33,9 +33,31 @@ from developers in 2025-2026):
 | **Catbox** | optional | free | 200 MB (GIF 20 MB) | only with an account hash | permanent links |
 | **My own links** | n/a | n/a | n/a | n/a (you manage the files) | you already host your files |
 
-Settings > Media host > pick one > fill in the fields > **Test**. For the
-bucket and WebDAV hosts the test uploads a tiny text file, checks that its
-public link opens without a login, and deletes the file again.
+**Litterbox is the zero-setup start:** pick it and you can post right away.
+For regular posting, set up your own **bucket** (Backblaze B2 or Cloudflare R2,
+both have free tiers). Litterbox is run by one volunteer and is sometimes
+down or refuses uploads for a while; a bucket you own doesn't depend on
+anyone else's server.
+
+Settings > Media host > pick one > fill in the fields > **Test connection**.
+What the test does depends on the host, and the result says what was tested:
+
+| Host | What **Test connection** does |
+|---|---|
+| Litterbox | uploads a tiny text file (23 bytes) set to expire after 1 hour, so it deletes itself |
+| Catbox with an account hash | uploads a tiny text file and deletes it again with your account hash (this also checks the hash) |
+| Catbox without an account hash | only checks that catbox.moe answers. Uploads are **not** tested, because an anonymous test file could never be deleted |
+| S3-compatible bucket, Nextcloud / WebDAV | uploads a tiny text file, checks that its link opens without a login, and deletes the file again |
+| My own links | nothing to test (NEFORUM uploads nothing); open one of your links in a browser |
+
+**When an upload fails.** If the host has a temporary problem (an HTTP 5xx
+answer such as 500 or 503, a timeout or a dropped connection), NEFORUM waits
+a few seconds and tries once more. If that fails too, the error says in plain
+words what happened and whose side the problem is on, for example: *"Litterbox
+couldn't store the file: its server answered HTTP 500 (Internal Server Error).
+This is a problem on Litterbox's side; try again later or choose another media
+host in Settings."* A 4xx answer (the host turned the file or your settings
+down) is not retried, because sending the same thing again won't help.
 
 ## Litterbox and Catbox
 
@@ -51,6 +73,8 @@ private.
   own. Instagram and Threads videos use 24 h.
 - Up to 1 GB per file ("Temporary uploads up to 1 GB are allowed.").
 - Files can't be deleted early. They disappear when the time is up.
+- **Test connection** really uploads: a 23-byte text file kept for 1 hour
+  (whatever *Keep files for* says), which then expires by itself.
 
 **Catbox** (permanent)
 
@@ -62,6 +86,9 @@ private.
   and paste the **userhash** from your account page into
   *Account hash (userhash)*. Files tied to an account are permanent until
   deleted.
+- **Test connection** with an account hash uploads a tiny file and deletes it
+  again. Without one it only checks that catbox.moe answers and says that
+  uploads were not tested, so no permanent anonymous test file is left behind.
 - Catbox's FAQ says: "You cannot use Catbox for commercial services without
   prior approval." Use it for your own posts, not for a business.
 
@@ -77,10 +104,10 @@ your own keys, and are deleted after posting. NEFORUM signs requests itself
 |---|---|---|
 | Endpoint | `https://s3.us-west-004.backblazeb2.com` | the S3 API address (see below) |
 | Region | `us-west-004` | leave empty to guess it: R2 = `auto`, AWS and B2 from the endpoint (also `s3.dualstack.<region>`), MinIO = `us-east-1` |
-| Bucket | `my-neforum-media` | |
+| Bucket | `my-post-media` | |
 | Access key ID | | B2: "keyID" |
 | Secret access key | | B2: "applicationKey"; stored in your device's keychain |
-| Public base URL | `https://my-neforum-media.s3.us-west-004.backblazeb2.com` | where anyone can read the bucket; leave empty for a private bucket (see below) |
+| Public base URL | `https://my-post-media.s3.us-west-004.backblazeb2.com` | where anyone can read the bucket; leave empty for a private bucket (see below) |
 | Folder in the bucket | `neforum/` | optional |
 | Addressing style | `auto` | `path` = `endpoint/bucket/key`, `virtual` = `bucket.endpoint/key` |
 
@@ -90,9 +117,10 @@ your own keys, and are deleted after posting. NEFORUM signs requests itself
   never expire.
 - *Private bucket, Public base URL empty*: NEFORUM hands out a **signed link**
   that works for as long as the platform needs it, at most 7 days (the S3
-  limit). Meta does not document whether it accepts these. Developers report
+  limit). Nothing in the bucket is public and no domain or DNS setup is
+  needed. Meta does not document whether it accepts these. Developers report
   that they work as long as the link has not expired. Use a public bucket if
-  you see "media could not be fetched".
+  you see "media could not be fetched" (Instagram error 9004 / 2207052).
 
 **Safety net:** add a *lifecycle rule* to the bucket that deletes objects in
 `neforum/` after 1 day. Then nothing is left behind if NEFORUM is closed in the
@@ -118,14 +146,40 @@ support per-file permissions, so the whole bucket is public.
 
 1. Cloudflare dashboard > **R2**. Enabling R2 goes through a subscription
    checkout and needs a payment method on file, even for the free tier.
-2. **Create bucket**. Under **Settings > Public access**, connect a **custom
-   domain** (recommended), or enable the `r2.dev` URL. Cloudflare says the
-   `r2.dev` URL is rate-limited and meant for development only.
-3. **Manage R2 API Tokens** > create a token with *Object Read & Write* on this
-   bucket. Copy the **Access Key ID** and the **Secret Access Key**.
-4. In NEFORUM: Endpoint `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`, Region
-   empty (= `auto`), Public base URL = your custom domain or the `pub-....r2.dev`
-   address.
+   (Backblaze B2 above needs no card.)
+2. **Create bucket**, for example `my-post-media`. Use it only for NEFORUM.
+3. Decide how platforms reach the files:
+   - **Private bucket + signed links** (simplest): change nothing under
+     *Public access* and leave NEFORUM's *Public base URL* empty. The bucket
+     stays private and you don't need a domain or any DNS change. Meta does not
+     document whether it accepts signed links, so this is **unverified**: post
+     one real Instagram photo to check.
+   - **Public custom domain**: if Instagram can't fetch the file (error 9004 /
+     2207052), open the bucket's **Settings > Public access** and connect a
+     custom domain such as `media.example.com` (the domain must be on
+     Cloudflare). Then put `https://media.example.com` in *Public base URL*.
+     The `r2.dev` URL also works, but Cloudflare says it is rate-limited and
+     meant for development only.
+4. API token: **R2** > **Manage API Tokens** (on the R2 overview page, under
+   *Account Details*) > **Create Account API token**. Permissions: **Object
+   Read & Write**. Under the bucket choice pick **Apply to specific buckets
+   only** and select your bucket. Create it.
+5. The next page shows three values: a **Token value**, an **Access Key ID**
+   and a **Secret Access Key**. NEFORUM needs the **Access Key ID** and the
+   **Secret Access Key**, not the Token value. Copy the secret now; Cloudflare
+   shows it only once.
+6. Endpoint: on the same R2 overview page, *Account Details* shows the **S3
+   API** address next to **Manage API Tokens**. It looks like
+   `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`. Use it without a bucket
+   name at the end.
+7. Safety net: bucket > **Settings** > **Object Lifecycle Rules** > **Add
+   rule**: delete objects older than **1 day**, and abort incomplete multipart
+   uploads after **1 day**. Leave the prefix empty when the bucket is only for
+   NEFORUM (or enter your *Folder in the bucket*, e.g. `neforum/`).
+8. In NEFORUM: Endpoint = the S3 API address from step 6, Region empty
+   (= `auto`), Bucket = your bucket name, Access key ID and Secret access key
+   from step 5, Public base URL empty (signed links) or your custom domain.
+   Then **Test connection**.
 
 Free tier as of October 2026: 10 GB-month of storage, 1 million writes and
 10 million reads per month, free egress.
@@ -195,9 +249,9 @@ share links do **not** work.
   not affected.
 - NEFORUM holds each file in memory while it uploads it. Very large videos
   (several GB) may fail on phones.
-- Free third-party hosts (Litterbox, Catbox) can be slow or down. If posting to
-  Instagram fails with "media could not be fetched", try again or switch to
-  your own bucket.
+- Free third-party hosts (Litterbox, Catbox) can be slow or down. NEFORUM
+  retries a failed upload once; if posting still fails, or Instagram says
+  "media could not be fetched", try again later or switch to your own bucket.
 
 ## Sources
 
@@ -211,6 +265,8 @@ share links do **not** work.
 - Cloudflare R2 presigned URLs: https://developers.cloudflare.com/r2/api/s3/presigned-urls/
 - Cloudflare R2 public buckets: https://developers.cloudflare.com/r2/buckets/public-buckets/
 - Cloudflare R2 pricing: https://developers.cloudflare.com/r2/pricing/
+- Cloudflare R2 API tokens: https://developers.cloudflare.com/r2/api/tokens/
+- Cloudflare R2 object lifecycles: https://developers.cloudflare.com/r2/buckets/object-lifecycles/
 - Backblaze B2 S3-compatible API: https://www.backblaze.com/docs/cloud-storage-s3-compatible-api
 - Backblaze B2 pricing: https://www.backblaze.com/cloud-storage/pricing
 - MinIO `mc anonymous set`: https://docs.min.io/community/minio-object-store/reference/minio-mc/mc-anonymous-set.html

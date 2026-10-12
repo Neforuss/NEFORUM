@@ -154,27 +154,38 @@ class ThreadsAdapter extends PlatformAdapter {
     customSchemeRedirectOk: false,
     fixedRedirectUri: suggestedRedirectUri,
     redirectNote: 'Register exactly https://127.0.0.1:52771/callback in your app under Use cases > '
-        'Access the Threads API > Settings > Client OAuth Settings (redirect URIs). Not needed when you paste a token.',
+        'Access the Threads API > Settings > Redirect Callback URLs (called Client OAuth Settings on some screens). '
+        'Not needed when you paste a token.',
     intro: '''
 **Post to your Threads profile through your own free Meta app** (about 10 minutes, once). Any Threads profile works; no App Review.
 
-1. Open <https://developers.facebook.com/apps/creation/>, pick the use case **Access the Threads API** and finish the wizard.
-2. **Use cases > Access the Threads API > Customize**: click **Add** next to `threads_content_publish` (`threads_basic` is always on).
+1. Open <https://developers.facebook.com/apps/creation/>, pick the use case **Access the Threads API** (add **Manage messaging & content on Instagram** too if you want one app for both) and finish the wizard. No business portfolio? Pick **I don't want to connect a business portfolio yet**.
+2. **Use cases > Access the Threads API > Customize**: click **Add** next to `threads_content_publish` (`threads_basic` is already "Ready for testing").
 3. **App roles > Roles > Add People**, choose **Threads Tester** and enter your Threads username. Accept the invite in Threads: **Settings > Account > Website permissions > Invites**.
-4. Back in the use case open **Settings**. Under **Client OAuth Settings** add `https://127.0.0.1:52771/callback`; put the same address in **Deauthorize callback URL** and **Data Deletion Requests URL**; click **Save**.
-5. Copy the **Threads app ID** and **Threads app secret** from that page (not the Facebook App ID) into the fields below.
-6. Press **Sign in**, allow access, then copy the whole address of the page that does not load (`https://127.0.0.1:52771/callback?code=...`) and paste it into NEFORUM.
+4. Back in the use case open **Settings**. Below the app ID and secret, the **User Token Generator** lists your profile: click **Generate Access Token**, allow access in the pop-up, copy the token and paste it into the first field below. Your profile must be **public**. The token is long-lived (60 days) and NEFORUM renews it, so the app ID and secret can stay empty.
+5. For images and videos, pick a **media host** in NEFORUM **Settings > Media hosting** (text-only posts need none). **Litterbox** needs no setup and is fine to start; for regular posting a bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) is more reliable. The **Guide** button there explains each host.
 
-**Shortcut:** if that Settings page offers a **User Token Generator**, generate a token for your profile and paste it into the last field instead (steps 4 to 6 are then not needed; add the app secret if NEFORUM asks for it).
+**Browser sign-in instead of a token:** on the same Settings page add `https://127.0.0.1:52771/callback` under **Redirect Callback URLs** (some screens: **Client OAuth Settings**), put the same address in **Uninstall Callback URL** and **Delete Callback URL**, click **Save**, copy the **Threads app ID** and **Threads app secret** (not the Facebook App ID) into the fields below and press **Sign in**. After you allow access, paste the whole address of the page that does not load (`https://127.0.0.1:52771/callback?code=...`).
 ''',
     fields: [
+      ConnectField(
+        key: fieldAccessToken,
+        label: 'Access token from the User Token Generator',
+        kind: FieldKind.password,
+        required: false,
+        secret: true,
+        help: '**Recommended.** Use cases > Access the Threads API > **Settings** > User Token Generator > '
+            '**Generate Access Token**, for a public profile that has accepted its Threads Tester invite. The token '
+            'is long-lived; NEFORUM checks it and renews it before it expires (60 days). With a token, the fields '
+            'below can stay empty.',
+      ),
       ConnectField(
         key: 'app_id',
         label: 'Threads app ID',
         required: false,
         placeholder: '1234567890123456',
         help: 'Use cases > Access the Threads API > **Settings** > Threads app ID (not the Facebook App ID). '
-            'Needed for browser sign-in.',
+            'Only needed for browser sign-in.',
       ),
       ConnectField(
         key: secretAppSecret,
@@ -182,8 +193,9 @@ class ThreadsAdapter extends PlatformAdapter {
         kind: FieldKind.password,
         required: false,
         secret: true,
-        help: 'Same Settings page, next to the Threads app ID (click **Show**). Needed for browser sign-in, and to '
-            'turn a 1-hour token into a 60-day one. Stays on this device.',
+        help: 'Same Settings page, next to the Threads app ID (click **Show**). Needed for browser sign-in. Not '
+            'needed for a User Token Generator token (already long-lived); NEFORUM only asks for it if a pasted '
+            'token lasts about an hour. Stays on this device.',
       ),
       ConnectField(
         key: configRedirectUri,
@@ -191,17 +203,8 @@ class ThreadsAdapter extends PlatformAdapter {
         kind: FieldKind.url,
         required: false,
         defaultValue: 'https://127.0.0.1:52771/callback',
-        help: 'Must match the address under Client OAuth Settings exactly (watch for a trailing slash) and start '
-            'with https://.',
-      ),
-      ConnectField(
-        key: fieldAccessToken,
-        label: 'Or: access token from the User Token Generator',
-        kind: FieldKind.password,
-        required: false,
-        secret: true,
-        help: 'Use cases > Access the Threads API > **Settings** > User Token Generator, for a profile that has '
-            'accepted its Threads Tester invite. NEFORUM checks it and renews it before it expires (60 days).',
+        help: 'Only for browser sign-in. Must match the address under Redirect Callback URLs (some screens: '
+            'Client OAuth Settings) exactly (watch for a trailing slash) and start with https://.',
       ),
     ],
   );
@@ -636,7 +639,7 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
     } on HttpFailure catch (f) {
       return fail(threadsErrorFrom(f));
     } on MediaHostException catch (e) {
-      return fail(PublishError.configuration('Uploading media to your media host failed: ${e.message}'));
+      return fail(e.toPublishError());
     } on Exception catch (e) {
       return fail(PublishError.network('Could not reach Threads: $e'));
     } finally {
