@@ -95,7 +95,11 @@ void main() {
     c.read(composerProvider.notifier).selectAccounts([ig.id, masto.id]);
     c.read(composerProvider.notifier).setSchedule(DateTime.now().add(const Duration(hours: 2)));
     await pumpFor(1000);
-    expect(find.byType(TextCardView), findsOneWidget);
+    // What Instagram will get (the preview list builds only the cards that fit
+    // the window, so a small screen may not show Instagram's yet).
+    final previews = {for (final p in c.read(composerPreviewsProvider)) p.account.platformId: p};
+    expect(previews['instagram']!.variant.media.single.isTextCard, isTrue, reason: 'Instagram gets a text card');
+    expect(previews['instagram']!.issues.any((i) => i.code == 'media.text_card'), isTrue);
     noErrors('compose');
 
     final actions = c.read(postActionsProvider);
