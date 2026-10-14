@@ -204,10 +204,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Only the downloads: the web preview's files are not release assets.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: neforum-{android,windows,macos,ios-unsigned}
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
+      # A published release of this tag gets its files replaced; otherwise a new
+      # one is made (drafts are never reused, so a half-uploaded one can't leak).
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          ls -l dist
+          tag="$GITHUB_REF_NAME"
+          if gh api "repos/$GH_REPO/releases/tags/$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+            gh release edit "$tag" --title "NEFORUM ${tag#v}" --draft=false --latest
+          else
+            gh release create "$tag" dist/* --title "NEFORUM ${tag#v}" --generate-notes --latest
+          fi
