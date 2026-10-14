@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 /// Shown in the sidebar and Settings; keep in step with `version:` in
 /// pubspec.yaml (CI fails otherwise, see test/version_test.dart).
-const String kAppVersion = '1.0.2';
+const String kAppVersion = '1.0.3';
 
 /// Where NEFORUM is running. Uses [defaultTargetPlatform] so it never touches
 /// `dart:io` (keeps the web preview building).
