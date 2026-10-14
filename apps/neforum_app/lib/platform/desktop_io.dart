@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
@@ -136,6 +137,15 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
     if (_windowReady) {
       await windowManager.setPreventClose(false);
       await windowManager.destroy();
+      if (Platform.isWindows) {
+        // destroy() posts WM_QUIT: the runner then takes the window down on the
+        // main thread and returns from wWinMain, which ends the process.
+        // Calling exit() here raced that teardown, and hooks other programs
+        // inject into every window (Windhawk mods, for one) crashed on the
+        // half-exited process. Exit only if the runner has not after 5 s.
+        Timer(const Duration(seconds: 5), () => exit(0));
+        return;
+      }
     }
     exit(0);
   }
