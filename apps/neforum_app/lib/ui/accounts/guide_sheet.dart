@@ -62,15 +62,41 @@ class GuideSheet extends ConsumerWidget {
                 ),
               );
             }
-            return Scrollbar(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(Space.xxl, Space.lg, Space.xxl, Space.x4),
-                child: NfMarkdown(snap.data!, selectable: true),
-              ),
-            );
+            return _GuideBody(markdown: snap.data!);
           },
         ),
       ),
     ]);
   }
+}
+
+/// The guide text with its own scroll controller: a Scrollbar without one
+/// uses the PrimaryScrollController, which desktop scroll views do not attach
+/// to, and fails as soon as the guide scrolls.
+class _GuideBody extends StatefulWidget {
+  const _GuideBody({required this.markdown});
+  final String markdown;
+
+  @override
+  State<_GuideBody> createState() => _GuideBodyState();
+}
+
+class _GuideBodyState extends State<_GuideBody> {
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scrollbar(
+        controller: _scroll,
+        child: SingleChildScrollView(
+          controller: _scroll,
+          padding: const EdgeInsets.fromLTRB(Space.xxl, Space.lg, Space.xxl, Space.x4),
+          child: NfMarkdown(widget.markdown, selectable: true),
+        ),
+      );
 }

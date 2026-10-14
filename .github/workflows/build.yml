@@ -90,14 +90,22 @@ jobs:
           if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
           $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
           if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          & $iscc installer\neforum.iss
+          $version = ((Select-String -Path pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value)
+          & $iscc "/DAppVersion=$version" installer\neforum.iss
           Copy-Item build\installer\NEFORUM-Setup-*.exe ..\..\
+      - name: Browser extension
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
+          dart run tool/build_extension.dart
+          Copy-Item ..\..\dist\neforum-extension-*.zip ..\..\
       - uses: actions/upload-artifact@v4
         with:
           name: neforum-windows
           path: |
             neforum-windows.zip
             NEFORUM-Setup-*.exe
+            neforum-extension-*.zip
 
   macos:
     needs: test
@@ -117,10 +125,19 @@ jobs:
           flutter build macos --release
           cd build/macos/Build/Products/Release
           ditto -c -k --keepParent NEFORUM.app "$GITHUB_WORKSPACE/neforum-macos.zip"
+          # The usual Mac install: a disk image with the app and a shortcut to
+          # Applications, so NEFORUM is dragged there and shows up in
+          # Launchpad and Spotlight like any other app.
+          mkdir -p dmg
+          cp -R NEFORUM.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname NEFORUM -srcfolder dmg -ov -format UDZO "$GITHUB_WORKSPACE/NEFORUM-macOS.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: neforum-macos
-          path: neforum-macos.zip
+          path: |
+            neforum-macos.zip
+            NEFORUM-macOS.dmg
 
   ios:
     needs: test
@@ -137,9 +154,16 @@ jobs:
         run: |
           flutter pub get
           dart run tool/sync_docs.dart
-          flutter build ios --release --no-codesign
+          # Flutter's --no-codesign still lets Xcode ask for a signing team on
+          # some targets ("requires a selected Development Team"), so Flutter
+          # only prepares the project and Xcode builds with signing off for
+          # every target.
+          flutter build ios --release --no-codesign --config-only
+          xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/ios-unsigned \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" build
           mkdir -p Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/
+          cp -R build/ios-unsigned/Build/Products/Release-iphoneos/Runner.app Payload/
           zip -qr "$GITHUB_WORKSPACE/neforum-ios-unsigned.ipa" Payload
       - uses: actions/upload-artifact@v4
         with:

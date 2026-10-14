@@ -10,7 +10,7 @@
 ; user's app data folder and are kept on uninstall.
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 #define AppName "NEFORUM"
 #define AppExe "NEFORUM.exe"
@@ -53,6 +53,9 @@ SolidCompression=yes
 AppMutex=Local\org.neforum.NEFORUM
 CloseApplications=yes
 RestartApplications=no
+; Tell Windows (Explorer, Start, search) that a program was added or removed,
+; so NEFORUM shows up in the Start menu's app list and search straight away.
+ChangesAssociations=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -76,6 +79,13 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags
 Filename: "{sys}\taskkill.exe"; Parameters: "/IM {#AppExe} /F"; Flags: runhidden; RunOnceId: "StopNeforum"
 
 [Registry]
+; App Paths: Windows search and Win+R find "neforum" by name, like any
+; installed program. HKA is the current user's hive for a per-user install,
+; the machine's for an install for all users.
+Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#AppExe}"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExe}"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\{#AppExe}"; ValueType: string; ValueName: "Path"; ValueData: "{app}"
+; The name Windows shows for the program (Open with, Task Manager, search).
+Root: HKA; Subkey: "Software\Classes\Applications\{#AppExe}"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "{#AppName}"; Flags: uninsdeletekey
 ; "Start NEFORUM when I sign in" writes this value; remove it with the app.
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "{#AppName}"; Flags: uninsdeletevalue dontcreatekey
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "org.neforum.NEFORUM"; Flags: uninsdeletevalue dontcreatekey

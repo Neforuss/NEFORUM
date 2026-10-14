@@ -50,7 +50,7 @@ class PageHeader extends StatelessWidget {
 }
 
 /// Scrollable page body with responsive gutters and an optional max width.
-class PageBody extends StatelessWidget {
+class PageBody extends StatefulWidget {
   const PageBody({super.key, required this.children, this.maxWidth = 1240, this.controller, this.bottomPadding = Space.x5});
 
   final List<Widget> children;
@@ -65,17 +65,37 @@ class PageBody extends StatelessWidget {
   }
 
   @override
+  State<PageBody> createState() => _PageBodyState();
+}
+
+class _PageBodyState extends State<PageBody> {
+  /// Used when no controller is given. Without one, the scrollbar falls back
+  /// to the PrimaryScrollController, which desktop scroll views do not
+  /// attach to ("The Scrollbar's ScrollController has no ScrollPosition
+  /// attached" as soon as the page scrolls).
+  ScrollController? _own;
+
+  ScrollController get _controller => widget.controller ?? (_own ??= ScrollController());
+
+  @override
+  void dispose() {
+    _own?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final g = gutters(context);
+    final g = PageBody.gutters(context);
+    final controller = _controller;
     return Scrollbar(
       controller: controller,
       child: SingleChildScrollView(
         controller: controller,
-        padding: EdgeInsets.fromLTRB(g.left, context.isCompact ? Space.lg : Space.x4, g.right, bottomPadding),
+        padding: EdgeInsets.fromLTRB(g.left, context.isCompact ? Space.lg : Space.x4, g.right, widget.bottomPadding),
         child: Center(
           child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: maxWidth),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children),
+            constraints: BoxConstraints(maxWidth: widget.maxWidth),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: widget.children),
           ),
         ),
       ),
