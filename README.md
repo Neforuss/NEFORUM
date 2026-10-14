@@ -141,10 +141,12 @@ git clone https://github.com/Neforuss/NEFORUM.git
 cd NEFORUM/apps/neforum_app && flutter pub get && dart run tool/sync_docs.dart
 ```
 
-Then one of:
+Then one of the commands below. Android and iOS builds take
+`--dart-define=NEFORUM_MOBILE=true`, which leaves out the desktop tray code
+(its FFI bindings break the release compiler for phones).
 
 ```bash
-flutter build apk --release
+flutter build apk --release --dart-define=NEFORUM_MOBILE=true
 ```
 
 ```bash
@@ -162,7 +164,7 @@ flutter build macos --release
 ```
 
 ```bash
-flutter build ios --release
+flutter build ios --release --dart-define=NEFORUM_MOBILE=true
 ```
 
 ## Project layout

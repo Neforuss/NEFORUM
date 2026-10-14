@@ -57,7 +57,7 @@ jobs:
         run: |
           flutter pub get
           dart run tool/sync_docs.dart
-          flutter build apk --release
+          flutter build apk --release --dart-define=NEFORUM_MOBILE=true
           cp build/app/outputs/flutter-apk/app-release.apk ../../neforum-android.apk
       - uses: actions/upload-artifact@v4
         with:
@@ -162,7 +162,7 @@ jobs:
           # some targets ("requires a selected Development Team"), so Flutter
           # only prepares the project and Xcode builds with signing off for
           # every target.
-          flutter build ios --release --no-codesign --config-only
+          flutter build ios --release --no-codesign --config-only --dart-define=NEFORUM_MOBILE=true
           xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/ios-unsigned \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" build
