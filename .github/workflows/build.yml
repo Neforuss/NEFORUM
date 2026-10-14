@@ -26,6 +26,8 @@ jobs:
           dart pub get
           dart analyze --fatal-infos
           dart test
+      - name: Linux packages for the tray plugin's build hook
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
       - name: App - analyze and test
         working-directory: apps/neforum_app
         run: |
@@ -48,6 +50,8 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Linux packages for the tray plugin's build hook
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
       - name: Build APK
         working-directory: apps/neforum_app
         run: |
@@ -180,6 +184,8 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Linux packages for the tray plugin's build hook
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
       - name: Build web preview (demo workspace)
         working-directory: apps/neforum_app
         run: |
