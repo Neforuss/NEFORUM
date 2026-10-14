@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
@@ -14,25 +15,44 @@ final registryProvider = Provider<AdapterRegistry>((ref) => ref.watch(servicesPr
 final isDemoProvider = Provider<bool>((ref) => ref.watch(servicesProvider).demo);
 
 /// All connected accounts, live.
-final accountsProvider = StreamProvider<List<ConnectedAccount>>((ref) async* {
+final accountsProvider = StreamProvider<List<ConnectedAccount>>((ref) {
   final repo = ref.watch(servicesProvider).accounts;
-  yield await repo.all();
-  await for (final _ in repo.changes) {
-    yield await repo.all();
-  }
+  return liveList(repo.all, repo.changes);
 });
 
 /// All posts (drafts, scheduled, history), newest first, live.
-final postsProvider = StreamProvider<List<Post>>((ref) async* {
+final postsProvider = StreamProvider<List<Post>>((ref) {
   final repo = ref.watch(servicesProvider).posts;
-  yield await repo.all();
-  await for (final _ in repo.changes) {
-    yield await repo.all();
-  }
+  return liveList(repo.all, repo.changes);
 });
+
+/// [load] now and after every change. A failed load (the file busy for longer
+/// than the store's own retries) is retried until it works instead of ending
+/// the stream, which used to leave the app looking empty until restarted.
+@visibleForTesting
+Stream<List<T>> liveList<T>(Future<List<T>> Function() load, Stream<void> changes, {Duration retry = const Duration(seconds: 2)}) async* {
+  Future<List<T>> loadUntilItWorks() async {
+    while (true) {
+      try {
+        return await load();
+      } on Object {
+        await Future<void>.delayed(retry);
+      }
+    }
+  }
+
+  yield await loadUntilItWorks();
+  await for (final _ in changes) {
+    yield await loadUntilItWorks();
+  }
+}
 
 /// Accounts as a synchronous list (empty while loading).
 final accountListProvider = Provider<List<ConnectedAccount>>((ref) => ref.watch(accountsProvider).value ?? const []);
+
+/// False until the accounts have been read once: "no accounts yet" screens
+/// wait for this so a slow read never looks like an empty workspace.
+final accountsLoadedProvider = Provider<bool>((ref) => ref.watch(accountsProvider).hasValue);
 
 final accountByIdProvider = Provider.family<ConnectedAccount?, String>((ref, id) {
   for (final a in ref.watch(accountListProvider)) {

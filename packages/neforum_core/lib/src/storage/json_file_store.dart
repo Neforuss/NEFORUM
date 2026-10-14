@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:path/path.dart' as p;
 
@@ -40,13 +41,25 @@ class JsonFile {
   final String path;
   Future<void> _chain = Future<void>.value();
 
+  /// Antivirus, backup, sync and indexing tools can hold a file open for a
+  /// moment; a read then fails with a sharing violation. Retry for about 20
+  /// seconds before giving up, so a busy file is never mistaken for no data.
   Future<Object?> read() async {
     final f = File(path);
-    if (!await f.exists()) return null;
-    final text = await f.readAsString();
-    if (text.trim().isEmpty) return null;
-    return jsonDecode(text);
+    for (var attempt = 0;; attempt++) {
+      try {
+        if (!await f.exists()) return null;
+        final text = await f.readAsString();
+        if (text.trim().isEmpty) return null;
+        return jsonDecode(text);
+      } on FileSystemException {
+        if (attempt >= readAttempts - 1) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: math.min(2000, 100 * (attempt + 1))));
+      }
+    }
   }
+
+  static const readAttempts = 20;
 
   Future<void> write(Object data) {
     final next = _chain.then((_) async {

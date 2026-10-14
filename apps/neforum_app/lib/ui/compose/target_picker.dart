@@ -30,7 +30,11 @@ class TargetPicker extends ConsumerWidget {
     final notifier = ref.read(composerProvider.notifier);
     final registry = ref.watch(registryProvider);
 
-    if (accounts.isEmpty) return const _NoAccounts();
+    if (accounts.isEmpty) {
+      // Still reading the accounts: show nothing rather than "connect your first".
+      if (!ref.watch(accountsLoadedProvider)) return const SizedBox(height: 56);
+      return const _NoAccounts();
+    }
 
     // Lead with the platform; add the account name only when the user has
     // several accounts on the same platform.
