@@ -6,6 +6,10 @@
 //
 //   dart run tool/generate_icons.dart
 //
+// Or, for a stand-alone logo pack (every common size up to 2048 px, SVG, ICO):
+//
+//   dart run tool/generate_icons.dart --pack "<folder>"
+//
 // Pure Dart (package:image), anti-aliased with signed distance fields and
 // blended in linear light, so the icons are reproducible from source and
 // need no design tool.
@@ -22,7 +26,8 @@ const _c1 = (0x7D, 0x00, 0xFF); // NEFORUM purple
 const _c2 = (0x5C, 0x00, 0xC4); // deep purple
 const _yellow = (0xFF, 0xFF, 0x00);
 
-void main() {
+void main(List<String> args) {
+  if (args.length == 2 && args.first == '--pack') return _pack(args[1]);
   final root = Directory.current.path;
   String at(String rel) => '$root/$rel'.replaceAll('\\', '/');
 
@@ -121,6 +126,59 @@ void main() {
   }
 
   stdout.writeln('Icons written.');
+}
+
+/// Common app, store, web and profile-picture sizes, up to 2048 px.
+const _packSizes = [
+  16, 20, 24, 29, 32, 36, 40, 44, 48, 50, 57, 58, 60, 64, 72, 76, 80, 87, 96, 100, 114, 120, 128, 144, 152, //
+  167, 180, 192, 196, 256, 300, 384, 400, 512, 1024, 2048,
+];
+
+/// A logo pack for people: the rounded app icon at every size in [dir], the
+/// square (store / OS-masked) and circle (profile picture) versions in
+/// sub-folders, plus the SVG, a Windows .ico and a short guide.
+void _pack(String dir) {
+  String at(String rel) => '$dir/$rel';
+  for (final s in _packSizes) {
+    _png(at('NEFORUM-logo-${s}x$s.png'), _render(s, tile: _Tile.rounded));
+    _png(at('Square (full bleed, for stores and profile pictures)/NEFORUM-logo-square-${s}x$s.png'),
+        _render(s, tile: _Tile.square, opaque: true));
+    _png(at('Circle/NEFORUM-logo-circle-${s}x$s.png'), _render(s, tile: _Tile.circle));
+  }
+  File(at('NEFORUM-logo.svg')).writeAsStringSync(_svg(1024));
+  File(at('NEFORUM.ico'))
+      .writeAsBytesSync(img.IcoEncoder().encodeImages([for (final s in [16, 24, 32, 48, 64, 128, 256]) _render(s, tile: _Tile.rounded)]));
+  File(at('README.txt')).writeAsStringSync('''
+NEFORUM logo pack
+=================
+
+NEFORUM-logo-<size>.png   The app icon: purple tile with rounded corners, transparent outside.
+                          Use this almost everywhere (websites, documents, Windows, Linux, slides).
+NEFORUM-logo.svg          The same logo as a vector: sharp at any size, for print and the web.
+NEFORUM.ico               Windows icon file (16 to 256 px inside one file).
+
+Square (full bleed, ...)  No rounded corners, no transparency. For places that cut their own shape:
+                          Apple App Store and iOS (1024), Google Play (512), and profile pictures on
+                          X, Instagram, Facebook, YouTube, TikTok, Bluesky, Mastodon (400 to 1024).
+Circle                    Round, transparent outside. For profile pictures shown as circles when you
+                          want the circle drawn in the image itself.
+
+Common uses by size
+  16, 32, 48          Browser tab icons (favicon), Windows small icons
+  20, 29, 40, 58, 60, 76, 80, 87, 120, 152, 167, 180   iPhone and iPad (use the Square set)
+  36, 48, 72, 96, 144, 192          Android launcher sizes
+  57, 114             Older iPhone home screen
+  44, 50, 100, 300    Windows Store tiles and listing images
+  128, 256            Chrome Web Store, Windows large icons, macOS
+  192, 512            Web app (PWA) icons, Google Play (512, Square)
+  400                 Profile pictures (X, Bluesky, Mastodon)
+  1024                App Store (Square), macOS app icon
+  2048                High-resolution master for anything else
+
+Colors: purple #7D00FF (gradient #9426FF to #5C00C4), yellow #FFFF00.
+Made from the NEFORUM source (apps/neforum_app/tool/generate_icons.dart --pack).
+''');
+  stdout.writeln('Logo pack written to $dir');
 }
 
 enum _Tile { none, rounded, circle, square }
