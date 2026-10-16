@@ -47,36 +47,69 @@ class LoopbackAuthBroker implements AuthBroker {
     if (redirectUri.scheme != 'http' || redirectUri.port != port) {
       throw ArgumentError('LoopbackAuthBroker can only catch $loopbackUri, got $redirectUri');
     }
-    final server = await HttpServer.bind(host, port, shared: true);
+    final servers = await _bind();
     _log.info('Listening for OAuth redirect on $loopbackUri');
     final completer = Completer<Uri>();
-    late final StreamSubscription<HttpRequest> sub;
-    sub = server.listen((req) async {
+    Future<void> handle(HttpRequest req) async {
       if (req.uri.path != redirectUri.path) {
         req.response.statusCode = HttpStatus.notFound;
         await req.response.close();
         return;
       }
       final full = redirectUri.replace(query: req.uri.query, fragment: req.uri.fragment);
+      final q = full.queryParameters;
       req.response.headers.contentType = ContentType.html;
-      req.response.write(_landingPage(full.queryParameters.containsKey('error')));
+      req.response.write(q.containsKey('error') ? failurePage(q['error']!, q['error_description']) : _successPage);
       await req.response.close();
       if (!completer.isCompleted) completer.complete(full);
-    });
+    }
+
+    final subs = [for (final s in servers) s.listen(handle)];
     try {
       await openBrowser(authorizationUrl);
       return await completer.future.timeout(timeout, onTimeout: () => throw const AuthCancelled('Timed out waiting for the browser'));
     } finally {
-      await sub.cancel();
-      await server.close(force: true);
+      for (final s in subs) {
+        await s.cancel();
+      }
+      for (final s in servers) {
+        await s.close(force: true);
+      }
     }
   }
 
-  static String _landingPage(bool failed) => '''
-<!doctype html><html><head><meta charset="utf-8"><title>NEFORUM</title>
-<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#111;color:#eee}
-main{text-align:center;max-width:32rem;padding:2rem}</style></head>
-<body><main><h1>${failed ? 'Sign-in failed' : 'Signed in'}</h1>
-<p>${failed ? 'The platform returned an error. Go back to NEFORUM for details.' : 'You can close this window and return to NEFORUM.'}</p></main>
+  /// `localhost` can reach this computer over IPv4 (127.0.0.1) or IPv6 (::1),
+  /// whichever the browser tries first, so listen on both. Binding the name
+  /// itself would pick just one of them.
+  Future<List<HttpServer>> _bind() async {
+    if (host != 'localhost') return [await HttpServer.bind(host, port, shared: true)];
+    final servers = [await HttpServer.bind(InternetAddress.loopbackIPv4, port, shared: true)];
+    try {
+      servers.add(await HttpServer.bind(InternetAddress.loopbackIPv6, port, v6Only: true, shared: true));
+    } on SocketException {
+      // No IPv6 on this computer: browsers then use 127.0.0.1.
+    }
+    return servers;
+  }
+
+  static const String _style = '<style>body{font-family:system-ui,sans-serif;display:grid;place-items:center;'
+      'height:100vh;margin:0;background:#111;color:#eee}main{text-align:center;max-width:36rem;padding:2rem}'
+      'code{background:#222;padding:.1em .35em;border-radius:4px;word-break:break-word}</style>';
+
+  static const String _successPage = '''
+<!doctype html><html><head><meta charset="utf-8"><title>NEFORUM</title>$_style</head>
+<body><main><h1>Signed in</h1><p>You can close this window and return to NEFORUM.</p></main>
 <script>setTimeout(()=>window.close(),1500)</script></body></html>''';
+
+  /// What the platform sent back, so the reason is visible here too.
+  static String failurePage(String error, String? description) {
+    final what = [error, if (description != null && description.isNotEmpty) description].map(_escape).join(': ');
+    return '''
+<!doctype html><html><head><meta charset="utf-8"><title>NEFORUM</title>$_style</head>
+<body><main><h1>Sign-in failed</h1><p>The platform answered: <code>$what</code></p>
+<p>NEFORUM shows what to change. You can close this window.</p></main></body></html>''';
+  }
+
+  static String _escape(String s) =>
+      s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 }

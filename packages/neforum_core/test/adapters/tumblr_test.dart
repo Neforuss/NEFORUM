@@ -111,7 +111,8 @@ void main() {
       expect(spec.customSchemeRedirectOk, isTrue);
       expect(spec.fixedRedirectUri, isNull);
       expect(spec.intro, contains('https://www.tumblr.com/oauth/apps'));
-      expect(spec.intro, contains('http://127.0.0.1:52771/callback'));
+      expect(spec.intro, contains('http://localhost:52771/callback'));
+      expect(spec.intro, isNot(contains('http://127.0.0.1:52771/callback neforum')));
       expect(spec.intro, contains('neforum://callback/'));
       expect(spec.fields.firstWhere((f) => f.key == 'consumerSecret').secret, isTrue);
       expect(spec.fields.firstWhere((f) => f.key == 'consumerKey').secret, isFalse);
@@ -150,7 +151,8 @@ void main() {
       expect(auth.queryParameters['client_id'], 'ckey');
       expect(auth.queryParameters['response_type'], 'code');
       expect(auth.queryParameters['scope'], 'basic write offline_access');
-      expect(auth.queryParameters['redirect_uri'], 'http://127.0.0.1:52771/callback');
+      // Tumblr refuses to register 127.0.0.1, so a computer asks for localhost.
+      expect(auth.queryParameters['redirect_uri'], 'http://localhost:52771/callback');
       expect(auth.queryParameters['state'], isNotEmpty);
       expect(auth.queryParameters.containsKey('code_challenge'), isFalse);
 
@@ -162,7 +164,7 @@ void main() {
       expect(bodyOf(token), {
         'grant_type': 'authorization_code',
         'code': 'the-code',
-        'redirect_uri': 'http://127.0.0.1:52771/callback',
+        'redirect_uri': 'http://localhost:52771/callback',
         'client_id': 'ckey',
         'client_secret': 'csecret',
       });
@@ -182,7 +184,7 @@ void main() {
       expect(a.config['blogName'], 'myblog');
       expect(a.config['blogUuid'], _uuid);
       expect(a.config['blogNames'], ['sideblog', 'myblog']);
-      expect(a.config['redirectUri'], 'http://127.0.0.1:52771/callback');
+      expect(a.config['redirectUri'], 'http://localhost:52771/callback');
       expect(a.config.containsKey('consumerSecret'), isFalse);
 
       expect(result.secrets['consumer_secret'], 'csecret');
@@ -248,6 +250,40 @@ void main() {
       await adapter.connect(PlatformTier.byokApi,
           {'consumerKey': 'k', 'consumerSecret': 's', 'redirectUri': 'http://localhost:52771/callback'}, ctx);
       expect(broker.lastAuthorizationUrl!.queryParameters['redirect_uri'], 'http://localhost:52771/callback');
+    });
+
+    test('an override with 127.0.0.1 is kept (apps registered that way before)', () async {
+      final broker = FakeAuthBroker();
+      final ctx = testContext(
+        broker: broker,
+        handler: (r) async => r.url.path == '/v2/oauth2/token'
+            ? _json({'access_token': 'AT', 'expires_in': 2520, 'token_type': 'bearer'})
+            : _json(_userInfo()),
+      );
+      await adapter.connect(PlatformTier.byokApi,
+          {'consumerKey': 'k', 'consumerSecret': 's', 'redirectUri': 'http://127.0.0.1:52771/callback'}, ctx);
+      expect(broker.lastAuthorizationUrl!.queryParameters['redirect_uri'], 'http://127.0.0.1:52771/callback');
+    });
+
+    test('a refused return address names the address sent, the fix and Tumblr\'s own words', () async {
+      final broker = FakeAuthBroker(extraParams: {
+        'error': 'invalid_request',
+        'error_description': 'The redirect_uri does not match a registered redirect URL',
+      });
+      final ctx = testContext(broker: broker, handler: (r) async => throw StateError('no token call expected'));
+      await expectLater(
+        adapter.connect(PlatformTier.byokApi, {'consumerKey': 'k', 'consumerSecret': 's'}, ctx),
+        throwsA(isA<ConnectException>().having(
+          (e) => e.message,
+          'message',
+          allOf(
+            contains('http://localhost:52771/callback'),
+            contains('OAuth2 redirect URLs'),
+            contains('127.0.0.1:52771/callback instead'),
+            contains('does not match a registered redirect URL'),
+          ),
+        )),
+      );
     });
 
     test('missing fields and refused tokens raise ConnectException', () async {

@@ -31,30 +31,32 @@ Tumblr's daily limits reset once per calendar day on Tumblr's server clock. Tumb
    - **Default callback URL**:
 
      ```
-     http://127.0.0.1:52771/callback
+     http://localhost:52771/callback
      ```
 
    - **OAuth2 redirect URLs** (space separated). Enter both addresses on one line:
 
      ```
-     http://127.0.0.1:52771/callback neforum://callback/
+     http://localhost:52771/callback neforum://callback/
      ```
 
-     The first one is for NEFORUM on Windows and macOS, the second for Android and iPhone. **Keep the slash at the end of `neforum://callback/`**: Tumblr only accepts app addresses like this one when they end in a slash. Each address must match exactly, character for character.
+     The first one is for NEFORUM on Windows and macOS, the second for Android and iPhone. **Keep the slash at the end of `neforum://callback/`**: Tumblr only accepts app addresses like this one when they end in a slash. Each address must match exactly, character for character. Use `localhost`, not `127.0.0.1`: Tumblr refuses to save `127.0.0.1` addresses.
 3. Click **Register**. Tumblr only switches on OAuth 2 for an app once it has at least one OAuth2 redirect URL.
 4. On the app list, copy the **OAuth Consumer Key**. Click **Show secret key** and copy the **Secret Key** too.
-5. In NEFORUM go to **Accounts > Add > Tumblr > Your own API keys** and paste both keys.
+5. In NEFORUM go to **Accounts > Add > Tumblr > Your own API keys** and paste both keys. Leave **Redirect URI (advanced)** empty.
    - **Blog name** (optional): the blog to post to, i.e. the part before `.tumblr.com`. Leave it empty to use your main blog. To post to several blogs, add one NEFORUM account per blog. They can all use the same keys.
 6. Click **Connect**. Your browser opens Tumblr's permission page. Click **Allow**. NEFORUM asks for `basic` (read your blog list), `write` (create posts) and `offline_access` (stay signed in).
 
-### If Tumblr refuses the redirect address
+### If the sign-in fails after you click Allow
 
-Tumblr checks the web address when you save the app. Some addresses are refused with "The url's domain is not valid". Others are known to be refused too, such as home-network IPs like `192.168.x.x`. If `http://127.0.0.1:52771/callback` is refused:
+Tumblr shows its permission page even when the return address NEFORUM asks for is not registered in your app. After **Allow** it then sends the browser back with an error instead of a sign-in, and NEFORUM shows **Sign-in failed** with Tumblr's reason. The address NEFORUM asks for on a computer is `http://localhost:52771/callback`, so it must appear in **OAuth2 redirect URLs** exactly like that.
 
-1. Register `http://localhost:52771/callback` instead, as both the default callback and an OAuth2 redirect URL.
-2. In NEFORUM, enter the same address in the **Redirect URI (advanced)** field.
+- **Your app lists a different address** (for example an older app registered with `http://127.0.0.1:52771/callback`): enter that address in **Redirect URI (advanced)** in NEFORUM, or change the app to `http://localhost:52771/callback`.
+- Tumblr refuses to save some addresses with "The url's domain is not valid": `127.0.0.1` and home-network IPs such as `192.168.x.x`. `localhost` is accepted.
 
-On a computer the address must keep port `52771` and the path `/callback`.
+On a computer the address must keep port `52771` and the path `/callback`. NEFORUM listens there only while you sign in.
+
+Before NEFORUM 1.0.4 the app asked Tumblr for `http://127.0.0.1:52771/callback` unless the advanced field was filled in, which is why sign-in failed for apps registered with `localhost`.
 
 ### Staying signed in
 

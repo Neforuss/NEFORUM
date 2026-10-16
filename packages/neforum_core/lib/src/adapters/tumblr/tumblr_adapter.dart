@@ -115,7 +115,7 @@ class TumblrAdapter extends PlatformAdapter {
           usesBrowser: true,
           loopbackRedirectOk: true,
           customSchemeRedirectOk: true,
-          redirectNote: 'Under "OAuth2 redirect URLs" register `http://127.0.0.1:52771/callback` (computer) and '
+          redirectNote: 'Under "OAuth2 redirect URLs" register `http://localhost:52771/callback` (computer) and '
               '`neforum://callback/` (phone, with the trailing slash), separated by a space.',
           intro: _byokIntro,
           fields: [
@@ -145,8 +145,9 @@ class TumblrAdapter extends PlatformAdapter {
               kind: FieldKind.url,
               required: false,
               placeholder: 'http://localhost:52771/callback',
-              help: 'Only if Tumblr refused the standard redirect URL when you registered the app: enter the one '
-                  'you registered instead (on a computer it must use port 52771 and the path /callback).',
+              help: 'Leave empty: on a computer NEFORUM uses http://localhost:52771/callback. Only if your app lists '
+                  'a different address (for example http://127.0.0.1:52771/callback), enter that one here. On a '
+                  'computer it must use port 52771 and the path /callback.',
             ),
           ],
         ),
@@ -167,11 +168,11 @@ class TumblrAdapter extends PlatformAdapter {
 
 1. Sign in to Tumblr in your browser, open <https://www.tumblr.com/oauth/apps> and click **Register application**.
 2. Fill in an application name (e.g. "NEFORUM for <your name>"), a website (for example `https://github.com/Neforuss/NEFORUM`), a short description and your e-mail address.
-3. As **Default callback URL** enter `http://127.0.0.1:52771/callback`.
-4. As **OAuth2 redirect URLs** enter `http://127.0.0.1:52771/callback neforum://callback/` (two addresses separated by a space; keep the slash at the end of the second one). Save.
-5. Copy the **OAuth Consumer Key** and, after clicking **Show secret key**, the **Secret Key** into the fields below. Click Connect and allow access in the browser.
+3. As **Default callback URL** enter `http://localhost:52771/callback`.
+4. As **OAuth2 redirect URLs** enter `http://localhost:52771/callback neforum://callback/` (two addresses separated by a space; keep the slash at the end of the second one). Save.
+5. Copy the **OAuth Consumer Key** and, after clicking **Show secret key**, the **Secret Key** into the fields below. Leave "Redirect URI" empty. Click Connect and allow access in the browser.
 
-If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, register `http://localhost:52771/callback` instead and type that into "Redirect URI" below.''';
+Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("The url's domain is not valid").''';
 
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
@@ -252,13 +253,19 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
     );
   }
 
+  /// The address Tumblr sends a computer back to. Tumblr refuses to register
+  /// `http://127.0.0.1:...` ("The url's domain is not valid") but accepts
+  /// `localhost`, so on a computer NEFORUM asks for localhost; the loopback
+  /// server listens there on both IPv4 and IPv6.
+  static const String desktopRedirect = 'http://localhost:52771/callback';
+
   /// The broker's redirect, a user override, and the trailing slash Tumblr
   /// insists on for custom-scheme redirects (tumblr/docs #122).
   Uri _redirectUri(AuthBroker broker, String override) {
     if (override.isNotEmpty) {
       final u = Uri.tryParse(override);
       if (u == null || !u.hasScheme) {
-        throw const ConnectException('The redirect URI must be a full address such as http://localhost:52771/callback',
+        throw const ConnectException('The redirect URI must be a full address such as $desktopRedirect',
             field: 'redirectUri');
       }
       return u;
@@ -270,6 +277,7 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       fixed: spec.fixedRedirectUri,
     );
     if (chosen.scheme != 'http' && chosen.scheme != 'https' && chosen.path.isEmpty) return chosen.replace(path: '/');
+    if (chosen.scheme == 'http' && chosen.host == '127.0.0.1') return chosen.replace(host: 'localhost');
     return chosen;
   }
 
@@ -286,17 +294,24 @@ If Tumblr says "The url's domain is not valid" for the 127.0.0.1 address, regist
       );
 
   static String _oauthMessage(OAuthException e, Uri redirect) {
-    final d = '${e.error ?? ''} ${e.description ?? ''}'.toLowerCase();
+    final detail = [e.error, e.description].whereType<String>().where((s) => s.isNotEmpty).join(': ');
+    final said = detail.isEmpty ? '' : ' Tumblr said: "$detail".';
+    final d = detail.toLowerCase();
     if (d.contains('redirect')) {
-      return 'Tumblr rejected the redirect URL. Add exactly $redirect to "OAuth2 redirect URLs" in your app at '
-          'tumblr.com/oauth/apps and try again.';
+      final other = redirect.host == 'localhost'
+          ? ' If your app lists http://127.0.0.1:52771/callback instead, type that into "Redirect URI (advanced)".'
+          : redirect.host == '127.0.0.1'
+              ? ' Tumblr does not accept 127.0.0.1 there: register $desktopRedirect and clear "Redirect URI (advanced)".'
+              : '';
+      return 'Tumblr refused the return address NEFORUM asked for: $redirect. In your app at tumblr.com/oauth/apps, '
+          '"OAuth2 redirect URLs" must contain exactly that address (same host, port and path). Save the app, then '
+          'connect again.$other$said';
     }
     if (d.contains('access_denied')) return 'You did not allow NEFORUM to access Tumblr.';
     if (d.contains('client') || d.contains('secret')) {
-      return 'Tumblr did not accept the Consumer Key / Secret Key. Copy both again from tumblr.com/oauth/apps.';
+      return 'Tumblr did not accept the Consumer Key / Secret Key. Copy both again from tumblr.com/oauth/apps.$said';
     }
-    final detail = [e.error, e.description].whereType<String>().where((s) => s.isNotEmpty).join(': ');
-    return 'Tumblr sign-in failed${detail.isEmpty ? '' : ' ($detail)'}';
+    return 'Tumblr sign-in failed.${said.isEmpty ? ' ${e.message}.' : said}';
   }
 
   static List<_Blog> _blogs(Map<String, dynamic> user) {
