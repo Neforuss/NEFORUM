@@ -191,6 +191,7 @@ class _Visual extends ConsumerWidget {
     final v = p.variant;
     final card = v.media.isNotEmpty && isTextCardPlaceholder(v.media.first) ? textCardThemeOf(v.media.first) : null;
     final branded = card != null && textCardBrandedOf(v.media.first);
+    final font = card == null ? TextCardFont.original : textCardFontOf(v.media.first);
     final cardText = card == null ? '' : textCardText(_previewPost(ref), p.target);
     final byline = p.account.handle ?? p.account.displayName;
     final cardSize = textCardSize(p.descriptor.id);
@@ -207,7 +208,7 @@ class _Visual extends ConsumerWidget {
                 child: DecoratedBox(
                   position: DecorationPosition.foreground,
                   decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
-                  child: TextCardView(text: cardText, theme: card, aspect: aspect, byline: byline, branded: branded),
+                  child: TextCardView(text: cardText, theme: card, font: font, aspect: aspect, byline: byline, branded: branded),
                 ),
               ),
             )
@@ -243,7 +244,7 @@ class _Visual extends ConsumerWidget {
         Center(child: frame),
         if (card != null) ...[
           const SizedBox(height: Space.sm),
-          Center(child: _CardStylePicker(current: card, platform: p.descriptor, branded: branded, text: cardText, byline: byline)),
+          Center(child: _CardStylePicker(current: card, font: font, platform: p.descriptor, branded: branded, text: cardText, byline: byline)),
         ],
         const SizedBox(height: Space.sm + 2),
         if ((v.title ?? '').isNotEmpty) ...[
@@ -269,11 +270,13 @@ class _Visual extends ConsumerWidget {
 /// The composer's current post, for the words on a text card.
 Post _previewPost(WidgetRef ref) => ref.read(composerProvider).toPost(id: 'preview', status: PostStatus.draft, now: DateTime.now());
 
-/// Under a text card: black-on-white or white-on-black, the NEFORUM
+/// Under a text card: black-on-white or white-on-black, the font, the NEFORUM
 /// signature on or off for this network, and saving the card as an image.
 class _CardStylePicker extends ConsumerStatefulWidget {
-  const _CardStylePicker({required this.current, required this.platform, required this.branded, required this.text, required this.byline});
+  const _CardStylePicker(
+      {required this.current, required this.font, required this.platform, required this.branded, required this.text, required this.byline});
   final TextCardTheme current;
+  final TextCardFont font;
   final PlatformDescriptor platform;
   final bool branded;
   final String text;
@@ -297,6 +300,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         size: textCardSize(widget.platform.id),
         byline: widget.byline,
         branded: widget.branded,
+        font: widget.font,
       );
       final stamp = DateFormat('yyyy-MM-dd HHmm').format(DateTime.now());
       final r = await FileExport.save(
@@ -356,9 +360,24 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           },
         );
 
+    Widget fontOption(TextCardFont f) => pill(
+          selected: f == widget.font,
+          label: f == TextCardFont.original ? 'Inter' : f.label,
+          tooltip: f == TextCardFont.original ? "NEFORUM's original font (Inter)" : 'Set the words in ${f.label}',
+          leading: Text('Aa',
+              style: TextStyle(
+                  fontFamily: f.family, fontFamilyFallback: f.fallback, fontWeight: f.weight, fontSize: 12, height: 1, color: nf.text)),
+          onTap: () {
+            ref.read(composerProvider.notifier).setTextCardFont(f);
+            final s = ref.read(settingsProvider);
+            if (s.textCardFont != f) ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: f));
+          },
+        );
+
     final id = widget.platform.id;
     return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
       for (final t in TextCardTheme.values) themeOption(t),
+      for (final f in TextCardFont.values) fontOption(f),
       pill(
         selected: widget.branded,
         label: 'NEFORUM signature',

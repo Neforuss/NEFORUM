@@ -236,8 +236,12 @@ class NeforumHttp {
       req.headers.putIfAbsent('Content-Type', () => 'application/json; charset=utf-8');
       req.body = jsonEncode(jsonBody);
     } else if (form != null) {
-      req.headers.putIfAbsent('Content-Type', () => 'application/x-www-form-urlencoded; charset=utf-8');
-      req.bodyFields = form;
+      // The plain type, as browsers and curl send it: the body is
+      // percent-encoded ASCII, and TikTok's token endpoint answers "The
+      // request parameters are malformed" to `; charset=utf-8`. bodyFields
+      // (and body) would add that charset, so set the bytes directly.
+      req.headers.putIfAbsent('Content-Type', () => 'application/x-www-form-urlencoded');
+      req.bodyBytes = utf8.encode(encodeForm(form));
     } else if (bytes != null) {
       req.headers.putIfAbsent('Content-Type', () => 'application/octet-stream');
       req.bodyBytes = bytes;
@@ -255,6 +259,10 @@ class NeforumHttp {
   }
 
   /// True for errors that mean "the network failed", not "the server said no".
+  /// `application/x-www-form-urlencoded` body for [form] (UTF-8, `+` for spaces).
+  static String encodeForm(Map<String, String> form) =>
+      form.entries.map((e) => '${Uri.encodeQueryComponent(e.key)}=${Uri.encodeQueryComponent(e.value)}').join('&');
+
   static bool isTransportError(Object e) => e is TimeoutException || e is http.ClientException || isTransientIoError(e);
 
   static bool _retryable(int status) => status == 429 || status == 502 || status == 503 || status == 504;

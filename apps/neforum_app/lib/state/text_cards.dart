@@ -17,10 +17,12 @@ import 'settings.dart';
 /// [branded] picks the NEFORUM signature per network (platform id); otherwise
 /// a target keeps the choice its current card was made with, else the
 /// Settings default.
-Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {TextCardTheme? theme, Map<String, bool> branded = const {}}) async {
+Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
+    {TextCardTheme? theme, TextCardFont? font, Map<String, bool> branded = const {}}) async {
   final cards = {for (final m in post.media.where((m) => m.isTextCard)) m.id: m};
   if (!settings.textCards && cards.isEmpty) return post;
   final style = theme ?? textCardThemeOfPost(post) ?? settings.textCardTheme;
+  final face = font ?? textCardFontOfPost(post) ?? settings.textCardFont;
   final resolver = VariantResolver(settings.resolverOptions);
   final made = <String, MediaAttachment>{};
   final used = <String>{};
@@ -47,18 +49,19 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings, {Te
     final size = textCardSize(d.id);
     final byline = account.handle ?? account.displayName;
     final signed = branded[d.id] ?? (oldCard == null ? null : textCardBrandedOf(oldCard)) ?? settings.textCardBranded(d.id);
-    final key = '${size.width}x${size.height}|${style.name}|$signed|$byline|$text';
+    final key = '${size.width}x${size.height}|${style.name}|${face.name}|$signed|$byline|$text';
     var card = made[key];
     card ??= cards.values.where((m) =>
         m.width == size.width.round() &&
         m.height == size.height.round() &&
         textCardThemeOf(m) == style &&
+        textCardFontOf(m) == face &&
         textCardBrandedOf(m) == signed &&
         m.altText == textCardAltText(text)).firstOrNull;
     if (card == null) {
       try {
-        final bytes = await renderTextCardJpeg(text: text, theme: style, size: size, byline: byline, branded: signed);
-        final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed), mimeHint: 'image/jpeg');
+        final bytes = await renderTextCardJpeg(text: text, theme: style, size: size, byline: byline, branded: signed, font: face);
+        final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face), mimeHint: 'image/jpeg');
         card = MediaAttachment(
           id: m.id,
           path: m.path,
@@ -95,6 +98,14 @@ TextCardTheme? textCardThemeOfPost(Post post) {
     if (!m.isTextCard) continue;
     final t = textCardThemeOf(m);
     if (t != null) return t;
+  }
+  return null;
+}
+
+/// The font of the cards already on [post], if any.
+TextCardFont? textCardFontOfPost(Post post) {
+  for (final m in post.media) {
+    if (m.isTextCard) return textCardFontOf(m);
   }
   return null;
 }

@@ -16,7 +16,8 @@ import '../theme/tokens.dart';
 ///
 /// By default every card has the same signature so people recognise it
 /// anywhere: a purple rule along the top with a yellow tab, the words set
-/// large in Inter on plain black or white, and a footer with the NEFORUM
+/// large (in Inter, or Times New Roman or Arial, see [TextCardFont]) on plain
+/// black or white, and a footer with the NEFORUM
 /// mark, the wordmark and the author. The signature is optional per network
 /// (Settings > Text cards, or per post under the preview): a plain card keeps
 /// only the words and the author.
@@ -28,6 +29,29 @@ enum TextCardTheme {
   final String label;
   final Color background;
   final Color foreground;
+}
+
+/// Typeface for a card's words. The NEFORUM wordmark in the signature always
+/// keeps its own font.
+///
+/// Times New Roman and Arial come with Windows, macOS and iOS; elsewhere the
+/// closest installed face is used (Liberation or Noto on Linux and Android).
+enum TextCardFont {
+  original('NEFORUM (Inter)', Fonts.body, [], FontWeight.w600, -0.012),
+  timesNewRoman('Times New Roman', 'Times New Roman', ['Times', 'Liberation Serif', 'Tinos', 'Noto Serif', 'serif'], FontWeight.w400, 0),
+  arial('Arial', 'Arial', ['Helvetica', 'Liberation Sans', 'Arimo', 'Roboto', 'sans-serif'], FontWeight.w700, 0);
+
+  const TextCardFont(this.label, this.family, this.fallback, this.weight, this.tracking);
+  final String label;
+  final String family;
+  final List<String> fallback;
+  final FontWeight weight;
+
+  /// Letter spacing as a fraction of the font size.
+  final double tracking;
+
+  /// How a card made with this font is marked in its file name and path.
+  String get marker => this == original ? '' : 'font-$name';
 }
 
 /// Pixel size of the card: each platform's preferred portrait frame.
@@ -61,7 +85,8 @@ String textCardText(Post post, PostTarget target) {
 /// around 1,000 characters).
 String textCardAltText(String text) => text.length <= 1000 ? text : '${text.substring(0, 999)}…';
 
-String textCardFileName(TextCardTheme theme, {bool branded = true}) => 'neforum-text-card-${theme.name}${branded ? '' : '-plain'}.jpg';
+String textCardFileName(TextCardTheme theme, {bool branded = true, TextCardFont font = TextCardFont.original}) =>
+    'neforum-text-card-${theme.name}${branded ? '' : '-plain'}${font.marker.isEmpty ? '' : '-${font.marker}'}.jpg';
 
 /// Path prefix of the composer's stand-in for a card that is rendered when
 /// the post is saved.
@@ -70,22 +95,32 @@ const String kTextCardPlaceholder = 'textcard:';
 bool isTextCardPlaceholder(MediaAttachment m) => m.path.startsWith(kTextCardPlaceholder);
 
 /// What the composer's previews and checks see in place of the real card.
-MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme, {bool branded = true}) {
+MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
+    {bool branded = true, TextCardFont font = TextCardFont.original}) {
   final s = textCardSize(platformId);
   return MediaAttachment(
     id: 'textcard-$platformId',
-    path: '$kTextCardPlaceholder${theme.name}${branded ? '' : ':plain'}',
+    path: '$kTextCardPlaceholder${theme.name}${branded ? '' : ':plain'}${font.marker.isEmpty ? '' : ':${font.marker}'}',
     mimeType: 'image/jpeg',
     sizeBytes: 0,
     width: s.width.round(),
     height: s.height.round(),
-    fileName: textCardFileName(theme, branded: branded),
+    fileName: textCardFileName(theme, branded: branded, font: font),
     generated: true,
   );
 }
 
 /// Whether a generated card (or placeholder) carries the NEFORUM signature.
-bool textCardBrandedOf(MediaAttachment m) => !(m.path.endsWith(':plain') || (m.fileName ?? '').contains('-plain'));
+bool textCardBrandedOf(MediaAttachment m) => !(m.path.contains(':plain') || (m.fileName ?? '').contains('-plain'));
+
+/// The font a generated card (or placeholder) was made with.
+TextCardFont textCardFontOf(MediaAttachment m) {
+  final name = '${m.fileName ?? ''} ${m.path}';
+  for (final f in TextCardFont.values) {
+    if (f.marker.isNotEmpty && name.contains(f.marker)) return f;
+  }
+  return TextCardFont.original;
+}
 
 /// The theme a generated card (or placeholder) was made with.
 TextCardTheme? textCardThemeOf(MediaAttachment m) {
@@ -99,10 +134,13 @@ TextCardTheme? textCardThemeOf(MediaAttachment m) {
 /// Paints a card at any size; all measurements scale with the width, so
 /// the composer preview and the 1080-pixel export look the same.
 class TextCardPainter extends CustomPainter {
-  const TextCardPainter({required this.text, required this.theme, this.byline, this.branded = true});
+  const TextCardPainter({required this.text, required this.theme, this.byline, this.branded = true, this.font = TextCardFont.original});
 
   final String text;
   final TextCardTheme theme;
+
+  /// Typeface of the words.
+  final TextCardFont font;
 
   /// Draw the NEFORUM signature (top rule, mark and wordmark).
   final bool branded;
@@ -187,11 +225,12 @@ class TextCardPainter extends CustomPainter {
           text: TextSpan(
             text: text,
             style: TextStyle(
-              fontFamily: Fonts.body,
-              fontWeight: FontWeight.w600,
+              fontFamily: font.family,
+              fontFamilyFallback: font.fallback,
+              fontWeight: font.weight,
               fontSize: fs,
               height: _lineHeight,
-              letterSpacing: -0.012 * fs,
+              letterSpacing: font.tracking * fs,
               color: fg,
             ),
           ),
@@ -220,15 +259,18 @@ class TextCardPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(TextCardPainter old) => old.text != text || old.theme != theme || old.byline != byline || old.branded != branded;
+  bool shouldRepaint(TextCardPainter old) =>
+      old.text != text || old.theme != theme || old.byline != byline || old.branded != branded || old.font != font;
 }
 
 /// Live card for previews.
 class TextCardView extends StatelessWidget {
-  const TextCardView({super.key, required this.text, required this.theme, required this.aspect, this.byline, this.branded = true});
+  const TextCardView(
+      {super.key, required this.text, required this.theme, required this.aspect, this.byline, this.branded = true, this.font = TextCardFont.original});
 
   final String text;
   final TextCardTheme theme;
+  final TextCardFont font;
 
   /// Width / height.
   final double aspect;
@@ -238,15 +280,21 @@ class TextCardView extends StatelessWidget {
   @override
   Widget build(BuildContext context) => AspectRatio(
         aspectRatio: aspect,
-        child: CustomPaint(painter: TextCardPainter(text: text, theme: theme, byline: byline, branded: branded)),
+        child: CustomPaint(painter: TextCardPainter(text: text, theme: theme, byline: byline, branded: branded, font: font)),
       );
 }
 
 /// Renders a card to JPEG bytes (Instagram's API only takes JPEG).
-Future<Uint8List> renderTextCardJpeg({required String text, required TextCardTheme theme, required Size size, String? byline, bool branded = true}) async {
+Future<Uint8List> renderTextCardJpeg(
+    {required String text,
+    required TextCardTheme theme,
+    required Size size,
+    String? byline,
+    bool branded = true,
+    TextCardFont font = TextCardFont.original}) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder, Offset.zero & size);
-  TextCardPainter(text: text, theme: theme, byline: byline, branded: branded).paint(canvas, size);
+  TextCardPainter(text: text, theme: theme, byline: byline, branded: branded, font: font).paint(canvas, size);
   final picture = recorder.endRecording();
   final width = size.width.round();
   final height = size.height.round();

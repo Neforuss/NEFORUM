@@ -29,6 +29,7 @@ class AppSettings {
     this.compactPreviews = false,
     this.textCards = true,
     this.textCardTheme = TextCardTheme.dark,
+    this.textCardFont = TextCardFont.original,
     this.textCardPlainPlatforms = const [],
     this.delegateSchedules = true,
     this.browserExtension = true,
@@ -59,6 +60,7 @@ class AppSettings {
         compactPreviews: j['compactPreviews'] as bool? ?? false,
         textCards: j['textCards'] as bool? ?? true,
         textCardTheme: TextCardTheme.values.asNameMap()[j['textCardTheme']] ?? TextCardTheme.dark,
+        textCardFont: TextCardFont.values.asNameMap()[j['textCardFont']] ?? TextCardFont.original,
         textCardPlainPlatforms: (j['textCardPlainPlatforms'] as List? ?? const []).cast<String>(),
         delegateSchedules: j['delegateSchedules'] as bool? ?? true,
         browserExtension: j['browserExtension'] as bool? ?? true,
@@ -108,6 +110,9 @@ class AppSettings {
   /// image (Instagram, Pinterest, TikTok photos, Snapchat).
   final bool textCards;
   final TextCardTheme textCardTheme;
+
+  /// Default typeface of a card's words.
+  final TextCardFont textCardFont;
 
   /// Networks whose cards leave out the NEFORUM signature (plain cards).
   final List<String> textCardPlainPlatforms;
@@ -169,6 +174,7 @@ class AppSettings {
     bool? compactPreviews,
     bool? textCards,
     TextCardTheme? textCardTheme,
+    TextCardFont? textCardFont,
     List<String>? textCardPlainPlatforms,
     bool? delegateSchedules,
     bool? browserExtension,
@@ -198,6 +204,7 @@ class AppSettings {
         compactPreviews: compactPreviews ?? this.compactPreviews,
         textCards: textCards ?? this.textCards,
         textCardTheme: textCardTheme ?? this.textCardTheme,
+        textCardFont: textCardFont ?? this.textCardFont,
         textCardPlainPlatforms: textCardPlainPlatforms ?? this.textCardPlainPlatforms,
         delegateSchedules: delegateSchedules ?? this.delegateSchedules,
         browserExtension: browserExtension ?? this.browserExtension,
@@ -228,6 +235,7 @@ class AppSettings {
         'compactPreviews': compactPreviews,
         'textCards': textCards,
         'textCardTheme': textCardTheme.name,
+        'textCardFont': textCardFont.name,
         'textCardPlainPlatforms': textCardPlainPlatforms,
         'delegateSchedules': delegateSchedules,
         'browserExtension': browserExtension,

@@ -37,7 +37,7 @@ On a computer a hand-off is click here, paste there: NEFORUM opens the right pag
 
 ### Text cards for photo-only networks
 
-Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an image. When a post is only words, NEFORUM sets them on a plain card, white on black or black on white, with the same signature every time: a purple rule with a yellow tab along the top, and the NEFORUM mark, wordmark and your handle at the bottom. The card is made on your device when you save or schedule the post. It goes only to the networks that need it (the others get plain text) and carries the words as alt text. The caption still has the full text, hashtags and link. Pick the style per post under the preview, or turn cards off in Settings.
+Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an image. When a post is only words, NEFORUM sets them on a plain card, white on black or black on white, with the same signature every time: a purple rule with a yellow tab along the top, and the NEFORUM mark, wordmark and your handle at the bottom. The card is made on your device when you save or schedule the post. It goes only to the networks that need it (the others get plain text) and carries the words as alt text. The caption still has the full text, hashtags and link. Pick the style and the font (NEFORUM's own Inter, Times New Roman or Arial) per post under the preview, set the defaults in Settings → Text cards, or turn cards off there.
 
 The signature is optional per network: turn it off (for example only for Instagram) under the preview or in Settings → Text cards, and the card keeps just your words and handle. **Save image** under the preview saves the card as a JPEG (into `Downloads\NEFORUM\Text cards` on a computer, through the share sheet on a phone), and in a hand-off **Save media to Downloads** saves the post's photos and cards with readable names and opens the folder, ready to drag into Instagram or TikTok on the web.
 
@@ -121,14 +121,14 @@ Download from **[neforus.com/neforum](https://neforus.com/neforum/)** or from th
 
 | Platform | Download | How it installs |
 |---|---|---|
-| Windows | `NEFORUM-Setup-1.0.4.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
+| Windows | `NEFORUM-Setup-1.0.5.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
 | macOS | `NEFORUM-macOS.dmg` | Open it and drag NEFORUM onto Applications; it then shows up in Launchpad and Spotlight. Not signed by Apple yet, so the first time: right-click NEFORUM in Applications, then Open. macOS 10.15 or newer. (`neforum-macos.zip` has the same app.) |
 | Android | `neforum-android.apk` | Allow installing from your browser or file manager; NEFORUM then sits in the app drawer like any app. Android 7 or newer. |
 | iPhone and iPad | `neforum-ios-unsigned.ipa` | Sign it with your own Apple ID (Xcode, AltStore or Sideloadly), or build from source in Xcode. |
 
 The browser extension for Chrome and Firefox comes with the app (Settings → Browser extension → Show extension files) and is also in each release (`neforum-extension-chrome-*.zip`, `neforum-extension-firefox-*.zip`).
 
-Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.0.4`) publishes them as a release.
+Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.0.5`) publishes them as a release.
 ## Build from source
 
 You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, or Visual Studio 2022 with "Desktop development with C++" for Windows.

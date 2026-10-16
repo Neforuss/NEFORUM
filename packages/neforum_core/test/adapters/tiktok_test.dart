@@ -153,7 +153,9 @@ void main() {
       final tokenReq = calls[0];
       expect(tokenReq.method, 'POST');
       expect(tokenReq.url.toString(), 'https://open.tiktokapis.com/v2/oauth/token/');
-      expect(tokenReq.headers['content-type'], contains('application/x-www-form-urlencoded'));
+      // Exactly this: TikTok answers "The request parameters are malformed" to
+      // `application/x-www-form-urlencoded; charset=utf-8`.
+      expect(tokenReq.headers['content-type'], 'application/x-www-form-urlencoded');
       final form = bodyOf(tokenReq);
       expect(form['client_key'], 'ck123');
       expect(form['client_secret'], 'sekrit');

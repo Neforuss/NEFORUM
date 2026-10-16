@@ -259,35 +259,45 @@ class _TextCards extends ConsumerWidget {
     final nf = context.nf;
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
-    Widget option(TextCardTheme t) {
-      final selected = s.textCardTheme == t;
-      return Semantics(
-        button: true,
-        selected: selected,
+    Widget swatch({required String label, required bool selected, required VoidCallback onTap, required TextCardTheme theme, required TextCardFont font}) =>
+        Semantics(
+          button: true,
+          selected: selected,
+          label: label,
+          child: InkWell(
+            borderRadius: Radii.rMd,
+            onTap: s.textCards ? onTap : null,
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              AnimatedContainer(
+                duration: Motion.fast,
+                width: 132,
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                  borderRadius: Radii.rMd,
+                  border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1),
+                ),
+                child: ClipRRect(
+                  borderRadius: Radii.rSm,
+                  child: TextCardView(text: 'One app, one message, every platform.', theme: theme, font: font, aspect: 4 / 5, byline: '@you'),
+                ),
+              ),
+              const SizedBox(height: Space.xs + 2),
+              Text(label, style: context.text.labelMedium?.copyWith(color: selected ? nf.text : nf.textMuted)),
+            ]),
+          ),
+        );
+    Widget option(TextCardTheme t) => swatch(
         label: t.label,
-        child: InkWell(
-          borderRadius: Radii.rMd,
-          onTap: s.textCards ? () => n.update((x) => x.copyWith(textCardTheme: t)) : null,
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            AnimatedContainer(
-              duration: Motion.fast,
-              width: 132,
-              padding: const EdgeInsets.all(3),
-              decoration: BoxDecoration(
-                borderRadius: Radii.rMd,
-                border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1),
-              ),
-              child: ClipRRect(
-                borderRadius: Radii.rSm,
-                child: TextCardView(text: 'One app, one message, every platform.', theme: t, aspect: 4 / 5, byline: '@you'),
-              ),
-            ),
-            const SizedBox(height: Space.xs + 2),
-            Text(t.label, style: context.text.labelMedium?.copyWith(color: selected ? nf.text : nf.textMuted)),
-          ]),
-        ),
-      );
-    }
+        selected: s.textCardTheme == t,
+        onTap: () => n.update((x) => x.copyWith(textCardTheme: t)),
+        theme: t,
+        font: s.textCardFont);
+    Widget fontOption(TextCardFont f) => swatch(
+        label: f.label,
+        selected: s.textCardFont == f,
+        onTap: () => n.update((x) => x.copyWith(textCardFont: f)),
+        theme: s.textCardTheme,
+        font: f);
 
     return SettingsSection(
       title: 'Text cards',
@@ -326,6 +336,16 @@ class _TextCards extends ConsumerWidget {
           below: Opacity(
             opacity: s.textCards ? 1 : 0.45,
             child: Wrap(spacing: Space.lg, runSpacing: Space.md, children: [for (final t in TextCardTheme.values) option(t)]),
+          ),
+        ),
+        SettingRow(
+          title: 'Font',
+          description: 'The typeface of your words on the card. The NEFORUM signature keeps its own. '
+              'You can also switch it per post under the preview.',
+          enabled: s.textCards,
+          below: Opacity(
+            opacity: s.textCards ? 1 : 0.45,
+            child: Wrap(spacing: Space.lg, runSpacing: Space.md, children: [for (final f in TextCardFont.values) fontOption(f)]),
           ),
         ),
       ],
@@ -594,6 +614,8 @@ class _About extends StatelessWidget {
             OutlinedButton.icon(onPressed: () => open('https://github.com/Neforuss/NEFORUM'), icon: const Icon(Icons.code_rounded, size: 18), label: const Text('Source code')),
             OutlinedButton.icon(onPressed: () => showGuideSheet(context, 'platforms', asset: 'platforms.md'), icon: const Icon(Icons.table_chart_outlined, size: 18), label: const Text('Platform guide')),
             OutlinedButton.icon(onPressed: () => open('https://github.com/Neforuss/NEFORUM/issues'), icon: const Icon(Icons.bug_report_outlined, size: 18), label: const Text('Report a problem')),
+            OutlinedButton.icon(onPressed: () => open(kTermsUrl), icon: const Icon(Icons.gavel_rounded, size: 18), label: const Text('Terms of service')),
+            OutlinedButton.icon(onPressed: () => open(kPrivacyUrl), icon: const Icon(Icons.privacy_tip_outlined, size: 18), label: const Text('Privacy policy')),
           ]),
           const SizedBox(height: Space.xl),
           Text('Credits', style: context.text.titleSmall),

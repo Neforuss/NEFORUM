@@ -33,6 +33,7 @@ class ComposerState {
     this.focusedAccountId,
     this.revision = 0,
     this.textCardTheme,
+    this.textCardFont,
     this.textCardBranded = const {},
     this.poll,
     this.differentiate = false,
@@ -67,6 +68,9 @@ class ComposerState {
   /// from Settings.
   final TextCardTheme? textCardTheme;
 
+  /// Typeface of the card's words; null = the default from Settings.
+  final TextCardFont? textCardFont;
+
   /// Per network (platform id): whether its text card carries the NEFORUM
   /// signature; missing = the Settings default.
   final Map<String, bool> textCardBranded;
@@ -95,6 +99,7 @@ class ComposerState {
     String? focusedAccountId,
     int? revision,
     TextCardTheme? textCardTheme,
+    TextCardFont? textCardFont,
     Map<String, bool>? textCardBranded,
     PostPoll? poll,
     bool? differentiate,
@@ -121,6 +126,7 @@ class ComposerState {
         focusedAccountId: clearFocus ? null : (focusedAccountId ?? this.focusedAccountId),
         revision: revision ?? this.revision,
         textCardTheme: textCardTheme ?? this.textCardTheme,
+        textCardFont: textCardFont ?? this.textCardFont,
         textCardBranded: textCardBranded ?? this.textCardBranded,
         poll: clearPoll ? null : (poll ?? this.poll),
         differentiate: differentiate ?? this.differentiate,
@@ -185,6 +191,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setSchedule(DateTime? when) => state = when == null ? state.copyWith(clearSchedule: true) : state.copyWith(scheduledAt: when);
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
   void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
+  void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f);
   void setTextCardBranded(String platformId, bool branded) =>
       state = state.copyWith(textCardBranded: {...state.textCardBranded, platformId: branded});
   void setPoll(PostPoll? poll) => state = poll == null ? state.copyWith(clearPoll: true) : state.copyWith(poll: poll);
@@ -272,6 +279,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         scheduledAt: p.scheduledAt,
         revision: state.revision + 1,
         textCardTheme: textCardThemeOfPost(post),
+        textCardFont: textCardFontOfPost(post),
         textCardBranded: textCardBrandingOfPost(post, platformOf),
         poll: p.poll,
         differentiate: p.targets.any((t) => t.overrides.text != null),
@@ -300,6 +308,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       overrides: state.overrides,
       revision: state.revision + 1,
       textCardTheme: state.textCardTheme,
+      textCardFont: state.textCardFont,
       textCardBranded: state.textCardBranded,
       poll: state.poll,
       differentiate: state.differentiate,
@@ -331,7 +340,8 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     // when the post is saved; preview and check a stand-in for it.
     if (settings.textCards && qualifiesForTextCard(d, variant)) {
       final signed = c.textCardBranded[d.id] ?? settings.textCardBranded(d.id);
-      variant = variant.copyWith(media: [textCardPlaceholder(d.id, c.textCardTheme ?? settings.textCardTheme, branded: signed)]);
+      variant = variant.copyWith(media: [textCardPlaceholder(d.id, c.textCardTheme ?? settings.textCardTheme,
+          branded: signed, font: c.textCardFont ?? settings.textCardFont)]);
       issues.add(ValidationIssue.info('media.text_card', '${d.name} needs an image, so your words go out as ${signed ? 'a NEFORUM' : 'a plain'} text card', field: 'media'));
     }
     // Photos this network does not take as they are get a fitted copy on
@@ -439,7 +449,7 @@ class PostActions {
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
-    post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme, branded: c.textCardBranded);
+    post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme, font: c.textCardFont, branded: c.textCardBranded);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     await s.posts.upsert(post);
     return post;
