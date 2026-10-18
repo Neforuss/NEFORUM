@@ -1,12 +1,18 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
+import '../../media/caption_overlay.dart';
+import '../../media/photo_fitter.dart';
 import '../../media/text_card.dart';
 import '../../platform/file_export.dart';
+import '../../state/captioned_photos.dart';
 import '../../state/composer.dart';
+import '../../state/fitted_photos.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -23,7 +29,7 @@ import 'rich_text.dart';
 enum PreviewFamily { microblog, visual, forum, chat, blog }
 
 PreviewFamily previewFamilyFor(String platformId) => switch (platformId) {
-      'instagram' || 'tiktok' || 'pinterest' || 'youtube' || 'snapchat' => PreviewFamily.visual,
+      'instagram' || 'tiktok' || 'pinterest' || 'youtube' || 'snapchat' || 'rumble' || 'odysee' || 'bitchute' => PreviewFamily.visual,
       'reddit' || 'lemmy' => PreviewFamily.forum,
       'telegram' || 'discord' || 'matrix' || 'whatsapp' => PreviewFamily.chat,
       'wordpress' || 'ghost' || 'writefreely' || 'micropub' || 'devto' || 'hashnode' || 'substack' => PreviewFamily.blog,
@@ -34,10 +40,11 @@ PreviewFamily previewFamilyFor(String platformId) => switch (platformId) {
 double _visualAspect(String platformId, List<MediaAttachment> media) {
   final video = media.isNotEmpty && media.first.isVideo;
   return switch (platformId) {
-    'instagram' => video ? 9 / 16 : 4 / 5,
+    // Instagram shows a feed photo at its own shape within 4:5 to 1.91:1.
+    'instagram' => video ? 9 / 16 : (media.isEmpty ? 4 / 5 : (media.first.aspectRatio ?? 4 / 5).clamp(4 / 5, 1.91)),
     'tiktok' || 'snapchat' => 9 / 16,
     'pinterest' => 2 / 3,
-    'youtube' => (media.isNotEmpty && (media.first.aspectRatio ?? 1.7) < 1) ? 9 / 16 : 16 / 9,
+    'youtube' || 'rumble' || 'odysee' || 'bitchute' => (media.isNotEmpty && (media.first.aspectRatio ?? 1.7) < 1) ? 9 / 16 : 16 / 9,
     _ => 1,
   };
 }
@@ -189,13 +196,26 @@ class _Visual extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final v = p.variant;
+    final id = p.descriptor.id;
     final card = v.media.isNotEmpty && isTextCardPlaceholder(v.media.first) ? textCardThemeOf(v.media.first) : null;
     final branded = card != null && textCardBrandedOf(v.media.first);
     final font = card == null ? TextCardFont.original : textCardFontOf(v.media.first);
     final cardText = card == null ? '' : textCardText(_previewPost(ref), p.target);
     final byline = p.account.handle ?? p.account.displayName;
-    final cardSize = textCardSize(p.descriptor.id);
-    final aspect = card != null ? cardSize.width / cardSize.height : _visualAspect(p.descriptor.id, v.media);
+    final cardSize = textCardSize(id);
+    final settings = ref.watch(settingsProvider);
+    final composer = ref.watch(composerProvider);
+    final first = v.media.firstOrNull;
+    final isPhoto = card == null && first != null && first.kind == MediaKind.image;
+    // A photo NEFORUM fits: the composer checks a stand-in with the fitted
+    // shape; show the photo the user attached, the way it will be fitted.
+    final original = isPhoto && first.derivedFrom != null ? composer.media.where((m) => m.id == first.derivedFrom).firstOrNull : null;
+    final captionOn = isPhoto && captionOnPhotoFor(id, settings, composer.captionOnPhoto);
+    final aspect = card != null
+        ? cardSize.width / cardSize.height
+        : (original != null && first!.aspectRatio != null)
+            ? first.aspectRatio!
+            : _visualAspect(id, v.media);
     return LayoutBuilder(builder: (context, c) {
       final maxW = aspect < 1 ? (c.maxWidth * 0.62).clamp(160.0, 300.0) : c.maxWidth;
       final w = maxW.toDouble();
@@ -208,7 +228,8 @@ class _Visual extends ConsumerWidget {
                 child: DecoratedBox(
                   position: DecorationPosition.foreground,
                   decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
-                  child: TextCardView(text: cardText, theme: card, font: font, aspect: aspect, byline: byline, branded: branded),
+                  child: TextCardView(
+                      text: cardText, theme: card, font: font.resolve(id), aspect: aspect, byline: byline, branded: branded, safe: textCardSafeArea(id)),
                 ),
               ),
             )
@@ -228,7 +249,34 @@ class _Visual extends ConsumerWidget {
               ]),
             )
           : Stack(children: [
-              MediaThumb(v.media.first, size: h, aspect: aspect, radius: Radii.rMd),
+              if (isPhoto)
+                SizedBox(
+                  width: w,
+                  height: h,
+                  child: ClipRRect(
+                    borderRadius: Radii.rMd,
+                    child: Stack(fit: StackFit.expand, children: [
+                      _PreviewPhoto(
+                        photo: first,
+                        original: original,
+                        mode: settings.photoFit,
+                        frameAspect: aspect,
+                        // TikTok shows a photo that is not 9:16 whole, on black.
+                        letterbox: id == 'tiktok',
+                      ),
+                      if (captionOn)
+                        CustomPaint(
+                          painter: CaptionOverlayPainter(
+                            text: captionWords(_previewPost(ref), p.target),
+                            font: TextCardFont.platform.resolve(id),
+                            safe: captionSafeArea(id, aspect),
+                          ),
+                        ),
+                    ]),
+                  ),
+                )
+              else
+                MediaThumb(v.media.first, size: h, aspect: aspect, radius: Radii.rMd),
               if (v.media.length > 1)
                 Positioned(
                   right: 8,
@@ -245,6 +293,10 @@ class _Visual extends ConsumerWidget {
         if (card != null) ...[
           const SizedBox(height: Space.sm),
           Center(child: _CardStylePicker(current: card, font: font, platform: p.descriptor, branded: branded, text: cardText, byline: byline)),
+        ],
+        if (isPhoto && (kCaptionPhotoPlatforms.contains(id) || fullFrameAspect(id, v) != null)) ...[
+          const SizedBox(height: Space.sm),
+          Center(child: _PhotoOptions(platform: p.descriptor, variant: v, captionOn: captionOn)),
         ],
         const SizedBox(height: Space.sm + 2),
         if ((v.title ?? '').isNotEmpty) ...[
@@ -269,6 +321,139 @@ class _Visual extends ConsumerWidget {
 
 /// The composer's current post, for the words on a text card.
 Post _previewPost(WidgetRef ref) => ref.read(composerProvider).toPost(id: 'preview', status: PostStatus.draft, now: DateTime.now());
+
+/// The colours a colour fill would use around the photo at a path; `.$2` =
+/// borders above and below.
+final _edgeColoursProvider = FutureProvider.autoDispose.family<EdgeColours?, (String, bool)>((ref, key) async {
+  final storage = ref.read(servicesProvider).storage;
+  return edgeColoursOf(await storage.readMedia(key.$1), vertical: key.$2);
+});
+
+/// A photo in a network's frame as the network will show it: fitted (the
+/// whole photo on a blur or colour fill, or cut to the frame), letterboxed on
+/// black (TikTok, for a photo NEFORUM leaves as it is), or filling the frame.
+class _PreviewPhoto extends ConsumerWidget {
+  const _PreviewPhoto({required this.photo, required this.original, required this.mode, required this.frameAspect, required this.letterbox});
+
+  final MediaAttachment photo;
+
+  /// The photo the user attached, when [photo] is the stand-in for a fitted copy.
+  final MediaAttachment? original;
+  final PhotoFitMode mode;
+  final double frameAspect;
+  final bool letterbox;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final storage = ref.read(servicesProvider).storage;
+    final source = original ?? photo;
+    if (original != null && (mode == PhotoFitMode.pad || mode == PhotoFitMode.color)) {
+      final vertical = (source.aspectRatio ?? frameAspect) > frameAspect;
+      final Widget background;
+      if (mode == PhotoFitMode.color) {
+        final edges = ref.watch(_edgeColoursProvider((source.path, vertical))).value;
+        background = edges == null
+            ? const ColoredBox(color: Colors.black)
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: vertical ? Alignment.topCenter : Alignment.centerLeft,
+                    end: vertical ? Alignment.bottomCenter : Alignment.centerRight,
+                    colors: [Color(0xFF000000 | edges.start), Color(0xFF000000 | edges.end)],
+                  ),
+                ),
+              );
+      } else {
+        background = ImageFiltered(
+          imageFilter: ImageFilter.blur(sigmaX: 18, sigmaY: 18, tileMode: TileMode.clamp),
+          child: storage.image(source.path, fit: BoxFit.cover, cacheWidth: 120),
+        );
+      }
+      return Stack(fit: StackFit.expand, children: [background, storage.image(source.path, fit: BoxFit.contain)]);
+    }
+    if (original == null && letterbox) {
+      return ColoredBox(color: Colors.black, child: storage.image(source.path, fit: BoxFit.contain));
+    }
+    return storage.image(source.path, fit: BoxFit.cover);
+  }
+}
+
+/// Under a photo for Instagram or TikTok: write the caption on it, and fit
+/// photos to the whole frame. Both are remembered for the network.
+class _PhotoOptions extends ConsumerWidget {
+  const _PhotoOptions({required this.platform, required this.variant, required this.captionOn});
+  final PlatformDescriptor platform;
+  final PostVariant variant;
+  final bool captionOn;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final id = platform.id;
+    final settings = ref.watch(settingsProvider);
+    final frame = fullFrameAspect(id, variant);
+    final fills = settings.fillsFrame(id);
+    return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
+      if (kCaptionPhotoPlatforms.contains(id))
+        _optionPill(
+          context,
+          selected: captionOn,
+          label: 'Caption on photo',
+          tooltip: captionOn
+              ? 'Your caption is written on the first photo in ${TextCardFont.platform.resolve(id).label}; tap to leave the photo as it is'
+              : 'Write your caption on the first photo, in ${platform.name}\'s own font',
+          leading: Icon(Icons.subtitles_outlined, size: 14, color: captionOn ? nf.accent : nf.textFaint),
+          onTap: () {
+            final on = !captionOn;
+            ref.read(composerProvider.notifier).setCaptionOnPhoto(id, on);
+            ref.read(settingsProvider.notifier).update((x) => x.copyWith(
+                  captionPhotoPlatforms: on ? {...x.captionPhotoPlatforms, id}.toList() : x.captionPhotoPlatforms.where((p) => p != id).toList(),
+                ));
+          },
+        ),
+      if (frame != null)
+        _optionPill(
+          context,
+          selected: fills,
+          label: 'Fill the ${PhotoFit.ratioLabel(frame)} frame',
+          tooltip: fills
+              ? 'Photos are fitted to ${platform.name}\'s whole ${PhotoFit.ratioLabel(frame)} frame (Settings > Photos sets how); tap to leave their shape'
+              : 'Fit photos to ${platform.name}\'s whole ${PhotoFit.ratioLabel(frame)} frame, so nothing is cut off',
+          leading: Icon(Icons.fit_screen_outlined, size: 14, color: fills ? nf.accent : nf.textFaint),
+          onTap: () => ref.read(settingsProvider.notifier).update((x) => x.copyWith(
+                fillFramePlatforms: fills ? x.fillFramePlatforms.where((p) => p != id).toList() : {...x.fillFramePlatforms, id}.toList(),
+              )),
+        ),
+    ]);
+  }
+}
+
+/// A small toggle pill, as under text cards.
+Widget _optionPill(BuildContext context,
+    {required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) {
+  final nf = context.nf;
+  return Tooltip(
+    message: tooltip ?? label,
+    child: InkWell(
+      borderRadius: Radii.rPill,
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: Motion.fast,
+        padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2, vertical: Space.xs + 1),
+        decoration: BoxDecoration(
+          color: selected ? nf.accentSoft : Colors.transparent,
+          borderRadius: Radii.rPill,
+          border: Border.all(color: selected ? nf.accent : nf.border),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          leading,
+          const SizedBox(width: Space.xs + 2),
+          Text(label, style: context.text.labelSmall?.copyWith(color: selected ? nf.text : nf.textMuted)),
+        ]),
+      ),
+    ),
+  );
+}
 
 /// Under a text card: black-on-white or white-on-black, the font, the NEFORUM
 /// signature on or off for this network, and saving the card as an image.
@@ -300,7 +485,8 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         size: textCardSize(widget.platform.id),
         byline: widget.byline,
         branded: widget.branded,
-        font: widget.font,
+        font: widget.font.resolve(widget.platform.id),
+        safe: textCardSafeArea(widget.platform.id),
       );
       final stamp = DateFormat('yyyy-MM-dd HHmm').format(DateTime.now());
       final r = await FileExport.save(
@@ -362,11 +548,17 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
 
     Widget fontOption(TextCardFont f) => pill(
           selected: f == widget.font,
-          label: f == TextCardFont.original ? 'Inter' : f.label,
+          label: switch (f) { TextCardFont.original => 'Inter', TextCardFont.platform => "${widget.platform.name}'s own", _ => f.label },
           tooltip: f == TextCardFont.original ? "NEFORUM's original font (Inter)" : 'Set the words in ${f.label}',
           leading: Text('Aa',
               style: TextStyle(
-                  fontFamily: f.family, fontFamilyFallback: f.fallback, fontWeight: f.weight, fontSize: 12, height: 1, color: nf.text)),
+                  fontFamily: f.resolve(widget.platform.id).family,
+                  fontFamilyFallback: f.resolve(widget.platform.id).fallback,
+                  fontWeight: f.resolve(widget.platform.id).weight,
+                  fontVariations: f.resolve(widget.platform.id).variations,
+                  fontSize: 12,
+                  height: 1,
+                  color: nf.text)),
           onTap: () {
             ref.read(composerProvider.notifier).setTextCardFont(f);
             final s = ref.read(settingsProvider);

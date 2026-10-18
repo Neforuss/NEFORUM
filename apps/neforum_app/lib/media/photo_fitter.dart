@@ -71,7 +71,11 @@ FittedPhoto? _fitPhoto(_FitJob j) {
   if (j.minAspect != null && r < j.minAspect! - PhotoFit.aspectTolerance) target = j.minAspect;
   if (j.maxAspect != null && r > j.maxAspect! + PhotoFit.aspectTolerance) target = j.maxAspect;
   if (target != null && j.mode != PhotoFitMode.off) {
-    image = j.mode == PhotoFitMode.crop ? _crop(image, target) : _pad(image, target);
+    image = switch (j.mode) {
+      PhotoFitMode.crop => _crop(image, target),
+      PhotoFitMode.color => _colorFill(image, target),
+      _ => _pad(image, target),
+    };
   }
 
   var scale = 1.0;
@@ -111,6 +115,104 @@ img.Image _crop(img.Image image, double target) {
   }
   final w = math.max(1, (image.height * target).round());
   return img.copyCrop(image, x: (image.width - w) ~/ 2, y: 0, width: w, height: image.height);
+}
+
+/// The colours a colour fill uses next to each side of a photo: the dominant
+/// colour of a thin band along that edge. For a photo given borders above and
+/// below, [EdgeColours.start] is the top edge and [EdgeColours.end] the
+/// bottom; for borders left and right, the left and right edges.
+@immutable
+class EdgeColours {
+  const EdgeColours(this.start, this.end);
+
+  /// 0xRRGGBB.
+  final int start;
+  final int end;
+}
+
+/// [EdgeColours] of the photo in [bytes]; [vertical] = borders go above and
+/// below (a wide photo in a tall frame). Null when it cannot be read. Runs off
+/// the UI thread.
+Future<EdgeColours?> edgeColoursOf(Uint8List bytes, {required bool vertical}) => compute(_edgeColoursJob, (bytes, vertical));
+
+EdgeColours? _edgeColoursJob((Uint8List, bool) a) {
+  img.Image? decoded;
+  try {
+    decoded = img.decodeImage(a.$1);
+  } on Object {
+    decoded = null;
+  }
+  if (decoded == null) return null;
+  var image = img.bakeOrientation(decoded);
+  if (image.width > 400 || image.height > 400) {
+    final s = 400 / math.max(image.width, image.height);
+    image = _scaled(image, s);
+  }
+  return edgeColours(image, vertical: a.$2);
+}
+
+/// See [edgeColoursOf].
+@visibleForTesting
+EdgeColours edgeColours(img.Image image, {required bool vertical}) {
+  final band = math.max(1, ((vertical ? image.height : image.width) * 0.06).round());
+  if (vertical) {
+    return EdgeColours(_dominant(image, 0, 0, image.width, band), _dominant(image, 0, image.height - band, image.width, band));
+  }
+  return EdgeColours(_dominant(image, 0, 0, band, image.height), _dominant(image, image.width - band, 0, band, image.height));
+}
+
+/// The most common colour in a rectangle: pixels grouped into coarse buckets
+/// (16 levels per channel), the fullest bucket's average. Ignores
+/// transparent pixels.
+int _dominant(img.Image image, int x0, int y0, int w, int h) {
+  final counts = <int, int>{};
+  final sums = <int, List<int>>{};
+  final step = math.max(1, math.sqrt(w * h / 4000).floor());
+  for (var y = y0; y < y0 + h; y += step) {
+    for (var x = x0; x < x0 + w; x += step) {
+      final p = image.getPixel(x, y);
+      if (p.a < 128) continue;
+      final r = p.r.toInt(), g = p.g.toInt(), b = p.b.toInt();
+      final key = (r >> 4) << 8 | (g >> 4) << 4 | (b >> 4);
+      counts[key] = (counts[key] ?? 0) + 1;
+      final s = sums.putIfAbsent(key, () => [0, 0, 0]);
+      s[0] += r;
+      s[1] += g;
+      s[2] += b;
+    }
+  }
+  if (counts.isEmpty) return 0x000000;
+  final best = counts.entries.reduce((a, b) => a.value >= b.value ? a : b);
+  final s = sums[best.key]!;
+  final n = best.value;
+  return (s[0] ~/ n) << 16 | (s[1] ~/ n) << 8 | (s[2] ~/ n);
+}
+
+/// Borders up to [target] (width / height) in the photo's own dominant
+/// colours, one flowing into the other across the frame, like Instagram
+/// stories: a wide photo in a tall frame gets its top edge's colour above and
+/// its bottom edge's colour below.
+img.Image _colorFill(img.Image image, double target) {
+  final r = image.width / image.height;
+  final vertical = r > target; // too wide: borders above and below
+  final w = vertical ? image.width : math.max(image.width, (image.height * target).round());
+  final h = vertical ? math.max(image.height, (image.width / target).round()) : image.height;
+  final edges = edgeColours(image, vertical: vertical);
+  final canvas = img.Image(width: w, height: h, numChannels: 3);
+  final length = vertical ? h : w;
+  final s = edges.start, e = edges.end;
+  for (var i = 0; i < length; i++) {
+    final t = length <= 1 ? 0.0 : i / (length - 1);
+    final cr = ((s >> 16 & 0xFF) * (1 - t) + (e >> 16 & 0xFF) * t).round();
+    final cg = ((s >> 8 & 0xFF) * (1 - t) + (e >> 8 & 0xFF) * t).round();
+    final cb = ((s & 0xFF) * (1 - t) + (e & 0xFF) * t).round();
+    if (vertical) {
+      img.drawLine(canvas, x1: 0, y1: i, x2: w - 1, y2: i, color: img.ColorRgb8(cr, cg, cb));
+    } else {
+      img.drawLine(canvas, x1: i, y1: 0, x2: i, y2: h - 1, color: img.ColorRgb8(cr, cg, cb));
+    }
+  }
+  return img.compositeImage(canvas, image, dstX: (w - image.width) ~/ 2, dstY: (h - image.height) ~/ 2);
 }
 
 /// Borders up to [target] (width / height), filled with the photo itself,

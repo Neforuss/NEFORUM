@@ -83,6 +83,65 @@ bool CopyImage(HWND owner, const flutter::EncodableMap& args) {
   return any;
 }
 
+std::vector<uint8_t> GlobalBytes(HANDLE h) {
+  std::vector<uint8_t> out;
+  if (!h) return out;
+  const SIZE_T size = GlobalSize(h);
+  const void* p = GlobalLock(h);
+  if (p && size > 0) out.assign(static_cast<const uint8_t*>(p), static_cast<const uint8_t*>(p) + size);
+  if (p) GlobalUnlock(h);
+  return out;
+}
+
+std::string Utf8(const std::wstring& w) {
+  if (w.empty()) return std::string();
+  int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+  std::string out(n, '\0');
+  WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), out.data(), n, nullptr, nullptr);
+  return out;
+}
+
+// What a paste into the composer can attach: copied files (Explorer),
+// "PNG" (browsers, Snipping Tool) or a bitmap (CF_DIBV5 / CF_DIB). Returns
+// an empty map when the clipboard holds none of them.
+flutter::EncodableMap ReadImage(HWND owner) {
+  flutter::EncodableMap out;
+  bool open = false;
+  for (int i = 0; i < 10 && !(open = OpenClipboard(owner) != FALSE); i++) Sleep(25);
+  if (!open) return out;
+  if (HANDLE drop = GetClipboardData(CF_HDROP)) {
+    flutter::EncodableList files;
+    HDROP hdrop = static_cast<HDROP>(drop);
+    const UINT count = DragQueryFileW(hdrop, 0xFFFFFFFF, nullptr, 0);
+    for (UINT i = 0; i < count; i++) {
+      const UINT len = DragQueryFileW(hdrop, i, nullptr, 0);
+      std::wstring path(len, L'\0');
+      DragQueryFileW(hdrop, i, path.data(), len + 1);
+      files.push_back(flutter::EncodableValue(Utf8(path)));
+    }
+    if (!files.empty()) out[flutter::EncodableValue("files")] = flutter::EncodableValue(files);
+  }
+  if (out.empty()) {
+    const UINT png = RegisterClipboardFormatW(L"PNG");
+    if (IsClipboardFormatAvailable(png)) {
+      auto bytes = GlobalBytes(GetClipboardData(png));
+      if (!bytes.empty()) out[flutter::EncodableValue("png")] = flutter::EncodableValue(bytes);
+    }
+  }
+  if (out.empty()) {
+    for (UINT format : {static_cast<UINT>(CF_DIBV5), static_cast<UINT>(CF_DIB)}) {
+      if (!IsClipboardFormatAvailable(format)) continue;
+      auto bytes = GlobalBytes(GetClipboardData(format));
+      if (!bytes.empty()) {
+        out[flutter::EncodableValue("dib")] = flutter::EncodableValue(bytes);
+        break;
+      }
+    }
+  }
+  CloseClipboard();
+  return out;
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -114,6 +173,10 @@ bool FlutterWindow::OnCreate() {
   clipboard_channel_->SetMethodCallHandler(
       [this](const flutter::MethodCall<flutter::EncodableValue>& call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result) {
+        if (call.method_name() == "readImage") {
+          result->Success(flutter::EncodableValue(ReadImage(GetHandle())));
+          return;
+        }
         const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
         if (call.method_name() != "copyImage" || !args) {
           result->NotImplemented();

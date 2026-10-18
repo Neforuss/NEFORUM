@@ -10,6 +10,10 @@ enum PhotoFitMode {
   /// Borders are added (filled with a soft blur of the photo): nothing is cut.
   pad,
 
+  /// Borders are added, filled with the photo's dominant colours flowing
+  /// from its edges (like Instagram stories): nothing is cut.
+  color,
+
   /// The photo is cut to the nearest shape the platform takes, around its
   /// centre.
   crop,
@@ -109,7 +113,7 @@ class PhotoFit {
     if (maxAspect != null && r > maxAspect! + aspectTolerance) target = maxAspect;
     if (target != null && mode != PhotoFitMode.off) {
       final tooTall = r < target;
-      if (mode == PhotoFitMode.pad) {
+      if (mode == PhotoFitMode.pad || mode == PhotoFitMode.color) {
         // Borders: keep the photo, widen (too tall) or heighten (too wide).
         if (tooTall) {
           w = h * target;
@@ -166,7 +170,11 @@ class PhotoFit {
     final parts = <String>[];
     if (problems.contains(FitProblem.tooTall) || problems.contains(FitProblem.tooWide)) {
       final target = problems.contains(FitProblem.tooTall) ? minAspect! : maxAspect!;
-      parts.add('${mode == PhotoFitMode.crop ? 'cropped' : 'given borders'} to ${ratioLabel(target)}');
+      parts.add('${switch (mode) {
+        PhotoFitMode.crop => 'cropped',
+        PhotoFitMode.color => 'given a colour fill',
+        _ => 'given borders',
+      }} to ${ratioLabel(target)}');
     }
     if (problems.contains(FitProblem.fileType)) parts.add('made a JPEG');
     if (problems.contains(FitProblem.pixels)) parts.add('scaled down');

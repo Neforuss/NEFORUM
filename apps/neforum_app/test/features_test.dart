@@ -263,7 +263,9 @@ void main() {
     expect(igPreview.variant.media.single.derivedFrom, second.id, reason: 'the photo picked for Instagram, not a text card');
     expect(igPreview.issues.map((i) => i.code), isNot(contains('media.text_card')));
     expect(igPreview.issues.map((i) => i.code), isNot(contains('media.dropped')));
-    expect(igPreview.issues.where((i) => i.code == 'media.photo_fit').single.message, 'second.png will be made a JPEG for Instagram');
+    // Instagram fills its 4:5 frame by default (Settings > Fill the whole frame).
+    expect(igPreview.issues.where((i) => i.code == 'media.photo_fit').single.message,
+        'second.png will be given borders to 4:5, made a JPEG for Instagram');
     expect(previews[masto.id]!.variant.media.map((m) => m.id), [first.id, second.id]);
 
     // Saved: Instagram gets a JPEG of the second photo; Mastodon both originals.

@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../media/text_card.dart';
 import '../platform/notifications.dart';
+import 'captioned_photos.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
 import 'scheduler.dart';
@@ -35,6 +36,7 @@ class ComposerState {
     this.textCardTheme,
     this.textCardFont,
     this.textCardBranded = const {},
+    this.captionOnPhoto = const {},
     this.poll,
     this.differentiate = false,
   });
@@ -75,6 +77,10 @@ class ComposerState {
   /// signature; missing = the Settings default.
   final Map<String, bool> textCardBranded;
 
+  /// Per network (instagram, tiktok): whether the caption is written on the
+  /// first photo; missing = the Settings default.
+  final Map<String, bool> captionOnPhoto;
+
   /// Poll or quiz for networks that have them (YouTube Posts).
   final PostPoll? poll;
 
@@ -101,6 +107,7 @@ class ComposerState {
     TextCardTheme? textCardTheme,
     TextCardFont? textCardFont,
     Map<String, bool>? textCardBranded,
+    Map<String, bool>? captionOnPhoto,
     PostPoll? poll,
     bool? differentiate,
     bool clearPoll = false,
@@ -128,6 +135,7 @@ class ComposerState {
         textCardTheme: textCardTheme ?? this.textCardTheme,
         textCardFont: textCardFont ?? this.textCardFont,
         textCardBranded: textCardBranded ?? this.textCardBranded,
+        captionOnPhoto: captionOnPhoto ?? this.captionOnPhoto,
         poll: clearPoll ? null : (poll ?? this.poll),
         differentiate: differentiate ?? this.differentiate,
       );
@@ -194,6 +202,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f);
   void setTextCardBranded(String platformId, bool branded) =>
       state = state.copyWith(textCardBranded: {...state.textCardBranded, platformId: branded});
+  void setCaptionOnPhoto(String platformId, bool on) => state = state.copyWith(captionOnPhoto: {...state.captionOnPhoto, platformId: on});
   void setPoll(PostPoll? poll) => state = poll == null ? state.copyWith(clearPoll: true) : state.copyWith(poll: poll);
   void setDifferentiate(bool on) => state = state.copyWith(differentiate: on);
 
@@ -281,10 +290,15 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardTheme: textCardThemeOfPost(post),
         textCardFont: textCardFontOfPost(post),
         textCardBranded: textCardBrandingOfPost(post, platformOf),
+        captionOnPhoto: captionChoicesOfPost(post, platformOf),
         poll: p.poll,
         differentiate: p.targets.any((t) => t.overrides.text != null),
       );
   }
+
+  /// Puts back a post that was being written when NEFORUM closed
+  /// (composer_draft.dart).
+  void restore(ComposerState kept) => state = kept.copyWith(revision: state.revision + 1);
 
   /// Starts over with the same targets.
   void reset({bool keepTargets = true}) {
@@ -310,6 +324,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardTheme: state.textCardTheme,
       textCardFont: state.textCardFont,
       textCardBranded: state.textCardBranded,
+      captionOnPhoto: state.captionOnPhoto,
       poll: state.poll,
       differentiate: state.differentiate,
     );
@@ -346,7 +361,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     }
     // Photos this network does not take as they are get a fitted copy on
     // save; check what that copy will be.
-    final fit = settings.photoFit == PhotoFitMode.off ? null : adapter.photoFit(a, variant);
+    final fit = settings.photoFit == PhotoFitMode.off ? null : effectivePhotoFit(adapter, a, variant, settings);
     if (fit != null) {
       final fitted = [
         for (final m in variant.media)
@@ -358,6 +373,10 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
           issues.add(ValidationIssue.info('media.photo_fit', '${m.fileName ?? 'A photo'} will be ${fit.describe(m, settings.photoFit)} for ${d.name}', field: 'media'));
         }
       }
+    }
+    final firstMedia = variant.media.firstOrNull;
+    if (captionOnPhotoFor(d.id, settings, c.captionOnPhoto) && firstMedia != null && firstMedia.kind == MediaKind.image && !firstMedia.isTextCard) {
+      issues.add(ValidationIssue.info('media.caption_photo', 'Your caption is written on the first photo for ${d.name}', field: 'media'));
     }
     try {
       issues.addAll(adapter.validate(variant, a));
@@ -451,6 +470,7 @@ class PostActions {
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
     post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme, font: c.textCardFont, branded: c.textCardBranded);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
+    post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto);
     await s.posts.upsert(post);
     return post;
   }
@@ -526,7 +546,10 @@ class PostActions {
     // Posts saved before text cards existed, or drafts published from a
     // list, get their cards here.
     post = await attachTextCards(s, post, ref.read(settingsProvider));
+    final accounts = ref.read(accountListProvider);
+    final choices = captionChoicesOfPost(post, (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
+    post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: choices);
     await s.posts.upsert(post);
     final run = ref.read(publishRunProvider.notifier);
     run.start(postId, accountIds ?? post.targets.map((t) => t.accountId));

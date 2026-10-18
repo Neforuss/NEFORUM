@@ -186,9 +186,47 @@ class _Posting extends ConsumerWidget {
         onChanged: (v) => n.update((x) => x.copyWith(photoFit: v)),
         options: const [
           (PhotoFitMode.pad, 'Add borders', 'Recommended. The whole photo stays, on a soft blur of its own colours.'),
+          (PhotoFitMode.color, 'Fill with its colours', 'The whole photo stays; the space around it is filled with its dominant colours, '
+              'flowing from its edges like Instagram stories. No black bars.'),
           (PhotoFitMode.crop, 'Crop it to fit', 'Cuts the edges, keeping the middle.'),
           (PhotoFitMode.off, 'Never change my photos', 'The network shows an error and you replace the photo yourself.'),
         ],
+      ),
+      SettingRow(
+        title: 'Fill the whole frame',
+        description: 'Fit every photo to the frame these networks show it in, the way chosen above, so nothing is cut off and there '
+            'are no black bars: TikTok 9:16, Instagram 4:5 (stories 9:16). You can also switch it under the preview.',
+        enabled: s.photoFit != PhotoFitMode.off,
+        below: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          for (final id in const ['tiktok', 'instagram'])
+            FilterChip(
+              label: Text(ref.watch(registryProvider).descriptor(id)?.name ?? id),
+              avatar: PlatformTile(id, size: 18),
+              selected: s.fillsFrame(id),
+              onSelected: s.photoFit == PhotoFitMode.off
+                  ? null
+                  : (on) => n.update((x) => x.copyWith(
+                        fillFramePlatforms: on ? {...x.fillFramePlatforms, id}.toList() : x.fillFramePlatforms.where((p) => p != id).toList(),
+                      )),
+            ),
+        ]),
+      ),
+      SettingRow(
+        title: 'Write the caption on the first photo',
+        description: 'Your caption, set on the photo in the network\'s own font (TikTok Sans on TikTok, Instagram Sans on Instagram), '
+            'on a dark label clear of the network\'s buttons. The caption is still posted as text too. Photos only: NEFORUM does not '
+            're-encode videos. You can also switch it per post under the preview.',
+        below: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          for (final id in const ['tiktok', 'instagram'])
+            FilterChip(
+              label: Text(ref.watch(registryProvider).descriptor(id)?.name ?? id),
+              avatar: PlatformTile(id, size: 18),
+              selected: s.captionOnPhoto(id),
+              onSelected: (on) => n.update((x) => x.copyWith(
+                    captionPhotoPlatforms: on ? {...x.captionPhotoPlatforms, id}.toList() : x.captionPhotoPlatforms.where((p) => p != id).toList(),
+                  )),
+            ),
+        ]),
       ),
       SettingSwitch(title: 'Number thread parts', description: 'Adds (1/3), (2/3)… to each part.', value: s.threadNumbering, onChanged: (v) => n.update((x) => x.copyWith(threadNumbering: v))),
       SettingSwitch(title: 'Add my hashtags to the text', description: 'Where the network has no separate tags field.', value: s.appendHashtags, onChanged: (v) => n.update((x) => x.copyWith(appendHashtags: v))),
@@ -621,7 +659,7 @@ class _About extends StatelessWidget {
           Text('Credits', style: context.text.titleSmall),
           const SizedBox(height: Space.xs),
           Text(
-            'Fonts: Inter, Bricolage Grotesque and JetBrains Mono (SIL Open Font License). Platform logos: Font Awesome Brands (CC BY 4.0); trademarks belong to their owners. Icons: Material Symbols (Apache 2.0).',
+            'Fonts: Inter, Bricolage Grotesque, JetBrains Mono and TikTok Sans (SIL Open Font License). Platform logos: Font Awesome Brands (CC BY 4.0); trademarks belong to their owners. Icons: Material Symbols (Apache 2.0).',
             style: context.text.bodySmall,
           ),
         ]),

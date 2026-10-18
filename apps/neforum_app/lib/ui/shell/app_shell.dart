@@ -11,6 +11,7 @@ import '../../platform/env.dart';
 import '../../platform/notifications.dart';
 import '../../platform/ui_bridge.dart';
 import '../../state/composer.dart';
+import '../../state/composer_draft.dart';
 import '../../state/providers.dart';
 import '../../state/scheduler.dart';
 import '../../theme/tokens.dart';
@@ -100,6 +101,8 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget build(BuildContext context) {
     final w = context.width;
     final nf = context.nf;
+    // Keeps the post being written across restarts.
+    ref.watch(composerDraftKeeperProvider);
     final demo = ref.watch(isDemoProvider);
     final scheduled = ref.watch(scheduledPostsProvider).length;
     final attention = ref.watch(needsAttentionProvider).length;

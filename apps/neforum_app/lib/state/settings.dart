@@ -36,6 +36,8 @@ class AppSettings {
     this.browserQuickPost = true,
     this.browserOpenInFirst = true,
     this.photoFit = PhotoFitMode.pad,
+    this.fillFramePlatforms = const ['tiktok', 'instagram'],
+    this.captionPhotoPlatforms = const [],
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -67,6 +69,8 @@ class AppSettings {
         browserQuickPost: j['browserQuickPost'] as bool? ?? true,
         browserOpenInFirst: j['browserOpenInFirst'] as bool? ?? true,
         photoFit: PhotoFitMode.values.asNameMap()[j['photoFit']] ?? PhotoFitMode.pad,
+        fillFramePlatforms: (j['fillFramePlatforms'] as List? ?? const ['tiktok', 'instagram']).cast<String>(),
+        captionPhotoPlatforms: (j['captionPhotoPlatforms'] as List? ?? const []).cast<String>(),
       );
 
   final ThemeMode themeMode;
@@ -141,6 +145,17 @@ class AppSettings {
   /// borders or cropped, or nothing (the post shows an error).
   final PhotoFitMode photoFit;
 
+  /// Networks whose photos are fitted to the whole frame they show them in
+  /// (TikTok 9:16, Instagram feed 4:5, stories 9:16), with [photoFit].
+  final List<String> fillFramePlatforms;
+
+  bool fillsFrame(String platformId) => fillFramePlatforms.contains(platformId);
+
+  /// Networks whose first photo gets the caption written on it.
+  final List<String> captionPhotoPlatforms;
+
+  bool captionOnPhoto(String platformId) => captionPhotoPlatforms.contains(platformId);
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -181,6 +196,8 @@ class AppSettings {
     bool? browserQuickPost,
     bool? browserOpenInFirst,
     PhotoFitMode? photoFit,
+    List<String>? fillFramePlatforms,
+    List<String>? captionPhotoPlatforms,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -211,6 +228,8 @@ class AppSettings {
         browserQuickPost: browserQuickPost ?? this.browserQuickPost,
         browserOpenInFirst: browserOpenInFirst ?? this.browserOpenInFirst,
         photoFit: photoFit ?? this.photoFit,
+        fillFramePlatforms: fillFramePlatforms ?? this.fillFramePlatforms,
+        captionPhotoPlatforms: captionPhotoPlatforms ?? this.captionPhotoPlatforms,
       );
 
   Map<String, dynamic> toJson() => {
@@ -242,5 +261,7 @@ class AppSettings {
         'browserQuickPost': browserQuickPost,
         'browserOpenInFirst': browserOpenInFirst,
         'photoFit': photoFit.name,
+        'fillFramePlatforms': fillFramePlatforms,
+        'captionPhotoPlatforms': captionPhotoPlatforms,
       };
 }

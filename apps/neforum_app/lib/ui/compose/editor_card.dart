@@ -1,5 +1,6 @@
 import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
@@ -216,7 +217,15 @@ class _EditorCardState extends ConsumerState<EditorCard> {
         await attachDroppedFiles(context, ref, d.files);
       },
       child: Stack(children: [
-        card,
+        // Ctrl+V / ⌘V attaches a pasted picture or copied files; anything else
+        // pastes as text, as usual.
+        CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.keyV, control: true): _paste,
+            const SingleActivator(LogicalKeyboardKey.keyV, meta: true): _paste,
+          },
+          child: card,
+        ),
         if (_dragging)
           Positioned.fill(
             child: IgnorePointer(
@@ -237,6 +246,15 @@ class _EditorCardState extends ConsumerState<EditorCard> {
           ),
       ]),
     );
+  }
+
+  Future<void> _paste() async {
+    final focused = primaryFocus?.context;
+    if (await pasteMedia(context, ref)) return;
+    // Not a picture: the text field's own paste.
+    if (focused != null && focused.mounted) {
+      Actions.maybeInvoke(focused, const PasteTextIntent(SelectionChangedCause.keyboard));
+    }
   }
 
   static String _prettyLink(String url) {

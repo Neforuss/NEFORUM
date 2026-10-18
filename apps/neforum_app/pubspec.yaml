@@ -3,7 +3,7 @@ description: >-
   NEFORUM: one app, one message, every platform. Free and open-source
   cross-poster for Android, iOS, macOS and Windows.
 publish_to: 'none'
-version: 1.0.5+6
+version: 1.0.6+7
 
 environment:
   sdk: ^3.13.0
@@ -102,3 +102,7 @@ flutter:
       fonts:
         - asset: assets/fonts/JetBrainsMono-Regular.ttf
           weight: 400
+    # TikTok's own typeface (variable: weights are set with FontVariation).
+    - family: TikTok Sans
+      fonts:
+        - asset: assets/fonts/TikTokSans.ttf

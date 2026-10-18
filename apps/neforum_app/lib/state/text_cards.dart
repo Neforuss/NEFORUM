@@ -1,3 +1,4 @@
+import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
@@ -49,19 +50,23 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     final size = textCardSize(d.id);
     final byline = account.handle ?? account.displayName;
     final signed = branded[d.id] ?? (oldCard == null ? null : textCardBrandedOf(oldCard)) ?? settings.textCardBranded(d.id);
-    final key = '${size.width}x${size.height}|${style.name}|${face.name}|$signed|$byline|$text';
+    final safe = textCardSafeArea(d.id);
+    final hasSafe = safe != EdgeInsets.zero;
+    final key = '${size.width}x${size.height}|${style.name}|${face.name}|$signed|$hasSafe|$byline|$text';
     var card = made[key];
     card ??= cards.values.where((m) =>
         m.width == size.width.round() &&
         m.height == size.height.round() &&
         textCardThemeOf(m) == style &&
         textCardFontOf(m) == face &&
+        textCardSafeOf(m) == hasSafe &&
         textCardBrandedOf(m) == signed &&
         m.altText == textCardAltText(text)).firstOrNull;
     if (card == null) {
       try {
-        final bytes = await renderTextCardJpeg(text: text, theme: style, size: size, byline: byline, branded: signed, font: face);
-        final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face), mimeHint: 'image/jpeg');
+        final bytes = await renderTextCardJpeg(
+            text: text, theme: style, size: size, byline: byline, branded: signed, font: face.resolve(d.id), safe: safe);
+        final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face, safe: hasSafe), mimeHint: 'image/jpeg');
         card = MediaAttachment(
           id: m.id,
           path: m.path,

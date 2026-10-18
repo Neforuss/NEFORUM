@@ -11,7 +11,7 @@ A free and open-source cross-poster for Android, iPhone and iPad, macOS and Wind
   <img src="docs/screenshots/compose-dark.png" alt="The NEFORUM composer: one post, live previews for every network" width="900">
 </p>
 
-Write a post once. NEFORUM adapts it for each network (character limits, threads, hashtags, links, media rules), shows you a live preview of every version, and publishes it everywhere at once or on a schedule.
+Write a post once. NEFORUM adapts it for each network (character limits, threads, hashtags, links, media rules), shows you a live preview of every version, and publishes it everywhere at once or on a schedule. Paste screenshots and copied photos straight into the composer (Ctrl+V, or ⌘V on a Mac), and the post you are writing is kept when you close NEFORUM, until you publish or schedule it.
 
 It does what Buffer, Publer, Metricool, Later or Typefully do for posting, with three differences:
 
@@ -37,7 +37,7 @@ On a computer a hand-off is click here, paste there: NEFORUM opens the right pag
 
 ### Text cards for photo-only networks
 
-Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an image. When a post is only words, NEFORUM sets them on a plain card, white on black or black on white, with the same signature every time: a purple rule with a yellow tab along the top, and the NEFORUM mark, wordmark and your handle at the bottom. The card is made on your device when you save or schedule the post. It goes only to the networks that need it (the others get plain text) and carries the words as alt text. The caption still has the full text, hashtags and link. Pick the style and the font (NEFORUM's own Inter, Times New Roman or Arial) per post under the preview, set the defaults in Settings → Text cards, or turn cards off there.
+Instagram, Pinterest, TikTok photo posts and Snapchat refuse a post without an image. When a post is only words, NEFORUM sets them on a plain card, white on black or black on white, with the same signature every time: a purple rule with a yellow tab along the top, and the NEFORUM mark, wordmark and your handle at the bottom. The card is made on your device when you save or schedule the post. It goes only to the networks that need it (the others get plain text) and carries the words as alt text. The caption still has the full text, hashtags and link. Pick the style and the font (NEFORUM's own Inter, each network's own: TikTok Sans or Instagram Sans, Times New Roman or Arial) per post under the preview, set the defaults in Settings → Text cards, or turn cards off there.
 
 The signature is optional per network: turn it off (for example only for Instagram) under the preview or in Settings → Text cards, and the card keeps just your words and handle. **Save image** under the preview saves the card as a JPEG (into `Downloads\NEFORUM\Text cards` on a computer, through the share sheet on a phone), and in a hand-off **Save media to Downloads** saves the post's photos and cards with readable names and opens the folder, ready to drag into Instagram or TikTok on the web.
 
@@ -47,7 +47,11 @@ What works on X rarely works on LinkedIn or Instagram. Under the editor, **Diffe
 
 ### Photos that fit every network
 
-Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks have their own size and pixel limits. Instead of refusing the post, NEFORUM makes an adjusted copy for the network that needs it, with soft borders from the photo's own colours (or cropped, your choice in Settings), and every other network gets the original.
+Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks have their own size and pixel limits. Instead of refusing the post, NEFORUM makes an adjusted copy for the network that needs it, and every other network gets the original. Choose how in Settings: soft borders from a blur of the photo, a **colour fill** with the photo's own dominant colours flowing from its edges (like Instagram stories, no black bars), or a crop.
+
+**Fill the whole frame** (on by default for TikTok and Instagram): photos are fitted to the frame those apps show them in, TikTok 9:16 and Instagram 4:5 (stories 9:16), so nothing is cut off. The preview shows exactly what each network gets.
+
+**Caption on photo** (Instagram and TikTok, off by default): the caption is written on the first photo in the network's own font (TikTok Sans, bundled; Instagram Sans when installed), on a dark label placed clear of the app's buttons. Videos are left as they are.
 
 <p align="center">
   <img src="docs/screenshots/differentiation-dark.png" alt="DIFFERENTIATION: one version per network, side by side" width="900">
@@ -73,11 +77,12 @@ The **Poll** button adds a text poll, an image poll or a quiz for networks that 
 
 ## Supported platforms
 
-29 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
+32 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
 
 - **Open networks:** Mastodon and compatible servers (Pleroma, Akkoma, GoToSocial, Friendica, Pixelfed, Mitra), Bluesky, Misskey / Sharkey / Firefish / Iceshrimp, Nostr, Lemmy, Matrix
 - **Big platforms:** X, Threads, Facebook, LinkedIn, Reddit, Tumblr
-- **Photo and video:** Instagram, TikTok, YouTube (videos and Shorts), YouTube Posts (text and image posts on your channel's Posts tab), Pinterest, Snapchat
+- **Photo and video:** Instagram, TikTok, YouTube Posts (text and image posts on your channel's Posts tab), Pinterest, Snapchat
+- **Video sites:** YouTube (videos and Shorts), Odysee (automatic through the LBRY desktop app, or hand-off), Rumble, BitChute
 - **Messaging:** Telegram channels and groups, Discord (webhooks), WhatsApp
 - **Blogs and newsletters:** WordPress, Ghost, WriteFreely / Write.as, Micropub (IndieWeb, Micro.blog), DEV, Hashnode, Substack Notes
 - **Business:** Google Business Profile
@@ -121,14 +126,14 @@ Download from **[neforus.com/neforum](https://neforus.com/neforum/)** or from th
 
 | Platform | Download | How it installs |
 |---|---|---|
-| Windows | `NEFORUM-Setup-1.0.5.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
+| Windows | `NEFORUM-Setup-1.0.6.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
 | macOS | `NEFORUM-macOS.dmg` | Open it and drag NEFORUM onto Applications; it then shows up in Launchpad and Spotlight. Not signed by Apple yet, so the first time: right-click NEFORUM in Applications, then Open. macOS 10.15 or newer. (`neforum-macos.zip` has the same app.) |
 | Android | `neforum-android.apk` | Allow installing from your browser or file manager; NEFORUM then sits in the app drawer like any app. Android 7 or newer. |
 | iPhone and iPad | `neforum-ios-unsigned.ipa` | Sign it with your own Apple ID (Xcode, AltStore or Sideloadly), or build from source in Xcode. |
 
 The browser extension for Chrome and Firefox comes with the app (Settings → Browser extension → Show extension files) and is also in each release (`neforum-extension-chrome-*.zip`, `neforum-extension-firefox-*.zip`).
 
-Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.0.5`) publishes them as a release.
+Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.0.6`) publishes them as a release.
 ## Build from source
 
 You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, or Visual Studio 2022 with "Desktop development with C++" for Windows.

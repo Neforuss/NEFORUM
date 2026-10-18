@@ -2,8 +2,29 @@ import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/photo_fitter.dart';
+import 'captioned_photos.dart';
 import 'services.dart';
 import 'settings.dart';
+
+/// The whole frame a network shows photos in, as width / height: TikTok
+/// 9:16, Instagram 4:5 (feed and carousels) or 9:16 (stories). Null for the
+/// others.
+double? fullFrameAspect(String platformId, PostVariant v) => switch (platformId) {
+      'tiktok' => 9 / 16,
+      'instagram' => (v.extraAs<bool>('storyMode') ?? false) ? 9 / 16 : 4 / 5,
+      _ => null,
+    };
+
+/// The photo rules NEFORUM fits a target's photos to: the platform's own
+/// ([PlatformAdapter.photoFit]) and, when Settings fit photos to the whole
+/// frame on that network, exactly its frame shape ([fullFrameAspect]), so
+/// nothing is cut off or shown with black bars there.
+PhotoFit? effectivePhotoFit(PlatformAdapter adapter, ConnectedAccount account, PostVariant variant, AppSettings settings) {
+  final fit = adapter.photoFit(account, variant);
+  final frame = settings.fillsFrame(account.platformId) ? fullFrameAspect(account.platformId, variant) : null;
+  if (frame == null) return fit;
+  return (fit ?? PhotoFit(label: adapter.descriptorForAccount(account).name)).copyWith(minAspect: frame, maxAspect: frame);
+}
 
 /// Gives every target whose platform does not take one of the post's photos
 /// as it is (Instagram's 4:5 to 1.91:1, a file type, a size or pixel limit;
@@ -19,13 +40,18 @@ import 'settings.dart';
 /// its target still fails with the platform's own message.
 Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) async {
   final mode = settings.photoFit;
-  final pool = {for (final m in post.media.where((m) => m.derivedFrom != null)) '${m.derivedFrom}|${m.fitKey}': m};
+  // Photos with the caption written on them are managed by
+  // attachCaptionedPhotos, which runs after this.
+  final pool = {for (final m in post.media.where((m) => m.derivedFrom != null && !isCaptionedCopy(m))) '${m.derivedFrom}|${m.fitKey}': m};
+  // Handed on untouched (no target lists them here), for attachCaptionedPhotos
+  // to reuse or remove.
+  final captioned = [for (final m in post.media) if (isCaptionedCopy(m)) m];
   var p = withoutFittedPhotos(post);
   if (mode == PhotoFitMode.off) {
     for (final m in pool.values) {
       await s.media.discard(m);
     }
-    return p;
+    return p.copyWith(media: [...p.media, ...captioned]);
   }
 
   final resolver = VariantResolver(settings.resolverOptions);
@@ -38,7 +64,7 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
     final adapter = account == null ? null : s.registry.byId(account.platformId);
     if (account == null || adapter == null) continue;
     final variant = resolver.resolve(p, t, adapter.descriptorForAccount(account), account: account);
-    final fit = adapter.photoFit(account, variant);
+    final fit = effectivePhotoFit(adapter, account, variant, settings);
     if (fit == null) continue;
 
     final ids = t.overrides.mediaIds ?? [for (final m in userMedia) m.id];
@@ -91,7 +117,7 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
   for (final m in pool.values) {
     if (!keep.contains(m.id)) await s.media.discard(m);
   }
-  return p.copyWith(media: [...p.media, ...used.values]);
+  return p.copyWith(media: [...p.media, ...used.values, ...captioned]);
 }
 
 /// Fits the photos of the saved post [postId] (see [attachFittedPhotos]) before

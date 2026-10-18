@@ -26,6 +26,9 @@ import 'reddit/reddit_adapter.dart';
 import 'threads/threads_adapter.dart';
 import 'tiktok/tiktok_adapter.dart';
 import 'tumblr/tumblr_adapter.dart';
+import 'video_sites/bitchute_adapter.dart';
+import 'video_sites/odysee_adapter.dart';
+import 'video_sites/rumble_adapter.dart';
 import 'x/x_adapter.dart';
 import 'youtube/youtube_adapter.dart';
 import 'youtube/youtube_posts_adapter.dart';
@@ -49,10 +52,14 @@ List<PlatformAdapter> builtinAdapters() => [
       // Photo & video
       InstagramAdapter(),
       TikTokAdapter(),
-      YouTubeAdapter(),
       YouTubePostsAdapter(),
       PinterestAdapter(),
       SnapchatAdapter(),
+      // Video sites
+      YouTubeAdapter(),
+      RumbleAdapter(),
+      OdyseeAdapter(),
+      BitChuteAdapter(),
       // Messaging
       TelegramAdapter(),
       DiscordAdapter(),

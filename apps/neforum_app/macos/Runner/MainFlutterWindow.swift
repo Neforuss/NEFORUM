@@ -17,6 +17,10 @@ class MainFlutterWindow: NSWindow {
     let channel = FlutterMethodChannel(
       name: "neforum/clipboard", binaryMessenger: flutterViewController.engine.binaryMessenger)
     channel.setMethodCallHandler { call, result in
+      if call.method == "readImage" {
+        result(MainFlutterWindow.readImage())
+        return
+      }
       guard call.method == "copyImage", let args = call.arguments as? [String: Any] else {
         result(FlutterMethodNotImplemented)
         return
@@ -26,6 +30,25 @@ class MainFlutterWindow: NSWindow {
     clipboardChannel = channel
 
     super.awakeFromNib()
+  }
+
+  /// What a paste into the composer can attach: copied files (Finder), else a
+  /// picture as PNG (TIFF from screenshots and apps is converted). Empty when
+  /// the pasteboard holds neither.
+  private static func readImage() -> [String: Any] {
+    let pasteboard = NSPasteboard.general
+    if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL],
+       !urls.isEmpty {
+      return ["files": urls.map { $0.path }]
+    }
+    if let png = pasteboard.data(forType: .png), !png.isEmpty {
+      return ["png": FlutterStandardTypedData(bytes: png)]
+    }
+    if let tiff = pasteboard.data(forType: .tiff), let rep = NSBitmapImageRep(data: tiff),
+       let png = rep.representation(using: .png, properties: [:]) {
+      return ["png": FlutterStandardTypedData(bytes: png)]
+    }
+    return [:]
   }
 
   /// PNG and TIFF (what browsers and apps read on paste) plus the original

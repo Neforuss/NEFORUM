@@ -2,8 +2,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../platform/clipboard_media.dart';
 import '../../platform/env.dart';
 import '../../platform/media_library.dart';
 import '../../state/composer.dart';
@@ -72,6 +74,35 @@ Future<void> attachDroppedFiles(BuildContext context, WidgetRef ref, List<XFile>
   if (rejected > 0 && context.mounted) {
     showToast(context, '$rejected file(s) skipped: only images and videos can be attached', icon: Icons.info_outline_rounded);
   }
+}
+
+/// Ctrl+V / ⌘V in the composer: attaches a pasted picture (a screenshot,
+/// "Copy image" in a browser) or photos and videos copied in Explorer or
+/// Finder. Returns false when the clipboard holds none, so the paste goes on
+/// as text.
+Future<bool> pasteMedia(BuildContext context, WidgetRef ref) async {
+  final pasted = await ClipboardMedia.readImage();
+  if (pasted == null) return false;
+  final library = ref.read(servicesProvider).media;
+  if (pasted.files.isNotEmpty) {
+    final media = [
+      for (final p in pasted.files)
+        if (MediaLibrary.supportedExtensions.contains(p.split('.').last.toLowerCase())) p,
+    ];
+    if (media.isEmpty) return false;
+    if (!context.mounted) return true;
+    await attachDroppedFiles(context, ref, [for (final p in media) XFile(p)]);
+    return true;
+  }
+  final png = pasted.png;
+  if (png == null) return false;
+  try {
+    final stamp = DateFormat('yyyy-MM-dd HH.mm.ss').format(DateTime.now());
+    ref.read(composerProvider.notifier).addMedia([await library.importBytes(png, fileName: 'Pasted image $stamp.png', mimeHint: 'image/png')]);
+  } on Object catch (e) {
+    if (context.mounted) showToast(context, 'Could not attach the pasted image: $e', icon: Icons.error_outline_rounded);
+  }
+  return true;
 }
 
 /// Horizontal, reorderable strip of attachments with remove and alt-text

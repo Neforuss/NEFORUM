@@ -89,6 +89,9 @@ const Map<String, PlatformBrand> platformBrands = {
   'whatsapp': PlatformBrand(color: Color(0xFF25D366), icon: FontAwesomeIcons.whatsapp),
   'google_business': PlatformBrand(color: Color(0xFF4285F4), icon: FontAwesomeIcons.google, gradient: _googleGradient),
   'substack': PlatformBrand(color: Color(0xFFFF6719), monogram: 'S'),
+  'rumble': PlatformBrand(color: Color(0xFF85C742), onColor: Color(0xFF111111), monogram: 'R'),
+  'odysee': PlatformBrand(color: Color(0xFFE50054), icon: FontAwesomeIcons.odysee),
+  'bitchute': PlatformBrand(color: Color(0xFFEF4137), monogram: 'B'),
 };
 
 PlatformBrand fallbackBrand(String id) {
