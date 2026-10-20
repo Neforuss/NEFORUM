@@ -50,6 +50,16 @@ android {
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
     }
+
+    // Compress the native code (Flutter engine, compiled Dart) inside the APK
+    // instead of storing it raw: the APK roughly halves, and each per-ABI APK
+    // stays under the 25 MiB per-file limit of the neforus.com mirror. Android
+    // unpacks it once at install.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
 }
 
 kotlin {

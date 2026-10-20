@@ -59,10 +59,21 @@ jobs:
           dart run tool/sync_docs.dart
           flutter build apk --release --dart-define=NEFORUM_MOBILE=true
           cp build/app/outputs/flutter-apk/app-release.apk ../../neforum-android.apk
+      # One APK per processor type as well: each is under the 25 MiB per-file
+      # limit of the neforus.com download mirror (arm64 fits nearly every
+      # phone of the last decade).
+      - name: Build per-ABI APKs
+        working-directory: apps/neforum_app
+        run: |
+          flutter build apk --release --split-per-abi --dart-define=NEFORUM_MOBILE=true
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk ../../neforum-android-arm64.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk ../../neforum-android-armv7.apk
+          cp build/app/outputs/flutter-apk/app-x86_64-release.apk ../../neforum-android-x86_64.apk
+          ls -l ../../neforum-android*.apk
       - uses: actions/upload-artifact@v4
         with:
           name: neforum-android
-          path: neforum-android.apk
+          path: neforum-android*.apk
 
   windows:
     needs: test
@@ -136,12 +147,43 @@ jobs:
           cp -R NEFORUM.app dmg/
           ln -s /Applications dmg/Applications
           hdiutil create -volname NEFORUM -srcfolder dmg -ov -format UDZO "$GITHUB_WORKSPACE/NEFORUM-macOS.dmg"
+      # The same app for one processor each (Apple silicon, Intel): about half
+      # the size, so each fits the 25 MiB per-file limit of the neforus.com
+      # download mirror. Thinning breaks the ad-hoc signature, so the app is
+      # signed again ad hoc with its own entitlements (sandbox included, so it
+      # keeps the same data folder as the universal build).
+      - name: Build Apple silicon and Intel downloads
+        continue-on-error: true
+        working-directory: apps/neforum_app/build/macos/Build/Products/Release
+        run: |
+          ent="$GITHUB_WORKSPACE/apps/neforum_app/macos/Runner/Release.entitlements"
+          thin() {
+            arch="$1"; label="$2"; out="thin-$label"
+            rm -rf "$out" && mkdir -p "$out/dmg"
+            cp -R NEFORUM.app "$out/dmg/"
+            app="$out/dmg/NEFORUM.app"
+            find "$app" -type f | while read -r f; do
+              archs="$(lipo -archs "$f" 2>/dev/null || true)"
+              case "$archs" in
+                *" "*) lipo "$f" -thin "$arch" -output "$f.thin" && cat "$f.thin" > "$f" && rm "$f.thin" ;;
+              esac
+            done
+            find "$app/Contents/Frameworks" -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) -exec codesign --force --sign - {} \;
+            codesign --force --sign - --entitlements "$ent" "$app"
+            codesign --verify --deep "$app"
+            ditto -c -k --keepParent "$app" "$GITHUB_WORKSPACE/neforum-macos-$label.zip"
+            ln -s /Applications "$out/dmg/Applications"
+            hdiutil create -volname NEFORUM -srcfolder "$out/dmg" -ov -format UDZO "$GITHUB_WORKSPACE/NEFORUM-macOS-$label.dmg"
+          }
+          thin arm64 apple-silicon
+          thin x86_64 intel
+          ls -l "$GITHUB_WORKSPACE"/*.dmg "$GITHUB_WORKSPACE"/*.zip
       - uses: actions/upload-artifact@v4
         with:
           name: neforum-macos
           path: |
-            neforum-macos.zip
-            NEFORUM-macOS.dmg
+            neforum-macos*.zip
+            NEFORUM-macOS*.dmg
 
   ios:
     needs: test
