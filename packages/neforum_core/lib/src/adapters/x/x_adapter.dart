@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' show ClientException;
 import 'package:uuid/uuid.dart';
 
+import '../../auth/oauth1.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
@@ -21,8 +22,15 @@ import '../platform_adapter.dart';
 import 'x_api.dart';
 
 /// X (formerly Twitter) through the official X API v2 with the user's own
-/// developer app (OAuth 2.0 + PKCE), or through a hand-off to the X app /
-/// `x.com/intent/tweet` composer.
+/// developer app, or through a hand-off to the X app / `x.com/intent/tweet`
+/// composer.
+///
+/// The API tier connects in one of two ways, chosen by what the user fills
+/// in: the four OAuth 1.0a keys from the app's "Keys and tokens" page (no
+/// browser; the keys never expire or change, so the account works on every
+/// device at once), or OAuth 2.0 + PKCE in the browser (renewed every two
+/// hours with a refresh token that X replaces each time, so only one device
+/// stays connected). Both give the same account id.
 class XAdapter extends PlatformAdapter {
   XAdapter();
 
@@ -35,8 +43,24 @@ class XAdapter extends PlatformAdapter {
   static const String cfgConfidential = 'confidentialClient';
   static const String cfgUserId = 'userId';
 
+  /// How the account signs its API calls: [authOAuth1] or [authOAuth2].
+  /// Accounts connected before OAuth 1.0a was offered have no value, which
+  /// means OAuth 2.0.
+  static const String cfgAuthMode = 'authMode';
+  static const String authOAuth1 = 'oauth1';
+  static const String authOAuth2 = 'oauth2';
+
   /// Secret key for a confidential client's secret.
   static const String secretClientSecret = 'client_secret';
+
+  /// Connect-form keys of the four OAuth 1.0a keys, in form order.
+  static const String fieldApiKey = 'api_key';
+  static const String fieldApiKeySecret = 'api_key_secret';
+  static const String fieldAccessToken = 'access_token';
+  static const String fieldAccessTokenSecret = 'access_token_secret';
+
+  /// True when [account] signs with OAuth 1.0a keys.
+  static bool usesOAuth1(ConnectedAccount account) => account.configString(cfgAuthMode) == authOAuth1;
 
   static const String _desktopRedirect = 'http://127.0.0.1:52771/callback';
   static const String _mobileRedirect = 'neforum://callback';
@@ -109,9 +133,15 @@ class XAdapter extends PlatformAdapter {
     supportsLinkField: false,
   );
 
-  /// Every refresh returns a new refresh token and invalidates the old one.
+  /// Every OAuth 2.0 refresh returns a new refresh token and invalidates the
+  /// old one.
   @override
   bool get rotatesRefreshTokens => true;
+
+  /// OAuth 1.0a keys are never renewed, so only OAuth 2.0 accounts rotate.
+  @override
+  bool rotatesRefreshTokensFor(ConnectedAccount account) =>
+      account.tier == PlatformTier.byokApi && !usesOAuth1(account);
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
@@ -119,18 +149,19 @@ class XAdapter extends PlatformAdapter {
   static const String _byokIntro = '''
 **Post automatically with your own X developer app.** X charges per post (about \$0.015, or \$0.20 when the post contains a link), paid from credits on *your* developer account. NEFORUM never sees any money.
 
+Paste the four keys from the X developer portal (Keys and tokens: API Key and Secret, Access Token and Secret, with Read and write permission) to stay connected on every device; or leave them empty and sign in with the browser.
+
 1. Open **https://console.x.com** and sign in with your X account. Accept the Developer Agreement and the pay-per-use terms.
 2. Add credits under billing (a few dollars last a long time for normal posting).
 3. Create a **Project** and an **App** inside it.
-4. In the app's **User authentication settings** turn on **OAuth 2.0** and choose:
+4. In the app's **User authentication settings** choose:
    - App permissions: **Read and write**
    - Type of app: **Native App** (a public client, no secret needed)
    - Callback URI / Redirect URL: add **both** `$_desktopRedirect` and `$_mobileRedirect` exactly as written (no trailing slash; X does not accept `localhost`)
    - Website URL: any page about you or `https://github.com/Neforuss/NEFORUM`
-5. Save, then copy the **OAuth 2.0 Client ID** from the app's *Keys and tokens* page and paste it below.
-6. Press **Connect**: X opens in your browser, you approve NEFORUM, and you are done.
-
-Only if you chose *Web App* or *Automated App or Bot* instead of Native App, also paste the **Client Secret**.''';
+5. Save. Then either:
+   - **Keys (every device):** on the app's *Keys and tokens* page copy the **API Key and Secret**, and generate the **Access Token and Secret** (regenerate them if they were made before you chose Read and write: old ones stay read-only). Paste all four below and press **Connect**. No browser needed, and the keys never expire.
+   - **Browser sign-in (one device):** copy the **OAuth 2.0 Client ID** from *Keys and tokens*, paste it below and press **Sign in with X**. Only if you chose *Web App* or *Automated App or Bot* instead of Native App, also paste the **Client Secret**. X replaces this sign-in every time NEFORUM renews it, so it stays connected on only one device.''';
 
   static const String _handoffIntro = '''
 **No developer account, no cost.** NEFORUM opens the X composer with your text already filled in (the X app on phones, x.com in the browser on computers) and you press **Post** yourself.
@@ -143,16 +174,53 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
           tier: PlatformTier.byokApi,
           usesBrowser: true,
           intro: _byokIntro,
-          redirectNote: 'Register both $_desktopRedirect (computers) and $_mobileRedirect (phones) as callback URLs '
-              'in your X app. They must match exactly.',
+          redirectNote: 'Only for browser sign-in (not needed when you paste the four keys): register both '
+              '$_desktopRedirect (computers) and $_mobileRedirect (phones) as callback URLs in your X app. They '
+              'must match exactly.',
           loopbackRedirectOk: true,
           customSchemeRedirectOk: true,
           fields: [
+            // Secret fields whose key contains "token" switch the app's form
+            // from browser sign-in to Connect as soon as one is filled in.
+            ConnectField(
+              key: fieldApiKey,
+              label: 'API Key',
+              required: false,
+              help: 'For staying connected on every device. console.x.com > your app > Keys and tokens > '
+                  '**API Key and Secret** (also called Consumer Key and Secret). Leave the four keys empty to sign '
+                  'in with the browser instead.',
+            ),
+            ConnectField(
+              key: fieldApiKeySecret,
+              label: 'API Key Secret',
+              kind: FieldKind.password,
+              required: false,
+              secret: true,
+            ),
+            ConnectField(
+              key: fieldAccessToken,
+              label: 'Access Token',
+              kind: FieldKind.password,
+              required: false,
+              secret: true,
+              placeholder: 'starts with your numeric user id and a dash',
+              help: 'Same page > **Access Token and Secret** > Generate. X must show them as made with **Read and '
+                  'write** permission; regenerate them after changing the permission. Not the Bearer Token.',
+            ),
+            ConnectField(
+              key: fieldAccessTokenSecret,
+              label: 'Access Token Secret',
+              kind: FieldKind.password,
+              required: false,
+              secret: true,
+            ),
             ConnectField(
               key: 'client_id',
               label: 'OAuth 2.0 Client ID',
+              required: false,
               placeholder: 'e.g. M1M5R3BMVy13QmpScXkzTUt5OE46MTpjaQ',
-              help: 'console.x.com > your app > Keys and tokens > OAuth 2.0 Client ID and Client Secret.',
+              help: 'Only for browser sign-in, with the four keys above left empty. console.x.com > your app > '
+                  'Keys and tokens > OAuth 2.0 Client ID and Client Secret.',
             ),
             ConnectField(
               key: 'client_secret',
@@ -189,10 +257,15 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     if (tier != PlatformTier.byokApi) {
       throw ConnectException('X does not support the ${tier.label} tier in NEFORUM');
     }
+    final keys = _pastedKeys(input);
+    if (keys != null) return _connectOAuth1(keys, ctx);
     final clientId = (input['client_id'] ?? '').trim();
     final clientSecret = (input['client_secret'] ?? '').trim();
     if (clientId.isEmpty) {
-      throw const ConnectException('Paste the OAuth 2.0 Client ID of your X app', field: 'client_id');
+      throw const ConnectException(
+          'Paste the four keys (API Key and Secret, Access Token and Secret), or the OAuth 2.0 Client ID to sign in '
+          'with the browser',
+          field: 'client_id');
     }
     final client = _client(clientId, clientSecret);
     final broker = ctx.requireBroker();
@@ -228,6 +301,7 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       profileUrl: 'https://x.com/${user.username}',
       createdAt: ctx.now(),
       config: {
+        cfgAuthMode: authOAuth2,
         cfgClientId: clientId,
         cfgConfidential: clientSecret.isNotEmpty,
         cfgUserId: user.id,
@@ -236,6 +310,85 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     return ConnectResult(
       account: account,
       secrets: tokens.toSecrets({if (clientSecret.isNotEmpty) secretClientSecret: clientSecret}),
+    );
+  }
+
+  /// The four OAuth 1.0a keys from the form, or null when all four are
+  /// empty (browser sign-in). Some but not all filled in is a mistake worth
+  /// naming, not a reason to open the browser.
+  static OAuth1Credentials? _pastedKeys(Map<String, String> input) {
+    String v(String key) => (input[key] ?? '').trim();
+    const labels = {
+      fieldApiKey: 'API Key',
+      fieldApiKeySecret: 'API Key Secret',
+      fieldAccessToken: 'Access Token',
+      fieldAccessTokenSecret: 'Access Token Secret',
+    };
+    if (labels.keys.every((k) => v(k).isEmpty)) return null;
+    for (final e in labels.entries) {
+      if (v(e.key).isEmpty) {
+        throw ConnectException(
+            'Paste the ${e.value} too: the keys only work as a set of four. To sign in with the browser instead, '
+            'clear all four.',
+            field: e.key);
+      }
+    }
+    // App-only Bearer Tokens start with a run of "A"s; they cannot post.
+    if (v(fieldAccessToken).startsWith('AAAAAAAAAA')) {
+      throw const ConnectException(
+          'That is the Bearer Token. Paste the Access Token instead (Keys and tokens > Access Token and Secret).',
+          field: fieldAccessToken);
+    }
+    return OAuth1Credentials(
+      consumerKey: v(fieldApiKey),
+      consumerSecret: v(fieldApiKeySecret),
+      token: v(fieldAccessToken),
+      tokenSecret: v(fieldAccessTokenSecret),
+    );
+  }
+
+  /// Checks the keys by asking X who they belong to (`GET /2/users/me`,
+  /// signed), then builds the same account the browser sign-in would.
+  Future<ConnectResult> _connectOAuth1(OAuth1Credentials keys, AdapterContext ctx) async {
+    final XUser user;
+    try {
+      user = await XApi.oauth1(ctx, keys).me();
+    } on HttpFailure catch (e) {
+      if (e.statusCode == 401) {
+        final said = XApi.errorMessage(e.response.jsonMap) ?? 'HTTP 401';
+        throw ConnectException('X did not accept the keys (X said: $said). Copy all four again from Keys and tokens '
+            '(regenerating a key replaces the old one), and check that this device\'s date and time are right: '
+            'X refuses signed requests from a clock that is off by more than a few minutes.');
+      }
+      throw ConnectException('X refused to read your profile with these keys: ${XApi.mapError(e, now: ctx.now()).message}');
+    } on AdapterException catch (e) {
+      throw ConnectException(e.error.message);
+    }
+    final level = (user.accessLevel ?? '').toLowerCase();
+    if (level.isNotEmpty && !level.contains('write')) {
+      throw ConnectException(
+          'These keys can only read (X reports "${user.accessLevel}"), so NEFORUM could not post. In the app\'s User '
+          'authentication settings choose "Read and write", save, then regenerate the Access Token and Secret and '
+          'paste the new pair.',
+          field: fieldAccessToken);
+    }
+    return ConnectResult(
+      account: ConnectedAccount(
+        // Same id as the browser sign-in: it is the same X account.
+        id: 'x-${user.id}',
+        platformId: id,
+        tier: PlatformTier.byokApi,
+        displayName: '${user.name} (@${user.username})',
+        handle: '@${user.username}',
+        avatarUrl: user.avatarUrl,
+        profileUrl: 'https://x.com/${user.username}',
+        createdAt: ctx.now(),
+        config: {
+          cfgAuthMode: authOAuth1,
+          cfgUserId: user.id,
+        },
+      ),
+      secrets: keys.toSecrets(),
     );
   }
 
@@ -260,7 +413,9 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
-    if (account.tier != PlatformTier.byokApi) return null;
+    // OAuth 1.0a keys never expire: nothing to renew, and nothing that could
+    // end the connection on another device.
+    if (account.tier != PlatformTier.byokApi || usesOAuth1(account)) return null;
     final tokens = OAuthTokens.fromSecrets(secrets);
     if (tokens == null) {
       throw const AdapterException(PublishError.auth('No X sign-in stored for this account; reconnect it'));
@@ -293,6 +448,10 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
 
   @override
   Future<void> disconnect(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    // OAuth 1.0a keys are left alone: the same keys may be in use on the
+    // user's other devices, and they are revoked or regenerated on the
+    // app's Keys and tokens page, where they were made.
+    if (usesOAuth1(account)) return;
     final tokens = OAuthTokens.fromSecrets(secrets);
     final clientId = account.configString(cfgClientId);
     if (account.tier != PlatformTier.byokApi || tokens == null || clientId.isEmpty) return;
@@ -347,7 +506,7 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       }
     }
     if (account.tier == PlatformTier.byokApi) {
-      if (account.configString(cfgClientId).isEmpty) {
+      if (!usesOAuth1(account) && account.configString(cfgClientId).isEmpty) {
         issues.add(const ValidationIssue.error(
             'account.not_configured', 'This X account has no Client ID; reconnect it', field: 'account'));
       }
@@ -375,11 +534,12 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     if (account.tier != PlatformTier.byokApi) {
       return PublishResult.failure(const PublishError.unsupported('This X account posts through hand-off, not the API'));
     }
-    final tokens = OAuthTokens.fromSecrets(secrets);
-    if (tokens == null) {
-      return PublishResult.failure(const PublishError.auth('No X sign-in stored for this account; reconnect it'));
+    final api = _api(account, secrets, ctx);
+    if (api == null) {
+      return PublishResult.failure(PublishError.auth(usesOAuth1(account)
+          ? 'The X keys of this account are missing; reconnect it and paste the four keys again'
+          : 'No X sign-in stored for this account; reconnect it'));
     }
-    final api = XApi(ctx, tokens.accessToken);
     final parts = variant.isThread ? variant.threadParts : [variant.text];
     final ids = <String>[];
     try {
@@ -470,6 +630,18 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
   // ---------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------
+
+  /// The API with this account's credentials: signed with its OAuth 1.0a
+  /// keys, or with its OAuth 2.0 token as a Bearer header. Null when they
+  /// are not stored.
+  static XApi? _api(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) {
+    if (usesOAuth1(account)) {
+      final keys = OAuth1Credentials.fromSecrets(secrets);
+      return keys == null ? null : XApi.oauth1(ctx, keys);
+    }
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    return tokens == null ? null : XApi(ctx, tokens.accessToken);
+  }
 
   /// Native App (public) clients authenticate with `client_id` in the body
   /// only; confidential clients use HTTP Basic (client_id stays in the body,

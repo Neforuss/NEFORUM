@@ -11,7 +11,7 @@ A free and open-source cross-poster for Android, iPhone and iPad, macOS and Wind
   <img src="docs/screenshots/compose-dark.png" alt="The NEFORUM composer: one post, live previews for every network" width="900">
 </p>
 
-Write a post once. NEFORUM adapts it for each network (character limits, threads, hashtags, links, media rules), shows you a live preview of every version, and publishes it everywhere at once or on a schedule. Paste screenshots and copied photos straight into the composer (Ctrl+V, or ⌘V on a Mac), and the post you are writing is kept when you close NEFORUM, until you publish or schedule it. Moving to a new phone or computer? **Move to another device** carries every account and its keys there in one encrypted file, no cloud involved.
+Write a post once. NEFORUM adapts it for each network (character limits, threads, hashtags, links, media rules), shows you a live preview of every version, and publishes it everywhere at once or on a schedule. Paste screenshots and copied photos straight into the composer (Ctrl+V, or ⌘V on a Mac), and the post you are writing is kept when you close NEFORUM, until you publish or schedule it. Using several devices? **Sync** keeps accounts, keys, posts and settings the same everywhere through one encrypted file in storage you already have (OneDrive, Google Drive, Dropbox, iCloud Drive, Syncthing, Nextcloud and other WebDAV servers, S3 buckets), the way KeePassXC shares a database. Moving to a new phone or computer instead? **Move to another device** carries every account and its keys there in one encrypted file, no cloud involved.
 
 It does what Buffer, Publer, Metricool, Later or Typefully do for posting, with three differences:
 
@@ -110,6 +110,10 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **iPhone and iPad:** iOS does not let apps run on a timer. Networks that hold posts need nothing from the phone. For the rest you get a notification at the scheduled time; its **Publish now** button posts without opening the app.
 - **Hand-off accounts** always get a "time to post" reminder.
 
+## Sync without a server
+
+Turn on **Settings > Sync** and every device reads and writes one encrypted file (`NEFORUM.neforumsync`, Argon2id + AES-256-GCM) in a folder your cloud app syncs, on a WebDAV server or in an S3-compatible bucket. Phones use WebDAV or S3 directly. Each account, post and setting merges on its own; when both sides changed the same thing, a post that already went out beats an edit and the newest renewed sign-in wins. X and Tumblr, which kill the old sign-in on every renewal, get one renewer at a time, the renewed keys travel through the file, and a refused renewal re-reads the file and retries; or connect them with OAuth 1.0a keys, which never expire. A scheduled post is published by the device it was scheduled on (it has the photos), and another device steps in only when that one has been silent and the post is 30 minutes overdue. See [docs/sync.md](docs/sync.md).
+
 ## More screenshots
 
 | | |
@@ -126,14 +130,14 @@ Download from **[neforus.com/neforum](https://neforus.com/neforum/)** or from th
 
 | Platform | Download | How it installs |
 |---|---|---|
-| Windows | `NEFORUM-Setup-1.0.7.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
+| Windows | `NEFORUM-Setup-1.0.8.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
 | macOS | `NEFORUM-macOS.dmg` | Open it and drag NEFORUM onto Applications; it then shows up in Launchpad and Spotlight. Not signed by Apple yet, so the first time: right-click NEFORUM in Applications, then Open. macOS 10.15 or newer. (`neforum-macos.zip` has the same app.) |
 | Android | `neforum-android.apk` | Allow installing from your browser or file manager; NEFORUM then sits in the app drawer like any app. Android 7 or newer. |
 | iPhone and iPad | `neforum-ios-unsigned.ipa` | Sign it with your own Apple ID (Xcode, AltStore or Sideloadly), or build from source in Xcode. |
 
 The browser extension for Chrome and Firefox comes with the app (Settings → Browser extension → Show extension files) and is also in each release (`neforum-extension-chrome-*.zip`, `neforum-extension-firefox-*.zip`).
 
-Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.0.7`) publishes them as a release.
+Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.0.8`) publishes them as a release.
 ## Build from source
 
 You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, or Visual Studio 2022 with "Desktop development with C++" for Windows.
@@ -177,7 +181,8 @@ flutter build ios --release --dart-define=NEFORUM_MOBILE=true
 ```
 packages/neforum_core   Pure-Dart core: data model, 29 platform adapters, text
                         adaptation (counting, threads), quota tracking, OAuth,
-                        media hosts, publish service, scheduler. No Flutter.
+                        media hosts, publish service, scheduler, encrypted
+                        backup and sync. No Flutter.
 apps/neforum_app        Flutter app: design system, screens, keychain storage,
                         sign-in, notifications, background work, tray.
 docs/platforms          Per-platform setup guides (bundled into the app).
@@ -205,7 +210,7 @@ The core has over 1,000 tests that pin every adapter's requests and error handli
 
 ## Privacy
 
-NEFORUM has no backend. It stores accounts, posts and settings in your app data folder and secrets in the OS keychain (Keychain on Apple platforms, Keystore on Android, DPAPI on Windows). Network traffic goes only to the platforms you post to and, if you pick them, the media host and fallback host you configure. Settings, then Data and privacy, has three tools: **Move to another device** saves your accounts with their keys, media hosts, settings and drafts in one file encrypted with a passphrase (Argon2id and AES-256-GCM), which you carry to your phone or another computer yourself and import there (see [docs/backup.md](docs/backup.md)); **Export posts** saves a readable JSON file of your posts and account list without any keys; **Delete everything** removes all accounts, keys and posts from the device. Backup files you made are your own copies: deleting your data in NEFORUM does not delete them.
+NEFORUM has no backend. It stores accounts, posts and settings in your app data folder and secrets in the OS keychain (Keychain on Apple platforms, Keystore on Android, DPAPI on Windows). Network traffic goes only to the platforms you post to and, if you pick them, the media host and fallback host you configure and the storage you sync through (which only ever receives the encrypted sync file). Settings, then Data and privacy, has three tools: **Move to another device** saves your accounts with their keys, media hosts, settings and drafts in one file encrypted with a passphrase (Argon2id and AES-256-GCM), which you carry to your phone or another computer yourself and import there (see [docs/backup.md](docs/backup.md)); **Export posts** saves a readable JSON file of your posts and account list without any keys; **Delete everything** removes all accounts, keys and posts from the device. Backup files you made are your own copies: deleting your data in NEFORUM does not delete them.
 
 ## License
 

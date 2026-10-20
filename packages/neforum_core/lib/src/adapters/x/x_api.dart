@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../../auth/oauth1.dart';
 import '../../http/neforum_http.dart';
 import '../../model/media.dart';
 import '../../model/publish_result.dart';
@@ -28,18 +29,34 @@ class XEndpoints {
 
 /// The authenticated X user, from `GET /2/users/me`.
 class XUser {
-  const XUser({required this.id, required this.username, required this.name, this.avatarUrl});
+  const XUser({required this.id, required this.username, required this.name, this.avatarUrl, this.accessLevel});
 
   final String id;
   final String username;
   final String name;
   final String? avatarUrl;
+
+  /// X's `x-access-level` response header on OAuth 1.0a calls (`read`,
+  /// `read-write`, `read-write-directmessages`), when X sends it.
+  final String? accessLevel;
 }
 
 /// Thin, stateless wrapper over the X API v2 calls NEFORUM needs. Throws
 /// [HttpFailure] / [AdapterException]; the adapter converts them.
+///
+/// Every call is authorized the same way: with the OAuth 2.0 user token as
+/// a Bearer header ([XApi.new]), or signed with the user's OAuth 1.0a keys
+/// ([XApi.oauth1]). X's API reference lists both ("OAuth2UserToken" and
+/// "UserToken") for each endpoint used here.
 class XApi {
-  XApi(this.ctx, String accessToken) : _auth = {'Authorization': 'Bearer $accessToken'};
+  XApi(this.ctx, String accessToken)
+      : _bearer = {'Authorization': 'Bearer $accessToken'},
+        _signer = null;
+
+  /// Signs every request with OAuth 1.0a; a fresh nonce per attempt.
+  XApi.oauth1(this.ctx, OAuth1Credentials keys, {String Function()? nonce})
+      : _bearer = const {},
+        _signer = OAuth1Signer(keys, clock: ctx.now, nonce: nonce);
 
   /// Images up to this size go through the one-shot upload; larger GIFs and
   /// all videos use the chunked initialize/append/finalize flow.
@@ -55,10 +72,28 @@ class XApi {
   static const Duration _maxProcessingWait = Duration(minutes: 30);
 
   final AdapterContext ctx;
-  final Map<String, String> _auth;
+  final Map<String, String> _bearer;
+  final OAuth1Signer? _signer;
+
+  /// Sends one request with this API's authorization. Only JSON and
+  /// multipart bodies are used, and neither is part of an OAuth 1.0a
+  /// signature; query parameters (the STATUS poll) are signed.
+  Future<NeforumResponse> _call(String method, Uri url,
+      {Object? json, Map<String, String>? fields, List<HttpFilePart>? files}) {
+    final signer = _signer;
+    return ctx.http.send(
+      method,
+      url,
+      headers: _bearer,
+      signHeaders: signer == null ? null : () => signer.headers(method, url),
+      jsonBody: json,
+      fields: fields,
+      files: files,
+    );
+  }
 
   Future<XUser> me() async {
-    final res = await ctx.http.get(XEndpoints.me, headers: _auth);
+    final res = await _call('GET', XEndpoints.me);
     final data = _map(res.jsonMap['data']);
     final id = _str(data['id']);
     final username = _str(data['username']);
@@ -70,6 +105,7 @@ class XApi {
       username: username,
       name: _str(data['name']) ?? username,
       avatarUrl: _str(data['profile_image_url']),
+      accessLevel: res.headers['x-access-level'],
     );
   }
 
@@ -109,7 +145,7 @@ class XApi {
       if (inReplyTo != null) 'reply': {'in_reply_to_tweet_id': inReplyTo},
       if (replySettings != null) 'reply_settings': replySettings,
     };
-    final res = await ctx.http.postJson(XEndpoints.tweets, body, headers: _auth);
+    final res = await _call('POST', XEndpoints.tweets, json: body);
     final id = _str(_map(res.jsonMap['data'])['id']);
     if (id == null) {
       throw AdapterException(PublishError.platform('X accepted the post but returned no id', raw: _snippet(res.body)));
@@ -130,11 +166,11 @@ class XApi {
   }
 
   Future<String> _simpleUpload(MediaAttachment m, Uint8List bytes) async {
-    final res = await ctx.http.multipart(
+    final res = await _call(
+      'POST',
       XEndpoints.mediaUpload,
       fields: {'media_category': _category(m)},
       files: [HttpFilePart(field: 'media', bytes: bytes, fileName: _fileName(m), contentType: m.mimeType)],
-      headers: _auth,
     );
     final data = _map(res.jsonMap['data']);
     final id = _requireMediaId(data, res);
@@ -143,17 +179,18 @@ class XApi {
   }
 
   Future<String> _chunkedUpload(MediaAttachment m, Uint8List bytes) async {
-    final init = await ctx.http.postJson(
+    final init = await _call(
+      'POST',
       XEndpoints.mediaInitialize,
-      {'media_type': m.mimeType, 'total_bytes': bytes.length, 'media_category': _category(m)},
-      headers: _auth,
+      json: {'media_type': m.mimeType, 'total_bytes': bytes.length, 'media_category': _category(m)},
     );
     final id = _requireMediaId(_map(init.jsonMap['data']), init);
     final segments = (bytes.length + chunkBytes - 1) ~/ chunkBytes;
     for (var i = 0; i < segments; i++) {
       if (segments > 1) ctx.progress('Uploading ${m.isVideo ? 'video' : 'GIF'}: part ${i + 1} of $segments');
       final end = (i + 1) * chunkBytes > bytes.length ? bytes.length : (i + 1) * chunkBytes;
-      await ctx.http.multipart(
+      await _call(
+        'POST',
         XEndpoints.mediaAppend(id),
         fields: {'segment_index': '$i'},
         files: [
@@ -164,10 +201,9 @@ class XApi {
             contentType: 'application/octet-stream',
           ),
         ],
-        headers: _auth,
       );
     }
-    final fin = await ctx.http.send('POST', XEndpoints.mediaFinalize(id), headers: _auth);
+    final fin = await _call('POST', XEndpoints.mediaFinalize(id));
     await _awaitProcessing(id, _map(fin.jsonMap['data'])['processing_info']);
     return id;
   }
@@ -193,7 +229,7 @@ class XApi {
       ctx.progress('X is processing the video${pct == null ? '' : ' ($pct%)'}');
       await Future<void>.delayed(Duration(seconds: secs));
       waited += Duration(seconds: secs);
-      final res = await ctx.http.get(XEndpoints.mediaStatus(id), headers: _auth);
+      final res = await _call('GET', XEndpoints.mediaStatus(id));
       current = _map(res.jsonMap['data'])['processing_info'];
     }
     throw const AdapterException(PublishError.network('X is still processing the media; try again later'));
@@ -203,15 +239,15 @@ class XApi {
   Future<void> _setAltText(String id, String alt) async {
     final text = alt.length > altTextMax ? alt.substring(0, altTextMax) : alt;
     try {
-      await ctx.http.postJson(
+      await _call(
+        'POST',
         XEndpoints.mediaMetadata,
-        {
+        json: {
           'id': id,
           'metadata': {
             'alt_text': {'text': text},
           },
         },
-        headers: _auth,
       );
     } on HttpFailure catch (e) {
       if (e.statusCode == 401 || e.statusCode == 402 || e.statusCode == 429) rethrow;
@@ -292,7 +328,8 @@ class XApi {
           .hasMatch(lower)) {
         return PublishError.auth(
           'X does not let this app post for the account: $detail. Check that the app has "Read and write" '
-          'permission and a funded pay-per-use project at console.x.com, then reconnect.',
+          'permission and a funded pay-per-use project at console.x.com, then reconnect. With pasted keys, '
+          'regenerate the Access Token and Secret after switching to "Read and write": old tokens keep the old permission.',
           raw: raw,
           statusCode: status,
         );

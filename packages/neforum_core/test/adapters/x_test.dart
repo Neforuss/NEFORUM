@@ -82,9 +82,22 @@ void main() {
       expect(byok.intro, contains('Native App'));
       expect(byok.intro, contains('http://127.0.0.1:52771/callback'));
       expect(byok.intro, contains('neforum://callback'));
-      expect(byok.fields.map((f) => f.key), ['client_id', 'client_secret']);
-      expect(byok.fields[1].secret, isTrue);
-      expect(byok.fields[1].required, isFalse);
+      expect(byok.intro, contains('Paste the four keys from the X developer portal (Keys and tokens: API Key and Secret, '
+          'Access Token and Secret, with Read and write permission) to stay connected on every device; or leave them '
+          'empty and sign in with the browser.'));
+      expect(byok.fields.map((f) => f.key),
+          ['api_key', 'api_key_secret', 'access_token', 'access_token_secret', 'client_id', 'client_secret']);
+      final byKey = {for (final f in byok.fields) f.key: f};
+      // Everything is optional in the form: either the four keys or the Client ID.
+      expect(byok.fields.every((f) => !f.required), isTrue);
+      for (final k in ['api_key_secret', 'access_token', 'access_token_secret', 'client_secret']) {
+        expect(byKey[k]!.secret, isTrue, reason: k);
+      }
+      expect(byKey['api_key']!.secret, isFalse);
+      // The app switches from browser sign-in to Connect when a secret
+      // "token" field is filled in.
+      expect(byok.fields.where((f) => f.secret && f.key.contains('token')).map((f) => f.key),
+          ['access_token', 'access_token_secret']);
       expect(adapter.specFor(PlatformTier.handoff).usesBrowser, isFalse);
     });
   });
@@ -185,6 +198,20 @@ void main() {
         () => adapter.connect(PlatformTier.byokApi, {'client_id': ' '}, ctx),
         throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'client_id')),
       );
+    });
+
+    test('OAuth 2.0 accounts are marked as such', () async {
+      final ctx = testContext(
+        broker: FakeAuthBroker(),
+        handler: (req) async => req.url.path == '/2/oauth2/token'
+            ? _json({'token_type': 'bearer', 'expires_in': 7200, 'access_token': 'at-1', 'refresh_token': 'rt-1'})
+            : _json({
+                'data': {'id': '42', 'name': 'Alice', 'username': 'alice'},
+              }),
+      );
+      final r = await adapter.connect(PlatformTier.byokApi, {'client_id': 'cid'}, ctx);
+      expect(r.account.config['authMode'], 'oauth2');
+      expect(adapter.rotatesRefreshTokensFor(r.account), isTrue);
     });
 
     test('token endpoint refusal becomes a ConnectException with a hint', () async {
@@ -594,6 +621,233 @@ void main() {
             _apiAccount(), _secrets(expiresAt: testNow.subtract(const Duration(minutes: 1)), refresh: null), ctx),
         throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)),
       );
+    });
+  });
+
+  group('OAuth 1.0a keys', () {
+    const keyInput = {
+      'api_key': 'test-api-key',
+      'api_key_secret': 'test-api-key-secret',
+      'access_token': '42-test-access-token',
+      'access_token_secret': 'test-access-token-secret',
+    };
+    const keys = OAuth1Credentials(
+      consumerKey: 'test-api-key',
+      consumerSecret: 'test-api-key-secret',
+      token: '42-test-access-token',
+      tokenSecret: 'test-access-token-secret',
+    );
+    final account = _apiAccount(config: const {'authMode': 'oauth1', 'userId': '42'});
+    final keySecrets = keys.toSecrets();
+
+    /// The request carries a valid OAuth 1.0a signature of this test's keys
+    /// (recomputed from its own nonce), made at the context's clock. [form]
+    /// is the form body, the only body that is signed.
+    void expectSigned(http.Request r, {Map<String, String> form = const {}}) {
+      final header = r.headers['Authorization'];
+      expect(header, startsWith('OAuth '), reason: '${r.method} ${r.url}');
+      final p = OAuth1.parseAuthorization(header)!;
+      expect(p.keys.toSet(), {
+        'oauth_consumer_key',
+        'oauth_nonce',
+        'oauth_signature',
+        'oauth_signature_method',
+        'oauth_timestamp',
+        'oauth_token',
+        'oauth_version',
+      });
+      expect(p['oauth_consumer_key'], 'test-api-key');
+      expect(p['oauth_token'], '42-test-access-token');
+      expect(p['oauth_signature_method'], 'HMAC-SHA1');
+      expect(p['oauth_version'], '1.0');
+      expect(p['oauth_timestamp'], '${testNow.millisecondsSinceEpoch ~/ 1000}');
+      expect(
+        header,
+        OAuth1.authorizationHeader(
+          method: r.method,
+          url: r.url,
+          consumerKey: keys.consumerKey,
+          consumerSecret: keys.consumerSecret,
+          token: keys.token,
+          tokenSecret: keys.tokenSecret,
+          form: form,
+          nonce: p['oauth_nonce']!,
+          timestamp: int.parse(p['oauth_timestamp']!),
+        ),
+        reason: 'signature of ${r.method} ${r.url}',
+      );
+    }
+
+    test('connect checks the keys with a signed /2/users/me, without a browser', () async {
+      final calls = <http.Request>[];
+      // No broker: a browser sign-in would throw.
+      final ctx = testContext(handler: (req) async {
+        calls.add(req);
+        return _json({
+          'data': {'id': '42', 'name': 'Alice', 'username': 'alice', 'profile_image_url': 'https://pbs.example/a.jpg'},
+        }, 200, {'x-access-level': 'read-write'});
+      });
+      final r = await adapter.connect(PlatformTier.byokApi, {...keyInput, 'client_id': ''}, ctx);
+
+      expect(calls, hasLength(1));
+      expect(calls.single.method, 'GET');
+      expect(calls.single.url.toString(), 'https://api.x.com/2/users/me?user.fields=profile_image_url');
+      expectSigned(calls.single);
+
+      final a = r.account;
+      expect(a.id, 'x-42', reason: 'the same account as a browser sign-in');
+      expect(a.tier, PlatformTier.byokApi);
+      expect(a.handle, '@alice');
+      expect(a.displayName, 'Alice (@alice)');
+      expect(a.avatarUrl, 'https://pbs.example/a.jpg');
+      expect(a.config, {'authMode': 'oauth1', 'userId': '42'});
+      expect(r.secrets, {
+        'oauth1_consumer_key': 'test-api-key',
+        'oauth1_consumer_secret': 'test-api-key-secret',
+        'oauth1_token': '42-test-access-token',
+        'oauth1_token_secret': 'test-access-token-secret',
+      });
+      expect(adapter.rotatesRefreshTokensFor(a), isFalse);
+      expect(adapter.validate(const PostVariant(text: 'hi'), a).map((i) => i.code), isNot(contains('account.not_configured')));
+    });
+
+    test('keys without write permission are refused at connect', () async {
+      final ctx = testContext(
+        handler: (_) async => _json({
+          'data': {'id': '42', 'name': 'Alice', 'username': 'alice'},
+        }, 200, {'x-access-level': 'read'}),
+      );
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, keyInput, ctx),
+        throwsA(isA<ConnectException>()
+            .having((e) => e.field, 'field', 'access_token')
+            .having((e) => e.message, 'message', contains('regenerate the Access Token and Secret'))),
+      );
+    });
+
+    test('an incomplete set of keys names the missing one; a Bearer Token is refused', () async {
+      final ctx = testContext(handler: (_) async => throw StateError('no HTTP expected'));
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, {...keyInput, 'access_token_secret': ' '}, ctx),
+        throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'access_token_secret')),
+      );
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, {'access_token': '42-only'}, ctx),
+        throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'api_key')),
+      );
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, {...keyInput, 'access_token': 'AAAAAAAAAAAAAAAAAAAAAbearer'}, ctx),
+        throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('Bearer Token'))),
+      );
+    });
+
+    test('keys X does not accept: a ConnectException that mentions the clock', () async {
+      final ctx = testContext(
+          handler: (_) async => _json({'title': 'Unauthorized', 'type': 'about:blank', 'status': 401, 'detail': 'Unauthorized'}, 401));
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, keyInput, ctx),
+        throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('date and time'))),
+      );
+    });
+
+    test('publish: thread with a photo, every call signed, no Bearer, no renewal', () async {
+      final calls = <http.Request>[];
+      var next = 10;
+      final ctx = testContext(handler: (req) async {
+        calls.add(req);
+        if (req.url.path == '/2/oauth2/token') throw StateError('no token renewal expected');
+        if (req.url.path == '/2/media/upload') {
+          return _json({
+            'data': {'id': '77'},
+          });
+        }
+        if (req.url.path == '/2/media/metadata') return _json({'data': {'id': '77'}});
+        return _json({
+          'data': {'id': '${next++}'},
+        }, 201);
+      });
+      expect(await adapter.refreshSecrets(account, keySecrets, ctx), isNull);
+      final v = PostVariant(text: 'one 1/2', threadParts: const ['one 1/2', 'two 2/2'], media: [fakeImage()]);
+      final r = await adapter.publish(v, account, keySecrets, ctx);
+      expect(r.success, isTrue, reason: '${r.error}');
+      expect(r.threadRemoteIds, ['10', '11']);
+      expect(calls.map((c) => '${c.method} ${c.url.path}').toList(), [
+        'POST /2/media/upload',
+        'POST /2/media/metadata',
+        'POST /2/tweets',
+        'POST /2/tweets',
+      ]);
+      // Multipart and JSON bodies are not part of the signature.
+      for (final c in calls) {
+        expectSigned(c);
+      }
+      expect(multipartFieldsOf(calls[0])['media_category'], 'tweet_image');
+      expect(bodyOf(calls[3])['reply'], {'in_reply_to_tweet_id': '10'});
+      final nonces = calls.map((c) => OAuth1.parseAuthorization(c.headers['Authorization'])!['oauth_nonce']).toSet();
+      expect(nonces, hasLength(calls.length), reason: 'a fresh nonce per request');
+    });
+
+    test('publish: chunked video, the STATUS poll signs its query', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(
+        mediaBytes: Uint8List.fromList(List.filled(1000, 7)),
+        handler: (req) async {
+          calls.add(req);
+          final p = req.url.path;
+          if (p == '/2/media/upload/initialize') {
+            return _json({
+              'data': {'id': '900'},
+            });
+          }
+          if (p == '/2/media/upload/900/append') return http.Response('', 204);
+          if (p == '/2/media/upload/900/finalize') {
+            return _json({
+              'data': {
+                'id': '900',
+                'processing_info': {'state': 'pending', 'check_after_secs': 0},
+              },
+            });
+          }
+          if (p == '/2/media/upload' && req.method == 'GET') {
+            return _json({
+              'data': {
+                'id': '900',
+                'processing_info': {'state': 'succeeded'},
+              },
+            });
+          }
+          return _json({
+            'data': {'id': '3003'},
+          }, 201);
+        },
+      );
+      final r = await adapter.publish(PostVariant(text: 'Clip', media: [fakeVideo()]), account, keySecrets, ctx);
+      expect(r.success, isTrue, reason: '${r.error}');
+      expect(calls.map((c) => '${c.method} ${c.url.path}').toList(), [
+        'POST /2/media/upload/initialize',
+        'POST /2/media/upload/900/append',
+        'POST /2/media/upload/900/finalize',
+        'GET /2/media/upload',
+        'POST /2/tweets',
+      ]);
+      for (final c in calls) {
+        expectSigned(c);
+      }
+      expect(calls[3].url.queryParameters, {'command': 'STATUS', 'media_id': '900'});
+    });
+
+    test('missing keys: auth error without a request; disconnect revokes nothing', () async {
+      final ctx = testContext(handler: (_) async => throw StateError('no HTTP expected'));
+      final r = await adapter.publish(const PostVariant(text: 'Hi'), account, const {'oauth1_consumer_key': 'k'}, ctx);
+      expect(r.error!.kind, PublishErrorKind.auth);
+      expect(r.error!.message, contains('four keys'));
+      // The same keys may be in use on the user's other devices.
+      await adapter.disconnect(account, keySecrets, ctx);
+    });
+
+    test('a hand-off account never rotates', () {
+      expect(adapter.rotatesRefreshTokensFor(fakeAccount('x', tier: PlatformTier.handoff)), isFalse);
+      expect(adapter.rotatesRefreshTokensFor(_apiAccount()), isTrue, reason: 'accounts from before the auth mode was stored');
     });
   });
 

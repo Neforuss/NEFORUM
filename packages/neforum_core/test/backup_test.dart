@@ -132,6 +132,17 @@ void main() {
       expect(report.attention.single, contains('X stays connected on only one device'));
     });
 
+    test('an X account on OAuth 1.0a keys can be copied without the one-device warning', () async {
+      await fromAccounts.upsert(ConnectedAccount(
+          id: 'x:9', platformId: 'x', tier: PlatformTier.byokApi, displayName: 'x:9', createdAt: _now, config: const {'authMode': 'oauth1'}));
+      await fromSecrets.write('x:9', const OAuth1Credentials(consumerKey: 'ck', consumerSecret: 'cs', token: 't', tokenSecret: 'ts').toSecrets());
+      final p = await roundTrip();
+      final candidates = previewImport(p, await toAccounts.all(), registry: builtinRegistry());
+      expect(candidates.firstWhere((c) => c.item.account.id == 'x:9').rotatesTokens, isFalse);
+      final report = await applyBackup(p, candidates: candidates, accounts: toAccounts, posts: toPosts, secrets: toSecrets);
+      expect(report.attention, isEmpty);
+    });
+
     test('Replace or Keep for an account already here; hand-off accounts match by name', () async {
       await toAccounts.upsert(_account('facebook-123', 'facebook', name: 'Old name'));
       await toSecrets.write('facebook-123', {'access_token': 'old'});

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NEFORUM",
   "short_name": "NEFORUM",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Fills in NEFORUM hand-offs on each platform's site (text, polls, photos, videos). You check it, then post with Ctrl+Enter.",
   "homepage_url": "https://neforus.com/neforum/",
   "minimum_chrome_version": "116",

@@ -201,14 +201,26 @@ class _TooLarge implements Exception {
   const _TooLarge();
 }
 
+/// Opens the server socket on [port] of [address]; tests put a stand-in here.
+typedef BrowserBridgeBind = Future<HttpServer> Function(InternetAddress address, int port);
+
+/// Did the system refuse the port, rather than another program using it?
+/// Windows says 10013 (WSAEACCES, "access forbidden") for a port Hyper-V
+/// (WSL, Docker, Windows Sandbox) reserved, or one another program holds
+/// exclusively; elsewhere EACCES (13) or EPERM (1).
+@visibleForTesting
+bool isPortRefused(SocketException e) => const {10013, 13, 1}.contains(e.osError?.errorCode);
+
 /// The bridge server (extensions/browser/PROTOCOL.md) on dart:io.
 class IoBrowserBridge extends BrowserBridge {
-  IoBrowserBridge({required this._secrets, required this._clock, required this._ports, required this._version});
+  IoBrowserBridge({required this._secrets, required this._clock, required this._ports, required this._version, BrowserBridgeBind? bind})
+      : _bind = bind ?? HttpServer.bind;
 
   final SecretStore _secrets;
   final DateTime Function() _clock;
   final List<int> _ports;
   final String _version;
+  final BrowserBridgeBind _bind;
   final Random _random = Random.secure();
 
   final ValueNotifier<BrowserBridgeStatus> _status = ValueNotifier(const BrowserBridgeStatus(BrowserBridgeState.off));
@@ -265,14 +277,20 @@ class IoBrowserBridge extends BrowserBridge {
 
   Future<void> _start() async {
     await _load();
+    var refused = false;
+    final skipped = <String>[];
     for (final port in _ports) {
       if (_disposed) return;
       final HttpServer server;
       try {
-        server = await HttpServer.bind(InternetAddress.loopbackIPv4, port);
-      } on SocketException {
+        server = await _bind(InternetAddress.loopbackIPv4, port);
+      } on SocketException catch (e) {
+        // In use, reserved or forbidden: any failure moves on to the next port.
+        if (isPortRefused(e)) refused = true;
+        skipped.add('$port (${e.osError?.errorCode ?? '?'})');
         continue;
       }
+      if (skipped.isNotEmpty) debugPrint('Browser bridge: could not open ${skipped.join(', ')}; using ${server.port}');
       if (_disposed) {
         await server.close(force: true);
         return;
@@ -290,7 +308,8 @@ class IoBrowserBridge extends BrowserBridge {
       _status.value = BrowserBridgeStatus(BrowserBridgeState.listening, port: server.port);
       return;
     }
-    _status.value = const BrowserBridgeStatus(BrowserBridgeState.portBusy);
+    debugPrint('Browser bridge: could not open any port: ${skipped.join(', ')}');
+    _status.value = BrowserBridgeStatus(refused ? BrowserBridgeState.portBlocked : BrowserBridgeState.portBusy);
   }
 
   @override

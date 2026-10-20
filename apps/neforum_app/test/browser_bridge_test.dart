@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_app/platform/browser_bridge.dart';
-import 'package:neforum_app/platform/browser_bridge_io.dart' show parseStartMenuInternet;
+import 'package:neforum_app/platform/browser_bridge_io.dart' show IoBrowserBridge, isPortRefused, parseStartMenuInternet;
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/platform/ui_bridge.dart';
 import 'package:neforum_app/state/providers.dart';
@@ -54,6 +54,14 @@ Future<_Response> _call(HttpClient client, int port, String method, String path,
   });
   expect(cors, isEmpty, reason: '$method $path must not send CORS headers');
   return _Response(res.statusCode, res.headers, bytes);
+}
+
+/// A port nothing listens on right now.
+Future<int> _freePort() async {
+  final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final port = s.port;
+  await s.close();
+  return port;
 }
 
 class _MemoryStorage implements AppStorage {
@@ -500,6 +508,114 @@ void main() {
     });
   });
 
+  group('ports', () {
+    /// A bridge whose ports in [refused] fail as Windows fails a port Hyper-V
+    /// reserved (10013), and those in [inUse] as a port another program uses
+    /// (10048); the others really open. [tried] records every port asked for.
+    IoBrowserBridge fakeBind(List<int> ports, {Set<int> refused = const {}, Set<int> inUse = const {}, List<int>? tried}) => IoBrowserBridge(
+          secrets: InMemorySecretStore(),
+          clock: DateTime.now,
+          ports: ports,
+          version: 'test',
+          bind: (address, port) {
+            tried?.add(port);
+            if (refused.contains(port)) {
+              throw SocketException('Failed to create server socket',
+                  osError: const OSError('An attempt was made to access a socket in a way forbidden by its access permissions.', 10013), address: address, port: port);
+            }
+            if (inUse.contains(port)) {
+              throw SocketException('Failed to create server socket',
+                  osError: const OSError('Only one usage of each socket address (protocol/network address/port) is normally permitted.', 10048), address: address, port: port);
+            }
+            return HttpServer.bind(address, port);
+          },
+        );
+
+    test('the 5277x ports come first, then the 4177x ones below Windows\' dynamic range', () {
+      expect(kBrowserBridgePorts, [for (var i = 0; i < 8; i++) 52772 + i, for (var i = 0; i < 8; i++) 41772 + i]);
+      expect(kBrowserBridgePorts.toSet(), hasLength(kBrowserBridgePorts.length));
+      expect(kBrowserBridgePorts.skip(8).every((p) => p < 49152), isTrue, reason: 'Hyper-V reserves ports in 49152 to 65535');
+      expect(describePorts(kBrowserBridgePorts), '52772 to 52779 and 41772 to 41779');
+      expect(describePorts(const [1, 2, 4, 7, 8]), '1 to 2, 4 and 7 to 8');
+      expect(describePorts(const [5]), '5');
+      // Extensions before 1.0.1 know only the 5277x ports.
+      expect([for (final p in kBrowserBridgePorts) isFallbackPort(p)], [for (var i = 0; i < 16; i++) i >= 8]);
+      expect(isFallbackPort(null), isFalse);
+      expect(isFallbackPort(50123), isFalse, reason: 'a test\'s own port');
+    });
+
+    test('the extension looks on the same ports, in the same order', () {
+      final js = File('../../extensions/browser/src/background.js').readAsStringSync();
+      final list = RegExp(r'NEFORUM_PORTS \?\? \[([\d,\s]+)\]').firstMatch(js);
+      expect(list, isNotNull, reason: 'const PORTS = globalThis.NEFORUM_PORTS ?? [...] in background.js');
+      final ports = [for (final s in list!.group(1)!.split(',')) if (s.trim().isNotEmpty) int.parse(s.trim())];
+      expect(ports, kBrowserBridgePorts);
+    });
+
+    test('access forbidden (10013) and EACCES count as refused; in use does not', () {
+      SocketException err(int code) => SocketException('x', osError: OSError('x', code));
+      expect(isPortRefused(err(10013)), isTrue);
+      expect(isPortRefused(err(13)), isTrue);
+      expect(isPortRefused(err(10048)), isFalse);
+      expect(isPortRefused(err(98)), isFalse);
+      expect(isPortRefused(err(-1)), isFalse);
+      expect(isPortRefused(const SocketException('no OS error')), isFalse);
+    });
+
+    test('a port Windows refuses (reserved by Hyper-V) is skipped; the bridge listens on the next one', () async {
+      final free = await _freePort();
+      final tried = <int>[];
+      final bridge = fakeBind([52772, 52773, free], refused: {52772, 52773}, tried: tried);
+      addTearDown(bridge.dispose);
+      await bridge.start();
+      expect(bridge.status.value, BrowserBridgeStatus(BrowserBridgeState.listening, port: free));
+      expect(tried, [52772, 52773, free]);
+      final client = _client();
+      addTearDown(() => client.close(force: true));
+      expect((await _call(client, free, 'GET', '/v1/hello')).json['app'], 'NEFORUM');
+    });
+
+    test('nothing opens: blocked when the system refused a port, busy when all are in use', () async {
+      final refused = fakeBind(const [52772, 52773, 41772], refused: {52772, 52773}, inUse: {41772});
+      addTearDown(refused.dispose);
+      await refused.start();
+      expect(refused.status.value.state, BrowserBridgeState.portBlocked);
+
+      final busy = fakeBind(const [52772, 41772], inUse: {52772, 41772});
+      addTearDown(busy.dispose);
+      await busy.start();
+      expect(busy.status.value.state, BrowserBridgeState.portBusy);
+    });
+
+    // A port the system really refuses: port 135 is held exclusively by
+    // Windows (RPC), which fails with 10013 like a reserved port, and is a
+    // privileged port on Linux (EACCES unless root). Skipped where it opens.
+    test('a port the system really refuses is skipped', () async {
+      const refusedPort = 135;
+      try {
+        final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, refusedPort);
+        await s.close();
+        markTestSkipped('port $refusedPort opens here');
+        return;
+      } on SocketException catch (e) {
+        if (!isPortRefused(e)) {
+          markTestSkipped('port $refusedPort fails here with ${e.osError}');
+          return;
+        }
+      }
+      final free = await _freePort();
+      final bridge = BrowserBridge.create(secrets: InMemorySecretStore(), ports: [refusedPort, free]);
+      addTearDown(bridge.dispose);
+      await bridge.start();
+      expect(bridge.status.value, BrowserBridgeStatus(BrowserBridgeState.listening, port: free));
+
+      final blocked = BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [refusedPort]);
+      addTearDown(blocked.dispose);
+      await blocked.start();
+      expect(blocked.status.value.state, BrowserBridgeState.portBlocked);
+    });
+  });
+
   test('settings: the browser extension flags survive JSON and default to on', () {
     expect(const AppSettings().browserExtension, isTrue);
     expect(AppSettings.fromJson(const {}).browserExtension, isTrue);
@@ -660,6 +776,44 @@ HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
     await tester.pump();
     expect(bridge.browsers.value, isEmpty);
     expect(find.text('None yet.'), findsOneWidget);
+
+    await tester.runAsync(bridge.dispose);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('Settings > Browser extension: says why when Windows refuses every port', variant: TargetPlatformVariant.only(TargetPlatform.windows), timeout: const Timeout(Duration(minutes: 1)), (tester) async {
+    tester.view.physicalSize = const Size(388, 2000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    BrowserBridge.launcher = _FakeLauncher();
+    addTearDown(() => BrowserBridge.launcher = const BrowserLauncher());
+
+    // Every port reserved (Hyper-V): 10013, "access forbidden".
+    final tried = <int>[];
+    final bridge = IoBrowserBridge(secrets: InMemorySecretStore(), clock: DateTime.now, ports: kBrowserBridgePorts, version: 'test', bind: (address, port) {
+      tried.add(port);
+      throw SocketException('Failed to create server socket',
+          osError: const OSError('An attempt was made to access a socket in a way forbidden by its access permissions.', 10013), address: address, port: port);
+    });
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(), browserBridge: bridge)))!;
+    await tester.runAsync(services.startBrowserBridge);
+    expect(tried, kBrowserBridgePorts, reason: 'every port was tried, in order');
+    expect(bridge.status.value.state, BrowserBridgeState.portBlocked);
+
+    await tester.pumpWidget(ProviderScope(
+      overrides: [servicesProvider.overrideWithValue(services)],
+      child: MaterialApp(
+        theme: buildTheme(Brightness.light, AccentChoice.neforum),
+        home: const Scaffold(body: SingleChildScrollView(child: BrowserExtensionSection())),
+      ),
+    ));
+    await tester.pump();
+
+    expect(find.text('Ports blocked'), findsOneWidget);
+    expect(find.textContaining('NEFORUM could not open ports 52772 to 52779 and 41772 to 41779: Windows refused them.'), findsOneWidget);
+    expect(find.textContaining('Hyper-V (used by WSL, Docker and Windows Sandbox)'), findsOneWidget);
+    expect(tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Pair a browser')).onPressed, isNull, reason: 'nothing to pair with');
 
     await tester.runAsync(bridge.dispose);
     await tester.pumpWidget(const SizedBox.shrink());

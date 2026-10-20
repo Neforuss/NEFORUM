@@ -25,7 +25,9 @@ void callbackDispatcher() {
     try {
       await NotificationService.instance.init();
       final services = await AppServices.create(demo: false);
+      await services.startCloudSync(background: true);
       await publishDueHeadless(services);
+      await services.cloudSync.syncNow();
       services.dispose();
       return true;
     } on Object catch (e) {
@@ -50,11 +52,13 @@ Future<void> _publishInBackground(String postId) async {
   try {
     await NotificationService.instance.init();
     final services = await AppServices.create(demo: false);
+    await services.startCloudSync(background: true);
     final post = await services.posts.get(postId);
-    if (post != null && post.status == PostStatus.scheduled) {
+    if (post != null && post.status == PostStatus.scheduled && await services.cloudSync.mayPublish(post)) {
       await fitPhotosOfSavedPost(services, postId);
       final done = await services.publisher().publish(postId, interactive: false, retryFailed: false);
       await announcePublishResult(services, done);
+      await services.cloudSync.syncNow();
     }
     services.dispose();
   } on Object catch (e) {
@@ -81,6 +85,7 @@ Future<void> main(List<String> args) async {
 
   await DesktopIntegration.instance.setCloseToTray(services.settings.minimizeToTray);
   unawaited(services.startBrowserBridge());
+  unawaited(services.startCloudSync());
 
   runApp(NeforumRoot(initial: services));
 }

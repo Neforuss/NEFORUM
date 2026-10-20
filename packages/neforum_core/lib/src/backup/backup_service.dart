@@ -184,7 +184,7 @@ class ImportCandidate {
   /// accounts (random ids) the same network and name.
   final ConnectedAccount? existing;
 
-  /// The network renews keys one device at a time ([PlatformAdapter.rotatesRefreshTokens]).
+  /// The network renews keys one device at a time ([PlatformAdapter.rotatesRefreshTokensFor]).
   final bool rotatesTokens;
 
   ImportChoice get defaultChoice => existing == null ? ImportChoice.add : (existing!.id == item.account.id ? ImportChoice.replace : ImportChoice.keep);
@@ -201,7 +201,7 @@ List<ImportCandidate> previewImport(BackupPayload payload, List<ConnectedAccount
         // Only accounts that hold keys (a hand-off account has none).
         rotatesTokens: item.account.tier != PlatformTier.handoff &&
             item.secrets.isNotEmpty &&
-            (registry?.byId(item.account.platformId)?.rotatesRefreshTokens ?? false),
+            (registry?.byId(item.account.platformId)?.rotatesRefreshTokensFor(item.account) ?? false),
       ),
   ];
 }

@@ -6,11 +6,16 @@
 const api = globalThis.browser ?? globalThis.chrome;
 
 /**
- * Ports the app may listen on, in the order it tries them. Tests set
+ * Ports the app may listen on, in the order it tries them (kBrowserBridgePorts
+ * in the app). The 4177x ports are for when Windows has reserved the 5277x
+ * ones (Hyper-V reserves blocks of ports from 49152 up). Tests set
  * NEFORUM_PORTS in their sandbox, so they don't meet a NEFORUM that is
  * running on this computer.
  */
-const PORTS = globalThis.NEFORUM_PORTS ?? [52772, 52773, 52774, 52775, 52776, 52777, 52778, 52779];
+const PORTS = globalThis.NEFORUM_PORTS ?? [
+  52772, 52773, 52774, 52775, 52776, 52777, 52778, 52779,
+  41772, 41773, 41774, 41775, 41776, 41777, 41778, 41779,
+];
 
 /** Raw bytes per media chunk sent to a content script (base64 makes it ~1 MB). */
 const CHUNK = 768 * 1024;

@@ -119,6 +119,21 @@ void main() {
       expect(spec.fields.firstWhere((f) => f.key == 'blog').required, isFalse);
       expect(adapter.specFor(PlatformTier.handoff).usesBrowser, isFalse);
     });
+
+    test('connect spec: optional OAuth 1.0a token pair from the API console', () {
+      final spec = adapter.specFor(PlatformTier.byokApi);
+      expect(spec.intro, contains('https://api.tumblr.com/console'));
+      expect(spec.intro, contains('several devices'));
+      for (final k in ['oauthToken', 'oauthTokenSecret']) {
+        final f = spec.fields.firstWhere((f) => f.key == k);
+        expect(f.secret, isTrue, reason: k);
+        expect(f.required, isFalse, reason: k);
+      }
+      // The app switches from browser sign-in to Connect when a secret
+      // "token" field is filled in.
+      expect(spec.fields.where((f) => f.secret && f.key.toLowerCase().contains('token')).map((f) => f.key),
+          ['oauthToken', 'oauthTokenSecret']);
+    });
   });
 
   group('connect', () {
@@ -783,6 +798,173 @@ void main() {
         adapter.cancelScheduled(held(), _account(), _secrets(), ctx),
         throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.network)),
       );
+    });
+  });
+
+  group('OAuth 1.0a keys', () {
+    const keyInput = {
+      'consumerKey': 'test-consumer-key',
+      'consumerSecret': 'test-consumer-secret',
+      'oauthToken': 'test-oauth-token',
+      'oauthTokenSecret': 'test-oauth-token-secret',
+    };
+    const keys = OAuth1Credentials(
+      consumerKey: 'test-consumer-key',
+      consumerSecret: 'test-consumer-secret',
+      token: 'test-oauth-token',
+      tokenSecret: 'test-oauth-token-secret',
+    );
+    final account = _account(config: const {
+      'authMode': 'oauth1',
+      'consumerKey': 'test-consumer-key',
+      'blogName': 'myblog',
+      'blogUuid': _uuid,
+    });
+    final keySecrets = keys.toSecrets();
+
+    /// The request carries a valid OAuth 1.0a signature of this test's keys
+    /// (recomputed from its own nonce), made at the context's clock. [form]
+    /// is the form body, the only body that is signed.
+    void expectSigned(http.Request r, {Map<String, String> form = const {}}) {
+      final header = r.headers['Authorization'];
+      expect(header, startsWith('OAuth '), reason: '${r.method} ${r.url}');
+      final p = OAuth1.parseAuthorization(header)!;
+      expect(p['oauth_consumer_key'], 'test-consumer-key');
+      expect(p['oauth_token'], 'test-oauth-token');
+      expect(p['oauth_signature_method'], 'HMAC-SHA1');
+      expect(p['oauth_version'], '1.0');
+      expect(p['oauth_timestamp'], '${testNow.millisecondsSinceEpoch ~/ 1000}');
+      expect(
+        header,
+        OAuth1.authorizationHeader(
+          method: r.method,
+          url: r.url,
+          consumerKey: keys.consumerKey,
+          consumerSecret: keys.consumerSecret,
+          token: keys.token,
+          tokenSecret: keys.tokenSecret,
+          form: form,
+          nonce: p['oauth_nonce']!,
+          timestamp: int.parse(p['oauth_timestamp']!),
+        ),
+        reason: 'signature of ${r.method} ${r.url}',
+      );
+    }
+
+    test('connect lists the blogs with a signed /v2/user/info, without a browser', () async {
+      final calls = <http.Request>[];
+      // No broker: a browser sign-in would throw.
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json(_userInfo());
+      });
+      final result = await adapter.connect(PlatformTier.byokApi, {...keyInput, 'blog': ''}, ctx);
+
+      final r = calls.single;
+      expect(r.method, 'GET');
+      expect(r.url.toString(), 'https://api.tumblr.com/v2/user/info');
+      expectSigned(r);
+
+      final a = result.account;
+      expect(a.id, 'tumblr:$_uuid', reason: 'the same account as a browser sign-in');
+      expect(a.handle, 'myblog');
+      expect(a.displayName, 'My Blog (myblog)');
+      expect(a.config['authMode'], 'oauth1');
+      expect(a.config['consumerKey'], 'test-consumer-key');
+      expect(a.config['blogUuid'], _uuid);
+      expect(a.config.containsKey('redirectUri'), isFalse);
+      expect(result.secrets, {
+        'oauth1_consumer_key': 'test-consumer-key',
+        'oauth1_consumer_secret': 'test-consumer-secret',
+        'oauth1_token': 'test-oauth-token',
+        'oauth1_token_secret': 'test-oauth-token-secret',
+      });
+      expect(adapter.rotatesRefreshTokensFor(a), isFalse);
+      expect(adapter.validate(const PostVariant(text: 'hi'), a).hasErrors, isFalse);
+    });
+
+    test('the blog field still picks a side blog', () async {
+      final ctx = testContext(handler: (r) async => _json(_userInfo()));
+      final result = await adapter.connect(PlatformTier.byokApi, {...keyInput, 'blog': 'sideblog.tumblr.com'}, ctx);
+      expect(result.account.id, 'tumblr:t:side999');
+    });
+
+    test('half a token pair names the missing field; refused keys mention the clock', () async {
+      final none = testContext(handler: (r) async => throw StateError('no HTTP expected'));
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, {...keyInput, 'oauthToken': ''}, none),
+        throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'oauthToken')),
+      );
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, {...keyInput, 'oauthTokenSecret': ' '}, none),
+        throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'oauthTokenSecret')),
+      );
+      final refused = testContext(handler: (r) async => _json({'meta': {'status': 401, 'msg': 'Unauthorized'}}, 401));
+      expect(
+        () => adapter.connect(PlatformTier.byokApi, keyInput, refused),
+        throwsA(isA<ConnectException>().having((e) => e.message, 'message', contains('date and time'))),
+      );
+    });
+
+    test('publish: JSON text post and multipart media post signed, nothing renewed', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        if (r.url.path == '/v2/oauth2/token') throw StateError('no token renewal expected');
+        return _created('42');
+      });
+      expect(await adapter.refreshSecrets(account, keySecrets, ctx), isNull);
+      final text = await adapter.publish(const PostVariant(text: 'Hello', tags: ['a']), account, keySecrets, ctx);
+      final media = await adapter.publish(PostVariant(text: 'Look', media: [fakeImage(), fakeVideo()]), account, keySecrets, ctx);
+      expect(text.success, isTrue, reason: '${text.error}');
+      expect(media.success, isTrue, reason: '${media.error}');
+
+      expect(calls, hasLength(2));
+      expect(calls.map((c) => c.url.toString()), everyElement('https://api.tumblr.com/v2/blog/t:AbCdEf123/posts'));
+      expect(calls[0].headers['content-type'], contains('application/json'));
+      expect(calls[1].headers['content-type'], startsWith('multipart/form-data; boundary='));
+      // JSON and multipart bodies are not part of the signature.
+      for (final c in calls) {
+        expectSigned(c);
+      }
+      expect(multipartFieldsOf(calls[1]).keys, ['json', 'media0', 'media1']);
+    });
+
+    test('a scheduled post goes to the queue signed, and its removal signs the form body', () async {
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        if (r.url.path.endsWith('/post/delete')) return _json({'meta': {'status': 200, 'msg': 'OK'}});
+        return _created('777');
+      });
+      final held = await adapter.publish(
+          PostVariant(text: 'Later', scheduledAt: testNow.add(const Duration(days: 1))), account, keySecrets, ctx);
+      expect(held.isHeldByPlatform, isTrue, reason: '${held.error}');
+      await adapter.cancelScheduled(held, account, keySecrets, ctx);
+
+      expect(_body(calls[0])['state'], 'queue');
+      expectSigned(calls[0]);
+      final delete = calls[1];
+      expect(delete.url.toString(), 'https://api.tumblr.com/v2/blog/t:AbCdEf123/post/delete');
+      expect(bodyOf(delete), {'id': '777'});
+      expectSigned(delete, form: const {'id': '777'});
+    });
+
+    test('missing keys: auth errors without a request', () async {
+      final ctx = testContext(handler: (r) async => throw StateError('no HTTP expected'));
+      final r = await adapter.publish(const PostVariant(text: 'x'), account, const {'oauth1_token': 't'}, ctx);
+      expect(r.error!.kind, PublishErrorKind.auth);
+      expect(r.error!.message, contains('four keys'));
+      await expectLater(
+        adapter.cancelScheduled(
+            PublishResult.scheduled(remoteId: '1', scheduledFor: testNow.add(const Duration(days: 1))), account, const {}, ctx),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)),
+      );
+    });
+
+    test('only OAuth 2 accounts rotate', () {
+      expect(adapter.rotatesRefreshTokensFor(_account()), isTrue);
+      expect(adapter.rotatesRefreshTokensFor(_account(tier: PlatformTier.handoff)), isFalse);
     });
   });
 

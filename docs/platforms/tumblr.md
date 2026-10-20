@@ -60,9 +60,30 @@ Before NEFORUM 1.0.4 the app asked Tumblr for `http://127.0.0.1:52771/callback` 
 
 ### Staying signed in
 
-A Tumblr sign-in lasts only 42 minutes. NEFORUM renews it automatically, and Tumblr hands out a new renewal key each time. If NEFORUM is not used for **42 days**, the renewal key expires and you need to click **Reconnect** once. The same happens if you remove the app's access on Tumblr.
+A Tumblr sign-in lasts only 42 minutes. NEFORUM renews it automatically, and Tumblr hands out a new renewal key each time. If NEFORUM is not used for **42 days**, the renewal key expires and you need to click **Reconnect** once. The same happens if you remove the app's access on Tumblr. Accounts connected with OAuth 1.0a keys (next section) are never renewed and don't expire.
 
-Your Secret Key is stored only in this device's secure storage, next to the sign-in. NEFORUM never sends it anywhere except to Tumblr's sign-in server.
+Your Secret Key is stored only in this device's secure storage, next to the sign-in. NEFORUM never sends it anywhere except to Tumblr.
+
+## Stay connected on several devices (OAuth 1.0a keys)
+
+**Why:** the browser sign-in above uses OAuth 2. NEFORUM renews it every 42 minutes, and Tumblr hands out a new renewal key each time and cancels the old one. When the same blog is on two devices (copied with **Settings → Move to another device**, or synced), the first device to renew cancels the other one's sign-in, and that device has to reconnect.
+
+Tumblr's API also accepts OAuth 1.0a: every route NEFORUM uses (listing your blogs, creating posts with photos and videos, queueing and deleting scheduled posts) requires "a signed request that meets the OAuth 1.0a Protocol" or OAuth 2. An OAuth 1.0a token and token secret are not renewed and don't change, so every device can use the same keys. Tumblr's API console shows them for your own app (as of October 2026):
+
+1. Register your Tumblr app as described above (steps 1 to 4).
+2. Signed in to Tumblr, open <https://api.tumblr.com/console>. It asks for a Consumer Key and Consumer Secret: paste your app's **OAuth Consumer Key** and **Secret Key** and click **Authenticate**.
+3. Tumblr asks whether your app may use your account. Click **Allow**; you come back to the console.
+4. Click **Show keys**. The console lists Consumer Key, Consumer Secret, **Token** and **Token Secret**. The code examples in the console show the same four values.
+5. In NEFORUM go to **Accounts > Add > Tumblr > Your own API keys**. Paste the OAuth Consumer Key and Secret Key as usual, then **Token** into **OAuth Token** and **Token Secret** into **OAuth Token Secret**. Fill in **Blog name** if you want a side blog, and click **Connect**. No browser sign-in opens: NEFORUM lists your blogs with the keys to check them. **Redirect URI (advanced)** is not used.
+6. On every other device, paste the same four keys, or copy the account with **Settings → Move to another device**. It stays connected on all of them.
+
+Good to know:
+
+- The token belongs to your Tumblr user and your app, not to one blog. The same four keys work for every NEFORUM account you add for your blogs.
+- To switch an account you already connected in the browser, connect it again with the keys. NEFORUM replaces the stored sign-in; your posts keep pointing to the account.
+- Every key request is signed with the current time. If a device's clock is off by more than a few minutes, Tumblr refuses the keys: set the clock right.
+- Anyone who has the four keys can post to your blogs. Treat them like a password. They stop working when you remove the app's access on Tumblr.
+- The token has to come from the console for the **same** app as the Consumer Key and Secret Key. Keys from two different apps are refused.
 
 ## Without API keys (hand-off)
 
@@ -139,6 +160,8 @@ NEFORUM opens the share sheet with your photos or video. Pick **Tumblr** (the An
 ## Sources
 
 - Tumblr API documentation (OAuth 2, rate limits, NPF post creation, error codes): <https://github.com/tumblr/docs/blob/master/api.md> (also <https://www.tumblr.com/docs/en/api/v2>)
+- OAuth 1.0a (HMAC-SHA1 in the `Authorization` header; the "OAuth" authentication level of `/user/info`, `/posts` and `/post/delete`): the "Authentication" section of <https://github.com/tumblr/docs/blob/master/api.md>
+- API console (Consumer Key and Consumer Secret, then **Authenticate**; **Show keys** lists Token and Token Secret): <https://api.tumblr.com/console>
 - Neue Post Format specification (blocks, 4,096 code points per text block, 30 images and 1 uploaded video per post): <https://github.com/tumblr/docs/blob/master/npf-spec.md>
 - Writing posts (524,288 characters per post): <https://help.tumblr.com/knowledge-base/writing-posts/>
 - Images and GIFs (20 MB, GIF 10 MB, RGB only, 30 images on the web): <https://help.tumblr.com/knowledge-base/image-gif-troubleshooting/>

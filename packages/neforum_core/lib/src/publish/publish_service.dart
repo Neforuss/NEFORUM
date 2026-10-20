@@ -21,6 +21,7 @@ import '../model/validation.dart';
 import '../quota/quota_tracker.dart';
 import '../storage/repositories.dart';
 import '../storage/secret_store.dart';
+import '../sync/secrets_coordinator.dart';
 import '../text/variant_resolver.dart';
 import '../util/logger.dart';
 
@@ -118,6 +119,7 @@ class PublishService {
     this.handoffLauncher,
     this.resolver = const VariantResolver(),
     this.options = const PublishOptions(),
+    this.secretsCoordinator,
     Clock? clock,
     Logger? log,
     Future<Uint8List> Function(MediaAttachment media)? readMedia,
@@ -142,6 +144,10 @@ class PublishService {
   final HandoffLauncher? handoffLauncher;
   final VariantResolver resolver;
   final PublishOptions options;
+
+  /// Renews sign-ins that several devices share through the sync file, for
+  /// accounts whose network rotates refresh tokens (the sync engine).
+  final SecretsCoordinator? secretsCoordinator;
   final Clock _now;
   final Logger _log;
   final Future<Uint8List> Function(MediaAttachment media)? _readMedia;
@@ -426,7 +432,10 @@ class PublishService {
       ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx) async {
     final secretMap = await secrets.read(account.id) ?? const <String, String>{};
     try {
-      final refreshed = await adapter.refreshSecrets(account, secretMap, ctx);
+      final coordinator = secretsCoordinator;
+      final refreshed = coordinator != null && adapter.rotatesRefreshTokensFor(account)
+          ? await coordinator.renew(account, secretMap, (s) => adapter.refreshSecrets(account, s, ctx))
+          : await adapter.refreshSecrets(account, secretMap, ctx);
       if (refreshed == null) return (secretMap, null);
       await secrets.write(account.id, refreshed);
       return (refreshed, null);

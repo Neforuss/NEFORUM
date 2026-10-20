@@ -9,8 +9,36 @@ import 'env.dart';
 /// Secret-store key holding the paired browsers (label, token, dates) as JSON.
 const String kBrowserSecretsKey = 'neforum.browser';
 
-/// Ports the bridge tries, in order (52771 is the OAuth loopback).
-const List<int> kBrowserBridgePorts = [52772, 52773, 52774, 52775, 52776, 52777, 52778, 52779];
+/// Ports the bridge tries, in order (52771 is the OAuth loopback); the
+/// extension (extensions/browser/src/background.js) looks on the same list.
+/// The 5277x ports come first, so existing setups keep working. They are in
+/// Windows' dynamic port range (49152 to 65535), where Hyper-V (WSL, Docker,
+/// Windows Sandbox) reserves random blocks of ports at startup; the
+/// [kBrowserBridgeFallbackPorts] are below that range, so they stay free when
+/// those are reserved.
+const List<int> kBrowserBridgePorts = [52772, 52773, 52774, 52775, 52776, 52777, 52778, 52779, ...kBrowserBridgeFallbackPorts];
+
+/// The ports tried when none of the 5277x ones can be opened. Extensions
+/// before 1.0.1 don't look on these.
+const List<int> kBrowserBridgeFallbackPorts = [41772, 41773, 41774, 41775, 41776, 41777, 41778, 41779];
+
+/// Only extensions from 1.0.1 on find the bridge on [port].
+bool isFallbackPort(int? port) => kBrowserBridgeFallbackPorts.contains(port);
+
+/// [ports] as runs of consecutive ports: "52772 to 52779 and 41772 to 41779".
+String describePorts(List<int> ports) {
+  final runs = <String>[];
+  for (var i = 0; i < ports.length;) {
+    var j = i;
+    while (j + 1 < ports.length && ports[j + 1] == ports[j] + 1) {
+      j++;
+    }
+    runs.add(i == j ? '${ports[i]}' : '${ports[i]} to ${ports[j]}');
+    i = j + 1;
+  }
+  if (runs.length < 2) return runs.join();
+  return '${runs.sublist(0, runs.length - 1).join(', ')} and ${runs.last}';
+}
 
 /// Version of extensions/browser/PROTOCOL.md this app speaks.
 const int kBrowserProtocolVersion = 1;
@@ -33,6 +61,11 @@ enum BrowserBridgeState {
 
   /// Every port of [kBrowserBridgePorts] is taken by another program.
   portBusy,
+
+  /// No port of [kBrowserBridgePorts] could be opened, and the system refused
+  /// at least one ("access forbidden": on Windows, error 10013, a port
+  /// reserved by Hyper-V or held exclusively by another program).
+  portBlocked,
 
   /// Web and phones: there is no extension to talk to.
   unsupported,

@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 /// Shown in the sidebar and Settings; keep in step with `version:` in
 /// pubspec.yaml (CI fails otherwise, see test/version_test.dart).
-const String kAppVersion = '1.0.7';
+const String kAppVersion = '1.0.8';
 
 /// NEFORUM's terms of service and privacy policy on neforus.com.
 const String kTermsUrl = 'https://neforus.com/neforum/terms/';

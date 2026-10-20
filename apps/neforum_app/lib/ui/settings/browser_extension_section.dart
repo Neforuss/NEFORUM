@@ -240,15 +240,25 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
   }
 
   static String? _statusText(BrowserBridgeStatus status, bool on) => switch (status.state) {
-        BrowserBridgeState.listening => 'Paired browsers can reach NEFORUM. Web pages cannot.',
-        BrowserBridgeState.portBusy => 'Ports ${kBrowserBridgePorts.first} to ${kBrowserBridgePorts.last} are all used by other programs. '
+        BrowserBridgeState.listening => isFallbackPort(status.port)
+            ? 'Paired browsers can reach NEFORUM. Web pages cannot. The usual ports (${describePorts([...kBrowserBridgePorts.where((p) => !isFallbackPort(p))])}) could not be opened, '
+                'so the extension finds NEFORUM only from version 1.0.1 on. If it says NEFORUM is not running, update it (see the guide).'
+            : 'Paired browsers can reach NEFORUM. Web pages cannot.',
+        BrowserBridgeState.portBusy => 'Ports ${describePorts(kBrowserBridgePorts)} are all used by other programs. '
             'Close one of them, then turn the extension off and on again.',
+        BrowserBridgeState.portBlocked => Env.isWindows
+            ? 'NEFORUM could not open ports ${describePorts(kBrowserBridgePorts)}: Windows refused them. '
+                'Windows may have reserved them for Hyper-V (used by WSL, Docker and Windows Sandbox), or other programs hold them. '
+                'Restarting the computer often frees them; then turn the extension off and on again. The guide has more.'
+            : 'NEFORUM could not open ports ${describePorts(kBrowserBridgePorts)}: the system refused them '
+                '(a firewall or security tool may block them), or other programs use them. Free one, then turn the extension off and on again.',
         _ => on ? 'Starting…' : 'Hand-offs work as before: copy, open, paste.',
       };
 
   static Widget _statusPill(BrowserBridgeStatus status) => switch (status.state) {
         BrowserBridgeState.listening => StatusPill('Listening on port ${status.port}', tone: Tone.success, icon: Icons.check_rounded, dense: false),
         BrowserBridgeState.portBusy => const StatusPill('Port busy', tone: Tone.warning, icon: Icons.warning_amber_rounded, dense: false),
+        BrowserBridgeState.portBlocked => const StatusPill('Ports blocked', tone: Tone.warning, icon: Icons.block_rounded, dense: false),
         _ => const StatusPill('Off', dense: false),
       };
 

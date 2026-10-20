@@ -99,6 +99,84 @@ Future<Uint8List> encryptBackup(Map<String, dynamic> payload, String passphrase,
 /// [minimum] is the cheapest key stretching accepted; tests pass
 /// [BackupKdfParams.testing].
 Future<Map<String, dynamic>> decryptBackup(Uint8List bytes, String passphrase, {BackupKdfParams minimum = BackupKdfParams.minimum}) async {
+  _checkEnvelope(bytes, minimum);
+  final d = ByteData.sublistView(bytes);
+  final params = BackupKdfParams(memoryKiB: d.getUint32(10, Endian.little), iterations: bytes[14], parallelism: bytes[15]);
+  final key = await _deriveKey(passphrase, Uint8List.sublistView(bytes, 16, 32), params);
+  return _openWith(bytes, key);
+}
+
+/// Encrypts and decrypts files in the backup format with the stretched key
+/// kept in memory, for a file that is read and written again and again (the
+/// sync file): key stretching runs once per salt, not on every sync. Writes
+/// reuse the salt of the file they replace (with a fresh nonce every time,
+/// as GCM requires), so every device keeps one cached key.
+class BackupCipher {
+  /// [derive] stretches the key (default [deriveBackupKey] on this thread);
+  /// apps pass one that runs it on a background isolate.
+  BackupCipher(this._passphrase,
+      {this.params = BackupKdfParams.standard,
+      this.minimum = BackupKdfParams.minimum,
+      Random? random,
+      Future<List<int>> Function(String passphrase, List<int> salt, BackupKdfParams params)? derive})
+      : _rng = random ?? Random.secure(),
+        _derive = derive ?? deriveBackupKey;
+
+  final String _passphrase;
+  final BackupKdfParams params;
+  final BackupKdfParams minimum;
+  final Random _rng;
+  final Future<List<int>> Function(String, List<int>, BackupKdfParams) _derive;
+  Uint8List? _salt;
+  BackupKdfParams? _saltParams;
+  SecretKey? _key;
+
+  /// The payload in [bytes] (see [decryptBackup] for the errors).
+  Future<Map<String, dynamic>> open(Uint8List bytes) async {
+    _checkEnvelope(bytes, minimum);
+    final d = ByteData.sublistView(bytes);
+    final p = BackupKdfParams(memoryKiB: d.getUint32(10, Endian.little), iterations: bytes[14], parallelism: bytes[15]);
+    final salt = Uint8List.fromList(Uint8List.sublistView(bytes, 16, 32));
+    final key = await _keyFor(salt, p);
+    return _openWith(bytes, key);
+  }
+
+  /// [payload] encrypted, with the salt of the last file opened (or a new one).
+  Future<Uint8List> seal(Map<String, dynamic> payload) async {
+    final salt = _salt ?? Uint8List.fromList(List.generate(16, (_) => _rng.nextInt(256)));
+    final p = _saltParams ?? params;
+    final key = await _keyFor(salt, p);
+    final nonce = Uint8List.fromList(List.generate(12, (_) => _rng.nextInt(256)));
+    final header = _header(p, salt, nonce);
+    final plain = GZipEncoder().encodeBytes(utf8.encode(jsonEncode(payload)));
+    final box = await AesGcm.with256bits().encrypt(plain, secretKey: key, nonce: nonce, aad: header);
+    return Uint8List.fromList([...header, ...box.cipherText, ...box.mac.bytes]);
+  }
+
+  Future<SecretKey> _keyFor(Uint8List salt, BackupKdfParams p) async {
+    final cached = _salt;
+    if (_key != null && cached != null && _sameBytes(cached, salt) && _saltParams?.memoryKiB == p.memoryKiB && _saltParams?.iterations == p.iterations) {
+      return _key!;
+    }
+    final key = SecretKey(await _derive(_passphrase, salt, p));
+    _salt = salt;
+    _saltParams = p;
+    _key = key;
+    return key;
+  }
+}
+
+bool _sameBytes(List<int> a, List<int> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
+/// Size, magic, version and cost checks shared by [decryptBackup] and
+/// [BackupCipher.open].
+void _checkEnvelope(Uint8List bytes, BackupKdfParams minimum) {
   if (bytes.length > BackupFormat.maxFileBytes) {
     throw const BackupException(BackupErrorKind.tooLarge, 'This file is too large to be a NEFORUM backup.');
   }
@@ -108,30 +186,26 @@ Future<Map<String, dynamic>> decryptBackup(Uint8List bytes, String passphrase, {
   if (bytes.length < BackupFormat.headerLength + BackupFormat.tagLength) {
     throw const BackupException(BackupErrorKind.wrongPassphraseOrDamaged, 'Wrong passphrase or damaged file.');
   }
-  final d = ByteData.sublistView(bytes);
   if (bytes[8] > BackupFormat.version) {
     throw const BackupException(BackupErrorKind.tooNew, 'This backup was made by a newer NEFORUM. Update NEFORUM here first.');
   }
   if (bytes[8] != BackupFormat.version || bytes[9] != BackupFormat.kdfArgon2id || bytes[32] != BackupFormat.aeadAesGcm) {
     throw const BackupException(BackupErrorKind.wrongPassphraseOrDamaged, 'Wrong passphrase or damaged file.');
   }
-  final params = BackupKdfParams(memoryKiB: d.getUint32(10, Endian.little), iterations: bytes[14], parallelism: bytes[15]);
   // A header claiming less work than any NEFORUM writes has been tampered
   // with; one claiming absurd work would stall the device.
-  if (params.memoryKiB < minimum.memoryKiB ||
-      params.iterations < minimum.iterations ||
-      params.parallelism < 1 ||
-      params.memoryKiB > 1024 * 1024 ||
-      params.iterations > 20 ||
-      params.parallelism > 8) {
+  final d = ByteData.sublistView(bytes);
+  final m = d.getUint32(10, Endian.little), t = bytes[14], par = bytes[15];
+  if (m < minimum.memoryKiB || t < minimum.iterations || par < 1 || m > 1024 * 1024 || t > 20 || par > 8) {
     throw const BackupException(BackupErrorKind.wrongPassphraseOrDamaged, 'Wrong passphrase or damaged file.');
   }
+}
+
+Future<Map<String, dynamic>> _openWith(Uint8List bytes, SecretKey key) async {
   final header = Uint8List.sublistView(bytes, 0, BackupFormat.headerLength);
-  final salt = Uint8List.sublistView(bytes, 16, 32);
   final nonce = Uint8List.sublistView(bytes, 33, 45);
   final cipherText = Uint8List.sublistView(bytes, BackupFormat.headerLength, bytes.length - BackupFormat.tagLength);
   final mac = Mac(Uint8List.sublistView(bytes, bytes.length - BackupFormat.tagLength));
-  final key = await _deriveKey(passphrase, salt, params);
   final List<int> plain;
   try {
     plain = await AesGcm.with256bits().decrypt(SecretBox(cipherText, nonce: nonce, mac: mac), secretKey: key, aad: header);
@@ -194,6 +268,11 @@ bool _startsWithMagic(Uint8List b) {
   }
   return true;
 }
+
+/// The 32-byte key for [passphrase] and [salt] (see [_deriveKey]), as plain
+/// bytes so it can come back from another isolate.
+Future<List<int>> deriveBackupKey(String passphrase, List<int> salt, BackupKdfParams params) async =>
+    (await _deriveKey(passphrase, salt, params)).extractBytes();
 
 /// Argon2id(passphrase as NFC UTF-8, salt, m, t, p) -> 32-byte key. A
 /// passphrase typed on different keyboards ("é" as one or two code points)

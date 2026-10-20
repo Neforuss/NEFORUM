@@ -5,8 +5,13 @@ The app is the server; the extension's background script is the only client.
 
 ## Transport
 
-- HTTP on **127.0.0.1** only, on the first free port of **52772 to 52779** (52771 is the OAuth
-  loopback). The extension finds the app by calling `GET /v1/hello` on each port in turn.
+- HTTP on **127.0.0.1** only, on the first port it can open of **52772 to 52779**, then
+  **41772 to 41779** (52771 is the OAuth loopback). The extension finds the app by calling
+  `GET /v1/hello` on each port in turn, in the same order (the port that answered last first).
+- Why two ranges: 52772-52779 lie in Windows' dynamic port range (49152-65535), where Hyper-V
+  (used by WSL, Docker and Windows Sandbox) reserves random blocks of ports at startup. Opening a
+  reserved port fails with "access forbidden" (error 10013), so the app moves on, and the 4177x
+  ports, below that range, are normally free. Extensions before 1.0.1 only look on 52772-52779.
 - JSON bodies (UTF-8), except media bytes.
 - **No CORS headers**, ever. Web pages therefore cannot read any response; the extension can,
   because its background script has host permission for `http://127.0.0.1/*`.

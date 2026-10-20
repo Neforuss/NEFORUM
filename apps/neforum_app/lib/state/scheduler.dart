@@ -54,6 +54,8 @@ class AppScheduler {
       final due = await _s.posts.due(DateTime.now());
       final out = <Post>[];
       for (final p in due) {
+        // With cloud sync, the device the post was scheduled on publishes it.
+        if (!await _s.cloudSync.mayPublish(p)) continue;
         await fitPhotosOfSavedPost(_s, p.id);
         final done = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false);
         out.add(done);
@@ -209,6 +211,7 @@ Future<void> announcePublishResult(AppServices s, Post p) async {
 Future<int> publishDueHeadless(AppServices s) async {
   final due = await s.posts.due(DateTime.now());
   for (final p in due) {
+    if (!await s.cloudSync.mayPublish(p)) continue;
     await fitPhotosOfSavedPost(s, p.id);
     final done = await s.publisher().publish(p.id, interactive: false, retryFailed: false);
     await announcePublishResult(s, done);

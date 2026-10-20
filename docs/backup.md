@@ -4,6 +4,8 @@ NEFORUM can put your accounts, their keys and your settings into **one encrypted
 
 You'll find it in **Settings > Data & privacy > Move to another device**.
 
+Want your devices to stay the same all the time instead of moving a file once? Use [Sync between devices](sync.md): one encrypted file in your OneDrive, Google Drive, Dropbox, iCloud Drive, Nextcloud, S3 bucket or other storage.
+
 ## What is in the file
 
 | Included | Default |
@@ -22,7 +24,7 @@ Settings that belong to one device stay there: starting at sign-in, keeping NEFO
 - **Copy:** both devices keep the accounts.
 - **Move:** after saving the file, the accounts are switched off on this device, so nothing posts twice. When the other device has imported them, open **Settings > Data & privacy** here and choose **Remove them here** (or **Use them here again** if you changed your mind).
 
-**X and Tumblr can stay connected on only one device.** Every time they renew a sign-in they invalidate the previous one, so after a Copy, whichever device renews first ends the other's connection. Reconnect them on the device that should keep them, or use Move.
+**X and Tumblr can stay connected on only one device.** Every time they renew a sign-in they invalidate the previous one, so after a Copy, whichever device renews first ends the other's connection. Reconnect them on the device that should keep them, or use Move. This does not apply to X and Tumblr accounts connected with OAuth 1.0a keys, which are never renewed: see "Stay connected on several devices" in the [X](platforms/x.md) and [Tumblr](platforms/tumblr.md) guides.
 
 ## The passphrase
 

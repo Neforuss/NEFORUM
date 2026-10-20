@@ -11,6 +11,7 @@ import '../platform/media_library.dart';
 import '../platform/secure_secret_store.dart';
 import '../platform/storage.dart';
 import '../platform/ui_bridge.dart';
+import 'cloud_sync.dart';
 import 'demo.dart';
 import 'media_host_config.dart';
 import 'settings.dart';
@@ -55,6 +56,9 @@ class AppServices {
 
   /// Demo workspace: simulated adapters, in-memory data.
   final bool demo;
+
+  /// The shared sync file (Settings > Sync); stays off in the demo.
+  late final CloudSync cloudSync;
 
   AppSettings _settings;
   AppSettings get settings => _settings;
@@ -117,6 +121,15 @@ class AppServices {
       demo: demo,
       settings: settings,
     );
+    services.cloudSync = CloudSync(
+      storage: st,
+      accounts: accounts,
+      posts: posts,
+      secrets: secrets,
+      http: services.http,
+      settings: () => services._settings,
+      saveSettings: services.saveSettings,
+    );
     await services._rebuildMediaHost();
     return services;
   }
@@ -131,6 +144,12 @@ class AppServices {
     await storage.writeJson('settings.json', s.toJson());
     if (hostChanged) await _rebuildMediaHost();
     if (bridgeChanged) await _syncBrowserBridge();
+    if (!demo) await cloudSync.settingsChanged();
+  }
+
+  /// Starts cloud sync when it is set up ([background]: one sync, no timers).
+  Future<void> startCloudSync({bool background = false}) async {
+    if (!demo) await cloudSync.start(background: background);
   }
 
   /// Starts the browser-extension bridge when this is a computer and the
@@ -176,6 +195,7 @@ class AppServices {
         browserFills: () => Env.isDesktop && browserBridge.canFill,
         resolver: VariantResolver(_settings.resolverOptions),
         options: _settings.publishOptions,
+        secretsCoordinator: cloudSync.active ? cloudSync : null,
         readMedia: media.read,
       );
 
@@ -208,6 +228,7 @@ class AppServices {
 
   void dispose() {
     _disposed = true;
+    cloudSync.dispose();
     unawaited(browserBridge.dispose());
     http.close();
   }

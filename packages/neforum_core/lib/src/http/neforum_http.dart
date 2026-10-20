@@ -9,6 +9,10 @@ import '../model/publish_result.dart';
 import '../util/logger.dart';
 import 'transient_stub.dart' if (dart.library.io) 'transient_io.dart';
 
+/// Headers computed afresh for each attempt of a request (see
+/// [NeforumHttp.send]).
+typedef HeaderSigner = Map<String, String> Function();
+
 const String neforumVersion = '0.1.0';
 const String defaultUserAgent = 'NEFORUM/$neforumVersion (+https://github.com/Neforuss/NEFORUM)';
 
@@ -119,44 +123,52 @@ class NeforumHttp {
 
   void close() => _client.close();
 
-  Future<NeforumResponse> get(Uri url, {Map<String, String>? headers, bool throwOnError = true}) =>
-      send('GET', url, headers: headers, throwOnError: throwOnError);
+  Future<NeforumResponse> get(Uri url,
+          {Map<String, String>? headers, HeaderSigner? signHeaders, bool throwOnError = true}) =>
+      send('GET', url, headers: headers, signHeaders: signHeaders, throwOnError: throwOnError);
 
-  Future<NeforumResponse> delete(Uri url, {Map<String, String>? headers, bool throwOnError = true}) =>
-      send('DELETE', url, headers: headers, throwOnError: throwOnError);
+  Future<NeforumResponse> delete(Uri url,
+          {Map<String, String>? headers, HeaderSigner? signHeaders, bool throwOnError = true}) =>
+      send('DELETE', url, headers: headers, signHeaders: signHeaders, throwOnError: throwOnError);
 
   Future<NeforumResponse> postJson(Uri url, Object? json,
-          {Map<String, String>? headers, bool throwOnError = true, String method = 'POST'}) =>
-      send(method, url, headers: headers, jsonBody: json, throwOnError: throwOnError);
+          {Map<String, String>? headers, HeaderSigner? signHeaders, bool throwOnError = true, String method = 'POST'}) =>
+      send(method, url, headers: headers, signHeaders: signHeaders, jsonBody: json, throwOnError: throwOnError);
 
   Future<NeforumResponse> postForm(Uri url, Map<String, String> form,
-          {Map<String, String>? headers, bool throwOnError = true, String method = 'POST'}) =>
-      send(method, url, headers: headers, form: form, throwOnError: throwOnError);
+          {Map<String, String>? headers, HeaderSigner? signHeaders, bool throwOnError = true, String method = 'POST'}) =>
+      send(method, url, headers: headers, signHeaders: signHeaders, form: form, throwOnError: throwOnError);
 
   Future<NeforumResponse> multipart(
     Uri url, {
     Map<String, String> fields = const {},
     List<HttpFilePart> files = const [],
     Map<String, String>? headers,
+    HeaderSigner? signHeaders,
     bool throwOnError = true,
     String method = 'POST',
   }) =>
-      send(method, url, headers: headers, fields: fields, files: files, throwOnError: throwOnError);
+      send(method, url,
+          headers: headers, signHeaders: signHeaders, fields: fields, files: files, throwOnError: throwOnError);
 
   /// Sends raw bytes (used for S3 presigned PUTs, chunked uploads, ...).
   Future<NeforumResponse> putBytes(Uri url, Uint8List bytes,
-          {Map<String, String>? headers, bool throwOnError = true, String method = 'PUT'}) =>
-      send(method, url, headers: headers, bytes: bytes, throwOnError: throwOnError);
+          {Map<String, String>? headers, HeaderSigner? signHeaders, bool throwOnError = true, String method = 'PUT'}) =>
+      send(method, url, headers: headers, signHeaders: signHeaders, bytes: bytes, throwOnError: throwOnError);
 
   Future<Uint8List> download(Uri url, {Map<String, String>? headers}) async {
     final r = await send('GET', url, headers: headers);
     return r.bodyBytes;
   }
 
+  /// [signHeaders] is called before every attempt, retries included, and its
+  /// headers go over [headers]: for signatures that must not be sent twice,
+  /// such as OAuth 1.0a's (X and Tumblr refuse a nonce they have seen).
   Future<NeforumResponse> send(
     String method,
     Uri url, {
     Map<String, String>? headers,
+    HeaderSigner? signHeaders,
     Object? jsonBody,
     Map<String, String>? form,
     Map<String, String>? fields,
@@ -181,7 +193,8 @@ class NeforumHttp {
     while (true) {
       attempt++;
       try {
-        final req = _build(method, url, headers, jsonBody, form, fields, files, bytes);
+        final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
+        final req = _build(method, url, attemptHeaders, jsonBody, form, fields, files, bytes);
         _log.debug('$method $url (attempt $attempt)');
         final streamed = await _client.send(req).timeout(effectiveTimeout);
         final res = await http.Response.fromStream(streamed).timeout(effectiveTimeout);

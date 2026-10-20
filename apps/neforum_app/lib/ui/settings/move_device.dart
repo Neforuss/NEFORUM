@@ -135,7 +135,7 @@ class _ExportDialogState extends ConsumerState<_ExportDialog> {
       for (final a in await s.accounts.all()) {
         if (a.tier == PlatformTier.handoff) continue;
         final adapter = s.registry.byId(a.platformId);
-        if (adapter != null && adapter.rotatesRefreshTokens) names.add(adapter.descriptor.name);
+        if (adapter != null && adapter.rotatesRefreshTokensFor(a)) names.add(adapter.descriptor.name);
       }
       if (mounted) setState(() => _rotating = names.toList()..sort());
     }();

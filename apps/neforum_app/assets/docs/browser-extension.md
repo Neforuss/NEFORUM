@@ -81,7 +81,7 @@ That's all. NEFORUM lists the paired browser, and you can remove it there at any
 
 ## How it stays private
 
-- The extension talks only to NEFORUM on your own computer (`127.0.0.1`, ports 52772 to 52779). Nothing goes to Neforus or anywhere else.
+- The extension talks only to NEFORUM on your own computer (`127.0.0.1`, ports 52772 to 52779, or 41772 to 41779 when those can't be used). Nothing goes to Neforus or anywhere else.
 - Only a paired browser can ask NEFORUM for anything; pairing needs the code shown in NEFORUM. Websites cannot read from NEFORUM: it refuses requests from web pages and sends no headers that would let a page read its answers.
 - NEFORUM hands over one post at a time, only after you click **Open**, and forgets it after 10 minutes.
 - The extension reads nothing from the sites except what it needs to find the composer and its Post button, and sends back only "filled in / partly / failed" (and "posted", after you posted with the key) so the hand-off can say how it went.
@@ -99,6 +99,17 @@ If the extension does not react at all:
 - In Firefox, make sure you clicked **Allow on supported sites**.
 - The hand-off waits 10 minutes. After that, click **Open** in NEFORUM again.
 
+## If the extension cannot find NEFORUM on Windows
+
+NEFORUM listens on one of ports 52772 to 52779. Those are in the range Windows hands out on its own (49152 to 65535), and Hyper-V, which WSL, Docker and Windows Sandbox use, reserves random blocks of that range each time Windows starts. When it has taken NEFORUM's ports, NEFORUM can't open them.
+
+NEFORUM now moves on to ports 41772 to 41779, below that range, so it keeps working. **Settings > Browser extension** shows the port it listens on. The extension only looks on those ports from **version 1.0.1**, so update it:
+
+- **Chrome, Edge, Brave, Opera**: after updating NEFORUM, open `chrome://extensions` and click the reload arrow on NEFORUM (if you loaded the `chrome` folder from **Show extension files**; if you copied it somewhere else, load the new folder instead). The card should say 1.0.1.
+- **Firefox**: load `manifest.json` from the new `firefox` folder again (see Install).
+
+If the status says **Ports blocked**, Windows refused every one of NEFORUM's ports. Restarting the computer usually changes which ports are reserved. To see the reserved ranges, run `netsh interface ipv4 show excludedportrange protocol=tcp` in a terminal.
+
 ## Publishing it in the stores (for the maintainer)
 
-`dart run tool/build_extension.dart` (in `apps/neforum_app`) builds both versions and writes upload-ready zips to `dist/`: `neforum-extension-chrome-<version>.zip` for the Chrome Web Store (a developer account costs a one-time US$5) and `neforum-extension-firefox-<version>.zip` for addons.mozilla.org (free; the add-on id is `neforum-extension@neforus.com`). Store review checks the permissions: the extension uses `storage`, `scripting`, `activeTab`, host access to `127.0.0.1`, and content scripts on the platforms listed above.
+`dart run tool/build_extension.dart` (in `apps/neforum_app`) builds both versions and writes upload-ready zips to `dist/`: `neforum-extension-chrome-<version>.zip` for the Chrome Web Store (a developer account costs a one-time US$5) and `neforum-extension-firefox-<version>.zip` for addons.mozilla.org (free; the add-on id is `neforum-extension@neforus.com`). Store review checks the permissions: the extension uses `storage`, `scripting`, `activeTab`, host access to `127.0.0.1` (any port: the match pattern `http://127.0.0.1/*` covers both port ranges), and content scripts on the platforms listed above.

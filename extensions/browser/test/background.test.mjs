@@ -1,15 +1,30 @@
 // Tests the extension's background script against a stand-in NEFORUM app
-// that follows ../PROTOCOL.md.   node --test extensions/browser/test
+// that follows ../PROTOCOL.md.   node --test extensions/browser/test/background.test.mjs
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-// Ports of their own (not 52772-52779), so a NEFORUM running on this computer is not in the way.
-// The stand-in listens on the last one, so discovery walks the list.
-const PORTS = [52790, 52791, 52792];
-const PORT = PORTS.at(-1);
+// Free ports of their own (found in `before`), so a NEFORUM running on this computer is not in
+// the way, and no fixed port can be reserved by Windows (Hyper-V). The stand-in listens on the
+// last one, so discovery walks the list.
+let PORTS = [];
+let PORT = 0;
+
+/** Ports nothing listens on right now, all different. */
+async function freePorts(n) {
+  const servers = [];
+  for (let i = 0; i < n; i++) {
+    const s = net.createServer();
+    await new Promise((r) => s.listen(0, '127.0.0.1', r));
+    servers.push(s);
+  }
+  const ports = servers.map((s) => s.address().port);
+  await Promise.all(servers.map((s) => new Promise((r) => s.close(r))));
+  return ports;
+}
 const TOKEN = 'tok_0123456789abcdefghijklmnopqrstuvwxyzABCD';
 const media = Buffer.alloc(2 * 1024 * 1024 + 123, 7); // > 2 chunks
 media[0] = 1;
@@ -91,8 +106,20 @@ function loadBackground() {
   return { store, send, listeners };
 }
 
-before(() => new Promise((r) => server.listen(PORT, '127.0.0.1', r)));
+before(async () => {
+  PORTS = await freePorts(3);
+  PORT = PORTS.at(-1);
+  await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
+});
 after(() => new Promise((r) => server.close(r)));
+
+test('ports: the app\'s list, the 5277x ports first, then the 4177x ones below Windows\' dynamic range', () => {
+  const sandbox = { module: { exports: {} }, chrome: { storage: { local: {} }, runtime: { onMessage: { addListener() {} }, onConnect: { addListener() {} } } }, btoa, navigator: { userAgent: '' } };
+  vm.runInNewContext(readFileSync(new URL('../src/background.js', import.meta.url), 'utf8'), sandbox);
+  const range = (from, n) => Array.from({ length: n }, (_, i) => from + i);
+  assert.deepEqual([...sandbox.module.exports.PORTS], [...range(52772, 8), ...range(41772, 8)]);
+  assert.ok(sandbox.module.exports.PORTS.slice(8).every((p) => p < 49152), 'outside 49152-65535, where Hyper-V reserves ports');
+});
 
 test('pairing, status, job, media in chunks, result, and a revoked token', async () => {
   const bg = loadBackground();

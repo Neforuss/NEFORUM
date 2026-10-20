@@ -3,7 +3,7 @@
 Fills in NEFORUM hand-offs on the platforms' websites (Chrome and Firefox, Manifest V3). User guide: [docs/browser-extension.md](../../docs/browser-extension.md). App protocol: [PROTOCOL.md](PROTOCOL.md).
 
 ```
-src/background.js        talks to the NEFORUM app on 127.0.0.1 (pairing, jobs, media in chunks)
+src/background.js        talks to the NEFORUM app on 127.0.0.1, ports 52772-52779 then 41772-41779 (pairing, jobs, media in chunks)
 src/content/fill.js      puts text into any editor (React inputs, Draft.js, Lexical, ProseMirror) and files into inputs, pastes, drops
 src/content/recipes.js   per-platform steps (open the composer, media first or not, where the caption is)
 src/content/panel.js     the in-page panel (shadow DOM)
@@ -23,7 +23,7 @@ Icons come from `tool/generate_icons.dart` (same geometry as the app icon).
 
 ## Tests
 
-- `node --test extensions/browser/test/background.test.mjs`: the background script against a stand-in app that follows PROTOCOL.md (discovery, pairing, jobs, chunked media, revoked tokens).
+- `node --test extensions/browser/test/background.test.mjs`: the background script against a stand-in app that follows PROTOCOL.md (the port list, discovery, pairing, jobs, chunked media, revoked tokens). The stand-in uses free ports of its own, never the real ones. `PORTS` must stay the same as `kBrowserBridgePorts` in the app (`apps/neforum_app/lib/platform/browser_bridge.dart`); the app's `test/browser_bridge_test.dart` checks that.
 - `test/pages/editors.html` and `test/pages/composer.html`: serve this folder (`python -m http.server 8791 --directory extensions/browser`) and run `fill.js` / the whole content flow against real Draft.js, Lexical and ProseMirror editors, a React-controlled textarea, file inputs, paste and drop targets.
 - `test/pages/post.html`: the real content scripts with a stand-in background (`harness.js`), for the Post shortcut. Serve this folder (`node tool/serve_web.js 8766 extensions/browser` from the repository root), open `http://127.0.0.1:8766/test/pages/post.html`, and press Ctrl+Enter yourself (a script's key press must not post). It has a decoy Post button and a search box that must be left alone, a Post button greyed out during an "upload", and `?next=1` (a Next screen first, with `?p=facebook`), `?inline=1` (the composer empties instead of closing), `?qp=0` (posting not allowed), `?pref=0` (opened in the other browser: nothing happens). `window.__results` has what was reported.
 - `test/pages/blocks.html?p=tumblr`: a Tumblr-like editor where every paragraph is its own editable block and a paste turns into new blocks a moment later. The text must go in exactly once (`window.postText()`), also after **Fill in again**.

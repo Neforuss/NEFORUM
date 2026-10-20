@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:uuid/uuid.dart';
 
 import '../../auth/auth_broker.dart';
+import '../../auth/oauth1.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
@@ -23,8 +24,16 @@ import '../platform_adapter.dart';
 import 'tumblr_api.dart';
 
 /// Tumblr: posts Neue Post Format (NPF) posts to one of the user's blogs
-/// through their own registered Tumblr app (OAuth 2, consumer key + secret),
-/// or hands the post to Tumblr's share tool / app.
+/// through their own registered Tumblr app, or hands the post to Tumblr's
+/// share tool / app.
+///
+/// The API tier signs in one of two ways with the app's consumer key and
+/// secret: OAuth 2 in the browser (a 42-minute token renewed with a refresh
+/// token that Tumblr replaces each time, so only one device stays
+/// connected), or, when the user also pastes an OAuth 1.0a token and token
+/// secret (shown by Tumblr's API console), OAuth 1.0a signatures. Those
+/// keys never expire, so the account works on every device at once. Both
+/// give the same account id.
 class TumblrAdapter extends PlatformAdapter {
   TumblrAdapter();
 
@@ -37,8 +46,19 @@ class TumblrAdapter extends PlatformAdapter {
   static const cfgBlogNames = 'blogNames';
   static const cfgRedirectUri = 'redirectUri';
 
-  // Secret keys (besides OAuthTokens' own).
+  /// How the account signs its API calls: [authOAuth1] or [authOAuth2].
+  /// Accounts connected before OAuth 1.0a was offered have no value, which
+  /// means OAuth 2.
+  static const cfgAuthMode = 'authMode';
+  static const authOAuth1 = 'oauth1';
+  static const authOAuth2 = 'oauth2';
+
+  // Secret keys (besides OAuthTokens' own; OAuth 1.0a accounts store
+  // OAuth1Credentials' keys instead).
   static const secretConsumerSecret = 'consumer_secret';
+
+  /// True when [account] signs with OAuth 1.0a keys.
+  static bool usesOAuth1(ConnectedAccount account) => account.configString(cfgAuthMode) == authOAuth1;
 
   /// Animated GIFs: 10 MB (Help Center "Image and GIF troubleshooting").
   static const int gifMaxBytes = 10 * 1024 * 1024;
@@ -103,9 +123,15 @@ class TumblrAdapter extends PlatformAdapter {
     supportsLinkField: true,
   );
 
-  /// Every refresh returns a new refresh token and invalidates the old one.
+  /// Every OAuth 2 refresh returns a new refresh token and invalidates the
+  /// old one.
   @override
   bool get rotatesRefreshTokens => true;
+
+  /// OAuth 1.0a keys are never renewed, so only OAuth 2 accounts rotate.
+  @override
+  bool rotatesRefreshTokensFor(ConnectedAccount account) =>
+      account.tier == PlatformTier.byokApi && !usesOAuth1(account);
 
   @override
   PlatformDescriptor get descriptor => tumblrDescriptor;
@@ -119,8 +145,9 @@ class TumblrAdapter extends PlatformAdapter {
           usesBrowser: true,
           loopbackRedirectOk: true,
           customSchemeRedirectOk: true,
-          redirectNote: 'Under "OAuth2 redirect URLs" register `http://localhost:52771/callback` (computer) and '
-              '`neforum://callback/` (phone, with the trailing slash), separated by a space.',
+          redirectNote: 'Only for browser sign-in (not needed when you paste the OAuth Token and Token Secret): under '
+              '"OAuth2 redirect URLs" register `http://localhost:52771/callback` (computer) and `neforum://callback/` '
+              '(phone, with the trailing slash), separated by a space.',
           intro: _byokIntro,
           fields: [
             ConnectField(
@@ -135,6 +162,25 @@ class TumblrAdapter extends PlatformAdapter {
               kind: FieldKind.password,
               secret: true,
               help: 'Same page, click "Show secret key" and copy it. It stays on this device.',
+            ),
+            // Secret fields whose key contains "token" switch the app's form
+            // from browser sign-in to Connect as soon as one is filled in.
+            ConnectField(
+              key: 'oauthToken',
+              label: 'OAuth Token',
+              kind: FieldKind.password,
+              required: false,
+              secret: true,
+              help: 'Only to stay connected on several devices: from <https://api.tumblr.com/console> after '
+                  '**Authenticate** with the two keys above (see the steps at the top). Leave both token fields '
+                  'empty to sign in with the browser.',
+            ),
+            ConnectField(
+              key: 'oauthTokenSecret',
+              label: 'OAuth Token Secret',
+              kind: FieldKind.password,
+              required: false,
+              secret: true,
             ),
             ConnectField(
               key: 'blog',
@@ -176,7 +222,12 @@ class TumblrAdapter extends PlatformAdapter {
 4. As **OAuth2 redirect URLs** enter `http://localhost:52771/callback neforum://callback/` (two addresses separated by a space; keep the slash at the end of the second one). Save.
 5. Copy the **OAuth Consumer Key** and, after clicking **Show secret key**, the **Secret Key** into the fields below. Leave "Redirect URI" empty. Click Connect and allow access in the browser.
 
-Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("The url's domain is not valid").''';
+Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("The url's domain is not valid").
+
+**To stay connected on several devices**, also fill in the OAuth Token and Token Secret. The browser sign-in is renewed every 42 minutes and Tumblr ends the previous one each time, so it stays connected on only one device; these OAuth 1.0a keys never expire.
+
+1. Open <https://api.tumblr.com/console>, enter the same Consumer Key and Secret Key and click **Authenticate**, then **Allow**.
+2. The console shows the keys (**Show keys**, and the code examples): copy **Token** and **Token Secret** into the fields below and click **Connect**. No browser sign-in needed.''';
 
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
@@ -199,6 +250,23 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     if (key.isEmpty) throw const ConnectException('Enter the OAuth Consumer Key of your Tumblr app', field: 'consumerKey');
     if (secret.isEmpty) throw const ConnectException('Enter the Secret Key of your Tumblr app', field: 'consumerSecret');
 
+    final token = (input['oauthToken'] ?? '').trim();
+    final tokenSecret = (input['oauthTokenSecret'] ?? '').trim();
+    if (token.isNotEmpty || tokenSecret.isNotEmpty) {
+      // One of the pair is a mistake worth naming, not a reason to open the
+      // browser.
+      if (token.isEmpty) {
+        throw const ConnectException('Paste the OAuth Token too, or clear the Token Secret to sign in with the browser',
+            field: 'oauthToken');
+      }
+      if (tokenSecret.isEmpty) {
+        throw const ConnectException('Paste the OAuth Token Secret too, or clear the Token to sign in with the browser',
+            field: 'oauthTokenSecret');
+      }
+      final keys = OAuth1Credentials(consumerKey: key, consumerSecret: secret, token: token, tokenSecret: tokenSecret);
+      return _connectOAuth1(keys, input['blog'] ?? '', ctx);
+    }
+
     final AuthBroker broker;
     try {
       broker = ctx.requireBroker();
@@ -220,16 +288,63 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
 
     final Map<String, dynamic> user;
     try {
-      final res = await ctx.http.get(TumblrApi.userInfoEndpoint, headers: _bearer(tokens.accessToken));
-      final response = res.jsonMap['response'];
-      final u = response is Map ? response['user'] : null;
-      user = u is Map ? Map<String, dynamic>.from(u) : const {};
+      user = _userOf(await ctx.http.get(TumblrApi.userInfoEndpoint, headers: _bearer(tokens.accessToken)));
     } on HttpFailure catch (e) {
       throw ConnectException('Signed in, but Tumblr refused to list your blogs (HTTP ${e.statusCode}). Try again.');
     }
+    return _connected(
+      user,
+      input['blog'] ?? '',
+      key,
+      ctx,
+      config: {cfgAuthMode: authOAuth2, cfgRedirectUri: redirect.toString()},
+      secrets: tokens.toSecrets({secretConsumerSecret: secret}),
+    );
+  }
+
+  /// Checks pasted OAuth 1.0a keys by listing the user's blogs with them
+  /// (`GET /v2/user/info`, signed), then builds the same account the
+  /// browser sign-in would.
+  Future<ConnectResult> _connectOAuth1(OAuth1Credentials keys, String wantedBlog, AdapterContext ctx) async {
+    final signer = OAuth1Signer(keys, clock: ctx.now);
+    final url = TumblrApi.userInfoEndpoint;
+    final Map<String, dynamic> user;
+    try {
+      user = _userOf(await ctx.http.get(url, headers: const {'Accept': 'application/json'}, signHeaders: () => signer.headers('GET', url)));
+    } on HttpFailure catch (e) {
+      final detail = TumblrApi.errorText(e.response.jsonMap);
+      final said = detail == null ? '' : ' Tumblr said: "$detail".';
+      if (e.statusCode == 401) {
+        throw ConnectException('Tumblr did not accept the keys.$said The OAuth Token and Token Secret must come from '
+            'the API console for this same app (same Consumer Key and Secret Key): copy all four again. Also check '
+            'that this device\'s date and time are right; Tumblr refuses signed requests from a clock that is off.');
+      }
+      throw ConnectException('Tumblr refused to list your blogs with these keys (HTTP ${e.statusCode}).$said Try again.');
+    }
+    return _connected(user, wantedBlog, keys.consumerKey, ctx, config: {cfgAuthMode: authOAuth1}, secrets: keys.toSecrets());
+  }
+
+  /// The `user` object of a `/v2/user/info` response.
+  static Map<String, dynamic> _userOf(NeforumResponse res) {
+    final response = res.jsonMap['response'];
+    final u = response is Map ? response['user'] : null;
+    return u is Map ? Map<String, dynamic>.from(u) : const {};
+  }
+
+  /// The account for the blog [wantedBlog] (or the main blog) of [user],
+  /// with the sign-in's own [config] entries and [secrets]. Its id depends
+  /// only on the blog, so either sign-in gives the same account.
+  ConnectResult _connected(
+    Map<String, dynamic> user,
+    String wantedBlog,
+    String consumerKey,
+    AdapterContext ctx, {
+    required Map<String, Object> config,
+    required Map<String, String> secrets,
+  }) {
     final blogs = _blogs(user);
     if (blogs.isEmpty) throw const ConnectException('Your Tumblr account has no blogs to post to');
-    final blog = _pickBlog(blogs, input['blog'] ?? '');
+    final blog = _pickBlog(blogs, wantedBlog);
 
     final userName = user['name'] as String? ?? '';
     final title = blog.title.trim();
@@ -244,16 +359,16 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
         profileUrl: blog.url.isNotEmpty ? blog.url : 'https://${blog.name}.tumblr.com/',
         createdAt: ctx.now(),
         config: {
-          cfgConsumerKey: key,
+          cfgConsumerKey: consumerKey,
           cfgBlogName: blog.name,
           if (blog.uuid.isNotEmpty) cfgBlogUuid: blog.uuid,
           if (blog.url.isNotEmpty) cfgBlogUrl: blog.url,
           if (userName.isNotEmpty) cfgUserName: userName,
           cfgBlogNames: [for (final b in blogs) b.name],
-          cfgRedirectUri: redirect.toString(),
+          ...config,
         },
       ),
-      secrets: tokens.toSecrets({secretConsumerSecret: secret}),
+      secrets: secrets,
     );
   }
 
@@ -364,7 +479,9 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
-    if (account.tier != PlatformTier.byokApi) return null;
+    // OAuth 1.0a keys never expire: nothing to renew, and nothing that could
+    // end the connection on another device.
+    if (account.tier != PlatformTier.byokApi || usesOAuth1(account)) return null;
     final tokens = OAuthTokens.fromSecrets(secrets);
     if (tokens == null) throw const AdapterException(PublishError.auth(_reconnectMessage));
     if (!tokens.isExpired(now: ctx.now())) return null;
@@ -393,6 +510,25 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
   static const String _expiredMessage =
       'Your Tumblr sign-in has expired (unused for 42 days or revoked). Reconnect Tumblr in Accounts.';
   static const String _reconnectMessage = 'Tumblr is not signed in. Reconnect Tumblr in Accounts.';
+  static const String _keysMissingMessage =
+      'The Tumblr keys of this account are missing. Reconnect Tumblr in Accounts and paste the four keys again.';
+
+  /// How [account]'s API calls are authorized: its OAuth 1.0a keys, or its
+  /// OAuth 2 token as a Bearer header. Throws [AdapterException] (auth) when
+  /// they are not stored or the token has run out.
+  static _TumblrAuth _authFor(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) {
+    if (usesOAuth1(account)) {
+      final keys = OAuth1Credentials.fromSecrets(secrets);
+      if (keys == null) throw const AdapterException(PublishError.auth(_keysMissingMessage));
+      return _TumblrAuth.oauth1(OAuth1Signer(keys, clock: ctx.now));
+    }
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    if (tokens == null) throw const AdapterException(PublishError.auth(_reconnectMessage));
+    if (tokens.isExpired(now: ctx.now(), leeway: Duration.zero)) {
+      throw const AdapterException(PublishError.auth(_expiredMessage));
+    }
+    return _TumblrAuth.bearer(tokens.accessToken);
+  }
 
   // ------------------------------------------------------------ validate
 
@@ -542,11 +678,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       return PublishResult.failure(
           const PublishError.unsupported('Hand-off Tumblr accounts are posted through the composer or share sheet'));
     }
-    final tokens = OAuthTokens.fromSecrets(secrets);
-    if (tokens == null) return PublishResult.failure(const PublishError.auth(_reconnectMessage));
-    if (tokens.isExpired(now: ctx.now(), leeway: Duration.zero)) {
-      return PublishResult.failure(const PublishError.auth(_expiredMessage));
-    }
+    final auth = _authFor(account, secrets, ctx);
     final blogName = account.configString(cfgBlogName);
     final blogId = account.configString(cfgBlogUuid, blogName);
     if (blogId.isEmpty) {
@@ -590,16 +722,17 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     };
 
     final url = TumblrApi.postsEndpoint(blogId);
-    final headers = {..._bearer(tokens.accessToken), 'Accept': 'application/json'};
+    final headers = {...auth.headers, 'Accept': 'application/json'};
     final NeforumResponse res;
+    // JSON and multipart bodies are not part of an OAuth 1.0a signature.
     if (uploads.isEmpty) {
       ctx.progress('Publishing to Tumblr');
-      res = await ctx.http.postJson(url, body, headers: headers);
+      res = await ctx.http.postJson(url, body, headers: headers, signHeaders: auth.signer('POST', url));
     } else {
       ctx.progress('Uploading ${uploads.length} file${uploads.length == 1 ? '' : 's'} to Tumblr');
       final mp = TumblrApi.multipart(body, uploads);
       res = await ctx.http.putBytes(url, mp.body,
-          method: 'POST', headers: {...headers, 'Content-Type': mp.contentType});
+          method: 'POST', headers: {...headers, 'Content-Type': mp.contentType}, signHeaders: auth.signer('POST', url));
     }
 
     final postId = TumblrApi.createdId(res);
@@ -769,16 +902,16 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     if (blogId.isEmpty) {
       throw const AdapterException(PublishError.configuration('No Tumblr blog selected; reconnect Tumblr'));
     }
-    final tokens = OAuthTokens.fromSecrets(secrets);
-    if (tokens == null) throw const AdapterException(PublishError.auth(_reconnectMessage));
-    if (tokens.isExpired(now: ctx.now(), leeway: Duration.zero)) {
-      throw const AdapterException(PublishError.auth(_expiredMessage));
-    }
+    final auth = _authFor(account, secrets, ctx);
+    final url = TumblrApi.deleteEndpoint(blogId);
+    final form = {'id': postId};
     try {
       await ctx.http.postForm(
-        TumblrApi.deleteEndpoint(blogId),
-        {'id': postId},
-        headers: {..._bearer(tokens.accessToken), 'Accept': 'application/json'},
+        url,
+        form,
+        headers: {...auth.headers, 'Accept': 'application/json'},
+        // A form body IS part of an OAuth 1.0a signature.
+        signHeaders: auth.signer('POST', url, form: form),
       );
     } on HttpFailure catch (e) {
       if (e.statusCode != 404) throw AdapterException(TumblrApi.mapFailure(e, 'Removing the scheduled Tumblr post'));
@@ -1171,6 +1304,29 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       composerUrl: composerFor(variant),
       composerInstructions: _composerSteps(variant),
     );
+  }
+}
+
+/// Authorizes Tumblr API calls with a Bearer token (OAuth 2) or with OAuth
+/// 1.0a signatures. A signature covers the query and a form body, never
+/// JSON or multipart, and is made afresh for every attempt (Tumblr refuses
+/// a nonce it has seen).
+class _TumblrAuth {
+  _TumblrAuth.bearer(String token)
+      : headers = {'Authorization': 'Bearer $token'},
+        _signer = null;
+  _TumblrAuth.oauth1(OAuth1Signer signer)
+      : headers = const {},
+        _signer = signer;
+
+  /// Static headers: the Bearer token, or none when requests are signed.
+  final Map<String, String> headers;
+  final OAuth1Signer? _signer;
+
+  /// The per-attempt signature for one request, or null for Bearer.
+  HeaderSigner? signer(String method, Uri url, {Map<String, String> form = const {}}) {
+    final s = _signer;
+    return s == null ? null : () => s.headers(method, url, form: form);
   }
 }
 

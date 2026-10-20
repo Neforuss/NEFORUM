@@ -51,6 +51,11 @@ abstract class PlatformAdapter {
   /// connected on only one of them: whichever renews first. Export warns.
   bool get rotatesRefreshTokens => false;
 
+  /// [rotatesRefreshTokens] for one account: on X and Tumblr an account
+  /// connected with OAuth 1.0a keys never renews anything, so it can live on
+  /// several devices. Ask this, not the getter, when an account is at hand.
+  bool rotatesRefreshTokensFor(ConnectedAccount account) => rotatesRefreshTokens;
+
   /// The photos this platform takes through [account] for [variant], as rules a photo can be
   /// changed to meet (shape, file type, size, pixels). The app makes a fitted
   /// copy of a photo that breaks them, for this platform only, instead of

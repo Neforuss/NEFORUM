@@ -39,6 +39,7 @@ class NeforumRootState extends State<NeforumRoot> {
     // Hand the browser extension's port over to the new workspace.
     await old.browserBridge.stop();
     unawaited(next.startBrowserBridge());
+    unawaited(next.startCloudSync());
     setState(() {
       _services = next;
       _switching = false;

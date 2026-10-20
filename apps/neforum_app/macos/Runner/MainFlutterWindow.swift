@@ -6,6 +6,14 @@ class MainFlutterWindow: NSWindow {
   /// web composer (lib/platform/clipboard_media.dart).
   private var clipboardChannel: FlutterMethodChannel?
 
+  /// "neforum/bookmarks": keeps the sync folder the user picked reachable
+  /// after a restart, through a security-scoped bookmark
+  /// (lib/platform/folder_access.dart).
+  private var bookmarksChannel: FlutterMethodChannel?
+
+  /// Folders reopened from a bookmark stay open until NEFORUM quits.
+  private static var openFolders: [URL] = []
+
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
@@ -29,7 +37,53 @@ class MainFlutterWindow: NSWindow {
     }
     clipboardChannel = channel
 
+    let bookmarks = FlutterMethodChannel(
+      name: "neforum/bookmarks", binaryMessenger: flutterViewController.engine.binaryMessenger)
+    bookmarks.setMethodCallHandler { call, result in
+      guard let args = call.arguments as? [String: Any] else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      switch call.method {
+      case "save":
+        result(MainFlutterWindow.saveBookmark(args["path"] as? String))
+      case "open":
+        result(MainFlutterWindow.openBookmark(args["bookmark"] as? String))
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    bookmarksChannel = bookmarks
+
     super.awakeFromNib()
+  }
+
+  /// A security-scoped bookmark of the folder at `path`, base64.
+  private static func saveBookmark(_ path: String?) -> String? {
+    guard let path = path else { return nil }
+    do {
+      let data = try URL(fileURLWithPath: path, isDirectory: true).bookmarkData(
+        options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+      return data.base64EncodedString()
+    } catch {
+      return nil
+    }
+  }
+
+  /// Resolves a bookmark from `saveBookmark` and opens the folder; returns
+  /// its path.
+  private static func openBookmark(_ bookmark: String?) -> String? {
+    guard let bookmark = bookmark, let data = Data(base64Encoded: bookmark) else { return nil }
+    var stale = false
+    do {
+      let url = try URL(
+        resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &stale)
+      guard url.startAccessingSecurityScopedResource() else { return nil }
+      openFolders.append(url)
+      return url.path
+    } catch {
+      return nil
+    }
   }
 
   /// What a paste into the composer can attach: copied files (Finder), else a

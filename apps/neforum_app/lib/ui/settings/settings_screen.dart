@@ -28,6 +28,7 @@ import 'browser_extension_section.dart';
 import 'media_host_section.dart';
 import 'move_device.dart';
 import 'setting_row.dart';
+import 'sync_section.dart';
 
 /// Settings, grouped into sections with a table of contents on wide screens.
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -54,6 +55,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       if (Env.isDesktop) ('Desktop', Icons.desktop_windows_outlined, const _Desktop()),
       if (Env.isDesktop) ('Browser extension', Icons.extension_outlined, const BrowserExtensionSection()),
       ('Notifications', Icons.notifications_none_rounded, const _Notifications()),
+      ('Sync', Icons.sync_rounded, const SyncSection()),
       ('Workspace', Icons.science_outlined, const _Workspace()),
       ('Data & privacy', Icons.shield_outlined, const _Data()),
       ('About', Icons.info_outline_rounded, const _About()),
@@ -588,7 +590,8 @@ class _DataState extends ConsumerState<_Data> {
     return SettingsSection(title: 'Data & privacy', icon: Icons.shield_outlined, children: [
       SettingRow(
         title: 'Everything stays on this device',
-        description: 'NEFORUM has no server, no account and no analytics. Your keys and tokens live in the system keychain. Posts go straight from this device to each network.',
+        description: 'NEFORUM has no server, no account and no analytics. Your keys and tokens live in the system keychain. Posts go straight from this device to each network. '
+            'With Sync on, one encrypted file also sits in the storage you chose.',
       ),
       SettingRow(
         title: 'Data folder',

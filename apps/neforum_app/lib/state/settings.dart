@@ -40,6 +40,8 @@ class AppSettings {
     this.captionPhotoPlatforms = const [],
     this.movedAccountIds = const [],
     this.movedAt,
+    this.syncProviderId,
+    this.syncConfig = const {},
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -75,6 +77,8 @@ class AppSettings {
         captionPhotoPlatforms: (j['captionPhotoPlatforms'] as List? ?? const []).cast<String>(),
         movedAccountIds: (j['movedAccountIds'] as List? ?? const []).cast<String>(),
         movedAt: DateTime.tryParse('${j['movedAt'] ?? ''}'),
+        syncProviderId: j['syncProviderId'] as String?,
+        syncConfig: Map<String, String>.from(j['syncConfig'] as Map? ?? const {}),
       );
 
   final ThemeMode themeMode;
@@ -165,6 +169,18 @@ class AppSettings {
   final List<String> movedAccountIds;
   final DateTime? movedAt;
 
+  /// The storage holding the shared sync file (a [SyncProvider] id), or
+  /// `null` when sync is off. Device-only, like [syncConfig].
+  final String? syncProviderId;
+
+  /// Where the sync file is: `folder` (plus `bookmark` on a Mac), or the
+  /// WebDAV `url` and `username`, or the S3 `endpoint`, `region`, `bucket`,
+  /// `folder`, `accessKeyId` and `addressing`. The passphrase and passwords
+  /// live in the keychain.
+  final Map<String, String> syncConfig;
+
+  bool get syncOn => syncProviderId != null;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -210,6 +226,9 @@ class AppSettings {
     List<String>? movedAccountIds,
     DateTime? movedAt,
     bool clearMoved = false,
+    String? syncProviderId,
+    Map<String, String>? syncConfig,
+    bool clearSync = false,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -244,6 +263,8 @@ class AppSettings {
         captionPhotoPlatforms: captionPhotoPlatforms ?? this.captionPhotoPlatforms,
         movedAccountIds: clearMoved ? const [] : (movedAccountIds ?? this.movedAccountIds),
         movedAt: clearMoved ? null : (movedAt ?? this.movedAt),
+        syncProviderId: clearSync ? null : (syncProviderId ?? this.syncProviderId),
+        syncConfig: clearSync ? const {} : (syncConfig ?? this.syncConfig),
       );
 
   Map<String, dynamic> toJson() => {
@@ -279,5 +300,7 @@ class AppSettings {
         'captionPhotoPlatforms': captionPhotoPlatforms,
         if (movedAccountIds.isNotEmpty) 'movedAccountIds': movedAccountIds,
         if (movedAt != null) 'movedAt': movedAt!.toIso8601String(),
+        if (syncProviderId != null) 'syncProviderId': syncProviderId,
+        if (syncConfig.isNotEmpty) 'syncConfig': syncConfig,
       };
 }
