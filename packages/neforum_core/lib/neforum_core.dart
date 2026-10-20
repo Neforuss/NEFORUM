@@ -34,6 +34,8 @@ export 'src/storage/json_file_store_stub.dart' if (dart.library.io) 'src/storage
 export 'src/storage/repositories.dart';
 export 'src/storage/secret_store.dart';
 export 'src/sync/folder_sync_backend_stub.dart' if (dart.library.io) 'src/sync/folder_sync_backend.dart';
+export 'src/sync/google_drive_sync_backend.dart';
+export 'src/sync/oauth_token_source.dart';
 export 'src/sync/secrets_coordinator.dart';
 export 'src/sync/sync_backend.dart';
 export 'src/sync/sync_document.dart';

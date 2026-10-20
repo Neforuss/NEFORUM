@@ -10,7 +10,7 @@
 ; user's app data folder and are kept on uninstall.
 
 #ifndef AppVersion
-  #define AppVersion "1.1.2"
+  #define AppVersion "1.1.3"
 #endif
 #define AppName "NEFORUM"
 #define AppExe "NEFORUM.exe"

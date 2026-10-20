@@ -7,6 +7,10 @@ enum SyncBackendKind {
   /// system file picker (the Files app on iOS).
   folder,
 
+  /// NEFORUM talks to Google Drive's API directly with the user's own Google
+  /// Cloud OAuth client; works on every platform.
+  googleDrive,
+
   /// A WebDAV folder, reached directly (computers and phones).
   webdav,
 
@@ -54,9 +58,12 @@ class SyncProvider {
   /// The hint for this device.
   String hintFor({bool ios = false, bool android = false}) => (ios ? iosHint : (android ? androidHint : null)) ?? hint;
 
-  /// Whether this provider is offered on the device.
-  bool availableOn({bool ios = false, bool android = false}) =>
-      kind != SyncBackendKind.folder || (ios ? iosHint != null : (android ? androidHint != null : true));
+  /// Whether this provider is offered on the device: a folder provider only
+  /// where it has a hint; the others, reached directly, everywhere.
+  bool availableOn({bool ios = false, bool android = false}) => switch (kind) {
+        SyncBackendKind.folder => ios ? iosHint != null : (android ? androidHint != null : true),
+        SyncBackendKind.googleDrive || SyncBackendKind.webdav || SyncBackendKind.s3 => true,
+      };
 }
 
 /// iPhone hint for a cloud app whose folders iOS lets NEFORUM pick.
@@ -97,9 +104,10 @@ final List<SyncProvider> syncProviders = List.unmodifiable([
     id: 'googledrive',
     name: 'Google Drive',
     kind: SyncBackendKind.folder,
-    hint: 'Install Google Drive for desktop, then pick a folder in "My Drive" (the G: drive on Windows). Set it to "Available offline".',
-    iosHint: _iosFile('Google Drive', 'Drive'),
-    androidHint: _androidFile('Google Drive'),
+    // Not offered on phones: Google Drive's apps there cannot have their
+    // folders picked and often do not hand the file over.
+    hint: 'Install Google Drive for desktop, then pick a folder in "My Drive" (the G: drive on Windows). Set it to "Available offline". '
+        'Phones and tablets cannot use this folder: if one should sync too, choose Google Drive (direct) on every device instead.',
   ),
   SyncProvider(
     id: 'dropbox',
@@ -180,6 +188,17 @@ final List<SyncProvider> syncProviders = List.unmodifiable([
     hint: 'Any folder another program keeps in sync, or a network share every computer can reach.',
     iosHint: 'Any location the Files app shows that your other devices also reach: Choose folder, or Choose the sync file where folders are grayed out.',
     androidHint: 'A folder on this phone that another app keeps in sync (Syncthing-Fork, FolderSync, Autosync), or the sync file in any app the picker shows.',
+  ),
+  // Google Drive through its API: works on phones too.
+  SyncProvider(
+    id: 'googledrive-direct',
+    name: 'Google Drive (direct)',
+    kind: SyncBackendKind.googleDrive,
+    hint: "NEFORUM reaches Google Drive itself through your own Google Cloud project (the one for NEFORUM's YouTube connection works "
+        'too). In the Google Cloud console: enable the Google Drive API; set up the OAuth consent screen (External) with the drive.file '
+        'scope and click Publish app, or sign-ins expire after 7 days; then create an OAuth client of type "Desktop app" and paste its '
+        'Client ID and Client secret here. The file goes in a "NEFORUM Sync" folder in My Drive. Choose this option on every device: '
+        'it cannot see a file Google Drive for desktop put in a folder.',
   ),
   // WebDAV: works on phones too.
   SyncProvider(

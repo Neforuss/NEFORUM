@@ -142,15 +142,17 @@ class FilesAppSyncBackend extends SyncBackend {
     }
   }
 
-  /// Proves NEFORUM may write there: a probe file next to the sync file, or,
-  /// for a picked file, writing its own contents back.
+  /// Proves NEFORUM may write there without changing the sync file: the
+  /// system says whether the file (or the folder) may be changed ("probe"),
+  /// and in a folder a probe file is written and removed next to it. Writing
+  /// a picked file back could upload a stale copy over a newer one.
   @override
   Future<void> check() async {
-    if (isFile) {
-      final current = await read();
-      await _call<String>('write', {'name': fileName, 'bytes': current?.bytes ?? Uint8List(0), 'force': true});
-      return;
+    if (await _call<bool>('probe') != true) {
+      throw SyncBackendException('NEFORUM may not change files there: "$folderName" is read-only for other apps. '
+          'Check that your account may edit it, or choose another location.');
     }
+    if (isFile) return;
     final probe = '.$fileName.check';
     await _call<String>('write', {'name': probe, 'bytes': Uint8List.fromList(const [0x4E]), 'force': true});
     await _call<void>('delete', {'name': probe});

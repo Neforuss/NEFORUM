@@ -488,6 +488,30 @@ void main() {
       expect((await fa.posts.all()).map((p) => p.id).toSet(), {'from-a', 'from-b'});
     });
 
+    test('folder: an empty sync file counts as no sync file yet', () async {
+      final dir = await Directory.systemTemp.createTemp('neforum-sync-');
+      addTearDown(() => dir.delete(recursive: true));
+      final file = File('${dir.path}/$kSyncFileName')..writeAsBytesSync(const []);
+      final folder = FolderSyncBackend(dir.path);
+      expect(await folder.read(), isNull);
+      await expectLater(folder.write(Uint8List.fromList([9]), ifMatch: '1:0'), throwsA(isA<SyncConflict>()));
+      final v = await folder.write(Uint8List.fromList([4, 5]), ifMatch: null);
+      final blob = await folder.read();
+      expect(blob!.bytes, [4, 5]);
+      expect(blob.version, v);
+
+      // The first device to sync fills the empty file ("Create the sync
+      // file" on a phone); the next one joins it.
+      file.writeAsBytesSync(const []);
+      final fa = _Device('A', FolderSyncBackend(dir.path), clock);
+      await fa.posts.upsert(_post('from-a'));
+      await fa.engine.sync();
+      expect(file.lengthSync(), greaterThan(0));
+      final fb = _Device('B', FolderSyncBackend(dir.path), clock);
+      await fb.engine.sync();
+      expect(await fb.posts.get('from-a'), isNotNull);
+    });
+
     test('WebDAV: conditional writes, 412 is a conflict, missing folder is created', () async {
       final calls = <String>[];
       var exists = false;
@@ -553,17 +577,20 @@ void main() {
     for (final p in syncProviders) {
       expect(p.name, isNotEmpty);
       expect(p.hint, isNotEmpty);
-      if (p.kind != SyncBackendKind.folder) expect(p.urlTemplate, startsWith('https://'));
+      if (p.kind == SyncBackendKind.webdav || p.kind == SyncBackendKind.s3) expect(p.urlTemplate, startsWith('https://'));
     }
     final folders = syncProviders.where((p) => p.kind == SyncBackendKind.folder).toList();
-    expect(folders.where((p) => p.iosHint != null).map((p) => p.id), containsAll(['icloud', 'onedrive', 'googledrive', 'dropbox']),
+    expect(folders.where((p) => p.iosHint != null).map((p) => p.id), containsAll(['icloud', 'onedrive', 'dropbox']),
         reason: 'iPhones and iPads reach these through the Files app');
     expect(syncProviderById('icloud')!.hintFor(ios: true), contains('iCloud Drive'));
     expect(syncProviderById('onedrive')!.hintFor(ios: false), contains('Always keep on this device'));
-    // Google Drive and OneDrive cannot have their folders picked on iOS: the
-    // hint sends the user to the sync file instead.
-    expect(syncProviderById('googledrive')!.hintFor(ios: true), contains('Choose the sync file'));
-    expect(syncProviderById('googledrive')!.hintFor(android: true), contains('Choose the sync file'));
+    // OneDrive cannot have its folders picked on iOS: the hint sends the user
+    // to the sync file instead.
+    expect(syncProviderById('onedrive')!.hintFor(ios: true), contains('Choose the sync file'));
+    expect(syncProviderById('onedrive')!.hintFor(android: true), contains('Choose the sync file'));
+    // Phones reach Google Drive through its API, not its Files integration.
+    expect(syncProviderById('googledrive')!.availableOn(ios: true), isFalse);
+    expect(syncProviderById('googledrive-direct')!.availableOn(ios: true), isTrue);
     expect(syncProviderById('icloud')!.availableOn(android: true), isFalse, reason: 'no iCloud Drive app on Android');
     expect(syncProviderById('icloud')!.availableOn(ios: true), isTrue);
     expect(syncProviders.where((p) => p.kind == SyncBackendKind.folder && p.availableOn(android: true)).length, greaterThanOrEqualTo(10));

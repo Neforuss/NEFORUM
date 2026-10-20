@@ -45,7 +45,7 @@ import workmanager_apple
   }
 }
 
-/// A failure with a code the Dart side understands ("conflict").
+/// A failure with a code the Dart side understands ("conflict", "bookmark").
 struct SyncFolderError: Error {
   let code: String
   let message: String
@@ -63,18 +63,25 @@ struct SyncFolderError: Error {
 /// Access survives restarts through a bookmark, and every read and write
 /// goes through NSFileCoordinator, so iCloud or the cloud app downloads the
 /// newest file first and uploads what NEFORUM wrote. An empty file counts as
-/// no sync file yet.
+/// no sync file yet. "probe" tells whether NEFORUM may change the location
+/// without changing anything.
 ///
 /// Tapping a `.neforumsync` file in the Files app (or "Open in NEFORUM")
 /// opens it in place too (Info.plist declares the type, org.neforum.sync):
 /// the app takes it with "takeOpened" and offers to sync with it.
 class SyncFolderPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate, UIDocumentPickerDelegate {
   private var pendingPick: FlutterResult?
-  private var pendingIsFile = false
+  private var pendingMode = "folder"
+  /// The picker that answers [pendingPick], to tell when it went away
+  /// without calling back.
+  private weak var activePicker: UIDocumentPickerViewController?
   private var channel: FlutterMethodChannel?
 
   /// A sync file opened from the Files app, until the app takes it.
   private static var openedFile: [String: Any]?
+
+  /// The sync file's name (kSyncFileName in neforum_core).
+  static let syncFileName = "NEFORUM.neforumsync"
 
   /// NEFORUM's own file type (declared in Info.plist), so the picker and the
   /// Files app know a .neforumsync file instead of graying it out.
@@ -155,19 +162,32 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate, 
   // MARK: Picking
 
   private func pick(_ mode: String, _ result: @escaping FlutterResult) {
-    guard pendingPick == nil, let top = SyncFolderPlugin.topController() else {
-      result(nil)
+    if let earlier = pendingPick {
+      // A picker still on screen answers the earlier call. One that never
+      // showed, or went away without calling back, must not block every
+      // later Choose... press.
+      if let picker = activePicker, picker.presentingViewController != nil {
+        result(nil)
+        return
+      }
+      pendingPick = nil
+      activePicker = nil
+      earlier(nil)
+    }
+    guard let top = SyncFolderPlugin.topController() else {
+      result(FlutterError(code: "picker", message: "NEFORUM could not show the file picker: open NEFORUM and try again.", details: nil))
       return
     }
     let picker: UIDocumentPickerViewController
     switch mode {
     case "file":
-      // NEFORUM's own type first, then anything: cloud apps report a file
-      // type of their own choosing for an extension iOS did not know.
+      // NEFORUM's own type first, then any file: cloud apps report a file
+      // type of their own choosing for an extension iOS did not know. Not
+      // .item, which made folders pickable here.
       picker = UIDocumentPickerViewController(
-        forOpeningContentTypes: [SyncFolderPlugin.syncFileType, .data, .item], asCopy: false)
+        forOpeningContentTypes: [SyncFolderPlugin.syncFileType, .data], asCopy: false)
     case "create":
-      let url = FileManager.default.temporaryDirectory.appendingPathComponent("NEFORUM.neforumsync")
+      let url = FileManager.default.temporaryDirectory.appendingPathComponent(SyncFolderPlugin.syncFileName)
       try? FileManager.default.removeItem(at: url)
       guard FileManager.default.createFile(atPath: url.path, contents: Data()) else {
         result(FlutterError(code: "io", message: "Could not prepare the sync file.", details: nil))
@@ -178,55 +198,105 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate, 
       picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.folder], asCopy: false)
     }
     pendingPick = result
-    pendingIsFile = mode != "folder"
+    pendingMode = mode
+    activePicker = picker
     picker.delegate = self
     picker.allowsMultipleSelection = false
-    top.present(picker, animated: true)
+    picker.shouldShowFileExtensions = true
+    // Only Cancel or a choice closes it, so the delegate always hears back.
+    picker.isModalInPresentation = true
+    top.present(picker, animated: true) { [weak self] in
+      // iOS did not show it (another sheet was in the way...).
+      guard let self = self, self.activePicker === picker, picker.presentingViewController == nil else { return }
+      self.finishPick(FlutterError(code: "picker", message: "iOS did not show the file picker: try again.", details: nil))
+    }
+  }
+
+  /// Answers the pending pick, once.
+  private func finishPick(_ value: Any?) {
+    guard let result = pendingPick else { return }
+    pendingPick = nil
+    activePicker = nil
+    result(value)
   }
 
   func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-    guard let result = pendingPick else { return }
-    pendingPick = nil
+    guard controller === activePicker else { return }
+    let mode = pendingMode
+    let isFile = mode != "folder"
     guard let url = urls.first else {
-      result(nil)
+      finishPick(nil)
       return
     }
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-    if pendingIsFile && url.hasDirectoryPath {
-      result(FlutterError(code: "picker", message: "That is a folder: use Choose folder for folders, or open the folder and tap NEFORUM.neforumsync.", details: nil))
+    if isFile && url.hasDirectoryPath {
+      finishPick(FlutterError(code: "picker", message: "That is a folder: use Choose folder for folders, or open the folder and tap NEFORUM.neforumsync.", details: nil))
+      return
+    }
+    if mode == "create" && url.lastPathComponent != SyncFolderPlugin.syncFileName {
+      // "Keep Both" next to an existing sync file, or the cloud app renamed
+      // it: the other devices would never find that copy.
+      DispatchQueue.global(qos: .utility).async { SyncFolderPlugin.removeIfEmpty(url) }
+      finishPick(FlutterError(
+        code: "picker",
+        message: "The file was saved as \"\(url.lastPathComponent)\", so your other devices would not find it. If NEFORUM.neforumsync is already there, use Choose the sync file. Otherwise create it again with that exact name.",
+        details: nil))
       return
     }
     do {
       let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-      result([
-        "bookmark": bookmark.base64EncodedString(), "name": url.lastPathComponent, "path": url.path, "file": pendingIsFile,
+      finishPick([
+        "bookmark": bookmark.base64EncodedString(), "name": url.lastPathComponent, "path": url.path, "file": isFile,
       ] as [String: Any])
     } catch {
-      result(FlutterError(code: "bookmark", message: "iOS did not allow NEFORUM to keep this location: \(error.localizedDescription)", details: nil))
+      finishPick(FlutterError(code: "bookmark", message: "iOS did not allow NEFORUM to keep this location: \(error.localizedDescription)", details: nil))
     }
   }
 
   func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-    pendingPick?(nil)
-    pendingPick = nil
+    guard controller === activePicker else { return }
+    finishPick(nil)
   }
 
+  /// Removes the file "create" saved under another name, only if it is
+  /// still empty: a file with something in it is never touched.
+  private static func removeIfEmpty(_ url: URL) {
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    var coordinationError: NSError?
+    NSFileCoordinator(filePresenter: nil).coordinate(writingItemAt: url, options: .forDeleting, error: &coordinationError) { target in
+      guard size(of: target) == 0 else { return }
+      try? FileManager.default.removeItem(at: target)
+    }
+  }
+
+  /// The top view controller in NEFORUM's window in the foreground, to show
+  /// the picker on; `nil` when there is none.
   private static func topController() -> UIViewController? {
     let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-    let windows = scenes.flatMap { $0.windows }
-    var top = (windows.first { $0.isKeyWindow } ?? windows.first)?.rootViewController
-    while let presented = top?.presentedViewController { top = presented }
+      .filter { $0.session.role == .windowApplication }
+    guard let scene = scenes.first(where: { $0.activationState == .foregroundActive })
+      ?? scenes.first(where: { $0.activationState == .foregroundInactive }) else { return nil }
+    var top = (scene.keyWindow ?? scene.windows.first)?.rootViewController
+    while let presented = top?.presentedViewController, !presented.isBeingDismissed { top = presented }
     return top
   }
 
   // MARK: Reading and writing
 
   private static func run(_ method: String, bookmark: Data, args: [String: Any]) throws -> Any? {
+    // A stale bookmark still resolves to the right item (it was moved or
+    // renamed), so it is used as it is; only a refused access is an error.
     var stale = false
     let base = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
     let scoped = base.startAccessingSecurityScopedResource()
     defer { if scoped { base.stopAccessingSecurityScopedResource() } }
+    // iOS withdrew the access. A location inside NEFORUM's own container
+    // needs no granted access (and its path changes when the app is updated).
+    if !scoped && !isInsideContainer(base) {
+      throw SyncFolderError(code: "bookmark", message: "iOS no longer lets NEFORUM use this location: choose it again in Settings > Sync.")
+    }
     // The bookmark is the sync file itself, or the folder it lives in.
     let isFile = args["file"] as? Bool ?? false
     let file = isFile ? base : base.appendingPathComponent(args["name"] as? String ?? "")
@@ -236,6 +306,22 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate, 
     var failure: Error?
 
     switch method {
+    case "probe":
+      // Whether NEFORUM may change the sync file, or add files to the
+      // folder, asked without changing anything. The file is fetched first;
+      // the folder only needs what iOS already knows.
+      let options: NSFileCoordinator.ReadingOptions = isFile ? [] : .immediatelyAvailableMetadataOnly
+      coordinator.coordinate(readingItemAt: base, options: options, error: &coordinationError) { url in
+        guard FileManager.default.fileExists(atPath: url.path) else {
+          let what = isFile ? "The sync file" : "The folder"
+          failure = SyncFolderError(code: "bookmark", message: "\(what) is gone: choose it again in Settings > Sync.")
+          return
+        }
+        var fresh = url
+        fresh.removeAllCachedResourceValues()
+        let writable = (try? fresh.resourceValues(forKeys: [.isWritableKey]))?.isWritable ?? true
+        out = writable && FileManager.default.isWritableFile(atPath: url.path)
+      }
     case "read":
       coordinator.coordinate(readingItemAt: file, options: [], error: &coordinationError) { url in
         guard let current = version(of: url) else { return }
@@ -263,6 +349,9 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate, 
           // A picked file can only be written in place: there is no access
           // to its folder for the temporary file of an atomic write.
           try typed.data.write(to: writeURL, options: isFile ? Data.WritingOptions() : .atomic)
+          if isFile && size(of: writeURL) != Int64(typed.data.count) {
+            throw SyncFolderError(code: "io", message: "The cloud app did not replace the whole file.")
+          }
           out = version(of: writeURL) ?? ""
         } catch {
           failure = error
@@ -301,12 +390,26 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate, 
   }
 
   /// Changes whenever the file does: modification time (microseconds) and
-  /// size. `nil` when there is no file, or only an empty one.
+  /// size, from the file system rather than cached URL values. `nil` when
+  /// there is no file, or only an empty one.
   private static func version(of url: URL) -> String? {
-    guard FileManager.default.fileExists(atPath: url.path),
-          let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-          let size = values.fileSize, size > 0 else { return nil }
-    let modified = values.contentModificationDate?.timeIntervalSince1970 ?? 0
+    guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+          let size = (attributes[.size] as? NSNumber)?.int64Value, size > 0 else { return nil }
+    let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
     return "\(Int64(modified * 1_000_000)):\(size)"
+  }
+
+  /// The file's size in bytes from the file system; `nil` when it is not
+  /// there.
+  private static func size(of url: URL) -> Int64? {
+    return ((try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber)?.int64Value
+  }
+
+  /// Whether [url] is in NEFORUM's own container ("On My iPhone > NEFORUM"),
+  /// where iOS grants no security-scoped access because none is needed.
+  private static func isInsideContainer(_ url: URL) -> Bool {
+    let home = URL(fileURLWithPath: NSHomeDirectory()).resolvingSymlinksInPath().path
+    let path = url.resolvingSymlinksInPath().path
+    return path == home || path.hasPrefix(home + "/")
   }
 }

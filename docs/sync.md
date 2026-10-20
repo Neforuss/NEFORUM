@@ -6,30 +6,39 @@ You'll find it in **Settings > Sync**.
 
 ## Where the file can live
 
+**Google Drive (direct)** (computers, iPhone, iPad and Android). NEFORUM talks to Google Drive itself. It keeps the file in a **NEFORUM Sync** folder in your My Drive. This is the way to use Google Drive on a phone or tablet: Google Drive's iPhone and iPad app does not let other apps pick its folders, and it often does not hand files over to them. **Every device must use Google Drive (direct)**, your computers too, because NEFORUM cannot see a file that Google Drive for desktop put in another folder.
+
+It uses your own Google Cloud project, once, the same way NEFORUM's YouTube connection does (you can reuse that project):
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project, or open the one you use for YouTube.
+2. **APIs & Services > Library**: enable the **Google Drive API**.
+3. **OAuth consent screen** (Google Auth Platform): choose **External**, fill in the app name and your email, then add the scope `.../auth/drive.file` under **Data access**. This scope only lets NEFORUM see files it made itself.
+4. Under **Audience**, click **Publish app**. While an app is in "Testing", Google ends its sign-ins after 7 days. With only this scope, publishing needs no review.
+5. **Clients > Create client**, type **Desktop app**. Copy the **Client ID** and **Client secret**.
+6. In NEFORUM, go to **Settings > Sync > Set up > Google Drive (direct)**, paste them, and sign in with Google. Do this on every device with the same Client ID and secret.
+
 **A cloud app on your computer.** NEFORUM writes the file into a folder; your cloud app does the syncing.
 
-- OneDrive, Google Drive (Drive for desktop), Dropbox, iCloud Drive, Box Drive, MEGA, pCloud Drive, Proton Drive, Sync.com
+- OneDrive, Dropbox, iCloud Drive, Box Drive, MEGA, pCloud Drive, Proton Drive, Sync.com
+- Google Drive for desktop. Phones cannot use it this way: if a phone should sync too, use Google Drive (direct) on every device instead.
 - Syncthing (no cloud at all: your devices sync with each other directly)
 - The Nextcloud or ownCloud desktop client
 - Any other folder that is kept in sync, or a network share
 
-Keep the folder **available offline** ("Always keep on this device" in OneDrive, "Available offline" in Google Drive and Dropbox). Otherwise the cloud app may not download the newest file before NEFORUM reads it.
+Keep the folder **available offline** ("Always keep on this device" in OneDrive, "Available offline" in Dropbox). Otherwise the cloud app may not download the newest file before NEFORUM reads it.
 
-**A cloud app on your iPhone, iPad or Android phone.** Pick a location in the system file picker (the Files app on iPhone and iPad). iCloud Drive or the cloud app does the syncing. There are three ways to pick:
+**A cloud app on your iPhone, iPad or Android phone.** Pick a location in the system file picker (the Files app on iPhone and iPad), and the cloud app does the syncing. How well this works depends on the cloud app, not on NEFORUM:
 
-- **Choose folder**: NEFORUM keeps `NEFORUM.neforumsync` in the folder. This works with iCloud Drive, Dropbox and On My iPhone. On Android it works with a folder that Syncthing-Fork or another sync app keeps in step.
-- **Choose the sync file**: pick the `NEFORUM.neforumsync` that your computer already made. Use this for apps that do not let other apps pick their folders: in the iPhone folder picker they look grayed out (Google Drive, OneDrive, MEGA and others). They still let NEFORUM open and save that one file.
-- **Create the sync file**: when the phone is your first device, save a new, empty sync file into the cloud app. NEFORUM fills it in.
+- **Choose folder**: NEFORUM keeps `NEFORUM.neforumsync` in the folder. Works with iCloud Drive, Dropbox and On My iPhone, and should work with the Nextcloud app (version 6 or newer). On Android it works with a folder that Syncthing-Fork or another sync app keeps in step. OneDrive, Box, MEGA, pCloud, Proton Drive and Synology Drive do not let other apps pick their folders: in the folder picker they look grayed out.
+- **Choose the sync file**: pick the `NEFORUM.neforumsync` that your computer already made. This is for apps whose folders cannot be picked. OneDrive, Box and pCloud let NEFORUM open and save that one file, though the cloud app may take a while to upload changes. MEGA, Proton Drive and Sync.com are not recommended.
+- **Create the sync file**: when the phone is your first device, save a new, empty sync file into the cloud app, and NEFORUM fills it in. If the cloud app asks whether to replace an existing file, cancel and use **Choose the sync file** instead.
 
-On an iPhone or iPad you can also tap `NEFORUM.neforumsync` in the Files app, or use **Open in NEFORUM** in the cloud app. NEFORUM opens **Settings > Sync** with that file already chosen; just add the passphrase.
-
-The cloud apps include the OneDrive, Google Drive, Dropbox, Box, MEGA, pCloud, Proton Drive, Sync.com, Nextcloud and ownCloud apps, plus Möbius Sync (Syncthing for iPhone).
+On an iPhone or iPad you can also tap `NEFORUM.neforumsync` in the Files app, in iCloud Drive or On My iPhone. NEFORUM opens **Settings > Sync** with that file already chosen; just add the passphrase. Files inside other cloud apps keep that app's own icon and do not open NEFORUM: the cloud app decides that, not NEFORUM.
 
 Install the cloud app and sign in first. On an iPhone, if the app is missing from the picker, open the Files app, tap **Browse**, then **⋯ > Edit**, and turn it on.
 
-NEFORUM keeps access to what you picked after a restart. On iPhone and iPad it asks iCloud or the cloud app for the newest file before every read, and hands over every write for upload.
+NEFORUM keeps access to what you picked after a restart. On iPhone and iPad it asks the cloud app for the newest file before every read, and hands over every write for upload. When you turn sync on, NEFORUM checks that it may change files there, without touching the sync file.
 
-If a cloud app refuses to save the file, NEFORUM tells you when you turn sync on. Use WebDAV or S3 instead.
 **WebDAV** (computers, iPhone, iPad and Android). NEFORUM talks to the server itself.
 
 - Nextcloud and ownCloud, Koofr, pCloud, Infomaniak kDrive, Fastmail Files
@@ -47,10 +56,7 @@ Use an **app password** wherever the service offers one.
 
 Use a private bucket and a key that can only read and write that bucket.
 
-For example, your PC syncs a Google Drive folder and makes `NEFORUM.neforumsync` there. Your iPhone and your Android phone then pick that file in their Google Drive app with **Choose the sync file**.
-
-Every device must use the same storage and the same file.
-
+Every device must use the same storage and the same file. For example: your PC, your iPhone and your Android phone all use **Google Drive (direct)** with the same Client ID; or your PC syncs a Dropbox folder and your iPhone picks the same folder in the Files app.
 ## Turning it on
 
 ### On your first device
@@ -132,5 +138,10 @@ Start the cloud app, or reconnect the drive.
 **Changes take long to arrive with a cloud app**
 The cloud app decides when to upload. Check that it is running and that the folder is available offline.
 
+**On iPhone or iPad, tapping the sync file in Google Drive does nothing**
+Google Drive's app did not hand the file over. Its Privacy Screen setting, a file that is not downloaded yet, or a stuck Google Drive app can all cause this. Use **Google Drive (direct)** instead, on every device. If you want to try the picker again: in Google Drive's settings, turn off Privacy Screen; mark the file **Available offline**; and restart the phone.
+
+**"The Google sign-in expired or was revoked"**
+Sign in again in **Settings > Sync > Change…**. If this happens every week, the Google Cloud app is still in Testing: click **Publish app** under Audience.
 **On a Mac, iPhone or iPad, sync stopped after moving or renaming the folder**
 Choose **Change…** and pick the folder again.

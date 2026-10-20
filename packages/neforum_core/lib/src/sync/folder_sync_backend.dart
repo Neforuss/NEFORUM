@@ -42,6 +42,9 @@ class FolderSyncBackend extends SyncBackend {
         return null;
       }
       final bytes = await f.readAsBytes();
+      // An empty file is a sync file not written yet (made by hand, or with
+      // "Create the sync file" on a phone).
+      if (bytes.isEmpty) return null;
       return SyncBlob(bytes, await _version(f));
     } on FileSystemException catch (e) {
       throw SyncBackendException('Could not read ${f.path}: ${e.osError?.message ?? e.message}', temporary: true);
@@ -52,8 +55,9 @@ class FolderSyncBackend extends SyncBackend {
   Future<String?> write(Uint8List bytes, {required String? ifMatch}) async {
     final f = _file;
     try {
-      final exists = await f.exists();
-      final current = exists ? await _version(f) : null;
+      // An empty file counts as none, as in [read].
+      final s = await f.stat();
+      final current = s.type != FileSystemEntityType.file || s.size <= 0 ? null : _versionOf(s);
       if (current != ifMatch) throw const SyncConflict();
       final tmp = File(p.join(folder, '.$fileName.${_rng.nextInt(1 << 32).toRadixString(16)}.tmp'));
       await tmp.writeAsBytes(bytes, flush: true);
@@ -119,8 +123,7 @@ class FolderSyncBackend extends SyncBackend {
     }
   }
 
-  static Future<String> _version(File f) async {
-    final s = await f.stat();
-    return '${s.modified.microsecondsSinceEpoch}:${s.size}';
-  }
+  static Future<String> _version(File f) async => _versionOf(await f.stat());
+
+  static String _versionOf(FileStat s) => '${s.modified.microsecondsSinceEpoch}:${s.size}';
 }

@@ -112,7 +112,7 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 
 ## Sync without a server
 
-Turn on **Settings > Sync** and every device reads and writes one encrypted file (`NEFORUM.neforumsync`, Argon2id + AES-256-GCM) in a folder your cloud app syncs, on a WebDAV server or in an S3-compatible bucket. Phones and tablets pick a folder, or the sync file itself, in their cloud app through the system file picker (iCloud Drive, Google Drive, OneDrive, Dropbox and others), or use WebDAV or S3 directly. Each account, post and setting merges on its own; when both sides changed the same thing, a post that already went out beats an edit and the newest renewed sign-in wins. X and Tumblr, which kill the old sign-in on every renewal, get one renewer at a time, the renewed keys travel through the file, and a refused renewal re-reads the file and retries; or connect them with OAuth 1.0a keys, which never expire. A scheduled post is published by the device it was scheduled on (it has the photos), and another device steps in only when that one has been silent and the post is 30 minutes overdue. See [docs/sync.md](docs/sync.md).
+Turn on **Settings > Sync** and every device reads and writes one encrypted file (`NEFORUM.neforumsync`, Argon2id + AES-256-GCM) in a folder your cloud app syncs, on a WebDAV server or in an S3-compatible bucket. Google Drive works directly on every device through its API with your own Google Cloud key (Google Drive's iPhone app does not let other apps pick its folders); phones and tablets can also pick a folder or the sync file in iCloud Drive, Dropbox and other cloud apps through the system file picker, or use WebDAV or S3. Each account, post and setting merges on its own; when both sides changed the same thing, a post that already went out beats an edit and the newest renewed sign-in wins. X and Tumblr, which kill the old sign-in on every renewal, get one renewer at a time, the renewed keys travel through the file, and a refused renewal re-reads the file and retries; or connect them with OAuth 1.0a keys, which never expire. A scheduled post is published by the device it was scheduled on (it has the photos), and another device steps in only when that one has been silent and the post is 30 minutes overdue. See [docs/sync.md](docs/sync.md).
 
 ## More screenshots
 
@@ -130,14 +130,14 @@ Download from **[neforus.com/neforum](https://neforus.com/neforum/)** or from th
 
 | Platform | Download | How it installs |
 |---|---|---|
-| Windows | `NEFORUM-Setup-1.1.2.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
+| Windows | `NEFORUM-Setup-1.1.3.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
 | macOS | `NEFORUM-macOS.dmg` | Open it and drag NEFORUM onto Applications; it then shows up in Launchpad and Spotlight. Not signed by Apple yet, so the first time: right-click NEFORUM in Applications, then Open. macOS 10.15 or newer. (`neforum-macos.zip` has the same app. `NEFORUM-macOS-apple-silicon.dmg` and `NEFORUM-macOS-intel.dmg` are smaller downloads for one kind of Mac.) |
 | Android | `neforum-android.apk` | Allow installing from your browser or file manager; NEFORUM then sits in the app drawer like any app. Android 7 or newer. Smaller downloads for one kind of phone: `neforum-android-arm64.apk` (nearly every phone), `neforum-android-armv7.apk` (older 32-bit phones), `neforum-android-x86_64.apk` (Chromebooks and emulators). |
 | iPhone and iPad | `neforum-ios-unsigned.ipa` | Sign it with your own Apple ID (Xcode, AltStore or Sideloadly), or build from source in Xcode. |
 
 The browser extension for Chrome and Firefox comes with the app (Settings → Browser extension → Show extension files) and is also in each release (`neforum-extension-chrome-*.zip`, `neforum-extension-firefox-*.zip`).
 
-Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.1.2`) publishes them as a release.
+Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.1.3`) publishes them as a release.
 ## Build from source
 
 You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, or Visual Studio 2022 with "Desktop development with C++" for Windows.

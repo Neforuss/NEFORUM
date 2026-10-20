@@ -18,6 +18,11 @@ import 'settings.dart';
 /// Keychain entry with the sync passphrase and the storage password or key.
 const String kSyncSecretsKey = 'neforum.sync';
 
+/// Keychain entry with this device's Google Drive sign-in (access and refresh
+/// token). Kept apart from [kSyncSecretsKey] so an hourly token renewal does
+/// not look like a changed setup, and never synced: each device signs in.
+const String kSyncOAuthKey = 'neforum.sync.oauth';
+
 /// What the sync settings show.
 enum CloudSyncPhase { off, syncing, ok, error }
 
@@ -34,16 +39,19 @@ class CloudSyncStatus {
 }
 
 /// The values the sync form collects for [providerId] (non-secret ones go
-/// to [AppSettings.syncConfig], `passphrase`, `password` and
-/// `secretAccessKey` to the keychain).
-const Set<String> kSyncSecretFields = {'passphrase', 'password', 'secretAccessKey'};
+/// to [AppSettings.syncConfig], `passphrase`, `password`, `secretAccessKey`
+/// and `clientSecret` to the keychain).
+const Set<String> kSyncSecretFields = {'passphrase', 'password', 'secretAccessKey', 'clientSecret'};
 
 /// The storage [settings] point at, or `null` when sync is off or the setup
 /// is incomplete. On a phone or tablet ([filesApp], default: iOS and
 /// Android) a folder provider is a location picked in the system file picker
 /// (a folder, or the sync file itself when `target` is `file`); on a computer
-/// it is a plain folder.
-SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets, NeforumHttp http, {String? folderOverride, bool? filesApp}) {
+/// it is a plain folder. Google Drive (direct) needs this device's sign-in
+/// ([oauth], tokens as [OAuthTokens.toSecrets] stores them) and a way to keep
+/// renewed tokens ([saveOAuth]).
+SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets, NeforumHttp http,
+    {String? folderOverride, bool? filesApp, Map<String, String>? oauth, Future<void> Function(Map<String, String>)? saveOAuth}) {
   final provider = syncProviderById(settings.syncProviderId);
   if (provider == null) return null;
   final c = settings.syncConfig;
@@ -60,6 +68,16 @@ SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets,
       }
       final folder = folderOverride ?? v('folder');
       return folder == null ? null : FolderSyncBackend(folder);
+    case SyncBackendKind.googleDrive:
+      final clientId = v('clientId');
+      if (clientId == null || oauth == null || OAuthTokens.fromSecrets(oauth) == null) return null;
+      final tokens = OAuthTokenSource(
+        client: OAuthTokenSource.googleDriveClient(clientId: clientId, clientSecret: secrets['clientSecret']),
+        http: http,
+        secrets: oauth,
+        save: saveOAuth ?? (_) async {},
+      );
+      return GoogleDriveSyncBackend(http: http, token: tokens.accessToken);
     case SyncBackendKind.webdav:
       final url = v('url'), user = v('username'), password = secrets['password'];
       if (url == null || user == null || password == null || password.isEmpty) return null;
@@ -133,6 +151,10 @@ class CloudSync implements SecretsCoordinator {
   bool _running = false;
   DateTime _quietUntil = DateTime.fromMillisecondsSinceEpoch(0);
 
+  /// Bumped whenever the engine is replaced or dropped: a sync still running
+  /// in an old engine must not save a renewed Google sign-in any more.
+  int _generation = 0;
+
   /// Whether sync is set up and working on this device.
   bool get active => _engine != null;
 
@@ -174,6 +196,17 @@ class CloudSync implements SecretsCoordinator {
     }
   }
 
+  /// Drops the engine now, before the Sync settings write or delete the
+  /// keychain entries, so a sync still in flight cannot save a renewed
+  /// Google sign-in over them. The next [settingsChanged] always rebuilds.
+  void detach() {
+    _generation++;
+    stop();
+    _engine?.dispose();
+    _engine = null;
+    _engineKey = null;
+  }
+
   void _changed() {
     if (_engine == null || _running || DateTime.now().isBefore(_quietUntil)) return;
     _soon?.cancel();
@@ -183,10 +216,14 @@ class CloudSync implements SecretsCoordinator {
   Future<String> _configKey() async {
     final s = _currentSettings();
     final secret = await secrets.read(kSyncSecretsKey) ?? const <String, String>{};
-    return syncHash({'provider': s.syncProviderId, 'config': s.syncConfig, 'secrets': secret});
+    // A new Google sign-in changes the refresh token; the hourly renewal of
+    // the access token does not, so it does not rebuild the engine.
+    final refresh = (await secrets.read(kSyncOAuthKey))?['refresh_token'];
+    return syncHash({'provider': s.syncProviderId, 'config': s.syncConfig, 'secrets': secret, 'signIn': ?refresh});
   }
 
   Future<void> _rebuild() async {
+    final generation = ++_generation;
     _engine?.dispose();
     _engine = null;
     final s = _currentSettings();
@@ -200,7 +237,11 @@ class CloudSync implements SecretsCoordinator {
     String? folder;
     final bookmark = s.syncConfig['bookmark'];
     if (bookmark != null && bookmark.isNotEmpty && Env.isMacOS) folder = await FolderAccess.reopen(bookmark);
-    final backend = buildSyncBackend(s, secret, http, folderOverride: folder);
+    final oauth = await secrets.read(kSyncOAuthKey);
+    final backend = buildSyncBackend(s, secret, http, folderOverride: folder, oauth: oauth, saveOAuth: (m) async {
+      // An engine that was replaced, dropped or turned off keeps nothing.
+      if (generation == _generation) await secrets.write(kSyncOAuthKey, m);
+    });
     if (backend == null || passphrase == null || passphrase.isEmpty) {
       status.value = const CloudSyncStatus(CloudSyncPhase.error, message: 'Sync is not fully set up: open Settings > Sync.');
       return;
@@ -317,5 +358,7 @@ String describeSyncError(Object e) => switch (e) {
       BackupException(kind: BackupErrorKind.wrongPassphraseOrDamaged) =>
         'The sync passphrase does not open the sync file (or the file is damaged). Use the passphrase you chose on your first device.',
       BackupException(:final message) => message,
+      AuthCancelled() => 'The Google sign-in was cancelled.',
+      OAuthException() => 'Google refused the sign-in: $e. Check the Client ID and secret (a "Desktop app" client), and that the Google Drive API is enabled.',
       _ => 'Sync failed: $e',
     };

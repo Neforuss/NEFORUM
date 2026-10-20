@@ -85,17 +85,23 @@ void main() {
     final versions = <String, String>{};
     var tick = 0;
     final calls = <String>[];
+    // What 'probe' answers: whether the system lets NEFORUM change the
+    // location.
+    var writable = true;
 
     setUp(() {
       files.clear();
       versions.clear();
       calls.clear();
+      writable = true;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
         final a = Map<String, Object?>.from(call.arguments as Map);
         expect(a['bookmark'], 'bm');
         final name = a['name'] as String? ?? '';
-        calls.add('${call.method} $name');
+        calls.add(name.isEmpty ? call.method : '${call.method} $name');
         switch (call.method) {
+          case 'probe':
+            return writable;
           case 'read':
             return files.containsKey(name) ? {'bytes': files[name], 'version': versions[name]} : null;
           case 'write':
@@ -131,9 +137,32 @@ void main() {
       await b.removeConflictCopy(copies.single);
       expect(files.containsKey('NEFORUM (1).neforumsync'), isFalse);
 
+      calls.clear();
       await b.check();
-      expect(calls, containsAllInOrder(['write .NEFORUM.neforumsync.check', 'delete .NEFORUM.neforumsync.check']));
+      expect(calls, ['probe', 'write .NEFORUM.neforumsync.check', 'delete .NEFORUM.neforumsync.check']);
       expect(files.keys, isNot(contains('.NEFORUM.neforumsync.check')));
+    });
+
+    test('a location the system says NEFORUM may not change is refused before anything is written', () async {
+      files['NEFORUM.neforumsync'] = Uint8List.fromList([7]);
+      writable = false;
+      for (final b in [FilesAppSyncBackend('bm', folderName: 'Shared'), FilesAppSyncBackend('bm', folderName: 'Shared', isFile: true)]) {
+        calls.clear();
+        await expectLater(
+            b.check(), throwsA(isA<SyncBackendException>().having((e) => e.message, 'message', startsWith('NEFORUM may not change files there:'))));
+        expect(calls, ['probe']);
+      }
+      expect(files.keys, ['NEFORUM.neforumsync']);
+      expect(files['NEFORUM.neforumsync'], [7]);
+    });
+
+    test('a probe that finds the location gone asks to choose it again', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'probe');
+        throw PlatformException(code: 'bookmark', message: 'The sync file is gone: choose it again in Settings > Sync.');
+      });
+      final b = FilesAppSyncBackend('bm', folderName: 'NEFORUM.neforumsync', isFile: true);
+      await expectLater(b.check(), throwsA(isA<SyncBackendException>().having((e) => e.message, 'message', contains('choose it again'))));
     });
 
     test('a picked sync file (Google Drive, OneDrive): read and written in place, empty means not made yet', () async {
@@ -142,6 +171,8 @@ void main() {
         expect(a['file'], isTrue, reason: 'the bookmark is the file itself');
         calls.add(call.method);
         switch (call.method) {
+          case 'probe':
+            return true;
           case 'read':
             final bytes = files['picked'];
             return bytes == null || bytes.isEmpty ? null : {'bytes': bytes, 'version': versions['picked']};
@@ -158,6 +189,8 @@ void main() {
       files['picked'] = Uint8List(0); // "Create the sync file" made an empty one
       final b = FilesAppSyncBackend('bm', folderName: 'NEFORUM.neforumsync', isFile: true);
       await b.check();
+      expect(calls, ['probe'], reason: 'checking never writes the file: that could upload a stale copy over a newer one');
+      expect(versions, isEmpty);
       expect(await b.read(), isNull, reason: 'an empty file is a sync file not written yet');
       final v = await b.write(Uint8List.fromList([5]), ifMatch: null);
       expect((await b.read())!.version, v);
@@ -165,6 +198,22 @@ void main() {
       expect(calls, isNot(contains('list')), reason: 'no folder access for a picked file');
       final settings = const AppSettings(syncProviderId: 'googledrive', syncConfig: {'folder': 'NEFORUM.neforumsync', 'bookmark': 'bm', 'target': 'file'});
       expect((buildSyncBackend(settings, const {}, NeforumHttp(), filesApp: true)! as FilesAppSyncBackend).isFile, isTrue);
+    });
+
+    test('picking: the mode goes to the system picker, whose refusals reach the settings as they are', () async {
+      final modes = <Object?>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'pick');
+        final mode = (call.arguments as Map)['mode'];
+        modes.add(mode);
+        if (mode == 'create') throw PlatformException(code: 'picker', message: 'A sync file is already there: use Choose the sync file instead.');
+        if (mode == 'folder') return null;
+        return {'bookmark': 'bm', 'name': 'NEFORUM.neforumsync', 'path': '/p', 'file': true};
+      });
+      expect(await FilesAppFolder.pick(PickMode.file), (bookmark: 'bm', name: 'NEFORUM.neforumsync', isFile: true));
+      expect(await FilesAppFolder.pick(PickMode.folder), isNull, reason: 'cancelled');
+      await expectLater(FilesAppFolder.pick(PickMode.create), throwsA(isA<PlatformException>().having((e) => e.code, 'code', 'picker')));
+      expect(modes, ['file', 'folder', 'create']);
     });
 
     test('a sync file tapped in the Files app is taken once; a copy has no bookmark', () async {
@@ -190,6 +239,17 @@ void main() {
       final b = FilesAppSyncBackend('bm', folderName: 'NEFORUM');
       await expectLater(b.read(), throwsA(isA<SyncBackendException>().having((e) => e.message, 'message', contains('again'))));
     });
+  });
+
+  test('Google Drive (direct) needs the Client ID and this device\'s sign-in', () {
+    final http = NeforumHttp();
+    const drive = AppSettings(syncProviderId: 'googledrive-direct', syncConfig: {'clientId': '123-abc.apps.googleusercontent.com'});
+    expect(buildSyncBackend(drive, const {'clientSecret': 's'}, http), isNull, reason: 'not signed in on this device yet');
+    final signedIn = {'access_token': 'a', 'refresh_token': 'r', 'expires_at': DateTime.now().add(const Duration(hours: 1)).toUtc().toIso8601String()};
+    expect(buildSyncBackend(drive, const {'clientSecret': 's'}, http, oauth: signedIn), isA<GoogleDriveSyncBackend>());
+    expect(buildSyncBackend(const AppSettings(syncProviderId: 'googledrive-direct'), const {}, http, oauth: signedIn), isNull, reason: 'no Client ID');
+    expect(syncProviderById('googledrive-direct')!.availableOn(ios: true), isTrue);
+    expect(syncProviderById('googledrive')!.availableOn(ios: true), isFalse, reason: 'Google Drive\'s Files integration cannot be picked on iPhone');
   });
 
   test('sync settings stay on the device and survive a round trip', () {

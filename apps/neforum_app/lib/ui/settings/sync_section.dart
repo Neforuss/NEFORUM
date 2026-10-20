@@ -76,6 +76,7 @@ class _OnRows extends ConsumerWidget {
     final s = ref.read(servicesProvider);
     final where = switch (provider?.kind) {
       SyncBackendKind.folder => settings.syncConfig['folder'] ?? '',
+      SyncBackendKind.googleDrive => 'The NEFORUM Sync folder in your Google Drive',
       SyncBackendKind.webdav => settings.syncConfig['url'] ?? '',
       SyncBackendKind.s3 => '${settings.syncConfig['bucket'] ?? ''} at ${Uri.tryParse(settings.syncConfig['endpoint'] ?? '')?.host ?? ''}',
       null => '',
@@ -101,7 +102,11 @@ class _OnRows extends ConsumerWidget {
         ),
       );
       if (sure != true) return;
+      s.cloudSync.detach();
       await s.secrets.delete(kSyncSecretsKey);
+      // Only this device's sign-in: revoking it at Google would also end the
+      // other devices' access to the files NEFORUM made.
+      await s.secrets.delete(kSyncOAuthKey);
       await s.storage.writeJson('sync-state.json', const <String, dynamic>{});
       await ref.read(settingsProvider.notifier).update((x) => x.copyWith(clearSync: true));
       if (context.mounted) showToast(context, 'Sync is off on this device', icon: Icons.sync_disabled_rounded);
@@ -163,6 +168,11 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
   /// the sync file itself rather than its folder.
   String? _bookmark;
   bool _isFile = false;
+
+  /// This device's Google Drive sign-in, when it has one (see kSyncOAuthKey),
+  /// and the Client ID it belongs to.
+  Map<String, String>? _oauth;
+  String? _oauthClientId;
   bool _hidden = true, _saved = false, _busy = false;
   String? _error;
   String? _progress;
@@ -188,13 +198,20 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
         }
       }
       () async {
-        final secret = await ref.read(servicesProvider).secrets.read(kSyncSecretsKey) ?? const {};
+        final store = ref.read(servicesProvider).secrets;
+        final secret = await store.read(kSyncSecretsKey) ?? const {};
+        final oauth = await store.read(kSyncOAuthKey);
         if (!mounted) return;
         setState(() {
           _passphrase.text = secret['passphrase'] ?? '';
           _c('password').text = secret['password'] ?? '';
           _c('secretAccessKey').text = secret['secretAccessKey'] ?? '';
+          _c('clientSecret').text = secret['clientSecret'] ?? '';
           _saved = _passphrase.text.isNotEmpty;
+          if (oauth != null && current.kind == SyncBackendKind.googleDrive) {
+            _oauth = Map.of(oauth);
+            _oauthClientId = settings.syncConfig['clientId'];
+          }
         });
       }();
     }
@@ -234,16 +251,23 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     if (Env.isMobile) {
       try {
         final picked = await FilesAppFolder.pick(mode);
-        if (picked != null && mounted) {
-          setState(() {
-            _folder = picked.name;
-            _bookmark = picked.bookmark;
-            _isFile = picked.isFile;
-            _error = null;
-          });
+        if (picked == null || !mounted) return;
+        // A copy the cloud app made when two devices collided: the other
+        // devices keep using the real sync file.
+        if (picked.isFile && isSyncConflictCopyName(picked.name)) {
+          setState(() => _error = 'That is a copy a cloud app made (${picked.name}). Pick NEFORUM.neforumsync instead.');
+          return;
         }
+        setState(() {
+          _folder = picked.name;
+          _bookmark = picked.bookmark;
+          _isFile = picked.isFile;
+          _error = null;
+        });
       } on PlatformException catch (e) {
         if (mounted) setState(() => _error = e.message ?? 'Could not open the file picker.');
+      } on MissingPluginException {
+        if (mounted) setState(() => _error = 'NEFORUM cannot open the file picker on this device. Use WebDAV or S3-compatible storage instead.');
       }
       return;
     }
@@ -260,6 +284,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           if (Env.isMobile) 'bookmark': ?_bookmark,
           if (Env.isMobile && _isFile) 'target': 'file',
         },
+      SyncBackendKind.googleDrive => {'clientId': t('clientId')},
       SyncBackendKind.webdav => {'url': t('url'), 'username': t('username')},
       SyncBackendKind.s3 => {
           'endpoint': t('endpoint'),
@@ -276,6 +301,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
         'passphrase': _passphrase.text,
         if (_provider?.kind == SyncBackendKind.webdav) 'password': _c('password').text,
         if (_provider?.kind == SyncBackendKind.s3) 'secretAccessKey': _c('secretAccessKey').text.trim(),
+        if (_provider?.kind == SyncBackendKind.googleDrive) 'clientSecret': _c('clientSecret').text.trim(),
       };
 
   String? _missing() {
@@ -285,6 +311,10 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     switch (p.kind) {
       case SyncBackendKind.folder:
         if (c['folder'] == null || (Env.isMobile && c['bookmark'] == null)) return Env.isMobile ? 'Choose a folder or the sync file.' : 'Choose the folder.';
+      case SyncBackendKind.googleDrive:
+        final id = c['clientId'] ?? '';
+        if (id.isEmpty || _c('clientSecret').text.trim().isEmpty) return 'Paste the Client ID and Client secret of your Google Cloud "Desktop app" client.';
+        if (!id.endsWith('.apps.googleusercontent.com')) return 'That does not look like a Google Client ID (it ends in .apps.googleusercontent.com).';
       case SyncBackendKind.webdav:
         final u = Uri.tryParse(c['url'] ?? '');
         if (u == null || !u.hasScheme || u.host.isEmpty || (c['url'] ?? '').contains('<')) return 'Fill in the WebDAV address (replace the <parts>).';
@@ -316,9 +346,23 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     final p = _provider!;
     final config = _config;
     final secrets = _secrets;
+    // Whether this attempt reuses this device's stored Google sign-in: when
+    // that sign-in turns out dead, the next tap signs in again.
+    final reused = p.kind == SyncBackendKind.googleDrive && _oauth != null && _oauthClientId == config['clientId'];
     try {
+      Map<String, String>? oauth;
+      if (p.kind == SyncBackendKind.googleDrive) {
+        oauth = reused ? _oauth : null;
+        if (oauth == null) {
+          setState(() => _progress = 'Signing in with Google in your browser…');
+          oauth = await _signInWithGoogle(config['clientId']!, secrets['clientSecret']!);
+          _oauth = oauth;
+          _oauthClientId = config['clientId'];
+          if (mounted) setState(() => _progress = 'Checking Google Drive…');
+        }
+      }
       final trial = ref.read(settingsProvider).copyWith(syncProviderId: p.id, syncConfig: config);
-      final backend = buildSyncBackend(trial, secrets, s.http);
+      final backend = buildSyncBackend(trial, secrets, s.http, oauth: oauth, saveOAuth: (m) async => _oauth = oauth = m);
       if (backend == null) throw const SyncBackendException('Some details are missing.');
       await backend.check();
       setState(() => _progress = 'Looking for a sync file…');
@@ -334,25 +378,77 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
         final bookmark = await FolderAccess.remember(config['folder']!);
         if (bookmark != null) stored = {...config, 'bookmark': bookmark};
       }
+      // No sync still running in the old engine may save over what follows.
+      s.cloudSync.detach();
       await s.secrets.write(kSyncSecretsKey, secrets);
+      final signedIn = oauth;
+      if (signedIn != null) {
+        await s.secrets.write(kSyncOAuthKey, signedIn);
+      } else {
+        await s.secrets.delete(kSyncOAuthKey);
+      }
       final before = ref.read(settingsProvider);
       final changedStorage = before.syncProviderId != p.id ||
           before.syncConfig['folder'] != config['folder'] ||
-          before.syncConfig['bookmark'] != config['bookmark'];
+          before.syncConfig['bookmark'] != config['bookmark'] ||
+          before.syncConfig['clientId'] != config['clientId'];
       if (changedStorage) await s.storage.writeJson('sync-state.json', const <String, dynamic>{});
       await ref.read(settingsProvider.notifier).update((x) => x.copyWith(syncProviderId: p.id, syncConfig: stored));
       if (!mounted) return;
       Navigator.of(context).pop();
       showToast(context, blob == null ? 'Sync is on: the sync file was created' : 'Sync is on: this device joined the sync file', icon: Icons.sync_rounded);
     } on Object catch (e) {
+      final dead = (e is SyncBackendException && !e.temporary) || e is OAuthException;
       if (mounted) {
         setState(() {
+          if (reused && dead) {
+            _oauth = null;
+            _oauthClientId = null;
+          }
           _busy = false;
           _progress = null;
           _error = describeSyncError(e);
         });
       }
     }
+  }
+
+  /// "Create the sync file" is only for the first device: a second one
+  /// would start a separate file next to the real one.
+  Future<void> _confirmCreate() async {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Create a new sync file?'),
+        content: const Text(
+            'Only do this on your first device. If NEFORUM.neforumsync is already in that place, cancel and use Choose the sync file instead. '
+            'If the picker asks whether to replace a file, do not replace it.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text('Create it')),
+        ],
+      ),
+    );
+    if (go == true) await _chooseFolder(PickMode.create);
+  }
+
+  /// Google's sign-in in the browser (the OS sign-in sheet on phones and
+  /// Macs), with the user's own "Desktop app" client: Google sends the
+  /// browser back to http://127.0.0.1, which NEFORUM listens on.
+  Future<Map<String, String>> _signInWithGoogle(String clientId, String clientSecret) async {
+    final s = ref.read(servicesProvider);
+    final redirect = s.broker.chooseRedirectUri(loopbackOk: true, customSchemeOk: false);
+    if (redirect.scheme != 'http') throw const SyncBackendException('Google sign-in is not available on this device.');
+    final client = OAuthTokenSource.googleDriveClient(clientId: clientId, clientSecret: clientSecret);
+    final tokens = await client.authorize(s.http, s.broker, redirectUri: redirect);
+    if (tokens.refreshToken == null || tokens.refreshToken!.isEmpty) {
+      throw const SyncBackendException('Google did not give NEFORUM a lasting sign-in. Try again.');
+    }
+    final granted = tokens.scope;
+    if (granted != null && !granted.split(' ').contains(googleDriveScope)) {
+      throw const SyncBackendException('The Google Drive permission was not granted. Sign in again and allow NEFORUM to see the files it makes.');
+    }
+    return tokens.toSecrets();
   }
 
   @override
@@ -401,6 +497,8 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
         ]);
     return [
       Text('Pick the storage you already use. Use the same one on every device.', style: context.text.bodyMedium),
+      group('Google Drive, directly', 'NEFORUM signs in to Google Drive itself with your own Google Cloud key. Works on every device: use it on all of them.',
+          SyncBackendKind.googleDrive),
       if (Env.isDesktop)
         group('A cloud app on this computer', 'NEFORUM writes the file into a folder; your cloud app does the syncing.', SyncBackendKind.folder),
       if (Env.isIOS)
@@ -450,7 +548,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
             label: const Text('Choose the sync file…'),
           ),
           OutlinedButton.icon(
-            onPressed: _busy ? null : () => _chooseFolder(PickMode.create),
+            onPressed: _busy ? null : _confirmCreate,
             icon: const Icon(Icons.note_add_outlined, size: 18),
             label: const Text('Create the sync file…'),
           ),
@@ -470,6 +568,31 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
             TextButton(onPressed: _busy ? null : _chooseFolder, child: const Text('Choose folder…')),
           ]),
         ),
+      if (p.kind == SyncBackendKind.googleDrive) ...[
+        field('clientId', 'Client ID', hint: 'From your Google Cloud project: Clients > a "Desktop app" client. The same on every device.'),
+        field('clientSecret', 'Client secret', secret: true),
+        Text(
+          _oauth != null && _oauthClientId == _c('clientId').text.trim()
+              ? 'This device is signed in to Google Drive.'
+              : 'When you tap Turn on sync, Google asks you to sign in and to let NEFORUM see the files it makes.',
+          style: context.text.bodySmall?.copyWith(color: nf.textMuted),
+        ),
+        if (_oauth != null && _oauthClientId == _c('clientId').text.trim())
+          TextButton(
+            onPressed: _busy
+                ? null
+                : () => setState(() {
+                      _oauth = null;
+                      _oauthClientId = null;
+                    }),
+            child: const Text('Sign in again or use another Google account'),
+          ),
+        TextButton.icon(
+          onPressed: () => showGuideSheet(context, 'sync', asset: 'sync.md'),
+          icon: const Icon(Icons.help_outline_rounded, size: 18),
+          label: const Text('How to make the Client ID'),
+        ),
+      ],
       if (p.kind == SyncBackendKind.webdav) ...[
         field('url', 'WebDAV folder address', hint: 'The file NEFORUM.neforumsync goes in this folder; it is created if missing.'),
         field('username', 'Username'),
