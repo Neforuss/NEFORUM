@@ -13,9 +13,10 @@ It uses your own Google Cloud project, once, the same way NEFORUM's YouTube conn
 1. In the [Google Cloud console](https://console.cloud.google.com/), create a project, or open the one you use for YouTube.
 2. **APIs & Services > Library**: enable the **Google Drive API**.
 3. **OAuth consent screen** (Google Auth Platform): choose **External**, fill in the app name and your email, then add the scope `.../auth/drive.file` under **Data access**. This scope only lets NEFORUM see files it made itself.
-4. Under **Audience**, click **Publish app**. While an app is in "Testing", Google ends its sign-ins after 7 days. With only this scope, publishing needs no review.
-5. **Clients > Create client**, type **Desktop app**. Copy the **Client ID** and **Client secret**.
-6. In NEFORUM, go to **Settings > Sync > Set up > Google Drive (direct)**, paste them, and sign in with Google. Do this on every device with the same Client ID and secret.
+4. **Audience > Test users**: click **Add users** and add **your own Google address**. Add every Google account you will sign in with, on any device: the one whose Drive should hold the sync file. Without this, Google refuses the sign-in. This Google Cloud app is only for you. You don't share it, and nobody else uses your Client ID.
+5. Optional: also under **Audience**, click **Publish app**. While an app is in "Testing", Google ends its sign-ins after 7 days, and NEFORUM asks you to sign in again. With only the `drive.file` scope, publishing needs no review from Google.
+6. **Clients > Create client**, type **Desktop app**. Copy the **Client ID** and **Client secret**.
+7. In NEFORUM, go to **Settings > Sync > Set up > Google Drive (direct)**, paste them, and sign in with the Google account you added as a test user. Do this on every device with the same Client ID, secret and passphrase.
 
 **A cloud app on your computer.** NEFORUM writes the file into a folder; your cloud app does the syncing.
 
@@ -142,6 +143,6 @@ The cloud app decides when to upload. Check that it is running and that the fold
 Google Drive's app did not hand the file over. Its Privacy Screen setting, a file that is not downloaded yet, or a stuck Google Drive app can all cause this. Use **Google Drive (direct)** instead, on every device. If you want to try the picker again: in Google Drive's settings, turn off Privacy Screen; mark the file **Available offline**; and restart the phone.
 
 **"The Google sign-in expired or was revoked"**
-Sign in again in **Settings > Sync > Change…**. If this happens every week, the Google Cloud app is still in Testing: click **Publish app** under Audience.
+Sign in again in **Settings > Sync > Change…**. If this happens every week, the Google Cloud app is still in Testing: click **Publish app** under Audience. If Google refuses the sign-in with "Access blocked" or a message that the app is being tested, add your Google address under **Audience > Test users**.
 **On a Mac, iPhone or iPad, sync stopped after moving or renaming the folder**
 Choose **Change…** and pick the folder again.

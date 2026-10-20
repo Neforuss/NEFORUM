@@ -196,7 +196,8 @@ final List<SyncProvider> syncProviders = List.unmodifiable([
     kind: SyncBackendKind.googleDrive,
     hint: "NEFORUM reaches Google Drive itself through your own Google Cloud project (the one for NEFORUM's YouTube connection works "
         'too). In the Google Cloud console: enable the Google Drive API; set up the OAuth consent screen (External) with the drive.file '
-        'scope and click Publish app, or sign-ins expire after 7 days; then create an OAuth client of type "Desktop app" and paste its '
+        'scope; under Audience > Test users, add your own Google address (every account you will sign in with); optionally click '
+        'Publish app so sign-ins do not expire after 7 days; then create an OAuth client of type "Desktop app" and paste its '
         'Client ID and Client secret here. The file goes in a "NEFORUM Sync" folder in My Drive. Choose this option on every device: '
         'it cannot see a file Google Drive for desktop put in a folder.',
   ),
