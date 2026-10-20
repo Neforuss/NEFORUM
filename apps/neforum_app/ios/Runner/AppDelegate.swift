@@ -51,14 +51,22 @@ struct SyncFolderError: Error {
   let message: String
 }
 
-/// "neforum/syncfolder": the sync file in a folder the user picked in the
-/// Files app (iCloud Drive, or the location of a cloud app such as OneDrive,
-/// Google Drive or Dropbox). Access survives restarts through a bookmark,
-/// and every read and write goes through NSFileCoordinator, so iCloud or the
-/// cloud app downloads the newest file first and uploads what NEFORUM wrote
-/// (lib/platform/files_app_folder.dart).
+/// "neforum/syncfolder": the sync file in a location the user picked in the
+/// Files app (lib/platform/files_app_folder.dart):
+///
+/// * a folder (iCloud Drive, Dropbox, On My iPhone...), or
+/// * the sync file itself, for apps that do not let other apps pick their
+///   folders and show up grayed out in the folder picker (Google Drive,
+///   OneDrive, MEGA...) but do let them open and save one file in place.
+///   "create" saves a new, empty sync file into such an app.
+///
+/// Access survives restarts through a bookmark, and every read and write
+/// goes through NSFileCoordinator, so iCloud or the cloud app downloads the
+/// newest file first and uploads what NEFORUM wrote. An empty file counts as
+/// no sync file yet.
 class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
   private var pendingPick: FlutterResult?
+  private var pendingIsFile = false
 
   static func register(in registry: FlutterPluginRegistry) {
     if let registrar = registry.registrar(forPlugin: "NeforumSyncFolder") {
@@ -72,11 +80,11 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
   }
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    let args = call.arguments as? [String: Any] ?? [:]
     if call.method == "pick" {
-      pick(result)
+      pick(args["mode"] as? String ?? "folder", result)
       return
     }
-    let args = call.arguments as? [String: Any] ?? [:]
     guard let encoded = args["bookmark"] as? String, let bookmark = Data(base64Encoded: encoded) else {
       result(FlutterError(code: "bookmark", message: "No folder was chosen.", details: nil))
       return
@@ -94,15 +102,30 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
     }
   }
 
-  // MARK: Picking the folder
+  // MARK: Picking
 
-  private func pick(_ result: @escaping FlutterResult) {
+  private func pick(_ mode: String, _ result: @escaping FlutterResult) {
     guard pendingPick == nil, let top = SyncFolderPlugin.topController() else {
       result(nil)
       return
     }
+    let picker: UIDocumentPickerViewController
+    switch mode {
+    case "file":
+      picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.data], asCopy: false)
+    case "create":
+      let url = FileManager.default.temporaryDirectory.appendingPathComponent("NEFORUM.neforumsync")
+      try? FileManager.default.removeItem(at: url)
+      guard FileManager.default.createFile(atPath: url.path, contents: Data()) else {
+        result(FlutterError(code: "io", message: "Could not prepare the sync file.", details: nil))
+        return
+      }
+      picker = UIDocumentPickerViewController(forExporting: [url], asCopy: false)
+    default:
+      picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.folder], asCopy: false)
+    }
     pendingPick = result
-    let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.folder], asCopy: false)
+    pendingIsFile = mode != "folder"
     picker.delegate = self
     picker.allowsMultipleSelection = false
     top.present(picker, animated: true)
@@ -119,9 +142,11 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
     do {
       let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
-      result(["bookmark": bookmark.base64EncodedString(), "name": url.lastPathComponent, "path": url.path])
+      result([
+        "bookmark": bookmark.base64EncodedString(), "name": url.lastPathComponent, "path": url.path, "file": pendingIsFile,
+      ] as [String: Any])
     } catch {
-      result(FlutterError(code: "bookmark", message: "iOS did not allow NEFORUM to keep this folder: \(error.localizedDescription)", details: nil))
+      result(FlutterError(code: "bookmark", message: "iOS did not allow NEFORUM to keep this location: \(error.localizedDescription)", details: nil))
     }
   }
 
@@ -138,15 +163,16 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
     return top
   }
 
-  // MARK: Reading and writing in the folder
+  // MARK: Reading and writing
 
   private static func run(_ method: String, bookmark: Data, args: [String: Any]) throws -> Any? {
     var stale = false
-    let folder = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
-    let scoped = folder.startAccessingSecurityScopedResource()
-    defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
-    let name = args["name"] as? String ?? ""
-    let file = folder.appendingPathComponent(name)
+    let base = try URL(resolvingBookmarkData: bookmark, options: [], relativeTo: nil, bookmarkDataIsStale: &stale)
+    let scoped = base.startAccessingSecurityScopedResource()
+    defer { if scoped { base.stopAccessingSecurityScopedResource() } }
+    // The bookmark is the sync file itself, or the folder it lives in.
+    let isFile = args["file"] as? Bool ?? false
+    let file = isFile ? base : base.appendingPathComponent(args["name"] as? String ?? "")
     let coordinator = NSFileCoordinator(filePresenter: nil)
     var coordinationError: NSError?
     var out: Any?
@@ -155,10 +181,10 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
     switch method {
     case "read":
       coordinator.coordinate(readingItemAt: file, options: [], error: &coordinationError) { url in
-        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        guard let current = version(of: url) else { return }
         do {
           let data = try Data(contentsOf: url)
-          out = ["bytes": FlutterStandardTypedData(bytes: data), "version": version(of: url) ?? ""] as [String: Any]
+          out = ["bytes": FlutterStandardTypedData(bytes: data), "version": current] as [String: Any]
         } catch {
           failure = error
         }
@@ -172,20 +198,22 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
       coordinator.coordinate(
         readingItemAt: file, options: [], writingItemAt: file, options: .forReplacing, error: &coordinationError
       ) { readURL, writeURL in
-        let current: String? = FileManager.default.fileExists(atPath: readURL.path) ? (version(of: readURL) ?? "") : nil
-        if !force && current != ifMatch {
+        if !force && version(of: readURL) != ifMatch {
           failure = SyncFolderError(code: "conflict", message: "The sync file changed while NEFORUM was writing it.")
           return
         }
         do {
-          try typed.data.write(to: writeURL, options: .atomic)
+          // A picked file can only be written in place: there is no access
+          // to its folder for the temporary file of an atomic write.
+          try typed.data.write(to: writeURL, options: isFile ? Data.WritingOptions() : .atomic)
           out = version(of: writeURL) ?? ""
         } catch {
           failure = error
         }
       }
     case "list":
-      coordinator.coordinate(readingItemAt: folder, options: [.immediatelyAvailableMetadataOnly], error: &coordinationError) { url in
+      if isFile { return [String]() }
+      coordinator.coordinate(readingItemAt: base, options: [.immediatelyAvailableMetadataOnly], error: &coordinationError) { url in
         do {
           // Files iCloud has not downloaded yet show up as ".name.icloud".
           out = try FileManager.default.contentsOfDirectory(atPath: url.path).map { entry -> String in
@@ -199,6 +227,7 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
         }
       }
     case "delete":
+      if isFile { return nil }
       coordinator.coordinate(writingItemAt: file, options: .forDeleting, error: &coordinationError) { url in
         do {
           if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
@@ -214,10 +243,13 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
     return out
   }
 
-  /// Changes whenever the file does: modification time (microseconds) and size.
+  /// Changes whenever the file does: modification time (microseconds) and
+  /// size. `nil` when there is no file, or only an empty one.
   private static func version(of url: URL) -> String? {
-    guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
-          let modified = values.contentModificationDate else { return nil }
-    return "\(Int64(modified.timeIntervalSince1970 * 1_000_000)):\(values.fileSize ?? 0)"
+    guard FileManager.default.fileExists(atPath: url.path),
+          let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+          let size = values.fileSize, size > 0 else { return nil }
+    let modified = values.contentModificationDate?.timeIntervalSince1970 ?? 0
+    return "\(Int64(modified * 1_000_000)):\(size)"
   }
 }

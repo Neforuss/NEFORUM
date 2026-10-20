@@ -15,15 +15,19 @@ You'll find it in **Settings > Sync**.
 
 Keep the folder **available offline** ("Always keep on this device" in OneDrive, "Available offline" in Google Drive and Dropbox). Otherwise the cloud app may not download the newest file before NEFORUM reads it.
 
-**iCloud Drive or a cloud app on an iPhone or iPad.** NEFORUM uses a folder you pick in the Files app, and iCloud Drive or the cloud app does the syncing.
+**A cloud app on your iPhone, iPad or Android phone.** Pick a location in the system file picker (the Files app on iPhone and iPad). iCloud Drive or the cloud app does the syncing. There are three ways to pick:
 
-- iCloud Drive
-- The OneDrive, Google Drive, Dropbox, Box, MEGA, pCloud, Proton Drive, Sync.com, Nextcloud and ownCloud apps
-- Möbius Sync, which is Syncthing for iPhone
-- Any other location the Files app shows
+- **Choose folder**: NEFORUM keeps `NEFORUM.neforumsync` in the folder. This works with iCloud Drive, Dropbox and On My iPhone. On Android it works with a folder that Syncthing-Fork or another sync app keeps in step.
+- **Choose the sync file**: pick the `NEFORUM.neforumsync` that your computer already made. Use this for apps that do not let other apps pick their folders: in the iPhone folder picker they look grayed out (Google Drive, OneDrive, MEGA and others). They still let NEFORUM open and save that one file.
+- **Create the sync file**: when the phone is your first device, save a new, empty sync file into the cloud app. NEFORUM fills it in.
 
-Install the cloud app and sign in first. If it is missing from the picker, open the Files app, tap **Browse**, then **⋯ > Edit**, and turn it on. NEFORUM keeps access to the folder after a restart. It asks iCloud or the cloud app for the newest file before every read, and hands over every write for upload.
+The cloud apps include the OneDrive, Google Drive, Dropbox, Box, MEGA, pCloud, Proton Drive, Sync.com, Nextcloud and ownCloud apps, plus Möbius Sync (Syncthing for iPhone).
 
+Install the cloud app and sign in first. On an iPhone, if the app is missing from the picker, open the Files app, tap **Browse**, then **⋯ > Edit**, and turn it on.
+
+NEFORUM keeps access to what you picked after a restart. On iPhone and iPad it asks iCloud or the cloud app for the newest file before every read, and hands over every write for upload.
+
+If a cloud app refuses to save the file, NEFORUM tells you when you turn sync on. Use WebDAV or S3 instead.
 **WebDAV** (computers, iPhone, iPad and Android). NEFORUM talks to the server itself.
 
 - Nextcloud and ownCloud, Koofr, pCloud, Infomaniak kDrive, Fastmail Files
@@ -41,9 +45,7 @@ Use an **app password** wherever the service offers one.
 
 Use a private bucket and a key that can only read and write that bucket.
 
-**Android phones cannot use a cloud app's folder.** On Android, pick WebDAV or S3. Your computers can use the same server or bucket directly, or they can stay on their folder if the cloud service also offers WebDAV (Nextcloud, Koofr, pCloud).
-
-For example, your PC on OneDrive and your iPhone on OneDrive both work with the same file. An Android phone joins through WebDAV or S3.
+For example, your PC syncs a Google Drive folder and makes `NEFORUM.neforumsync` there. Your iPhone and your Android phone then pick that file in their Google Drive app with **Choose the sync file**.
 
 Every device must use the same storage and the same file.
 
@@ -101,6 +103,8 @@ You can avoid renewals altogether by connecting X and Tumblr with **OAuth 1.0a k
 **A scheduled post is published by the device it was scheduled on**, because that device has its photos and videos. Your other devices show the post but leave it alone.
 
 If that device stays silent (switched off, or NEFORUM closed) and the post is more than 30 minutes overdue, another device publishes it instead. It only does so if it has all of the post's photos and videos, so a text-only post can always be picked up.
+
+If a phone's background task cannot reach the sync location, it goes by what the last sync saw.
 
 Platforms that hold scheduled posts themselves (see **Settings > Scheduling**) publish on time either way.
 

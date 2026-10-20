@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -57,7 +58,8 @@ void main() {
   test('the storage settings build the right backend, and nothing when incomplete', () {
     final http = NeforumHttp();
     expect(buildSyncBackend(const AppSettings(), const {}, http), isNull);
-    expect(buildSyncBackend(const AppSettings(syncProviderId: 'dropbox', syncConfig: {'folder': 'D:/Dropbox/NEFORUM'}), const {}, http), isA<FolderSyncBackend>());
+    expect(buildSyncBackend(const AppSettings(syncProviderId: 'dropbox', syncConfig: {'folder': 'D:/Dropbox/NEFORUM'}), const {}, http, filesApp: false),
+        isA<FolderSyncBackend>());
     const dav = AppSettings(syncProviderId: 'nextcloud', syncConfig: {'url': 'https://cloud.example.com/remote.php/dav/files/u/NEFORUM', 'username': 'u'});
     expect(buildSyncBackend(dav, const {}, http), isNull, reason: 'no password');
     expect(buildSyncBackend(dav, const {'password': 'app'}, http), isA<WebDavSyncBackend>());
@@ -134,6 +136,37 @@ void main() {
       expect(files.keys, isNot(contains('.NEFORUM.neforumsync.check')));
     });
 
+    test('a picked sync file (Google Drive, OneDrive): read and written in place, empty means not made yet', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        final a = Map<String, Object?>.from(call.arguments as Map);
+        expect(a['file'], isTrue, reason: 'the bookmark is the file itself');
+        calls.add(call.method);
+        switch (call.method) {
+          case 'read':
+            final bytes = files['picked'];
+            return bytes == null || bytes.isEmpty ? null : {'bytes': bytes, 'version': versions['picked']};
+          case 'write':
+            final current = (files['picked']?.isEmpty ?? true) ? null : versions['picked'];
+            if (a['force'] != true && current != a['ifMatch']) throw PlatformException(code: 'conflict');
+            files['picked'] = a['bytes']! as Uint8List;
+            return versions['picked'] = 'v${++tick}';
+          case 'list':
+            return <String>[];
+        }
+        return null;
+      });
+      files['picked'] = Uint8List(0); // "Create the sync file" made an empty one
+      final b = FilesAppSyncBackend('bm', folderName: 'NEFORUM.neforumsync', isFile: true);
+      await b.check();
+      expect(await b.read(), isNull, reason: 'an empty file is a sync file not written yet');
+      final v = await b.write(Uint8List.fromList([5]), ifMatch: null);
+      expect((await b.read())!.version, v);
+      expect(await b.conflictCopies(), isEmpty);
+      expect(calls, isNot(contains('list')), reason: 'no folder access for a picked file');
+      final settings = const AppSettings(syncProviderId: 'googledrive', syncConfig: {'folder': 'NEFORUM.neforumsync', 'bookmark': 'bm', 'target': 'file'});
+      expect((buildSyncBackend(settings, const {}, NeforumHttp(), filesApp: true)! as FilesAppSyncBackend).isFile, isTrue);
+    });
+
     test('a folder iOS no longer lets NEFORUM open asks to pick it again', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async => throw PlatformException(code: 'bookmark', message: 'Choose the folder again.'));
@@ -151,6 +184,10 @@ void main() {
   });
 
   test('two devices on one synced folder share accounts, keys, posts and settings', () async {
+    // A computer: flutter_test pretends to be Android, where a folder is a
+    // picked location instead.
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final dir = await Directory.systemTemp.createTemp('neforum-cloud-sync-');
     addTearDown(() => dir.delete(recursive: true));
     final passphrase = generatePassphrase();
@@ -195,6 +232,8 @@ void main() {
   }, timeout: const Timeout(Duration(minutes: 2)));
 
   test('a wrong passphrase shows a clear message', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final dir = await Directory.systemTemp.createTemp('neforum-cloud-sync-');
     addTearDown(() => dir.delete(recursive: true));
     final a = _Device(dir.path);

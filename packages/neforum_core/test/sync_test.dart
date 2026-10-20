@@ -276,6 +276,26 @@ void main() {
       expect(await a.engine.mayPublish((await a.posts.get('s1'))!), isFalse, reason: 'B claimed it');
     });
 
+    test('a fresh process that cannot reach the file goes by the last synced claims', () async {
+      await a.posts.upsert(_post('s1', status: PostStatus.scheduled, scheduledAt: due));
+      await a.engine.sync();
+      await b.engine.sync();
+      // A phone's background task: a new engine, B's saved state, no file.
+      SyncEngine offline() => SyncEngine(
+            backend: _BrokenBackend(),
+            cipher: BackupCipher(_pass, params: _fast, minimum: _fast),
+            deviceId: 'B',
+            device: SyncDeviceInfo(label: 'B', platform: 'test', appVersion: '1', seenAt: DateTime.utc(2000)),
+            sources: [PostsSyncSource(b.posts)],
+            state: b.stateStore,
+            clock: () => clock.now,
+          );
+      final onB = (await b.posts.get('s1'))!;
+      expect(await offline().mayPublish(onB), isFalse, reason: 'A scheduled it and was just seen');
+      clock.now = due.add(const Duration(hours: 2));
+      expect(await offline().mayPublish(onB), isTrue, reason: 'A has been silent and the post is long overdue');
+    });
+
     test('a post only on this device is published here', () async {
       expect(await a.engine.mayPublish(_post('local', status: PostStatus.scheduled, scheduledAt: due)), isTrue);
     });
@@ -540,6 +560,14 @@ void main() {
         reason: 'iPhones and iPads reach these through the Files app');
     expect(syncProviderById('icloud')!.hintFor(ios: true), contains('iCloud Drive'));
     expect(syncProviderById('onedrive')!.hintFor(ios: false), contains('Always keep on this device'));
+    // Google Drive and OneDrive cannot have their folders picked on iOS: the
+    // hint sends the user to the sync file instead.
+    expect(syncProviderById('googledrive')!.hintFor(ios: true), contains('Choose the sync file'));
+    expect(syncProviderById('googledrive')!.hintFor(android: true), contains('Choose the sync file'));
+    expect(syncProviderById('icloud')!.availableOn(android: true), isFalse, reason: 'no iCloud Drive app on Android');
+    expect(syncProviderById('icloud')!.availableOn(ios: true), isTrue);
+    expect(syncProviders.where((p) => p.kind == SyncBackendKind.folder && p.availableOn(android: true)).length, greaterThanOrEqualTo(10));
+    expect(syncProviderById('nextcloud')!.availableOn(android: true), isTrue, reason: 'WebDAV works everywhere');
     expect(isSyncConflictCopyName('NEFORUM (1).neforumsync'), isTrue);
     expect(isSyncConflictCopyName('.NEFORUM.neforumsync.check'), isFalse);
     expect(syncProviders.where((p) => p.kind == SyncBackendKind.webdav).length, greaterThanOrEqualTo(8));

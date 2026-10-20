@@ -157,8 +157,10 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
   final _passphrase = TextEditingController();
   String? _folder;
 
-  /// The Files-app folder's bookmark (iPhone and iPad).
+  /// The picked location's bookmark (phones and tablets), and whether it is
+  /// the sync file itself rather than its folder.
   String? _bookmark;
+  bool _isFile = false;
   bool _hidden = true, _saved = false, _busy = false;
   String? _error;
   String? _progress;
@@ -177,6 +179,8 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           _folder = e.value;
         } else if (e.key == 'bookmark') {
           _bookmark = e.value;
+        } else if (e.key == 'target') {
+          _isFile = e.value == 'file';
         } else {
           _c(e.key).text = e.value;
         }
@@ -216,19 +220,20 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     });
   }
 
-  Future<void> _chooseFolder() async {
-    if (Env.isIOS) {
+  Future<void> _chooseFolder([PickMode mode = PickMode.folder]) async {
+    if (Env.isMobile) {
       try {
-        final picked = await FilesAppFolder.pick();
+        final picked = await FilesAppFolder.pick(mode);
         if (picked != null && mounted) {
           setState(() {
             _folder = picked.name;
             _bookmark = picked.bookmark;
+            _isFile = picked.isFile;
             _error = null;
           });
         }
       } on PlatformException catch (e) {
-        if (mounted) setState(() => _error = e.message ?? 'Could not open the Files picker.');
+        if (mounted) setState(() => _error = e.message ?? 'Could not open the file picker.');
       }
       return;
     }
@@ -240,7 +245,11 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     final p = _provider!;
     String t(String k) => _c(k).text.trim();
     return switch (p.kind) {
-      SyncBackendKind.folder => {'folder': ?_folder, if (Env.isIOS) 'bookmark': ?_bookmark},
+      SyncBackendKind.folder => {
+          'folder': ?_folder,
+          if (Env.isMobile) 'bookmark': ?_bookmark,
+          if (Env.isMobile && _isFile) 'target': 'file',
+        },
       SyncBackendKind.webdav => {'url': t('url'), 'username': t('username')},
       SyncBackendKind.s3 => {
           'endpoint': t('endpoint'),
@@ -265,7 +274,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     final c = _config;
     switch (p.kind) {
       case SyncBackendKind.folder:
-        if (c['folder'] == null || (Env.isIOS && c['bookmark'] == null)) return 'Choose the folder.';
+        if (c['folder'] == null || (Env.isMobile && c['bookmark'] == null)) return Env.isMobile ? 'Choose a folder or the sync file.' : 'Choose the folder.';
       case SyncBackendKind.webdav:
         final u = Uri.tryParse(c['url'] ?? '');
         if (u == null || !u.hasScheme || u.host.isEmpty || (c['url'] ?? '').contains('<')) return 'Fill in the WebDAV address (replace the <parts>).';
@@ -316,7 +325,10 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
         if (bookmark != null) stored = {...config, 'bookmark': bookmark};
       }
       await s.secrets.write(kSyncSecretsKey, secrets);
-      final changedStorage = ref.read(settingsProvider).syncProviderId != p.id || ref.read(settingsProvider).syncConfig['folder'] != config['folder'];
+      final before = ref.read(settingsProvider);
+      final changedStorage = before.syncProviderId != p.id ||
+          before.syncConfig['folder'] != config['folder'] ||
+          before.syncConfig['bookmark'] != config['bookmark'];
       if (changedStorage) await s.storage.writeJson('sync-state.json', const <String, dynamic>{});
       await ref.read(settingsProvider.notifier).update((x) => x.copyWith(syncProviderId: p.id, syncConfig: stored));
       if (!mounted) return;
@@ -373,7 +385,8 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           Text(sub, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
           const SizedBox(height: Space.xs),
           Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
-            for (final x in syncProviders.where((x) => x.kind == kind)) ActionChip(label: Text(x.name), onPressed: () => _pick(x)),
+            for (final x in syncProviders.where((x) => x.kind == kind && x.availableOn(ios: Env.isIOS, android: Env.isAndroid)))
+              ActionChip(label: Text(x.name), onPressed: () => _pick(x)),
           ]),
         ]);
     return [
@@ -381,14 +394,13 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       if (Env.isDesktop)
         group('A cloud app on this computer', 'NEFORUM writes the file into a folder; your cloud app does the syncing.', SyncBackendKind.folder),
       if (Env.isIOS)
-        group('iCloud Drive or a cloud app', 'Pick a folder in the Files app; iCloud Drive or the cloud app does the syncing.', SyncBackendKind.folder),
+        group('iCloud Drive or a cloud app', 'Pick a folder, or the sync file, in the Files app; iCloud Drive or the cloud app does the syncing.',
+            SyncBackendKind.folder),
+      if (Env.isAndroid)
+        group('A cloud app or a synced folder', 'Pick the sync file in a cloud app, or a folder on this phone that a sync app keeps in step.',
+            SyncBackendKind.folder),
       group('WebDAV', 'NEFORUM reaches the server itself. Works on phones too.', SyncBackendKind.webdav),
       group('S3-compatible storage', 'NEFORUM reaches the bucket itself. Works on phones too.', SyncBackendKind.s3),
-      if (Env.isAndroid) ...[
-        const SizedBox(height: Space.md),
-        Text('Android cannot use a cloud app\'s folder: pick WebDAV or S3 (your computers can use the same server or bucket).',
-            style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
-      ],
     ];
   }
 
@@ -405,14 +417,47 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           ),
         );
     return [
-      Text(p.hintFor(ios: Env.isIOS), style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+      Text(p.hintFor(ios: Env.isIOS, android: Env.isAndroid), style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
       const SizedBox(height: Space.md),
-      if (p.kind == SyncBackendKind.folder)
+      if (p.kind == SyncBackendKind.folder && Env.isMobile) ...[
+        NfWell(
+          padding: const EdgeInsets.all(Space.md),
+          child: Text(
+            _folder == null ? 'Nothing chosen yet' : (_isFile ? 'Sync file: $_folder' : 'Folder: $_folder'),
+            style: monoStyle(context, size: 12, color: _folder == null ? nf.textMuted : nf.text),
+          ),
+        ),
+        const SizedBox(height: Space.sm),
+        Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          OutlinedButton.icon(
+            onPressed: _busy ? null : () => _chooseFolder(PickMode.folder),
+            icon: const Icon(Icons.folder_open_rounded, size: 18),
+            label: const Text('Choose folder…'),
+          ),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : () => _chooseFolder(PickMode.file),
+            icon: const Icon(Icons.insert_drive_file_outlined, size: 18),
+            label: const Text('Choose the sync file…'),
+          ),
+          OutlinedButton.icon(
+            onPressed: _busy ? null : () => _chooseFolder(PickMode.create),
+            icon: const Icon(Icons.note_add_outlined, size: 18),
+            label: const Text('Create the sync file…'),
+          ),
+        ]),
+        const SizedBox(height: Space.xs),
+        Text(
+          'Grayed out when choosing a folder? That app does not let other apps pick its folders. Choose the sync file there '
+          '(NEFORUM.neforumsync, which your computer makes), or create it there if this is your first device.',
+          style: context.text.bodySmall?.copyWith(color: nf.textMuted),
+        ),
+      ],
+      if (p.kind == SyncBackendKind.folder && !Env.isMobile)
         NfWell(
           padding: const EdgeInsets.fromLTRB(Space.md, Space.xs, Space.xs, Space.xs),
           child: Row(children: [
             Expanded(child: Text(_folder ?? 'No folder chosen', style: monoStyle(context, size: 12, color: _folder == null ? nf.textMuted : nf.text))),
-            TextButton(onPressed: _busy ? null : _chooseFolder, child: Text(Env.isIOS ? 'Choose in Files…' : 'Choose folder…')),
+            TextButton(onPressed: _busy ? null : _chooseFolder, child: const Text('Choose folder…')),
           ]),
         ),
       if (p.kind == SyncBackendKind.webdav) ...[

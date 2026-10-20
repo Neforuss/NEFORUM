@@ -39,8 +39,10 @@ class CloudSyncStatus {
 const Set<String> kSyncSecretFields = {'passphrase', 'password', 'secretAccessKey'};
 
 /// The storage [settings] point at, or `null` when sync is off or the setup
-/// is incomplete. A folder is a Files-app location on an iPhone or iPad
-/// ([filesApp], default: on iOS) and a plain folder elsewhere.
+/// is incomplete. On a phone or tablet ([filesApp], default: iOS and
+/// Android) a folder provider is a location picked in the system file picker
+/// (a folder, or the sync file itself when `target` is `file`); on a computer
+/// it is a plain folder.
 SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets, NeforumHttp http, {String? folderOverride, bool? filesApp}) {
   final provider = syncProviderById(settings.syncProviderId);
   if (provider == null) return null;
@@ -52,9 +54,9 @@ SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets,
 
   switch (provider.kind) {
     case SyncBackendKind.folder:
-      if (filesApp ?? Env.isIOS) {
+      if (filesApp ?? Env.isMobile) {
         final bookmark = v('bookmark');
-        return bookmark == null ? null : FilesAppSyncBackend(bookmark, folderName: v('folder') ?? provider.name);
+        return bookmark == null ? null : FilesAppSyncBackend(bookmark, folderName: v('folder') ?? provider.name, isFile: v('target') == 'file');
       }
       final folder = folderOverride ?? v('folder');
       return folder == null ? null : FolderSyncBackend(folder);

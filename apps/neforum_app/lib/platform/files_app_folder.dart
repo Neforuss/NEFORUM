@@ -1,34 +1,59 @@
 import 'package:flutter/services.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
-/// A folder picked in the Files app on an iPhone or iPad.
-typedef PickedFolder = ({String bookmark, String name, String path});
+/// A location picked with the system file picker: a folder, or the sync file
+/// itself ([isFile]).
+typedef PickedLocation = ({String bookmark, String name, bool isFile});
 
-/// iPhone and iPad: the sync file in a Files-app location (iCloud Drive, or a
-/// cloud app such as OneDrive, Google Drive or Dropbox). iOS has no folders a
-/// cloud app syncs in the background the way a computer does; instead each
-/// cloud app offers a location in the Files app. NEFORUM keeps access to the
-/// picked folder with a bookmark and reads and writes the file through
-/// NSFileCoordinator, so iCloud or the cloud app fetches the newest file and
-/// uploads the new one (ios/Runner/AppDelegate.swift, SyncFolderPlugin).
+/// How to pick the location.
+enum PickMode {
+  /// A folder: NEFORUM keeps NEFORUM.neforumsync in it (and merges the
+  /// copies a cloud app makes when two devices collide).
+  folder,
+
+  /// The sync file another device already made, for cloud apps that do not
+  /// let other apps pick their folders (Google Drive, OneDrive, MEGA... look
+  /// grayed out in the iOS folder picker) but do let them open and save a
+  /// file in place.
+  file,
+
+  /// A new, empty sync file saved into such a cloud app, for the first
+  /// device.
+  create,
+}
+
+/// Phones and tablets: the sync file in a location of the system file picker
+/// (the Files app on iPhone and iPad, Android's picker): iCloud Drive or a
+/// cloud app such as OneDrive, Google Drive or Dropbox. A phone has no
+/// folders a cloud app syncs in the background the way a computer does;
+/// each cloud app offers its files through the picker instead. Access is
+/// kept across restarts (an iOS bookmark, an Android persisted permission),
+/// and on iOS reads and writes go through NSFileCoordinator so iCloud or the
+/// cloud app fetches the newest file and uploads the new one
+/// (ios/Runner/AppDelegate.swift and android/.../MainActivity.kt).
 abstract final class FilesAppFolder {
   static const MethodChannel channel = MethodChannel('neforum/syncfolder');
 
-  /// Opens the Files picker for a folder; `null` when the user cancelled.
-  static Future<PickedFolder?> pick() async {
-    final r = await channel.invokeMapMethod<String, Object?>('pick');
+  /// Opens the picker; `null` when the user cancelled.
+  static Future<PickedLocation?> pick(PickMode mode) async {
+    final r = await channel.invokeMapMethod<String, Object?>('pick', {'mode': mode.name});
     if (r == null) return null;
-    return (bookmark: '${r['bookmark']}', name: '${r['name'] ?? ''}', path: '${r['path'] ?? ''}');
+    return (bookmark: '${r['bookmark']}', name: '${r['name'] ?? ''}', isFile: r['file'] == true);
   }
 }
 
 class FilesAppSyncBackend extends SyncBackend {
-  FilesAppSyncBackend(this.bookmark, {required this.folderName, this.fileName = kSyncFileName, MethodChannel? channel})
+  FilesAppSyncBackend(this.bookmark, {required this.folderName, this.isFile = false, this.fileName = kSyncFileName, MethodChannel? channel})
       : _channel = channel ?? FilesAppFolder.channel;
 
   /// From [FilesAppFolder.pick].
   final String bookmark;
+
+  /// The folder's (or the picked file's) name, for the settings.
   final String folderName;
+
+  /// The bookmark is the sync file itself, not its folder.
+  final bool isFile;
   final String fileName;
   final MethodChannel _channel;
 
@@ -42,21 +67,22 @@ class FilesAppSyncBackend extends SyncBackend {
 
   Future<T?> _call<T>(String method, [Map<String, Object?> args = const {}]) async {
     try {
-      return await _channel.invokeMethod<T>(method, {'bookmark': bookmark, ...args});
+      return await _channel.invokeMethod<T>(method, {'bookmark': bookmark, 'file': isFile, ...args});
     } on PlatformException catch (e) {
       if (e.code == 'conflict') throw const SyncConflict();
-      if (e.code == 'bookmark') throw SyncBackendException(e.message ?? 'Choose the folder again in Settings > Sync.');
-      throw SyncBackendException('Could not use the folder "$folderName": ${e.message ?? e.code}', temporary: true);
+      if (e.code == 'bookmark') throw SyncBackendException(e.message ?? 'Choose the location again in Settings > Sync.');
+      throw SyncBackendException('Could not use "$folderName": ${e.message ?? e.code}', temporary: true);
     } on MissingPluginException {
-      throw const SyncBackendException('This version of NEFORUM cannot use Files app folders.');
+      throw const SyncBackendException('The sync location cannot be reached right now; NEFORUM syncs when it is open.', temporary: true);
     }
   }
 
-  Future<SyncBlob?> _read(String name) async {
-    final r = await _call<Map<Object?, Object?>>('read', {'name': name});
+  Future<SyncBlob?> _read(String name, {bool sideCopy = false}) async {
+    final r = await _call<Map<Object?, Object?>>('read', {'name': name, if (sideCopy) 'file': false});
     if (r == null) return null;
     final bytes = r['bytes'];
-    if (bytes is! Uint8List) return null;
+    // An empty file is a sync file not written yet ("Create the sync file").
+    if (bytes is! Uint8List || bytes.isEmpty) return null;
     return SyncBlob(bytes, '${r['version'] ?? ''}');
   }
 
@@ -69,12 +95,13 @@ class FilesAppSyncBackend extends SyncBackend {
 
   @override
   Future<List<SyncSideCopy>> conflictCopies() async {
+    if (isFile) return const [];
     final names = await _call<List<Object?>>('list') ?? const [];
     final out = <SyncSideCopy>[];
     for (final n in names.whereType<String>()) {
       if (!isSyncConflictCopyName(n, fileName: fileName)) continue;
       try {
-        final blob = await _read(n);
+        final blob = await _read(n, sideCopy: true);
         if (blob != null) out.add(SyncSideCopy(n, blob.bytes));
       } on SyncBackendException {
         // Not downloaded yet: next time.
@@ -85,7 +112,7 @@ class FilesAppSyncBackend extends SyncBackend {
 
   @override
   Future<void> removeConflictCopy(SyncSideCopy copy) async {
-    if (!isSyncConflictCopyName(copy.name, fileName: fileName)) return;
+    if (isFile || !isSyncConflictCopyName(copy.name, fileName: fileName)) return;
     try {
       await _call<void>('delete', {'name': copy.name});
     } on SyncBackendException {
@@ -93,8 +120,15 @@ class FilesAppSyncBackend extends SyncBackend {
     }
   }
 
+  /// Proves NEFORUM may write there: a probe file next to the sync file, or,
+  /// for a picked file, writing its own contents back.
   @override
   Future<void> check() async {
+    if (isFile) {
+      final current = await read();
+      await _call<String>('write', {'name': fileName, 'bytes': current?.bytes ?? Uint8List(0), 'force': true});
+      return;
+    }
     final probe = '.$fileName.check';
     await _call<String>('write', {'name': probe, 'bytes': Uint8List.fromList(const [0x4E]), 'force': true});
     await _call<void>('delete', {'name': probe});

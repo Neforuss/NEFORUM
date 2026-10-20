@@ -326,7 +326,13 @@ class SyncEngine implements SecretsCoordinator {
       _cachedDoc = doc.copy();
       _cachedVersion = remote.version;
     }
-    await state.write(_State(base: newBase, joined: true, lastSyncAt: now).toJson());
+    await state.write(_State(
+      base: newBase,
+      joined: true,
+      lastSyncAt: now,
+      claims: {for (final e in doc.claims.entries) e.key: e.value.by},
+      seen: {for (final e in doc.devices.entries) e.key: e.value.seenAt},
+    ).toJson());
     if (received > 0 || sent > 0) _log.info('Synced: $received in, $sent out${conflicts > 0 ? ', $conflicts on both sides' : ''}');
     return _Pass(
       SyncReport(at: now, received: received, sent: sent, conflicts: conflicts, mergedCopies: remote.copies.length, wrote: mustWrite),
@@ -472,8 +478,16 @@ class SyncEngine implements SecretsCoordinator {
     } on Object catch (e) {
       _log.warn('Could not check the sync file before publishing (${e is SyncBackendException ? e.message : e}); using the last known state');
       final doc = _cachedDoc;
-      if (doc == null) return true;
-      return _claimVerdict(doc, post, mediaHere: mediaHere) != _Claim.others;
+      if (doc != null) return _claimVerdict(doc, post, mediaHere: mediaHere) != _Claim.others;
+      // A fresh process (a phone's background task): what the last sync saw.
+      final st = _State.parse(await state.read());
+      final owner = st.claims[post.id];
+      if (owner == null || owner == deviceId) return true;
+      final seen = st.seen[owner];
+      final at = post.scheduledAt;
+      final quiet = seen == null || now.difference(seen) > ownerTimeout;
+      final overdue = at != null && now.difference(at) > ownerTimeout;
+      return quiet && overdue && mediaHere;
     }
   }
 
@@ -657,7 +671,7 @@ class _Pass {
 }
 
 class _State {
-  _State({required this.base, required this.joined, this.lastSyncAt});
+  _State({required this.base, required this.joined, this.lastSyncAt, this.claims = const {}, this.seen = const {}});
 
   factory _State.parse(Map<String, dynamic>? j) {
     final raw = j?['base'];
@@ -669,6 +683,16 @@ class _State {
       },
       joined: j?['joined'] == true,
       lastSyncAt: DateTime.tryParse('${j?['lastSyncAt'] ?? ''}'),
+      claims: {
+        if (j?['claims'] case final Map<Object?, Object?> m)
+          for (final e in m.entries)
+            if (e.key is String && e.value is String) e.key as String: e.value as String,
+      },
+      seen: {
+        if (j?['seen'] case final Map<Object?, Object?> m)
+          for (final e in m.entries)
+            if (e.key is String && DateTime.tryParse('${e.value}') != null) e.key as String: DateTime.parse('${e.value}'),
+      },
     );
   }
 
@@ -676,5 +700,18 @@ class _State {
   final bool joined;
   final DateTime? lastSyncAt;
 
-  Map<String, dynamic> toJson() => {'base': base, 'joined': joined, if (lastSyncAt != null) 'lastSyncAt': lastSyncAt!.toUtc().toIso8601String()};
+  /// Scheduled post id -> the device that publishes it, as last seen, for
+  /// when the file cannot be read (a phone's background task).
+  final Map<String, String> claims;
+
+  /// Device id -> its last heartbeat, as last seen.
+  final Map<String, DateTime> seen;
+
+  Map<String, dynamic> toJson() => {
+        'base': base,
+        'joined': joined,
+        if (lastSyncAt != null) 'lastSyncAt': lastSyncAt!.toUtc().toIso8601String(),
+        if (claims.isNotEmpty) 'claims': claims,
+        if (seen.isNotEmpty) 'seen': {for (final e in seen.entries) e.key: e.value.toUtc().toIso8601String()},
+      };
 }
