@@ -1,9 +1,10 @@
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_app/media/text_card.dart';
+import 'package:neforum_app/platform/files_app_folder.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/cloud_sync.dart';
 import 'package:neforum_app/state/settings.dart';
@@ -63,6 +64,82 @@ void main() {
     const r2 = AppSettings(syncProviderId: 'r2', syncConfig: {'endpoint': 'https://acc.r2.cloudflarestorage.com', 'bucket': 'b', 'accessKeyId': 'k'});
     final s3 = buildSyncBackend(r2, const {'secretAccessKey': 's'}, http)! as S3SyncBackend;
     expect(s3.objectUri(s3.key).host, 'acc.r2.cloudflarestorage.com');
+  });
+
+  test('on an iPhone or iPad a folder is a Files-app location kept by its bookmark', () {
+    final http = NeforumHttp();
+    const onPhone = AppSettings(syncProviderId: 'icloud', syncConfig: {'folder': 'NEFORUM', 'bookmark': 'Ym9va21hcms='});
+    final b = buildSyncBackend(onPhone, const {}, http, filesApp: true);
+    expect(b, isA<FilesAppSyncBackend>());
+    expect(b!.label, 'NEFORUM');
+    expect(buildSyncBackend(const AppSettings(syncProviderId: 'onedrive', syncConfig: {'folder': 'NEFORUM'}), const {}, http, filesApp: true), isNull,
+        reason: 'no bookmark: the folder must be picked again');
+  });
+
+  group('Files-app folder (iPhone, iPad)', () {
+    TestWidgetsFlutterBinding.ensureInitialized();
+    const channel = MethodChannel('neforum/syncfolder');
+    final files = <String, Uint8List>{};
+    final versions = <String, String>{};
+    var tick = 0;
+    final calls = <String>[];
+
+    setUp(() {
+      files.clear();
+      versions.clear();
+      calls.clear();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        final a = Map<String, Object?>.from(call.arguments as Map);
+        expect(a['bookmark'], 'bm');
+        final name = a['name'] as String? ?? '';
+        calls.add('${call.method} $name');
+        switch (call.method) {
+          case 'read':
+            return files.containsKey(name) ? {'bytes': files[name], 'version': versions[name]} : null;
+          case 'write':
+            if (a['force'] != true && versions[name] != a['ifMatch']) throw PlatformException(code: 'conflict');
+            files[name] = a['bytes']! as Uint8List;
+            return versions[name] = 'v${++tick}';
+          case 'list':
+            return files.keys.toList();
+          case 'delete':
+            files.remove(name);
+            versions.remove(name);
+            return null;
+        }
+        return null;
+      });
+    });
+    tearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, null));
+
+    test('reads, writes only over the version it read, merges conflict copies, checks with a probe', () async {
+      final b = FilesAppSyncBackend('bm', folderName: 'NEFORUM');
+      expect(await b.read(), isNull);
+      final v1 = await b.write(Uint8List.fromList([1]), ifMatch: null);
+      await expectLater(b.write(Uint8List.fromList([2]), ifMatch: null), throwsA(isA<SyncConflict>()));
+      final blob = await b.read();
+      expect(blob!.bytes, [1]);
+      expect(blob.version, v1);
+      expect(await b.write(Uint8List.fromList([3]), ifMatch: v1), isNot(v1));
+
+      files['NEFORUM (1).neforumsync'] = Uint8List.fromList([9]);
+      files['notes.txt'] = Uint8List.fromList([0]);
+      final copies = await b.conflictCopies();
+      expect(copies.map((c) => c.name), ['NEFORUM (1).neforumsync']);
+      await b.removeConflictCopy(copies.single);
+      expect(files.containsKey('NEFORUM (1).neforumsync'), isFalse);
+
+      await b.check();
+      expect(calls, containsAllInOrder(['write .NEFORUM.neforumsync.check', 'delete .NEFORUM.neforumsync.check']));
+      expect(files.keys, isNot(contains('.NEFORUM.neforumsync.check')));
+    });
+
+    test('a folder iOS no longer lets NEFORUM open asks to pick it again', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async => throw PlatformException(code: 'bookmark', message: 'Choose the folder again.'));
+      final b = FilesAppSyncBackend('bm', folderName: 'NEFORUM');
+      await expectLater(b.read(), throwsA(isA<SyncBackendException>().having((e) => e.message, 'message', contains('again'))));
+    });
   });
 
   test('sync settings stay on the device and survive a round trip', () {

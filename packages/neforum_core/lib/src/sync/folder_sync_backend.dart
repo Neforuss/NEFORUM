@@ -70,16 +70,8 @@ class FolderSyncBackend extends SyncBackend {
     }
   }
 
-  /// Names cloud clients give conflicting copies: "NEFORUM (Alice's
-  /// conflicted copy 2026-10-20).neforumsync" (Dropbox), "NEFORUM-PC.neforumsync"
-  /// (OneDrive), "NEFORUM (1).neforumsync" (Google Drive),
-  /// "NEFORUM.sync-conflict-20261020-101500-ABCDEFG.neforumsync" (Syncthing),
-  /// "NEFORUM (conflicted copy 2026-10-20 101500).neforumsync" (Nextcloud).
-  bool isConflictCopyName(String name) {
-    final stem = p.basenameWithoutExtension(fileName);
-    final ext = p.extension(fileName);
-    return name != fileName && name.startsWith(stem) && name.endsWith(ext) && !name.startsWith('.');
-  }
+  /// See [isSyncConflictCopyName].
+  bool isConflictCopyName(String name) => isSyncConflictCopyName(name, fileName: fileName);
 
   @override
   Future<List<SyncSideCopy>> conflictCopies() async {

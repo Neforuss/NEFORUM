@@ -6,7 +6,7 @@ You'll find it in **Settings > Sync**.
 
 ## Where the file can live
 
-**A cloud app on your computer** (computers only). NEFORUM writes the file into a folder; your cloud app does the syncing.
+**A cloud app on your computer.** NEFORUM writes the file into a folder; your cloud app does the syncing.
 
 - OneDrive, Google Drive (Drive for desktop), Dropbox, iCloud Drive, Box Drive, MEGA, pCloud Drive, Proton Drive, Sync.com
 - Syncthing (no cloud at all: your devices sync with each other directly)
@@ -15,7 +15,16 @@ You'll find it in **Settings > Sync**.
 
 Keep the folder **available offline** ("Always keep on this device" in OneDrive, "Available offline" in Google Drive and Dropbox). Otherwise the cloud app may not download the newest file before NEFORUM reads it.
 
-**WebDAV** (computers and phones). NEFORUM talks to the server itself.
+**iCloud Drive or a cloud app on an iPhone or iPad.** NEFORUM uses a folder you pick in the Files app, and iCloud Drive or the cloud app does the syncing.
+
+- iCloud Drive
+- The OneDrive, Google Drive, Dropbox, Box, MEGA, pCloud, Proton Drive, Sync.com, Nextcloud and ownCloud apps
+- Möbius Sync, which is Syncthing for iPhone
+- Any other location the Files app shows
+
+Install the cloud app and sign in first. If it is missing from the picker, open the Files app, tap **Browse**, then **⋯ > Edit**, and turn it on. NEFORUM keeps access to the folder after a restart. It asks iCloud or the cloud app for the newest file before every read, and hands over every write for upload.
+
+**WebDAV** (computers, iPhone, iPad and Android). NEFORUM talks to the server itself.
 
 - Nextcloud and ownCloud, Koofr, pCloud, Infomaniak kDrive, Fastmail Files
 - A Hetzner Storage Box
@@ -24,7 +33,7 @@ Keep the folder **available offline** ("Always keep on this device" in OneDrive,
 
 Use an **app password** wherever the service offers one.
 
-**S3-compatible object storage** (computers and phones). NEFORUM talks to the bucket itself.
+**S3-compatible object storage** (computers, iPhone, iPad and Android). NEFORUM talks to the bucket itself.
 
 - Amazon S3, Cloudflare R2, Backblaze B2, Wasabi, IDrive e2, Scaleway, DigitalOcean Spaces, Hetzner Object Storage, Storj
 - MinIO
@@ -32,7 +41,9 @@ Use an **app password** wherever the service offers one.
 
 Use a private bucket and a key that can only read and write that bucket.
 
-**Phones cannot use a cloud app's folder.** On a phone, pick WebDAV or S3. Your computers can use the same server or bucket directly, or they can stay on their folder if the cloud service also offers WebDAV (Nextcloud, Koofr, pCloud).
+**Android phones cannot use a cloud app's folder.** On Android, pick WebDAV or S3. Your computers can use the same server or bucket directly, or they can stay on their folder if the cloud service also offers WebDAV (Nextcloud, Koofr, pCloud).
+
+For example, your PC on OneDrive and your iPhone on OneDrive both work with the same file. An Android phone joins through WebDAV or S3.
 
 Every device must use the same storage and the same file.
 
@@ -115,5 +126,5 @@ Start the cloud app, or reconnect the drive.
 **Changes take long to arrive with a cloud app**
 The cloud app decides when to upload. Check that it is running and that the folder is available offline.
 
-**On a Mac, sync stopped after moving the folder**
+**On a Mac, iPhone or iPad, sync stopped after moving or renaming the folder**
 Choose **Change…** and pick the folder again.

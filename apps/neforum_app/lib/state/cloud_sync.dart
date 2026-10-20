@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../platform/device_name.dart';
 import '../platform/env.dart';
 import '../platform/file_exists.dart';
+import '../platform/files_app_folder.dart';
 import '../platform/folder_access.dart';
 import '../platform/storage.dart';
 import 'device_transfer.dart';
@@ -38,8 +39,9 @@ class CloudSyncStatus {
 const Set<String> kSyncSecretFields = {'passphrase', 'password', 'secretAccessKey'};
 
 /// The storage [settings] point at, or `null` when sync is off or the setup
-/// is incomplete.
-SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets, NeforumHttp http, {String? folderOverride}) {
+/// is incomplete. A folder is a Files-app location on an iPhone or iPad
+/// ([filesApp], default: on iOS) and a plain folder elsewhere.
+SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets, NeforumHttp http, {String? folderOverride, bool? filesApp}) {
   final provider = syncProviderById(settings.syncProviderId);
   if (provider == null) return null;
   final c = settings.syncConfig;
@@ -50,6 +52,10 @@ SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets,
 
   switch (provider.kind) {
     case SyncBackendKind.folder:
+      if (filesApp ?? Env.isIOS) {
+        final bookmark = v('bookmark');
+        return bookmark == null ? null : FilesAppSyncBackend(bookmark, folderName: v('folder') ?? provider.name);
+      }
       final folder = folderOverride ?? v('folder');
       return folder == null ? null : FolderSyncBackend(folder);
     case SyncBackendKind.webdav:
@@ -191,7 +197,7 @@ class CloudSync implements SecretsCoordinator {
     final passphrase = secret['passphrase'];
     String? folder;
     final bookmark = s.syncConfig['bookmark'];
-    if (bookmark != null && bookmark.isNotEmpty) folder = await FolderAccess.reopen(bookmark);
+    if (bookmark != null && bookmark.isNotEmpty && Env.isMacOS) folder = await FolderAccess.reopen(bookmark);
     final backend = buildSyncBackend(s, secret, http, folderOverride: folder);
     if (backend == null || passphrase == null || passphrase.isEmpty) {
       status.value = const CloudSyncStatus(CloudSyncPhase.error, message: 'Sync is not fully set up: open Settings > Sync.');

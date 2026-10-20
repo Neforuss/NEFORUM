@@ -2,7 +2,9 @@ import 'package:meta/meta.dart';
 
 /// How NEFORUM reaches the sync file.
 enum SyncBackendKind {
-  /// A folder a desktop cloud app keeps in sync (computers only).
+  /// A folder a cloud app keeps in sync: on a computer a folder the desktop
+  /// app syncs, on an iPhone or iPad a location in the Files app (iCloud
+  /// Drive or a cloud app's). Not on Android.
   folder,
 
   /// A WebDAV folder, reached directly (computers and phones).
@@ -22,6 +24,7 @@ class SyncProvider {
     required this.name,
     required this.kind,
     required this.hint,
+    this.iosHint,
     this.urlTemplate,
     this.region,
   });
@@ -33,40 +36,111 @@ class SyncProvider {
   /// Where to find the folder, the address or the keys.
   final String hint;
 
+  /// For a folder provider, how to reach it on an iPhone or iPad (through
+  /// the Files app); `null` when it has no iPhone app with a Files location.
+  final String? iosHint;
+
   /// WebDAV folder URL or S3 endpoint, with `<placeholders>`.
   final String? urlTemplate;
 
   /// S3 region to suggest, when the provider needs a fixed one.
   final String? region;
+
+  /// The hint for this device.
+  String hintFor({required bool ios}) => ios ? (iosHint ?? hint) : hint;
 }
+
+/// What every Files-app hint ends with.
+const String _filesTip = ' If it is missing from the picker, open the Files app, tap Browse, then ⋯ > Edit, and turn it on.';
 
 /// Every provider the sync settings offer, folder apps first.
 const List<SyncProvider> syncProviders = [
-  // Desktop cloud apps: pick a folder they sync.
+  // Cloud apps: on a computer a folder they sync, on an iPhone or iPad a
+  // location in the Files app.
   SyncProvider(
-      id: 'onedrive', name: 'OneDrive', kind: SyncBackendKind.folder, hint: 'Pick a folder inside your OneDrive folder, for example OneDrive\\NEFORUM. Right-click it and choose "Always keep on this device".'),
+    id: 'onedrive',
+    name: 'OneDrive',
+    kind: SyncBackendKind.folder,
+    hint: 'Pick a folder inside your OneDrive folder, for example OneDrive\\NEFORUM. Right-click it and choose "Always keep on this device".',
+    iosHint: 'Install the OneDrive app and sign in, then pick a folder under OneDrive.$_filesTip',
+  ),
   SyncProvider(
-      id: 'googledrive',
-      name: 'Google Drive',
-      kind: SyncBackendKind.folder,
-      hint: 'Install Google Drive for desktop, then pick a folder in "My Drive" (the G: drive on Windows). Set it to "Available offline".'),
-  SyncProvider(id: 'dropbox', name: 'Dropbox', kind: SyncBackendKind.folder, hint: 'Pick a folder inside your Dropbox folder. Make it "Available offline".'),
+    id: 'googledrive',
+    name: 'Google Drive',
+    kind: SyncBackendKind.folder,
+    hint: 'Install Google Drive for desktop, then pick a folder in "My Drive" (the G: drive on Windows). Set it to "Available offline".',
+    iosHint: 'Install the Google Drive app and sign in, then pick a folder under Drive.$_filesTip',
+  ),
   SyncProvider(
-      id: 'icloud',
-      name: 'iCloud Drive',
-      kind: SyncBackendKind.folder,
-      hint: 'On a Mac, pick a folder in iCloud Drive and turn off "Optimise Mac Storage" for it. On Windows, use iCloud for Windows and pick a folder in iCloud Drive.'),
-  SyncProvider(id: 'box', name: 'Box', kind: SyncBackendKind.folder, hint: 'Install Box Drive and pick a folder in it; mark it "Make available offline".'),
-  SyncProvider(id: 'mega', name: 'MEGA', kind: SyncBackendKind.folder, hint: 'In the MEGA desktop app, sync a local folder, then pick that folder.'),
-  SyncProvider(id: 'pcloud-drive', name: 'pCloud Drive', kind: SyncBackendKind.folder, hint: 'Pick a folder in pCloud Drive that is set to sync offline (or a pCloud Sync folder).'),
-  SyncProvider(id: 'proton', name: 'Proton Drive', kind: SyncBackendKind.folder, hint: 'Install the Proton Drive app and pick a folder it syncs; keep it available offline.'),
-  SyncProvider(id: 'syncdotcom', name: 'Sync.com', kind: SyncBackendKind.folder, hint: 'Pick a folder inside your Sync folder.'),
+    id: 'dropbox',
+    name: 'Dropbox',
+    kind: SyncBackendKind.folder,
+    hint: 'Pick a folder inside your Dropbox folder. Make it "Available offline".',
+    iosHint: 'Install the Dropbox app and sign in, then pick a folder under Dropbox.$_filesTip',
+  ),
   SyncProvider(
-      id: 'syncthing', name: 'Syncthing', kind: SyncBackendKind.folder, hint: 'Pick a folder Syncthing shares between your devices. No cloud at all: your devices sync with each other directly.'),
+    id: 'icloud',
+    name: 'iCloud Drive',
+    kind: SyncBackendKind.folder,
+    hint: 'On a Mac, pick a folder in iCloud Drive and turn off "Optimise Mac Storage" for it. On Windows, use iCloud for Windows and pick a folder in iCloud Drive.',
+    iosHint: 'Pick a folder in iCloud Drive. iCloud Drive must be on: Settings > your name > iCloud > iCloud Drive.',
+  ),
   SyncProvider(
-      id: 'nextcloud-client', name: 'Nextcloud or ownCloud app', kind: SyncBackendKind.folder, hint: 'Pick a folder the Nextcloud (or ownCloud) desktop client syncs. Phones use WebDAV instead.'),
-  SyncProvider(id: 'folder', name: 'Any other synced folder', kind: SyncBackendKind.folder, hint: 'Any folder another program keeps in sync, or a network share every computer can reach.'),
-
+    id: 'box',
+    name: 'Box',
+    kind: SyncBackendKind.folder,
+    hint: 'Install Box Drive and pick a folder in it; mark it "Make available offline".',
+    iosHint: 'Install the Box app and sign in, then pick a folder under Box.$_filesTip',
+  ),
+  SyncProvider(
+    id: 'mega',
+    name: 'MEGA',
+    kind: SyncBackendKind.folder,
+    hint: 'In the MEGA desktop app, sync a local folder, then pick that folder.',
+    iosHint: 'Install the MEGA app and sign in, then pick a folder under MEGA.$_filesTip',
+  ),
+  SyncProvider(
+    id: 'pcloud-drive',
+    name: 'pCloud Drive',
+    kind: SyncBackendKind.folder,
+    hint: 'Pick a folder in pCloud Drive that is set to sync offline (or a pCloud Sync folder).',
+    iosHint: 'Install the pCloud app and sign in, then pick a folder under pCloud.$_filesTip',
+  ),
+  SyncProvider(
+    id: 'proton',
+    name: 'Proton Drive',
+    kind: SyncBackendKind.folder,
+    hint: 'Install the Proton Drive app and pick a folder it syncs; keep it available offline.',
+    iosHint: 'Install the Proton Drive app and sign in, then pick a folder under Proton Drive.$_filesTip',
+  ),
+  SyncProvider(
+    id: 'syncdotcom',
+    name: 'Sync.com',
+    kind: SyncBackendKind.folder,
+    hint: 'Pick a folder inside your Sync folder.',
+    iosHint: 'Install the Sync.com app and sign in, then pick a folder under Sync.$_filesTip',
+  ),
+  SyncProvider(
+    id: 'syncthing',
+    name: 'Syncthing',
+    kind: SyncBackendKind.folder,
+    hint: 'Pick a folder Syncthing shares between your devices. No cloud at all: your devices sync with each other directly.',
+    iosHint: 'Install Möbius Sync (Syncthing for iPhone), share a folder with your computers, then pick it under On My iPhone > Möbius Sync.',
+  ),
+  SyncProvider(
+    id: 'nextcloud-client',
+    name: 'Nextcloud or ownCloud app',
+    kind: SyncBackendKind.folder,
+    hint: 'Pick a folder the Nextcloud (or ownCloud) desktop client syncs. Android phones use WebDAV instead.',
+    iosHint: 'Install the Nextcloud (or ownCloud) app and sign in, then pick a folder under it.$_filesTip',
+  ),
+  SyncProvider(
+    id: 'folder',
+    name: 'Any other synced folder',
+    kind: SyncBackendKind.folder,
+    hint: 'Any folder another program keeps in sync, or a network share every computer can reach.',
+    iosHint: 'Any location the Files app shows that your other devices also reach, such as another cloud app or a server under Shared.',
+  ),
   // WebDAV: works on phones too.
   SyncProvider(
     id: 'nextcloud',

@@ -535,6 +535,13 @@ void main() {
       expect(p.hint, isNotEmpty);
       if (p.kind != SyncBackendKind.folder) expect(p.urlTemplate, startsWith('https://'));
     }
+    final folders = syncProviders.where((p) => p.kind == SyncBackendKind.folder).toList();
+    expect(folders.where((p) => p.iosHint != null).map((p) => p.id), containsAll(['icloud', 'onedrive', 'googledrive', 'dropbox']),
+        reason: 'iPhones and iPads reach these through the Files app');
+    expect(syncProviderById('icloud')!.hintFor(ios: true), contains('iCloud Drive'));
+    expect(syncProviderById('onedrive')!.hintFor(ios: false), contains('Always keep on this device'));
+    expect(isSyncConflictCopyName('NEFORUM (1).neforumsync'), isTrue);
+    expect(isSyncConflictCopyName('.NEFORUM.neforumsync.check'), isFalse);
     expect(syncProviders.where((p) => p.kind == SyncBackendKind.webdav).length, greaterThanOrEqualTo(8));
     expect(syncProviders.where((p) => p.kind == SyncBackendKind.s3).length, greaterThanOrEqualTo(8));
   });

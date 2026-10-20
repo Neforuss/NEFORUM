@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../platform/env.dart';
+import '../../platform/files_app_folder.dart';
 import '../../platform/folder_access.dart';
 import '../../state/cloud_sync.dart';
 import '../../state/providers.dart';
@@ -155,6 +156,9 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
   final _fields = <String, TextEditingController>{};
   final _passphrase = TextEditingController();
   String? _folder;
+
+  /// The Files-app folder's bookmark (iPhone and iPad).
+  String? _bookmark;
   bool _hidden = true, _saved = false, _busy = false;
   String? _error;
   String? _progress;
@@ -171,6 +175,8 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       for (final e in settings.syncConfig.entries) {
         if (e.key == 'folder' && current.kind == SyncBackendKind.folder) {
           _folder = e.value;
+        } else if (e.key == 'bookmark') {
+          _bookmark = e.value;
         } else {
           _c(e.key).text = e.value;
         }
@@ -211,6 +217,21 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
   }
 
   Future<void> _chooseFolder() async {
+    if (Env.isIOS) {
+      try {
+        final picked = await FilesAppFolder.pick();
+        if (picked != null && mounted) {
+          setState(() {
+            _folder = picked.name;
+            _bookmark = picked.bookmark;
+            _error = null;
+          });
+        }
+      } on PlatformException catch (e) {
+        if (mounted) setState(() => _error = e.message ?? 'Could not open the Files picker.');
+      }
+      return;
+    }
     final path = await FilePicker.getDirectoryPath(dialogTitle: 'Choose the folder ${_provider?.name ?? 'your cloud app'} syncs');
     if (path != null && mounted) setState(() => _folder = path);
   }
@@ -219,7 +240,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     final p = _provider!;
     String t(String k) => _c(k).text.trim();
     return switch (p.kind) {
-      SyncBackendKind.folder => {'folder': ?_folder},
+      SyncBackendKind.folder => {'folder': ?_folder, if (Env.isIOS) 'bookmark': ?_bookmark},
       SyncBackendKind.webdav => {'url': t('url'), 'username': t('username')},
       SyncBackendKind.s3 => {
           'endpoint': t('endpoint'),
@@ -244,7 +265,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     final c = _config;
     switch (p.kind) {
       case SyncBackendKind.folder:
-        if (c['folder'] == null) return 'Choose the folder.';
+        if (c['folder'] == null || (Env.isIOS && c['bookmark'] == null)) return 'Choose the folder.';
       case SyncBackendKind.webdav:
         final u = Uri.tryParse(c['url'] ?? '');
         if (u == null || !u.hasScheme || u.host.isEmpty || (c['url'] ?? '').contains('<')) return 'Fill in the WebDAV address (replace the <parts>).';
@@ -358,12 +379,14 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     return [
       Text('Pick the storage you already use. Use the same one on every device.', style: context.text.bodyMedium),
       if (Env.isDesktop)
-        group('A cloud app on this computer', 'NEFORUM writes the file into a folder; your cloud app does the syncing. Computers only.', SyncBackendKind.folder),
+        group('A cloud app on this computer', 'NEFORUM writes the file into a folder; your cloud app does the syncing.', SyncBackendKind.folder),
+      if (Env.isIOS)
+        group('iCloud Drive or a cloud app', 'Pick a folder in the Files app; iCloud Drive or the cloud app does the syncing.', SyncBackendKind.folder),
       group('WebDAV', 'NEFORUM reaches the server itself. Works on phones too.', SyncBackendKind.webdav),
       group('S3-compatible storage', 'NEFORUM reaches the bucket itself. Works on phones too.', SyncBackendKind.s3),
-      if (Env.isMobile) ...[
+      if (Env.isAndroid) ...[
         const SizedBox(height: Space.md),
-        Text('Phones cannot use a cloud app\'s folder: on a phone, pick WebDAV or S3 (your computers can use the same server or bucket).',
+        Text('Android cannot use a cloud app\'s folder: pick WebDAV or S3 (your computers can use the same server or bucket).',
             style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
       ],
     ];
@@ -382,14 +405,14 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           ),
         );
     return [
-      Text(p.hint, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+      Text(p.hintFor(ios: Env.isIOS), style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
       const SizedBox(height: Space.md),
       if (p.kind == SyncBackendKind.folder)
         NfWell(
           padding: const EdgeInsets.fromLTRB(Space.md, Space.xs, Space.xs, Space.xs),
           child: Row(children: [
             Expanded(child: Text(_folder ?? 'No folder chosen', style: monoStyle(context, size: 12, color: _folder == null ? nf.textMuted : nf.text))),
-            TextButton(onPressed: _busy ? null : _chooseFolder, child: const Text('Choose folder…')),
+            TextButton(onPressed: _busy ? null : _chooseFolder, child: Text(Env.isIOS ? 'Choose in Files…' : 'Choose folder…')),
           ]),
         ),
       if (p.kind == SyncBackendKind.webdav) ...[

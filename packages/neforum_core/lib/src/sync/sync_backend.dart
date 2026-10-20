@@ -12,6 +12,19 @@ import '../util/logger.dart';
 /// The sync file's name in the chosen folder, WebDAV folder or bucket.
 const String kSyncFileName = 'NEFORUM.neforumsync';
 
+/// Whether [name] is a copy a cloud client made of the sync file [fileName]
+/// when two devices wrote at once: "NEFORUM (Alice's conflicted copy
+/// 2026-10-20).neforumsync" (Dropbox), "NEFORUM-PC.neforumsync" (OneDrive),
+/// "NEFORUM (1).neforumsync" (Google Drive, iCloud Drive),
+/// "NEFORUM.sync-conflict-20261020-101500-ABCDEFG.neforumsync" (Syncthing),
+/// "NEFORUM (conflicted copy 2026-10-20 101500).neforumsync" (Nextcloud).
+bool isSyncConflictCopyName(String name, {String fileName = kSyncFileName}) {
+  final dot = fileName.lastIndexOf('.');
+  final stem = dot <= 0 ? fileName : fileName.substring(0, dot);
+  final ext = dot <= 0 ? '' : fileName.substring(dot);
+  return name != fileName && name.startsWith(stem) && name.endsWith(ext) && !name.startsWith('.');
+}
+
 /// The sync file as read, with the version it had then.
 @immutable
 class SyncBlob {
