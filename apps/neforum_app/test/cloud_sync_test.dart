@@ -167,6 +167,23 @@ void main() {
       expect((buildSyncBackend(settings, const {}, NeforumHttp(), filesApp: true)! as FilesAppSyncBackend).isFile, isTrue);
     });
 
+    test('a sync file tapped in the Files app is taken once; a copy has no bookmark', () async {
+      final queue = <Map<String, Object?>?>[
+        {'name': 'NEFORUM.neforumsync', 'inPlace': true, 'bookmark': 'bm'},
+        null,
+        {'name': 'NEFORUM.neforumsync', 'inPlace': false},
+      ];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'takeOpened');
+        return queue.removeAt(0);
+      });
+      final first = await FilesAppFolder.takeOpened();
+      expect(first?.bookmark, 'bm');
+      expect(first?.name, 'NEFORUM.neforumsync');
+      expect(await FilesAppFolder.takeOpened(), isNull);
+      expect((await FilesAppFolder.takeOpened())?.bookmark, isNull, reason: 'a copy cannot be synced');
+    });
+
     test('a folder iOS no longer lets NEFORUM open asks to pick it again', () async {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async => throw PlatformException(code: 'bookmark', message: 'Choose the folder again.'));

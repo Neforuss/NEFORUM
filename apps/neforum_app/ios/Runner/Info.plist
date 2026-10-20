@@ -36,6 +36,50 @@
 			</array>
 		</dict>
 	</array>
+	<!-- The sync file (.neforumsync): a type of its own, so the Files app and
+	     the sync file picker know it, and tapping one opens NEFORUM with it
+	     in place (Settings > Sync, AppDelegate.swift SyncFolderPlugin). -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.neforum.sync</string>
+			<key>UTTypeDescription</key>
+			<string>NEFORUM sync file</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>neforumsync</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/x-neforumsync</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>NEFORUM sync file</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.neforum.sync</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<!-- Apps NEFORUM can open for hand-off -->
 	<key>LSApplicationQueriesSchemes</key>
 	<array>

@@ -40,6 +40,28 @@ abstract final class FilesAppFolder {
     if (r == null) return null;
     return (bookmark: '${r['bookmark']}', name: '${r['name'] ?? ''}', isFile: r['file'] == true);
   }
+
+  /// A .neforumsync file the user tapped in the Files app (or opened with
+  /// "Open in NEFORUM") since the last call, once. `null` bookmark: iOS
+  /// handed over a copy instead of the file itself, which cannot be synced.
+  static Future<({String? bookmark, String name})?> takeOpened() async {
+    try {
+      final r = await channel.invokeMapMethod<String, Object?>('takeOpened');
+      if (r == null) return null;
+      final bookmark = r['bookmark'];
+      return (bookmark: bookmark is String && bookmark.isNotEmpty ? bookmark : null, name: '${r['name'] ?? kSyncFileName}');
+    } on MissingPluginException {
+      return null;
+    }
+  }
+
+  /// Calls [onOpened] whenever a sync file is opened while NEFORUM runs.
+  static void listenForOpened(void Function() onOpened) {
+    channel.setMethodCallHandler((call) async {
+      if (call.method == 'openedAvailable') onOpened();
+      return null;
+    });
+  }
 }
 
 class FilesAppSyncBackend extends SyncBackend {

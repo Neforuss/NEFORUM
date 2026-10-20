@@ -145,7 +145,9 @@ class _OnRows extends ConsumerWidget {
 
 /// Choose the storage, fill in where the file is, and the passphrase.
 class SyncSetupDialog extends ConsumerStatefulWidget {
-  const SyncSetupDialog({super.key});
+  /// [opened]: a sync file tapped in the Files app, already chosen.
+  const SyncSetupDialog({super.key, this.opened});
+  final PickedLocation? opened;
 
   @override
   ConsumerState<SyncSetupDialog> createState() => _SyncSetupDialogState();
@@ -195,6 +197,14 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           _saved = _passphrase.text.isNotEmpty;
         });
       }();
+    }
+    final opened = widget.opened;
+    if (opened != null) {
+      final keep = current != null && current.kind == SyncBackendKind.folder;
+      _pick(keep ? current : syncProviderById('folder')!);
+      _folder = opened.name;
+      _bookmark = opened.bookmark;
+      _isFile = opened.isFile;
     }
   }
 

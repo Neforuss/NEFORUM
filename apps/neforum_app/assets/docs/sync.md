@@ -21,6 +21,8 @@ Keep the folder **available offline** ("Always keep on this device" in OneDrive,
 - **Choose the sync file**: pick the `NEFORUM.neforumsync` that your computer already made. Use this for apps that do not let other apps pick their folders: in the iPhone folder picker they look grayed out (Google Drive, OneDrive, MEGA and others). They still let NEFORUM open and save that one file.
 - **Create the sync file**: when the phone is your first device, save a new, empty sync file into the cloud app. NEFORUM fills it in.
 
+On an iPhone or iPad you can also tap `NEFORUM.neforumsync` in the Files app, or use **Open in NEFORUM** in the cloud app. NEFORUM opens **Settings > Sync** with that file already chosen; just add the passphrase.
+
 The cloud apps include the OneDrive, Google Drive, Dropbox, Box, MEGA, pCloud, Proton Drive, Sync.com, Nextcloud and ownCloud apps, plus Möbius Sync (Syncthing for iPhone).
 
 Install the cloud app and sign in first. On an iPhone, if the app is missing from the picker, open the Files app, tap **Browse**, then **⋯ > Edit**, and turn it on.

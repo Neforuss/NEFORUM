@@ -64,9 +64,21 @@ struct SyncFolderError: Error {
 /// goes through NSFileCoordinator, so iCloud or the cloud app downloads the
 /// newest file first and uploads what NEFORUM wrote. An empty file counts as
 /// no sync file yet.
-class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
+///
+/// Tapping a `.neforumsync` file in the Files app (or "Open in NEFORUM")
+/// opens it in place too (Info.plist declares the type, org.neforum.sync):
+/// the app takes it with "takeOpened" and offers to sync with it.
+class SyncFolderPlugin: NSObject, FlutterPlugin, FlutterSceneLifeCycleDelegate, UIDocumentPickerDelegate {
   private var pendingPick: FlutterResult?
   private var pendingIsFile = false
+  private var channel: FlutterMethodChannel?
+
+  /// A sync file opened from the Files app, until the app takes it.
+  private static var openedFile: [String: Any]?
+
+  /// NEFORUM's own file type (declared in Info.plist), so the picker and the
+  /// Files app know a .neforumsync file instead of graying it out.
+  static let syncFileType = UTType(exportedAs: "org.neforum.sync", conformingTo: .data)
 
   static func register(in registry: FlutterPluginRegistry) {
     if let registrar = registry.registrar(forPlugin: "NeforumSyncFolder") {
@@ -76,11 +88,49 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "neforum/syncfolder", binaryMessenger: registrar.messenger())
-    registrar.addMethodCallDelegate(SyncFolderPlugin(), channel: channel)
+    let instance = SyncFolderPlugin()
+    instance.channel = channel
+    registrar.addMethodCallDelegate(instance, channel: channel)
+    registrar.addSceneDelegate(instance)
+  }
+
+  // MARK: Sync files opened from the Files app
+
+  func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions?) -> Bool {
+    guard let contexts = connectionOptions?.urlContexts else { return false }
+    return receive(contexts)
+  }
+
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) -> Bool {
+    return receive(URLContexts)
+  }
+
+  /// Keeps a bookmark of an opened .neforumsync file; other links (sign-in
+  /// redirects) are left to the rest of the app.
+  private func receive(_ contexts: Set<UIOpenURLContext>) -> Bool {
+    guard let context = contexts.first(where: { $0.url.isFileURL && $0.url.pathExtension.lowercased() == "neforumsync" }) else {
+      return false
+    }
+    let url = context.url
+    let scoped = url.startAccessingSecurityScopedResource()
+    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    var info: [String: Any] = ["name": url.lastPathComponent, "inPlace": context.options.openInPlace]
+    if context.options.openInPlace,
+       let bookmark = try? url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil) {
+      info["bookmark"] = bookmark.base64EncodedString()
+    }
+    SyncFolderPlugin.openedFile = info
+    channel?.invokeMethod("openedAvailable", arguments: nil)
+    return true
   }
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
     let args = call.arguments as? [String: Any] ?? [:]
+    if call.method == "takeOpened" {
+      result(SyncFolderPlugin.openedFile)
+      SyncFolderPlugin.openedFile = nil
+      return
+    }
     if call.method == "pick" {
       pick(args["mode"] as? String ?? "folder", result)
       return
@@ -112,7 +162,10 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
     let picker: UIDocumentPickerViewController
     switch mode {
     case "file":
-      picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.data], asCopy: false)
+      // NEFORUM's own type first, then anything: cloud apps report a file
+      // type of their own choosing for an extension iOS did not know.
+      picker = UIDocumentPickerViewController(
+        forOpeningContentTypes: [SyncFolderPlugin.syncFileType, .data, .item], asCopy: false)
     case "create":
       let url = FileManager.default.temporaryDirectory.appendingPathComponent("NEFORUM.neforumsync")
       try? FileManager.default.removeItem(at: url)
@@ -140,6 +193,10 @@ class SyncFolderPlugin: NSObject, FlutterPlugin, UIDocumentPickerDelegate {
     }
     let scoped = url.startAccessingSecurityScopedResource()
     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+    if pendingIsFile && url.hasDirectoryPath {
+      result(FlutterError(code: "picker", message: "That is a folder: use Choose folder for folders, or open the folder and tap NEFORUM.neforumsync.", details: nil))
+      return
+    }
     do {
       let bookmark = try url.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)
       result([

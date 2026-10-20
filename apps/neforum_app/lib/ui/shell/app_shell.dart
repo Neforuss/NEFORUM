@@ -8,6 +8,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../../brand/neforum_logo.dart';
 import '../../platform/desktop.dart';
 import '../../platform/env.dart';
+import '../../platform/files_app_folder.dart';
 import '../../platform/notifications.dart';
 import '../../platform/ui_bridge.dart';
 import '../../state/composer.dart';
@@ -20,6 +21,7 @@ import '../../widgets/buttons.dart';
 import '../handoff/handoff_sheet.dart';
 import '../root.dart';
 import '../router.dart';
+import '../settings/sync_section.dart';
 import 'paste_code_dialog.dart';
 
 /// Adaptive frame around the five sections: sidebar on wide windows, an
@@ -48,7 +50,37 @@ class _AppShellState extends ConsumerState<AppShell> {
         _onIntent(launch);
       }
       DesktopIntegration.instance.initTray(_onTray);
+      if (Env.isIOS) {
+        FilesAppFolder.listenForOpened(_takeOpenedSyncFile);
+        unawaited(_takeOpenedSyncFile());
+      }
     });
+  }
+
+  /// A .neforumsync file tapped in the Files app: Settings > Sync with that
+  /// file already chosen.
+  Future<void> _takeOpenedSyncFile() async {
+    final opened = await FilesAppFolder.takeOpened();
+    if (opened == null || !mounted) return;
+    _go(AppSection.settings);
+    final bookmark = opened.bookmark;
+    if (bookmark == null) {
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('That was a copy of the sync file'),
+          content: const Text(
+              'The app the file came from gave NEFORUM a copy, so changes could not go back to it. Open Settings > Sync > Set up, pick the '
+              'cloud app, and use Choose the sync file to select NEFORUM.neforumsync there instead.'),
+          actions: [FilledButton(onPressed: () => Navigator.of(c).pop(), child: const Text('OK'))],
+        ),
+      );
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (_) => SyncSetupDialog(opened: (bookmark: bookmark, name: opened.name, isFile: true)),
+    );
   }
 
   @override
