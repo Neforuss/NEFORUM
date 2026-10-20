@@ -46,6 +46,11 @@ abstract class PlatformAdapter {
           ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
       null;
 
+  /// The platform hands out a new refresh token on every renewal and kills
+  /// the old one (X, Tumblr). An account copied to a second device then stays
+  /// connected on only one of them: whichever renews first. Export warns.
+  bool get rotatesRefreshTokens => false;
+
   /// The photos this platform takes through [account] for [variant], as rules a photo can be
   /// changed to meet (shape, file type, size, pixels). The app makes a fitted
   /// copy of a photo that breaks them, for this platform only, instead of

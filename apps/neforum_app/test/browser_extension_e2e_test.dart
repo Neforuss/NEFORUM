@@ -23,8 +23,9 @@ void main() {
 
   test('the real extension pairs, gets the job and its file, reports back and unpairs', () async {
     final secrets = InMemorySecretStore();
-    const port = 52795;
-    final bridge = BrowserBridge.create(secrets: secrets, ports: const [port]);
+    // A free port of its own: fixed ones can be reserved by Windows (Hyper-V).
+    final port = await _freePort();
+    final bridge = BrowserBridge.create(secrets: secrets, ports: [port]);
     await bridge.start();
     addTearDown(bridge.dispose);
     expect(bridge.status.value.listening, isTrue, reason: 'port $port must be free');
@@ -70,4 +71,11 @@ void main() {
     expect(results.single.message, 'e2e');
     expect(bridge.browsers.value, isEmpty, reason: 'unpair removed the browser');
   }, skip: hasNode ? false : 'Node is not installed');
+}
+
+Future<int> _freePort() async {
+  final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+  final port = s.port;
+  await s.close();
+  return port;
 }

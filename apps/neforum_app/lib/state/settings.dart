@@ -38,6 +38,8 @@ class AppSettings {
     this.photoFit = PhotoFitMode.pad,
     this.fillFramePlatforms = const ['tiktok', 'instagram'],
     this.captionPhotoPlatforms = const [],
+    this.movedAccountIds = const [],
+    this.movedAt,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -71,6 +73,8 @@ class AppSettings {
         photoFit: PhotoFitMode.values.asNameMap()[j['photoFit']] ?? PhotoFitMode.pad,
         fillFramePlatforms: (j['fillFramePlatforms'] as List? ?? const ['tiktok', 'instagram']).cast<String>(),
         captionPhotoPlatforms: (j['captionPhotoPlatforms'] as List? ?? const []).cast<String>(),
+        movedAccountIds: (j['movedAccountIds'] as List? ?? const []).cast<String>(),
+        movedAt: DateTime.tryParse('${j['movedAt'] ?? ''}'),
       );
 
   final ThemeMode themeMode;
@@ -156,6 +160,11 @@ class AppSettings {
 
   bool captionOnPhoto(String platformId) => captionPhotoPlatforms.contains(platformId);
 
+  /// Accounts exported with "Move to another device" (Move): switched off
+  /// here until the user confirms the other device has them. Device-only.
+  final List<String> movedAccountIds;
+  final DateTime? movedAt;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -198,6 +207,9 @@ class AppSettings {
     PhotoFitMode? photoFit,
     List<String>? fillFramePlatforms,
     List<String>? captionPhotoPlatforms,
+    List<String>? movedAccountIds,
+    DateTime? movedAt,
+    bool clearMoved = false,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -230,6 +242,8 @@ class AppSettings {
         photoFit: photoFit ?? this.photoFit,
         fillFramePlatforms: fillFramePlatforms ?? this.fillFramePlatforms,
         captionPhotoPlatforms: captionPhotoPlatforms ?? this.captionPhotoPlatforms,
+        movedAccountIds: clearMoved ? const [] : (movedAccountIds ?? this.movedAccountIds),
+        movedAt: clearMoved ? null : (movedAt ?? this.movedAt),
       );
 
   Map<String, dynamic> toJson() => {
@@ -263,5 +277,7 @@ class AppSettings {
         'photoFit': photoFit.name,
         'fillFramePlatforms': fillFramePlatforms,
         'captionPhotoPlatforms': captionPhotoPlatforms,
+        if (movedAccountIds.isNotEmpty) 'movedAccountIds': movedAccountIds,
+        if (movedAt != null) 'movedAt': movedAt!.toIso8601String(),
       };
 }

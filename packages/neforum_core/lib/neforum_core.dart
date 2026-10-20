@@ -12,6 +12,8 @@ export 'src/adapters/platform_adapter.dart';
 export 'src/auth/auth_broker.dart';
 export 'src/auth/loopback_auth_broker_stub.dart' if (dart.library.io) 'src/auth/loopback_auth_broker.dart';
 export 'src/auth/oauth2_pkce.dart';
+export 'src/backup/backup_format.dart';
+export 'src/backup/backup_service.dart';
 export 'src/handoff/handoff_plan.dart';
 export 'src/http/neforum_http.dart';
 export 'src/media_hosts/media_hosts.dart';

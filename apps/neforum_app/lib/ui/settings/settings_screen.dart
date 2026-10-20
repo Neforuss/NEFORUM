@@ -26,6 +26,7 @@ import '../accounts/guide_sheet.dart';
 import '../root.dart';
 import 'browser_extension_section.dart';
 import 'media_host_section.dart';
+import 'move_device.dart';
 import 'setting_row.dart';
 
 /// Settings, grouped into sections with a table of contents on wide screens.
@@ -605,9 +606,10 @@ class _DataState extends ConsumerState<_Data> {
         ),
       ),
       SettingRow(title: 'Media library', description: _mediaBytes == null ? 'Measuring…' : '${formatBytes(_mediaBytes!)} of attached photos and videos'),
+      const MoveDeviceRows(),
       SettingRow(
         title: 'Export posts',
-        description: 'A JSON file with your posts and account list (without keys).',
+        description: 'A readable JSON file with your posts and account list, without keys (for your records; it cannot be imported).',
         trailing: OutlinedButton.icon(onPressed: _export, icon: const Icon(Icons.download_rounded, size: 18), label: const Text('Export')),
         stackOnCompact: true,
       ),

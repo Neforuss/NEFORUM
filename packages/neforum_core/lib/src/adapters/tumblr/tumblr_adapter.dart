@@ -103,6 +103,10 @@ class TumblrAdapter extends PlatformAdapter {
     supportsLinkField: true,
   );
 
+  /// Every refresh returns a new refresh token and invalidates the old one.
+  @override
+  bool get rotatesRefreshTokens => true;
+
   @override
   PlatformDescriptor get descriptor => tumblrDescriptor;
 

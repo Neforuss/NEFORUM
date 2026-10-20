@@ -82,6 +82,14 @@ class LoopbackAuthBroker implements AuthBroker {
   /// whichever the browser tries first, so listen on both. Binding the name
   /// itself would pick just one of them.
   Future<List<HttpServer>> _bind() async {
+    try {
+      return await _bindAll();
+    } on SocketException catch (e) {
+      throw LoopbackPortUnavailable(port, reserved: e.osError?.errorCode == 10013);
+    }
+  }
+
+  Future<List<HttpServer>> _bindAll() async {
     if (host != 'localhost') return [await HttpServer.bind(host, port, shared: true)];
     final servers = [await HttpServer.bind(InternetAddress.loopbackIPv4, port, shared: true)];
     try {
@@ -112,4 +120,23 @@ class LoopbackAuthBroker implements AuthBroker {
 
   static String _escape(String s) =>
       s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+}
+
+/// The sign-in return port cannot be opened. On Windows, Hyper-V (used by
+/// WSL, Docker and Windows Sandbox) reserves random blocks of ports at
+/// start-up ("access forbidden", 10013); the message says how to free it.
+class LoopbackPortUnavailable implements Exception {
+  const LoopbackPortUnavailable(this.port, {required this.reserved});
+  final int port;
+
+  /// Reserved by the system rather than used by another program.
+  final bool reserved;
+
+  @override
+  String toString() => reserved
+      ? 'Windows has reserved port $port (Hyper-V, used by WSL, Docker and Windows Sandbox, reserves random port blocks), '
+          'so NEFORUM cannot receive the sign-in. In an administrator terminal run: net stop winnat, then '
+          'netsh int ipv4 add excludedportrange protocol=tcp startport=52771 numberofports=9 store=persistent, '
+          'then net start winnat. Then try again.'
+      : 'Port $port is in use by another program, so NEFORUM cannot receive the sign-in. Close it (or another NEFORUM) and try again.';
 }

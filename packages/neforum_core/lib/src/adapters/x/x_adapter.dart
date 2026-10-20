@@ -109,6 +109,10 @@ class XAdapter extends PlatformAdapter {
     supportsLinkField: false,
   );
 
+  /// Every refresh returns a new refresh token and invalidates the old one.
+  @override
+  bool get rotatesRefreshTokens => true;
+
   @override
   PlatformDescriptor get descriptor => _descriptor;
 

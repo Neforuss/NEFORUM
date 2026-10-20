@@ -7,7 +7,13 @@ import 'package:test/test.dart';
 // A real loopback server on a spare port, with a fake "browser" that follows
 // the redirect itself.
 void main() {
-  const port = 52799;
+  // A free port: fixed ones can be reserved by Windows (Hyper-V).
+  late int port;
+  setUp(() async {
+    final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    port = s.port;
+    await s.close();
+  });
 
   Future<(int, String)> get(InternetAddress address, String pathAndQuery) async {
     final client = HttpClient();
