@@ -20,6 +20,7 @@ import '../../state/media_host_config.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
+import '../../theme/zoom.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
 import '../accounts/guide_sheet.dart';
@@ -158,7 +159,41 @@ class _Appearance extends ConsumerWidget {
         value: s.compactPreviews,
         onChanged: (v) => n.update((x) => x.copyWith(compactPreviews: v)),
       ),
+      if (Env.isDesktop) const _Zoom(),
     ]);
+  }
+}
+
+/// Desktop only: the same steps as Ctrl + / Ctrl − (⌘ on a Mac).
+class _Zoom extends ConsumerWidget {
+  const _Zoom();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final zoom = ref.watch(settingsProvider.select((s) => s.uiZoom));
+    final n = ref.read(settingsProvider.notifier);
+    final key = Env.isMacOS ? '⌘' : 'Ctrl';
+    return SettingRow(
+      title: 'Zoom',
+      description: 'Makes everything bigger or smaller on this computer. Shortcuts: $key + to zoom in, $key − to zoom out, '
+          '$key 0 for 100%, or hold $key and turn the mouse wheel.',
+      stackOnCompact: true,
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(
+          tooltip: 'Zoom out',
+          onPressed: zoom > kZoomLevels.first ? () => n.update((x) => x.copyWith(uiZoom: zoomOut(x.uiZoom))) : null,
+          icon: const Icon(Icons.remove_rounded),
+        ),
+        SizedBox(width: 56, child: Text(zoomLabel(zoom), textAlign: TextAlign.center, style: context.text.titleSmall)),
+        IconButton(
+          tooltip: 'Zoom in',
+          onPressed: zoom < kZoomLevels.last ? () => n.update((x) => x.copyWith(uiZoom: zoomIn(x.uiZoom))) : null,
+          icon: const Icon(Icons.add_rounded),
+        ),
+        const SizedBox(width: Space.sm),
+        TextButton(onPressed: zoom == 1 ? null : () => n.update((x) => x.copyWith(uiZoom: 1)), child: const Text('Reset')),
+      ]),
+    );
   }
 }
 

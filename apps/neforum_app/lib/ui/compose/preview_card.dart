@@ -16,6 +16,7 @@ import '../../state/fitted_photos.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
+import '../../theme/zoom.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
@@ -476,7 +477,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
 
   Future<void> _save(BuildContext buttonContext) async {
     final box = buttonContext.findRenderObject() as RenderBox?;
-    final origin = box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+    final origin = box == null ? null : windowRectOf(buttonContext, box);
     setState(() => _saving = true);
     try {
       final bytes = await renderTextCardJpeg(

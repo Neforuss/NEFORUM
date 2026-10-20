@@ -18,6 +18,7 @@ import '../../platform/ui_bridge.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
+import '../../theme/zoom.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
@@ -293,7 +294,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   Future<void> _share(BuildContext buttonContext) async {
     // Read the anchor before any await: iPad/macOS need it for the popover.
     final box = buttonContext.findRenderObject() as RenderBox?;
-    final origin = box == null ? null : box.localToGlobal(Offset.zero) & box.size;
+    final origin = box == null ? null : windowRectOf(buttonContext, box);
     await _copy(quiet: true);
     final media = ref.read(servicesProvider).media;
     final files = <XFile>[];

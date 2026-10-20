@@ -3,6 +3,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/text_card.dart';
 import '../theme/tokens.dart';
+import '../theme/zoom.dart';
 
 /// Everything the user can change in Settings. Persisted as settings.json.
 @immutable
@@ -42,6 +43,7 @@ class AppSettings {
     this.movedAt,
     this.syncProviderId,
     this.syncConfig = const {},
+    this.uiZoom = 1,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -79,6 +81,7 @@ class AppSettings {
         movedAt: DateTime.tryParse('${j['movedAt'] ?? ''}'),
         syncProviderId: j['syncProviderId'] as String?,
         syncConfig: Map<String, String>.from(j['syncConfig'] as Map? ?? const {}),
+        uiZoom: validZoom(j['uiZoom']),
       );
 
   final ThemeMode themeMode;
@@ -181,6 +184,10 @@ class AppSettings {
 
   bool get syncOn => syncProviderId != null;
 
+  /// Desktop only: how big everything is drawn, 1 = 100% (Ctrl + / Ctrl −).
+  /// Device-only: each screen needs its own.
+  final double uiZoom;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -229,6 +236,7 @@ class AppSettings {
     String? syncProviderId,
     Map<String, String>? syncConfig,
     bool clearSync = false,
+    double? uiZoom,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -265,6 +273,7 @@ class AppSettings {
         movedAt: clearMoved ? null : (movedAt ?? this.movedAt),
         syncProviderId: clearSync ? null : (syncProviderId ?? this.syncProviderId),
         syncConfig: clearSync ? const {} : (syncConfig ?? this.syncConfig),
+        uiZoom: uiZoom ?? this.uiZoom,
       );
 
   Map<String, dynamic> toJson() => {
@@ -302,5 +311,6 @@ class AppSettings {
         if (movedAt != null) 'movedAt': movedAt!.toIso8601String(),
         if (syncProviderId != null) 'syncProviderId': syncProviderId,
         if (syncConfig.isNotEmpty) 'syncConfig': syncConfig,
+        if (uiZoom != 1) 'uiZoom': uiZoom,
       };
 }

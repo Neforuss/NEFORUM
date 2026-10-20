@@ -6,11 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../brand/neforum_logo.dart';
 import '../platform/desktop.dart';
+import '../platform/env.dart';
 import '../state/providers.dart';
 import '../state/services.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import 'router.dart';
+import 'ui_zoom.dart';
 
 /// Owns the [AppServices] instance and rebuilds the whole provider tree when
 /// the user enters or leaves the demo workspace.
@@ -75,6 +77,12 @@ class NeforumApp extends ConsumerWidget {
       routerConfig: router,
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       supportedLocales: const [Locale('en')],
+      builder: (context, child) => UiZoom(
+        enabled: Env.isDesktop,
+        zoom: settings.uiZoom,
+        onChanged: (z) => ref.read(settingsProvider.notifier).update((x) => x.copyWith(uiZoom: z)),
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }

@@ -35,11 +35,26 @@ class _IoStorage implements AppStorage {
     }
   }
 
+  /// The latest write of each file. Writes of one file wait for each other:
+  /// they share its .tmp file, and quick changes (holding Ctrl + to zoom)
+  /// would otherwise write it at the same time.
+  final _writes = <String, Future<void>>{};
+
   @override
-  Future<void> writeJson(String name, Object data) async {
+  Future<void> writeJson(String name, Object data) {
+    final json = const JsonEncoder.withIndent('  ').convert(data);
+    final write = (_writes[name] ?? Future<void>.value()).then((_) {}, onError: (Object _) {}).then((_) => _writeNow(name, json));
+    _writes[name] = write;
+    write.then((_) {}, onError: (Object _) {}).whenComplete(() {
+      if (identical(_writes[name], write)) _writes.remove(name);
+    });
+    return write;
+  }
+
+  Future<void> _writeNow(String name, String json) async {
     final target = File(p.join(dataDir, name));
     final tmp = File('${target.path}.tmp');
-    await tmp.writeAsString(const JsonEncoder.withIndent('  ').convert(data), flush: true);
+    await tmp.writeAsString(json, flush: true);
     await tmp.rename(target.path);
   }
 
