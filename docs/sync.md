@@ -69,7 +69,7 @@ Every device must use the same storage and the same file. For example: your PC, 
 
 ### On each other device
 
-Do the same steps with the same storage and the **same passphrase**. NEFORUM opens the existing file and adds what the device has. Where both have the same thing, the file's version is kept.
+Do the same steps with the same storage and the **same passphrase**. NEFORUM opens the existing file and adds what the device has. If the device already has accounts of its own, NEFORUM asks **which data should win** where both have the same account, setting or post: this device's or the sync file's. Choose this device's when it is the one with your real setup (for example a computer joining a file a new phone just started). Everything else from both sides is kept either way.
 
 Hand-off accounts that you set up on both devices before syncing become one account.
 

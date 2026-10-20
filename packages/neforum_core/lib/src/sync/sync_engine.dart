@@ -233,6 +233,10 @@ class SyncEngine implements SecretsCoordinator {
     final doc = remote.doc;
     final before = syncHash(doc.toJson(writtenBy: '', writtenAt: DateTime.utc(2000)));
     final firstJoin = !st.joined;
+    // A device joining an existing file normally takes the file's version
+    // where both sides have the same record; set up with
+    // [keepThisDeviceOnJoin], its own version wins instead.
+    final keepLocal = firstJoin && st.preferLocal;
 
     if (firstJoin && remote.exists) await _adoptHandoffTwins(doc);
 
@@ -273,7 +277,7 @@ class SyncEngine implements SecretsCoordinator {
         takeRemote = false;
       } else {
         conflicts++;
-        takeRemote = _remoteWins(key, local[key], rec, now, firstJoin: firstJoin);
+        takeRemote = _remoteWins(key, local[key], rec, now, firstJoin: firstJoin, keepLocal: keepLocal);
       }
       if (takeRemote) {
         toApply[key] = rec!.deleted ? null : rec.value;
@@ -354,8 +358,14 @@ class SyncEngine implements SecretsCoordinator {
         _ => 3,
       };
 
+  /// The sync state to start a device's first sync with when ITS records
+  /// should win over the file's where both have the same one (the device
+  /// that holds the data being joined to a newer, emptier file). Write it
+  /// to the [SyncStateStore] before the first sync; it applies once.
+  static const Map<String, dynamic> keepThisDeviceOnJoin = {'preferLocal': true};
+
   /// Both sides changed [key]: whether the file's version wins.
-  bool _remoteWins(String key, SyncItem? local, SyncRecord rec, DateTime now, {required bool firstJoin}) {
+  bool _remoteWins(String key, SyncItem? local, SyncRecord rec, DateTime now, {required bool firstJoin, bool keepLocal = false}) {
     if (rec.deleted) return local == null; // an edit beats a deletion
     if (local == null) return true;
     final prefix = key.substring(0, key.indexOf(':'));
@@ -370,7 +380,9 @@ class SyncEngine implements SecretsCoordinator {
       final le = _expiry(local.value), re = _expiry(rec.value);
       if (le != null && re != null && le != re) return re.isAfter(le);
     }
-    // A device joining the file takes what is already there.
+    // A device joining the file takes what is already there, unless it was
+    // set up to keep its own (see [keepThisDeviceOnJoin]).
+    if (keepLocal) return false;
     if (firstJoin) return true;
     return rec.at.isAfter(local.modifiedAt ?? now);
   }
@@ -671,7 +683,7 @@ class _Pass {
 }
 
 class _State {
-  _State({required this.base, required this.joined, this.lastSyncAt, this.claims = const {}, this.seen = const {}});
+  _State({required this.base, required this.joined, this.lastSyncAt, this.claims = const {}, this.seen = const {}, this.preferLocal = false});
 
   factory _State.parse(Map<String, dynamic>? j) {
     final raw = j?['base'];
@@ -682,6 +694,7 @@ class _State {
             if (e.key is String && e.value is String) e.key as String: e.value as String,
       },
       joined: j?['joined'] == true,
+      preferLocal: j?['preferLocal'] == true,
       lastSyncAt: DateTime.tryParse('${j?['lastSyncAt'] ?? ''}'),
       claims: {
         if (j?['claims'] case final Map<Object?, Object?> m)
@@ -698,6 +711,9 @@ class _State {
 
   final Map<String, String> base;
   final bool joined;
+
+  /// The first sync keeps this device's records over the file's.
+  final bool preferLocal;
   final DateTime? lastSyncAt;
 
   /// Scheduled post id -> the device that publishes it, as last seen, for

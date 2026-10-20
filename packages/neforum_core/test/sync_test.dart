@@ -173,6 +173,27 @@ void main() {
       expect(await a.accounts.get('bsky'), isNotNull);
     });
 
+    test('a device set up to keep its own data wins where both have the same record, once', () async {
+      // The phone made the file first, with its own (default) version.
+      await a.accounts.upsert(_account('m1', 'mastodon', name: 'Phone default'));
+      await a.engine.sync();
+      // The computer holds the real data and joins keeping it.
+      await b.accounts.upsert(_account('m1', 'mastodon', name: 'Computer original'));
+      await b.accounts.upsert(_account('bsky', 'bluesky'));
+      await b.stateStore.write(Map.of(SyncEngine.keepThisDeviceOnJoin));
+      await b.engine.sync();
+      expect((await b.accounts.get('m1'))?.displayName, 'Computer original');
+      await a.engine.sync();
+      expect((await a.accounts.get('m1'))?.displayName, 'Computer original', reason: 'the phone takes the computer\'s version');
+      expect(await a.accounts.get('bsky'), isNotNull);
+      // Only the first sync: later changes merge as usual.
+      expect(b.stateStore.data?['preferLocal'], isNull);
+      await a.accounts.upsert(_account('m1', 'mastodon', name: 'Renamed on the phone'));
+      await a.engine.sync();
+      await b.engine.sync();
+      expect((await b.accounts.get('m1'))?.displayName, 'Renamed on the phone');
+    });
+
     test('a new or emptied file never deletes anything here', () async {
       await a.posts.upsert(_post('p1'));
       await a.engine.sync();

@@ -1,5 +1,3 @@
-import 'dart:isolate';
-
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -367,11 +365,32 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       await backend.check();
       setState(() => _progress = 'Looking for a sync file…');
       final blob = await backend.read();
+      final before = ref.read(settingsProvider);
+      final changedStorage = before.syncProviderId != p.id ||
+          before.syncConfig['folder'] != config['folder'] ||
+          before.syncConfig['bookmark'] != config['bookmark'] ||
+          before.syncConfig['clientId'] != config['clientId'];
+      var keepLocal = false;
       if (blob != null) {
         setState(() => _progress = 'Unlocking the sync file: this takes a moment on purpose…');
-        final passphrase = secrets['passphrase']!;
-        final bytes = blob.bytes;
-        await Isolate.run(() async => BackupCipher(passphrase).open(bytes));
+        final opened = await openSyncFileOffThread(secrets['passphrase']!, blob.bytes);
+        // Joining a file while this device already has data: ask whose
+        // version stays where both have the same account, setting or post.
+        final here = (await s.accounts.all()).length;
+        if (changedStorage && here > 0) {
+          if (!mounted) return;
+          final choice = await _askWhoWins(here: here, inFile: accountsInSyncFile(opened));
+          if (choice == null) {
+            if (mounted) {
+              setState(() {
+                _busy = false;
+                _progress = null;
+              });
+            }
+            return;
+          }
+          keepLocal = choice;
+        }
       }
       var stored = config;
       if (p.kind == SyncBackendKind.folder && Env.isMacOS) {
@@ -387,12 +406,9 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       } else {
         await s.secrets.delete(kSyncOAuthKey);
       }
-      final before = ref.read(settingsProvider);
-      final changedStorage = before.syncProviderId != p.id ||
-          before.syncConfig['folder'] != config['folder'] ||
-          before.syncConfig['bookmark'] != config['bookmark'] ||
-          before.syncConfig['clientId'] != config['clientId'];
-      if (changedStorage) await s.storage.writeJson('sync-state.json', const <String, dynamic>{});
+      if (changedStorage) {
+        await s.storage.writeJson('sync-state.json', keepLocal ? Map.of(SyncEngine.keepThisDeviceOnJoin) : const <String, dynamic>{});
+      }
       await ref.read(settingsProvider.notifier).update((x) => x.copyWith(syncProviderId: p.id, syncConfig: stored));
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -412,6 +428,28 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       }
     }
   }
+
+  /// Whose version wins on this device's first sync with an existing file:
+  /// true = this device's, false = the file's, null = cancel.
+  Future<bool?> _askWhoWins({required int here, required int inFile}) => showDialog<bool>(
+        context: context,
+        builder: (c) {
+          final mineFirst = here >= inFile;
+          return AlertDialog(
+            title: const Text('Which data should win?'),
+            content: Text(
+                'This device has $here ${here == 1 ? 'account' : 'accounts'}; the sync file has $inFile. Everything from both is kept. '
+                'Where both have the same account, setting or post, NEFORUM keeps one version: which one?'),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('Cancel')),
+              if (mineFirst) TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text("The sync file's")),
+              if (mineFirst) FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text("This device's")),
+              if (!mineFirst) TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text("This device's")),
+              if (!mineFirst) FilledButton(onPressed: () => Navigator.of(c).pop(false), child: const Text("The sync file's")),
+            ],
+          );
+        },
+      );
 
   /// "Create the sync file" is only for the first device: a second one
   /// would start a separate file next to the real one.

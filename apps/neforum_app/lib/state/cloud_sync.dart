@@ -102,6 +102,22 @@ SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets,
 Future<List<int>> _deriveOffThread(String passphrase, List<int> salt, BackupKdfParams params) =>
     Isolate.run(() => deriveBackupKey(passphrase, salt, params));
 
+/// The sync file in [bytes] opened with [passphrase] on a background
+/// isolate. A top-level function on purpose: a closure written inside a
+/// widget's method can carry that widget's state along, which cannot be sent
+/// to another isolate ("object is unsendable").
+Future<Map<String, dynamic>> openSyncFileOffThread(String passphrase, Uint8List bytes) =>
+    Isolate.run(() => BackupCipher(passphrase).open(bytes));
+
+/// How many accounts the opened sync file holds (0 if it cannot be read).
+int accountsInSyncFile(Map<String, dynamic> opened) {
+  try {
+    return SyncDocument.parse(opened).records.entries.where((e) => e.key.startsWith('account:') && !e.value.deleted).length;
+  } on Object {
+    return 0;
+  }
+}
+
 /// The sync file's state on this device (sync-state.json).
 class _StateFile implements SyncStateStore {
   _StateFile(this.storage);
@@ -360,5 +376,12 @@ String describeSyncError(Object e) => switch (e) {
       BackupException(:final message) => message,
       AuthCancelled() => 'The Google sign-in was cancelled.',
       OAuthException() => 'Google refused the sign-in: $e. Check the Client ID and secret (a "Desktop app" client), and that the Google Drive API is enabled.',
-      _ => 'Sync failed: $e',
+      _ => 'Sync failed: ${_firstLine(e)}',
     };
+
+/// The first line of [e], at most 240 characters: some errors carry pages of
+/// internal detail that mean nothing to the reader.
+String _firstLine(Object e) {
+  final line = '$e'.split('\n').first.trim();
+  return line.length > 240 ? '${line.substring(0, 240)}…' : line;
+}

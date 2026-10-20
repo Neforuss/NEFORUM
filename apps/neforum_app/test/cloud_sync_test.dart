@@ -252,6 +252,25 @@ void main() {
     expect(syncProviderById('googledrive')!.availableOn(ios: true), isFalse, reason: 'Google Drive\'s Files integration cannot be picked on iPhone');
   });
 
+  test('an existing sync file is opened on a background isolate and its accounts counted', () async {
+    final doc = SyncDocument()
+      ..records['account:m1'] = SyncRecord.of({'id': 'm1'}, at: DateTime.utc(2026, 10, 20), by: 'A')
+      ..records['account:gone'] = SyncRecord.tombstone(at: DateTime.utc(2026, 10, 20), by: 'A')
+      ..records['setting:accent'] = SyncRecord.of('neforum', at: DateTime.utc(2026, 10, 20), by: 'A');
+    final bytes = await BackupCipher('a sync passphrase').seal(doc.toJson(writtenBy: 'A', writtenAt: DateTime.utc(2026, 10, 20)));
+    final opened = await openSyncFileOffThread('a sync passphrase', bytes);
+    expect(accountsInSyncFile(opened), 1, reason: 'the tombstone does not count');
+    await expectLater(openSyncFileOffThread('the wrong one!', bytes), throwsA(isA<BackupException>()));
+    expect(accountsInSyncFile(const {'not': 'a sync file'}), 0);
+  }, timeout: const Timeout(Duration(minutes: 2)));
+
+  test('unexpected errors are shown as one short line', () {
+    final long = 'Invalid argument(s): Illegal argument in isolate message: object is unsendable\n${'  <- Instance of something\n' * 200}';
+    final shown = describeSyncError(StateError(long));
+    expect(shown.split('\n').length, 1);
+    expect(shown.length, lessThan(270));
+  });
+
   test('sync settings stay on the device and survive a round trip', () {
     const s = AppSettings(syncProviderId: 'koofr', syncConfig: {'url': 'https://app.koofr.net/dav/Koofr/NEFORUM', 'username': 'me@example.com'});
     final back = AppSettings.fromJson(s.toJson());
