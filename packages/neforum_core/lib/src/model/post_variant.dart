@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'artwork.dart';
 import 'media.dart';
 import 'poll.dart';
 import 'post.dart';
@@ -28,6 +29,7 @@ class PostVariant {
     this.issues = const [],
     this.sourcePostId,
     this.poll,
+    this.artwork,
   });
 
   /// Body text. When the post was split into a thread this is the first part.
@@ -63,6 +65,12 @@ class PostVariant {
 
   /// The post's poll or quiz, only on platforms that have polls.
   final PostPoll? poll;
+
+  /// The post's artwork details ([Post.artwork]); null when the post is not
+  /// artwork.
+  final ArtworkDetails? artwork;
+
+  bool get isArtwork => artwork != null;
 
   bool get isThread => threadParts.length > 1;
   bool get hasMedia => media.isNotEmpty;
@@ -106,6 +114,7 @@ class PostVariant {
         issues: issues ?? this.issues,
         sourcePostId: sourcePostId,
         poll: clearPoll ? null : (poll ?? this.poll),
+        artwork: artwork,
       );
 
   PostVariant addIssues(Iterable<ValidationIssue> more) =>

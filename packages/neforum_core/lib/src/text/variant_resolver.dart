@@ -158,6 +158,7 @@ class VariantResolver {
       issues: issues,
       sourcePostId: post.id,
       poll: d.polls == null ? null : poll,
+      artwork: post.artwork,
     );
   }
 
