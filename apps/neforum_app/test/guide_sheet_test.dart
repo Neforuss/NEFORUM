@@ -160,6 +160,24 @@ void main() {
     });
   });
 
+  testWidgets('a bundled platform guide opens with its steps and closed details', (tester) async {
+    await tester.pumpWidget(_host(const GuideSheet(platformId: 'discord')));
+    await tester.pumpAndSettle();
+    // The sheet's header shows the title, so the guide's own # title is not repeated.
+    expect(_text('Discord setup guide'), findsOneWidget);
+    expect(_text('Copy Webhook URL'), findsOneWidget);
+    expect(find.text('Show all details'), findsOneWidget);
+    expect(find.text('Sources'), findsOneWidget);
+    expect(_text('https://docs.discord.com/developers/topics/rate-limits'), findsNothing);
+  });
+
+  testWidgets('a link to another guide opens it at the heading it names', (tester) async {
+    await tester.pumpWidget(_host(const GuideSheet(platformId: 'media-hosts', asset: 'media-hosts.md', section: 'fallback-host')));
+    await tester.pumpAndSettle();
+    expect(_text('NEFORUM uploads the file to the fallback instead'), findsOneWidget);
+    expect(_text('Both are free services run by one volunteer'), findsNothing);
+  });
+
   test('in every bundled guide the numbered procedures come before the explanations', () {
     final docs = Directory('assets/docs').listSync().whereType<File>().where((f) => f.path.endsWith('.md')).toList();
     expect(docs, isNotEmpty);

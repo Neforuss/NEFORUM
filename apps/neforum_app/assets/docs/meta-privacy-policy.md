@@ -1,44 +1,25 @@
 # A privacy policy URL for your Meta app
 
-Last checked: 11 October 2026, on Meta's App Dashboard.
+This guide gives the Meta app you post with (Facebook Pages, Instagram, Threads) the **Privacy policy URL** that Meta asks for before you can **Publish** the app, so that everyone, not only you, sees your posts. Use NEFORUM's own policy (option A, nothing to write or host) or publish a short policy of your own (option B).
 
-NEFORUM posts to Facebook Pages, Instagram and Threads through a Meta app that you create yourself. Meta's App modes page says: "Any data generated while an app is in Development mode, such as test posts, can only be seen by role users." To let everyone see your posts, you **Publish** the app, and the Publish page asks for a **Privacy policy URL**. In October 2026 that was the only required item; a data deletion URL, an app icon and a category were optional.
+## Steps: Option A, use NEFORUM's privacy policy
 
-You can do either of these:
+1. Open your app's **Publish** page (or **App settings > Basic**).
+2. Enter `https://neforus.com/neforum/privacy/` as the **Privacy policy URL**.
+3. Optional: enter `https://neforus.com/neforum/privacy/#data-deletion` as the **Data deletion instructions URL**.
 
-- **Option A:** enter NEFORUM's own privacy policy. Nothing to write or host.
-- **Option B:** publish a short policy of your own, from the template below.
+## Steps: Option B, publish your own policy
 
-## Option A: use NEFORUM's privacy policy
-
-On the Publish page (or **App settings > Basic**), enter:
-
-| Field | Address |
-|---|---|
-| **Privacy policy URL** | `https://neforus.com/neforum/privacy/` |
-| **Data deletion instructions URL** (optional) | `https://neforus.com/neforum/privacy/#data-deletion` |
-
-That page is NEFORUM's policy, written by Neforus, who makes NEFORUM. It covers the Meta apps people create to post with NEFORUM. It says:
-
-- NEFORUM has no server and collects nothing.
-- Your accounts, tokens and posts stay on your device.
-- Which Facebook, Instagram and Threads permissions NEFORUM uses, and what for.
-- How to delete your data and remove the app's access.
-
-It fits when you use the app **only with NEFORUM** and don't add other permissions or connect it to another service. Keep in mind:
-
-- Meta makes every app's developer responsible for the app's privacy policy. Pointing to NEFORUM's page is your decision; Meta has not confirmed that a shared policy is fine.
-- The contact address on that page belongs to Neforus. Questions people send there about your app reach Neforus, not you.
-
-## Option B: publish your own policy
-
-Any public page that opens without signing in will do, for example:
-
-- a page on your own website;
-- a free **GitHub Pages** site: a public repository with an `index.md` file, then **Settings > Pages > Deploy from a branch**;
-- a free **Google Sites** page.
-
-Copy the template, replace everything in [square brackets], delete the permission lines you don't use and publish the page. Enter its address as the **Privacy policy URL**. For the optional **Data deletion instructions URL**, use the same address (or its "Deleting your data" section, if your host links to headings).
+1. Choose a public page that opens without signing in, for example:
+   - a page on your own website;
+   - a free **GitHub Pages** site: a public repository with an `index.md` file, then **Settings > Pages > Deploy from a branch**;
+   - a free **Google Sites** page.
+2. Copy the template below.
+3. Replace everything in [square brackets].
+4. Delete the permission lines you don't use.
+5. Publish the page.
+6. Enter its address as the **Privacy policy URL**.
+7. Optional: enter the same address as the **Data deletion instructions URL** (or its "Deleting your data" section, if your host links to headings).
 
 ```
 # Privacy policy for [app name]
@@ -86,8 +67,28 @@ Posts already published stay on each network until they are deleted there.
 For help, write to [email address].
 ```
 
+## How it works
+
+Last checked: 11 October 2026, on Meta's App Dashboard.
+
+NEFORUM posts to Facebook Pages, Instagram and Threads through a Meta app that you create yourself. Meta's App modes page says: "Any data generated while an app is in Development mode, such as test posts, can only be seen by role users." To let everyone see your posts, you **Publish** the app, and the Publish page asks for a **Privacy policy URL**. In October 2026 that was the only required item; a data deletion URL, an app icon and a category were optional.
+
+### NEFORUM's privacy policy (option A)
+
+That page is NEFORUM's policy, written by Neforus, who makes NEFORUM. It covers the Meta apps people create to post with NEFORUM. It says:
+
+- NEFORUM has no server and collects nothing.
+- Your accounts, tokens and posts stay on your device.
+- Which Facebook, Instagram and Threads permissions NEFORUM uses, and what for.
+- How to delete your data and remove the app's access.
+
+It fits when you use the app **only with NEFORUM** and don't add other permissions or connect it to another service. Keep in mind:
+
+- Meta makes every app's developer responsible for the app's privacy policy. Pointing to NEFORUM's page is your decision; Meta has not confirmed that a shared policy is fine.
+- The contact address on that page belongs to Neforus. Questions people send there about your app reach Neforus, not you.
+
 ## Related
 
-- [Facebook setup guide](platforms/facebook.md), step 5
+- [Facebook setup guide](platforms/facebook.md), steps 20 to 22 ("Publish the app so others can see your posts")
 - [Instagram setup guide](platforms/instagram.md)
 - [Threads setup guide](platforms/threads.md)

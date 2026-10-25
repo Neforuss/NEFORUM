@@ -1,6 +1,48 @@
-# LinkedIn
+# LinkedIn setup guide
 
-NEFORUM can post to **your own LinkedIn profile**. You can connect it in two ways:
+This guide connects **your own LinkedIn profile** to NEFORUM with a free LinkedIn developer app, so NEFORUM posts there automatically. Connect from NEFORUM on Windows or macOS; on phones, use the hand-off steps.
+
+## Steps
+
+1. Sign in to LinkedIn and open <https://www.linkedin.com/developers/apps>.
+2. Click **Create app**.
+3. Fill in:
+   - **App name**: anything, e.g. `NEFORUM for Ada`.
+   - **LinkedIn Page**: a company Page you administer. If you have none, create a free one at <https://www.linkedin.com/company/setup/new/> (a "company" with just your name is fine).
+   - **App logo**: any square image.
+4. Accept the API Terms of Use and click **Create app**.
+5. On the app's **Settings** tab, click **Verify** next to the Page.
+6. Open the verification link and approve it.
+   - If you are the Page's admin, approval is instant. Otherwise the Page admin has 30 days to approve it.
+7. Open the **Products** tab and click **Request access** for both of these. Both are approved immediately.
+   - **Share on LinkedIn**
+   - **Sign In with LinkedIn using OpenID Connect**
+8. Open the **Auth** tab. Under **OAuth 2.0 settings > Authorized redirect URLs for your app**, click the pencil and add exactly
+
+   ```
+   http://127.0.0.1:52771/callback
+   ```
+
+   It must match exactly: `http`, `127.0.0.1`, port `52771`, path `/callback`, no trailing slash.
+9. Click **Update**.
+10. Still on the **Auth** tab, check that the **OAuth 2.0 scopes** list shows `openid`, `profile` and `w_member_social`.
+11. Copy the **Client ID** and the **Primary Client Secret** (click the eye icon to reveal it).
+12. In NEFORUM, choose **Add account > LinkedIn > Your own API keys** and paste both values.
+13. Click **Sign in with LinkedIn**. Your browser opens LinkedIn's consent screen.
+14. Click **Allow**. The browser comes back to NEFORUM.
+
+## Steps: Hand-off without keys
+
+1. In NEFORUM, add **LinkedIn**, choose **Hand off to the app** and click **Add LinkedIn**. Nothing else is needed.
+2. Publish the post in NEFORUM. It copies your text to the clipboard and opens LinkedIn:
+   - **Text only**: a new post, usually with your text already in it.
+   - **With a link**: LinkedIn's share page for the link.
+   - **With photos or video** (phones): the share sheet with your files. Pick LinkedIn.
+3. Paste your text if it is missing (above the preview, for a link).
+4. On a computer, attach photos or video yourself.
+5. Press **Post**.
+
+## How it works
 
 | Tier | What you need | Cost | Limits | Review |
 |---|---|---|---|---|
@@ -16,31 +58,6 @@ What the automatic tier **cannot** do:
 - Mention people. Mentions need LinkedIn member IDs, and NEFORUM cannot look those up. `@` is shown as plain text. Hashtags such as `#flutter` work.
 - Connect from a phone. LinkedIn only sends you back to a web address (not to an app). Connect LinkedIn from NEFORUM on Windows or macOS. On phones, use the hand-off tier.
 
-## Set up "Your own API keys"
-
-1. Sign in to LinkedIn and open <https://www.linkedin.com/developers/apps>. Click **Create app**.
-2. Fill in:
-   - **App name**: anything, e.g. `NEFORUM for Ada`.
-   - **LinkedIn Page**: a company Page you administer. If you have none, create a free one at <https://www.linkedin.com/company/setup/new/> (a "company" with just your name is fine).
-   - **App logo**: any square image.
-   - Accept the API Terms of Use and click **Create app**.
-3. On the app's **Settings** tab, click **Verify** next to the Page. Open the verification link and approve it. If you are the Page's admin, approval is instant. Otherwise the Page admin has 30 days to approve it.
-4. Open the **Products** tab. Click **Request access** for both:
-   - **Share on LinkedIn**
-   - **Sign In with LinkedIn using OpenID Connect**
-
-   Both are approved immediately.
-5. Open the **Auth** tab. Under **OAuth 2.0 settings > Authorized redirect URLs for your app**, click the pencil, add exactly
-
-   ```
-   http://127.0.0.1:52771/callback
-   ```
-
-   then click **Update**. It must match exactly: `http`, `127.0.0.1`, port `52771`, path `/callback`, no trailing slash.
-6. Still on the **Auth** tab, check that the **OAuth 2.0 scopes** list shows `openid`, `profile` and `w_member_social`.
-7. Copy the **Client ID** and the **Primary Client Secret** (click the eye icon to reveal it).
-8. In NEFORUM, choose **Add account > LinkedIn > Your own API keys**, paste both values and click **Connect**. Your browser opens LinkedIn's consent screen. Click **Allow**, and the browser comes back to NEFORUM.
-
 The client secret and your sign-in token stay in NEFORUM's secret store on your device. Don't share the secret. Anyone who has it can act as your app.
 
 ### The "LinkedIn API version" field
@@ -50,6 +67,12 @@ LinkedIn releases a new API version every month (format `YYYYMM`). Each version 
 ### Don't change the permissions later
 
 If your app ever asks LinkedIn for a different set of scopes, LinkedIn cancels every earlier sign-in for that app. NEFORUM always asks for `openid profile w_member_social`.
+
+### Hand-off
+
+- **Text only**: NEFORUM opens `https://www.linkedin.com/feed/?shareActive=true&text=…`, which usually opens a new post with your text already in it. This URL isn't documented by LinkedIn. Since October 2026 it sometimes opens the article editor instead. Your text is always copied to the clipboard as well: go to linkedin.com, click **Start a post** and paste.
+- **With a link**: NEFORUM opens LinkedIn's official share page `https://www.linkedin.com/sharing/share-offsite/?url=…`. It only accepts the link, so paste your text above the preview.
+- **With photos or video** (phones): NEFORUM opens the share sheet with your files and copies the text. Pick LinkedIn (Android package `com.linkedin.android`) and paste the text if it is missing. On iPhone, the LinkedIn app may accept only the text or link, not the images. On a computer, attach the files yourself.
 
 ## What gets posted
 
@@ -65,13 +88,7 @@ If your app ever asks LinkedIn for a different set of scopes, LinkedIn cancels e
 - **Visibility**: Public → `PUBLIC`; Followers → `CONNECTIONS`. LinkedIn has no unlisted or private posts, so Unlisted becomes public and Private becomes connections-only. You can force `PUBLIC`, `CONNECTIONS` or `LOGGED_IN` with the advanced field `linkedinVisibility`.
 - **Threads and content warnings** don't exist on LinkedIn.
 
-## Hand-off tier
-
-- **Text only**: NEFORUM opens `https://www.linkedin.com/feed/?shareActive=true&text=…`, which usually opens a new post with your text already in it. This URL isn't documented by LinkedIn. Since October 2026 it sometimes opens the article editor instead. Your text is always copied to the clipboard as well: go to linkedin.com, click **Start a post** and paste.
-- **With a link**: NEFORUM opens LinkedIn's official share page `https://www.linkedin.com/sharing/share-offsite/?url=…`. It only accepts the link, so paste your text above the preview.
-- **With photos or video** (phones): NEFORUM opens the share sheet with your files and copies the text. Pick LinkedIn (Android package `com.linkedin.android`) and paste the text if it is missing. On iPhone, the LinkedIn app may accept only the text or link, not the images. On a computer, attach the files yourself.
-
-## Known limitations
+## Limits
 
 - Re-connect every 60 days (LinkedIn rule for self-serve apps).
 - The 150 calls/day figure is documented for LinkedIn's older share API. LinkedIn doesn't publish a number for the current Posts API. Your real limit appears in the developer portal's **Analytics** tab after your first post that day.

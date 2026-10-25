@@ -1,22 +1,59 @@
 # Sync between devices
 
-NEFORUM can keep your accounts, their keys, your posts and your settings the same on all your computers and phones. Like KeePassXC, it keeps **one encrypted file** in storage you already use, and every device reads and writes that file. There is no NEFORUM server and no NEFORUM account. Your storage provider only ever sees an encrypted file.
+This guide keeps your accounts, their keys, your posts and your settings the same on all your computers and phones, through **one encrypted file** in storage you already use. There is no NEFORUM server and no NEFORUM account, and your storage provider only ever sees an encrypted file.
 
-You'll find it in **Settings > Sync**.
+## Steps: On your first device
 
-## Where the file can live
+1. Go to **Settings > Sync > Set up…** and pick your storage (see "Where the file can live" under How it works).
+   - For **Google Drive (direct)**, do "Steps: Google Drive (direct)" below first.
+2. Choose the folder, or fill in the WebDAV address or the S3 bucket and key.
+3. Choose a **sync passphrase**. You can use **Generate** for a random one.
+   - Write it down or keep it in your password manager. Without it, the file cannot be opened by you or by anyone else, and there is no recovery.
+4. Choose **Turn on sync**. NEFORUM creates `NEFORUM.neforumsync` and puts everything in it.
 
-**Google Drive (direct)** (computers, iPhone, iPad and Android). NEFORUM talks to Google Drive itself. It keeps the file in a **NEFORUM Sync** folder in your My Drive. This is the way to use Google Drive on a phone or tablet: Google Drive's iPhone and iPad app does not let other apps pick its folders, and it often does not hand files over to them. **Every device must use Google Drive (direct)**, your computers too, because NEFORUM cannot see a file that Google Drive for desktop put in another folder.
+## Steps: On each other device
 
-It uses your own Google Cloud project, once, the same way NEFORUM's YouTube connection does (you can reuse that project):
+1. Go to **Settings > Sync > Set up…** and pick the **same storage**.
+2. Choose the same folder or file, or fill in the same WebDAV address or S3 bucket and key.
+3. Enter the **same passphrase**.
+4. Choose **Turn on sync**. NEFORUM opens the existing file and adds what the device has.
+5. If the device already has accounts of its own, choose **which data should win** where both have the same account, setting or post: this device's or the sync file's.
+   - Choose this device's when it is the one with your real setup (for example a computer joining a file a new phone just started). Everything else from both sides is kept either way.
+
+## Steps: Google Drive (direct)
+
+This uses your own Google Cloud project, once, the same way NEFORUM's YouTube connection does (you can reuse that project).
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), create a project, or open the one you use for YouTube.
 2. **APIs & Services > Library**: enable the **Google Drive API**.
-3. **OAuth consent screen** (Google Auth Platform): choose **External**, fill in the app name and your email, then add the scope `.../auth/drive.file` under **Data access**. This scope only lets NEFORUM see files it made itself.
-4. **Audience > Test users**: click **Add users** and add **your own Google address**. Add every Google account you will sign in with, on any device: the one whose Drive should hold the sync file. Without this, Google refuses the sign-in. This Google Cloud app is only for you. You don't share it, and nobody else uses your Client ID.
-5. Optional: also under **Audience**, click **Publish app**. While an app is in "Testing", Google ends its sign-ins after 7 days, and NEFORUM asks you to sign in again. With only the `drive.file` scope, publishing needs no review from Google.
-6. **Clients > Create client**, type **Desktop app**. Copy the **Client ID** and **Client secret**.
-7. In NEFORUM, go to **Settings > Sync > Set up > Google Drive (direct)**, paste them, and sign in with the Google account you added as a test user. Do this on every device with the same Client ID, secret and passphrase.
+3. **OAuth consent screen** (Google Auth Platform): choose **External** and fill in the app name and your email.
+4. Under **Data access**, add the scope `.../auth/drive.file`. This scope only lets NEFORUM see files it made itself.
+5. **Audience > Test users**: click **Add users** and add **your own Google address**.
+   - Add every Google account you will sign in with, on any device: the one whose Drive should hold the sync file. Without this, Google refuses the sign-in.
+   - This Google Cloud app is only for you. You don't share it, and nobody else uses your Client ID.
+6. Optional: also under **Audience**, click **Publish app**.
+   - While an app is in "Testing", Google ends its sign-ins after 7 days, and NEFORUM asks you to sign in again. With only the `drive.file` scope, publishing needs no review from Google.
+7. **Clients > Create client**, type **Desktop app**.
+8. Copy the **Client ID** and **Client secret**.
+9. In NEFORUM, go to **Settings > Sync > Set up > Google Drive (direct)** and paste them.
+10. Sign in with the Google account you added as a test user.
+11. Do this on every device with the same Client ID, secret and passphrase.
+
+## Steps: Turn sync off
+
+1. Go to **Settings > Sync > Turn off**. This device keeps everything it has and stops using the file. The file and your other devices are not changed.
+
+## How it works
+
+Like KeePassXC, NEFORUM keeps one encrypted file in storage you already use, and every device reads and writes that file.
+
+Every device must use the same storage and the same file. For example: your PC, your iPhone and your Android phone all use **Google Drive (direct)** with the same Client ID; or your PC syncs a Dropbox folder and your iPhone picks the same folder in the Files app.
+
+Hand-off accounts that you set up on both devices before syncing become one account.
+
+### Where the file can live
+
+**Google Drive (direct)** (computers, iPhone, iPad and Android). NEFORUM talks to Google Drive itself. It keeps the file in a **NEFORUM Sync** folder in your My Drive. This is the way to use Google Drive on a phone or tablet: Google Drive's iPhone and iPad app does not let other apps pick its folders, and it often does not hand files over to them. **Every device must use Google Drive (direct)**, your computers too, because NEFORUM cannot see a file that Google Drive for desktop put in another folder.
 
 **A cloud app on your computer.** NEFORUM writes the file into a folder; your cloud app does the syncing.
 
@@ -57,23 +94,7 @@ Use an **app password** wherever the service offers one.
 
 Use a private bucket and a key that can only read and write that bucket.
 
-Every device must use the same storage and the same file. For example: your PC, your iPhone and your Android phone all use **Google Drive (direct)** with the same Client ID; or your PC syncs a Dropbox folder and your iPhone picks the same folder in the Files app.
-## Turning it on
-
-### On your first device
-
-1. Go to **Settings > Sync > Set up…** and pick your storage.
-2. Choose the folder, or fill in the WebDAV address or the S3 bucket and key.
-3. Choose a **sync passphrase**. You can use **Generate** for a random one. Write it down or keep it in your password manager. Without it, the file cannot be opened by you or by anyone else, and there is no recovery.
-4. Choose **Turn on sync**. NEFORUM creates `NEFORUM.neforumsync` and puts everything in it.
-
-### On each other device
-
-Do the same steps with the same storage and the **same passphrase**. NEFORUM opens the existing file and adds what the device has. If the device already has accounts of its own, NEFORUM asks **which data should win** where both have the same account, setting or post: this device's or the sync file's. Choose this device's when it is the one with your real setup (for example a computer joining a file a new phone just started). Everything else from both sides is kept either way.
-
-Hand-off accounts that you set up on both devices before syncing become one account.
-
-## What syncs
+### What syncs
 
 | Synced | |
 |---|---|
@@ -124,11 +145,7 @@ Platforms that hold scheduled posts themselves (see **Settings > Scheduling**) p
 - NEFORUM never makes the file public. It needs no sharing link, and a private bucket is enough.
 - To change the passphrase, turn Sync off on every device, delete `NEFORUM.neforumsync`, then set it up again with the new passphrase.
 
-## Turning it off
-
-Go to **Settings > Sync > Turn off**. This device keeps everything it has and stops using the file. The file and your other devices are not changed.
-
-## If something goes wrong
+## Troubleshooting
 
 **"The sync passphrase does not open the sync file"**
 Use the passphrase you chose on your first device.
@@ -144,5 +161,6 @@ Google Drive's app did not hand the file over. Its Privacy Screen setting, a fil
 
 **"The Google sign-in expired or was revoked"**
 Sign in again in **Settings > Sync > Change…**. If this happens every week, the Google Cloud app is still in Testing: click **Publish app** under Audience. If Google refuses the sign-in with "Access blocked" or a message that the app is being tested, add your Google address under **Audience > Test users**.
+
 **On a Mac, iPhone or iPad, sync stopped after moving or renaming the folder**
 Choose **Change…** and pick the folder again.

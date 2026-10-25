@@ -1,29 +1,57 @@
-# DEV Community (and other Forem communities)
+# DEV Community setup guide
 
-NEFORUM publishes articles to **DEV** (dev.to) through the Forem API v1. Other communities that run Forem work the same way: enter their address when you connect.
+This guide connects **DEV** (dev.to), or another community that runs Forem, to NEFORUM with a personal API key. Afterwards NEFORUM publishes your articles there automatically.
+
+## Steps
+
+1. Sign in at https://dev.to.
+2. Open **Settings > Extensions**: https://dev.to/settings/extensions
+3. Under **DEV Community API Keys**, enter `NEFORUM` as the description.
+4. Press **Generate API Key**.
+5. Copy the key.
+6. In NEFORUM, add **DEV Community** and paste the key.
+7. Leave **Forem community** set to `https://dev.to` unless you post to another Forem community; then enter its address.
+8. Press **Connect**.
+9. If your posts have images, set up a media host that keeps files **permanently** under **Settings > Media hosting** (see "Images need a media host" under How it works).
+
+## Steps: Hand-off without a key
+
+1. Sign in to DEV in your browser.
+2. In NEFORUM, add **DEV Community**, choose **Hand off to the app** and click **Add DEV Community**.
+3. Publish the post in NEFORUM. It opens the DEV editor with your title, tags and text filled in, and copies the full Markdown to the clipboard.
+4. Upload your images in the editor. They can't travel in the link.
+5. Check the preview.
+6. Press **Publish**.
+
+## How it works
+
+NEFORUM publishes articles through the Forem API v1. Other communities that run Forem work the same way: enter their address when you connect.
 
 As of October 2026, the API is free. Any DEV account can create a personal API key. There's no developer registration and no app review.
-
-## Ways to connect
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
 | **Open API** (recommended) | A DEV account and a personal API key | Free | About 10 new articles per 30 seconds and 1 write request per second. If you go over, DEV returns HTTP 429 with `Retry-After`. |
 | **Hand-off** | A DEV account, signed in in your browser | Free | NEFORUM opens the DEV editor with your title, tags and text filled in. You press **Publish** yourself. |
 
-### Create your API key
-
-1. Sign in at https://dev.to.
-2. Open **Settings > Extensions**: https://dev.to/settings/extensions
-3. Under **DEV Community API Keys**, enter `NEFORUM` as the description and press **Generate API Key**.
-4. Copy the key.
-5. In NEFORUM, add **DEV Community** and paste the key. Leave **Forem community** set to `https://dev.to` unless you post to another Forem community.
-
 There's no redirect address, OAuth app or browser sign-in. The key doesn't expire. To revoke it, return to the same settings page.
 
 When you connect, NEFORUM checks the key with `GET /api/users/me`. It sends the `api-key` header and `Accept: application/vnd.forem.api-v1+json`.
 
-## Posting
+### Images need a media host
+
+**The DEV API cannot upload files.** It only accepts image *links*. So NEFORUM first puts your images on the **media host** you set up under **Settings > Media hosting**:
+
+- The first image becomes the cover (`main_image`).
+- The other images are added at the end of the article as `![alt](url)`.
+
+Choose a host that keeps files **permanently**, such as your own S3 or R2 bucket. A temporary host like litterbox deletes files after a while, and the images then disappear from your article. If you have no media host, posts with images fail with a clear message.
+
+### Hand-off
+
+NEFORUM opens `https://dev.to/new?prefill=...`. The link carries your article as Markdown, with front matter at the top (`title`, `published: true`, `tags`, and optionally `canonical_url` and `cover_image`). You must be signed in. The full Markdown is also copied to the clipboard.
+
+## What gets posted
 
 NEFORUM sends `POST /api/articles` with `{"article": {...}}`:
 
@@ -32,7 +60,7 @@ NEFORUM sends `POST /api/articles` with `{"article": {...}}`:
 | Title (**required**) | `title` | 128 characters at most. If there's no title, NEFORUM uses the first line of your text. |
 | Text | `body_markdown` | Markdown, up to 800 KB. A link you attach is added to the end. |
 | Tags | `tags` | At most **4**, each at most **30** characters. They're lower-cased, and anything except letters and digits is removed: `Web-Dev` becomes `webdev`. Extra tags and tags that are still longer than 30 characters are dropped (DEV would refuse the whole article). |
-| Images | `main_image` and inline images | See below. |
+| Images | `main_image` and inline images | See "Images need a media host" above. |
 
 By default, `published` is set to `true`. Set `draft: true` to save the article as a draft instead.
 
@@ -47,22 +75,7 @@ By default, `published` is set to `true`. Set `draft: true` to save the article 
 | `mainImage` | `main_image`, as an image URL you already host |
 | `coverFromFirstImage: false` | Embeds every image in the article instead of using the first as the cover |
 
-### Images need a media host
-
-**The DEV API cannot upload files.** It only accepts image *links*. So NEFORUM first puts your images on the **media host** you set up under Settings > Media host:
-
-- The first image becomes the cover (`main_image`).
-- The other images are added at the end of the article as `![alt](url)`.
-
-Choose a host that keeps files **permanently**, such as your own S3 or R2 bucket. A temporary host like litterbox deletes files after a while, and the images then disappear from your article. If you have no media host, posts with images fail with a clear message.
-
-## Hand-off
-
-NEFORUM opens `https://dev.to/new?prefill=...`. The link carries your article as Markdown, with front matter at the top (`title`, `published: true`, `tags`, and optionally `canonical_url` and `cover_image`). You must be signed in. Check the preview and press **Publish**.
-
-The full Markdown is also copied to the clipboard. Images can't travel in the link, so upload them in the editor.
-
-## Known limitations
+## Limits
 
 - **No image upload.** Images need a media host, or you add them in the hand-off editor.
 - **No scheduling.** The API v1 reference documents no scheduling field. (Forem's source code accepts a future `published_at`, but it is undocumented, so NEFORUM does not rely on it.) NEFORUM schedules on your device.
