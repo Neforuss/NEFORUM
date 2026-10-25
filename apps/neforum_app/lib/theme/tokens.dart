@@ -216,6 +216,8 @@ class NfColors extends ThemeExtension<NfColors> {
     required this.chromeAccent,
     required this.onChromeAccent,
     required this.chromeSelected,
+    required this.chromeUrgent,
+    required this.onChromeUrgent,
     required this.chromeActionGradient,
     required this.success,
     required this.successSoft,
@@ -285,6 +287,12 @@ class NfColors extends ThemeExtension<NfColors> {
   /// Icon and bar of the current section in the sidebar, on [chromeRaised].
   final Color chromeSelected;
 
+  /// Fill of a count on the chrome that needs the user (Activity's), behind
+  /// [onChromeUrgent]: yellow on the brand chrome and on an accent chrome it
+  /// stands out from, amber on a chrome in the page colors.
+  final Color chromeUrgent;
+  final Color onChromeUrgent;
+
   /// Fill of `PrimaryAction(onChrome: true)`, behind [onChromeAccent].
   final LinearGradient chromeActionGradient;
   final Color success;
@@ -340,6 +348,8 @@ class NfColors extends ThemeExtension<NfColors> {
       chromeAccent: Brand.yellow,
       onChromeAccent: Brand.ink,
       chromeSelected: Brand.yellow,
+      chromeUrgent: Brand.yellow,
+      onChromeUrgent: Brand.ink,
       chromeActionGradient: _yellowAction,
       success: const Color(0xFF0E9F62),
       successSoft: const Color(0xFFE3F6EC),
@@ -384,6 +394,8 @@ class NfColors extends ThemeExtension<NfColors> {
       chromeAccent: Brand.yellow,
       onChromeAccent: Brand.ink,
       chromeSelected: Brand.yellow,
+      chromeUrgent: Brand.yellow,
+      onChromeUrgent: Brand.ink,
       chromeActionGradient: _yellowAction,
       success: const Color(0xFF3DD68C),
       successSoft: const Color(0xFF12291F),
@@ -402,7 +414,8 @@ class NfColors extends ThemeExtension<NfColors> {
 
   /// The chrome in the page's own colors: light in the light theme, dark in
   /// the dark theme, set apart by a hairline, with the accent (never yellow,
-  /// which has no contrast on light surfaces) for the current section.
+  /// which has no contrast on light surfaces) for the current section and
+  /// the warning amber for counts that need the user.
   NfColors withThemeChrome() => _withChrome(
         chrome: surface,
         chromeRaised: accentSoft,
@@ -412,6 +425,8 @@ class NfColors extends ThemeExtension<NfColors> {
         chromeAccent: accentFill,
         onChromeAccent: readableOn(accentFill),
         chromeSelected: accent,
+        chromeUrgent: warning,
+        onChromeUrgent: readableOn(warning),
         chromeActionGradient: brandGradient,
       );
 
@@ -425,15 +440,29 @@ class NfColors extends ThemeExtension<NfColors> {
       fill = accentShadesOf(fill).light;
       content = Colors.white;
     }
+    // Unselected destinations: the content faded toward the fill, but only as
+    // far as WCAG AA (4.5:1) allows. The content itself always passes.
+    final faded = Color.alphaBlend(content.withValues(alpha: 0.74), fill);
+    var muted = content;
+    for (var step = 0; step < 13; step++) {
+      final c = Color.lerp(faded, content, step / 13)!;
+      if (contrastRatio(c, fill) >= 4.5) {
+        muted = c;
+        break;
+      }
+    }
+    final yellowStandsOut = contrastRatio(highlight, fill) >= 3;
     return _withChrome(
       chrome: fill,
       chromeRaised: Color.alphaBlend(content.withValues(alpha: 0.14), fill),
       onChrome: content,
-      onChromeMuted: Color.alphaBlend(content.withValues(alpha: 0.74), fill),
+      onChromeMuted: muted,
       chromeBorder: Colors.transparent,
       chromeAccent: content,
       onChromeAccent: fill,
       chromeSelected: content,
+      chromeUrgent: yellowStandsOut ? highlight : content,
+      onChromeUrgent: yellowStandsOut ? onHighlight : fill,
       chromeActionGradient: LinearGradient(
         begin: Alignment.topCenter,
         end: Alignment.bottomCenter,
@@ -451,6 +480,8 @@ class NfColors extends ThemeExtension<NfColors> {
     required Color chromeAccent,
     required Color onChromeAccent,
     required Color chromeSelected,
+    required Color chromeUrgent,
+    required Color onChromeUrgent,
     required LinearGradient chromeActionGradient,
   }) =>
       NfColors(
@@ -478,6 +509,8 @@ class NfColors extends ThemeExtension<NfColors> {
         chromeAccent: chromeAccent,
         onChromeAccent: onChromeAccent,
         chromeSelected: chromeSelected,
+        chromeUrgent: chromeUrgent,
+        onChromeUrgent: onChromeUrgent,
         chromeActionGradient: chromeActionGradient,
         success: success,
         successSoft: successSoft,
@@ -534,6 +567,8 @@ class NfColors extends ThemeExtension<NfColors> {
       chromeAccent: l(chromeAccent, other.chromeAccent),
       onChromeAccent: l(onChromeAccent, other.onChromeAccent),
       chromeSelected: l(chromeSelected, other.chromeSelected),
+      chromeUrgent: l(chromeUrgent, other.chromeUrgent),
+      onChromeUrgent: l(onChromeUrgent, other.onChromeUrgent),
       chromeActionGradient: LinearGradient.lerp(chromeActionGradient, other.chromeActionGradient, t)!,
       success: l(success, other.success),
       successSoft: l(successSoft, other.successSoft),

@@ -150,11 +150,8 @@ class _AppShellState extends ConsumerState<AppShell> {
       return Scaffold(
         backgroundColor: nf.bg,
         body: SafeArea(bottom: false, child: body),
-        bottomNavigationBar: DecoratedBox(
-          decoration: BoxDecoration(
-            color: nf.chrome,
-            border: nf.chromeBorder.a == 0 ? null : Border(top: BorderSide(color: nf.chromeBorder)),
-          ),
+        bottomNavigationBar: Container(
+          decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf, top: true)),
           child: NavigationBar(
             selectedIndex: widget.shell.currentIndex,
             onDestinationSelected: (i) => _go(AppSection.values[i]),
@@ -189,8 +186,9 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget _badged(Widget icon, int count, bool urgent) => _ChromeBadge(count: count, urgent: urgent, child: icon);
 }
 
-/// A count on a navigation icon: yellow when it needs the user, otherwise in
-/// the chrome's content color (readable on every chrome style).
+/// A count on a navigation icon: in [NfColors.chromeUrgent] when it needs the
+/// user, otherwise in the chrome's content color (readable on every chrome
+/// style).
 class _ChromeBadge extends StatelessWidget {
   const _ChromeBadge({required this.count, required this.urgent, required this.child});
 
@@ -204,16 +202,24 @@ class _ChromeBadge extends StatelessWidget {
     final nf = context.nf;
     return Badge(
       label: Text('$count'),
-      backgroundColor: urgent ? nf.highlight : nf.onChrome,
-      textColor: urgent ? nf.onHighlight : nf.chrome,
+      backgroundColor: urgent ? nf.chromeUrgent : nf.onChrome,
+      textColor: urgent ? nf.onChromeUrgent : nf.chrome,
       child: child,
     );
   }
 }
 
-/// The line between the sidebar or rail and the page, when the chrome style
-/// has one.
-Border? _chromeEdge(NfColors nf) => nf.chromeBorder.a == 0 ? null : Border(right: BorderSide(color: nf.chromeBorder));
+/// The line between the chrome and the page, when the chrome style has one:
+/// right of the sidebar or rail, or along the [top] of the bottom bar.
+///
+/// It goes on a Container's decoration, which insets the child by the line's
+/// width. The chrome's own opaque background (the NavigationBar's Material)
+/// would otherwise paint over it.
+Border? _chromeEdge(NfColors nf, {bool top = false}) {
+  if (nf.chromeBorder.a == 0) return null;
+  final side = BorderSide(color: nf.chromeBorder);
+  return top ? Border(top: side) : Border(right: side);
+}
 
 // ---------------------------------------------------------------------------
 
@@ -327,13 +333,13 @@ class _NavItemState extends State<_NavItem> {
                   constraints: const BoxConstraints(minWidth: 22),
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: widget.urgent ? nf.highlight : nf.onChrome.withValues(alpha: sel ? 0.16 : 0.10),
+                    color: widget.urgent ? nf.chromeUrgent : nf.onChrome.withValues(alpha: sel ? 0.16 : 0.10),
                     borderRadius: Radii.rPill,
                   ),
                   child: Text(
                     '${widget.badge}',
                     textAlign: TextAlign.center,
-                    style: context.text.labelSmall?.copyWith(color: widget.urgent ? nf.onHighlight : nf.onChrome, fontWeight: FontWeight.w700),
+                    style: context.text.labelSmall?.copyWith(color: widget.urgent ? nf.onChromeUrgent : nf.onChrome, fontWeight: FontWeight.w700),
                   ),
                 ),
             ]),

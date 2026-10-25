@@ -226,6 +226,21 @@ void main() {
       await _unmount(tester);
     });
 
+    testWidgets('Jump to keeps its buttons inside the sheet at the largest text size', (tester) async {
+      // The phone's largest font size (130%) times NEFORUM's largest (150%).
+      tester.platformDispatcher.textScaleFactorTestValue = 1.3;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await _pumpSettings(tester, const Size(360, 780), settings: {'mobileTextScale': 1.5});
+      await tester.tap(find.text('Jump to'));
+      await _settle(tester);
+      final sheet = tester.getRect(find.byType(BottomSheet));
+      for (final label in ['Expand all', 'Collapse all']) {
+        final button = tester.getRect(find.widgetWithText(TextButton, label));
+        expect(button.right, lessThanOrEqualTo(sheet.right - Space.lg), reason: label);
+      }
+      await _unmount(tester);
+    });
+
     testWidgets('a tablet-sized page uses the chip bar', (tester) async {
       await _pumpSettings(tester, const Size(900, 700));
       expect(find.text('Jump to'), findsOneWidget);

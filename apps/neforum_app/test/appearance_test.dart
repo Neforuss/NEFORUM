@@ -4,9 +4,11 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/brand/neforum_logo.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
@@ -15,9 +17,12 @@ import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/theme/app_theme.dart';
 import 'package:neforum_app/theme/text_scale.dart';
 import 'package:neforum_app/theme/tokens.dart';
+import 'package:neforum_app/ui/accounts/account_card.dart';
+import 'package:neforum_app/ui/activity/target_chip.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
 import 'package:neforum_app/ui/settings/appearance_section.dart';
+import 'package:neforum_app/widgets/badges.dart';
 import 'package:neforum_app/widgets/layout.dart';
 import 'package:neforum_app/widgets/surfaces.dart';
 
@@ -172,7 +177,8 @@ void main() {
         expect(themed.chrome, themed.surface);
         expect(themed.onChrome, themed.text);
         expect(themed.chromeBorder, themed.border);
-        expect([themed.chromeAccent, themed.chromeSelected], everyElement(isNot(Brand.yellow)));
+        expect([themed.chromeAccent, themed.chromeSelected, themed.chromeUrgent], everyElement(isNot(Brand.yellow)));
+        expect(themed.chromeUrgent, themed.warning, reason: 'counts that need the user: amber, like the "Needs you" pill');
 
         final accent = buildTheme(b, AccentChoice.ocean, chrome: NavigationChromeStyle.accent).extension<NfColors>()!;
         expect(accent.chrome, b == Brightness.light ? AccentChoice.ocean.light : isNot(Brand.night));
@@ -187,11 +193,26 @@ void main() {
             final c = buildTheme(b, accent, customAccent: custom, chrome: style).extension<NfColors>()!;
             final label = '$style $b $accent $custom';
             expect(contrastRatio(c.onChrome, c.chrome), greaterThanOrEqualTo(4.5), reason: 'labels: $label');
+            expect(contrastRatio(c.onChromeMuted, c.chrome), greaterThanOrEqualTo(4.5), reason: 'unselected labels and icons: $label');
             expect(contrastRatio(c.onChromeAccent, c.chromeAccent), greaterThanOrEqualTo(3), reason: 'current section icon: $label');
             expect(contrastRatio(c.chromeSelected, c.chromeRaised), greaterThanOrEqualTo(3), reason: 'sidebar selection: $label');
+            expect(contrastRatio(c.chromeUrgent, c.chrome), greaterThanOrEqualTo(3), reason: 'badge that needs the user: $label');
+            expect(contrastRatio(c.onChromeUrgent, c.chromeUrgent), greaterThanOrEqualTo(4.5), reason: 'count on that badge: $label');
           }
         }
       }
+    });
+
+    test('unselected destinations on the accent chrome stay fainter than the selected one', () {
+      for (final b in Brightness.values) {
+        for (final accent in AccentChoice.presets) {
+          final c = buildTheme(b, accent, chrome: NavigationChromeStyle.accent).extension<NfColors>()!;
+          expect(contrastRatio(c.onChromeMuted, c.chrome), lessThan(contrastRatio(c.onChrome, c.chrome)), reason: '$b $accent');
+        }
+      }
+      // An accent on which the faded content already passes keeps it as it was.
+      final purple = buildTheme(Brightness.dark, AccentChoice.neforum, chrome: NavigationChromeStyle.accent).extension<NfColors>()!;
+      expect(purple.onChromeMuted, Color.alphaBlend(purple.onChrome.withValues(alpha: 0.74), purple.chrome));
     });
 
     for (final style in NavigationChromeStyle.values) {
@@ -211,6 +232,12 @@ void main() {
         final sidebar = chromeBox(264);
         expect(sidebar.color, expected);
         expect(sidebar.border != null, style == NavigationChromeStyle.theme, reason: 'a hairline only on a chrome in the page colors');
+        // The demo workspace has a post that needs the user: Activity's count.
+        final activityCount = find.descendant(
+          of: find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Activity'),
+          matching: find.byWidgetPredicate((w) => w is Container && w.constraints == const BoxConstraints(minWidth: 22)),
+        );
+        expect((tester.widget<Container>(activityCount).decoration! as BoxDecoration).color, nf.chromeUrgent);
 
         tester.view.physicalSize = const Size(1000, 800);
         await _settle(tester);
@@ -219,8 +246,16 @@ void main() {
         tester.view.physicalSize = const Size(390, 800);
         await _settle(tester);
         expect(find.byType(NavigationBar), findsOneWidget);
-        final bar = tester.widget<DecoratedBox>(find.ancestor(of: find.byType(NavigationBar), matching: find.byType(DecoratedBox)).first);
-        expect((bar.decoration as BoxDecoration).color, expected);
+        final barBox = find.ancestor(of: find.byType(NavigationBar), matching: find.byType(DecoratedBox)).first;
+        final bar = tester.widget<DecoratedBox>(barBox).decoration as BoxDecoration;
+        expect(bar.color, expected);
+        expect(bar.border != null, style == NavigationChromeStyle.theme, reason: 'a hairline only on a chrome in the page colors');
+        // The bar paints an opaque background over its whole area, so it has
+        // to start below the hairline or it hides it.
+        final line = bar.border?.top.width ?? 0;
+        expect(tester.getTopLeft(find.byType(NavigationBar)).dy, tester.getTopLeft(barBox).dy + line);
+        final badges = tester.widgetList<Badge>(find.descendant(of: find.byType(NavigationBar), matching: find.byType(Badge)));
+        expect(badges.map((b) => b.backgroundColor), contains(nf.chromeUrgent));
         await _unmount(tester);
       });
     }
@@ -331,6 +366,79 @@ void main() {
       await tester.pumpWidget(app(1.5));
       expect(tester.state(find.byType(_Probe)), same(state));
       expect(MediaQuery.textScalerOf(tester.element(find.byType(_Probe))).scale(10), closeTo(16.5, 1e-9));
+    });
+  });
+
+  group('largest text size', () {
+    /// The phone's own font size setting, under NEFORUM's text size.
+    void systemTextScale(WidgetTester tester, double factor) {
+      tester.platformDispatcher.textScaleFactorTestValue = factor;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    }
+
+    final tagline = find.text('One message, every platform');
+
+    testWidgets('the wordmark shortens its tagline only when it does not fit', (tester) async {
+      Future<RenderParagraph> pump(double scale) async {
+        await tester.pumpWidget(MaterialApp(
+          theme: buildTheme(Brightness.light, AccentChoice.neforum),
+          home: Material(
+            child: MediaQuery(
+              data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+              // The width the sidebar leaves it.
+              child: const Align(alignment: Alignment.topLeft, child: SizedBox(width: 216, child: NeforumWordmark(size: 32, showTagline: true))),
+            ),
+          ),
+        ));
+        return tester.renderObject<RenderParagraph>(tagline);
+      }
+
+      expect((await pump(1)).didExceedMaxLines, isFalse);
+      expect((await pump(1.5)).didExceedMaxLines, isTrue);
+      expect(tester.getRect(tagline).right, lessThanOrEqualTo(216));
+    });
+
+    testWidgets('the wordmark stays inside the tablet sidebar', (tester) async {
+      await _pumpApp(tester, size: const Size(1280, 800), settings: {'mobileTextScale': 1.5}, route: '/queue');
+      expect(tagline, findsOneWidget);
+      final wordmark = tester.getRect(find.byType(NeforumWordmark));
+      expect(tester.getRect(tagline).right, lessThanOrEqualTo(wordmark.right));
+      // The sidebar is 264 wide, with 16 + 8 of padding on each side.
+      expect(wordmark.right, lessThanOrEqualTo(264 - 24));
+      await _unmount(tester);
+    });
+
+    testWidgets('the wordmark stays inside the About card on a phone', (tester) async {
+      await _pumpApp(tester, size: const Size(360, 780), settings: {'mobileTextScale': 1.5});
+      await tester.ensureVisible(tagline);
+      await _settle(tester);
+      expect(tester.getRect(tagline).right, lessThanOrEqualTo(tester.getRect(find.byType(NeforumWordmark)).right));
+      await _unmount(tester);
+    });
+
+    testWidgets('account cards keep their badges clear of the menu on a 360-wide phone', (tester) async {
+      systemTextScale(tester, 1.3);
+      final c = await _pumpApp(tester, size: const Size(360, 780), settings: {'mobileTextScale': 1.5}, route: '/accounts');
+      final youtube = c.read(accountListProvider).firstWhere((a) => a.platformId == 'youtube_posts');
+      await tester.runAsync(() => c.read(servicesProvider).accounts.upsert(youtube.copyWith(enabled: false)));
+      await _settle(tester);
+      final card = find.ancestor(of: find.text('Off'), matching: find.byType(AccountCard));
+      expect(card, findsOneWidget);
+      final menu = tester.getRect(find.descendant(of: card, matching: find.byTooltip('More')));
+      for (final pill in [find.text('Off'), find.descendant(of: card, matching: find.text(tierShortLabel(youtube.tier)))]) {
+        expect(tester.getRect(pill).right, lessThanOrEqualTo(menu.left));
+      }
+      await _unmount(tester);
+    });
+
+    testWidgets('target chips fit an Activity card on a 360-wide phone', (tester) async {
+      systemTextScale(tester, 1.3);
+      await _pumpApp(tester, size: const Size(360, 780), settings: {'mobileTextScale': 1.5}, route: '/activity');
+      expect(find.byType(TargetChip), findsWidgets);
+      for (final chip in find.byType(TargetChip).evaluate()) {
+        expect(tester.getRect(find.byWidget(chip.widget)).right, lessThanOrEqualTo(360 - 16));
+      }
+      await _unmount(tester);
     });
   });
 

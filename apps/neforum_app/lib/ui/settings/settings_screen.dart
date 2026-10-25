@@ -427,7 +427,9 @@ class _JumpSheet extends ConsumerWidget {
               spacing: Space.sm,
               children: [
                 Text('Jump to', style: context.text.titleLarge),
-                Row(mainAxisSize: MainAxisSize.min, children: [
+                // A Wrap, not a Row: at large text sizes the buttons stack
+                // instead of running past the edge of the sheet.
+                Wrap(children: [
                   TextButton(onPressed: anyCollapsed ? onExpandAll : null, child: const Text('Expand all')),
                   TextButton(onPressed: allCollapsed ? null : onCollapseAll, child: const Text('Collapse all')),
                 ]),

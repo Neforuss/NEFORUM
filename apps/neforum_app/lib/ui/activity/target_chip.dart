@@ -64,7 +64,9 @@ class TargetChip extends ConsumerWidget {
             child: Row(mainAxisSize: MainAxisSize.min, children: [
               AccountAvatar(a, size: 20, showBadge: false),
               const SizedBox(width: Space.xs + 2),
-              Text(name, style: context.text.labelMedium),
+              // Shortened when a large text size makes the chip wider than
+              // the card it sits in.
+              Flexible(child: Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelMedium)),
               const SizedBox(width: Space.xs + 2),
               Icon(icon, size: 13, color: tone.fg(nf)),
               const SizedBox(width: 2),
