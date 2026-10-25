@@ -416,10 +416,15 @@ class NfColors extends ThemeExtension<NfColors> {
       );
 
   /// The chrome in the accent color (a deeper shade in the dark theme), with
-  /// white or ink content, whichever reads better on it.
+  /// white or ink content, whichever reads better on it. An accent on which
+  /// neither passes WCAG AA is darkened until white does.
   NfColors withAccentChrome() {
-    final fill = isDark ? Color.lerp(accentFill, Colors.black, 0.3)! : accentFill;
-    final content = readableOn(fill);
+    var fill = isDark ? Color.lerp(accentFill, Colors.black, 0.3)! : accentFill;
+    var content = readableOn(fill);
+    if (contrastRatio(content, fill) < 4.5) {
+      fill = accentShadesOf(fill).light;
+      content = Colors.white;
+    }
     return _withChrome(
       chrome: fill,
       chromeRaised: Color.alphaBlend(content.withValues(alpha: 0.14), fill),

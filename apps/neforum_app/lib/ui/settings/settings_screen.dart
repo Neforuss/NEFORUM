@@ -80,14 +80,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     super.dispose();
   }
 
-  void _onScroll() {
-    if (_jumpTarget == null) _updateCurrent();
-  }
+  void _onScroll() => _updateCurrent();
 
   /// The section in view is the last one whose top has passed the upper part
   /// of the page; at the very end of the page, the last section.
   void _updateCurrent() {
-    if (!mounted || !_scroll.hasClients || _titles.isEmpty) return;
+    if (!mounted || _jumpTarget != null || !_scroll.hasClients || _titles.isEmpty) return;
     final position = _scroll.position;
     final line = position.pixels + math.min(160.0, position.viewportDimension * 0.3);
     var found = _titles.first;
