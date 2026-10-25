@@ -119,6 +119,13 @@ class ComposerState {
 
   bool get isArtwork => artwork != null;
 
+  /// Every part with words in it ([text], then [additionalParts]) joined with
+  /// blank lines: what networks without threads receive.
+  String get joinedParts => [
+        for (final p in [text, ...additionalParts])
+          if (p.trim().isNotEmpty) p.trimRight(),
+      ].join('\n\n');
+
   bool get isEmpty =>
       text.trim().isEmpty &&
       additionalParts.every((p) => p.trim().isEmpty) &&
@@ -218,6 +225,25 @@ class ComposerState {
       );
 }
 
+/// `PostOverrides.extra` key of a Discord target's "Mention @everyone"
+/// choice (bool), read by the Discord adapter.
+const String kMentionEveryoneKey = 'mentionEveryone';
+
+/// [target] with the Settings value of "Mention @everyone" written into its
+/// overrides when it is a Discord target without a choice of its own, so
+/// scheduled and background runs post it the way it was saved.
+PostTarget withMentionDefault(PostTarget target, String? platformId, AppSettings settings) {
+  if (platformId != 'discord' || target.overrides.extra.containsKey(kMentionEveryoneKey)) return target;
+  return target.copyWith(
+    overrides: target.overrides.copyWith(extra: {...target.overrides.extra, kMentionEveryoneKey: settings.discordMentionEveryone}),
+  );
+}
+
+/// [withMentionDefault] for every target of [post].
+Post withMentionDefaults(Post post, List<ConnectedAccount> accounts, AppSettings settings) => post.copyWith(targets: [
+      for (final t in post.targets) withMentionDefault(t, accounts.where((a) => a.id == t.accountId).firstOrNull?.platformId, settings),
+    ]);
+
 class ComposerNotifier extends Notifier<ComposerState> {
   @override
   ComposerState build() {
@@ -291,11 +317,26 @@ class ComposerNotifier extends Notifier<ComposerState> {
     return at + 1;
   }
 
-  /// Removes thread part [index] (1 or more; part 0 is cleared with [reset]).
+  /// Removes thread part [index] (1 or more; part 0 is cleared with
+  /// [clearPost]).
   void removePart(int index) {
     if (index < 1 || index - 1 >= state.additionalParts.length) return;
     final parts = [...state.additionalParts]..removeAt(index - 1);
     state = state.copyWith(additionalParts: parts, revision: state.revision + 1);
+  }
+
+  /// Empties the post: every part, media, title, link, poll, content
+  /// warning, tags and per-network versions. Keeps the targets, the schedule,
+  /// artwork mode and which saved post is being edited.
+  void clearPost() {
+    state = ComposerState(
+      editingPostId: state.editingPostId,
+      visibility: ref.read(settingsProvider).defaultVisibility,
+      selected: state.selected,
+      scheduledAt: state.scheduledAt,
+      artwork: state.artwork,
+      revision: state.revision + 1,
+    );
   }
 
   /// DIFFERENTIATION: [text] becomes this account's own version; null goes
@@ -365,6 +406,12 @@ class ComposerNotifier extends Notifier<ComposerState> {
     final p = withoutTextCards(post);
     final accounts = ref.read(accountListProvider);
     String? platformOf(String id) => accounts.where((a) => a.id == id).map((a) => a.platformId).firstOrNull;
+    // A "Mention @everyone" value that matches Settings was written on save
+    // (withMentionDefault); it is not a choice of this post.
+    final mentionDefault = ref.read(settingsProvider).discordMentionEveryone;
+    PostOverrides ownOverrides(PostTarget t) => platformOf(t.accountId) == 'discord' && t.overrides.extra[kMentionEveryoneKey] == mentionDefault
+        ? t.overrides.copyWith(extra: {...t.overrides.extra}..remove(kMentionEveryoneKey))
+        : t.overrides;
     state = ComposerState(
         editingPostId: p.id,
         text: p.text,
@@ -376,7 +423,10 @@ class ComposerNotifier extends Notifier<ComposerState> {
         visibility: p.visibility,
         tags: p.tags,
         selected: p.targets.map((t) => t.accountId).toSet(),
-        overrides: {for (final t in p.targets) if (!t.overrides.isEmpty) t.accountId: t.overrides},
+        overrides: {
+          for (final t in p.targets)
+            if (!ownOverrides(t).isEmpty) t.accountId: ownOverrides(t),
+        },
         scheduledAt: p.scheduledAt,
         revision: state.revision + 1,
         textCardTheme: textCardThemeOfPost(post),
@@ -454,7 +504,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     if (adapter == null) continue;
     final target = post.targetFor(a.id)!;
     final d = adapter.descriptorForAccount(a);
-    var variant = resolver.resolve(post, target, d, account: a);
+    var variant = resolver.resolve(post, withMentionDefault(target, a.platformId, settings), d, account: a);
     final issues = <ValidationIssue>[...variant.issues];
     // Image-only platforms get the words as a NEFORUM text card, rendered
     // when the post is saved; preview and check a stand-in for it.
@@ -570,6 +620,7 @@ class PostActions {
     final existing = c.editingPostId == null ? null : await s.posts.get(c.editingPostId!);
     if (existing != null) await _releaseHeld(existing.id);
     var post = c.toPost(id: c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
+    post = withMentionDefaults(post, ref.read(accountListProvider), ref.read(settingsProvider));
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);

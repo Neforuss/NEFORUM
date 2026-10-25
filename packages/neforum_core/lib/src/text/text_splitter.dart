@@ -25,6 +25,38 @@ class TextSplitter {
     return parts;
   }
 
+  /// Turns the parts a user wrote into thread parts that each fit: a part
+  /// that is too long is split further, as [split] does. With [numbering]
+  /// every final part gets a ` (i/n)` suffix counted across all of them, and
+  /// the suffix is accounted for in the limit.
+  static List<String> splitParts(List<String> parts, TextRules rules, {bool numbering = true}) {
+    if (parts.length == 1) return split(parts.single, rules, numbering: numbering);
+    final max = rules.maxLength;
+    List<String> pieces(int reserve) => [
+          for (final p in parts)
+            if (max == null || TextCounter.count(p, rules) <= max - reserve) p else ..._splitTo(p, rules, max - reserve),
+        ];
+    if (!numbering) return pieces(0);
+    // The suffix grows with the number of parts, and a longer suffix can
+    // split a part again; repeat until the count is stable.
+    var reserve = _suffix(parts.length).length;
+    var out = pieces(reserve);
+    while (_suffix(out.length).length > reserve) {
+      reserve = _suffix(out.length).length;
+      out = pieces(reserve);
+    }
+    return number(out);
+  }
+
+  /// Adds ` (i/n)` to each part; a single part stays as it is.
+  static List<String> number(List<String> parts) =>
+      parts.length < 2 ? parts : [for (var i = 0; i < parts.length; i++) '${parts[i]} (${i + 1}/${parts.length})'];
+
+  /// The widest suffix [number] adds to a thread of [count] parts.
+  static int suffixLength(int count) => _suffix(count).length;
+
+  static String _suffix(int count) => ' ($count/$count)';
+
   static List<String> _splitTo(String text, TextRules rules, int budget) {
     final out = <String>[];
     var current = StringBuffer();
@@ -102,10 +134,13 @@ class TextSplitter {
   }
 
   /// Truncates to fit, appending [ellipsis]. Never cuts inside a grapheme or
-  /// a URL.
-  static String truncate(String text, TextRules rules, {String ellipsis = '…'}) {
-    final max = rules.maxLength;
-    if (max == null || TextCounter.fits(text, rules)) return text;
+  /// a URL. [reserve] keeps that many characters of the limit free (for a
+  /// thread part's ` (i/n)` suffix).
+  static String truncate(String text, TextRules rules, {String ellipsis = '…', int reserve = 0}) {
+    final limit = rules.maxLength;
+    if (limit == null) return text;
+    final max = limit - reserve;
+    if (TextCounter.count(text, rules) <= max) return text;
     final chars = text.characters.toList();
     var lo = 0, hi = chars.length;
     while (lo < hi) {

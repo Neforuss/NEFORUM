@@ -5,10 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../state/composer.dart';
+import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/char_ring.dart';
+import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
 import 'media_tray.dart';
 import 'poll_sheet.dart';
@@ -137,25 +139,38 @@ class _EditorCardState extends ConsumerState<EditorCard> {
             ),
           ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(Space.xl, Space.md, Space.xl, Space.sm),
-          child: TextField(
-            controller: _text,
-            focusNode: widget.focusNode,
-            onChanged: notifier.setText,
-            minLines: context.isCompact ? 5 : 7,
-            maxLines: null,
-            keyboardType: TextInputType.multiline,
-            style: context.text.bodyLarge?.copyWith(fontSize: 17, height: 1.55),
-            decoration: InputDecoration(
-              hintText: "What's happening? Write once, NEFORUM adapts it for every network.",
-              hintStyle: context.text.bodyLarge?.copyWith(fontSize: 17, color: nf.textFaint, height: 1.55),
-              filled: false,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding: EdgeInsets.zero,
+          padding: const EdgeInsets.fromLTRB(Space.xl, Space.md, Space.md, Space.sm),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: TextField(
+                controller: _text,
+                focusNode: widget.focusNode,
+                onChanged: notifier.setText,
+                minLines: context.isCompact ? 5 : 7,
+                maxLines: null,
+                keyboardType: TextInputType.multiline,
+                style: context.text.bodyLarge?.copyWith(fontSize: 17, height: 1.55),
+                decoration: InputDecoration(
+                  hintText: "What's happening? Write once, NEFORUM adapts it for every network.",
+                  hintStyle: context.text.bodyLarge?.copyWith(fontSize: 17, color: nf.textFaint, height: 1.55),
+                  filled: false,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
             ),
-          ),
+            const SizedBox(width: Space.xs),
+            // Always laid out, so the text does not reflow when it appears.
+            Visibility(
+              visible: _hasContent(c),
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: ToolButton(icon: Icons.close_rounded, tooltip: 'Clear post', size: 32, onPressed: _clearPost),
+            ),
+          ]),
         ),
         if (c.link != null || c.tags.isNotEmpty || c.poll != null)
           Padding(
@@ -248,6 +263,18 @@ class _EditorCardState extends ConsumerState<EditorCard> {
     );
   }
 
+  /// Something "Clear post" would remove.
+  static bool _hasContent(ComposerState c) =>
+      !c.isEmpty || c.additionalParts.isNotEmpty || c.poll != null || c.contentWarning != null || c.tags.isNotEmpty || c.overrides.isNotEmpty;
+
+  /// Empties the whole post (targets stay), with Undo.
+  void _clearPost() {
+    final notifier = ref.read(composerProvider.notifier);
+    final before = ref.read(composerProvider);
+    notifier.clearPost();
+    showToast(context, 'Post cleared', icon: Icons.delete_sweep_outlined, actionLabel: 'Undo', onAction: () => notifier.restore(before));
+  }
+
   Future<void> _paste() async {
     final focused = primaryFocus?.context;
     if (await pasteMedia(context, ref)) return;
@@ -290,6 +317,216 @@ class _EditorCardState extends ConsumerState<EditorCard> {
     final current = ref.read(composerProvider).tags;
     final result = await showDialog<List<String>>(context: context, builder: (_) => _TagsDialog(initial: current));
     if (result != null) ref.read(composerProvider.notifier).setTags(result);
+  }
+}
+
+/// The text field and focus of one thread part after the first.
+class _PartField {
+  final TextEditingController controller = TextEditingController();
+  final FocusNode focus = FocusNode();
+
+  void dispose() {
+    controller.dispose();
+    focus.dispose();
+  }
+}
+
+/// THREAD: one editor per part after the first ([ComposerState.additionalParts]),
+/// each with its own character count and a remove control, and "Add to
+/// thread" under the last part. Networks with threads post each part as a
+/// reply; the others get the parts joined.
+class ThreadPartEditors extends ConsumerStatefulWidget {
+  const ThreadPartEditors({super.key});
+
+  @override
+  ConsumerState<ThreadPartEditors> createState() => _ThreadPartEditorsState();
+}
+
+class _ThreadPartEditorsState extends ConsumerState<ThreadPartEditors> {
+  final List<_PartField> _parts = [];
+  int _revision = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    final c = ref.read(composerProvider);
+    _revision = c.revision;
+    for (final text in c.additionalParts) {
+      _parts.add(_PartField()..controller.text = text);
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final p in _parts) {
+      p.dispose();
+    }
+    super.dispose();
+  }
+
+  /// When the composer state is replaced (load, reset, undo), resync the
+  /// fields with its parts.
+  void _syncFrom(ComposerState c) {
+    if (c.revision == _revision) return;
+    _revision = c.revision;
+    final texts = c.additionalParts;
+    while (_parts.length > texts.length) {
+      _retire(_parts.removeLast());
+    }
+    while (_parts.length < texts.length) {
+      _parts.add(_PartField());
+    }
+    for (var i = 0; i < texts.length; i++) {
+      if (_parts[i].controller.text != texts[i]) {
+        _parts[i].controller.value = TextEditingValue(text: texts[i], selection: TextSelection.collapsed(offset: texts[i].length));
+      }
+    }
+    setState(() {});
+  }
+
+  /// Disposes [p] once its field has left the tree.
+  void _retire(_PartField p) => WidgetsBinding.instance.addPostFrameCallback((_) => p.dispose());
+
+  /// Adds a part at the end and moves the cursor into it.
+  void _add() {
+    final index = ref.read(composerProvider.notifier).addPart();
+    // The part's field exists from the next frame on.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && index - 1 < _parts.length) _parts[index - 1].focus.requestFocus();
+    });
+  }
+
+  /// Removes part [index] (1 or more), with Undo.
+  void _remove(int index) {
+    final notifier = ref.read(composerProvider.notifier);
+    final before = ref.read(composerProvider);
+    // Drop this part's own field, so the fields after it keep their focus.
+    _retire(_parts.removeAt(index - 1));
+    notifier.removePart(index);
+    setState(() {});
+    showToast(context, 'Part ${index + 1} removed', icon: Icons.delete_outline_rounded, actionLabel: 'Undo', onAction: () => notifier.restore(before));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(composerProvider.select((c) => c.revision), (_, _) => _syncFrom(ref.read(composerProvider)));
+    final c = ref.watch(composerProvider);
+    final count = c.additionalParts.length;
+    final showAdd = count > 0 || !c.isEmpty;
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      for (var i = 0; i < count && i < _parts.length; i++) ...[
+        const _ThreadConnector(),
+        _PartEditor(
+          key: ObjectKey(_parts[i]),
+          index: i + 1,
+          field: _parts[i],
+          onChanged: (v) => ref.read(composerProvider.notifier).setPart(i + 1, v),
+          onRemove: () => _remove(i + 1),
+        ),
+      ],
+      if (showAdd)
+        Padding(
+          padding: const EdgeInsets.only(top: Space.sm),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _add,
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Add to thread'),
+              style: TextButton.styleFrom(foregroundColor: context.nf.textMuted),
+            ),
+          ),
+        ),
+    ]);
+  }
+}
+
+/// The line that joins the parts of a thread.
+class _ThreadConnector extends StatelessWidget {
+  const _ThreadConnector();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(left: Space.xl + 6),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: Container(width: 2, height: Space.md, color: context.nf.borderStrong),
+        ),
+      );
+}
+
+/// The editor of thread part [index] (1 or more; the first part is the main
+/// editor).
+class _PartEditor extends ConsumerWidget {
+  const _PartEditor({super.key, required this.index, required this.field, required this.onChanged, required this.onRemove});
+  final int index;
+  final _PartField field;
+  final ValueChanged<String> onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final c = ref.watch(composerProvider);
+    final text = index - 1 < c.additionalParts.length ? c.additionalParts[index - 1] : '';
+    final budget = _partBudget(text, ref);
+    return NfCard(
+      padding: const EdgeInsets.fromLTRB(Space.xl, Space.sm, Space.md, Space.md),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Icon(Icons.subdirectory_arrow_right_rounded, size: 16, color: nf.textFaint),
+          const SizedBox(width: Space.xs),
+          Expanded(child: Text('Part ${index + 1}', style: context.text.labelMedium?.copyWith(color: nf.textMuted))),
+          CharRing(used: budget.used, max: budget.max, parts: budget.parts, size: 20, alwaysShowCount: true),
+          const SizedBox(width: Space.xs),
+          ToolButton(icon: Icons.close_rounded, tooltip: 'Remove part ${index + 1}', size: 32, onPressed: onRemove),
+        ]),
+        TextField(
+          controller: field.controller,
+          focusNode: field.focus,
+          onChanged: onChanged,
+          minLines: 2,
+          maxLines: null,
+          keyboardType: TextInputType.multiline,
+          style: context.text.bodyLarge?.copyWith(fontSize: 17, height: 1.55),
+          decoration: InputDecoration(
+            hintText: 'Continue the thread',
+            hintStyle: context.text.bodyLarge?.copyWith(fontSize: 17, color: nf.textFaint, height: 1.55),
+            filled: false,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            contentPadding: EdgeInsets.zero,
+          ),
+        ),
+      ]),
+    );
+  }
+
+  /// Characters of this part against the tightest network that posts it on
+  /// its own (a network with threads, without a version of its own), with
+  /// the ` (i/n)` numbering it will get. Without such a network: the plain
+  /// count.
+  static ({int used, int? max, int parts}) _partBudget(String text, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    ({int used, int? max, int parts}) best = (used: text.characters.length, max: null, parts: 1);
+    var bestRatio = -1.0;
+    for (final p in ref.watch(composerPreviewsProvider)) {
+      final rules = p.descriptor.text;
+      final max = rules.maxLength;
+      if (max == null || !rules.supportsThreads || !p.account.tier.isAutomatic || p.target.overrides.text != null) continue;
+      final suffix = settings.threadNumbering && p.variant.isThread ? TextSplitter.suffixLength(p.variant.threadParts.length) : 0;
+      final used = TextCounter.count(text.trimRight(), rules) + suffix;
+      final ratio = used / max;
+      if (ratio <= bestRatio) continue;
+      bestRatio = ratio;
+      final splits = settings.overflow == OverflowStrategy.threadOrError || settings.overflow == OverflowStrategy.threadOrTruncate;
+      // Too long: split into at least two posts (only the numbering may be
+      // what does not fit).
+      final pieces = used > max && splits ? TextSplitter.split(text.trimRight(), rules, numbering: false).length : 1;
+      best = (used: used, max: max, parts: used > max && splits && pieces < 2 ? 2 : pieces);
+    }
+    return best;
   }
 }
 

@@ -542,6 +542,15 @@ void discordTests() {
           contains('media.total_too_large'));
       expect(adapter.validate(PostVariant(text: 'a' * 2001), _dcAccount()).map((i) => i.code), contains('text.too_long'));
     });
+
+    test('"Mention @everyone" is reported, and only when it is on', () {
+      String? mention(PostVariant v) =>
+          adapter.validate(v, _dcAccount()).where((i) => i.code == 'mention.everyone').map((i) => i.message).firstOrNull;
+      expect(mention(const PostVariant(text: 'News')), isNull);
+      expect(mention(const PostVariant(text: 'News', extra: {'mentionEveryone': false})), isNull);
+      expect(mention(const PostVariant(text: 'News', extra: {'mentionEveryone': true})), contains('Starts with @everyone'));
+      expect(mention(const PostVariant(text: 'News @here', extra: {'mentionEveryone': true})), contains('Your @everyone or @here'));
+    });
   });
 
   group('discord publish', () {
@@ -562,6 +571,84 @@ void discordTests() {
       });
       expect(res.remoteId, '9001');
       expect(res.remoteUrl, 'https://discord.com/channels/777/555/9001');
+    });
+
+    group('mention @everyone', () {
+      Future<List<http.Request>> send(PostVariant v, {Map<String, dynamic> config = const {}}) async {
+        final calls = <http.Request>[];
+        var n = 0;
+        final ctx = testContext(handler: (r) async {
+          calls.add(r);
+          return _json({'id': '${++n}', 'channel_id': '8888'});
+        });
+        final res = await adapter.publish(v, _dcAccount(extra: config), secrets, ctx);
+        expect(res.success, isTrue, reason: '${res.error}');
+        return calls;
+      }
+
+      Map<String, dynamic> payloadOf(http.Request r) {
+        final f = multipartFieldsOf(r);
+        return f.containsKey('payload_json') ? jsonDecode(f['payload_json']!) as Map<String, dynamic> : bodyOf(r);
+      }
+
+      test('on: the first message starts with @everyone and may notify; later ones may not', () async {
+        final calls = await send(const PostVariant(text: 'a', threadParts: ['a', 'b'], extra: {'mentionEveryone': true}));
+        expect(bodyOf(calls[0])['content'], '@everyone\na');
+        expect(bodyOf(calls[0])['allowed_mentions'], {'parse': ['everyone']});
+        expect(bodyOf(calls[1])['content'], 'b');
+        expect(bodyOf(calls[1])['allowed_mentions'], {'parse': <String>[]});
+      });
+
+      test('off or missing: no prefix and no notification', () async {
+        for (final extra in const [<String, dynamic>{}, {'mentionEveryone': false}]) {
+          final calls = await send(PostVariant(text: 'Hello @everyone', extra: extra));
+          expect(bodyOf(calls.single)['content'], 'Hello @everyone');
+          expect(bodyOf(calls.single)['allowed_mentions'], {'parse': <String>[]});
+        }
+      });
+
+      test('text that already mentions @everyone or @here gets no second mention', () async {
+        var calls = await send(const PostVariant(text: 'Hello @everyone', extra: {'mentionEveryone': true}));
+        expect(bodyOf(calls.single)['content'], 'Hello @everyone');
+        expect(bodyOf(calls.single)['allowed_mentions'], {'parse': ['everyone']});
+
+        // The part that names @here is the one that notifies.
+        calls = await send(const PostVariant(text: 'a', threadParts: ['a', 'b @here', 'c'], extra: {'mentionEveryone': true}));
+        expect(calls.map((c) => bodyOf(c)['content']), ['a', 'b @here', 'c']);
+        expect(calls.map((c) => bodyOf(c)['allowed_mentions']), [
+          {'parse': <String>[]},
+          {'parse': ['everyone']},
+          {'parse': <String>[]},
+        ]);
+
+        // An e-mail-like "@everyoneelse" is not a mention.
+        calls = await send(const PostVariant(text: 'ask @everyoneelse', extra: {'mentionEveryone': true}));
+        expect(bodyOf(calls.single)['content'], '@everyone\nask @everyoneelse');
+      });
+
+      test('a first part the mention makes too long is split again', () async {
+        final long = '${'word ' * 398}tail'; // 1994 characters
+        final calls = await send(PostVariant(text: long, extra: const {'mentionEveryone': true}));
+        expect(calls, hasLength(2));
+        final first = bodyOf(calls[0])['content'] as String;
+        expect(first, startsWith('@everyone\nword'));
+        expect(first.length, lessThanOrEqualTo(2000));
+        expect(bodyOf(calls[0])['allowed_mentions'], {'parse': ['everyone']});
+        expect(bodyOf(calls[1])['content'], endsWith('tail'));
+        expect(bodyOf(calls[1])['allowed_mentions'], {'parse': <String>[]});
+        expect('$first ${bodyOf(calls[1])['content']}'.replaceFirst('@everyone\n', ''), long);
+      });
+
+      test('media only: the message is just the mention; forum names stay clean', () async {
+        var calls = await send(PostVariant(text: '', media: [fakeImage()], extra: const {'mentionEveryone': true}));
+        final payload = payloadOf(calls.single);
+        expect(payload['content'], '@everyone');
+        expect(payload['allowed_mentions'], {'parse': ['everyone']});
+
+        calls = await send(const PostVariant(text: 'Launch day\nDetails', extra: {'mentionEveryone': true}), config: {'forum': true});
+        expect(bodyOf(calls.single)['thread_name'], 'Launch day');
+        expect(bodyOf(calls.single)['content'], '@everyone\nLaunch day\nDetails');
+      });
     });
 
     test('media: multipart payload_json + files[n] with alt text and spoilers', () async {

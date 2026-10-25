@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
@@ -33,19 +34,42 @@ class ComposeScreen extends ConsumerStatefulWidget {
 
 enum _Pane { write, preview }
 
-class _ComposeScreenState extends ConsumerState<ComposeScreen> {
+class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindingObserver {
   final _focus = FocusNode();
   final _previewScroll = ScrollController();
   _Pane _pane = _Pane.write;
   String? _loadedId;
   bool _busy = false;
 
+  /// Phones and tablets: the on-screen keyboard is showing.
+  bool _keyboardOpen = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _focus.dispose();
     _previewScroll.dispose();
     super.dispose();
   }
+
+  /// The keyboard opening or closing changes the view's bottom inset. The
+  /// app shell's Scaffold takes that inset out of this screen's MediaQuery,
+  /// so it is read from the view itself.
+  @override
+  void didChangeMetrics() {
+    if (!mounted || !Env.isMobile) return;
+    final open = View.of(context).viewInsets.bottom > 0;
+    if (open != _keyboardOpen) setState(() => _keyboardOpen = open);
+  }
+
+  /// Takes the cursor out of the text field, which closes the keyboard.
+  void _hideKeyboard() => FocusManager.instance.primaryFocus?.unfocus();
 
   void _maybeLoad() {
     final id = widget.editPostId;
@@ -145,6 +169,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
       onSchedule: _schedule,
       onPublish: _publish,
       onShowProblems: _showProblems,
+      onHideKeyboard: Env.isMobile && _keyboardOpen ? _hideKeyboard : null,
       busy: _busy,
     );
 
@@ -178,7 +203,11 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
                 ButtonSegment(value: _Pane.preview, label: Text('Preview (${previews.length})'), icon: const Icon(Icons.visibility_outlined, size: 18)),
               ],
               selected: {_pane},
-              onSelectionChanged: (s) => setState(() => _pane = s.first),
+              onSelectionChanged: (s) {
+                // The keyboard would only cover the previews.
+                if (Env.isMobile && s.first == _Pane.preview) _hideKeyboard();
+                setState(() => _pane = s.first);
+              },
               showSelectedIcon: false,
             ),
           ),
@@ -206,9 +235,40 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
         const SingleActivator(LogicalKeyboardKey.keyS, control: true): _saveDraft,
         const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _saveDraft,
       },
-      child: Focus(autofocus: false, child: body),
+      child: Focus(
+        autofocus: false,
+        // Phones and tablets: a tap outside the text fields closes the
+        // keyboard (text fields, buttons and chips keep their own taps).
+        child: Env.isMobile ? GestureDetector(onTap: _hideKeyboard, child: body) : body,
+      ),
     );
   }
+}
+
+/// Phones and tablets: a downward drag on the write column closes the
+/// keyboard, as a swipe down on it does in other apps. Flutter receives no
+/// touches on the keyboard itself, so this is the nearest equivalent.
+/// Upward drags only scroll.
+class _DragDownHidesKeyboard extends StatelessWidget {
+  const _DragDownHidesKeyboard({required this.child});
+  final Widget child;
+
+  bool _onScroll(ScrollNotification n) {
+    // Only the column's own scroll view, not the sideways lists in it.
+    if (n.depth != 0 || n.metrics.axis != Axis.vertical) return false;
+    final drag = switch (n) {
+      ScrollUpdateNotification(:final dragDetails) => dragDetails,
+      // At the top of the page a downward drag cannot scroll any further.
+      OverscrollNotification(:final dragDetails) => dragDetails,
+      _ => null,
+    };
+    final focus = FocusManager.instance.primaryFocus;
+    if (drag != null && drag.delta.dy > 0 && focus != null && focus is! FocusScopeNode) focus.unfocus();
+    return false;
+  }
+
+  @override
+  Widget build(BuildContext context) => NotificationListener<ScrollNotification>(onNotification: _onScroll, child: child);
 }
 
 class _WriteColumn extends ConsumerWidget {
@@ -229,9 +289,11 @@ class _WriteColumn extends ConsumerWidget {
             : 'Edit draft';
     final compact = context.isCompact;
 
-    return PageBody(
+    final page = PageBody(
       maxWidth: 780,
       bottomPadding: Space.xxl,
+      // A short post can still be dragged down to close the keyboard.
+      physics: Env.isMobile ? const AlwaysScrollableScrollPhysics() : null,
       children: [
         if (!compact || editingPost != null)
           Padding(
@@ -259,16 +321,18 @@ class _WriteColumn extends ConsumerWidget {
         TargetPicker(scrollable: scrollableTargets),
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
+        const ThreadPartEditors(),
         if (!c.isEmpty) ...[
           const SizedBox(height: Space.lg),
           const DifferentiationPanel(),
         ],
-        if (c.isEmpty) ...[
+        if (c.isEmpty && c.additionalParts.isEmpty) ...[
           const SizedBox(height: Space.lg),
           _Starters(onFocus: focusNode.requestFocus),
         ],
       ],
     );
+    return Env.isMobile ? _DragDownHidesKeyboard(child: page) : page;
   }
 }
 
@@ -291,7 +355,12 @@ class _Starters extends ConsumerWidget {
         ref.read(composerProvider.notifier).prefill('Worth a read: ');
         onFocus();
       }),
-      chip(Icons.forum_outlined, 'Start a thread', onFocus),
+      // Adds the second part; the cursor goes to the first, which is still
+      // empty while these starters show.
+      chip(Icons.forum_outlined, 'Start a thread', () {
+        ref.read(composerProvider.notifier).addPart();
+        onFocus();
+      }),
     ]);
   }
 }

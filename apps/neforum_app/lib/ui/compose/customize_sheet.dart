@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
+import '../../platform/env.dart';
 import '../../state/composer.dart';
+import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
@@ -50,12 +52,24 @@ const Map<String, List<_Extra>> _extrasByPlatform = {
     _Extra('state', 'Publish as', options: ['published', 'queue', 'draft']),
   ],
   'instagram': [_Extra('storyMode', 'Post as a story', boolean: true)],
+  'discord': [
+    _Extra(kMentionEveryoneKey, 'Mention @everyone',
+        boolean: true,
+        help: 'The first message starts with @everyone, which notifies everyone in the channel. '
+            'The default is in Settings > Posting.'),
+  ],
 };
 
 Future<void> showCustomizeSheet(BuildContext context, TargetPreview preview) {
   final sheet = CustomizeSheet(preview: preview);
   if (context.isCompact) {
-    return showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => sheet);
+    // Lifted above the keyboard, so the field being typed in stays visible.
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) => Padding(padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheetContext).bottom), child: sheet),
+    );
   }
   return showDialog<void>(
     context: context,
@@ -87,12 +101,22 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
   TargetPreview get p => widget.preview;
   PostOverrides get o => p.target.overrides;
 
+  /// The main post's text as this sheet shows it: the unsplit words for a
+  /// thread (every part the user wrote, joined), else what the network gets.
+  String _mainText(ComposerState c) => p.variant.isThread ? c.joinedParts : p.variant.text;
+
+  /// The value a yes/no option has when this post makes no choice: the
+  /// Settings default where there is one, else off.
+  bool _defaultOf(String key) => switch (key) {
+        kMentionEveryoneKey => ref.read(settingsProvider).discordMentionEveryone,
+        _ => false,
+      };
+
   @override
   void initState() {
     super.initState();
     final c = ref.read(composerProvider);
-    final v = p.variant;
-    _text = TextEditingController(text: o.text ?? (v.isThread ? c.text : v.text));
+    _text = TextEditingController(text: o.text ?? _mainText(c));
     _title = TextEditingController(text: o.title ?? c.title ?? '');
     _cw = TextEditingController(text: o.contentWarning ?? c.contentWarning ?? '');
     _media = (o.mediaIds ?? c.media.map((m) => m.id)).toSet();
@@ -127,10 +151,11 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
         extra[e.key] = v;
       }
     }
-    extra.removeWhere((_, v) => v == null || v == false);
+    // Only choices that differ from the default are kept.
+    extra.removeWhere((k, v) => v == null || v is bool && v == _defaultOf(k));
     final allMedia = c.media.map((m) => m.id).toList();
     final mediaIds = allMedia.where(_media.contains).toList();
-    final textChanged = _text.text != (p.variant.isThread ? c.text : p.variant.text);
+    final textChanged = _text.text != _mainText(c);
     final o = PostOverrides(
       text: textChanged ? _text.text : this.o.text,
       title: _title.text.trim().isEmpty || _title.text == (c.title ?? '') ? null : _title.text.trim(),
@@ -174,6 +199,7 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       ),
       Flexible(
         child: SingleChildScrollView(
+          keyboardDismissBehavior: Env.isMobile ? ScrollViewKeyboardDismissBehavior.onDrag : ScrollViewKeyboardDismissBehavior.manual,
           padding: const EdgeInsets.fromLTRB(Space.xxl, 0, Space.xxl, Space.lg),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Text(
@@ -270,10 +296,12 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
   Widget _extraField(_Extra e) {
     final nf = context.nf;
     if (e.boolean) {
+      final value = _extra[e.key];
       return SwitchListTile(
         contentPadding: EdgeInsets.zero,
         title: Text(e.label, style: context.text.bodyMedium),
-        value: _extra[e.key] == true,
+        subtitle: e.help == null ? null : Text(e.help!, style: context.text.bodySmall),
+        value: value is bool ? value : _defaultOf(e.key),
         onChanged: (v) => setState(() => _extra[e.key] = v),
       );
     }

@@ -73,27 +73,51 @@ class VariantResolver {
     media = _filterMedia(media, d, issues);
 
     // ---- text ----------------------------------------------------------
-    var text = (o.text ?? post.text).trimRight();
+    // The parts the user wrote ([Post.parts]). A per-network version is one
+    // text and replaces all of them.
+    final written = o.text == null
+        ? [
+            for (final p in post.parts)
+              if (p.trim().isNotEmpty) p.trimRight(),
+          ]
+        : const <String>[];
+    final canThread = t.supportsThreads && (account == null || account.tier.isAutomatic);
+    var text = (o.text ?? written.join('\n\n')).trimRight();
     final link = o.link ?? post.link;
     final tags = post.tags.where((x) => x.trim().isNotEmpty).map(_cleanTag).toList();
 
+    // The link and hashtags go at the end: of the text, or of the last part
+    // of a thread.
+    final additions = <String>[];
+    var probe = text;
     if (link != null && link.isNotEmpty && !d.supportsLinkField && options.appendLink && t.linkInText) {
-      final already = UrlDetector.find(text).any((u) => u.normalized == Uri.tryParse(link)?.toString() || u.text == link);
-      if (!already) text = text.isEmpty ? link : '$text\n\n$link';
-    }
-    if (tags.isNotEmpty && t.supportsHashtags && !t.hashtagsAsField && options.appendHashtags && o.text == null) {
-      final missing = tags.where((x) => !RegExp('(?<!\\w)#${RegExp.escape(x)}(?!\\w)', caseSensitive: false).hasMatch(text)).toList();
-      if (missing.isNotEmpty) {
-        final line = missing.map((x) => '#$x').join(' ');
-        text = text.isEmpty ? line : '$text\n\n$line';
+      final already = UrlDetector.find(probe).any((u) => u.normalized == Uri.tryParse(link)?.toString() || u.text == link);
+      if (!already) {
+        additions.add(link);
+        probe = '$probe\n\n$link';
       }
     }
+    if (tags.isNotEmpty && t.supportsHashtags && !t.hashtagsAsField && options.appendHashtags && o.text == null) {
+      final missing = tags.where((x) => !RegExp('(?<!\\w)#${RegExp.escape(x)}(?!\\w)', caseSensitive: false).hasMatch(probe)).toList();
+      if (missing.isNotEmpty) additions.add(missing.map((x) => '#$x').join(' '));
+    }
+    String withAdditions(String s) => [if (s.isNotEmpty) s, ...additions].join('\n\n');
 
     // ---- overflow ------------------------------------------------------
     var threadParts = const <String>[];
-    if (t.maxLength != null && !TextCounter.fits(text, t)) {
+    if (written.length > 1 && canThread) {
+      // A thread the user wrote: one post per part.
+      threadParts = _writtenThread([...written.take(written.length - 1), withAdditions(written.last)], d, issues);
+      text = threadParts.first;
+    } else {
+      // Networks without threads (and hand-offs) get every part in one post.
+      text = withAdditions(text);
+      if (written.length > 1) {
+        issues.add(ValidationIssue.info('text.parts_joined', '${d.name} gets the ${written.length} parts as one post', field: 'text'));
+      }
+    }
+    if (threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
       final n = TextCounter.count(text, t);
-      final canThread = t.supportsThreads && (account == null || account.tier.isAutomatic);
       switch (options.overflow) {
         case OverflowStrategy.threadOrError:
         case OverflowStrategy.threadOrTruncate:
@@ -120,7 +144,7 @@ class VariantResolver {
     if (t.titleSupported && (title == null || title.trim().isEmpty) && t.titleRequired) {
       // Derive a title from the first line so Reddit/Lemmy/blog posts work
       // without a separate field.
-      final firstLine = (o.text ?? post.text).split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
+      final firstLine = (o.text ?? written.firstOrNull ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
       if (firstLine.isNotEmpty) {
         title = t.titleMax != null && firstLine.length > t.titleMax! ? '${firstLine.substring(0, t.titleMax! - 1)}…' : firstLine;
         issues.add(ValidationIssue.info('title.derived', 'Title taken from the first line for ${d.name}', field: 'title'));
@@ -160,6 +184,42 @@ class VariantResolver {
       poll: d.polls == null ? null : poll,
       artwork: post.artwork,
     );
+  }
+
+  /// The thread for [parts] the user wrote. A part longer than the limit is
+  /// split further, truncated or reported, as [ResolverOptions.overflow]
+  /// says for long text; numbering counts every final part.
+  List<String> _writtenThread(List<String> parts, PlatformDescriptor d, List<ValidationIssue> issues) {
+    final t = d.text;
+    final numbering = options.threadNumbering;
+    List<String> thread;
+    switch (options.overflow) {
+      case OverflowStrategy.threadOrError:
+      case OverflowStrategy.threadOrTruncate:
+        thread = TextSplitter.splitParts(parts, t, numbering: numbering);
+      case OverflowStrategy.truncate:
+        final reserve = numbering ? TextSplitter.suffixLength(parts.length) : 0;
+        final shortened = [for (final p in parts) TextSplitter.truncate(p, t, reserve: reserve)];
+        for (var i = 0; i < parts.length; i++) {
+          if (shortened[i] != parts[i]) {
+            issues.add(ValidationIssue.warning('text.truncated',
+                'Part ${i + 1} truncated from ${TextCounter.count(parts[i], t)} to ${t.maxLength! - reserve} characters for ${d.name}',
+                field: 'text'));
+          }
+        }
+        thread = numbering ? TextSplitter.number(shortened) : shortened;
+      case OverflowStrategy.error:
+        thread = numbering ? TextSplitter.number(parts) : parts;
+        // Same words as RulesValidator, so the two reports read as one.
+        for (var i = 0; i < thread.length; i++) {
+          final n = TextCounter.count(thread[i], t);
+          if (t.maxLength != null && n > t.maxLength!) {
+            issues.add(ValidationIssue.error('text.too_long', 'Part ${i + 1} is $n/${t.maxLength} characters for ${d.name}', field: 'text'));
+          }
+        }
+    }
+    issues.add(ValidationIssue.info('text.threaded', 'Published as a ${thread.length}-part thread on ${d.name}', field: 'text'));
+    return thread;
   }
 
   List<MediaAttachment> _filterMedia(List<MediaAttachment> media, PlatformDescriptor d, List<ValidationIssue> issues) {
