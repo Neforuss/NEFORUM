@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../state/providers.dart';
+import '../compose/target_picker.dart' show adultRatingDescription;
 import 'setting_row.dart';
 
 /// Defaults for artwork posts to art portfolio sites.
@@ -22,7 +23,7 @@ class ArtworkSettingsSection extends ConsumerWidget {
         options: const [
           (ArtworkMaturity.general, 'General', 'Suitable for everyone.'),
           (ArtworkMaturity.mature, 'Mature', 'Suggestive themes, mild nudity or violence.'),
-          (ArtworkMaturity.adult, 'Adult', 'Explicit. Only sites that allow it receive the post.'),
+          (ArtworkMaturity.adult, 'Adult', adultRatingDescription),
         ],
       ),
       SettingSwitch(

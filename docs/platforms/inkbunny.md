@@ -22,7 +22,7 @@ This guide connects Inkbunny, so NEFORUM uploads your artwork and fills in the s
 
 ## How it works
 
-Inkbunny only receives posts marked as artwork, with at least one image.
+Inkbunny only receives posts marked as artwork, with at least one image or an MP4 video.
 
 **Signing in**: NEFORUM sends your username and password to Inkbunny once (in the body of the request, never in the address) and gets a session back. It keeps only that session, in this device's secure storage, and forgets the password. Removing the account signs the session out.
 

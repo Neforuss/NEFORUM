@@ -170,7 +170,7 @@ class DeviantArtAdapter extends PlatformAdapter {
 3. Under "OAuth2 Redirect URI Whitelist" enter `http://127.0.0.1:52771/callback`. Save.
 4. Copy the app's **client_id** into the field below and click Connect. Allow access in the browser.
 
-NEFORUM asks for `basic`, `stash` and `publish`: read your username, put a file in your Sta.sh, and publish it.''';
+NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file in your Sta.sh, and `publish` to publish it.''';
 
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {

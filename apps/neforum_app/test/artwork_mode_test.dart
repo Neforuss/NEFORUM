@@ -97,6 +97,36 @@ void main() {
       expect(defaultPostTargets(accounts, registry, marked, artwork: true), {'acct-cara'});
     });
 
+    test('a list marked before the first art site was added still sends artwork to every art site', () {
+      // Only social accounts are marked: "Include in new posts" was switched
+      // off for Instagram before any art site was connected.
+      const older = AppSettings(defaultTargetIds: ['acct-mastodon']);
+      expect(defaultPostTargets(accounts, registry, older, artwork: true), {'acct-behance', 'acct-cara'});
+      expect(defaultPostTargets(accounts, registry, older), {'acct-mastodon'});
+    });
+
+    test('the account card shows and changes what new posts go to', () {
+      const older = AppSettings(defaultTargetIds: ['acct-mastodon']);
+      final instagram = accounts[1], behance = accounts[2];
+      expect(includedInNewPosts(accounts, registry, older, behance), isTrue, reason: 'no art site is marked, so all are in');
+      expect(includedInNewPosts(accounts, registry, older, instagram), isFalse);
+
+      // Switching one art site off leaves the other art sites on.
+      final off = AppSettings(defaultTargetIds: defaultTargetIdsWith(accounts, registry, older, behance, included: false));
+      expect(off.defaultTargetIds, ['acct-mastodon', 'acct-cara']);
+      expect(defaultPostTargets(accounts, registry, off, artwork: true), {'acct-cara'});
+      expect(includedInNewPosts(accounts, registry, off, behance), isFalse);
+
+      // And on again; with every enabled account included the list is empty.
+      final on = AppSettings(defaultTargetIds: defaultTargetIdsWith(accounts, registry, off, behance, included: true));
+      expect(on.defaultTargetIds, ['acct-mastodon', 'acct-cara', 'acct-behance']);
+      expect(defaultTargetIdsWith(accounts, registry, on, instagram, included: true), isEmpty);
+
+      // From the empty list (everything included), switching one off marks the rest.
+      expect(defaultTargetIdsWith(accounts, registry, const AppSettings(), behance, included: false),
+          ['acct-mastodon', 'acct-instagram', 'acct-cara']);
+    });
+
     test('new artwork starts with the Settings defaults', () {
       const s = AppSettings(artworkMaturity: ArtworkMaturity.mature, artworkDisallowAiTraining: false);
       expect(newArtworkDetails(s), const ArtworkDetails(maturity: ArtworkMaturity.mature, disallowAiTraining: false));
@@ -241,6 +271,78 @@ void main() {
       c.read(composerProvider.notifier).reset();
       expect(c.read(composerProvider).selected, {'demo-cara'});
       expect(c.read(composerProvider).artwork, newArtworkDetails(c.read(settingsProvider)));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('Artwork picks every art site when "Include in new posts" was set before they were added', (tester) async {
+      final (services, c) = await boot(tester);
+      await addArtSites(tester, services);
+      await tester.runAsync(() => c.read(settingsProvider.notifier).update((s) => s.copyWith(defaultTargetIds: const ['demo-mastodon'])));
+      c.read(composerProvider.notifier).reset(keepTargets: false);
+      c.read(routerProvider).go('/compose');
+      await settle(tester);
+      expect(c.read(composerProvider).selected, {'demo-mastodon'});
+
+      await tester.ensureVisible(find.byKey(TargetPicker.artworkSwitchKey));
+      await tester.tap(find.byKey(TargetPicker.artworkSwitchKey));
+      await settle(tester);
+      expect(c.read(composerProvider).selected, {'demo-behance', 'demo-cara'});
+      expect(find.text('2 of 2'), findsOneWidget);
+
+      // The art site's card agrees, and switching it off keeps the other art site.
+      c.read(routerProvider).go('/accounts');
+      await settle(tester);
+      final behance = find.byWidgetPredicate((w) => w is AccountCard && w.account.id == 'demo-behance');
+      await tester.ensureVisible(behance);
+      await settle(tester);
+      expect(find.descendant(of: behance, matching: find.text('Include in new artwork posts')), findsOneWidget);
+      final include = find.descendant(of: behance, matching: find.byType(Switch)).first;
+      expect(tester.widget<Switch>(include).value, isTrue);
+      await tester.tap(include);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      await settle(tester);
+      expect(c.read(settingsProvider).defaultTargetIds, ['demo-mastodon', 'demo-cara']);
+      expect(tester.widget<Switch>(include).value, isFalse);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    });
+
+    testWidgets('the Adult rating says that sites refusing it stop the post until deselected', (tester) async {
+      final (services, c) = await boot(tester);
+      await addArtSites(tester, services);
+      c.read(composerProvider.notifier).reset(keepTargets: false);
+      c.read(routerProvider).go('/compose');
+      await settle(tester);
+      await tester.ensureVisible(find.byKey(TargetPicker.artworkSwitchKey));
+      await tester.tap(find.byKey(TargetPicker.artworkSwitchKey));
+      await settle(tester);
+      await tester.ensureVisible(find.text('Adult'));
+      await settle(tester);
+      await tester.tap(find.text('Adult'));
+      await settle(tester);
+      expect(c.read(composerProvider).artwork!.maturity, ArtworkMaturity.adult);
+      expect(find.byTooltip(adultRatingDescription), findsOneWidget);
+      expect(adultRatingDescription, contains('Cara'));
+
+      // As the text says: Cara refuses explicit work with an error, which
+      // holds up the whole post until Cara is deselected.
+      Iterable<String> errors(String platformId) =>
+          c.read(composerPreviewsProvider).where((p) => p.account.platformId == platformId).expand((p) => p.issues).where((i) => i.isError).map((i) => i.code);
+      expect(errors('cara'), contains('cara.adult'));
+      expect(errors('behance'), isNot(contains('cara.adult')));
+      expect(c.read(composerReadinessProvider).canPublish, isFalse);
+      c.read(composerProvider.notifier).toggleAccount('demo-cara');
+      await settle(tester);
+      expect(errors('cara'), isEmpty);
+
+      // Settings > Artwork describes the rating the same way.
+      c.read(routerProvider).go('/settings');
+      await settle(tester);
+      expect(find.text(adultRatingDescription), findsOneWidget);
+      expect(find.textContaining('Only sites that allow it'), findsNothing);
 
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump(const Duration(seconds: 1));

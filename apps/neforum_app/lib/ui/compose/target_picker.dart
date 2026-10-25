@@ -168,6 +168,12 @@ class _ArtworkSwitch extends StatelessWidget {
   }
 }
 
+/// What the Adult rating does, here and in Settings > Artwork. Sites that
+/// refuse explicit work report an error, and one error holds up the whole
+/// post, so they have to be deselected.
+const String adultRatingDescription = 'Explicit. Sites that do not allow it, such as Cara and Dribbble, stop the post '
+    'until you deselect them.';
+
 /// Rating, "Made with AI" and "Ask not to train AI" of an artwork post.
 class _ArtworkOptions extends StatelessWidget {
   const _ArtworkOptions({required this.details, required this.onChanged});
@@ -185,7 +191,7 @@ class _ArtworkOptions extends StatelessWidget {
           segments: const [
             ButtonSegment(value: ArtworkMaturity.general, label: Text('General'), tooltip: 'Suitable for everyone'),
             ButtonSegment(value: ArtworkMaturity.mature, label: Text('Mature'), tooltip: 'Suggestive themes, mild nudity or violence'),
-            ButtonSegment(value: ArtworkMaturity.adult, label: Text('Adult'), tooltip: 'Explicit. Only sites that allow it receive the post.'),
+            ButtonSegment(value: ArtworkMaturity.adult, label: Text('Adult'), tooltip: adultRatingDescription),
           ],
           selected: {details.maturity},
           showSelectedIcon: false,

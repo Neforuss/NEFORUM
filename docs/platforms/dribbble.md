@@ -32,7 +32,7 @@ This guide sets up Dribbble. By default NEFORUM hands each shot to Dribbble's up
 
 ## How it works
 
-Dribbble only receives posts marked as artwork, with at least one image.
+Dribbble only receives posts marked as artwork, with at least one image (or, by hand-off, a video).
 
 **Hand-off** uses Dribbble's own uploader, which takes everything the website takes: several images, a video, text blocks and full-size work. Choose who publishes under **Publish as** (you or a team), then **Continue** opens **Final Touches** for the thumbnail and the tags.
 
