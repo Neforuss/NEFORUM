@@ -36,6 +36,7 @@ class PhotoFit {
     this.maxBytes,
     this.maxPixels,
     this.maxSideSum,
+    this.exactSizes,
     this.label = '',
   });
 
@@ -60,13 +61,27 @@ class PhotoFit {
   /// Width + height may be at most this (Telegram).
   final int? maxSideSum;
 
+  /// The only pixel sizes taken (Dribbble's API: 800 x 600 or 400 x 300). A
+  /// photo of any other size is brought to the shape and then scaled, up or
+  /// down, to exactly the first of them.
+  final List<({int width, int height})>? exactSizes;
+
   /// Where the rules come from, for messages ("Instagram feed photos").
   final String label;
 
   /// Shapes within this much of a limit count as inside it.
   static const double aspectTolerance = 0.005;
 
-  PhotoFit copyWith({double? minAspect, double? maxAspect, Set<String>? mimeTypes, int? maxBytes, int? maxPixels, int? maxSideSum, String? label}) =>
+  PhotoFit copyWith({
+    double? minAspect,
+    double? maxAspect,
+    Set<String>? mimeTypes,
+    int? maxBytes,
+    int? maxPixels,
+    int? maxSideSum,
+    List<({int width, int height})>? exactSizes,
+    String? label,
+  }) =>
       PhotoFit(
         minAspect: minAspect ?? this.minAspect,
         maxAspect: maxAspect ?? this.maxAspect,
@@ -74,8 +89,13 @@ class PhotoFit {
         maxBytes: maxBytes ?? this.maxBytes,
         maxPixels: maxPixels ?? this.maxPixels,
         maxSideSum: maxSideSum ?? this.maxSideSum,
+        exactSizes: exactSizes ?? this.exactSizes,
         label: label ?? this.label,
       );
+
+  /// [width] x [height] is one of [exactSizes] (always true without them).
+  bool hasExactSize(int width, int height) =>
+      exactSizes == null || exactSizes!.any((s) => s.width == width && s.height == height);
 
   /// Can NEFORUM change [m] at all? Still photos only.
   static bool canFit(MediaAttachment m) => m.kind == MediaKind.image;
@@ -96,6 +116,7 @@ class PhotoFit {
     if (w != null && h != null) {
       if (maxPixels != null && w * h >= maxPixels!) out.add(FitProblem.pixels);
       if (maxSideSum != null && w + h > maxSideSum!) out.add(FitProblem.pixels);
+      if (!hasExactSize(w, h) && !out.contains(FitProblem.pixels)) out.add(FitProblem.pixels);
     }
     return out;
   }
@@ -106,6 +127,9 @@ class PhotoFit {
   ({int width, int height})? fittedSize(MediaAttachment m, PhotoFitMode mode) {
     final w0 = m.width, h0 = m.height;
     if (w0 == null || h0 == null || w0 <= 0 || h0 <= 0) return null;
+    if (exactSizes != null && exactSizes!.isNotEmpty) {
+      return hasExactSize(w0, h0) ? (width: w0, height: h0) : exactSizes!.first;
+    }
     var w = w0.toDouble(), h = h0.toDouble();
     final r = w / h;
     double? target;
@@ -161,7 +185,8 @@ class PhotoFit {
   /// Identifies these rules with [mode], so a fitted copy made for them can be
   /// reused (two platforms with the same rules share one copy).
   String keyFor(PhotoFitMode mode) =>
-      '${mode.name}|${minAspect ?? ''}|${maxAspect ?? ''}|${(mimeTypes?.toList()?..sort())?.join(',') ?? ''}|${maxBytes ?? ''}|${maxPixels ?? ''}|${maxSideSum ?? ''}';
+      '${mode.name}|${minAspect ?? ''}|${maxAspect ?? ''}|${(mimeTypes?.toList()?..sort())?.join(',') ?? ''}|${maxBytes ?? ''}|${maxPixels ?? ''}|${maxSideSum ?? ''}'
+      '${exactSizes == null ? '' : '|${exactSizes!.map((s) => '${s.width}x${s.height}').join(',')}'}';
 
   /// "fitted to 4:5 with borders", "made a JPEG", "made smaller": what fitting
   /// does to [m], for the composer.
@@ -177,7 +202,10 @@ class PhotoFit {
       }} to ${ratioLabel(target)}');
     }
     if (problems.contains(FitProblem.fileType)) parts.add('made a JPEG');
-    if (problems.contains(FitProblem.pixels)) parts.add('scaled down');
+    final exact = fittedSize(m, mode);
+    if (problems.contains(FitProblem.pixels)) {
+      parts.add(exactSizes != null && exact != null ? 'resized to ${exact.width} x ${exact.height}' : 'scaled down');
+    }
     if (problems.contains(FitProblem.fileSize)) parts.add('made smaller');
     return parts.join(', ');
   }
