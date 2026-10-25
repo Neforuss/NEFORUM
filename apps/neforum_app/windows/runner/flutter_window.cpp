@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "flutter/generated_plugin_registrant.h"
+#include "video_compositor.h"
 
 namespace {
 
@@ -184,6 +185,7 @@ bool FlutterWindow::OnCreate() {
         }
         result->Success(flutter::EncodableValue(CopyImage(GetHandle(), *args)));
       });
+  video_compositor_ = std::make_unique<VideoCompositor>(flutter_controller_->engine()->messenger());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
@@ -199,6 +201,7 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   clipboard_channel_ = nullptr;
+  video_compositor_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

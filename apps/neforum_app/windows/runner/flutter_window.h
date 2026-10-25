@@ -10,6 +10,8 @@
 
 #include "win32_window.h"
 
+class VideoCompositor;
+
 // A window that does nothing but host a Flutter view.
 class FlutterWindow : public Win32Window {
  public:
@@ -34,6 +36,9 @@ class FlutterWindow : public Win32Window {
   // "neforum/clipboard": puts a photo on the clipboard for pasting into a
   // web composer (lib/platform/clipboard_media.dart).
   std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> clipboard_channel_;
+
+  // "neforum/video": burns caption blocks into videos (video_compositor.cpp).
+  std::unique_ptr<VideoCompositor> video_compositor_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_
