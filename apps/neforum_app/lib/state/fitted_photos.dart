@@ -121,21 +121,28 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
 }
 
 /// Fits the photos of the saved post [postId] (see [attachFittedPhotos]) before
-/// it is published in the background: posts saved before photos were fitted,
-/// or before a setting changed. Best effort; the post is left as it is on any
+/// it is published in the background (scheduled posts, Publish now on a
+/// reminder): posts saved before photos were fitted, or before a setting
+/// changed. The caption stays written on the photos it was written on when
+/// the post was saved, in the same style ([attachCaptionedPhotos]), and is
+/// left off where it was off. Best effort; the post is left as it is on any
 /// problem.
 Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
   try {
     final post = await s.posts.get(postId);
     if (post == null || !post.media.any((m) => !m.generated)) return;
-    await s.posts.upsert(await attachFittedPhotos(s, post, s.settings));
+    // Read first: fitting lists the original photos on the targets again.
+    final choices = await captionChoicesOfSavedPost(s, post);
+    final fitted = await attachFittedPhotos(s, post, s.settings);
+    await s.posts.upsert(await attachCaptionedPhotos(s, fitted, s.settings, choices: choices));
   } on Object catch (e) {
     debugPrint('Could not fit the photos of $postId: $e');
   }
 }
 
-/// [post] without fitted copies: each target lists the original photos again
-/// (and no list at all when that is every photo, as before fitting).
+/// [post] without fitted copies (captioned copies included): each target lists
+/// the original photos again (and no list at all when that is every photo, as
+/// before fitting).
 Post withoutFittedPhotos(Post post) {
   final fitted = {for (final m in post.media.where((m) => m.derivedFrom != null)) m.id: m.derivedFrom!};
   if (fitted.isEmpty) return post;
