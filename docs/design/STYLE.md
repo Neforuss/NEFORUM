@@ -23,7 +23,12 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
   **Never** use yellow as text, or as the only cue, on light surfaces: it has
   no contrast there.
 - **Navigation chrome** (sidebar, rail, phone bottom bar) is deep purple in
-  both themes (`chrome`, `chromeRaised`, `onChrome`, `onChromeMuted`).
+  both themes by default (`chrome`, `chromeRaised`, `onChrome`, `onChromeMuted`).
+  Settings > Appearance > Navigation bar can make it match the theme (the
+  page's surfaces with a `chromeBorder` hairline, the accent instead of
+  yellow for the current section) or the accent color. Mark the current
+  section with `chromeAccent`/`onChromeAccent` (fills) and `chromeSelected`
+  (sidebar icon and bar), never with `highlight` directly.
   `PrimaryAction(onChrome: true)` and `NeforumWordmark(onChrome: true)` are the
   variants for it.
 - Neutrals carry a faint purple cast in both themes; semantic colors
@@ -33,9 +38,9 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
 
 | Token | Where |
 |---|---|
-| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentFill`, `accentSoft`, `highlight`/`onHighlight`, `chrome`/`chromeRaised`/`onChrome`/`onChromeMuted`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`) |
+| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentFill`, `accentSoft`, `highlight`/`onHighlight`, `chrome`/`chromeRaised`/`onChrome`/`onChromeMuted`/`chromeBorder`/`chromeAccent`/`onChromeAccent`/`chromeSelected`/`chromeActionGradient`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`) |
 | `Space.*` | 4-pt spacing scale: `xxs 2, xs 4, sm 8, md 12, lg 16, xl 20, xxl 24, x3 32, x4 40, x5 48, x6 64` |
-| `Radii.*` | `rXs 6, rSm 10, rMd 14, rLg 20, rXl 28, rPill` |
+| `Radii.*` | `rXs 6, rSm 10, rMd 14, rLg 20, rXl 28, rPill`; all 0 with the square corner style (`Radii.square`, set by `buildTheme`). They are getters, never `const`. For other sizes use `Radii.circular(r)`, `Radii.corner(r)`, `Radii.circleShape`, `Radii.circleBorder`, `Radii.stadium`. Generated images (text cards, captions) keep fixed radii |
 | `Motion.*` | `fast 140ms, medium 240ms, slow 420ms`, curves `standard`, `emphasized`, `spring` |
 | `Breakpoints` | `compact < 720` (phone, bottom bar), `expanded ≥ 1180` (sidebar, side-by-side panes), `readable 760` max width for forms |
 | `context.text` | Text theme. Display/headline/titleLarge use Bricolage Grotesque; everything else Inter |

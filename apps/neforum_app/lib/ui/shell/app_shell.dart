@@ -150,8 +150,11 @@ class _AppShellState extends ConsumerState<AppShell> {
       return Scaffold(
         backgroundColor: nf.bg,
         body: SafeArea(bottom: false, child: body),
-        bottomNavigationBar: ColoredBox(
-          color: nf.chrome,
+        bottomNavigationBar: DecoratedBox(
+          decoration: BoxDecoration(
+            color: nf.chrome,
+            border: nf.chromeBorder.a == 0 ? null : Border(top: BorderSide(color: nf.chromeBorder)),
+          ),
           child: NavigationBar(
             selectedIndex: widget.shell.currentIndex,
             onDestinationSelected: (i) => _go(AppSection.values[i]),
@@ -183,16 +186,34 @@ class _AppShellState extends ConsumerState<AppShell> {
     );
   }
 
-  Widget _badged(Widget icon, int count, bool urgent) {
-    if (count == 0) return icon;
+  Widget _badged(Widget icon, int count, bool urgent) => _ChromeBadge(count: count, urgent: urgent, child: icon);
+}
+
+/// A count on a navigation icon: yellow when it needs the user, otherwise in
+/// the chrome's content color (readable on every chrome style).
+class _ChromeBadge extends StatelessWidget {
+  const _ChromeBadge({required this.count, required this.urgent, required this.child});
+
+  final int count;
+  final bool urgent;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    if (count == 0) return child;
+    final nf = context.nf;
     return Badge(
       label: Text('$count'),
-      backgroundColor: urgent ? context.nf.highlight : context.nf.onChrome,
-      textColor: context.nf.onHighlight,
-      child: icon,
+      backgroundColor: urgent ? nf.highlight : nf.onChrome,
+      textColor: urgent ? nf.onHighlight : nf.chrome,
+      child: child,
     );
   }
 }
+
+/// The line between the sidebar or rail and the page, when the chrome style
+/// has one.
+Border? _chromeEdge(NfColors nf) => nf.chromeBorder.a == 0 ? null : Border(right: BorderSide(color: nf.chromeBorder));
 
 // ---------------------------------------------------------------------------
 
@@ -207,19 +228,20 @@ class _Sidebar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
+    final dense = context.denseLayout;
     final accounts = ref.watch(accountListProvider);
     return Container(
       width: 264,
-      color: nf.chrome,
-      padding: const EdgeInsets.fromLTRB(Space.lg, Space.xxl, Space.lg, Space.lg),
+      decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf)),
+      padding: EdgeInsets.fromLTRB(Space.lg, dense ? Space.lg : Space.xxl, Space.lg, Space.lg),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: Space.sm),
           child: NeforumWordmark(size: 32, showTagline: true, onChrome: true),
         ),
-        const SizedBox(height: Space.x3),
-        PrimaryAction(label: 'New post', icon: Icons.add_rounded, onPressed: onNewPost, expand: true, onChrome: true),
-        const SizedBox(height: Space.xxl),
+        SizedBox(height: dense ? Space.xxl : Space.x3),
+        PrimaryAction(label: 'New post', icon: Icons.add_rounded, onPressed: onNewPost, expand: true, onChrome: true, compact: dense),
+        SizedBox(height: dense ? Space.lg : Space.xxl),
         for (final s in AppSection.values) ...[
           _NavItem(
             section: s,
@@ -275,7 +297,7 @@ class _NavItemState extends State<_NavItem> {
           label: widget.section.label,
           child: AnimatedContainer(
             duration: Motion.fast,
-            height: 44,
+            height: context.denseLayout ? 38 : 44,
             padding: const EdgeInsets.symmetric(horizontal: Space.md),
             decoration: BoxDecoration(
               color: sel ? nf.chromeRaised : (_hover ? nf.onChrome.withValues(alpha: 0.05) : Colors.transparent),
@@ -287,9 +309,9 @@ class _NavItemState extends State<_NavItem> {
                 width: 3,
                 height: sel ? 18 : 0,
                 margin: const EdgeInsets.only(right: Space.sm),
-                decoration: BoxDecoration(color: nf.highlight, borderRadius: Radii.rPill),
+                decoration: BoxDecoration(color: nf.chromeSelected, borderRadius: Radii.rPill),
               ),
-              Icon(sel ? widget.section.selectedIcon : widget.section.icon, size: 20, color: sel ? nf.highlight : nf.onChromeMuted),
+              Icon(sel ? widget.section.selectedIcon : widget.section.icon, size: 20, color: sel ? nf.chromeSelected : nf.onChromeMuted),
               const SizedBox(width: Space.md),
               Expanded(
                 child: Text(
@@ -367,13 +389,14 @@ class _Rail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
+    final dense = context.denseLayout;
     return Container(
       width: 88,
-      color: nf.chrome,
-      padding: const EdgeInsets.symmetric(vertical: Space.xl),
+      decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf)),
+      padding: EdgeInsets.symmetric(vertical: dense ? Space.md : Space.xl),
       child: Column(children: [
         const NeforumMark(size: 38),
-        const SizedBox(height: Space.xxl),
+        SizedBox(height: dense ? Space.lg : Space.xxl),
         Tooltip(
           message: 'New post',
           child: GestureDetector(
@@ -381,15 +404,15 @@ class _Rail extends StatelessWidget {
             child: MouseRegion(
               cursor: SystemMouseCursors.click,
               child: Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(color: nf.highlight, borderRadius: Radii.rLg, boxShadow: nf.glow(nf.highlight, strength: 0.6)),
-                child: Icon(Icons.add_rounded, color: nf.onHighlight, size: 26),
+                width: dense ? 46 : 52,
+                height: dense ? 46 : 52,
+                decoration: BoxDecoration(color: nf.chromeAccent, borderRadius: Radii.rLg, boxShadow: nf.glow(nf.chromeAccent, strength: 0.6)),
+                child: Icon(Icons.add_rounded, color: nf.onChromeAccent, size: 26),
               ),
             ),
           ),
         ),
-        const SizedBox(height: Space.xxl),
+        SizedBox(height: dense ? Space.lg : Space.xxl),
         for (final s in AppSection.values)
           _RailItem(section: s, selected: s == current, badge: badges[s] ?? 0, urgent: s == AppSection.activity, onTap: () => onSelect(s)),
       ]),
@@ -409,9 +432,9 @@ class _RailItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    final icon = Icon(selected ? section.selectedIcon : section.icon, size: 22, color: selected ? nf.onHighlight : nf.onChromeMuted);
+    final icon = Icon(selected ? section.selectedIcon : section.icon, size: 22, color: selected ? nf.onChromeAccent : nf.onChromeMuted);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Space.xs),
+      padding: EdgeInsets.symmetric(vertical: context.denseLayout ? Space.xxs : Space.xs),
       child: InkWell(
         onTap: onTap,
         borderRadius: Radii.rMd,
@@ -422,12 +445,8 @@ class _RailItem extends StatelessWidget {
               duration: Motion.fast,
               width: 52,
               height: 32,
-              decoration: BoxDecoration(color: selected ? nf.highlight : Colors.transparent, borderRadius: Radii.rPill),
-              child: Center(
-                child: badge > 0
-                    ? Badge(label: Text('$badge'), backgroundColor: urgent ? nf.highlight : nf.onChrome, textColor: nf.onHighlight, child: icon)
-                    : icon,
-              ),
+              decoration: BoxDecoration(color: selected ? nf.chromeAccent : Colors.transparent, borderRadius: Radii.rPill),
+              child: Center(child: _ChromeBadge(count: badge, urgent: urgent, child: icon)),
             ),
             const SizedBox(height: Space.xs),
             Text(

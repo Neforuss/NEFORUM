@@ -1,12 +1,34 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../theme/tokens.dart';
 import '../../widgets/surfaces.dart';
 
-/// A settings section: titled card with rows separated by hairlines.
+/// Which settings sections are folded away, provided by the Settings screen.
+/// Sections are known by their title. Without a scope above them (a section
+/// shown on its own) sections are always open and cannot fold.
+class SettingsSectionScope extends InheritedWidget {
+  const SettingsSectionScope({super.key, required this.collapsed, required this.onToggle, required super.child});
+
+  /// Titles of the folded sections.
+  final Set<String> collapsed;
+
+  /// Folds or opens the section with this title.
+  final ValueChanged<String> onToggle;
+
+  static SettingsSectionScope? maybeOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<SettingsSectionScope>();
+
+  @override
+  bool updateShouldNotify(SettingsSectionScope old) => !setEquals(old.collapsed, collapsed) || old.onToggle != onToggle;
+}
+
+/// A settings section: titled card with rows separated by hairlines. Inside
+/// a [SettingsSectionScope] the header folds and opens the card.
 class SettingsSection extends StatelessWidget {
   const SettingsSection({super.key, required this.title, required this.icon, this.subtitle, required this.children});
 
+  /// Also the section's key in the Settings screen's table of contents and in
+  /// the list of folded sections, so it must not change.
   final String title;
   final IconData icon;
   final String? subtitle;
@@ -15,31 +37,73 @@ class SettingsSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
+    final scope = SettingsSectionScope.maybeOf(context);
+    final collapsed = scope?.collapsed.contains(title) ?? false;
     final rows = <Widget>[];
     for (var i = 0; i < children.length; i++) {
       if (i > 0) rows.add(Divider(height: 1, color: nf.border, indent: Space.xl, endIndent: Space.xl));
       rows.add(children[i]);
     }
+    Widget header = AnimatedPadding(
+      duration: Motion.medium,
+      curve: Motion.standard,
+      padding: EdgeInsets.only(left: Space.xs, bottom: collapsed ? Space.xs : Space.md, top: scope == null ? 0 : Space.xs),
+      child: Row(children: [
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(color: nf.accentSoft, borderRadius: Radii.rSm),
+          child: Icon(icon, size: 17, color: nf.accent),
+        ),
+        const SizedBox(width: Space.md),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: context.text.titleLarge),
+            if (subtitle != null) Text(subtitle!, style: context.text.bodySmall),
+          ]),
+        ),
+        if (scope != null)
+          Padding(
+            padding: const EdgeInsets.only(left: Space.sm),
+            child: AnimatedRotation(
+              turns: collapsed ? -0.25 : 0,
+              duration: Motion.fast,
+              child: Icon(Icons.expand_more_rounded, color: nf.textMuted),
+            ),
+          ),
+      ]),
+    );
+    if (scope != null) {
+      header = Semantics(
+        button: true,
+        expanded: !collapsed,
+        label: collapsed ? 'Expand $title' : 'Collapse $title',
+        excludeSemantics: true,
+        child: Tooltip(
+          message: collapsed ? 'Expand' : 'Collapse',
+          waitDuration: const Duration(seconds: 1),
+          child: InkWell(
+            borderRadius: Radii.rMd,
+            onTap: () => scope.onToggle(title),
+            child: header,
+          ),
+        ),
+      );
+    }
+    final card = NfCard(padding: const EdgeInsets.symmetric(vertical: Space.xs), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows));
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(
-        padding: const EdgeInsets.only(left: Space.xs, bottom: Space.md),
-        child: Row(children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(color: nf.accentSoft, borderRadius: Radii.rSm),
-            child: Icon(icon, size: 17, color: nf.accent),
+      header,
+      if (scope == null)
+        card
+      else
+        ClipRect(
+          child: AnimatedSize(
+            duration: Motion.medium,
+            curve: Motion.standard,
+            alignment: Alignment.topCenter,
+            child: collapsed ? const SizedBox(width: double.infinity) : card,
           ),
-          const SizedBox(width: Space.md),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(title, style: context.text.titleLarge),
-              if (subtitle != null) Text(subtitle!, style: context.text.bodySmall),
-            ]),
-          ),
-        ]),
-      ),
-      NfCard(padding: const EdgeInsets.symmetric(vertical: Space.xs), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: rows)),
+        ),
     ]);
   }
 }
@@ -71,7 +135,7 @@ class SettingRow extends StatelessWidget {
       ],
     ]);
     final body = Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Space.xl, vertical: Space.lg),
+      padding: EdgeInsets.symmetric(horizontal: Space.xl, vertical: context.denseLayout ? Space.md : Space.lg),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (stack) ...[
           text,

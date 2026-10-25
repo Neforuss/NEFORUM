@@ -12,6 +12,9 @@ import 'mark_geometry.dart';
 ///
 /// With [animate] the arc and then each bar light up in turn, the message
 /// travelling out (used while publishing).
+///
+/// The tile keeps its rounded corners with the square corner style: it is the
+/// logo, the same one the app icon and text cards carry.
 class NeforumMark extends StatefulWidget {
   const NeforumMark({super.key, this.size = 40, this.animate = false, this.gradient});
 
@@ -132,7 +135,7 @@ class NeforumWordmark extends StatelessWidget {
   final double size;
   final bool showTagline;
 
-  /// White type for the deep-purple navigation chrome.
+  /// Type in the navigation chrome's colors ([NfColors.onChrome]).
   final bool onChrome;
 
   @override

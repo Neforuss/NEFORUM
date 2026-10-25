@@ -8,6 +8,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import '../theme/tokens.dart';
 import '../theme/zoom.dart';
 
 /// Draws the app [zoom] times bigger or smaller, the way a browser zooms a
@@ -168,7 +169,7 @@ class _UiZoomState extends State<UiZoom> with WidgetsBindingObserver {
                   duration: const Duration(milliseconds: 160),
                   child: Material(
                     color: scheme.inverseSurface,
-                    shape: const StadiumBorder(),
+                    shape: Radii.stadium,
                     elevation: 3,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
