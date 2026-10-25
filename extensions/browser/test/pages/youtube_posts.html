@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: YouTube Posts poll test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  [hidden] { display: none !important; }
+  ytd-backstage-post-dialog-renderer { display: grid; gap: 8px; max-width: 520px; border: 1px solid #bbb; border-radius: 10px; padding: 10px; }
+  #contenteditable-root { min-height: 40px; outline: 1px dashed #ccc; padding: 6px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+  <!--
+    A post box shaped like YouTube's (the element names its recipe looks
+    for): the text, then one attachment: a text poll (two answers to start,
+    "Add option" for more) or a quiz (answers, a radio button for the correct
+    one, an explanation).
+      ?p=youtube_posts&kind=poll|quiz   which one the job has
+      ?auto=1                           automatic posting (see harness.js)
+    window.poll() has what the attachment holds.
+  -->
+  <ytd-backstage-post-dialog-renderer>
+    <div id="contenteditable-root" contenteditable="true" aria-label="Share an update with your fans"></div>
+    <div class="row">
+      <button type="button" aria-label="Image">Image</button>
+      <button type="button" id="poll-button">Poll</button>
+      <button type="button" id="quiz-button">Quiz</button>
+    </div>
+    <div id="attachment"></div>
+    <div id="submit-button"><button type="button" id="post">Post</button></div>
+  </ytd-backstage-post-dialog-renderer>
+  <p id="done" hidden>Posted.</p>
+  <script>
+    const q = new URLSearchParams(location.search);
+    const quiz = q.get('kind') === 'quiz';
+    window.NEFORUM_TEST_MEDIA = false;
+    window.NEFORUM_TEST_TEXT = quiz ? 'Capital of France?' : 'Tea or coffee?';
+    const attachment = document.getElementById('attachment');
+    const answer = (n) => {
+      const row = Object.assign(document.createElement('div'), { className: 'row' });
+      const input = Object.assign(document.createElement('input'), { placeholder: quiz ? 'Answer' : 'Add option' });
+      if (quiz) row.append(Object.assign(document.createElement('input'), { type: 'radio', name: 'correct', value: String(n) }));
+      row.append(input);
+      return row;
+    };
+    function openEditor(kind) {
+      attachment.replaceChildren();
+      const editor = document.createElement('div');
+      editor.id = kind === 'quiz' ? 'quiz-attachment' : 'poll-attachment';
+      editor.append(answer(0), answer(1));
+      const add = Object.assign(document.createElement('button'), { type: 'button', textContent: kind === 'quiz' ? 'Add answer' : 'Add option' });
+      add.addEventListener('click', () => editor.insertBefore(answer(editor.querySelectorAll('input:not([type="radio"])').length), add));
+      editor.append(add);
+      if (kind === 'quiz') editor.append(Object.assign(document.createElement('textarea'), { placeholder: 'Explanation (optional)' }));
+      attachment.append(editor);
+    }
+    document.getElementById('poll-button').addEventListener('click', () => openEditor('poll'));
+    document.getElementById('quiz-button').addEventListener('click', () => openEditor('quiz'));
+    document.getElementById('post').addEventListener('click', () => {
+      document.querySelector('ytd-backstage-post-dialog-renderer').hidden = true;
+      document.getElementById('done').hidden = false;
+    });
+    window.poll = () => ({
+      text: document.getElementById('contenteditable-root').innerText.trim(),
+      kind: attachment.firstElementChild?.id ?? null,
+      answers: [...attachment.querySelectorAll('input:not([type="radio"])')].map((i) => i.value),
+      correct: attachment.querySelector('input[type="radio"]:checked')?.value ?? null,
+      explanation: attachment.querySelector('textarea')?.value ?? null,
+    });
+  </script>
+  <script src="harness.js"></script>
+  <script>
+    // Adds the poll to the job the stand-in background hands out.
+    (() => {
+      const send = globalThis.browser.runtime.sendMessage;
+      globalThis.browser.runtime.sendMessage = async (msg) => {
+        const r = await send(msg);
+        if (msg.type === 'job' && r.value?.job) {
+          r.value.job.poll = quiz
+            ? { kind: 'quiz', imageOptions: false, options: ['Paris', 'Lyon', 'Nice'], correctIndex: 0, explanation: 'Paris is the capital.' }
+            : { kind: 'poll', imageOptions: false, options: ['Tea', 'Coffee', 'Neither'] };
+        }
+        return r;
+      };
+    })();
+  </script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>
