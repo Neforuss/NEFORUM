@@ -35,6 +35,7 @@ class MainActivity : FlutterActivity() {
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neforum/syncfolder")
             .setMethodCallHandler { call, result -> handleSyncFolder(call, result) }
+        VideoCompositor(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     /**
