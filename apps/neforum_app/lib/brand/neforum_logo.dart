@@ -129,6 +129,10 @@ class _MarkPainter extends CustomPainter {
 }
 
 /// Mark + "NEFORUM" wordmark.
+///
+/// The type follows the text size setting; where it no longer fits the width
+/// it is given (the sidebar, a phone's About card), the tagline ends in an
+/// ellipsis instead of running past the edge.
 class NeforumWordmark extends StatelessWidget {
   const NeforumWordmark({super.key, this.size = 30, this.showTagline = false, this.onChrome = false});
 
@@ -146,29 +150,35 @@ class NeforumWordmark extends StatelessWidget {
       children: [
         NeforumMark(size: size),
         SizedBox(width: size * 0.36),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'NEFORUM',
-              style: TextStyle(
-                fontFamily: Fonts.display,
-                fontWeight: FontWeight.w800,
-                fontSize: size * 0.62,
-                letterSpacing: size * 0.035,
-                height: 1,
-                color: onChrome ? nf.onChrome : nf.text,
-              ),
-            ),
-            if (showTagline) ...[
-              SizedBox(height: size * 0.12),
+        Flexible(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                'One message, every platform',
-                style: TextStyle(fontSize: size * 0.34, color: onChrome ? nf.onChromeMuted : nf.textFaint, height: 1, fontWeight: FontWeight.w500),
+                'NEFORUM',
+                softWrap: false,
+                overflow: TextOverflow.fade,
+                style: TextStyle(
+                  fontFamily: Fonts.display,
+                  fontWeight: FontWeight.w800,
+                  fontSize: size * 0.62,
+                  letterSpacing: size * 0.035,
+                  height: 1,
+                  color: onChrome ? nf.onChrome : nf.text,
+                ),
               ),
+              if (showTagline) ...[
+                SizedBox(height: size * 0.12),
+                Text(
+                  'One message, every platform',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: size * 0.34, color: onChrome ? nf.onChromeMuted : nf.textFaint, height: 1, fontWeight: FontWeight.w500),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ],
     );

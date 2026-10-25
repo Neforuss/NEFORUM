@@ -42,11 +42,12 @@ class AccountCard extends ConsumerWidget {
                 if (a.handle != null)
                   Text(a.handle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
                 const SizedBox(height: Space.xs + 2),
-                Row(children: [
-                  Text(d?.name ?? a.platformId, style: context.text.labelMedium?.copyWith(color: nf.textMuted)),
-                  const SizedBox(width: Space.sm),
+                // The badges move to a second line when a long platform name
+                // or a large text size leaves no room beside it.
+                Wrap(spacing: Space.sm, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                  Text(d?.name ?? a.platformId, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelMedium?.copyWith(color: nf.textMuted)),
                   TierBadge(a.tier),
-                  if (!a.enabled) ...[const SizedBox(width: Space.xs), const StatusPill('Off', dense: true)],
+                  if (!a.enabled) const StatusPill('Off', dense: true),
                 ]),
               ]),
             ),
