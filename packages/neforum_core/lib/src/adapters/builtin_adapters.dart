@@ -1,4 +1,9 @@
 import 'adapter_registry.dart';
+import 'art/deviantart_adapter.dart';
+import 'art/dribbble_adapter.dart';
+import 'art/flickr_adapter.dart';
+import 'art/inkbunny_adapter.dart';
+import 'art/pixelfed_adapter.dart';
 import 'blogs_a/ghost_adapter.dart';
 import 'blogs_a/wordpress_adapter.dart';
 import 'blogs_a/writefreely_adapter.dart';
@@ -74,6 +79,12 @@ List<PlatformAdapter> builtinAdapters() => [
       SubstackAdapter(),
       // Business
       GoogleBusinessAdapter(),
+      // Art and portfolios (posting through an API)
+      DeviantArtAdapter(),
+      DribbbleAdapter(),
+      PixelfedAdapter(),
+      FlickrAdapter(),
+      InkbunnyAdapter(),
     ];
 
 /// A registry with every built-in adapter.
