@@ -226,14 +226,14 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
               selected: c == selected,
               label: '$what ${_colorName(c)}',
               child: InkWell(
-                customBorder: const CircleBorder(),
+                customBorder: Radii.circleBorder,
                 onTap: () => onPick(c),
                 child: Container(
                   width: 28,
                   height: 28,
                   decoration: BoxDecoration(
                     color: Color(c),
-                    shape: BoxShape.circle,
+                    shape: Radii.circleShape,
                     border: Border.all(color: c == selected ? nf.accent : nf.borderStrong, width: c == selected ? 3 : 1),
                   ),
                 ),

@@ -172,7 +172,7 @@ class _Thumbs extends StatelessWidget {
                 if (i == shown.length - 1 && extra > 0)
                   Positioned.fill(
                     child: Container(
-                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.55), borderRadius: BorderRadius.circular(56 * 0.14)),
+                      decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.55), borderRadius: Radii.circular(56 * 0.14)),
                       alignment: Alignment.center,
                       child: Text(
                         '+$extra',

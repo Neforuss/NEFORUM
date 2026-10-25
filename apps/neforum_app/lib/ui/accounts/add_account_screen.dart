@@ -214,7 +214,7 @@ class _Success extends ConsumerWidget {
               top: -6,
               child: Container(
                 padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(color: nf.success, shape: BoxShape.circle, border: Border.all(color: nf.surface, width: 3)),
+                decoration: BoxDecoration(color: nf.success, shape: Radii.circleShape, border: Border.all(color: nf.surface, width: 3)),
                 child: const Icon(Icons.check_rounded, size: 16, color: Colors.white),
               ),
             ),

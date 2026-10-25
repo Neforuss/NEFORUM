@@ -77,7 +77,8 @@ class _EditorCardState extends ConsumerState<EditorCard> {
     final previews = ref.watch(composerPreviewsProvider);
     final titleUseful = previews.any((p) => p.descriptor.text.titleSupported);
     final cwUseful = previews.any((p) => p.descriptor.text.supportsContentWarning);
-    final showTitle = _showTitle || (titleUseful && previews.any((p) => p.descriptor.text.titleRequired));
+    // Artwork always has a title: it becomes the work's title on art sites.
+    final showTitle = _showTitle || (titleUseful && (c.isArtwork || previews.any((p) => p.descriptor.text.titleRequired)));
     final pollNetworks = [for (final p in previews) if (p.descriptor.polls != null) p.descriptor];
 
     final card = NfCard(
@@ -695,9 +696,9 @@ class _MetaChip extends StatelessWidget {
     final nf = context.nf;
     return Material(
       color: Color.alphaBlend(tone.withValues(alpha: nf.isDark ? 0.14 : 0.08), nf.surface),
-      shape: StadiumBorder(side: BorderSide(color: tone.withValues(alpha: 0.35))),
+      shape: Radii.stadium.copyWith(side: BorderSide(color: tone.withValues(alpha: 0.35))),
       child: InkWell(
-        customBorder: const StadiumBorder(),
+        customBorder: Radii.stadium,
         onTap: onTap,
         child: Padding(
           padding: const EdgeInsets.only(left: Space.sm, right: 2, top: 2, bottom: 2),

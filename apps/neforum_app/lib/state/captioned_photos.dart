@@ -1,12 +1,16 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
+import 'package:uuid/uuid.dart';
 
 import '../media/caption_overlay.dart';
 import '../media/caption_style.dart';
 import '../media/render_parameters.dart';
 import '../media/text_card.dart';
+import '../platform/media_files.dart';
+import '../platform/video_compositor.dart';
 import 'fitted_photos.dart';
 import 'services.dart';
 import 'settings.dart';
@@ -21,6 +25,14 @@ const String _captionKeyPrefix = 'caption|';
 
 /// A copy of a photo with the caption written on it ([attachCaptionedPhotos]).
 bool isCaptionedCopy(MediaAttachment m) => m.derivedFrom != null && (m.fitKey ?? '').startsWith(_captionKeyPrefix);
+
+/// Whether this device can put a caption block above a video
+/// ([VideoCompositor]).
+final videoCaptionsSupportedProvider = FutureProvider<bool>((ref) => VideoCompositor.instance.isSupported());
+
+/// Shape of the frame a video with a caption block above it is made in:
+/// TikTok and Instagram (Reels and stories) show videos at 9:16.
+double? videoFrameAspect(String platformId) => kCaptionPhotoPlatforms.contains(platformId) ? 9 / 16 : null;
 
 /// Whether [platformId]'s first photo gets the caption: the post's own choice
 /// ([choices]), else the Settings default.
@@ -56,7 +68,10 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     final ids = t.overrides.mediaIds ?? [for (final m in p.media) if (!m.generated) m.id];
     if (ids.isEmpty) continue;
     final first = p.media.where((m) => m.id == ids.first).firstOrNull;
-    if (first == null || first.kind != MediaKind.image || first.isTextCard || first.mimeType == 'image/gif') continue;
+    if (first == null || first.isTextCard || first.mimeType == 'image/gif') continue;
+    // A video gets the caption only as a block above it, made by the video
+    // compositor where this device has one.
+    if (first.isVideo && !block) continue;
     final words = look.wordsFor(captionWords(p, t));
     if (words.isEmpty) continue;
 
@@ -65,6 +80,24 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     if (block) {
       final adapter = s.registry.byId(platform);
       if (adapter != null) frame = fullFrameAspect(platform, resolver.resolve(p, t, adapter.descriptorForAccount(account), account: account));
+    }
+    if (first.isVideo) {
+      frame = videoFrameAspect(platform);
+      if (frame == null) continue;
+      final params = <String, dynamic>{
+        'kind': RenderKind.caption,
+        'platform': platform,
+        'style': look.toJson(),
+        'textHash': stableHash(words),
+        'frameAspect': frame,
+        'video': true,
+      };
+      final key = '$_captionKeyPrefix$platform|${first.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
+      final copy = used[key] ?? pool[key] ?? await _composeCaptionedVideo(s, first, words: words, style: look, platform: platform, frame: frame, key: key, params: params);
+      if (copy == null) continue;
+      used[key] = copy;
+      p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(mediaIds: [copy.id, ...ids.skip(1)])));
+      continue;
     }
     // A frame is made from the photo the user attached: a fitted copy's
     // borders would only be shrunk into it.
@@ -145,7 +178,13 @@ Map<String, bool> captionChoicesOfPost(Post post, String? Function(String accoun
     if (platform == null || !kCaptionPhotoPlatforms.contains(platform)) continue;
     final ids = t.overrides.mediaIds ?? [for (final m in post.media) if (!m.generated) m.id];
     final first = ids.isEmpty ? null : byId[ids.first];
-    if (first == null || first.kind != MediaKind.image || first.isTextCard) continue;
+    if (first == null || first.isTextCard || first.mimeType == 'image/gif') continue;
+    // A video without a caption block may be on a device without a video
+    // compositor, so only a captioned one counts as a choice.
+    if (first.isVideo) {
+      if (isCaptionedCopy(first)) out[platform] = true;
+      continue;
+    }
     out[platform] = (out[platform] ?? false) || isCaptionedCopy(first);
   }
   return out;
@@ -174,6 +213,62 @@ Map<String, dynamic>? captionStyleOfPost(Post post) {
     if (style is Map) return Map<String, dynamic>.from(style);
   }
   return null;
+}
+
+/// A copy of [video] in the network's whole frame of [frame] aspect, with the
+/// caption block above it ([renderCaptionBlockOverlay], [VideoCompositor]);
+/// null when this device cannot compose videos or composing fails, and the
+/// original video then goes out unchanged.
+Future<MediaAttachment?> _composeCaptionedVideo(AppServices s, MediaAttachment video,
+    {required String words,
+    required CaptionStyle style,
+    required String platform,
+    required double frame,
+    required String key,
+    required Map<String, dynamic> params}) async {
+  final compositor = VideoCompositor.instance;
+  if (!await compositor.isSupported()) return null;
+  final id = const Uuid().v7();
+  final out = newMediaFilePath(s.storage.dataDir, id, 'mp4');
+  if (out == null) return null;
+  final made = MediaAttachment(id: id, path: out, mimeType: 'video/mp4', sizeBytes: 0);
+  try {
+    final overlay = await renderCaptionBlockOverlay(text: words, style: style, platformId: platform, frameAspect: frame);
+    await compositor.compose(
+      inputPath: video.path,
+      outputPath: out,
+      overlayPng: overlay.png,
+      frameWidth: overlay.frameWidth,
+      frameHeight: overlay.frameHeight,
+      contentRect: overlay.contentRect,
+      backgroundArgb: overlay.backgroundArgb,
+    );
+    return MediaAttachment(
+      id: id,
+      path: out,
+      mimeType: 'video/mp4',
+      sizeBytes: await mediaFileLength(out),
+      width: overlay.frameWidth,
+      height: overlay.frameHeight,
+      durationMs: video.durationMs,
+      altText: video.altText,
+      fileName: _captionedVideoName(video),
+      generated: true,
+      derivedFrom: video.id,
+      fitKey: key,
+      renderParameters: params,
+    );
+  } on Object catch (e) {
+    debugPrint('Could not put the caption above ${video.fileName ?? video.id}: $e');
+    await s.media.discard(made);
+    return null;
+  }
+}
+
+String _captionedVideoName(MediaAttachment m) {
+  final name = m.fileName ?? m.id;
+  final dot = name.lastIndexOf('.');
+  return '${dot > 0 ? name.substring(0, dot) : name} (captioned).mp4';
 }
 
 String _captionedName(MediaAttachment m) {

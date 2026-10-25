@@ -1,6 +1,6 @@
 # Mastodon setup guide
 
-This guide connects your account on Mastodon or a compatible server, so NEFORUM posts there for you. The `mastodon` connector works with every server that speaks the Mastodon client API: **Mastodon** (including forks such as glitch-soc and Hometown), **Pleroma**, **Akkoma**, **GoToSocial**, **Friendica**, **Pixelfed**, **Mitra** and **Iceshrimp.NET**.
+This guide connects your account on Mastodon or a compatible server, so NEFORUM posts there for you. The `mastodon` connector works with every server that speaks the Mastodon client API: **Mastodon** (including forks such as glitch-soc and Hometown), **Pleroma**, **Akkoma**, **GoToSocial**, **Friendica**, **Pixelfed**, **Mitra** and **Iceshrimp.NET**. For artwork, Pixelfed also has its own entry under Art and portfolios ([Pixelfed setup guide](pixelfed.md)), which posts only artwork posts there.
 
 ## Steps
 

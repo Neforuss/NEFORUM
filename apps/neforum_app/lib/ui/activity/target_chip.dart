@@ -42,9 +42,9 @@ class TargetChip extends ConsumerWidget {
       message: tip,
       child: Material(
         color: nf.surface,
-        shape: StadiumBorder(side: BorderSide(color: target.status == TargetStatus.failed ? nf.danger.withValues(alpha: 0.5) : nf.border)),
+        shape: Radii.stadium.copyWith(side: BorderSide(color: target.status == TargetStatus.failed ? nf.danger.withValues(alpha: 0.5) : nf.border)),
         child: InkWell(
-          customBorder: const StadiumBorder(),
+          customBorder: Radii.stadium,
           onTap: !tappable
               ? null
               : () async {

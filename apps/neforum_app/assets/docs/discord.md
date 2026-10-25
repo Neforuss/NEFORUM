@@ -17,7 +17,7 @@ This guide connects one Discord channel to NEFORUM through an incoming webhook. 
 8. If the webhook belongs to a forum or media channel, turn on **Forum or media channel**.
    - Each post then starts a new forum post, named after the post title (or its first line).
 9. Click **Connect**.
-10. Optional: to post without notifying everyone, turn off @everyone for Discord under **Settings > Posting**.
+10. Optional: to post without notifying everyone, turn off **Mention @everyone on Discord** under **Settings > Posting**.
     - To change it for one post only, open **Customize** for the Discord target and switch **Mention @everyone**.
 
 ## How it works
@@ -38,7 +38,7 @@ Treat the webhook URL like a password: anyone who has it can post in the channel
 
 ## What gets posted
 
-- **@everyone** (on by default): the first message of each post starts with `@everyone` on its own line, so everyone in the channel is notified. If your text already contains @everyone or @here, NEFORUM does not add another one. Turn it off under **Settings > Posting**, or for one post with **Mention @everyone** in **Customize**.
+- **@everyone** (on by default): the first message of each post starts with `@everyone` on its own line, so everyone in the channel is notified. If your text already contains @everyone or @here, NEFORUM does not add another one. Turn it off with **Mention @everyone on Discord** under **Settings > Posting**, or for one post with **Mention @everyone** in **Customize**.
 - **Other mentions don't ping.** Role and user mentions in cross-posted text show as text but don't ping anyone. The later messages of a long post never ping, and with @everyone turned off, `@everyone` and `@here` in your text show as text only.
 - **Text** uses Discord's own Markdown (`**bold**`, `*italic*`, `` `code` ``, `> quote`) and is sent as written. Posts longer than 2000 characters are sent as several messages in a row. If Discord asks NEFORUM to wait up to 10 seconds between them, NEFORUM waits and carries on. If a later message still fails, the earlier ones stay posted and NEFORUM does **not** retry on its own (that would post them twice); the error lists what is already live.
 - **Media**: up to 10 images/videos per message, uploaded together with the text. Alt text is sent as the attachment description (max 1024 characters). Media marked **sensitive** is sent as a spoiler.

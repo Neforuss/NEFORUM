@@ -92,7 +92,7 @@ class PublishProgressSheet extends ConsumerWidget {
         height: 64,
         decoration: BoxDecoration(
           color: error != null ? nf.dangerSoft : (problem ? nf.warningSoft : (onlyCancelled ? nf.surfaceSunken : nf.successSoft)),
-          shape: BoxShape.circle,
+          shape: Radii.circleShape,
         ),
         child: Icon(
           error != null ? Icons.error_outline_rounded : (problem ? Icons.priority_high_rounded : (onlyCancelled ? Icons.block_rounded : Icons.check_rounded)),

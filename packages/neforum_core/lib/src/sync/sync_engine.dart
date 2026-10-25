@@ -389,7 +389,7 @@ class SyncEngine implements SecretsCoordinator {
 
   static int _statusRank(Object? postJson) => switch (postJson is Map ? postJson['status'] : null) {
         'published' => 3,
-        'partial' || 'failed' => 2,
+        'partial' || 'failed' || 'cancelled' => 2,
         'publishing' => 1,
         _ => 0,
       };

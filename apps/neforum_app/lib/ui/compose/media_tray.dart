@@ -209,7 +209,7 @@ class _RoundIcon extends StatelessWidget {
             child: Container(
               width: 24,
               height: 24,
-              decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.62), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.62), shape: Radii.circleShape),
               child: Icon(icon, size: 15, color: Colors.white),
             ),
           ),
@@ -268,7 +268,7 @@ class _AddTile extends StatelessWidget {
             height: size,
             child: NfWell(
               dashed: true,
-              radius: BorderRadius.circular(size * 0.14),
+              radius: Radii.circular(size * 0.14),
               padding: EdgeInsets.zero,
               child: Center(
                 child: Column(mainAxisSize: MainAxisSize.min, children: [

@@ -738,7 +738,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                             bottom: 3,
                             child: Material(
                               color: copied ? nf.success : Colors.black.withValues(alpha: 0.62),
-                              shape: const CircleBorder(),
+                              shape: Radii.circleBorder,
                               child: IconButton(
                                 tooltip: _photos.length == 1 ? 'Copy photo' : 'Copy photo $n',
                                 iconSize: 15,
@@ -870,7 +870,7 @@ class _Step extends StatelessWidget {
             width: 24,
             height: 24,
             alignment: Alignment.center,
-            decoration: BoxDecoration(color: nf.accentSoft, shape: BoxShape.circle),
+            decoration: BoxDecoration(color: nf.accentSoft, shape: Radii.circleShape),
             child: Text(
               '$index',
               style: monoStyle(context, size: 12, color: nf.accent, weight: FontWeight.w700),

@@ -11,7 +11,7 @@ A free and open-source cross-poster for Android, iPhone and iPad, macOS and Wind
   <img src="docs/screenshots/compose-dark.png" alt="The NEFORUM composer: one post, live previews for every network" width="900">
 </p>
 
-Write a post once. NEFORUM adapts it for each network (character limits, threads, hashtags, links, media rules), shows you a live preview of every version, and publishes it everywhere at once or on a schedule. Paste screenshots and copied photos straight into the composer (Ctrl+V, or ⌘V on a Mac), zoom everything in or out like a web page on a computer (Ctrl + and Ctrl −, ⌘ on a Mac, or Ctrl + mouse wheel), and the post you are writing is kept when you close NEFORUM, until you publish or schedule it. Using several devices? **Sync** keeps accounts, keys, posts and settings the same everywhere through one encrypted file in storage you already have (OneDrive, Google Drive, Dropbox, iCloud Drive, Syncthing, Nextcloud and other WebDAV servers, S3 buckets), the way KeePassXC shares a database. Moving to a new phone or computer instead? **Move to another device** carries every account and its keys there in one encrypted file, no cloud involved.
+Write a post once. NEFORUM adapts it for each network (character limits, threads, hashtags, links, media rules), shows you a live preview of every version, and publishes it everywhere at once or on a schedule. Paste screenshots and copied photos straight into the composer (Ctrl+V, or ⌘V on a Mac), zoom everything in or out like a web page on a computer (Ctrl + and Ctrl −, ⌘ on a Mac, or Ctrl + mouse wheel), and the post you are writing is kept when you close NEFORUM, until you publish or schedule it. Write a thread part by part with **+ Add to thread**, clear a part or the whole post with its **X** (with Undo), and cancel a post while it is being published. Once every network has a post, NEFORUM deletes it with its photos by default (Settings → Activity and history), so nothing you published stays on your device. Using several devices? **Sync** keeps accounts, keys, posts and settings the same everywhere through one encrypted file in storage you already have (OneDrive, Google Drive, Dropbox, iCloud Drive, Syncthing, Nextcloud and other WebDAV servers, S3 buckets), the way KeePassXC shares a database. Moving to a new phone or computer instead? **Move to another device** carries every account and its keys there in one encrypted file, no cloud involved.
 
 It does what Buffer, Publer, Metricool, Later or Typefully do for posting, with three differences:
 
@@ -25,15 +25,15 @@ Every connected account uses one of these. You can connect the same platform mor
 
 | | How it works | Good for |
 |---|---|---|
-| **Auto** | Posts automatically through the platform's open API. No developer keys, no fees, no review. | Mastodon and the fediverse, Bluesky, Nostr, Misskey, Lemmy, Matrix, Telegram, Discord, WordPress, Ghost, DEV, Micropub |
-| **Your keys** | Posts automatically through the official API, using a developer app you create once. NEFORUM tracks the platform's quota and warns you before you hit it. | X, Threads, LinkedIn, YouTube, Reddit, Pinterest, Tumblr, Facebook Pages, Instagram professional accounts, TikTok, Hashnode |
-| **Hand-off** | NEFORUM prepares everything: caption on the clipboard, photos in the share sheet, the composer opened with your text. You tap Post. | Any personal account anywhere: Instagram, TikTok, Facebook profiles, YouTube Posts, Snapchat, WhatsApp, Google Business Profile, Substack Notes, and every platform above when you'd rather not set up keys |
+| **Auto** | Posts automatically through the platform's open API. No developer keys, no fees, no review. | Mastodon and the fediverse, Pixelfed, Bluesky, Nostr, Misskey, Lemmy, Matrix, Telegram, Discord, WordPress, Ghost, DEV, Micropub, Inkbunny |
+| **Your keys** | Posts automatically through the official API, using a developer app you create once. NEFORUM tracks the platform's quota and warns you before you hit it. | X, Threads, LinkedIn, YouTube, Reddit, Pinterest, Tumblr, Facebook Pages, Instagram professional accounts, TikTok, Hashnode, DeviantArt, Dribbble, Flickr |
+| **Hand-off** | NEFORUM prepares everything: caption on the clipboard, photos in the share sheet, the composer opened with your text. You tap Post. | Any personal account anywhere: Instagram, TikTok, Facebook profiles, YouTube Posts, Snapchat, WhatsApp, Google Business Profile, Substack Notes, the art sites without an API (Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol, 500px), and every platform above when you'd rather not set up keys |
 
 If an API account runs out of quota (for example X's monthly cap), NEFORUM can fall back to hand-off for that post instead of failing.
 
-On a computer a hand-off is click here, paste there: NEFORUM opens the right page (a prefilled composer where the network has one, your channel's Posts tab on YouTube, the photo upload on TikTok), with your text already copied. Each photo has a **Copy photo** button, so you add it with Ctrl+V (⌘V on a Mac) wherever the composer takes pasted pictures, and **Copy next** hands out the text, any poll answers and each photo in turn. Websites don't let other apps type into them or drop files on them, so the paste itself stays yours, unless you add the browser extension.
+On a computer a hand-off is click here, paste there: NEFORUM opens the right page (a prefilled composer where the network has one, your channel's Posts tab on YouTube, the photo upload on TikTok), with your text already copied. Each photo has a **Copy photo** button, so you add it with Ctrl+V (⌘V on a Mac) wherever the composer takes pasted pictures, and **Copy next** hands out the text, any poll answers and each photo in turn. Websites don't let other apps type into them or drop files on them, so the paste itself stays yours, unless you add the browser extension. On a phone, after you paste one part in the other app and come back to NEFORUM, the next part is already copied for you; on Android, **Share** opens the network's own app directly.
 
-**NEFORUM browser extension (Chrome and Firefox).** Pair it once in Settings → Browser extension, and **Open** in a hand-off fills in the post on the platform's page: text, poll answers, photos and videos, on YouTube Posts, TikTok Studio, Instagram, Substack, Facebook, X, Bluesky, Threads, LinkedIn, Pinterest and more. You check it and press Post. It talks only to NEFORUM on your computer. See [docs/browser-extension.md](docs/browser-extension.md).
+**NEFORUM browser extension (Chrome and Firefox).** Pair it once in Settings → Browser extension, and **Open** in a hand-off fills in the post on the platform's page: text, poll answers, photos and videos, on YouTube Posts (polls and quizzes included), TikTok Studio, Instagram, Substack, Facebook, X, Bluesky, Threads, LinkedIn, Pinterest, the art sites and more, thread parts included. You check it and press Post. Or turn on **Post automatically** in Settings → Browser extension: the extension then presses Post itself after a three-second countdown you can stop, also for scheduled posts while NEFORUM runs on your computer. It stays off for X, LinkedIn and Snapchat unless you include them, because their terms forbid scripted posting, and sites that need your own choice (a Reddit community, a WhatsApp recipient, a Behance cover) are filled in for you to finish. It talks only to NEFORUM on your computer. See [docs/browser-extension.md](docs/browser-extension.md).
 
 ### Text cards for photo-only networks
 
@@ -51,7 +51,7 @@ Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks h
 
 **Fill the whole frame** (on by default for TikTok and Instagram): photos are fitted to the frame those apps show them in, TikTok 9:16 and Instagram 4:5 (stories 9:16), so nothing is cut off. The preview shows exactly what each network gets.
 
-**Caption on photo** (Instagram and TikTok, off by default): the caption is written on the first photo in the network's own font (TikTok Sans, bundled; Instagram Sans when installed), on a dark label placed clear of the app's buttons. The caption editor (tap the pill under the preview, or Settings → Text cards for the default) changes the words on the photo, puts them at the top, middle or bottom, or in a **block above the photo** (the network's whole frame with the photo scaled to fit below), and sets the size, colours, background, alignment and font, with a live preview. Videos are left as they are.
+**Caption on photo** (Instagram and TikTok, off by default): the caption is written on the first photo in the network's own font (TikTok Sans, bundled; Instagram Sans when installed), on a dark label placed clear of the app's buttons. The caption editor (tap the pill under the preview, or Settings → Text cards for the default) changes the words on the photo, puts them at the top, middle or bottom, or in a **block above the photo** (the network's whole frame with the photo scaled to fit below), and sets the size, colours, background, alignment and font, with a live preview. A video gets the caption in a block above it: NEFORUM makes a copy of the video in the network's 9:16 frame on your device (Windows, macOS, Android, iPhone and iPad), keeping its sound; the original goes out unchanged where that is not possible.
 
 <p align="center">
   <img src="docs/screenshots/differentiation-dark.png" alt="DIFFERENTIATION: one version per network, side by side" width="900">
@@ -60,6 +60,10 @@ Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks h
 ### Polls and quizzes
 
 The **Poll** button adds a text poll, an image poll or a quiz for networks that have them (YouTube Posts today). The post text is the question; other networks get the post without the poll. In the hand-off every answer has its own copy button.
+
+### Artwork for art sites
+
+Turn on **Artwork** under Post to, and the post goes only to your art sites (DeviantArt, ArtStation, Behance, pixiv and the others below): the post's title and tags become the work's title and tags, and its text the description. Set the rating (general, mature or adult), mark work made with AI, and ask the sites not to train AI on it where they offer that. Art sites never receive text cards, and ordinary posts leave them out.
 
 <p align="center">
   <img src="docs/screenshots/text-card-dark.jpg" alt="A NEFORUM text card, white on black" width="260">
@@ -77,7 +81,7 @@ The **Poll** button adds a text poll, an image poll or a quiz for networks that 
 
 ## Supported platforms
 
-32 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
+48 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
 
 - **Open networks:** Mastodon and compatible servers (Pleroma, Akkoma, GoToSocial, Friendica, Pixelfed, Mitra), Bluesky, Misskey / Sharkey / Firefish / Iceshrimp, Nostr, Lemmy, Matrix
 - **Big platforms:** X, Threads, Facebook, LinkedIn, Reddit, Tumblr
@@ -86,6 +90,7 @@ The **Poll** button adds a text poll, an image poll or a quiz for networks that 
 - **Messaging:** Telegram channels and groups, Discord (webhooks), WhatsApp
 - **Blogs and newsletters:** WordPress, Ghost, WriteFreely / Write.as, Micropub (IndieWeb, Micro.blog), DEV, Hashnode, Substack Notes
 - **Business:** Google Business Profile
+- **Art and portfolios:** DeviantArt, Dribbble, Pixelfed, Flickr and Inkbunny automatically; Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol and 500px by hand-off
 
 ### Honest limits (as of October 2026)
 
@@ -97,7 +102,7 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **Connecting Meta (Facebook Pages, Instagram, Threads):** paste a token from Meta's own tools (Graph API Explorer, Instagram's **Generate token**, the Threads User Token Generator), so no redirect address has to be registered. NEFORUM turns it into a long-lived token and renews it. The setup guides follow Meta's documentation and its App Dashboard as of October 2026, step by step. Publishing your Meta app needs a privacy policy URL: enter NEFORUM's or publish your own from a template ([docs/meta-privacy-policy.md](docs/meta-privacy-policy.md)).
 - **Tumblr without API keys:** text, link, quote and chat posts open Tumblr's share tool prefilled. Photo posts open prefilled too on a computer when you have set up a media host; otherwise NEFORUM opens a new photo post and saves the photos to Downloads to drag in. With the browser extension, Tumblr's full editor opens and is filled in, files included. Quote, chat and audio posts are a per-post choice.
 - **TikTok:** apps TikTok has not audited can only post privately. Hand-off posts publicly from the TikTok app.
-- **YouTube Posts** (the text and image posts on a channel's Posts tab) have no API at all, so they always use hand-off. Your channel needs YouTube's advanced features turned on.
+- **YouTube Posts** (the text and image posts on a channel's Posts tab) have no API at all, so they use hand-off. On a computer, the browser extension can post them for you when you turn on automatic posting. Your channel needs YouTube's advanced features turned on.
 - **YouTube:** uploads from apps that have not passed Google's verification may be locked to private. Google's own pages disagree on whether that still applies, and NEFORUM cannot detect it. Hand-off always posts publicly.
 - **Micropub (IndieAuth):** sign-in works on Windows and macOS. On phones, servers that check the app's client page can refuse it until the project publishes that page.
 - **Hand-off** always needs one tap from you in the other app, so it cannot run unattended.

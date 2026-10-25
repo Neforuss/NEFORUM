@@ -6,28 +6,43 @@ NEFORUM reaches every platform in one of three ways. Each account you connect us
 - **Your keys** (official API with your own developer app): posts automatically within the platform's quota. You create a free (or, for X, pay-per-use) developer app once.
 - **Hand-off**: NEFORUM prepares the post, copies the text and opens the platform's app or website; you tap Post. Works with any personal account, even where the API is closed to normal users.
 
-Generated from the code on 2026-10-17.
+Generated from the code on 2026-10-25.
 
 | Platform | Ways to post | Personal account OK | Text limit | Media | Quotas tracked | Server-side scheduling | Setup guide |
 |---|---|---|---|---|---|---|---|
+| 500px | Hand-off | Yes | No limit | 30 images (required) | - | - | [fivehundredpx.md](platforms/fivehundredpx.md) |
+| Artfol | Hand-off | Yes | No limit | 100 images (required) | - | - | [artfol.md](platforms/artfol.md) |
+| ArtStation | Hand-off | Yes | No limit | 100 images or 100 videos (required) | - | - | [artstation.md](platforms/artstation.md) |
+| Behance | Hand-off | Yes | No limit | 100 images or 100 videos (required) | - | - | [behance.md](platforms/behance.md) |
 | BitChute | Hand-off | Yes | 3000 characters | 1 video (required) | - | - | [bitchute.md](platforms/bitchute.md) |
 | Bluesky | Auto, Hand-off | Yes | 300 characters, threads | 4 images or 1 video | 1666/1 h, 11666/day | - | [bluesky.md](platforms/bluesky.md) |
+| Cara | Hand-off | Yes | 1200 characters | 10 images (required) | - | - | [cara.md](platforms/cara.md) |
 | DEV Community | Auto, Hand-off | Yes | 819200 bytes | 10 images, needs media host for API | 10/30 s | - | [devto.md](platforms/devto.md) |
+| DeviantArt | Your keys, Hand-off | Yes | No limit | 1 image (required) | - | - | [deviantart.md](platforms/deviantart.md) |
 | Discord | Auto | Yes | 2000 characters, threads | 10 images or 10 videos | 30/1 min | - | [discord.md](platforms/discord.md) |
+| Dribbble | Your keys, Hand-off | Yes | No limit | 10 images or 1 video (required) | 1440/day | - | [dribbble.md](platforms/dribbble.md) |
 | Facebook | Your keys, Hand-off | Hand-off only | 63206 characters | 10 images or 1 video | 4800/day | Yes | [facebook.md](platforms/facebook.md) |
+| Flickr | Your keys, Hand-off | Yes | No limit | 10 images or 1 video (required) | - | - | [flickr.md](platforms/flickr.md) |
+| Fur Affinity | Hand-off | Yes | No limit | 1 image (required) | - | - | [furaffinity.md](platforms/furaffinity.md) |
 | Ghost | Auto, Hand-off | Yes | No limit | 20 images | - | Yes | [ghost.md](platforms/ghost.md) |
 | Google Business Profile | Hand-off | Hand-off only | 1500 characters | 1 image or 1 video | - | - | [google_business.md](platforms/google_business.md) |
 | Hashnode | Your keys, Hand-off | Yes | No limit | 10 images | 500/1 min | - | [hashnode.md](platforms/hashnode.md) |
+| Inkbunny | Auto, Hand-off | Yes | No limit | 20 images or 1 video (required) | - | - | [inkbunny.md](platforms/inkbunny.md) |
 | Instagram | Your keys, Hand-off | Hand-off only | 2200 characters | 10 images or 10 videos (required), needs media host for API | 100/day | - | [instagram.md](platforms/instagram.md) |
+| Itaku | Hand-off | Yes | 5000 characters | 100 images or 1 video (required) | - | - | [itaku.md](platforms/itaku.md) |
+| Ko-fi | Hand-off | Yes | No limit | 8 images (required) | - | - | [kofi.md](platforms/kofi.md) |
 | Lemmy | Auto, Hand-off | Yes | 50000 characters | 1 image or 1 video | 6/10 min | - | [lemmy.md](platforms/lemmy.md) |
 | LinkedIn | Your keys, Hand-off | Yes | 3000 characters | 20 images or 1 video | 150/day | - | [linkedin.md](platforms/linkedin.md) |
 | Mastodon | Auto, Hand-off | Yes | 500 characters (links = 23), threads | 4 images or 1 video | 300/5 min, 1000/day | Yes | [mastodon.md](platforms/mastodon.md) |
 | Matrix | Auto | Yes | No limit | 10 images or 10 videos | 12/1 min | - | [matrix.md](platforms/matrix.md) |
 | Micropub (IndieWeb / Micro.blog) | Auto | Yes | No limit | 10 images or 1 video | - | - | [micropub.md](platforms/micropub.md) |
 | Misskey | Auto, Hand-off | Yes | 3000 characters, threads | 16 images or 16 videos | 300/1 h | - | [misskey.md](platforms/misskey.md) |
+| Newgrounds | Hand-off | Yes | No limit | 100 images (required) | - | - | [newgrounds.md](platforms/newgrounds.md) |
 | Nostr | Auto, Hand-off | Yes | No limit | 20 images or 20 videos | - | - | [nostr.md](platforms/nostr.md) |
 | Odysee | Auto, Hand-off | Yes | 5000 characters | 1 image or 1 video (required) | - | - | [odysee.md](platforms/odysee.md) |
 | Pinterest | Your keys, Hand-off | Hand-off only | 800 characters | 5 images or 1 video (required) | 300/day, 1000/day | - | [pinterest.md](platforms/pinterest.md) |
+| Pixelfed | Auto, Hand-off | Yes | 500 characters | 4 images (required) | 1000/day | - | [pixelfed.md](platforms/pixelfed.md) |
+| pixiv | Hand-off | Yes | No limit | 100 images (required) | - | - | [pixiv.md](platforms/pixiv.md) |
 | Reddit | Your keys, Hand-off | Yes | 40000 characters | 20 images or 1 video | 100/1 min | - | [reddit.md](platforms/reddit.md) |
 | Rumble | Hand-off | Yes | 5000 characters | 1 video (required) | - | - | [rumble.md](platforms/rumble.md) |
 | Snapchat | Hand-off | Yes | 250 characters | 1 image or 1 video (required) | - | - | [snapchat.md](platforms/snapchat.md) |
@@ -36,6 +51,7 @@ Generated from the code on 2026-10-17.
 | Threads | Your keys, Hand-off | Yes | 500 characters, threads | 20 images or 20 videos, needs media host for API | 250/day | - | [threads.md](platforms/threads.md) |
 | TikTok | Your keys, Hand-off | Yes | 2200 characters | 35 images or 1 video (required) | 15/day, 6/1 min | - | [tiktok.md](platforms/tiktok.md) |
 | Tumblr | Your keys, Hand-off | Yes | 524288 characters | 30 images or 1 video | 250/day | Yes | [tumblr.md](platforms/tumblr.md) |
+| Weasyl | Hand-off | Yes | No limit | 1 image (required) | - | - | [weasyl.md](platforms/weasyl.md) |
 | WhatsApp | Hand-off | Yes | No limit | 100 images or 100 videos | - | - | [whatsapp.md](platforms/whatsapp.md) |
 | WordPress | Auto, Hand-off | Yes | No limit | 20 images or 5 videos | - | Yes | [wordpress.md](platforms/wordpress.md) |
 | Write.as / WriteFreely | Auto, Hand-off | Yes | No limit | 20 images, needs media host for API | - | - | [writefreely.md](platforms/writefreely.md) |
@@ -44,6 +60,26 @@ Generated from the code on 2026-10-17.
 | YouTube Posts | Hand-off | Yes | No limit | 10 images | - | - | [youtube_posts.md](platforms/youtube_posts.md) |
 
 ## Cost and account notes
+
+### 500px
+
+- **Account:** Any 500px account, with the 500px app on your phone or a browser. NEFORUM never signs in to 500px.
+- **Cost and limits:** Free. 500px closed its API in 2018, so NEFORUM hands your photos to the 500px app (or opens 500px.com) and you publish.
+
+### Artfol
+
+- **Account:** Any Artfol account, with the Artfol app on your phone or a browser. NEFORUM never signs in to Artfol.
+- **Cost and limits:** Free. Artfol has no API, so NEFORUM hands your images to the Artfol app (or opens artfol.app) and you post.
+
+### ArtStation
+
+- **Account:** Any ArtStation account. NEFORUM never signs in to ArtStation; you publish the project on artstation.com.
+- **Cost and limits:** Free. ArtStation has no public API, so NEFORUM prepares the project and you publish it on artstation.com.
+
+### Behance
+
+- **Account:** Any Behance (Adobe) account. NEFORUM never signs in to Behance; you publish the project on behance.net.
+- **Cost and limits:** Free. Behance no longer issues API keys and never offered a way to publish projects through one, so NEFORUM prepares the project and you publish it on behance.net.
 
 ### BitChute
 
@@ -55,20 +91,45 @@ Generated from the code on 2026-10-17.
 - **Account:** Any free Bluesky account, including ones on a self-hosted AT Protocol server. You only need to create an app password in Bluesky settings; no developer account or app review.
 - **Cost and limits:** Free with no paid tiers. Bluesky only caps how fast you post (about 1,600 posts an hour) and how many videos you upload per day.
 
+### Cara
+
+- **Account:** Any Cara account, with the Cara app on your phone or a browser. NEFORUM never signs in to Cara.
+- **Cost and limits:** Free. Cara has no API, so NEFORUM hands your images to the Cara app (or opens cara.app) and you post.
+
 ### DEV Community
 
 - **Account:** Any DEV (or other Forem) account. You create a personal API key in your settings; no developer registration or review.
 - **Cost and limits:** Free. DEV allows about 10 new articles per 30 seconds (brand-new accounts only about one per 5 minutes) and one write request per second.
+
+### DeviantArt
+
+- **Account:** Any DeviantArt account with a verified email address, plus your own free DeviantArt app (registered in a minute, no review).
+- **Cost and limits:** Free. DeviantArt has no fixed quota; it slows down apps that send too many requests.
 
 ### Discord
 
 - **Account:** You need the "Manage Webhooks" permission in the Discord server. One webhook posts into one channel; no bot or developer account is needed.
 - **Cost and limits:** Free. Discord limits how fast a webhook may post (it tells NEFORUM how long to wait) and how big files may be (20 MiB each unless the server is boosted).
 
+### Dribbble
+
+- **Account:** Any Dribbble account for the hand-off. Posting through the API needs your own Dribbble app and an account that may upload shots (an approved Designer account or a team).
+- **Cost and limits:** Free. The API allows 60 requests a minute and 1,440 a day, and Dribbble reviews every shot.
+
 ### Facebook
 
 - **Account:** Automatic posting works only for Facebook Pages you manage, through a free Meta developer app you create yourself; personal profiles and groups cannot be posted to by any app. For a personal profile, use hand-off: NEFORUM copies your text and opens Facebook so you can paste and post.
 - **Cost and limits:** The Graph API is free. Meta allows about 4,800 calls per day multiplied by the number of people who engaged with your Page, which is plenty for normal posting; new Pages with no engagement get much less.
+
+### Flickr
+
+- **Account:** Any Flickr account for the hand-off. Posting through the API needs your own Flickr API key, which only Flickr Pro members can request and Flickr reviews.
+- **Cost and limits:** The API itself is free, but an API key needs a Flickr Pro membership. Free accounts keep at most 1,000 photos and videos.
+
+### Fur Affinity
+
+- **Account:** Any Fur Affinity account. NEFORUM never signs in to Fur Affinity; you submit on furaffinity.net.
+- **Cost and limits:** Free. Fur Affinity has no API, so NEFORUM prepares the submission and you finish it on furaffinity.net.
 
 ### Ghost
 
@@ -85,10 +146,25 @@ Generated from the code on 2026-10-17.
 - **Account:** A Hashnode account with a blog. API posting only works when that blog is on the paid Hashnode Pro plan; the hand-off option works on any plan.
 - **Cost and limits:** Since May 2026 Hashnode only answers API calls for blogs on Hashnode Pro (paid per seat). Within Pro the limits are generous (500 write calls a minute).
 
+### Inkbunny
+
+- **Account:** Any Inkbunny account with "Enable API Access" ticked in its account settings. NEFORUM signs in once and keeps only the session, never your password.
+- **Cost and limits:** Free. Inkbunny limits how many submissions an account makes per hour.
+
 ### Instagram
 
 - **Account:** Hand-off works with any Instagram account, including personal ones: NEFORUM copies the caption and hands the photo or video to the Instagram app. Automatic posting needs a professional (Business or Creator) account and your own free Meta developer app; personal accounts cannot use the API.
 - **Cost and limits:** The Instagram API is free. Meta's docs give each account 100 API posts per rolling 24 hours in one place and 50 in two others; NEFORUM counts up to 100 and treats Instagram's own limit error as a quota problem. Photos must be put on a public media host you configure because Instagram downloads them from a link.
+
+### Itaku
+
+- **Account:** Any Itaku account. NEFORUM never signs in to Itaku; you submit on itaku.ee.
+- **Cost and limits:** Free. Itaku has no public API, so NEFORUM prepares the upload and you submit it on itaku.ee.
+
+### Ko-fi
+
+- **Account:** Any Ko-fi creator page. NEFORUM never signs in to Ko-fi; you publish on ko-fi.com.
+- **Cost and limits:** Free. Ko-fi's API only reports payments, so NEFORUM prepares the image post and you publish it on ko-fi.com.
 
 ### Lemmy
 
@@ -120,6 +196,11 @@ Generated from the code on 2026-10-17.
 - **Account:** Any ordinary account on a Misskey, Sharkey, CherryPick, Firefish or Iceshrimp-JS server. No developer account or app review is needed.
 - **Cost and limits:** Free. Your server allows about 300 notes and 120 file uploads per hour, and sets its own file-size and storage limits.
 
+### Newgrounds
+
+- **Account:** Any Newgrounds account. NEFORUM never signs in to Newgrounds; you publish on newgrounds.com.
+- **Cost and limits:** Free. Newgrounds has no API for art, so NEFORUM prepares the project and you publish it on newgrounds.com.
+
 ### Nostr
 
 - **Account:** Just a Nostr key pair (your nsec private key). No email, phone number, sign-up or app review is needed, and any Nostr app can create a key for you.
@@ -134,6 +215,16 @@ Generated from the code on 2026-10-17.
 
 - **Account:** Automatic posting needs a Pinterest business account (converting a personal account is free and keeps your profile) and your own Pinterest developer app, which Pinterest must approve before it works. Until Pinterest also grants the app Standard access, Pins it creates are only visible to you.
 - **Cost and limits:** Free. With Trial access Pinterest allows about 300 new Pins and 1000 API calls per day, and the Pins stay private to you; Standard access (after a video review by Pinterest) makes them public.
+
+### Pixelfed
+
+- **Account:** Any account on a Pixelfed server. You only type your server address and approve NEFORUM in the browser.
+- **Cost and limits:** Free on every server, with no developer account or app review.
+
+### pixiv
+
+- **Account:** Any pixiv account, with the pixiv app on your phone or a browser. NEFORUM never signs in to pixiv.
+- **Cost and limits:** Free. pixiv has no public API, so NEFORUM prepares the upload and you post it on pixiv.net or in the pixiv app.
 
 ### Reddit
 
@@ -174,6 +265,11 @@ Generated from the code on 2026-10-17.
 
 - **Account:** Any normal Tumblr account works. For automatic posting you register your own free Tumblr app at tumblr.com/oauth/apps, which takes a minute and needs no review.
 - **Cost and limits:** Free. Tumblr allows 250 posts a day per user, and your own app gets 1,000 API calls an hour and 5,000 a day, far more than NEFORUM needs.
+
+### Weasyl
+
+- **Account:** Any Weasyl account. NEFORUM never signs in to Weasyl; you submit on weasyl.com.
+- **Cost and limits:** Free. Weasyl's API cannot upload, so NEFORUM prepares the submission and you finish it on weasyl.com.
 
 ### WhatsApp
 

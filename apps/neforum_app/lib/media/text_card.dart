@@ -131,6 +131,8 @@ EdgeInsets textCardSafeArea(String platformId) {
 /// only photo is the card's background ([backgroundMediaId], one of the post's
 /// own photos) qualifies too: the card takes the photo's place.
 bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgroundMediaId}) {
+  // Art sites receive the artist's own images only, never a card of words.
+  if (d.isArtPlatform) return false;
   final m = d.media;
   final noMedia = v.media.isEmpty || (backgroundMediaId != null && v.media.length == 1 && v.media.single.id == backgroundMediaId);
   return m.requiresMedia && m.maxImages > 0 && m.imageMimeTypes.contains('image/jpeg') && noMedia && v.text.trim().isNotEmpty;

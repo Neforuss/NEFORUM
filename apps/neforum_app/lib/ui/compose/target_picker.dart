@@ -98,14 +98,18 @@ class TargetPicker extends ConsumerWidget {
     // The quick choices never mix art sites with the others.
     final choosable = shown.where((a) => a.enabled && (artworkMode || !art.contains(a.id)));
     final auto = choosable.where((a) => a.tier != PlatformTier.handoff).map((a) => a.id);
-    final header = Row(children: [
-      Text('Post to', style: context.text.titleSmall?.copyWith(color: nf.textMuted)),
-      const SizedBox(width: Space.sm),
-      Text('${shown.where((a) => selected.contains(a.id)).length} of ${shown.length}', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
-      const Spacer(),
-      _QuickFilter('All', () => notifier.selectAccounts(choosable.map((a) => a.id))),
-      _QuickFilter('Automatic only', () => notifier.selectAccounts(auto)),
-      _QuickFilter('None', () => notifier.selectAccounts(const [])),
+    // Wraps onto two lines when large text or a narrow phone leaves no room.
+    final header = Wrap(crossAxisAlignment: WrapCrossAlignment.center, alignment: WrapAlignment.spaceBetween, runSpacing: Space.xs, children: [
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        Text('Post to', style: context.text.titleSmall?.copyWith(color: nf.textMuted)),
+        const SizedBox(width: Space.sm),
+        Text('${shown.where((a) => selected.contains(a.id)).length} of ${shown.length}', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
+      ]),
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        _QuickFilter('All', () => notifier.selectAccounts(choosable.map((a) => a.id))),
+        _QuickFilter('Automatic only', () => notifier.selectAccounts(auto)),
+        _QuickFilter('None', () => notifier.selectAccounts(const [])),
+      ]),
     ]);
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [

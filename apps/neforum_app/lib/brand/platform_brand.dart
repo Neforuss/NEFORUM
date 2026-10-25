@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 
+import '../theme/tokens.dart';
+
 /// Visual identity of one platform inside NEFORUM: a color, an icon (or a
 /// monogram when Font Awesome has no logo) and an optional gradient.
 @immutable
@@ -189,8 +191,8 @@ class PlatformTile extends StatelessWidget {
       height: size,
       decoration: b.tile(
         brightness,
-        radius: BorderRadius.circular(radius ?? size * 0.28),
-        shape: circle ? BoxShape.circle : BoxShape.rectangle,
+        radius: Radii.circular(radius ?? size * 0.28),
+        shape: circle ? Radii.circleShape : BoxShape.rectangle,
       ),
       alignment: Alignment.center,
       child: PlatformGlyph(platformId, size: size * 0.5),

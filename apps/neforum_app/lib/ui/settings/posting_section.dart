@@ -61,10 +61,11 @@ class PostingSettingsSection extends ConsumerWidget {
         ]),
       ),
       SettingRow(
-        title: 'Write the caption on the first photo',
+        title: 'Write the caption on the first photo or video',
         description: 'Your caption, set on the photo in the network\'s own font (TikTok Sans on TikTok, Instagram Sans on Instagram), '
-            'on a dark label clear of the network\'s buttons. The caption is still posted as text too. Photos only: NEFORUM does not '
-            're-encode videos. You can also switch it per post under the preview.',
+            'on a label clear of the network\'s buttons or in a block above the photo (Settings > Text cards sets the style). A video '
+            'gets the block above it: NEFORUM makes a copy in the network\'s 9:16 frame on this device. The caption is still posted as '
+            'text too. You can also switch it per post under the preview.',
         below: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
           for (final id in const ['tiktok', 'instagram'])
             FilterChip(

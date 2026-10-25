@@ -34,7 +34,8 @@ import 'rich_text.dart';
 /// How a platform presents a post; drives the preview layout.
 enum PreviewFamily { microblog, visual, forum, chat, blog }
 
-PreviewFamily previewFamilyFor(String platformId) => switch (platformId) {
+PreviewFamily previewFamilyFor(String platformId, {bool artPlatform = false}) => switch (platformId) {
+      _ when artPlatform => PreviewFamily.visual,
       'instagram' || 'tiktok' || 'pinterest' || 'youtube' || 'snapchat' || 'rumble' || 'odysee' || 'bitchute' => PreviewFamily.visual,
       'reddit' || 'lemmy' => PreviewFamily.forum,
       'telegram' || 'discord' || 'matrix' || 'whatsapp' => PreviewFamily.chat,
@@ -43,7 +44,9 @@ PreviewFamily previewFamilyFor(String platformId) => switch (platformId) {
     };
 
 /// Width / height of the media frame on photo-first platforms.
-double _visualAspect(String platformId, List<MediaAttachment> media) {
+double _visualAspect(String platformId, List<MediaAttachment> media, {bool artPlatform = false}) {
+  // Art sites show the work at its own shape.
+  if (artPlatform) return (media.firstOrNull?.aspectRatio ?? 1).clamp(0.5, 2.0).toDouble();
   final video = media.isNotEmpty && media.first.isVideo;
   return switch (platformId) {
     // Instagram shows a feed photo at its own shape within 4:5 to 1.91:1.
@@ -70,7 +73,7 @@ class PreviewCard extends ConsumerWidget {
     final v = p.variant;
     final customized = !p.target.overrides.isEmpty;
     final hasErrors = p.issues.hasErrors;
-    final family = previewFamilyFor(d.id);
+    final family = previewFamilyFor(d.id, artPlatform: d.isArtPlatform);
     final rules = d.text;
     final used = rules.maxLength == null ? v.text.characters.length : TextCounter.count(v.text, rules);
 
@@ -224,15 +227,24 @@ class _Visual extends ConsumerWidget {
     final original = isPhoto && first.derivedFrom != null ? composer.media.where((m) => m.id == first.derivedFrom).firstOrNull : null;
     final captionOn = isPhoto && captionOnPhotoFor(id, settings, composer.captionOnPhoto);
     final captionStyle = captionStyleFor(composer.captionStyle, settings);
-    // The caption in a block above the photo: the preview is the network's
-    // whole frame, as it will be saved.
-    final blockFrame = captionOn && captionStyle.placement == CaptionPlacement.blockAbove ? fullFrameAspect(id, v) : null;
+    // A video on Instagram or TikTok can get the caption in a block above it
+    // where this device can compose videos.
+    final isVideo = card == null && first != null && first.isVideo;
+    final videoCaptions = isVideo && kCaptionPhotoPlatforms.contains(id) && (ref.watch(videoCaptionsSupportedProvider).value ?? false);
+    final videoCaptionOn = videoCaptions &&
+        captionOnPhotoFor(id, settings, composer.captionOnPhoto) &&
+        captionStyle.placement == CaptionPlacement.blockAbove;
+    // The caption in a block above the photo or video: the preview is the
+    // network's whole frame, as it will be saved.
+    final blockFrame = videoCaptionOn
+        ? videoFrameAspect(id)
+        : (captionOn && captionStyle.placement == CaptionPlacement.blockAbove ? fullFrameAspect(id, v) : null);
     final aspect = card != null
         ? cardSize.width / cardSize.height
         : blockFrame ??
             ((original != null && first!.aspectRatio != null)
                 ? first.aspectRatio!
-                : _visualAspect(id, v.media));
+                : _visualAspect(id, v.media, artPlatform: p.descriptor.isArtPlatform));
     return LayoutBuilder(builder: (context, c) {
       final maxW = aspect < 1 ? (c.maxWidth * 0.62).clamp(160.0, 300.0) : c.maxWidth;
       final w = maxW.toDouble();
@@ -275,7 +287,28 @@ class _Visual extends ConsumerWidget {
               ]),
             )
           : Stack(children: [
-              if (isPhoto && blockFrame != null)
+              if (isVideo && blockFrame != null)
+                SizedBox(
+                  width: w,
+                  height: h,
+                  child: ClipRRect(
+                    borderRadius: Radii.rMd,
+                    child: Stack(fit: StackFit.expand, children: [
+                      CaptionBlockFrame(
+                        platformId: id,
+                        photo: null,
+                        text: captionStyle.wordsFor(captionWords(_previewPost(ref), p.target)),
+                        style: captionStyle,
+                        fit: settings.photoFit,
+                      ),
+                      Align(
+                        alignment: const Alignment(0, 0.35),
+                        child: Icon(Icons.play_circle_outline_rounded, size: w * 0.18, color: Colors.white70),
+                      ),
+                    ]),
+                  ),
+                )
+              else if (isPhoto && blockFrame != null)
                 SizedBox(
                   width: w,
                   height: h,
@@ -366,6 +399,10 @@ class _Visual extends ConsumerWidget {
               cardPhoto: cardOnPhoto ? (original ?? composer.media.where((m) => m.id == first.id).firstOrNull) : null,
             ),
           ),
+        ],
+        if (videoCaptions) ...[
+          const SizedBox(height: Space.sm),
+          Center(child: _VideoCaptionOption(platform: p.descriptor, captionOn: videoCaptionOn)),
         ],
         const SizedBox(height: Space.sm + 2),
         if ((v.title ?? '').isNotEmpty) ...[
@@ -502,6 +539,43 @@ class _PhotoOptions extends ConsumerWidget {
               )),
         ),
     ]);
+  }
+}
+
+/// Under a video for Instagram or TikTok: put the caption in a block above
+/// the video (the pill turns it on in that placement and opens the caption
+/// editor). Videos take the caption only as a block above them.
+class _VideoCaptionOption extends ConsumerWidget {
+  const _VideoCaptionOption({required this.platform, required this.captionOn});
+  final PlatformDescriptor platform;
+  final bool captionOn;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final id = platform.id;
+    return _optionPill(
+      context,
+      selected: captionOn,
+      label: 'Caption above video',
+      tooltip: captionOn
+          ? 'Your caption is in a block above the video, which NEFORUM puts in ${platform.name}\'s 9:16 frame; tap to change it, or to turn it off'
+          : 'Put your caption in a block above the video, in ${platform.name}\'s 9:16 frame',
+      leading: Icon(Icons.subtitles_outlined, size: 14, color: captionOn ? nf.accent : nf.textFaint),
+      onTap: () {
+        final composer = ref.read(composerProvider.notifier);
+        final settings = ref.read(settingsProvider);
+        if (!captionOn) {
+          composer.setCaptionOnPhoto(id, true);
+          ref.read(settingsProvider.notifier).update((x) => x.copyWith(captionPhotoPlatforms: {...x.captionPhotoPlatforms, id}.toList()));
+          final style = captionStyleFor(ref.read(composerProvider).captionStyle, settings);
+          if (style.placement != CaptionPlacement.blockAbove) {
+            composer.setCaptionStyle(style.copyWith(placement: CaptionPlacement.blockAbove).toJson());
+          }
+        }
+        showCaptionEditorSheet(context, platformId: id);
+      },
+    );
   }
 }
 

@@ -8,22 +8,6 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
-/// Guides that a parallel 1.2.0 workstream rewrites into this layout. Remove
-/// this set once those rewrites are merged.
-const _guidesAwaitingRewrite = {
-  'bitchute',
-  'bluesky',
-  'devto',
-  'discord',
-  'facebook',
-  'ghost',
-  'google_business',
-  'hashnode',
-  'instagram',
-  'lemmy',
-  'linkedin',
-};
-
 /// A `## ` heading that opens a numbered procedure.
 bool _isStepsHeading(String heading) => heading == 'Steps' || heading.startsWith('Steps:');
 
@@ -82,7 +66,6 @@ void main() {
   test('every platform guide starts with its numbered steps', () {
     final problems = <String>[];
     for (final adapter in builtinRegistry().all) {
-      if (_guidesAwaitingRewrite.contains(adapter.id)) continue;
       final guide = File('assets/docs/${adapter.id}.md');
       if (!guide.existsSync()) {
         problems.add('${adapter.id}: assets/docs/${adapter.id}.md is missing (run dart run tool/sync_docs.dart)');

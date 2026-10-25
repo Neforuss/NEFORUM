@@ -561,6 +561,14 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
               : 'Your caption is written on the first photo for ${d.name}',
           field: 'media'));
     }
+    if (captionOnPhotoFor(d.id, settings, c.captionOnPhoto) &&
+        firstMedia != null &&
+        firstMedia.isVideo &&
+        captionStyle.placement == CaptionPlacement.blockAbove &&
+        (ref.watch(videoCaptionsSupportedProvider).value ?? false)) {
+      issues.add(ValidationIssue.info('media.caption_video',
+          'Your caption is set in a block above the video for ${d.name}; NEFORUM makes that copy when you save or publish', field: 'media'));
+    }
     try {
       issues.addAll(adapter.validate(variant, a));
     } on Object catch (e) {

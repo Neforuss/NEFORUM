@@ -31,7 +31,7 @@ enum TimestampDisplay {
   /// "5 min ago", "Yesterday".
   relative,
 
-  /// Weekday, date and time: "Saturday, 25 October 2026, 14:05".
+  /// Weekday, date and time: "Sunday, 25 October 2026, 14:05".
   exact,
 }
 
