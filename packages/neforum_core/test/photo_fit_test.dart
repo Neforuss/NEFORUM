@@ -45,6 +45,20 @@ void main() {
       expect(t.width + t.height, lessThanOrEqualTo(10000));
     });
 
+    test('exact sizes: any other size is resized to the first, up or down', () {
+      const fit = PhotoFit(minAspect: 4 / 3, maxAspect: 4 / 3, exactSizes: [(width: 800, height: 600), (width: 400, height: 300)]);
+      expect(fit.problemsOf(photo(w: 400, h: 300)), isEmpty);
+      expect(fit.problemsOf(photo(w: 640, h: 480)), [FitProblem.pixels]);
+      expect(fit.problemsOf(photo()), [FitProblem.tooTall, FitProblem.pixels]);
+      expect(fit.fittedSize(photo(w: 640, h: 480), PhotoFitMode.pad), (width: 800, height: 600), reason: 'scaled up');
+      expect(fit.fittedSize(photo(), PhotoFitMode.crop), (width: 800, height: 600));
+      expect(fit.fittedSize(photo(w: 400, h: 300), PhotoFitMode.pad), (width: 400, height: 300));
+      expect(fit.problemsOf(fit.standIn(photo(), PhotoFitMode.pad)), isEmpty);
+      expect(fit.describe(photo(), PhotoFitMode.pad), 'given borders to 4:3, resized to 800 x 600');
+      expect(fit.keyFor(PhotoFitMode.pad), isNot(fit.copyWith(exactSizes: const [(width: 400, height: 300)]).keyFor(PhotoFitMode.pad)));
+      expect(const PhotoFit().hasExactSize(1, 1), isTrue, reason: 'no exact sizes: every size is fine');
+    });
+
     test('the stand-in the composer checks passes the rules it was made for', () {
       for (final m in [photo(), photo(w: 4000, h: 1000), photo(mime: 'image/png', size: 20000000)]) {
         for (final mode in [PhotoFitMode.pad, PhotoFitMode.crop]) {

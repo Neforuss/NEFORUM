@@ -16,9 +16,10 @@ class FittedPhoto {
 
 /// Makes [bytes] (a photo of type [mimeType]) meet [fit] with [mode]: the
 /// shape brought within its limits (borders filled with a soft blur of the
-/// photo, or the edges cut), then scaled down within the pixel limits and
-/// saved as the right type within the size limit. Runs off the UI thread.
-/// Null when the photo cannot be read (HEIC, a broken file).
+/// photo, or the edges cut), then scaled down within the pixel limits (or to
+/// the exact size the platform takes) and saved as the right type within the
+/// size limit. Runs off the UI thread. Null when the photo cannot be read
+/// (HEIC, a broken file).
 Future<FittedPhoto?> fitPhoto(Uint8List bytes, String mimeType, PhotoFit fit, PhotoFitMode mode) => compute(
       _fitPhoto,
       _FitJob(
@@ -30,6 +31,7 @@ Future<FittedPhoto?> fitPhoto(Uint8List bytes, String mimeType, PhotoFit fit, Ph
         maxBytes: fit.maxBytes,
         maxPixels: fit.maxPixels,
         maxSideSum: fit.maxSideSum,
+        exactSizes: fit.exactSizes,
       ),
     );
 
@@ -43,6 +45,7 @@ class _FitJob {
     this.maxBytes,
     this.maxPixels,
     this.maxSideSum,
+    this.exactSizes,
   });
   final Uint8List bytes;
   final String outMime;
@@ -52,6 +55,7 @@ class _FitJob {
   final int? maxBytes;
   final int? maxPixels;
   final int? maxSideSum;
+  final List<({int width, int height})>? exactSizes;
 }
 
 FittedPhoto? _fitPhoto(_FitJob j) {
@@ -78,13 +82,22 @@ FittedPhoto? _fitPhoto(_FitJob j) {
     };
   }
 
-  var scale = 1.0;
-  final px = image.width * image.height;
-  if (j.maxPixels != null && px >= j.maxPixels!) scale = math.min(scale, math.sqrt((j.maxPixels! - 1) / px));
-  if (j.maxSideSum != null && image.width + image.height > j.maxSideSum!) scale = math.min(scale, j.maxSideSum! / (image.width + image.height));
-  if (scale < 1) image = _scaled(image, scale);
+  final exact = j.exactSizes;
+  if (exact != null && exact.isNotEmpty) {
+    // Only these sizes are taken: scale (up or down) to the first one.
+    if (!exact.any((s) => s.width == image.width && s.height == image.height)) {
+      image = img.copyResize(image, width: exact.first.width, height: exact.first.height, interpolation: img.Interpolation.average);
+    }
+  } else {
+    var scale = 1.0;
+    final px = image.width * image.height;
+    if (j.maxPixels != null && px >= j.maxPixels!) scale = math.min(scale, math.sqrt((j.maxPixels! - 1) / px));
+    if (j.maxSideSum != null && image.width + image.height > j.maxSideSum!) scale = math.min(scale, j.maxSideSum! / (image.width + image.height));
+    if (scale < 1) image = _scaled(image, scale);
+  }
 
-  // Within the size limit: lower JPEG quality first, then smaller pixels.
+  // Within the size limit: lower JPEG quality first, then smaller pixels
+  // (never for an exact size, which must stay as it is).
   final png = j.outMime == 'image/png';
   final qualities = png ? const [0] : const [90, 82, 74, 66];
   for (var round = 0; round < 12; round++) {
@@ -94,6 +107,7 @@ FittedPhoto? _fitPhoto(_FitJob j) {
         return FittedPhoto(bytes: out, width: image.width, height: image.height, mimeType: png ? 'image/png' : 'image/jpeg');
       }
     }
+    if (exact != null && exact.isNotEmpty) return null;
     image = _scaled(image, 0.85);
   }
   return null;

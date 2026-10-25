@@ -92,6 +92,20 @@ const Map<String, PlatformBrand> platformBrands = {
   'rumble': PlatformBrand(color: Color(0xFF85C742), onColor: Color(0xFF111111), monogram: 'R'),
   'odysee': PlatformBrand(color: Color(0xFFE50054), icon: FontAwesomeIcons.odysee),
   'bitchute': PlatformBrand(color: Color(0xFFEF4137), monogram: 'B'),
+  // Art and portfolios (posting through an API)
+  'deviantart': PlatformBrand(color: Color(0xFF00E59B), onColor: Color(0xFF06070D), icon: FontAwesomeIcons.deviantart),
+  'dribbble': PlatformBrand(color: Color(0xFFEA4C89), icon: FontAwesomeIcons.dribbble),
+  'pixelfed': PlatformBrand(
+    color: Color(0xFFA046FF),
+    icon: FontAwesomeIcons.pixelfed,
+    gradient: LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [Color(0xFFFF2F64), Color(0xFFA046FF), Color(0xFF3D8BFF)],
+    ),
+  ),
+  'flickr': PlatformBrand(color: Color(0xFF0063DC), icon: FontAwesomeIcons.flickr),
+  'inkbunny': PlatformBrand(color: Color(0xFF3E6A8A), monogram: 'Ib'),
 };
 
 PlatformBrand fallbackBrand(String id) {
