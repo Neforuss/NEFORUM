@@ -1130,6 +1130,18 @@ void main() {
       expect(plan.webIntent, isNull);
       expect(plan.preferred, HandoffMethod.manual);
       expect(plan.clipboardText, 'a\n\nb');
+      expect(plan.composerUrl, isNull, reason: 'no composer page for the browser extension either');
+    });
+
+    test('the share page is the composer the browser extension fills in (files, thread parts)', () {
+      final plan = adapter.buildHandoff(
+        PostVariant(text: 'one', threadParts: const ['one', 'two'], media: [fakeImage()]),
+        account: account(),
+      )!;
+      expect(plan.composerUrl, plan.webIntent);
+      expect(plan.composerInstructions, contains('**Fill in this page**'), reason: 'servers are not known to the extension in advance');
+      expect(plan.composerInstructions, contains('It adds your files.'));
+      expect(plan.composerInstructions, contains('reply to your post and **Insert** the next part'));
     });
 
     test('public posts do not send a visibility parameter', () {

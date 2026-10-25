@@ -804,7 +804,7 @@ void main() {
   });
 
   group('handoff', () {
-    test('share sheet to the YouTube app with title + description on the clipboard', () {
+    test('share sheet to the YouTube app; description on the clipboard, title and tags as snippets', () {
       final v = _variant();
       final plan = adapter.buildHandoff(v)!;
       expect(plan.platformId, 'youtube');
@@ -814,16 +814,25 @@ void main() {
       expect(plan.iosScheme, 'youtube://');
       expect(plan.desktopUrl, 'https://www.youtube.com/upload');
       expect(plan.shareFiles, v.media);
-      expect(plan.clipboardText,
-          'My video\n\nLine one of the description\nMore text\n\nTags: travel, new york');
+      expect(plan.clipboardText, 'Line one of the description\nMore text');
+      expect([for (final s in plan.snippets) (s.label, s.text)], [('Title', 'My video'), ('Tags', 'travel, new york')]);
       expect(plan.instructions, startsWith('1. '));
+      expect(plan.instructions, contains('Choose who the video is for'));
       expect(plan.mediaNote, isNotEmpty);
+    });
+
+    test('with the browser extension: the upload page, filled in up to the audience question', () {
+      final plan = adapter.buildHandoff(_variant())!;
+      expect(plan.composerUrl, Uri.parse('https://www.youtube.com/upload'));
+      expect(plan.composerInstructions, contains('the NEFORUM browser extension adds your video, the title, the description, the tags'));
+      expect(plan.composerInstructions, contains('**Is this video made for kids?**'));
     });
 
     test('without a video the hand-off is manual', () {
       final plan = adapter.buildHandoff(_variant(media: const []))!;
       expect(plan.preferred, HandoffMethod.manual);
       expect(plan.shareFiles, isEmpty);
+      expect(plan.composerUrl, isNull, reason: 'nothing to upload');
     });
   });
 }
