@@ -42,6 +42,7 @@ import workmanager_apple
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     SyncFolderPlugin.register(in: engineBridge.pluginRegistry)
+    VideoCompositorPlugin.register(in: engineBridge.pluginRegistry)
   }
 }
 

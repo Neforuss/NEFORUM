@@ -21,6 +21,7 @@ class MainFlutterWindow: NSWindow {
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
+    VideoCompositorPlugin.register(with: flutterViewController.registrar(forPlugin: "NeforumVideoCompositor"))
 
     let channel = FlutterMethodChannel(
       name: "neforum/clipboard", binaryMessenger: flutterViewController.engine.binaryMessenger)
