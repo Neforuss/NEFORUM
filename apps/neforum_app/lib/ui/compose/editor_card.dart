@@ -35,6 +35,9 @@ class _EditorCardState extends ConsumerState<EditorCard> {
   bool _dragging = false;
   int _revision = -1;
 
+  /// The Undo of the last "Clear post".
+  _UndoOffer? _undo;
+
   @override
   void initState() {
     super.initState();
@@ -55,7 +58,9 @@ class _EditorCardState extends ConsumerState<EditorCard> {
     super.dispose();
   }
 
-  /// When the composer state is replaced (load/reset), resync controllers.
+  /// When the main fields are replaced (load, reset, clear post, restore),
+  /// resync controllers. Thread part changes do not get here
+  /// ([ComposerState.revision]).
   void _syncFrom(ComposerState c) {
     if (c.revision == _revision) return;
     _revision = c.revision;
@@ -72,6 +77,7 @@ class _EditorCardState extends ConsumerState<EditorCard> {
   Widget build(BuildContext context) {
     final nf = context.nf;
     ref.listen(composerProvider.select((c) => c.revision), (_, _) => _syncFrom(ref.read(composerProvider)));
+    ref.listen(composerProvider, (_, next) => _undo?.review(next));
     final c = ref.watch(composerProvider);
     final notifier = ref.read(composerProvider.notifier);
     final previews = ref.watch(composerPreviewsProvider);
@@ -268,12 +274,15 @@ class _EditorCardState extends ConsumerState<EditorCard> {
   static bool _hasContent(ComposerState c) =>
       !c.isEmpty || c.additionalParts.isNotEmpty || c.poll != null || c.contentWarning != null || c.tags.isNotEmpty || c.overrides.isNotEmpty;
 
-  /// Empties the whole post (targets stay), with Undo.
+  /// Empties the whole post (targets stay). Undo brings it back until
+  /// anything else changes.
   void _clearPost() {
     final notifier = ref.read(composerProvider.notifier);
     final before = ref.read(composerProvider);
     notifier.clearPost();
-    showToast(context, 'Post cleared', icon: Icons.delete_sweep_outlined, actionLabel: 'Undo', onAction: () => notifier.restore(before));
+    final cleared = ref.read(composerProvider);
+    _undo = _UndoOffer.show(context, 'Post cleared', Icons.delete_sweep_outlined,
+        applies: (c) => identical(c, cleared), undo: () => notifier.undoClearPost(before, cleared));
   }
 
   Future<void> _paste() async {
@@ -321,6 +330,40 @@ class _EditorCardState extends ConsumerState<EditorCard> {
   }
 }
 
+/// The Undo toast of a change to the post. It goes after a few seconds, and
+/// at once when the change can no longer be undone, so it never offers to
+/// put back an old state.
+class _UndoOffer {
+  _UndoOffer._(this._messenger, this._applies);
+  final ScaffoldMessengerState _messenger;
+
+  /// Whether a composer state still allows the undo.
+  final bool Function(ComposerState c) _applies;
+  bool _open = true;
+
+  /// Shows [message] with Undo, which runs [undo]. Null without a messenger
+  /// to show it in.
+  static _UndoOffer? show(BuildContext context, String message, IconData icon,
+      {required bool Function(ComposerState c) applies, required VoidCallback undo}) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return null;
+    final offer = _UndoOffer._(messenger, applies);
+    final toast = showToast(context, message, icon: icon, actionLabel: 'Undo', persist: false, onAction: () {
+      offer._open = false;
+      undo();
+    });
+    toast?.closed.then((_) => offer._open = false);
+    return offer;
+  }
+
+  /// Takes the toast away once [c] no longer allows the undo.
+  void review(ComposerState c) {
+    if (!_open || _applies(c)) return;
+    _open = false;
+    _messenger.hideCurrentSnackBar();
+  }
+}
+
 /// The text field and focus of one thread part after the first.
 class _PartField {
   final TextEditingController controller = TextEditingController();
@@ -347,6 +390,9 @@ class _ThreadPartEditorsState extends ConsumerState<ThreadPartEditors> {
   final List<_PartField> _parts = [];
   int _revision = -1;
 
+  /// The Undo of the last part removed.
+  _UndoOffer? _undo;
+
   @override
   void initState() {
     super.initState();
@@ -365,10 +411,10 @@ class _ThreadPartEditorsState extends ConsumerState<ThreadPartEditors> {
     super.dispose();
   }
 
-  /// When the composer state is replaced (load, reset, undo), resync the
-  /// fields with its parts.
+  /// When the composer state is replaced (load, reset, undo) or a part is
+  /// added elsewhere ("Start a thread"), resync the fields with its parts.
   void _syncFrom(ComposerState c) {
-    if (c.revision == _revision) return;
+    if (c.revision == _revision && c.additionalParts.length == _parts.length) return;
     _revision = c.revision;
     final texts = c.additionalParts;
     while (_parts.length > texts.length) {
@@ -397,20 +443,39 @@ class _ThreadPartEditorsState extends ConsumerState<ThreadPartEditors> {
     });
   }
 
-  /// Removes part [index] (1 or more), with Undo.
+  /// Removes part [index] (1 or more). Undo puts it back where it was and
+  /// keeps what was written since, until the post is replaced.
   void _remove(int index) {
     final notifier = ref.read(composerProvider.notifier);
-    final before = ref.read(composerProvider);
+    final text = ref.read(composerProvider).additionalParts[index - 1];
     // Drop this part's own field, so the fields after it keep their focus.
     _retire(_parts.removeAt(index - 1));
     notifier.removePart(index);
     setState(() {});
-    showToast(context, 'Part ${index + 1} removed', icon: Icons.delete_outline_rounded, actionLabel: 'Undo', onAction: () => notifier.restore(before));
+    final revision = ref.read(composerProvider).revision;
+    _undo = _UndoOffer.show(context, 'Part ${index + 1} removed', Icons.delete_outline_rounded,
+        applies: (c) => c.revision == revision, undo: () => _putBack(notifier, index, text, revision));
+  }
+
+  /// Undo of [_remove]: part [index] comes back with [text], unless the post
+  /// was replaced after [revision].
+  void _putBack(ComposerNotifier notifier, int index, String text, int revision) {
+    if (mounted && ref.read(composerProvider).revision == revision) {
+      // Its own field goes back first, so the fields after it keep their
+      // focus.
+      _parts.insert((index - 1).clamp(0, _parts.length), _PartField()..controller.text = text);
+      setState(() {});
+    }
+    notifier.undoRemovePart(index, text, revision: revision);
   }
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(composerProvider.select((c) => c.revision), (_, _) => _syncFrom(ref.read(composerProvider)));
+    ref.listen(composerProvider.select((c) => (c.revision, c.additionalParts.length)), (_, _) {
+      final c = ref.read(composerProvider);
+      _undo?.review(c);
+      _syncFrom(c);
+    });
     final c = ref.watch(composerProvider);
     final count = c.additionalParts.length;
     final showAdd = count > 0 || !c.isEmpty;

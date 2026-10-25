@@ -62,6 +62,16 @@ void main() {
       expect(TextSplitter.splitParts(['alpha beta gamma delta epsilon'], rules), TextSplitter.split('alpha beta gamma delta epsilon', rules));
     });
 
+    test('withoutNumber takes off exactly the suffix number gave that part', () {
+      final numbered = TextSplitter.splitParts(['Headline', 'Body'], rules);
+      expect(TextSplitter.withoutNumber(numbered.first, 0, numbered.length), 'Headline');
+      expect(TextSplitter.withoutNumber(numbered.last, 1, numbered.length), 'Body');
+      // Words that only look like numbering stay.
+      expect(TextSplitter.withoutNumber('Plan (1/3)', 0, 2), 'Plan (1/3)');
+      expect(TextSplitter.withoutNumber('Plan (2/2)', 0, 2), 'Plan (2/2)');
+      expect(TextSplitter.withoutNumber('Alone (1/1)', 0, 1), 'Alone (1/1)');
+    });
+
     test('truncate can keep room for a suffix', () {
       expect(TextSplitter.truncate('alpha beta gamma delta', rules, reserve: 6).length, lessThanOrEqualTo(14));
       expect(TextSplitter.truncate('short', rules, reserve: 6), 'short');

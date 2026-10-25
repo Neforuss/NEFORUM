@@ -420,9 +420,11 @@ List<String> discordWithEveryone(String part) {
 }
 
 /// Forum post name: the variant title, else the first line, max 100 chars.
+/// A thread's first part leaves out its ` (1/n)` numbering.
 String discordThreadName(PostVariant v) {
   final title = v.title?.trim() ?? '';
-  var name = title.isNotEmpty ? title : v.text.trim().split('\n').first.trim();
+  final text = v.isThread ? TextSplitter.withoutNumber(v.threadParts.first, 0, v.threadParts.length) : v.text;
+  var name = title.isNotEmpty ? title : text.trim().split('\n').first.trim();
   if (name.isEmpty) name = 'New post';
   return name.length > discordMaxThreadName ? '${name.substring(0, discordMaxThreadName - 1)}…' : name;
 }

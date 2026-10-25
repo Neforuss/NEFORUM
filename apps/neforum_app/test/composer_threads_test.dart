@@ -62,6 +62,13 @@ final _editor = find.byWidgetPredicate((w) => w is TextField && w.controller is 
 /// The editors of the parts after the first.
 final _partFields = find.byWidgetPredicate((w) => w is TextField && w.decoration?.hintText == 'Continue the thread');
 
+/// The content warning and title fields above the main editor.
+final _cwField = find.byWidgetPredicate((w) => w is TextField && (w.decoration?.hintText ?? '').startsWith('Content warning'));
+final _titleField = find.byWidgetPredicate((w) => w is TextField && (w.decoration?.hintText ?? '').startsWith('Title'));
+
+/// What the Undo of the toast on screen does, kept to be tapped later.
+VoidCallback _undoAction(WidgetTester tester) => tester.widget<SnackBarAction>(find.byType(SnackBarAction)).onPressed;
+
 bool _hasFocus(WidgetTester tester, Finder field) => tester.widget<TextField>(field).focusNode?.hasFocus ?? false;
 
 void main() {
@@ -153,6 +160,96 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('undoing a removed part keeps everything written since', (tester) async {
+      final (_, c) = await boot(tester);
+      c.read(routerProvider).go('/compose');
+      await settle(tester);
+      final notifier = c.read(composerProvider.notifier);
+      notifier.restore(c.read(composerProvider).copyWith(text: 'One', additionalParts: ['Two', 'Three']));
+      await settle(tester);
+      await tester.tap(find.byTooltip('Remove part 2'));
+      await settle(tester);
+
+      await tester.enterText(_editor, 'One, rewritten');
+      await tester.enterText(_partFields, 'Three, rewritten');
+      notifier.setLink('https://example.org');
+      await settle(tester);
+      await tester.tap(find.text('Undo'));
+      await settle(tester);
+      final back = c.read(composerProvider);
+      expect(back.text, 'One, rewritten');
+      expect(back.additionalParts, ['Two', 'Three, rewritten']);
+      expect(back.link, 'https://example.org');
+      expect(tester.widget<TextField>(_editor).controller!.text, 'One, rewritten');
+      expect(tester.widgetList<TextField>(_partFields).map((f) => f.controller!.text), ['Two', 'Three, rewritten']);
+      expect(_hasFocus(tester, _partFields.at(1)), isTrue, reason: 'the part being written keeps the cursor');
+      await finish(tester);
+    });
+
+    testWidgets('publishing takes the Undo of a removed part away; a late Undo cannot bring the post back', (tester) async {
+      final (_, c) = await boot(tester);
+      c.read(routerProvider).go('/compose');
+      await settle(tester);
+      final masto = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon');
+      final notifier = c.read(composerProvider.notifier)..selectAccounts([masto.id]);
+      notifier.restore(c.read(composerProvider).copyWith(text: 'One', additionalParts: ['Two', 'Three']));
+      await settle(tester);
+      await tester.tap(find.byTooltip('Remove part 3'));
+      await settle(tester);
+      expect(find.text('Part 3 removed'), findsOneWidget);
+      final undo = _undoAction(tester);
+
+      // In the test's own clock, so the toast's exit runs in it too.
+      final publishing = c.read(postActionsProvider).publishNow();
+      await settle(tester);
+      await settle(tester);
+      expect((await publishing).additionalParts, ['Two']);
+      expect(find.text('Part 3 removed'), findsNothing, reason: 'the Undo goes with the post it belonged to');
+
+      undo();
+      await settle(tester);
+      final after = c.read(composerProvider);
+      expect(after.isEmpty, isTrue, reason: 'the published post does not come back');
+      expect(after.additionalParts, isEmpty);
+      expect(_partFields, findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('adding or removing a part leaves an open, empty warning and title and the cursor alone', (tester) async {
+      final (_, c) = await boot(tester);
+      c.read(routerProvider).go('/compose');
+      await settle(tester);
+      final masto = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon');
+      final linkedin = c.read(accountListProvider).firstWhere((a) => a.platformId == 'linkedin');
+      c.read(composerProvider.notifier).selectAccounts([masto.id, linkedin.id]);
+      await settle(tester);
+      await tester.enterText(_editor, 'A headline worth a warning');
+      await settle(tester);
+      await tester.tap(find.byTooltip('Content warning'));
+      await tester.tap(find.byTooltip('Title'));
+      await settle(tester);
+      expect(_cwField, findsOneWidget);
+      expect(_titleField, findsOneWidget);
+      final editor = tester.widget<TextField>(_editor).controller!;
+      editor.selection = const TextSelection.collapsed(offset: 2);
+
+      await tester.tap(find.text('Add to thread'));
+      await settle(tester);
+      expect(_partFields, findsOneWidget);
+      expect(_cwField, findsOneWidget, reason: 'an opened warning stays open while it is empty');
+      expect(_titleField, findsOneWidget);
+      expect(editor.selection, const TextSelection.collapsed(offset: 2));
+
+      await tester.tap(find.byTooltip('Remove part 2'));
+      await settle(tester);
+      expect(_partFields, findsNothing);
+      expect(_cwField, findsOneWidget);
+      expect(_titleField, findsOneWidget);
+      expect(editor.selection, const TextSelection.collapsed(offset: 2));
+      expect(editor.text, 'A headline worth a warning');
+      await finish(tester);
+    });
+
     testWidgets('"Start a thread" adds the second part and puts the cursor in the first', (tester) async {
       final (_, c) = await boot(tester);
       c.read(routerProvider).go('/compose');
@@ -206,6 +303,35 @@ void main() {
     expect(back.overrides[masto.id]?.text, 'A version of its own');
     expect(tester.widget<TextField>(_editor).controller!.text, 'Something worth clearing');
     expect(tester.widget<TextField>(_partFields).controller!.text, 'Part two');
+    await finish(tester);
+  });
+
+  testWidgets('the Undo of "Clear post" lapses once something new is written, and goes by itself', (tester) async {
+    final (_, c) = await boot(tester);
+    c.read(routerProvider).go('/compose');
+    await settle(tester);
+    await tester.enterText(_editor, 'First draft');
+    await settle(tester);
+    await tester.tap(find.byTooltip('Clear post'));
+    await settle(tester);
+    expect(find.text('Post cleared'), findsOneWidget);
+    final undo = _undoAction(tester);
+
+    await tester.enterText(_editor, 'A new start');
+    await settle(tester);
+    expect(find.text('Post cleared'), findsNothing, reason: 'it would overwrite the new words');
+    undo();
+    await settle(tester);
+    expect(c.read(composerProvider).text, 'A new start');
+    expect(tester.widget<TextField>(_editor).controller!.text, 'A new start');
+
+    // Left alone, the toast goes after a few seconds instead of staying.
+    await tester.tap(find.byTooltip('Clear post'));
+    await settle(tester);
+    expect(find.text('Post cleared'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 5));
+    await settle(tester);
+    expect(find.text('Post cleared'), findsNothing);
     await finish(tester);
   });
 

@@ -20,7 +20,7 @@ class TextSplitter {
     if (numbering) {
       final suffixLen = ' (${parts.length}/${parts.length})'.length;
       if (suffixLen + 1 > 8) parts = _splitTo(text, rules, max - suffixLen); // >99 parts, unlikely
-      return [for (var i = 0; i < parts.length; i++) '${parts[i]} (${i + 1}/${parts.length})'];
+      return [for (var i = 0; i < parts.length; i++) '${parts[i]}${_label(i, parts.length)}'];
     }
     return parts;
   }
@@ -50,12 +50,21 @@ class TextSplitter {
 
   /// Adds ` (i/n)` to each part; a single part stays as it is.
   static List<String> number(List<String> parts) =>
-      parts.length < 2 ? parts : [for (var i = 0; i < parts.length; i++) '${parts[i]} (${i + 1}/${parts.length})'];
+      parts.length < 2 ? parts : [for (var i = 0; i < parts.length; i++) '${parts[i]}${_label(i, parts.length)}'];
+
+  /// [part] without the ` (i/n)` suffix that [number] gives part [index]
+  /// (from 0) of a thread of [count] parts; unchanged when it has none.
+  static String withoutNumber(String part, int index, int count) {
+    final label = _label(index, count);
+    return count > 1 && part.endsWith(label) ? part.substring(0, part.length - label.length) : part;
+  }
 
   /// The widest suffix [number] adds to a thread of [count] parts.
   static int suffixLength(int count) => _suffix(count).length;
 
   static String _suffix(int count) => ' ($count/$count)';
+
+  static String _label(int index, int count) => ' (${index + 1}/$count)';
 
   static List<String> _splitTo(String text, TextRules rules, int budget) {
     final out = <String>[];
