@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../media/text_card.dart';
 import '../platform/notifications.dart';
+import 'artwork_targets.dart';
 import 'captioned_photos.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
@@ -233,11 +234,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
     );
   }
 
-  Set<String> _defaultTargets(List<ConnectedAccount> accounts) {
-    final ids = accounts.map((a) => a.id).toSet();
-    final defaults = ref.read(settingsProvider).defaultTargetIds.where(ids.contains).toSet();
-    return defaults.isNotEmpty ? defaults : accounts.where((a) => a.enabled).map((a) => a.id).toSet();
-  }
+  /// Art sites are left out: they only receive artwork (artwork_targets.dart).
+  Set<String> _defaultTargets(List<ConnectedAccount> accounts) =>
+      defaultPostTargets(accounts, ref.read(registryProvider), ref.read(settingsProvider));
 
   void setText(String v) => state = state.copyWith(text: v);
 
@@ -394,10 +393,15 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// (composer_draft.dart).
   void restore(ComposerState kept) => state = kept.copyWith(revision: state.revision + 1);
 
-  /// Starts over with the same targets.
+  /// Starts over with the same targets. Kept art sites keep artwork mode on,
+  /// with the artwork details back at their defaults.
   void reset({bool keepTargets = true}) {
     final fresh = build();
-    state = fresh.copyWith(selected: keepTargets ? state.selected : fresh.selected, revision: state.revision + 1);
+    state = fresh.copyWith(
+      selected: keepTargets ? state.selected : fresh.selected,
+      artwork: keepTargets && state.isArtwork ? newArtworkDetails(ref.read(settingsProvider)) : null,
+      revision: state.revision + 1,
+    );
   }
 
   /// Duplicates [p] as a fresh draft.

@@ -13,7 +13,8 @@ class ArtworkSettingsSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
-    return SettingsSection(title: 'Artwork', icon: Icons.brush_outlined, subtitle: 'Defaults for posts to art sites.', children: [
+    const subtitle = 'Defaults for posts to art sites. Turn on Artwork under Post to when you write one.';
+    return SettingsSection(title: 'Artwork', icon: Icons.brush_outlined, subtitle: subtitle, children: [
       SettingChoice<ArtworkMaturity>(
         title: 'Rating of new artwork',
         value: s.artworkMaturity,

@@ -106,6 +106,18 @@ const Map<String, PlatformBrand> platformBrands = {
   ),
   'flickr': PlatformBrand(color: Color(0xFF0063DC), icon: FontAwesomeIcons.flickr),
   'inkbunny': PlatformBrand(color: Color(0xFF3E6A8A), monogram: 'Ib'),
+  // Art and portfolios (hand-off)
+  'behance': PlatformBrand(color: Color(0xFF1769FF), icon: FontAwesomeIcons.behance),
+  'artstation': PlatformBrand(color: Color(0xFF13AFF0), icon: FontAwesomeIcons.artstation),
+  'cara': PlatformBrand(color: Color(0xFF141414), darkColor: Color(0xFF2E2E2E), monogram: 'Ca'),
+  'pixiv': PlatformBrand(color: Color(0xFF0096FA), icon: FontAwesomeIcons.pixiv),
+  'itaku': PlatformBrand(color: Color(0xFF3F51B5), monogram: 'It'),
+  'newgrounds': PlatformBrand(color: Color(0xFFF7931E), onColor: Color(0xFF111111), monogram: 'Ng'),
+  'furaffinity': PlatformBrand(color: Color(0xFF2E3B41), darkColor: Color(0xFF46575F), monogram: 'FA'),
+  'weasyl': PlatformBrand(color: Color(0xFFA52A2A), monogram: 'We'),
+  'kofi': PlatformBrand(color: Color(0xFF29ABE0), monogram: 'Ko'),
+  'artfol': PlatformBrand(color: Color(0xFFE8505B), monogram: 'Af'),
+  'fivehundredpx': PlatformBrand(color: Color(0xFF222222), darkColor: Color(0xFF3A3A3A), icon: FontAwesomeIcons.fiveHundredPx),
 };
 
 PlatformBrand fallbackBrand(String id) {
