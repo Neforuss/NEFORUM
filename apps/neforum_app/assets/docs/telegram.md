@@ -1,34 +1,52 @@
-# Telegram
+# Telegram setup guide
 
-NEFORUM posts to a Telegram **channel** or **group** through a **bot that you own**. The bot posts in the channel's name, the same way your own posts in a channel do. It cannot post to your personal chats or as you.
+This guide connects a Telegram **channel** or **group** through a **bot that you own**, so NEFORUM posts there for you. The bot posts in the channel's name, the same way your own posts in a channel do; it cannot post to your personal chats or as you.
 
-Status as of October 2026: the Telegram Bot API is free. There is no developer portal, no app review and no business account. Any Telegram user can create a bot in about a minute.
+## Steps
+
+1. In Telegram, open a chat with **@BotFather** (check for the blue verified tick).
+2. Send `/newbot`.
+3. Choose a display name, then a username that ends in `bot`, for example `my_news_poster_bot`.
+4. Copy the **token** BotFather replies with. It looks like `110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw`.
+   - Anyone who has this token controls your bot, so don't paste it anywhere else.
+   - If it leaks, send `/revoke` to BotFather and connect again with the new token.
+5. Add the bot to where it should post:
+   - **Channel:** open the channel > **Administrators** > **Add Admin**, search for your bot's username, and leave **Post Messages** switched on. Adding it as a plain subscriber is not enough.
+   - **Group:** add the bot as a member. It needs permission to send messages, and to send media if you post images.
+6. In NEFORUM, add **Telegram** and paste the token.
+7. Enter the chat:
+   - a public channel or group: `@channelusername` (or its `https://t.me/channelusername` link)
+   - a private channel or group: its numeric id. Channels and supergroups start with `-100`, for example `-1001234567890`; a small basic group has a shorter negative id such as `-123456789`. Bots can't use invite links (`t.me/+…`).
+   - To find the id, forward one post from the channel to a bot such as @userinfobot, or open the channel in Telegram Web, where the id is in the address bar.
+8. Pick **Formatting**:
+   - `markdown` (default) turns `**bold**`, `*italic*`, `` `code` ``, `~~strike~~`, `> quotes` and `[label](https://…)` links into Telegram formatting.
+   - `plain` sends your text exactly as written.
+9. Press **Connect**. If anything is missing, NEFORUM tells you what to fix.
+
+There is no redirect URI and nothing to register. Bot tokens never expire.
+
+## Steps: hand-off
+
+1. In NEFORUM, add **Telegram** and choose **Hand-off**.
+2. When you publish, pick the chat on Telegram's share page (or in the share sheet when you attach media).
+3. Press **Send**.
 
 ## Ways to connect
+
+Status as of October 2026: the Telegram Bot API is free. There is no developer portal, no app review and no business account. Any Telegram user can create a bot in about a minute.
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
 | **Open API** (recommended) | A bot token from @BotFather. The bot must be an **administrator with "Post Messages"** in your channel, or a member of your group. | Free | About 1 message per second per chat and 20 messages per minute in a group. If NEFORUM goes faster, Telegram says how many seconds to wait. |
 | **Hand-off** | The Telegram app or Telegram Web | Free | NEFORUM opens Telegram's share page (`https://t.me/share/url`) with your text, or the share sheet when you attach media. You pick the chat and press **Send**. |
 
-## Create your bot (Open API)
+## How it works
 
-1. In Telegram, open a chat with **@BotFather** (check for the blue verified tick) and send `/newbot`.
-2. Choose a display name, then a username that ends in `bot`, for example `my_news_poster_bot`.
-3. BotFather replies with a **token** that looks like `110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw`. Copy it. Anyone who has this token controls your bot, so don't paste it anywhere else. If it leaks, send `/revoke` to BotFather and connect again with the new token.
-4. Add the bot to where it should post:
-   - **Channel:** open the channel > **Administrators** > **Add Admin**, search for your bot's username, and leave **Post Messages** switched on. Adding it as a plain subscriber is not enough.
-   - **Group:** add the bot as a member. It needs permission to send messages, and to send media if you post images.
-5. In NEFORUM, add **Telegram**, paste the token and enter the chat:
-   - a public channel or group: `@channelusername` (or its `https://t.me/channelusername` link)
-   - a private channel or group: its numeric id. Channels and supergroups start with `-100`, for example `-1001234567890`; a small basic group has a shorter negative id such as `-123456789`. Bots can't use invite links (`t.me/+…`). To find the id, forward one post from the channel to a bot such as @userinfobot, or open the channel in Telegram Web, where the id is in the address bar.
-6. Pick **Formatting**. `markdown` (default) turns `**bold**`, `*italic*`, `` `code` ``, `~~strike~~`, `> quotes` and `[label](https://…)` links into Telegram formatting. `plain` sends your text exactly as written.
+### When you connect
 
-There is no redirect URI and nothing to register. Bot tokens never expire.
+NEFORUM checks the token (`getMe`), looks up the chat (`getChat`) and makes sure the bot is allowed to post there (`getChatMember`).
 
-When you connect, NEFORUM checks the token (`getMe`), looks up the chat (`getChat`) and makes sure the bot is allowed to post there (`getChatMember`). If anything is missing, it tells you what to fix.
-
-## Posting
+### Posting
 
 - **Text**: up to 4096 characters per message. Longer posts are split into several messages, and each one is a reply to the one before it.
 - **Media**: up to 10 photos and/or MP4 videos per post. One file is sent with `sendPhoto`, `sendVideo` or `sendAnimation` (for GIFs). Two to ten files are sent as an album (`sendMediaGroup`).
@@ -40,7 +58,7 @@ When you connect, NEFORUM checks the token (`getMe`), looks up the chat (`getCha
 - **View post** links: `https://t.me/<channel>/<id>` for public chats, and `https://t.me/c/<id>/<message>` (members only) for private supergroups and channels.
 - **Several messages per post** (media plus a long text, or a long text split into parts): if Telegram asks NEFORUM to slow down between them for up to 10 seconds, NEFORUM waits and carries on. If a later message still fails, the earlier ones stay posted and NEFORUM does **not** retry the post on its own (that would post them twice); the error lists what is already live so you can finish by hand.
 
-## Known limitations
+## Limits
 
 - **Bots only.** NEFORUM doesn't post as your personal account. That would need Telegram's user API (MTProto), with a phone-code login and stricter terms.
 - **No server-side scheduling.** The Bot API can't schedule messages. Scheduled posts are sent from your device, so it must be on and online at that time.
@@ -48,8 +66,11 @@ When you connect, NEFORUM checks the token (`getMe`), looks up the chat (`getCha
 - **GIFs in albums become still pictures.** Post a GIF on its own to keep the animation.
 - **Only MP4 video.** Telegram plays MP4 (H.264/AAC). Convert other formats first.
 - **Thread replies in channels** show as replies only to people who open the discussion or the reply chain. In the channel itself the parts appear one after another.
-- **Groups upgraded to supergroups** get a new id. Posting then fails with a message asking you to reconnect.
 - The bot token is part of every Bot API address. NEFORUM keeps it out of error messages. Don't share debug logs publicly.
+
+## Troubleshooting
+
+- **Posting fails with a message asking you to reconnect after a group was upgraded**: groups upgraded to supergroups get a new id. Reconnect the account.
 
 ## Sources
 

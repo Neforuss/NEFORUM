@@ -1,30 +1,38 @@
-# Substack Notes
+# Substack Notes setup guide
 
-NEFORUM reaches Substack **Notes** (Substack's short-post feed) by **hand-off only**. Nothing to set up, no API key, no sign-in.
+This guide connects Substack **Notes** (Substack's short-post feed) by **hand-off only**: NEFORUM copies your text and opens Substack, and you paste it into the Notes composer and click **Post**. Nothing to set up, no API key, no sign-in.
+
+## Steps
+
+1. In NEFORUM, add an account and choose **Substack Notes**.
+2. Optionally type a label, for example your Substack handle.
+3. Tap **Add Substack Notes**. That's it.
+
+## Steps: when you publish
+
+1. Publish your post. NEFORUM copies your text to the clipboard and opens Substack Notes, <https://substack.com/notes>. Sign in there once if you are not signed in yet.
+2. Click **What's on your mind?** at the top (or **Create** > **Note**).
+   - In the app, open the **Notes** tab and tap **+**.
+   - Substack has no link that opens the composer by itself, so this click is yours.
+3. Press Ctrl+V (⌘V on a Mac) to paste your text.
+4. Add images with the photo icon, or copy each with its button in NEFORUM and paste it if the composer takes pasted images.
+5. Click **Post**.
+
+## Ways to connect
+
+Status as of October 2026.
 
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
 | **Hand-off** (only tier) | Any Substack account. You do not need your own publication | Free | NEFORUM copies your text and opens Substack. You paste it into the Notes composer and click **Post**. |
 
-Status as of October 2026.
+## How it works
 
-## Why there is no automatic posting
+### Why there is no automatic posting
 
 - Substack has **no publishing API**. Its official Developer API only reads public profile data.
 - Unofficial tools such as python-substack log in with your browser cookie and call undocumented parts of the site. Substack's Terms of Use forbid automated access, and those tools can break at any time. NEFORUM does not use them.
 - The Notes composer does not accept any URL parameters, so not even the text can be prefilled.
-
-## Setting it up
-
-1. In NEFORUM, add an account and choose **Substack Notes**.
-2. Optionally type a label, for example your Substack handle. Tap **Connect**. That's it.
-
-## What happens when you publish
-
-1. NEFORUM copies your text to the clipboard and opens Substack Notes, <https://substack.com/notes>. Sign in there once if you are not signed in yet.
-2. Click **What's on your mind?** at the top (or **Create** > **Note**). In the app, open the **Notes** tab and tap **+**. Substack has no link that opens the composer by itself, so this click is yours.
-3. Press Ctrl+V (⌘V on a Mac) to paste your text. Add images with the photo icon, or copy each with its button in NEFORUM and paste it if the composer takes pasted images.
-4. Click **Post**.
 
 ## Limits
 
@@ -34,7 +42,7 @@ Status as of October 2026.
 - Hashtags have no special meaning on Substack, so NEFORUM does not add them.
 - Substack can schedule notes itself (three dots at the top of the composer > **Schedule**). NEFORUM does not control that.
 
-## Known limitations
+### Known limitations
 
 - You always paste the text yourself.
 - The Android app is `com.substack.app` (its Google Play listing), but Substack does not document a share target. NEFORUM shares files to it, but whether they land in a new note depends on the app.

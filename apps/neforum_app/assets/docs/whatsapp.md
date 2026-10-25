@@ -1,30 +1,39 @@
-# WhatsApp
+# WhatsApp setup guide
 
-NEFORUM reaches WhatsApp by **hand-off only**. Nothing to set up, no developer app, no sign-in.
+This guide connects WhatsApp by **hand-off only**: WhatsApp opens with your text or media, and you pick a chat, **My status** or a **Channel** and tap **Send**. Nothing to set up, no developer app, no sign-in.
+
+## Steps
+
+1. In NEFORUM, add an account and choose **WhatsApp**.
+2. Optionally type a label (for example "Family groups" or "My channel").
+3. Tap **Add WhatsApp**. That's it.
+
+## Steps: when you publish
+
+1. Publish your post. What opens depends on the post:
+   - **Text only:** NEFORUM opens `https://wa.me/?text=...` with your text already filled in. On a phone this opens the WhatsApp app. On a computer it goes on to WhatsApp Web, or to WhatsApp Desktop if it is installed.
+   - **With photos or videos (phone):** NEFORUM opens the share sheet with your files. Pick **WhatsApp**. Your text goes along as the caption and is also on the clipboard in case WhatsApp drops it.
+   - **With photos or videos (computer):** open WhatsApp Web/Desktop, attach the files and paste the text.
+2. Choose a chat or one of your Channels. With photos or videos on a phone, you can also choose **My status**.
+3. Tap **Send**.
+
+For a **text Status**, open **Updates**, tap the pencil, paste (your text is on the clipboard) and send.
+
+## Ways to connect
+
+Status as of October 2026.
 
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
 | **Hand-off** (only tier) | Any WhatsApp account. The WhatsApp app (phone), or WhatsApp Web / Desktop (computer) | Free | WhatsApp opens with your text or media. You pick a chat, **My status** or a **Channel** and tap **Send**. |
 
-Status as of October 2026.
+## How it works
 
-## Why there is no automatic posting
+### Why there is no automatic posting
 
 - WhatsApp has **no public API for Status or Channels**.
 - The **WhatsApp Business Platform** (Cloud API) is a paid service for businesses to message their customers. It needs a Meta business portfolio, a WhatsApp Business Account and a dedicated business phone number. Since 1 July 2025 it bills per message. It **cannot** post to Status or Channels either, so it does not help a cross-poster.
 - Unofficial libraries that act like WhatsApp Web (for example Baileys) break WhatsApp's terms of service and often get numbers banned. NEFORUM does not use them.
-
-## Setting it up
-
-1. In NEFORUM, add an account and choose **WhatsApp**.
-2. Optionally type a label (for example "Family groups" or "My channel"). Tap **Connect**. That's it.
-
-## What happens when you publish
-
-- **Text only:** NEFORUM opens `https://wa.me/?text=...` with your text already filled in. On a phone this opens the WhatsApp app. On a computer it goes on to WhatsApp Web, or to WhatsApp Desktop if it is installed. Choose a chat or one of your Channels and tap **Send**.
-  For a **text Status**, open **Updates**, tap the pencil, paste (your text is on the clipboard) and send.
-- **With photos or videos (phone):** NEFORUM opens the share sheet with your files. Pick **WhatsApp**, then choose **My status**, a Channel or a chat. Your text goes along as the caption and is also on the clipboard in case WhatsApp drops it.
-- **With photos or videos (computer):** open WhatsApp Web/Desktop, attach the files and paste the text.
 
 ## Limits
 
@@ -32,7 +41,7 @@ Status as of October 2026.
 - Media: up to 100 photos or videos at once (WhatsApp Help Center, web/desktop). WhatsApp compresses photos and videos. On Status, every photo or video becomes its own update. Status videos are cut at about 60 seconds; older app versions cut them at 30 s. This limit is reported, not documented.
 - No alt text, no threads, no scheduling.
 
-## Known limitations
+### Known limitations
 
 - NEFORUM **cannot preselect** Status or a Channel. You always choose the target in WhatsApp.
 - A thread that NEFORUM would split elsewhere is sent here as one message, with the parts separated by blank lines.
