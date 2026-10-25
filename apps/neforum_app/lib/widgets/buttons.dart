@@ -24,7 +24,8 @@ class PrimaryAction extends StatefulWidget {
   final bool expand;
   final bool compact;
 
-  /// Brand yellow with ink text, for the deep-purple navigation chrome.
+  /// The variant for the navigation chrome ([NfColors.chromeActionGradient]):
+  /// brand yellow with ink text on the default deep-purple chrome.
   final bool onChrome;
 
   /// Small widget after the label (e.g. a count badge or a chevron).
@@ -43,10 +44,9 @@ class _PrimaryActionState extends State<PrimaryAction> {
     final nf = context.nf;
     final enabled = widget.onPressed != null && !widget.loading;
     final h = widget.compact ? 40.0 : 50.0;
-    final fg = widget.onChrome ? nf.onHighlight : Colors.white;
-    final fill = widget.onChrome
-        ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [nf.highlight, Color.lerp(nf.highlight, const Color(0xFFFFB800), 0.35)!])
-        : nf.brandGradient;
+    final fg = widget.onChrome ? nf.onChromeAccent : Colors.white;
+    final fill = widget.onChrome ? nf.chromeActionGradient : nf.brandGradient;
+    final radius = Radii.circular(h / 2.6);
 
     final content = Row(
       mainAxisSize: widget.expand ? MainAxisSize.max : MainAxisSize.min,
@@ -98,8 +98,8 @@ class _PrimaryActionState extends State<PrimaryAction> {
               decoration: BoxDecoration(
                 gradient: enabled ? fill : null,
                 color: enabled ? null : nf.surfaceSunken,
-                borderRadius: BorderRadius.circular(h / 2.6),
-                boxShadow: enabled ? nf.glow(widget.onChrome ? nf.highlight : nf.accentFill, strength: (_hover ? 1.35 : 1) * (widget.onChrome ? 0.6 : 1)) : null,
+                borderRadius: radius,
+                boxShadow: enabled ? nf.glow(widget.onChrome ? nf.chromeAccent : nf.accentFill, strength: (_hover ? 1.35 : 1) * (widget.onChrome ? 0.6 : 1)) : null,
                 border: enabled ? null : Border.all(color: nf.border),
               ),
               child: Stack(
@@ -112,7 +112,7 @@ class _PrimaryActionState extends State<PrimaryAction> {
                       opacity: enabled && _hover ? 1 : 0,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(h / 2.6),
+                          borderRadius: radius,
                           gradient: LinearGradient(
                             begin: Alignment.topCenter,
                             end: Alignment.bottomCenter,
@@ -229,7 +229,7 @@ class PillButton extends StatelessWidget {
         foregroundColor: filled ? Colors.white : c,
         backgroundColor: filled ? c : null,
         side: BorderSide(color: filled ? c : nf.border),
-        shape: const StadiumBorder(),
+        shape: Radii.stadium,
         padding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.md),
         minimumSize: const Size(0, 40),
       ),

@@ -26,7 +26,7 @@ class MediaThumb extends ConsumerWidget {
     final nf = context.nf;
     final storage = ref.watch(servicesProvider).storage;
     final w = aspect == null ? size : size * aspect!;
-    final r = radius ?? BorderRadius.circular(size * 0.14);
+    final r = radius ?? Radii.circular(size * 0.14);
     final dpr = MediaQuery.devicePixelRatioOf(context);
 
     final Widget content;
@@ -47,7 +47,7 @@ class MediaThumb extends ConsumerWidget {
             child: Container(
               width: size * 0.36,
               height: size * 0.36,
-              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.16), shape: BoxShape.circle),
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.16), shape: Radii.circleShape),
               child: Icon(Icons.play_arrow_rounded, color: Colors.white, size: size * 0.24),
             ),
           ),

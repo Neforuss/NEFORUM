@@ -13,18 +13,22 @@ class NfCard extends StatefulWidget {
     this.selected = false,
     this.color,
     this.borderColor,
-    this.radius = Radii.rLg,
+    this.radius,
     this.elevated = false,
     this.clip = true,
   });
 
   final Widget child;
+
+  /// Three quarters of it with the compact density.
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
   final bool selected;
   final Color? color;
   final Color? borderColor;
-  final BorderRadius radius;
+
+  /// Defaults to [Radii.rLg].
+  final BorderRadius? radius;
 
   /// Adds a soft shadow (popovers, floating bars).
   final bool elevated;
@@ -50,10 +54,10 @@ class _NfCardState extends State<NfCard> {
     Widget content = AnimatedContainer(
       duration: Motion.fast,
       curve: Motion.standard,
-      padding: widget.padding,
+      padding: context.denseLayout ? widget.padding * 0.75 : widget.padding,
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: widget.radius,
+        borderRadius: widget.radius ?? Radii.rLg,
         border: Border.all(color: border, width: widget.selected ? 1.5 : 1),
         boxShadow: widget.elevated ? nf.elevation1 : null,
       ),
@@ -88,17 +92,20 @@ class _NfCardState extends State<NfCard> {
 
 /// A recessed area (media tray, code block, drop zone).
 class NfWell extends StatelessWidget {
-  const NfWell({super.key, required this.child, this.padding = const EdgeInsets.all(Space.md), this.radius = Radii.rMd, this.dashed = false, this.highlight = false});
+  const NfWell({super.key, required this.child, this.padding = const EdgeInsets.all(Space.md), this.radius, this.dashed = false, this.highlight = false});
 
   final Widget child;
   final EdgeInsetsGeometry padding;
-  final BorderRadius radius;
+
+  /// Defaults to [Radii.rMd].
+  final BorderRadius? radius;
   final bool dashed;
   final bool highlight;
 
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
+    final radius = this.radius ?? Radii.rMd;
     final decoration = BoxDecoration(
       color: highlight ? nf.accentSoft : nf.surfaceSunken,
       borderRadius: radius,

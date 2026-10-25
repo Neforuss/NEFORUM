@@ -9,7 +9,9 @@ import '../platform/desktop.dart';
 import '../platform/env.dart';
 import '../state/providers.dart';
 import '../state/services.dart';
+import '../state/settings.dart';
 import '../theme/app_theme.dart';
+import '../theme/text_scale.dart';
 import '../theme/tokens.dart';
 import 'router.dart';
 import 'ui_zoom.dart';
@@ -67,11 +69,19 @@ class NeforumApp extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
     final router = ref.watch(routerProvider);
     ref.listen(settingsProvider.select((s) => s.minimizeToTray), (_, next) => DesktopIntegration.instance.setCloseToTray(next));
+    ThemeData theme(Brightness brightness) => buildTheme(
+          brightness,
+          settings.accent,
+          customAccent: settings.customAccentColor,
+          corners: settings.cornerStyle,
+          chrome: settings.navigationChrome,
+          density: settings.interfaceDensity,
+        );
     return MaterialApp.router(
       title: 'NEFORUM',
       debugShowCheckedModeBanner: false,
-      theme: buildTheme(Brightness.light, settings.accent),
-      darkTheme: buildTheme(Brightness.dark, settings.accent),
+      theme: theme(Brightness.light),
+      darkTheme: theme(Brightness.dark),
       themeMode: settings.themeMode,
       themeAnimationDuration: Motion.medium,
       routerConfig: router,
@@ -81,7 +91,8 @@ class NeforumApp extends ConsumerWidget {
         enabled: Env.isDesktop,
         zoom: settings.uiZoom,
         onChanged: (z) => ref.read(settingsProvider.notifier).update((x) => x.copyWith(uiZoom: z)),
-        child: child ?? const SizedBox.shrink(),
+        // Phones and tablets: the text size from Settings > Appearance.
+        child: TextScale(scale: Env.isMobile ? settings.mobileTextScale : 1, child: child ?? const SizedBox.shrink()),
       ),
     );
   }
@@ -92,10 +103,12 @@ class _SwitchingSplash extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Keeps the current corner style while the workspace switches.
+    final corners = Radii.square ? CornerStyle.square : CornerStyle.rounded;
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: buildTheme(Brightness.light, AccentChoice.neforum),
-      darkTheme: buildTheme(Brightness.dark, AccentChoice.neforum),
+      theme: buildTheme(Brightness.light, AccentChoice.neforum, corners: corners),
+      darkTheme: buildTheme(Brightness.dark, AccentChoice.neforum, corners: corners),
       home: const Scaffold(body: Center(child: NeforumMark(size: 72, animate: true))),
     );
   }

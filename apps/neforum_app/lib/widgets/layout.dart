@@ -64,6 +64,9 @@ class PageBody extends StatefulWidget {
     return EdgeInsets.symmetric(horizontal: h);
   }
 
+  /// Space above the first child.
+  static double topPadding(BuildContext context) => context.isCompact ? Space.lg : (context.denseLayout ? Space.xxl : Space.x4);
+
   @override
   State<PageBody> createState() => _PageBodyState();
 }
@@ -91,7 +94,7 @@ class _PageBodyState extends State<PageBody> {
       controller: controller,
       child: SingleChildScrollView(
         controller: controller,
-        padding: EdgeInsets.fromLTRB(g.left, context.isCompact ? Space.lg : Space.x4, g.right, widget.bottomPadding),
+        padding: EdgeInsets.fromLTRB(g.left, PageBody.topPadding(context), g.right, widget.bottomPadding),
         child: Center(
           child: ConstrainedBox(
             constraints: BoxConstraints(maxWidth: widget.maxWidth),
@@ -168,6 +171,28 @@ class EmptyState extends StatelessWidget {
         if (action != null) ...[const SizedBox(height: Space.xxl), action!],
       ]),
     );
+  }
+}
+
+/// Draws [child] at [scale] of its size, like a page zoomed out: it is laid
+/// out `1 / scale` times wider than the space it gets, then shrunk to fit
+/// that width. Taps still land on what is drawn.
+class ScaledDown extends StatelessWidget {
+  const ScaledDown({super.key, required this.scale, required this.child});
+
+  final double scale;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, c) {
+      if (!c.hasBoundedWidth) return child;
+      return FittedBox(
+        fit: BoxFit.fitWidth,
+        alignment: Alignment.topLeft,
+        child: SizedBox(width: c.maxWidth / scale, child: child),
+      );
+    });
   }
 }
 

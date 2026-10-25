@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../state/settings.dart' show CornerStyle, InterfaceDensity, NavigationChromeStyle;
 import 'tokens.dart';
 
 /// Builds the NEFORUM [ThemeData] for one brightness and accent.
@@ -9,8 +10,27 @@ import 'tokens.dart';
 /// Material 3 widgets are restyled so they read as one calm, editorial
 /// system: flat surfaces separated by hairline borders, generous radii,
 /// Bricolage Grotesque for display text, Inter for everything else.
-ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
-  final c = brightness == Brightness.dark ? NfColors.dark(accent) : NfColors.light(accent);
+///
+/// The Appearance settings: [customAccent] (ARGB) is the color of
+/// [AccentChoice.custom]; [corners] square sets every radius to 0 (it also
+/// sets [Radii.square], which widgets read directly); [chrome] colors the
+/// sidebar, rail and bottom bar; [density] compact tightens the spacing.
+ThemeData buildTheme(
+  Brightness brightness,
+  AccentChoice accent, {
+  int? customAccent,
+  CornerStyle corners = CornerStyle.rounded,
+  NavigationChromeStyle chrome = NavigationChromeStyle.brand,
+  InterfaceDensity density = InterfaceDensity.comfortable,
+}) {
+  Radii.square = corners == CornerStyle.square;
+  final base = brightness == Brightness.dark ? NfColors.dark(accent, customAccent: customAccent) : NfColors.light(accent, customAccent: customAccent);
+  final c = switch (chrome) {
+    NavigationChromeStyle.brand => base,
+    NavigationChromeStyle.theme => base.withThemeChrome(),
+    NavigationChromeStyle.accent => base.withAccentChrome(),
+  };
+  final dense = density == InterfaceDensity.compact;
   final scheme = ColorScheme(
     brightness: brightness,
     primary: c.accent,
@@ -57,7 +77,7 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
     textTheme: text,
     primaryTextTheme: text,
     extensions: [c],
-    visualDensity: VisualDensity.standard,
+    visualDensity: dense ? VisualDensity.compact : VisualDensity.standard,
     materialTapTargetSize: MaterialTapTargetSize.padded,
     splashFactory: InkSparkle.splashFactory,
     highlightColor: Colors.transparent,
@@ -101,9 +121,9 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
         }),
         overlayColor: WidgetStateProperty.all(Colors.white.withValues(alpha: 0.10)),
         textStyle: WidgetStateProperty.all(text.labelLarge),
-        padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: Space.xl, vertical: Space.md + 2)),
-        minimumSize: WidgetStateProperty.all(const Size(64, 44)),
-        shape: WidgetStateProperty.all(const RoundedRectangleBorder(borderRadius: Radii.rMd)),
+        padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: dense ? Space.lg : Space.xl, vertical: dense ? Space.sm + 2 : Space.md + 2)),
+        minimumSize: WidgetStateProperty.all(Size(64, dense ? 38 : 44)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rMd)),
         elevation: WidgetStateProperty.all(0),
       ),
     ),
@@ -115,9 +135,9 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
         side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.hovered) ? c.borderStrong : c.border)),
         overlayColor: WidgetStateProperty.all(c.text.withValues(alpha: 0.04)),
         textStyle: WidgetStateProperty.all(text.labelLarge),
-        padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: Space.lg + 2, vertical: Space.md + 2)),
-        minimumSize: WidgetStateProperty.all(const Size(48, 44)),
-        shape: WidgetStateProperty.all(const RoundedRectangleBorder(borderRadius: Radii.rMd)),
+        padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: dense ? Space.md + 2 : Space.lg + 2, vertical: dense ? Space.sm + 2 : Space.md + 2)),
+        minimumSize: WidgetStateProperty.all(Size(48, dense ? 38 : 44)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rMd)),
       ),
     ),
 
@@ -126,8 +146,8 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
         foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.disabled) ? c.textFaint : c.accent),
         overlayColor: WidgetStateProperty.all(c.accent.withValues(alpha: 0.08)),
         textStyle: WidgetStateProperty.all(text.labelLarge),
-        padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm + 2)),
-        shape: WidgetStateProperty.all(const RoundedRectangleBorder(borderRadius: Radii.rSm)),
+        padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: Space.md, vertical: dense ? Space.xs + 2 : Space.sm + 2)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rSm)),
       ),
     ),
 
@@ -139,7 +159,7 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
           return c.textMuted;
         }),
         overlayColor: WidgetStateProperty.all(c.text.withValues(alpha: 0.06)),
-        shape: WidgetStateProperty.all(const RoundedRectangleBorder(borderRadius: Radii.rSm)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rSm)),
       ),
     ),
 
@@ -147,8 +167,8 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       filled: true,
       fillColor: c.surfaceSunken,
       hoverColor: Colors.transparent,
-      isDense: false,
-      contentPadding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.md + 2),
+      isDense: dense,
+      contentPadding: EdgeInsets.symmetric(horizontal: dense ? Space.md : Space.lg, vertical: dense ? Space.sm + 2 : Space.md + 2),
       hintStyle: text.bodyMedium?.copyWith(color: c.textFaint),
       labelStyle: text.bodyMedium?.copyWith(color: c.textMuted),
       floatingLabelStyle: text.bodySmall?.copyWith(color: c.accent, fontWeight: FontWeight.w600),
@@ -175,10 +195,10 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       selectedColor: c.accentSoft,
       disabledColor: c.surfaceSunken,
       side: BorderSide(color: c.border),
-      shape: const RoundedRectangleBorder(borderRadius: Radii.rPill),
+      shape: RoundedRectangleBorder(borderRadius: Radii.rPill),
       labelStyle: text.labelMedium?.copyWith(color: c.text),
       secondaryLabelStyle: text.labelMedium?.copyWith(color: c.accent),
-      padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs),
+      padding: EdgeInsets.symmetric(horizontal: Space.sm, vertical: dense ? Space.xxs : Space.xs),
       checkmarkColor: c.accent,
       showCheckmark: false,
     ),
@@ -194,7 +214,7 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.accentFill : Colors.transparent),
       checkColor: WidgetStateProperty.all(Colors.white),
       side: BorderSide(color: c.borderStrong, width: 1.5),
-      shape: const RoundedRectangleBorder(borderRadius: Radii.rXs),
+      shape: RoundedRectangleBorder(borderRadius: Radii.rXs),
     ),
 
     radioTheme: RadioThemeData(
@@ -222,8 +242,8 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
         foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.text : c.textMuted),
         side: WidgetStateProperty.all(BorderSide(color: c.border)),
         textStyle: WidgetStateProperty.all(text.labelMedium),
-        shape: WidgetStateProperty.all(const RoundedRectangleBorder(borderRadius: Radii.rSm)),
-        padding: WidgetStateProperty.all(const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rSm)),
+        padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: Space.md, vertical: dense ? Space.xs : Space.sm)),
       ),
       selectedIcon: const SizedBox.shrink(),
     ),
@@ -233,9 +253,9 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       textColor: c.text,
       titleTextStyle: text.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
       subtitleTextStyle: text.bodySmall?.copyWith(color: c.textMuted),
-      contentPadding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.xs),
-      shape: const RoundedRectangleBorder(borderRadius: Radii.rMd),
-      minVerticalPadding: Space.md,
+      contentPadding: EdgeInsets.symmetric(horizontal: dense ? Space.md : Space.lg, vertical: dense ? 0 : Space.xs),
+      shape: RoundedRectangleBorder(borderRadius: Radii.rMd),
+      minVerticalPadding: dense ? Space.sm : Space.md,
       selectedColor: c.accent,
       selectedTileColor: c.accentSoft,
     ),
@@ -261,7 +281,7 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       showDragHandle: true,
       dragHandleColor: c.borderStrong,
       dragHandleSize: const Size(40, 4),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl))),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(Radii.xl))),
       clipBehavior: Clip.antiAlias,
     ),
 
@@ -270,7 +290,7 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       backgroundColor: c.text,
       contentTextStyle: text.bodyMedium?.copyWith(color: c.bg),
       actionTextColor: c.isDark ? c.accent.withValues(alpha: 1) : c.accent,
-      shape: const RoundedRectangleBorder(borderRadius: Radii.rMd),
+      shape: RoundedRectangleBorder(borderRadius: Radii.rMd),
       elevation: 0,
       insetPadding: const EdgeInsets.all(Space.lg),
       width: null,
@@ -298,32 +318,33 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
         surfaceTintColor: WidgetStateProperty.all(Colors.transparent),
         elevation: WidgetStateProperty.all(0),
         side: WidgetStateProperty.all(BorderSide(color: c.border)),
-        shape: WidgetStateProperty.all(const RoundedRectangleBorder(borderRadius: Radii.rMd)),
+        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rMd)),
         padding: WidgetStateProperty.all(const EdgeInsets.all(Space.xs)),
       ),
     ),
 
-    // The phone bottom bar is navigation chrome: deep purple, yellow for the
-    // current section.
+    // The phone bottom bar is navigation chrome: deep purple and yellow for
+    // the current section by default (see NfColors.chrome).
     navigationBarTheme: NavigationBarThemeData(
       backgroundColor: c.chrome,
       surfaceTintColor: Colors.transparent,
-      indicatorColor: c.highlight,
+      indicatorColor: c.chromeAccent,
+      indicatorShape: Radii.stadium,
       elevation: 0,
-      height: 68,
+      height: dense ? 60 : 68,
       labelTextStyle: WidgetStateProperty.resolveWith((s) => text.labelSmall?.copyWith(
             color: s.contains(WidgetState.selected) ? c.onChrome : c.onChromeMuted,
             fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500,
           )),
       iconTheme: WidgetStateProperty.resolveWith((s) => IconThemeData(
-            color: s.contains(WidgetState.selected) ? c.onHighlight : c.onChromeMuted,
+            color: s.contains(WidgetState.selected) ? c.onChromeAccent : c.onChromeMuted,
             size: 22,
           )),
     ),
 
     scrollbarTheme: ScrollbarThemeData(
       thumbColor: WidgetStateProperty.all(c.borderStrong),
-      radius: const Radius.circular(8),
+      radius: Radius.circular(Radii.corner(8)),
       thickness: WidgetStateProperty.all(6),
       crossAxisMargin: 2,
     ),
@@ -345,15 +366,15 @@ ThemeData buildTheme(Brightness brightness, AccentChoice accent) {
       shape: RoundedRectangleBorder(borderRadius: Radii.rXl, side: BorderSide(color: c.border)),
       headerBackgroundColor: c.surfaceRaised,
       headerForegroundColor: c.text,
-      dayShape: WidgetStateProperty.all(const CircleBorder()),
+      dayShape: WidgetStateProperty.all(Radii.circleBorder),
       todayBorder: BorderSide(color: c.accent),
     ),
 
     timePickerTheme: TimePickerThemeData(
       backgroundColor: c.surfaceRaised,
       shape: RoundedRectangleBorder(borderRadius: Radii.rXl, side: BorderSide(color: c.border)),
-      hourMinuteShape: const RoundedRectangleBorder(borderRadius: Radii.rMd),
-      dayPeriodShape: const RoundedRectangleBorder(borderRadius: Radii.rSm),
+      hourMinuteShape: RoundedRectangleBorder(borderRadius: Radii.rMd),
+      dayPeriodShape: RoundedRectangleBorder(borderRadius: Radii.rSm),
       dialBackgroundColor: c.surfaceSunken,
     ),
 

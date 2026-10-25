@@ -26,15 +26,14 @@ class AccountAvatar extends StatelessWidget {
     Widget face;
     final url = account.avatarUrl;
     if (url != null && url.startsWith('http')) {
-      face = ClipOval(
-        child: Image.network(
-          url,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) => _initialsFace(context, initials, brand, b),
-        ),
+      final photo = Image.network(
+        url,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) => _initialsFace(context, initials, brand, b),
       );
+      face = Radii.square ? ClipRect(child: photo) : ClipOval(child: photo);
     } else {
       face = _initialsFace(context, initials, brand, b);
     }
@@ -51,8 +50,8 @@ class AccountAvatar extends StatelessWidget {
             bottom: 0,
             child: Container(
               padding: const EdgeInsets.all(1.6),
-              decoration: BoxDecoration(color: nf.surface, borderRadius: BorderRadius.circular(badgeSize * 0.36)),
-              child: PlatformTile(account.platformId, size: badgeSize, radius: badgeSize * 0.3),
+              decoration: BoxDecoration(color: nf.surface, borderRadius: Radii.circular(badgeSize * 0.36)),
+              child: PlatformTile(account.platformId, size: badgeSize, radius: Radii.corner(badgeSize * 0.3)),
             ),
           ),
       ]),
@@ -67,7 +66,7 @@ class AccountAvatar extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
+        shape: Radii.circleShape,
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -184,9 +183,9 @@ class PlatformStack extends StatelessWidget {
               padding: const EdgeInsets.all(2),
               decoration: BoxDecoration(
                 color: _ring(nf, i),
-                borderRadius: BorderRadius.circular(size * 0.34),
+                borderRadius: Radii.circular(size * 0.34),
               ),
-              child: PlatformTile(shown[i], size: size, radius: size * 0.28),
+              child: PlatformTile(shown[i], size: size, radius: Radii.corner(size * 0.28)),
             ),
           ),
         if (extra > 0)
@@ -196,7 +195,7 @@ class PlatformStack extends StatelessWidget {
               width: size + 2,
               height: size + 4,
               alignment: Alignment.center,
-              decoration: BoxDecoration(color: nf.surfaceSunken, borderRadius: BorderRadius.circular(size * 0.34), border: Border.all(color: nf.surface, width: 2)),
+              decoration: BoxDecoration(color: nf.surfaceSunken, borderRadius: Radii.circular(size * 0.34), border: Border.all(color: nf.surface, width: 2)),
               child: Text('+$extra', style: monoStyle(context, size: size * 0.42, weight: FontWeight.w600)),
             ),
           ),

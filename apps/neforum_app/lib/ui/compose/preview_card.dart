@@ -726,7 +726,7 @@ class _Chat extends StatelessWidget {
           padding: const EdgeInsets.all(Space.md),
           decoration: BoxDecoration(
             color: Color.alphaBlend(brand.withValues(alpha: nf.isDark ? 0.16 : 0.07), nf.surfaceSunken),
-            borderRadius: const BorderRadius.only(
+            borderRadius: BorderRadius.only(
               topRight: Radius.circular(Radii.lg),
               bottomLeft: Radius.circular(Radii.lg),
               bottomRight: Radius.circular(Radii.lg),

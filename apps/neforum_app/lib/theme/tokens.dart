@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
@@ -18,21 +19,52 @@ abstract final class Space {
   static const double x6 = 64;
 }
 
-/// Corner radii.
+/// Corner radii. With the square corner style (Settings → Appearance →
+/// Corners) every radius is 0, pills and avatars included.
+///
+/// [square] is set by `buildTheme` from the setting. Changing the style
+/// builds a new theme, so every widget that reads the theme (all of them, via
+/// `context.nf`) rebuilds and picks up the new values. Images NEFORUM
+/// generates for posting (text cards, captions) never use these.
 abstract final class Radii {
-  static const double xs = 6;
-  static const double sm = 10;
-  static const double md = 14;
-  static const double lg = 20;
-  static const double xl = 28;
-  static const double pill = 999;
+  static bool square = false;
 
-  static const BorderRadius rXs = BorderRadius.all(Radius.circular(xs));
-  static const BorderRadius rSm = BorderRadius.all(Radius.circular(sm));
-  static const BorderRadius rMd = BorderRadius.all(Radius.circular(md));
-  static const BorderRadius rLg = BorderRadius.all(Radius.circular(lg));
-  static const BorderRadius rXl = BorderRadius.all(Radius.circular(xl));
-  static const BorderRadius rPill = BorderRadius.all(Radius.circular(pill));
+  static double get xs => square ? 0 : 6;
+  static double get sm => square ? 0 : 10;
+  static double get md => square ? 0 : 14;
+  static double get lg => square ? 0 : 20;
+  static double get xl => square ? 0 : 28;
+  static double get pill => square ? 0 : 999;
+
+  static const BorderRadius _xs = BorderRadius.all(Radius.circular(6));
+  static const BorderRadius _sm = BorderRadius.all(Radius.circular(10));
+  static const BorderRadius _md = BorderRadius.all(Radius.circular(14));
+  static const BorderRadius _lg = BorderRadius.all(Radius.circular(20));
+  static const BorderRadius _xl = BorderRadius.all(Radius.circular(28));
+  static const BorderRadius _pill = BorderRadius.all(Radius.circular(999));
+
+  static BorderRadius get rXs => square ? BorderRadius.zero : _xs;
+  static BorderRadius get rSm => square ? BorderRadius.zero : _sm;
+  static BorderRadius get rMd => square ? BorderRadius.zero : _md;
+  static BorderRadius get rLg => square ? BorderRadius.zero : _lg;
+  static BorderRadius get rXl => square ? BorderRadius.zero : _xl;
+  static BorderRadius get rPill => square ? BorderRadius.zero : _pill;
+
+  /// [radius], or 0 with square corners (sizes that scale with a widget).
+  static double corner(double radius) => square ? 0 : radius;
+
+  /// `BorderRadius.circular(radius)` that follows the corner style.
+  static BorderRadius circular(double radius) => square ? BorderRadius.zero : BorderRadius.circular(radius);
+
+  /// Avatars, round buttons and swatches: circles, or squares with square
+  /// corners. Small status dots stay round ([BoxShape.circle]).
+  static BoxShape get circleShape => square ? BoxShape.rectangle : BoxShape.circle;
+
+  /// [CircleBorder] that follows the corner style.
+  static OutlinedBorder get circleBorder => square ? const RoundedRectangleBorder() : const CircleBorder();
+
+  /// [StadiumBorder] (pill buttons, chips) that follows the corner style.
+  static OutlinedBorder get stadium => square ? const RoundedRectangleBorder() : const StadiumBorder();
 }
 
 /// Motion.
@@ -95,7 +127,11 @@ enum AccentChoice {
   ocean('Ocean', Color(0xFF1677FF), Color(0xFF4C9BFF)),
   jade('Jade', Color(0xFF0F9F6E), Color(0xFF2FD39A)),
   magenta('Magenta', Color(0xFFD6338A), Color(0xFFF0629F)),
-  amber('Amber', Color(0xFFC77800), Color(0xFFFFB02E));
+  amber('Amber', Color(0xFFC77800), Color(0xFFFFB02E)),
+
+  /// The user's own color (the `customAccentColor` setting). The shades here
+  /// are used only while no color has been chosen.
+  custom('Custom', Brand.purple, Color(0xFF9D4DFF));
 
   const AccentChoice(this.label, this.light, this.dark);
   final String label;
@@ -107,7 +143,49 @@ enum AccentChoice {
   /// Accent for text and icons on dark backgrounds (a touch brighter for
   /// contrast).
   final Color dark;
+
+  /// The fixed choices, shown as swatches.
+  static List<AccentChoice> get presets => [for (final a in values) if (a != custom) a];
+
+  /// This choice's two shades; [customColor] (ARGB) is used by [custom].
+  AccentShades shades([int? customColor]) {
+    if (this != custom || customColor == null) return (light: light, dark: dark);
+    return accentShadesOf(Color(customColor));
+  }
 }
+
+/// An accent's two shades, as in [AccentChoice.light] and [AccentChoice.dark].
+typedef AccentShades = ({Color light, Color dark});
+
+/// The shades of any [color]: the light shade is darkened until white text on
+/// it passes WCAG AA (4.5:1), the dark shade lightened until it passes on the
+/// dark theme's cards. Transparency is ignored.
+AccentShades accentShadesOf(Color color) {
+  final base = color.withValues(alpha: 1);
+  Color adjust(Color toward, bool Function(Color) passes) {
+    for (var step = 0; step < 25; step++) {
+      final c = Color.lerp(base, toward, step / 25)!;
+      if (passes(c)) return c;
+    }
+    return toward;
+  }
+
+  return (
+    light: adjust(Colors.black, (c) => contrastRatio(c, Colors.white) >= 4.5),
+    dark: adjust(Colors.white, (c) => contrastRatio(c, NfColors.darkSurface) >= 4.5),
+  );
+}
+
+/// WCAG contrast ratio of two opaque colors (1 to 21).
+double contrastRatio(Color a, Color b) {
+  final la = a.computeLuminance();
+  final lb = b.computeLuminance();
+  return (math.max(la, lb) + 0.05) / (math.min(la, lb) + 0.05);
+}
+
+/// White or [Brand.ink], whichever reads better on [background].
+Color readableOn(Color background) =>
+    contrastRatio(Colors.white, background) >= contrastRatio(Brand.ink, background) ? Colors.white : Brand.ink;
 
 /// Semantic colors beyond Material's ColorScheme. Read with
 /// `context.nf` (see the extension below).
@@ -134,6 +212,11 @@ class NfColors extends ThemeExtension<NfColors> {
     required this.chromeRaised,
     required this.onChrome,
     required this.onChromeMuted,
+    required this.chromeBorder,
+    required this.chromeAccent,
+    required this.onChromeAccent,
+    required this.chromeSelected,
+    required this.chromeActionGradient,
     required this.success,
     required this.successSoft,
     required this.warning,
@@ -179,14 +262,31 @@ class NfColors extends ThemeExtension<NfColors> {
   final Color highlight;
   final Color onHighlight;
 
-  /// Navigation chrome (sidebar, rail, bottom bar): deep purple in both
-  /// themes, with white content and yellow for the current section.
+  /// Navigation chrome (sidebar, rail, bottom bar). By default deep purple in
+  /// both themes, with white content and yellow for the current section;
+  /// Settings → Appearance can make it follow the theme ([withThemeChrome])
+  /// or the accent ([withAccentChrome]).
   final Color chrome;
 
   /// A card or selected row on the chrome.
   final Color chromeRaised;
   final Color onChrome;
   final Color onChromeMuted;
+
+  /// The line between the chrome and the page (transparent when the chrome's
+  /// own color sets it apart).
+  final Color chromeBorder;
+
+  /// Fill marking the current section (rail and bottom bar) and the New post
+  /// button on the chrome, behind [onChromeAccent].
+  final Color chromeAccent;
+  final Color onChromeAccent;
+
+  /// Icon and bar of the current section in the sidebar, on [chromeRaised].
+  final Color chromeSelected;
+
+  /// Fill of `PrimaryAction(onChrome: true)`, behind [onChromeAccent].
+  final LinearGradient chromeActionGradient;
   final Color success;
   final Color successSoft;
   final Color warning;
@@ -202,8 +302,19 @@ class NfColors extends ThemeExtension<NfColors> {
   final LinearGradient brandGradient;
   final bool isDark;
 
-  static NfColors light(AccentChoice accent) {
-    final a = accent.light;
+  /// The dark theme's card color, which accents must read on.
+  static const Color darkSurface = Color(0xFF15101F);
+
+  /// Yellow call to action on the purple chrome.
+  static final LinearGradient _yellowAction = LinearGradient(
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+    colors: [Brand.yellow, Color.lerp(Brand.yellow, const Color(0xFFFFB800), 0.35)!],
+  );
+
+  /// [customAccent] (ARGB) is the user's own color for [AccentChoice.custom].
+  static NfColors light(AccentChoice accent, {int? customAccent}) {
+    final a = accent.shades(customAccent).light;
     return NfColors(
       bg: const Color(0xFFF6F4FA),
       surface: const Color(0xFFFFFFFF),
@@ -225,6 +336,11 @@ class NfColors extends ThemeExtension<NfColors> {
       chromeRaised: const Color(0xFF241044),
       onChrome: Colors.white,
       onChromeMuted: const Color(0xFFB8ADD0),
+      chromeBorder: Colors.transparent,
+      chromeAccent: Brand.yellow,
+      onChromeAccent: Brand.ink,
+      chromeSelected: Brand.yellow,
+      chromeActionGradient: _yellowAction,
       success: const Color(0xFF0E9F62),
       successSoft: const Color(0xFFE3F6EC),
       warning: const Color(0xFFC07A00),
@@ -240,11 +356,12 @@ class NfColors extends ThemeExtension<NfColors> {
     );
   }
 
-  static NfColors dark(AccentChoice accent) {
-    final a = accent.dark;
+  static NfColors dark(AccentChoice accent, {int? customAccent}) {
+    final shades = accent.shades(customAccent);
+    final a = shades.dark;
     return NfColors(
       bg: const Color(0xFF0D0916),
-      surface: const Color(0xFF15101F),
+      surface: darkSurface,
       surfaceRaised: const Color(0xFF1D1729),
       surfaceSunken: const Color(0xFF100C19),
       surfaceHover: const Color(0xFF1B1526),
@@ -254,8 +371,8 @@ class NfColors extends ThemeExtension<NfColors> {
       textMuted: const Color(0xFFADA5C0),
       textFaint: const Color(0xFF766E8A),
       accent: a,
-      accentFill: accent.light,
-      accentSoft: Color.alphaBlend(a.withValues(alpha: 0.16), const Color(0xFF15101F)),
+      accentFill: shades.light,
+      accentSoft: Color.alphaBlend(a.withValues(alpha: 0.16), darkSurface),
       onAccent: Colors.white,
       highlight: Brand.yellow,
       onHighlight: Brand.ink,
@@ -263,6 +380,11 @@ class NfColors extends ThemeExtension<NfColors> {
       chromeRaised: const Color(0xFF211040),
       onChrome: Colors.white,
       onChromeMuted: const Color(0xFFAA9DC6),
+      chromeBorder: Colors.transparent,
+      chromeAccent: Brand.yellow,
+      onChromeAccent: Brand.ink,
+      chromeSelected: Brand.yellow,
+      chromeActionGradient: _yellowAction,
       success: const Color(0xFF3DD68C),
       successSoft: const Color(0xFF12291F),
       warning: const Color(0xFFFFB547),
@@ -273,10 +395,98 @@ class NfColors extends ThemeExtension<NfColors> {
       infoSoft: const Color(0xFF13233A),
       shadow: const Color(0x66000000),
       scrim: const Color(0x99000000),
-      brandGradient: _gradientFor(accent.light),
+      brandGradient: _gradientFor(shades.light),
       isDark: true,
     );
   }
+
+  /// The chrome in the page's own colors: light in the light theme, dark in
+  /// the dark theme, set apart by a hairline, with the accent (never yellow,
+  /// which has no contrast on light surfaces) for the current section.
+  NfColors withThemeChrome() => _withChrome(
+        chrome: surface,
+        chromeRaised: accentSoft,
+        onChrome: text,
+        onChromeMuted: textMuted,
+        chromeBorder: border,
+        chromeAccent: accentFill,
+        onChromeAccent: readableOn(accentFill),
+        chromeSelected: accent,
+        chromeActionGradient: brandGradient,
+      );
+
+  /// The chrome in the accent color (a deeper shade in the dark theme), with
+  /// white or ink content, whichever reads better on it.
+  NfColors withAccentChrome() {
+    final fill = isDark ? Color.lerp(accentFill, Colors.black, 0.3)! : accentFill;
+    final content = readableOn(fill);
+    return _withChrome(
+      chrome: fill,
+      chromeRaised: Color.alphaBlend(content.withValues(alpha: 0.14), fill),
+      onChrome: content,
+      onChromeMuted: Color.alphaBlend(content.withValues(alpha: 0.74), fill),
+      chromeBorder: Colors.transparent,
+      chromeAccent: content,
+      onChromeAccent: fill,
+      chromeSelected: content,
+      chromeActionGradient: LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [content, Color.alphaBlend(fill.withValues(alpha: 0.1), content)],
+      ),
+    );
+  }
+
+  NfColors _withChrome({
+    required Color chrome,
+    required Color chromeRaised,
+    required Color onChrome,
+    required Color onChromeMuted,
+    required Color chromeBorder,
+    required Color chromeAccent,
+    required Color onChromeAccent,
+    required Color chromeSelected,
+    required LinearGradient chromeActionGradient,
+  }) =>
+      NfColors(
+        bg: bg,
+        surface: surface,
+        surfaceRaised: surfaceRaised,
+        surfaceSunken: surfaceSunken,
+        surfaceHover: surfaceHover,
+        border: border,
+        borderStrong: borderStrong,
+        text: text,
+        textMuted: textMuted,
+        textFaint: textFaint,
+        accent: accent,
+        accentFill: accentFill,
+        accentSoft: accentSoft,
+        onAccent: onAccent,
+        highlight: highlight,
+        onHighlight: onHighlight,
+        chrome: chrome,
+        chromeRaised: chromeRaised,
+        onChrome: onChrome,
+        onChromeMuted: onChromeMuted,
+        chromeBorder: chromeBorder,
+        chromeAccent: chromeAccent,
+        onChromeAccent: onChromeAccent,
+        chromeSelected: chromeSelected,
+        chromeActionGradient: chromeActionGradient,
+        success: success,
+        successSoft: successSoft,
+        warning: warning,
+        warningSoft: warningSoft,
+        danger: danger,
+        dangerSoft: dangerSoft,
+        info: info,
+        infoSoft: infoSoft,
+        shadow: shadow,
+        scrim: scrim,
+        brandGradient: brandGradient,
+        isDark: isDark,
+      );
 
   /// The primary call-to-action fill: the accent with a little depth
   /// (lighter top-left, deeper bottom-right). White text passes AA on all of it.
@@ -315,6 +525,11 @@ class NfColors extends ThemeExtension<NfColors> {
       chromeRaised: l(chromeRaised, other.chromeRaised),
       onChrome: l(onChrome, other.onChrome),
       onChromeMuted: l(onChromeMuted, other.onChromeMuted),
+      chromeBorder: l(chromeBorder, other.chromeBorder),
+      chromeAccent: l(chromeAccent, other.chromeAccent),
+      onChromeAccent: l(onChromeAccent, other.onChromeAccent),
+      chromeSelected: l(chromeSelected, other.chromeSelected),
+      chromeActionGradient: LinearGradient.lerp(chromeActionGradient, other.chromeActionGradient, t)!,
       success: l(success, other.success),
       successSoft: l(successSoft, other.successSoft),
       warning: l(warning, other.warning),
@@ -357,6 +572,9 @@ extension NfThemeX on BuildContext {
   double get width => MediaQuery.sizeOf(this).width;
   bool get isCompact => width < Breakpoints.compact;
   bool get isExpanded => width >= Breakpoints.expanded;
+
+  /// The compact density (Settings → Appearance → Density): tighter spacing.
+  bool get denseLayout => Theme.of(this).visualDensity == VisualDensity.compact;
 }
 
 /// Linear interpolation helper for animated values.
