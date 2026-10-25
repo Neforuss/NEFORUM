@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../state/providers.dart';
+import '../../state/scheduler.dart';
 import '../../state/settings.dart';
 import 'setting_row.dart';
 
@@ -17,7 +18,11 @@ class ActivitySettingsSection extends ConsumerWidget {
       SettingChoice<PublishedPostRetention>(
         title: 'After a post is published everywhere',
         value: s.publishedPostRetention,
-        onChanged: (v) => n.update((x) => x.copyWith(publishedPostRetention: v)),
+        onChanged: (v) async {
+          await n.update((x) => x.copyWith(publishedPostRetention: v));
+          // Posts the new choice no longer keeps go now, not at the next hourly check.
+          await ref.read(schedulerProvider).applyRetention();
+        },
         options: const [
           (PublishedPostRetention.discardOnCompletion, 'Delete it right away', 'Recommended. NEFORUM keeps no copy of the post, its text or its photos once every network has it.'),
           (PublishedPostRetention.retainSevenDays, 'Keep it for 7 days', 'Then it is deleted with its photos.'),
@@ -27,7 +32,7 @@ class ActivitySettingsSection extends ConsumerWidget {
       ),
       SettingRow(
         title: 'Times',
-        description: 'Exact shows the weekday, date and time.',
+        description: 'In Activity, the Queue and post details. Exact shows the weekday, date and time, for example "Saturday, 24 October 2026, 14:05".',
         stackOnCompact: true,
         trailing: SegmentedButton<TimestampDisplay>(
           segments: const [
@@ -41,6 +46,7 @@ class ActivitySettingsSection extends ConsumerWidget {
       ),
       SettingRow(
         title: 'Clock',
+        description: 'System follows the setting of this device.',
         stackOnCompact: true,
         trailing: SegmentedButton<ClockFormat>(
           segments: const [

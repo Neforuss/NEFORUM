@@ -45,7 +45,11 @@ class PostCard extends ConsumerWidget {
       platforms.add(a.platformId);
       statuses.add(t.status);
     }
-    final time = p.status == PostStatus.scheduled && p.scheduledAt != null ? dayLabel(p.scheduledAt!, withTime: true) : relativeTime(p.updatedAt);
+    final format = TimeFormatting.of(context, ref);
+    final time = p.status == PostStatus.scheduled && p.scheduledAt != null ? format.scheduled(p.scheduledAt!) : format.moment(p.updatedAt);
+    // The full weekday, date and time gets a line of its own.
+    final timeInRow = showTime && !format.exact;
+    final timeBelow = showTime && format.exact;
 
     return NfCard(
       onTap: onTap,
@@ -56,12 +60,12 @@ class PostCard extends ConsumerWidget {
           LayoutBuilder(
             builder: (context, c) {
               // Room left for the platform stack after the pill, time and menu.
-              final room = c.maxWidth - 110 - (showTime ? 90 : 0) - (actions.isEmpty ? 8 : 48);
+              final room = c.maxWidth - 110 - (timeInRow ? 90 : 0) - (actions.isEmpty ? 8 : 48);
               final maxIcons = (room / 15).floor().clamp(2, 6);
               return Row(
                 children: [
                   StatusPill(label, tone: tone, icon: icon, dense: true),
-                  if (showTime) ...[
+                  if (timeInRow) ...[
                     const SizedBox(width: Space.sm),
                     Flexible(
                       child: Text(
@@ -99,6 +103,13 @@ class PostCard extends ConsumerWidget {
               );
             },
           ),
+          if (timeBelow) ...[
+            const SizedBox(height: Space.xs),
+            Padding(
+              padding: const EdgeInsets.only(right: Space.md),
+              child: Text(time, style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
+            ),
+          ],
           const SizedBox(height: Space.sm),
           Padding(
             padding: const EdgeInsets.only(right: Space.md),

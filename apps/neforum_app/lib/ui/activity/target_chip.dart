@@ -28,11 +28,12 @@ class TargetChip extends ConsumerWidget {
     final url = target.result?.remoteUrl;
     final tappable = (target.status == TargetStatus.published && url != null) ||
         target.status == TargetStatus.awaitingHandoff ||
-        target.status == TargetStatus.failed;
+        needsRetry(target);
     final tip = switch (target.status) {
       TargetStatus.published when url != null => 'Open on $name',
       TargetStatus.awaitingHandoff => 'Finish on $name',
       TargetStatus.failed => target.result?.error?.message ?? 'Failed',
+      TargetStatus.cancelled => 'You cancelled this before it reached $name',
       TargetStatus.heldByPlatform => '$name publishes this itself at the scheduled time',
       _ => '$name: $label',
     };
@@ -52,7 +53,7 @@ class TargetChip extends ConsumerWidget {
                       await launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication);
                     case TargetStatus.awaitingHandoff:
                       await ref.read(postActionsProvider).runHandoff(post.id, target.accountId);
-                    case TargetStatus.failed:
+                    case TargetStatus.failed || TargetStatus.cancelled:
                       if (context.mounted) await showTargetError(context, ref, post, target, name);
                     default:
                       break;
@@ -76,7 +77,7 @@ class TargetChip extends ConsumerWidget {
   }
 }
 
-/// Explains a failed target and offers a retry.
+/// Explains a failed or cancelled target and offers a retry.
 Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, PostTarget target, String platformName) {
   final e = target.result?.error;
   return showDialog<void>(
@@ -84,7 +85,7 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
     builder: (dialogContext) {
       final nf = dialogContext.nf;
       return AlertDialog(
-        title: Text('$platformName did not take it'),
+        title: Text(target.status == TargetStatus.cancelled ? 'Not posted to $platformName' : '$platformName did not take it'),
         content: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 480),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -108,11 +109,21 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
           FilledButton.icon(
             onPressed: () async {
               Navigator.pop(dialogContext);
-              final done = await ref.read(postActionsProvider).publishExisting(post.id, accountIds: {target.accountId});
+              final Post done;
+              try {
+                done = await ref.read(postActionsProvider).publishExisting(post.id, accountIds: {target.accountId});
+              } on Object catch (e) {
+                if (context.mounted) showToast(context, 'Could not publish: $e', icon: Icons.error_outline_rounded);
+                return;
+              }
               final t = done.targetFor(target.accountId);
               if (context.mounted) {
-                showToast(context, t?.status == TargetStatus.failed ? 'Still failing: ${t?.result?.error?.message}' : 'Posted to $platformName',
-                    icon: t?.status == TargetStatus.failed ? Icons.error_outline_rounded : Icons.check_circle_rounded);
+                final message = switch (t?.status) {
+                  TargetStatus.failed => 'Still failing: ${t?.result?.error?.message}',
+                  TargetStatus.cancelled => 'Cancelled',
+                  _ => 'Posted to $platformName',
+                };
+                showToast(context, message, icon: t != null && needsRetry(t) ? Icons.error_outline_rounded : Icons.check_circle_rounded);
               }
             },
             icon: const Icon(Icons.refresh_rounded, size: 18),
@@ -133,5 +144,6 @@ String _advice(PublishError? e) => switch (e?.kind) {
       PublishErrorKind.network => 'This is usually temporary: a connection problem or the platform being busy. Retry in a minute.',
       PublishErrorKind.configuration => 'Something needs setting up first (see the message above).',
       PublishErrorKind.unsupported => 'This account type cannot do that. Try a different tier for this platform.',
+      PublishErrorKind.cancelled => 'Publishing was cancelled before this network got the post. Retry to post it now.',
       _ => 'Retry, and if it keeps failing, copy the details above when reporting the problem.',
     };
