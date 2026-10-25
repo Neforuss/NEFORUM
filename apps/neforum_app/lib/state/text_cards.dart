@@ -167,10 +167,20 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     if (!used.contains(m.id)) await s.media.discard(m);
   }
   // The photo picked only for the cards stays with the post while it is the
-  // background; one that was replaced is deleted.
+  // background; one that was replaced is deleted, unless another post (a
+  // duplicate) or one of this post's photos still uses the file.
   final keptBackground = chosenBackground != null && !ownPhoto ? chosenBackground.photo : null;
-  for (final m in backgrounds) {
-    if (m.id != keptBackground?.id) await s.media.discard(m);
+  final dropped = [for (final m in backgrounds) if (m.id != keptBackground?.id) m];
+  if (dropped.isNotEmpty) {
+    final inUse = {
+      for (final m in userPhotos.values) m.path,
+      ?keptBackground?.path,
+      for (final other in await s.posts.all())
+        if (other.id != post.id) ...other.media.map((m) => m.path),
+    };
+    for (final m in dropped) {
+      if (!inUse.contains(m.path)) await s.media.discard(m);
+    }
   }
   return p.copyWith(media: [
     ...p.media.where((m) => !m.isTextCard),
