@@ -8,7 +8,11 @@ import 'package:intl/intl.dart' show Bidi;
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../brand/neforum_logo.dart';
+import '../state/settings.dart' show TextCardAlignment;
 import '../theme/tokens.dart';
+import 'aligned_text.dart';
+import 'render_parameters.dart';
+import 'text_card_background.dart';
 
 /// NEFORUM text cards: a text-only post rendered as an image for platforms
 /// that refuse posts without one (Instagram, Pinterest, TikTok photo posts,
@@ -20,7 +24,14 @@ import '../theme/tokens.dart';
 /// black or white, and a footer with the NEFORUM
 /// mark, the wordmark and the author. The signature is optional per network
 /// (Settings > Text cards, or per post under the preview): a plain card keeps
-/// only the words and the author.
+/// only the words and the author, and the author's @handle is optional too.
+/// The words can be aligned five ways ([TextCardAlignment]) and set over a
+/// photo instead of a plain colour ([TextCardBackground]).
+///
+/// Every choice a card was made with is recorded in its
+/// [MediaAttachment.renderParameters] ([textCardRenderParameters]); cards made
+/// before 1.2.0 carry their theme, font, signature and safe area as markers in
+/// the file name, which the readers below still understand.
 enum TextCardTheme {
   dark('White on black', Color(0xFF000000), Color(0xFFFFFFFF)),
   light('Black on white', Color(0xFFFFFFFF), Color(0xFF000000));
@@ -116,11 +127,18 @@ EdgeInsets textCardSafeArea(String platformId) {
 }
 
 /// True when [d] cannot take a text-only post but accepts a JPEG, and the
-/// variant has words and no media: exactly when a card helps.
-bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v) {
+/// variant has words and no media: exactly when a card helps. A variant whose
+/// only photo is the card's background ([backgroundMediaId], one of the post's
+/// own photos) qualifies too: the card takes the photo's place.
+bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgroundMediaId}) {
   final m = d.media;
-  return m.requiresMedia && m.maxImages > 0 && m.imageMimeTypes.contains('image/jpeg') && v.media.isEmpty && v.text.trim().isNotEmpty;
+  final noMedia = v.media.isEmpty || (backgroundMediaId != null && v.media.length == 1 && v.media.single.id == backgroundMediaId);
+  return m.requiresMedia && m.maxImages > 0 && m.imageMimeTypes.contains('image/jpeg') && noMedia && v.text.trim().isNotEmpty;
 }
+
+/// Whether [d] is a network that gets text cards at all (it needs an image
+/// and takes a JPEG), whatever the post holds.
+bool takesTextCards(PlatformDescriptor d) => d.media.requiresMedia && d.media.maxImages > 0 && d.media.imageMimeTypes.contains('image/jpeg');
 
 /// The words on the card: the post as written (or the network's own version),
 /// without trailing lines that are only hashtags or links; those belong in
@@ -139,11 +157,54 @@ String textCardText(Post post, PostTarget target) {
 String textCardAltText(String text) => text.length <= 1000 ? text : '${text.substring(0, 999)}…';
 
 /// [safe]: the card keeps clear of a network's buttons ([fullScreenSafeArea]).
+/// The name still carries the markers cards had before 1.2.0, which helps
+/// people recognise the file; the render parameters are what NEFORUM reads.
 String textCardFileName(TextCardTheme theme, {bool branded = true, TextCardFont font = TextCardFont.original, bool safe = false}) =>
     'neforum-text-card-${theme.name}${branded ? '' : '-plain'}${font.marker.isEmpty ? '' : '-${font.marker}'}${safe ? '-safe' : ''}.jpg';
 
+/// Everything a card for [platformId] is rendered with, as recorded in its
+/// [MediaAttachment.renderParameters]: two cards with equal parameters (and
+/// size) are the same picture. [byline] is the @handle drawn on it, null when
+/// it is left out; [textHash] identifies the words ([stableHash]).
+Map<String, dynamic> textCardRenderParameters({
+  required String platformId,
+  required TextCardTheme theme,
+  required TextCardFont font,
+  required bool branded,
+  required TextCardAlignment alignment,
+  required bool showsHandle,
+  String? byline,
+  bool safe = false,
+  String? textHash,
+  TextCardBackground? background,
+}) =>
+    {
+      'kind': RenderKind.textCard,
+      'platform': platformId,
+      'theme': theme.name,
+      'font': font.name,
+      'branded': branded,
+      'alignment': alignment.name,
+      'handle': showsHandle,
+      if (showsHandle && byline != null) 'byline': byline,
+      'safe': safe,
+      'textHash': ?textHash,
+      if (background != null) 'background': background.toRenderParameters(),
+    };
+
+/// The render parameters of a card (or placeholder) made since 1.2.0; null
+/// for older cards, whose choices are read from the file name.
+Map<String, dynamic>? textCardParametersOf(MediaAttachment m) {
+  final p = m.renderParameters;
+  return p != null && p['kind'] == RenderKind.textCard ? p : null;
+}
+
 /// Whether a generated card was laid out clear of a network's buttons.
-bool textCardSafeOf(MediaAttachment m) => (m.fileName ?? '').contains('-safe');
+bool textCardSafeOf(MediaAttachment m) {
+  final p = textCardParametersOf(m);
+  if (p != null) return p['safe'] == true;
+  return (m.fileName ?? '').contains('-safe');
+}
 
 /// Path prefix of the composer's stand-in for a card that is rendered when
 /// the post is saved.
@@ -153,7 +214,11 @@ bool isTextCardPlaceholder(MediaAttachment m) => m.path.startsWith(kTextCardPlac
 
 /// What the composer's previews and checks see in place of the real card.
 MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
-    {bool branded = true, TextCardFont font = TextCardFont.original}) {
+    {bool branded = true,
+    TextCardFont font = TextCardFont.original,
+    TextCardAlignment alignment = TextCardAlignment.left,
+    bool showsHandle = true,
+    TextCardBackground? background}) {
   final s = textCardSize(platformId);
   return MediaAttachment(
     id: 'textcard-$platformId',
@@ -164,14 +229,30 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     height: s.height.round(),
     fileName: textCardFileName(theme, branded: branded, font: font),
     generated: true,
+    renderParameters: textCardRenderParameters(
+      platformId: platformId,
+      theme: theme,
+      font: font,
+      branded: branded,
+      alignment: alignment,
+      showsHandle: showsHandle,
+      safe: textCardSafeArea(platformId) != EdgeInsets.zero,
+      background: background,
+    ),
   );
 }
 
 /// Whether a generated card (or placeholder) carries the NEFORUM signature.
-bool textCardBrandedOf(MediaAttachment m) => !(m.path.contains(':plain') || (m.fileName ?? '').contains('-plain'));
+bool textCardBrandedOf(MediaAttachment m) {
+  final p = textCardParametersOf(m);
+  if (p != null) return p['branded'] != false;
+  return !(m.path.contains(':plain') || (m.fileName ?? '').contains('-plain'));
+}
 
 /// The font a generated card (or placeholder) was made with.
 TextCardFont textCardFontOf(MediaAttachment m) {
+  final p = textCardParametersOf(m);
+  if (p != null) return TextCardFont.values.asNameMap()[p['font']] ?? TextCardFont.original;
   final name = '${m.fileName ?? ''} ${m.path}';
   for (final f in TextCardFont.values) {
     if (f.marker.isNotEmpty && name.contains(f.marker)) return f;
@@ -181,6 +262,8 @@ TextCardFont textCardFontOf(MediaAttachment m) {
 
 /// The theme a generated card (or placeholder) was made with.
 TextCardTheme? textCardThemeOf(MediaAttachment m) {
+  final p = textCardParametersOf(m);
+  if (p != null) return TextCardTheme.values.asNameMap()[p['theme']];
   final name = '${m.fileName ?? ''} ${m.path}';
   for (final t in TextCardTheme.values) {
     if (name.contains('text-card-${t.name}') || name.contains('$kTextCardPlaceholder${t.name}')) return t;
@@ -188,11 +271,30 @@ TextCardTheme? textCardThemeOf(MediaAttachment m) {
   return null;
 }
 
+/// The alignment a card (or placeholder) was made with. Cards made before
+/// 1.2.0 were left-aligned.
+TextCardAlignment textCardAlignmentOf(MediaAttachment m) =>
+    TextCardAlignment.values.asNameMap()[textCardParametersOf(m)?['alignment']] ?? TextCardAlignment.left;
+
+/// Whether a card (or placeholder) shows the account's @handle. Cards made
+/// before 1.2.0 always did.
+bool textCardShowsHandleOf(MediaAttachment m) => textCardParametersOf(m)?['handle'] != false;
+
+/// The network a card was made for; null for cards made before 1.2.0.
+String? textCardPlatformOf(MediaAttachment m) => textCardParametersOf(m)?['platform'] as String?;
+
 /// Paints a card at any size; all measurements scale with the width, so
 /// the composer preview and the 1080-pixel export look the same.
 class TextCardPainter extends CustomPainter {
   const TextCardPainter(
-      {required this.text, required this.theme, this.byline, this.branded = true, this.font = TextCardFont.original, this.safe = EdgeInsets.zero});
+      {required this.text,
+      required this.theme,
+      this.byline,
+      this.branded = true,
+      this.font = TextCardFont.original,
+      this.safe = EdgeInsets.zero,
+      this.alignment = TextCardAlignment.left,
+      this.backdrop});
 
   final String text;
   final TextCardTheme theme;
@@ -203,12 +305,18 @@ class TextCardPainter extends CustomPainter {
   /// Draw the NEFORUM signature (top rule, mark and wordmark).
   final bool branded;
 
-  /// Author in the footer, e.g. "@ana@mastodon.social".
+  /// Author in the footer, e.g. "@ana@mastodon.social"; null leaves it out.
   final String? byline;
 
   /// Room the network's own buttons take, in pixels at 1080 wide
   /// ([fullScreenSafeArea]): the words and footer stay out of it.
   final EdgeInsets safe;
+
+  /// How the words are lined up.
+  final TextCardAlignment alignment;
+
+  /// A photo behind the words instead of the theme's plain colour.
+  final TextCardBackdrop? backdrop;
 
   static const double _lineHeight = 1.3;
 
@@ -217,11 +325,15 @@ class TextCardPainter extends CustomPainter {
     final u = size.width / 1080;
     final w = size.width;
     final h = size.height;
-    final fg = theme.foreground;
+    final fg = backdrop?.foreground ?? theme.foreground;
     final pad = 92 * u;
     final safeTop = safe.top * u, safeRight = safe.right * u, safeBottom = safe.bottom * u;
 
-    canvas.drawRect(Offset.zero & size, Paint()..color = theme.background);
+    if (backdrop != null) {
+      backdrop!.paint(canvas, Offset.zero & size, u);
+    } else {
+      canvas.drawRect(Offset.zero & size, Paint()..color = theme.background);
+    }
 
     final rule = branded ? 14 * u : 0.0;
     if (branded) {
@@ -285,38 +397,49 @@ class TextCardPainter extends CustomPainter {
     final areaW = w - pad * 2 - safeRight;
     final areaH = math.max(0.0, bottom - top);
     final rtl = Bidi.detectRtlDirectionality(text);
-    TextPainter layout(double fs, {int? maxLines}) => TextPainter(
-          text: TextSpan(
-            text: text,
-            style: font.style(fontSize: fs, height: _lineHeight, color: fg),
-          ),
-          textDirection: rtl ? TextDirection.rtl : TextDirection.ltr,
-          textAlign: TextAlign.start,
+    AlignedText layout(double fs, {int? maxLines}) => AlignedText(
+          text,
+          style: font.style(fontSize: fs, height: _lineHeight, color: fg),
+          alignment: alignment,
+          direction: rtl ? TextDirection.rtl : TextDirection.ltr,
           maxLines: maxLines,
-          ellipsis: maxLines == null ? null : '…',
-        )..layout(maxWidth: areaW);
+        )..layout(areaW, fill: true);
 
     var fs = 104 * u;
     final minFs = 30 * u;
-    var tp = layout(fs);
-    while (tp.height > areaH && fs > minFs) {
-      tp.dispose();
+    var words = layout(fs);
+    while (words.height > areaH && fs > minFs) {
+      words.dispose();
       fs = math.max(minFs, fs - 4 * u);
-      tp = layout(fs);
+      words = layout(fs);
     }
-    if (tp.height > areaH) {
+    if (words.height > areaH) {
       final lines = math.max(1, (areaH / (fs * _lineHeight)).floor());
-      tp.dispose();
-      tp = layout(fs, maxLines: lines);
+      words.dispose();
+      words = layout(fs, maxLines: lines);
     }
-    final dx = rtl ? pad + areaW - tp.width : pad;
-    tp.paint(canvas, Offset(dx, top + (areaH - tp.height) / 2));
-    tp.dispose();
+    final origin = Offset(pad, top + (areaH - words.height) / 2);
+    if (backdrop?.background.textBox ?? false) {
+      // A soft box behind the words, so they read over a busy photo.
+      final box = words.lineBounds.shift(origin).inflate(30 * u);
+      final lightWords = fg.computeLuminance() > 0.5;
+      canvas.drawRRect(RRect.fromRectAndRadius(box, Radius.circular(24 * u)),
+          Paint()..color = lightWords ? const Color(0x8C000000) : const Color(0xB3FFFFFF));
+    }
+    words.paint(canvas, origin);
+    words.dispose();
   }
 
   @override
   bool shouldRepaint(TextCardPainter old) =>
-      old.text != text || old.theme != theme || old.byline != byline || old.branded != branded || old.font != font || old.safe != safe;
+      old.text != text ||
+      old.theme != theme ||
+      old.byline != byline ||
+      old.branded != branded ||
+      old.font != font ||
+      old.safe != safe ||
+      old.alignment != alignment ||
+      old.backdrop != backdrop;
 }
 
 /// Live card for previews.
@@ -329,7 +452,9 @@ class TextCardView extends StatelessWidget {
       this.byline,
       this.branded = true,
       this.font = TextCardFont.original,
-      this.safe = EdgeInsets.zero});
+      this.safe = EdgeInsets.zero,
+      this.alignment = TextCardAlignment.left,
+      this.backdrop});
 
   final String text;
   final TextCardTheme theme;
@@ -340,11 +465,16 @@ class TextCardView extends StatelessWidget {
   final double aspect;
   final String? byline;
   final bool branded;
+  final TextCardAlignment alignment;
+  final TextCardBackdrop? backdrop;
 
   @override
   Widget build(BuildContext context) => AspectRatio(
         aspectRatio: aspect,
-        child: CustomPaint(painter: TextCardPainter(text: text, theme: theme, byline: byline, branded: branded, font: font, safe: safe)),
+        child: CustomPaint(
+          painter: TextCardPainter(
+              text: text, theme: theme, byline: byline, branded: branded, font: font, safe: safe, alignment: alignment, backdrop: backdrop),
+        ),
       );
 }
 
@@ -356,10 +486,13 @@ Future<Uint8List> renderTextCardJpeg(
     String? byline,
     bool branded = true,
     TextCardFont font = TextCardFont.original,
-    EdgeInsets safe = EdgeInsets.zero}) async {
+    EdgeInsets safe = EdgeInsets.zero,
+    TextCardAlignment alignment = TextCardAlignment.left,
+    TextCardBackdrop? backdrop}) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder, Offset.zero & size);
-  TextCardPainter(text: text, theme: theme, byline: byline, branded: branded, font: font, safe: safe).paint(canvas, size);
+  TextCardPainter(text: text, theme: theme, byline: byline, branded: branded, font: font, safe: safe, alignment: alignment, backdrop: backdrop)
+      .paint(canvas, size);
   final picture = recorder.endRecording();
   final width = size.width.round();
   final height = size.height.round();

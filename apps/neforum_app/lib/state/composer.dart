@@ -5,7 +5,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
+import '../media/caption_style.dart';
 import '../media/text_card.dart';
+import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
 import 'captioned_photos.dart';
 import 'fitted_photos.dart';
@@ -387,6 +389,10 @@ class ComposerNotifier extends Notifier<ComposerState> {
         differentiate: p.targets.any((t) => t.overrides.text != null),
         additionalParts: p.additionalParts,
         artwork: p.artwork,
+        textCardAlignment: textCardAlignmentOfPost(post),
+        textCardHandle: textCardHandleOfPost(post, platformOf),
+        captionStyle: captionStyleOfPost(post),
+        textCardBackground: textCardBackgroundOfPost(post),
       );
   }
 
@@ -442,6 +448,11 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final resolver = VariantResolver(settings.resolverOptions);
   final now = DateTime.now();
   final post = c.toPost(id: 'preview', status: PostStatus.draft, now: now);
+  final background = TextCardBackground.tryParse(c.textCardBackground);
+  // One of the post's photos as the cards' background: the card takes its
+  // place on image-only networks.
+  final backgroundPhotoId = background != null && c.media.any((m) => m.id == background.photo.id) ? background.photo.id : null;
+  final captionStyle = captionStyleFor(c.captionStyle, settings);
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -453,11 +464,23 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     final issues = <ValidationIssue>[...variant.issues];
     // Image-only platforms get the words as a NEFORUM text card, rendered
     // when the post is saved; preview and check a stand-in for it.
-    if (settings.textCards && qualifiesForTextCard(d, variant)) {
+    if (settings.textCards && qualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId)) {
       final signed = c.textCardBranded[d.id] ?? settings.textCardBranded(d.id);
-      variant = variant.copyWith(media: [textCardPlaceholder(d.id, c.textCardTheme ?? settings.textCardTheme,
-          branded: signed, font: c.textCardFont ?? settings.textCardFont)]);
-      issues.add(ValidationIssue.info('media.text_card', '${d.name} needs an image, so your words go out as ${signed ? 'a NEFORUM' : 'a plain'} text card', field: 'media'));
+      variant = variant.copyWith(media: [
+        textCardPlaceholder(
+          d.id,
+          c.textCardTheme ?? settings.textCardTheme,
+          branded: signed,
+          font: c.textCardFont ?? settings.textCardFont,
+          alignment: c.textCardAlignment ?? settings.textCardAlignment,
+          showsHandle: c.textCardHandle[d.id] ?? settings.textCardShowsHandle(d.id),
+          background: background,
+        ),
+      ]);
+      issues.add(ValidationIssue.info(
+          'media.text_card',
+          '${d.name} needs an image, so your words go out as ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}',
+          field: 'media'));
     }
     // Photos this network does not take as they are get a fitted copy on
     // save; check what that copy will be.
@@ -476,7 +499,12 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     }
     final firstMedia = variant.media.firstOrNull;
     if (captionOnPhotoFor(d.id, settings, c.captionOnPhoto) && firstMedia != null && firstMedia.kind == MediaKind.image && !firstMedia.isTextCard) {
-      issues.add(ValidationIssue.info('media.caption_photo', 'Your caption is written on the first photo for ${d.name}', field: 'media'));
+      issues.add(ValidationIssue.info(
+          'media.caption_photo',
+          captionStyle.placement == CaptionPlacement.blockAbove
+              ? 'Your caption is set in a block above the first photo for ${d.name}'
+              : 'Your caption is written on the first photo for ${d.name}',
+          field: 'media'));
     }
     try {
       issues.addAll(adapter.validate(variant, a));
@@ -568,9 +596,15 @@ class PostActions {
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
-    post = await attachTextCards(s, post, ref.read(settingsProvider), theme: c.textCardTheme, font: c.textCardFont, branded: c.textCardBranded);
+    post = await attachTextCards(s, post, ref.read(settingsProvider),
+        theme: c.textCardTheme,
+        font: c.textCardFont,
+        branded: c.textCardBranded,
+        alignment: c.textCardAlignment,
+        handle: c.textCardHandle,
+        background: c.textCardBackground ?? const {});
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
-    post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto);
+    post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
     await s.posts.upsert(post);
     return post;
   }
@@ -644,10 +678,9 @@ class PostActions {
     var post = await s.posts.get(postId);
     if (post == null) throw StateError('Post $postId not found');
     // Posts saved before text cards existed, or drafts published from a
-    // list, get their cards here.
+    // list, get their cards here; every choice is read back from the post.
     post = await attachTextCards(s, post, ref.read(settingsProvider));
-    final accounts = ref.read(accountListProvider);
-    final choices = captionChoicesOfPost(post, (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
+    final choices = await captionChoicesOfSavedPost(s, post);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: choices);
     await s.posts.upsert(post);

@@ -151,8 +151,7 @@ EdgeColours? _edgeColoursJob((Uint8List, bool) a) {
   return edgeColours(image, vertical: a.$2);
 }
 
-/// See [edgeColoursOf].
-@visibleForTesting
+/// See [edgeColoursOf]; [image] is already decoded and upright.
 EdgeColours edgeColours(img.Image image, {required bool vertical}) {
   final band = math.max(1, ((vertical ? image.height : image.width) * 0.06).round());
   if (vertical) {
