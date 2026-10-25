@@ -158,7 +158,7 @@ class PostTarget {
         attempts: json['attempts'] as int? ?? 0,
         lastAttemptAt: json['lastAttemptAt'] == null
             ? null
-            : DateTime.parse(json['lastAttemptAt'] as String),
+            : DateTime.parse(json['lastAttemptAt'] as String).toLocal(),
       );
 
   final String accountId;
@@ -227,11 +227,13 @@ class Post {
     this.artwork,
   });
 
+  /// Times are stored in UTC and come back in local time, so that day and
+  /// clock formatting (which does not convert) shows the user's own time.
   factory Post.fromJson(Map<String, dynamic> json) => Post(
         id: json['id'] as String,
         text: json['text'] as String,
-        createdAt: DateTime.parse(json['createdAt'] as String),
-        updatedAt: DateTime.parse(json['updatedAt'] as String),
+        createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+        updatedAt: DateTime.parse(json['updatedAt'] as String).toLocal(),
         title: json['title'] as String?,
         link: json['link'] as String?,
         media: (json['media'] as List? ?? const [])
@@ -243,7 +245,7 @@ class Post {
         language: json['language'] as String?,
         scheduledAt: json['scheduledAt'] == null
             ? null
-            : DateTime.parse(json['scheduledAt'] as String),
+            : DateTime.parse(json['scheduledAt'] as String).toLocal(),
         targets: (json['targets'] as List? ?? const [])
             .map((t) => PostTarget.fromJson(Map<String, dynamic>.from(t as Map)))
             .toList(),
