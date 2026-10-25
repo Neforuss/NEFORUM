@@ -14,6 +14,7 @@ class ComposerActionBar extends ConsumerWidget {
     required this.onSchedule,
     required this.onPublish,
     required this.onShowProblems,
+    this.onHideKeyboard,
     this.busy = false,
   });
 
@@ -21,6 +22,10 @@ class ComposerActionBar extends ConsumerWidget {
   final VoidCallback onSchedule;
   final VoidCallback onPublish;
   final VoidCallback onShowProblems;
+
+  /// Set while the on-screen keyboard is showing (phones and tablets): adds
+  /// a "Hide keyboard" button. The bar sits right above the keyboard.
+  final VoidCallback? onHideKeyboard;
   final bool busy;
 
   @override
@@ -91,13 +96,19 @@ class ComposerActionBar extends ConsumerWidget {
       ),
     );
 
+    final hideKeyboard = onHideKeyboard == null
+        ? null
+        : IconButton(onPressed: onHideKeyboard, tooltip: 'Hide keyboard', icon: const Icon(Icons.keyboard_hide_rounded));
+
     return Container(
       padding: EdgeInsets.fromLTRB(compact ? Space.lg : Space.xl, Space.md, compact ? Space.lg : Space.xl, Space.md),
       decoration: BoxDecoration(color: nf.bg, border: Border(top: BorderSide(color: nf.border))),
       child: compact
           ? Column(mainAxisSize: MainAxisSize.min, children: [
-              if (targets > 0) Padding(padding: const EdgeInsets.only(bottom: Space.sm), child: summary),
+              // While typing, the summary gives its line back to the text.
+              if (targets > 0 && hideKeyboard == null) Padding(padding: const EdgeInsets.only(bottom: Space.sm), child: summary),
               Row(children: [
+                ?hideKeyboard,
                 IconButton(onPressed: busy ? null : onSaveDraft, tooltip: 'Save draft', icon: const Icon(Icons.save_outlined)),
                 const SizedBox(width: Space.xs),
                 if (when == null) scheduleFor(short: true) else Flexible(child: scheduleFor(short: true)),
@@ -111,6 +122,7 @@ class ComposerActionBar extends ConsumerWidget {
               // A schedule adds a date chip and a longer button label.
               if (box.maxWidth < (when == null ? 460 : 780)) {
                 return Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                  ?hideKeyboard,
                   IconButton(onPressed: busy ? null : onSaveDraft, tooltip: 'Save draft', icon: const Icon(Icons.save_outlined)),
                   const Spacer(),
                   Flexible(flex: 3, child: scheduleFor(short: true)),
@@ -119,6 +131,7 @@ class ComposerActionBar extends ConsumerWidget {
                 ]);
               }
               return Row(children: [
+                if (hideKeyboard != null) ...[hideKeyboard, const SizedBox(width: Space.xs)],
                 TextButton.icon(
                   onPressed: busy ? null : onSaveDraft,
                   icon: const Icon(Icons.save_outlined, size: 18),

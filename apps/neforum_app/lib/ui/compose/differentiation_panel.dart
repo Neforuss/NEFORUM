@@ -16,6 +16,7 @@ import 'customize_sheet.dart';
 
 /// What a network gets when its version follows the main post: the main text
 /// with that network's hashtags and link added, not yet split into a thread.
+/// A version is one text, so a thread's parts are joined with blank lines.
 String baseVersionText(ComposerState c, TargetPreview p, AppSettings settings) {
   final resolver = VariantResolver(ResolverOptions(
     overflow: OverflowStrategy.error,
@@ -23,7 +24,7 @@ String baseVersionText(ComposerState c, TargetPreview p, AppSettings settings) {
     appendHashtags: settings.appendHashtags,
     appendLink: settings.appendLink,
   ));
-  final post = c.toPost(id: 'version', status: PostStatus.draft, now: DateTime.now());
+  final post = c.toPost(id: 'version', status: PostStatus.draft, now: DateTime.now()).copyWith(text: c.joinedParts, additionalParts: const []);
   final target = post.targetFor(p.account.id) ?? PostTarget(accountId: p.account.id);
   final plain = target.copyWith(overrides: target.overrides.copyWith(clearText: true));
   return resolver.resolve(post, plain, p.descriptor, account: p.account).text;

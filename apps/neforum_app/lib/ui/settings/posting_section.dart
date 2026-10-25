@@ -81,6 +81,13 @@ class PostingSettingsSection extends ConsumerWidget {
       SettingSwitch(title: 'Add my hashtags to the text', description: 'Where the network has no separate tags field.', value: s.appendHashtags, onChanged: (v) => n.update((x) => x.copyWith(appendHashtags: v))),
       SettingSwitch(title: 'Add my link to the text', description: 'Where the network has no link field and the link is not in the text yet.', value: s.appendLink, onChanged: (v) => n.update((x) => x.copyWith(appendLink: v))),
       SettingSwitch(
+        title: 'Mention @everyone on Discord',
+        description: 'Discord posts start with @everyone, which notifies everyone in the channel. '
+            'You can switch it for one post in Customize.',
+        value: s.discordMentionEveryone,
+        onChanged: (v) => n.update((x) => x.copyWith(discordMentionEveryone: v)),
+      ),
+      SettingSwitch(
         title: 'Hand off when an API limit is reached',
         description: 'If an account runs out of quota, NEFORUM opens the app for you instead of failing.',
         value: s.fallbackToHandoff,

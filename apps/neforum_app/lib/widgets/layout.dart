@@ -51,12 +51,15 @@ class PageHeader extends StatelessWidget {
 
 /// Scrollable page body with responsive gutters and an optional max width.
 class PageBody extends StatefulWidget {
-  const PageBody({super.key, required this.children, this.maxWidth = 1240, this.controller, this.bottomPadding = Space.x5});
+  const PageBody({super.key, required this.children, this.maxWidth = 1240, this.controller, this.bottomPadding = Space.x5, this.physics});
 
   final List<Widget> children;
   final double maxWidth;
   final ScrollController? controller;
   final double bottomPadding;
+
+  /// Scroll physics; null = the platform's.
+  final ScrollPhysics? physics;
 
   static EdgeInsets gutters(BuildContext context) {
     final w = context.width;
@@ -91,6 +94,7 @@ class _PageBodyState extends State<PageBody> {
       controller: controller,
       child: SingleChildScrollView(
         controller: controller,
+        physics: widget.physics,
         padding: EdgeInsets.fromLTRB(g.left, context.isCompact ? Space.lg : Space.x4, g.right, widget.bottomPadding),
         child: Center(
           child: ConstrainedBox(
