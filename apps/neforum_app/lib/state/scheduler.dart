@@ -8,6 +8,7 @@ import 'package:workmanager/workmanager.dart';
 import '../platform/desktop.dart';
 import '../platform/env.dart';
 import '../platform/notifications.dart';
+import 'automatic_handoff.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
 import 'services.dart';
@@ -57,7 +58,7 @@ class AppScheduler {
         // With cloud sync, the device the post was scheduled on publishes it.
         if (!await _s.cloudSync.mayPublish(p)) continue;
         await fitPhotosOfSavedPost(_s, p.id);
-        final done = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false);
+        final done = await AutomaticHandoff(_s).complete(await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false), unattended: !interactive);
         out.add(done);
         await _announce(done);
       }

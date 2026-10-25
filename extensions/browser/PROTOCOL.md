@@ -63,13 +63,29 @@ A job matches when `host`, without a leading `www.`, equals one of the job's `ho
   "title": "Optional title (Reddit, Pinterest, blogs) or null",
   "snippets": [{"label": "Answer 1", "text": "Yes"}],
   "media": [{"index": 0, "name": "photo.jpg", "mimeType": "image/jpeg", "size": 123456, "kind": "image"}],
-  "steps": "The hand-off's numbered steps (markdown), shown in the extension's panel",
+  "steps": "The hand-off's numbered steps (markdown)",
   "quickPost": true,                // the user may post from the page (Ctrl+Enter / Post now)
+  "autoPost": false,                // automatic posting: the extension posts by itself (see Rules)
+  "parts": ["Part 1", "Part 2"],    // a thread's parts, the first one included (only for a thread)
+  "description": "The post's text alone, without title or tags (only when there is text)",
+  "tags": ["art", "sketch"],        // tags without # (only when there are some)
+  "poll": {                         // only for a poll or quiz
+    "kind": "poll" | "quiz",
+    "imageOptions": false,          // an image poll: answer i is image i, options are the captions
+    "options": ["Tea", "Coffee"],
+    "correctIndex": 1,              // quiz only, index into options
+    "explanation": "..."            // quiz only, optional
+  },
+  "artwork": {"maturity": "general" | "mature" | "adult", "aiGenerated": false, "disallowAiTraining": true},
   "createdAt": "2026-10-12T10:00:00Z",
   "expiresAt": "2026-10-12T10:10:00Z",
   "preferred": true                 // this browser is the one NEFORUM opened the page in
 }
 ```
+
+`autoPost`, `parts`, `description`, `tags`, `poll` and `artwork` were added with extension 1.1.0;
+older extensions ignore them (they fill the page in and never post by themselves). Fields without
+content are left out, except `autoPost`, which is always sent.
 
 There is at most one job at a time (the newest). It expires 10 minutes after it was made.
 
@@ -90,21 +106,43 @@ The file's bytes with its `Content-Type`. `404` for an unknown or expired job or
 ### `POST /v1/job/<id>/result` (token)
 
 What the extension managed to do, so the app's hand-off sheet can say so.
-Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed"}`.
-`204`. The job stays available until it expires, so the user can fill the page in again.
+Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed", "automatic": "countdown" | "stopped" | "manual"}`.
+`204`. The job stays available until it expires, so the user can fill the page in again. The
+extension may report more than once for a job (after filling in, then after posting).
 
-`posted` (optional, only for jobs with `quickPost`): the user posted with the shortcut.
-`confirmed` means the composer closed or emptied afterwards (or the page moved on), and the app
-then marks the hand-off as posted; `pressed` means Post was pressed but the page gave no sign.
-The app ignores `posted` for jobs without `quickPost`.
+`posted` (optional, only for jobs with `quickPost` or `autoPost`): Post was pressed, by the user's
+shortcut or by automatic posting. `confirmed` means the composer closed or emptied afterwards (or
+the page moved on), and the app then marks the hand-off as posted; `pressed` means Post was pressed
+but the page gave no sign. The app ignores `posted` for jobs with neither flag.
+
+`automatic` (optional, only for jobs with `autoPost`; ignored for others):
+
+- `countdown`: everything was filled in; the extension presses Post when its 3-second countdown
+  ends. A report with `posted` follows.
+- `stopped`: the user stopped the countdown (or the wait for a greyed-out button) on the page.
+  Nothing was posted.
+- `manual`: the extension did not post: something was not filled in, the site asks for a choice
+  only the user can make, or no Post button was found. `message` says why. The page stays filled
+  in for the user.
+
+A report on an `autoPost` job without `automatic` and without `posted` comes from an extension
+before 1.1.0: the app hands the post back to the user.
 
 ## Rules for the extension
 
-- Never press the platform's Post / Share / Publish button on its own. Only when the job has
-  `quickPost` and the user, after the page was filled in, presses **Ctrl+Enter** (**⌘+Enter**)
-  with a real key press (`isTrusted`) while not typing elsewhere on the page, or clicks the
-  panel's **Post now**. Once per job. When the button is greyed out (an upload still running),
-  wait for it; Esc or Stop cancels. Two candidate buttons at the same distance from the composer
-  means no click.
+- Never press the platform's Post / Share / Publish button on its own, except for a job with
+  `autoPost` (below). Otherwise only when the job has `quickPost` and the user, after the page was
+  filled in, presses **Ctrl+Enter** (**⌘+Enter**) with a real key press (`isTrusted`) while not
+  typing elsewhere on the page, or clicks the panel's **Post now**. Once per job. When the button
+  is greyed out (an upload still running), wait for it; Esc or Stop cancels. Two candidate buttons
+  at the same distance from the composer means no click.
+- Automatic posting: only for a job whose `autoPost` is `true` (the app sets it only when the user
+  turned on automatic posting for that network), only in the browser the page was opened in
+  (`preferred` not `false`), only on the first fill of the job on that page (never after **Fill in
+  again** or a reload), and only when every part was filled in and the site's recipe does not need
+  the user. Then show a 3-second countdown in the panel with **Stop** (Esc does the same), press
+  Post once, wait for it as above, and report `posted`. In every other case report `automatic`
+  `manual` (or `stopped`) and leave the page as it is.
+- After Post, a confirmation dialog the recipe knows (`afterPostWords`) may be answered once.
 - Never send anything from the page back to the app other than the result above.
 - Keep the token in `storage.local`; forget it on `401`.

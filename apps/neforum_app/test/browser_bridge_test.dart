@@ -284,6 +284,7 @@ void main() {
         'media': <Object>[],
         'steps': '1. Check the post.\n2. Press Post.',
         'quickPost': false,
+        'autoPost': false,
         'createdAt': '2026-10-12T10:00:00Z',
         'expiresAt': '2026-10-12T10:10:00Z',
         'preferred': true,
@@ -389,7 +390,118 @@ void main() {
       expect(browserJobHosts(Uri.parse('https://www.threads.net/intent/post')), ['www.threads.net', 'threads.com', 'threads.net']);
       expect(browserJobHosts(Uri.parse('https://old.reddit.com/submit')), ['old.reddit.com', 'reddit.com', 'www.reddit.com', 'new.reddit.com']);
       expect(browserJobHosts(Uri.parse('https://myblog.substack.com/publish')), ['myblog.substack.com']);
-      expect(browserJobHosts(Uri.parse('https://web.whatsapp.com/send?text=hi')), ['web.whatsapp.com']);
+      expect(browserJobHosts(Uri.parse('https://web.whatsapp.com/send?text=hi')), ['web.whatsapp.com', 'wa.me', 'api.whatsapp.com']);
+      // wa.me forwards to api.whatsapp.com, then to WhatsApp Web: the job opened on wa.me must match there.
+      final wa = bridge.createJob(platformId: 'whatsapp', platformName: 'WhatsApp', url: 'https://wa.me/?text=hi', hosts: browserJobHosts(Uri.parse('https://wa.me/?text=hi')), text: 'hi')!;
+      expect(wa.matchesHost('web.whatsapp.com'), isTrue);
+      // youtube.com/upload forwards to YouTube Studio, but only for a video upload.
+      final upload = Uri.parse('https://www.youtube.com/upload');
+      expect(browserJobHosts(upload, platformId: 'youtube'), contains('studio.youtube.com'));
+      expect(browserJobHosts(Uri.parse('https://www.youtube.com/@a/posts'), platformId: 'youtube_posts'), isNot(contains('studio.youtube.com')));
+      expect(browserJobHosts(Uri.parse('https://www.pixiv.net/illustration/create'), platformId: 'pixiv'), ['www.pixiv.net', 'pixiv.net']);
+    });
+
+    test('job: automatic posting and the fields sites keep apart (thread parts, description, tags, poll, artwork)', () async {
+      final token = await pair();
+      const variant = PostVariant(
+        text: 'Which is the capital?',
+        threadParts: ['Which is the capital?', 'Answer below.'],
+        tags: ['quiz', 'geography'],
+        poll: PostPoll(options: ['Paris', '', 'Lyon'], kind: PollKind.quiz, correctIndex: 2, explanation: ' Lyon is not. '),
+        artwork: ArtworkDetails(maturity: ArtworkMaturity.mature, aiGenerated: true),
+      );
+      bridge.createJob(
+        platformId: 'youtube_posts',
+        platformName: 'YouTube Posts',
+        url: 'https://www.youtube.com/@a/posts',
+        hosts: const ['www.youtube.com'],
+        text: 'Which is the capital?',
+        autoPost: true,
+        details: BrowserJobDetails.fromVariant(variant),
+      );
+      final j = (await call('GET', '/v1/job?host=www.youtube.com', token: token)).json;
+      expect(j['autoPost'], isTrue);
+      expect(j['parts'], ['Which is the capital?', 'Answer below.']);
+      expect(j['description'], 'Which is the capital?');
+      expect(j['tags'], ['quiz', 'geography']);
+      expect(j['poll'], {
+        'kind': 'quiz',
+        'imageOptions': false,
+        'options': ['Paris', 'Lyon'],
+        'correctIndex': 1,
+        'explanation': 'Lyon is not.',
+      }, reason: 'empty answers dropped; the correct one counted among the rest');
+      expect(j['artwork'], {'maturity': 'mature', 'aiGenerated': true, 'disallowAiTraining': true});
+
+      // A single post sends none of these.
+      bridge.createJob(platformId: 'x', platformName: 'X', url: 'https://x.com/intent/tweet', hosts: const ['x.com'], text: 'Hi', details: BrowserJobDetails.fromVariant(const PostVariant(text: 'Hi')));
+      final single = (await call('GET', '/v1/job?host=x.com', token: token)).json;
+      expect(single.keys, isNot(containsAll(['parts', 'tags', 'poll', 'artwork'])));
+      expect(single['autoPost'], isFalse);
+    });
+
+    test('automatic: its states and posted are taken only from automatic jobs', () async {
+      final token = await pair('Firefox');
+      final results = <BrowserFillResult>[];
+      final sub = bridge.results.listen(results.add);
+      addTearDown(sub.cancel);
+
+      // An automatic job need not allow the shortcut to report its post.
+      var job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload', hosts: const ['www.tiktok.com'], text: 'Hi', autoPost: true)!;
+      expect((await call('GET', '/v1/job?host=www.tiktok.com', token: token)).json['autoPost'], isTrue);
+      for (final body in [
+        {'status': 'filled', 'text': true, 'automatic': 'countdown'},
+        {'status': 'filled', 'text': true, 'automatic': 'countdown', 'posted': 'confirmed'},
+        {'status': 'filled', 'text': true, 'automatic': 'stopped'},
+        {'status': 'partial', 'text': true, 'automatic': 'manual', 'message': 'Not everything was filled in.'},
+        {'status': 'filled', 'automatic': 'soon'},
+      ]) {
+        await call('POST', '/v1/job/${job.id}/result', token: token, body: body);
+      }
+      job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload', hosts: const ['www.tiktok.com'], text: 'Hi')!;
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'automatic': 'countdown', 'posted': 'confirmed'});
+      await pumpEventQueue();
+
+      expect([for (final r in results) (r.automatic, r.posted)], [
+        (BrowserAutomaticState.countdown, BrowserPostState.none),
+        (BrowserAutomaticState.countdown, BrowserPostState.confirmed),
+        (BrowserAutomaticState.stopped, BrowserPostState.none),
+        (BrowserAutomaticState.manual, BrowserPostState.none),
+        (BrowserAutomaticState.none, BrowserPostState.none),
+        (BrowserAutomaticState.none, BrowserPostState.none), // neither automatic nor quick post
+      ]);
+      expect(results[3].message, 'Not everything was filled in.');
+    });
+
+    test('the extension\'s pages: every site with a host alias of its own is in both manifests', () {
+      Map<String, dynamic> manifest(String browser) => jsonDecode(File('../../extensions/browser/manifest.$browser.json').readAsStringSync()) as Map<String, dynamic>;
+      final chrome = manifest('chrome');
+      final firefox = manifest('firefox');
+      expect(firefox['version'], chrome['version']);
+      expect(chrome['version'], '1.1.0');
+      final matches = [for (final m in (chrome['content_scripts'] as List).single['matches'] as List) m as String];
+      expect((firefox['content_scripts'] as List).single['matches'], matches);
+      bool matched(String host) => matches.any((m) => m == 'https://$host/*' || (m.startsWith('https://*.') && host.endsWith(m.substring(10, m.length - 2))));
+      for (final url in [
+        'https://www.behance.net/portfolio/editor',
+        'https://www.artstation.com/myartstation/projects/new',
+        'https://cara.app/',
+        'https://www.pixiv.net/illustration/create',
+        'https://itaku.ee/new/images',
+        'https://www.newgrounds.com/projects/art/new',
+        'https://www.furaffinity.net/submit/',
+        'https://www.weasyl.com/submit/visual',
+        'https://ko-fi.com/',
+        'https://artfol.app/',
+        'https://500px.com/',
+        'https://dribbble.com/uploads/new',
+        'https://www.flickr.com/photos/upload/',
+        'https://studio.youtube.com/',
+        'https://web.whatsapp.com/',
+      ]) {
+        final host = Uri.parse(url).host;
+        expect(matched(host), isTrue, reason: '$host: the content scripts run there');
+      }
     });
 
     test('only the newest job is served', () async {

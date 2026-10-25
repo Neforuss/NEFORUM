@@ -15,18 +15,21 @@ class PastedMedia {
 }
 
 /// Puts a photo on the system clipboard so it can be pasted into a web
-/// composer with Ctrl+V / ⌘V, next to the text a hand-off already copies.
+/// composer with Ctrl+V / ⌘V, or into another app on a phone, next to the
+/// text a hand-off already copies.
 ///
 /// Flutter's [Clipboard] only carries text, so this goes through the
-/// "neforum/clipboard" channel in the Windows and macOS runners
-/// (windows/runner/flutter_window.cpp, macos/Runner/MainFlutterWindow.swift).
-/// Browsers read pasted pictures as PNG; the original file rides along for
-/// places that accept pasted files and keep its own format.
+/// "neforum/clipboard" channel in the Windows, macOS, iOS and Android runners
+/// (windows/runner/flutter_window.cpp, macos/Runner/MainFlutterWindow.swift,
+/// ios/Runner/AppDelegate.swift, android/.../ClipboardChannel.kt).
+/// Browsers and apps read pasted pictures as PNG; on a computer the original
+/// file rides along for places that accept pasted files and keep its own
+/// format. Reading the clipboard ([readImage]) is for computers only.
 abstract final class ClipboardMedia {
   static const MethodChannel _channel = MethodChannel('neforum/clipboard');
 
-  /// Photos can be copied here (phones hand photos over by the share sheet).
-  static bool get supported => Env.isWindows || Env.isMacOS;
+  /// Photos can be copied here (not on Linux or the web).
+  static bool get supported => Env.isWindows || Env.isMacOS || Env.isIOS || Env.isAndroid;
 
   /// Longest side of the pasted picture. Networks scale photos to about this
   /// size anyway, and it keeps the PNG small enough for their upload limits.
@@ -43,7 +46,8 @@ abstract final class ClipboardMedia {
       final args = <String, Object?>{
         if (png != null) 'png': png.buffer.asUint8List(png.offsetInBytes, png.lengthInBytes),
         if (rgba != null) 'dib': dibFromRgba(rgba.buffer.asUint8List(rgba.offsetInBytes, rgba.lengthInBytes), image.width, image.height),
-        if (path != null && path.isNotEmpty) 'path': path,
+        // Phones paste the picture only; a file path means nothing to another app there.
+        if (path != null && path.isNotEmpty && Env.isDesktop) 'path': path,
       };
       image.dispose();
       return await _channel.invokeMethod<bool>('copyImage', args) ?? false;
@@ -57,7 +61,7 @@ abstract final class ClipboardMedia {
   /// copied in Explorer or Finder, or a picture (a screenshot, "Copy image" in
   /// a browser) as PNG bytes. Null when the clipboard holds neither.
   static Future<PastedMedia?> readImage() async {
-    if (!supported) return null;
+    if (!Env.isWindows && !Env.isMacOS) return null;
     try {
       final r = await _channel.invokeMapMethod<String, Object?>('readImage');
       if (r == null || r.isEmpty) return null;

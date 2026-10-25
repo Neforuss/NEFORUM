@@ -14,7 +14,9 @@ import '../../platform/browser_bridge.dart';
 import '../../platform/clipboard_media.dart';
 import '../../platform/env.dart';
 import '../../platform/file_export.dart';
+import '../../platform/share_target.dart';
 import '../../platform/ui_bridge.dart';
+import '../../state/automatic_handoff.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -88,6 +90,80 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   /// default browser.
   InstalledBrowser? _openedIn;
 
+  // ---- automatic posting ------------------------------------------------------
+
+  /// How long the sheet waits for the extension to report, before (and
+  /// after) its countdown, before it hands the post back to the user.
+  static const Duration _automaticWait = Duration(minutes: 2);
+  static const Duration _automaticPostingWait = Duration(minutes: 4);
+
+  /// This hand-off is being posted automatically (the page was opened by
+  /// itself, the job is marked automatic).
+  bool _automatic = false;
+
+  /// Why automatic posting ended without a post: the manual hand-off is up
+  /// to the user from here.
+  String? _automaticProblem;
+  Timer? _automaticTimer;
+
+  /// The page automatic posting opens: the platform's full composer, else its
+  /// prefilled composer link, else its page. Null when this hand-off is not
+  /// posted automatically: not a computer, no paired browser, automatic
+  /// posting off for this network, or nothing to open in a browser.
+  Uri? _automaticPage() {
+    if (!Env.isDesktop || !_bridge.canFill) return null;
+    if (!ref.read(settingsProvider).postsHandoffAutomatically(widget.account.platformId)) return null;
+    return automaticHandoffPage(plan);
+  }
+
+  Future<void> _startAutomatic() async {
+    final url = _automaticPage();
+    if (url == null || !mounted) return;
+    setState(() => _automatic = true);
+    _waitForExtension(_automaticWait);
+    await _openUrl(url, automatic: true);
+  }
+
+  /// Hands the post back to the user when the extension has not reported
+  /// within [wait].
+  void _waitForExtension(Duration wait) {
+    _automaticTimer?.cancel();
+    _automaticTimer = Timer(wait, () {
+      if (!mounted || !_automatic || _fill?.posted == BrowserPostState.confirmed) return;
+      _endAutomatic('The NEFORUM extension did not report back, so nothing was posted automatically. Check the page, or click Fill in again.');
+    });
+  }
+
+  void _endAutomatic(String problem) {
+    _automaticTimer?.cancel();
+    if (mounted) setState(() => _automaticProblem = problem);
+  }
+
+  /// What the extension reported on an automatic job.
+  void _onAutomaticResult(BrowserFillResult r) {
+    final host = bareHost(r.host).isEmpty ? 'the page' : bareHost(r.host);
+    final message = r.message == null ? '' : ' ${_sentence(r.message!)}';
+    if (r.posted == BrowserPostState.confirmed) {
+      _automaticTimer?.cancel();
+    } else if (r.posted == BrowserPostState.pressed) {
+      _endAutomatic('Pressed Post on $host, but the page did not close the composer. Check it there; if the post went up, click I posted it.');
+    } else {
+      switch (r.automatic) {
+        case BrowserAutomaticState.countdown:
+          _waitForExtension(_automaticPostingWait);
+        case BrowserAutomaticState.stopped:
+          _endAutomatic('You stopped automatic posting on $host, so nothing was posted. Finish the post there, then click I posted it.');
+        case BrowserAutomaticState.manual:
+          _endAutomatic('Not posted automatically.$message Finish the post on $host, then click I posted it.');
+        case BrowserAutomaticState.none:
+          // An extension before 1.1.0 fills the page in but never posts by itself.
+          _endAutomatic(r.status == BrowserFillStatus.filled
+              ? 'Filled in on $host, but your NEFORUM extension is older than 1.1.0 and does not post by itself. Post it there, or update the extension.'
+              : 'Not posted automatically: not everything was filled in.$message Finish the post on $host, then click I posted it.');
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -95,19 +171,26 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     _fillSub = _bridge.results.listen((r) {
       if (!mounted || r.jobId != _job?.id) return;
       setState(() => _fill = r);
-      // Posted from the page with the extension's shortcut, and the composer
-      // closed: this hand-off is done, so move on (to the next one, if any).
+      if (_job!.autoPost && _automaticProblem == null) _onAutomaticResult(r);
+      // Posted from the page (with the extension's shortcut, or by itself on
+      // an automatic job), and the composer closed: this hand-off is done, so
+      // move on (to the next one, if any).
       if (r.posted == BrowserPostState.confirmed) {
         Future<void>.delayed(const Duration(milliseconds: 1600), () {
           if (mounted && _fill?.jobId == r.jobId) Navigator.pop(context, HandoffChoice.posted);
         });
       }
     });
+    _lifecycle = AppLifecycleListener(onStateChange: _onLifecycle);
+    // Automatic posting opens the page by itself, once the sheet is up.
+    WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_startAutomatic()));
   }
 
   @override
   void dispose() {
     unawaited(_fillSub?.cancel());
+    _automaticTimer?.cancel();
+    _lifecycle.dispose();
     // Closed sheet, finished hand-off: the page must not be filled in again.
     final job = _job;
     if (job != null) _bridge.clearJob(job.id);
@@ -116,7 +199,8 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
 
   /// Gives the post to the browser extension, which fills in the composer
   /// at [url] (when a browser is paired and [url] is a web page).
-  void _sendToExtension(Uri url) {
+  /// [automatic]: it posts by itself once everything is filled in.
+  void _sendToExtension(Uri url, {bool automatic = false}) {
     if (!_bridge.canFill || !(url.isScheme('http') || url.isScheme('https'))) return;
     final media = ref.read(servicesProvider).media;
     final d = ref.read(registryProvider).descriptor(widget.account.platformId);
@@ -124,16 +208,15 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       platformId: widget.account.platformId,
       platformName: d?.name ?? widget.account.platformId,
       url: url.toString(),
-      hosts: browserJobHosts(url),
+      hosts: browserJobHosts(url, platformId: widget.account.platformId),
       text: _text,
       title: widget.variant.title,
       snippets: plan.snippets,
-      media: [
-        for (final m in plan.shareFiles)
-          BrowserJobMedia(name: _fileName(m), mimeType: m.mimeType, size: m.sizeBytes, isVideo: m.isVideo, read: () => media.read(m)),
-      ],
+      media: browserJobMedia(plan.shareFiles, media.read),
       steps: plan.instructions,
       quickPost: ref.read(settingsProvider).browserQuickPost,
+      autoPost: automatic,
+      details: BrowserJobDetails.fromVariant(widget.variant),
       target: _openedIn?.id,
     );
     if (job == null) return;
@@ -142,12 +225,6 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       _jobUrl = url;
       _fill = null;
     });
-  }
-
-  static String _fileName(MediaAttachment m) {
-    if ((m.fileName ?? '').isNotEmpty) return m.fileName!;
-    final ext = p.extension(m.path).isEmpty ? (m.isVideo ? '.mp4' : '.jpg') : p.extension(m.path);
-    return m.generated ? 'NEFORUM card$ext' : '${m.id}$ext';
   }
 
   /// "text and 2 photos", "1 video", "" for nothing.
@@ -172,14 +249,22 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final message = r?.message == null ? '' : ' ${_sentence(r!.message!)}';
     final where = _openedIn == null ? '' : ' in ${_openedIn!.name}';
     final post = _job!.quickPost ? 'Check it, then press $_postKeys on the page (or Post).' : 'Check it and press Post.';
-    final (IconData icon, Color color, String text) = switch ((r?.status, r?.posted)) {
-      (_, BrowserPostState.confirmed) => (Icons.check_circle_rounded, nf.success, 'Posted on $host. Marking this hand-off as done…'),
-      (_, BrowserPostState.pressed) => (Icons.info_outline_rounded, nf.info, 'Pressed Post on $host, but the page did not close the composer. Check it there; if the post went up, click I posted it.'),
-      (null, _) => (Icons.extension_outlined, nf.info, 'The NEFORUM extension$where is filling this in…'),
-      (BrowserFillStatus.filled, _) => (Icons.check_circle_rounded, nf.success, 'Filled in on $host${what.isEmpty ? '' : ': $what'}. $post'),
-      (BrowserFillStatus.partial, _) => (Icons.warning_amber_rounded, nf.warning, 'Partly filled in on $host${what.isEmpty ? '' : ': $what'}.$message Do the rest with the steps below.'),
-      (BrowserFillStatus.failed, _) => (Icons.error_outline_rounded, nf.danger, 'The extension could not fill in $host.$message Use the steps below.'),
-    };
+    final automatic = _job!.autoPost;
+    final problem = r?.posted == BrowserPostState.confirmed ? null : _automaticProblem;
+    final (IconData icon, Color color, String text) = problem != null
+        ? (Icons.warning_amber_rounded, nf.warning, problem)
+        : switch ((r?.status, r?.posted, r?.automatic)) {
+            (_, BrowserPostState.confirmed, _) => (Icons.check_circle_rounded, nf.success, 'Posted on $host. Marking this hand-off as done…'),
+            (_, BrowserPostState.pressed, _) => (Icons.info_outline_rounded, nf.info, 'Pressed Post on $host, but the page did not close the composer. Check it there; if the post went up, click I posted it.'),
+            (null, _, _) => automatic
+                ? (Icons.extension_outlined, nf.info, 'Posting automatically: the NEFORUM extension$where is filling this in…')
+                : (Icons.extension_outlined, nf.info, 'The NEFORUM extension$where is filling this in…'),
+            (_, _, BrowserAutomaticState.countdown) =>
+              (Icons.timer_outlined, nf.info, 'Filled in on $host${what.isEmpty ? '' : ': $what'}. The extension posts it in 3 seconds; Stop on the page keeps it unposted.'),
+            (BrowserFillStatus.filled, _, _) => (Icons.check_circle_rounded, nf.success, 'Filled in on $host${what.isEmpty ? '' : ': $what'}. $post'),
+            (BrowserFillStatus.partial, _, _) => (Icons.warning_amber_rounded, nf.warning, 'Partly filled in on $host${what.isEmpty ? '' : ': $what'}.$message Do the rest with the steps below.'),
+            (BrowserFillStatus.failed, _, _) => (Icons.error_outline_rounded, nf.danger, 'The extension could not fill in $host.$message Use the steps below.'),
+          };
     return _Callout(
       icon: icon,
       color: color,
@@ -187,7 +272,12 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       action: _jobUrl == null
           ? null
           : TextButton.icon(
-              onPressed: () => _sendToExtension(_jobUrl!),
+              onPressed: () {
+                // By hand from here: the new job is not automatic.
+                _automaticTimer?.cancel();
+                setState(() => _automaticProblem = null);
+                _sendToExtension(_jobUrl!);
+              },
               icon: const Icon(Icons.replay_rounded, size: 16),
               label: const Text('Fill in again'),
             ),
@@ -202,11 +292,15 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       // The text is the first thing "Copy next" hands out.
       if (_next == 0 && _text.isNotEmpty) _next = 1;
     });
+    if (_text.isNotEmpty) _markCopied(0);
     if (!quiet) showToast(context, 'Text copied. Paste it when the composer opens.', icon: Icons.check_circle_rounded);
   }
 
   /// Ctrl+V, or ⌘V on a Mac.
   static String get _pasteKeys => Env.isMacOS ? '⌘V' : 'Ctrl+V';
+
+  /// How to paste here: the keys on a computer, Paste in the app on a phone.
+  static String get _pasteHow => Env.isMobile ? 'Paste it in the app' : 'Press $_pasteKeys';
 
   /// Photos that can go on the clipboard (videos are dragged in instead).
   List<MediaAttachment> get _photos => [for (final m in plan.shareFiles) if (m.isImage) m];
@@ -214,16 +308,27 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   final Set<String> _copiedPhotos = {};
 
   /// Puts photo [m] on the clipboard for pasting into the composer.
-  Future<bool> _copyPhoto(MediaAttachment m) async {
+  Future<bool> _copyPhoto(MediaAttachment m, {bool quiet = false}) async {
     final bytes = await ref.read(servicesProvider).media.read(m);
     final ok = await ClipboardMedia.copyImage(bytes, path: m.path);
     if (!mounted) return ok;
-    if (ok) setState(() => _copiedPhotos.add(m.id));
-    showToast(
-      context,
-      ok ? 'Photo copied. Press $_pasteKeys in the composer.' : 'Could not copy the photo. Use Save media to Downloads and drag it in.',
-      icon: ok ? Icons.check_circle_rounded : Icons.error_outline_rounded,
-    );
+    if (ok) {
+      setState(() => _copiedPhotos.add(m.id));
+      _markCopied(_pasteItems.indexWhere((item) => item.photo == m));
+    }
+    if (!quiet) {
+      showToast(
+        context,
+        ok
+            ? Env.isMobile
+                ? 'Photo copied. Paste it in the app.'
+                : 'Photo copied. Press $_pasteKeys in the composer.'
+            : Env.isMobile
+                ? 'Could not copy the photo. Share it instead.'
+                : 'Could not copy the photo. Use Save media to Downloads and drag it in.',
+        icon: ok ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+      );
+    }
     return ok;
   }
 
@@ -231,22 +336,28 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   int _next = 0;
 
   /// Everything there is to paste, in order: the text, the snippets (poll
-  /// answers and the like), then each photo.
-  List<({String label, Future<void> Function() copy})> get _pasteItems {
+  /// answers and the like), then each photo (where photos can be copied).
+  List<({String label, MediaAttachment? photo, Future<bool> Function({bool quiet}) copy})> get _pasteItems {
     final photos = _photos;
     return [
-      if (_text.isNotEmpty) (label: 'Text', copy: () => _copy()),
+      if (_text.isNotEmpty) (label: 'Text', photo: null, copy: ({bool quiet = false}) => _copy(quiet: quiet).then((_) => true)),
       for (final s in plan.snippets)
         (
           label: s.label,
-          copy: () async {
+          photo: null,
+          copy: ({bool quiet = false}) async {
             await Clipboard.setData(ClipboardData(text: s.text));
-            if (mounted) showToast(context, '${s.label} copied. Press $_pasteKeys.', icon: Icons.check_circle_rounded);
+            if (mounted && !quiet) showToast(context, '${s.label} copied. $_pasteHow.', icon: Icons.check_circle_rounded);
+            return true;
           },
         ),
       if (ClipboardMedia.supported)
         for (var i = 0; i < photos.length; i++)
-          (label: photos.length == 1 ? 'Photo' : 'Photo ${i + 1} of ${photos.length}', copy: () => _copyPhoto(photos[i]).then((_) {})),
+          (
+            label: photos.length == 1 ? 'Photo' : 'Photo ${i + 1} of ${photos.length}',
+            photo: photos[i],
+            copy: ({bool quiet = false}) => _copyPhoto(photos[i], quiet: quiet),
+          ),
     ];
   }
 
@@ -256,6 +367,80 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final i = _next % items.length;
     await items[i].copy();
     if (mounted) setState(() => _next = i + 1);
+    _markCopied(i);
+  }
+
+  // ---- advance on return ------------------------------------------------------
+  //
+  // Where nothing can fill the page in (phones, and computers without a
+  // paired browser), the parts of a hand-off are copied one after another:
+  // the user copies one, leaves NEFORUM to paste it, and when NEFORUM is in
+  // front again the next part is already on the clipboard.
+
+  late final AppLifecycleListener _lifecycle;
+
+  /// Something was copied to paste in another app...
+  bool _copiedToPaste = false;
+
+  /// ...and NEFORUM went to the background since.
+  bool _away = false;
+
+  /// What is on the clipboard now ("Photo 2 of 3 copied. Paste it.").
+  String? _clipboardNote;
+
+  bool get _advancesOnReturn =>
+      ref.read(settingsProvider).advanceHandoffOnReturn && (Env.isMobile || (Env.isDesktop && !_bridge.canFill)) && _pasteItems.length > 1;
+
+  /// The item of [_pasteItems] copied last, by any button; the part copied on
+  /// return is the one after it.
+  int _lastCopied = -1;
+
+  /// Item [index] of [_pasteItems] was copied to paste somewhere else.
+  void _markCopied(int index) {
+    if (index < 0) return;
+    _copiedToPaste = true;
+    _lastCopied = index;
+  }
+
+  void _onLifecycle(AppLifecycleState state) {
+    if (!mounted || !_advancesOnReturn) return;
+    if (state == AppLifecycleState.resumed) {
+      if (!_away) return;
+      _away = false;
+      unawaited(_advance());
+    } else if (_copiedToPaste && state != AppLifecycleState.detached) {
+      // Window in the background (computer), or another app in front (phone).
+      _away = true;
+    }
+  }
+
+  /// Copies the next part. A photo that cannot be copied is skipped, and the
+  /// note says so.
+  Future<void> _advance() async {
+    final items = _pasteItems;
+    final skipped = <String>[];
+    for (var index = _lastCopied + 1; index < items.length; index++) {
+      final item = items[index];
+      final ok = await item.copy(quiet: true);
+      if (!mounted) return;
+      // "Copy next" follows along.
+      setState(() => _next = index + 1);
+      _lastCopied = index;
+      if (ok) {
+        setState(() => _clipboardNote = [for (final s in skipped) '$s could not be copied here, so it was skipped.', '${item.label} copied. $_pasteHow.'].join(' '));
+        return;
+      }
+      skipped.add(item.label);
+    }
+    final leftOut = _photos.isNotEmpty && !ClipboardMedia.supported;
+    setState(() {
+      _copiedToPaste = false;
+      _clipboardNote = [
+        for (final s in skipped) '$s could not be copied here, so it was skipped.',
+        'That was the last part: everything has been copied.',
+        if (leftOut) 'Photos cannot be copied on this computer: use Save media to Downloads.',
+      ].join(' ');
+    });
   }
 
   /// Ctrl+Enter, or ⌘+Enter on a Mac: the extension's Post shortcut.
@@ -270,25 +455,38 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     return (await _bridge.firstChoice())?.program;
   }
 
-  Future<void> _openUrl(Uri url) async {
+  /// Opens [url] (in the first-choice browser when set) after giving the
+  /// extension the job. [automatic]: the job posts by itself.
+  Future<void> _openUrl(Uri url, {bool automatic = false}) async {
     await _copy(quiet: true);
+    _noteFirstCopy();
     final program = await _firstChoice(url);
     if (!mounted) return;
     // The job first (for the browser it opens in), so the page finds it.
     _openedIn = program;
-    _sendToExtension(url);
+    _sendToExtension(url, automatic: automatic);
     var ok = program != null && await BrowserBridge.openInBrowser(program.id, url);
     if (!ok) {
       if (program != null && mounted) {
         // That browser would not start: the default one, and any browser fills in.
         _openedIn = null;
-        _sendToExtension(url);
+        _sendToExtension(url, automatic: automatic);
       }
       ok = await launchUrl(url, mode: LaunchMode.externalApplication);
     }
     if (!mounted) return;
     setState(() => _launched = ok || _launched);
-    if (!ok) showToast(context, 'Could not open $url', icon: Icons.error_outline_rounded);
+    if (!ok) {
+      showToast(context, 'Could not open $url', icon: Icons.error_outline_rounded);
+      if (automatic) _endAutomatic('NEFORUM could not open the page, so nothing was posted automatically. Use the steps below.');
+    }
+  }
+
+  /// After the first copy (Open, Share): says that the next part follows
+  /// when the user comes back.
+  void _noteFirstCopy() {
+    if (!mounted || !_advancesOnReturn || _text.isEmpty || _clipboardNote != null) return;
+    setState(() => _clipboardNote = 'Text copied. $_pasteHow, then come back here: the next part is copied for you.');
   }
 
   Future<void> _share(BuildContext buttonContext) async {
@@ -296,6 +494,21 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final box = buttonContext.findRenderObject() as RenderBox?;
     final origin = box == null ? null : windowRectOf(buttonContext, box);
     await _copy(quiet: true);
+    _noteFirstCopy();
+    // Android: straight into the network's app (its share sheet when the
+    // app is missing), the caption on the clipboard and in the share.
+    final package = plan.androidPackage ?? '';
+    if (ShareTarget.supported && package.isNotEmpty) {
+      final outcome = await ShareTarget.shareToApp(
+        package: package,
+        files: [for (final m in plan.shareFiles) (path: m.path, mimeType: m.mimeType)],
+        text: plan.shareText ?? _text,
+      );
+      if (outcome != ShareTargetOutcome.unavailable) {
+        if (mounted) setState(() => _launched = true);
+        return;
+      }
+    }
     final media = ref.read(servicesProvider).media;
     final files = <XFile>[];
     for (final m in plan.shareFiles) {
@@ -500,9 +713,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                     ],
                   ),
                 ),
-                for (final sn in plan.snippets) ...[
+                for (var i = 0; i < plan.snippets.length; i++) ...[
                   const SizedBox(height: Space.sm),
-                  _SnippetRow(snippet: sn),
+                  _SnippetRow(snippet: plan.snippets[i], onCopied: () => _markCopied((_text.isEmpty ? 0 : 1) + i)),
                 ],
                 if (plan.hasMedia) ...[
                   const SizedBox(height: Space.md),
@@ -545,8 +758,11 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                   if (ClipboardMedia.supported && _photos.isNotEmpty) ...[
                     const SizedBox(height: Space.xs + 2),
                     Text(
-                      'Copy a photo with its button, then press $_pasteKeys in the composer. If the site does not take '
-                      'pasted photos, use Save media to Downloads and drag them in.',
+                      Env.isMobile
+                          ? 'Copy a photo with its button, then paste it in the app (touch and hold the text box, then Paste). '
+                              'If the app does not take pasted photos, share them instead.'
+                          : 'Copy a photo with its button, then press $_pasteKeys in the composer. If the site does not take '
+                              'pasted photos, use Save media to Downloads and drag them in.',
                       style: context.text.bodySmall?.copyWith(color: nf.textMuted),
                     ),
                   ],
@@ -560,13 +776,45 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                   const SizedBox(height: Space.md),
                   AnimatedSwitcher(
                     duration: Motion.medium,
-                    child: KeyedSubtree(key: ValueKey('${_job?.id} ${_fill?.status}'), child: extensionStatus),
+                    child: KeyedSubtree(
+                      key: ValueKey('${_job?.id} ${_fill?.status} ${_fill?.automatic} ${_automaticProblem != null}'),
+                      child: extensionStatus,
+                    ),
+                  ),
+                ],
+                // What is on the clipboard now, when parts are copied in turn.
+                if (_clipboardNote != null && _advancesOnReturn) ...[
+                  const SizedBox(height: Space.md),
+                  _Callout(
+                    icon: Icons.content_paste_go_rounded,
+                    color: nf.info,
+                    text: _clipboardNote!,
+                    action: _lastCopied + 1 < pasteItems.length
+                        ? TextButton.icon(
+                            onPressed: () => unawaited(_advance()),
+                            icon: const Icon(Icons.skip_next_rounded, size: 16),
+                            label: Text('Copy next: ${pasteItems[_lastCopied + 1].label}'),
+                          )
+                        : null,
                   ),
                 ],
                 const SizedBox(height: Space.xl),
                 for (var i = 0; i < steps.length; i++) _Step(index: i + 1, text: steps[i]),
                 const SizedBox(height: Space.lg),
                 ...actions,
+                // Where parts are copied in turn: the switch for it, at hand
+                // (phones have no Browser extension settings).
+                if ((Env.isMobile || (Env.isDesktop && !_bridge.canFill)) && pasteItems.length > 1)
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text('Copy the next part when I come back', style: context.text.bodyMedium),
+                    value: ref.watch(settingsProvider).advanceHandoffOnReturn,
+                    onChanged: (v) {
+                      ref.read(settingsProvider.notifier).update((x) => x.copyWith(advanceHandoffOnReturn: v));
+                      if (!v) setState(() => _clipboardNote = null);
+                    },
+                  ),
                 if (extensionHint)
                   Row(children: [
                     Icon(Icons.extension_outlined, size: 16, color: nf.textFaint),
@@ -683,8 +931,11 @@ class _Callout extends StatelessWidget {
 /// One extra value to paste into its own field (a poll answer, a caption, the
 /// tags), with its own copy button.
 class _SnippetRow extends StatefulWidget {
-  const _SnippetRow({required this.snippet});
+  const _SnippetRow({required this.snippet, this.onCopied});
   final HandoffSnippet snippet;
+
+  /// Called after the copy button put the value on the clipboard.
+  final VoidCallback? onCopied;
 
   @override
   State<_SnippetRow> createState() => _SnippetRowState();
@@ -712,7 +963,9 @@ class _SnippetRowState extends State<_SnippetRow> {
           active: _copied,
           onPressed: () async {
             await Clipboard.setData(ClipboardData(text: widget.snippet.text));
-            if (mounted) setState(() => _copied = true);
+            if (!mounted) return;
+            setState(() => _copied = true);
+            widget.onCopied?.call();
           },
         ),
       ]),

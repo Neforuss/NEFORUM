@@ -72,7 +72,10 @@
     logo.innerHTML = LOGO;
     const close = () => host.remove();
 
-    const snippets = (job.snippets ?? []).map((s) =>
+    // The other parts of a thread can be inserted by hand too (where the
+    // site's composer holds one post at a time, as replies).
+    const parts = Array.isArray(job.parts) && job.parts.length > 1 ? job.parts.slice(1).map((text, i) => ({ label: `Part ${i + 2} of ${job.parts.length}`, text })) : [];
+    const snippets = [...(job.snippets ?? []), ...parts].map((s) =>
       el('div', { class: 'snip' }, el('span', { title: s.text }, `${s.label}: ${s.text}`),
         el('button', { class: 'a', onclick: () => navigator.clipboard.writeText(s.text).catch(() => {}) }, 'Copy'),
         el('button', { class: 'a', onclick: () => actions.insertSnippet(s.text) }, 'Insert')),
@@ -81,10 +84,14 @@
     // Post now: only a real click (a script's click is not trusted) posts.
     const postBtn = el('button', { class: 'a primary', hidden: '', title: `Press the site's Post button (${NF.postKeys})`, onclick: (e) => e.isTrusted && actions.post?.() },
       'Post now ', el('kbd', {}, NF.postKeys));
-    const stopBtn = el('button', { class: 'a', hidden: '', onclick: (e) => e.isTrusted && actions.stop?.() }, 'Stop');
+    const stopBtn = el('button', { class: 'a', hidden: '', title: 'Nothing is posted (Esc does the same)', onclick: (e) => e.isTrusted && actions.stop?.() }, 'Stop');
     const fillBtn = el('button', { class: 'a primary', onclick: () => actions.fill() }, 'Fill in again');
     const note = el('div', { class: 'note' },
-      job.quickPost ? `Check the post, then press ${NF.postKeys} (or Post now) to post it.` : 'NEFORUM fills in the post. Check it, then press Post yourself.');
+      job.autoPost === true
+        ? 'You turned on automatic posting for this site: NEFORUM fills in the post, counts down 3 seconds, then posts it. Stop (or Esc) keeps it unposted.'
+        : job.quickPost
+          ? `Check the post, then press ${NF.postKeys} (or Post now) to post it.`
+          : 'NEFORUM fills in the post. Check it, then press Post yourself.');
 
     const box = el('div', { class: 'p', role: 'dialog', 'aria-label': `NEFORUM: post to ${job.platformName}` },
       el('div', { class: 'h' }, logo.firstChild, el('b', {}, 'NEFORUM'), el('span', {}, job.platformName),
@@ -117,7 +124,7 @@
       },
       /**
        * The Post now part: 'off' (not offered), 'ready' (Post now shown),
-       * 'busy' (waiting or posting: Stop shown), 'done' (posted).
+       * 'busy' (counting down, waiting or posting: Stop shown), 'done' (posted).
        */
       setPost(state) {
         postBtn.hidden = state !== 'ready';

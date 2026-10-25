@@ -2,8 +2,11 @@
 // Text goes in the way a person's paste would, so the site's own editor
 // (React inputs, Draft.js, Lexical, ProseMirror, Quill) takes it as real
 // input. Files go into the site's file input, or are pasted or dropped onto
-// the composer. Only pressPost presses a Post button, and main.js calls it
-// only for the user's own Ctrl+Enter (⌘+Enter) or Post now click.
+// the composer. Form fields (title, tags, ratings) are found by the words
+// that label them, since sites rename their markup more often than their
+// labels. Only pressPost presses a Post button, and main.js calls it only
+// for the user's own Ctrl+Enter (⌘+Enter) or Post now click, or, for a job
+// NEFORUM marked automatic, when the countdown the user could stop ends.
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -117,6 +120,34 @@
   }
 
   const contentOf = (el) => norm(el.matches?.('textarea, input') ? el.value : el.innerText ?? el.textContent);
+
+  /**
+   * What of [text] comes after [start], when [start] (whitespace collapsed,
+   * as contentOf gives it) is how [text] begins; null when it does not
+   * begin so. A link that prefilled the first part of a post leaves only the
+   * rest to add, so the first part is not put in twice.
+   */
+  function restAfter(text, start) {
+    const s = String(text ?? '');
+    const want = norm(start);
+    let i = 0;
+    let j = 0;
+    while (i < s.length && /\s/.test(s[i])) i++;
+    while (j < want.length) {
+      if (i >= s.length) return null;
+      if (/\s/.test(s[i])) {
+        // A run of blanks in the text is one space in what the field shows.
+        while (i < s.length && /\s/.test(s[i])) i++;
+        if (want[j] !== ' ') return null;
+        j++;
+        continue;
+      }
+      if (s[i] !== want[j]) return null;
+      i++;
+      j++;
+    }
+    return s.slice(i);
+  }
 
   /** Does [el] hold exactly [text] (what a replace should leave)? */
   const holdsOnly = (el, text) => contentOf(el) === norm(text);
@@ -236,6 +267,15 @@
   async function insertText(el, text, { replace = false } = {}) {
     if (!el || !text) return null;
     const scope = composerOf(el);
+    if (!replace) {
+      // The field shows how the text begins (a link prefilled the first
+      // part): only the rest goes in. Checked before the 40-character test
+      // below, which would take a long first part for the whole text, and a
+      // short one for none of it (and put it in a second time).
+      const have = contentOf(el);
+      const rest = have && have !== norm(text) ? restAfter(text, have) : null;
+      if (rest !== null) return norm(rest) ? insertText(el, rest) : 'already';
+    }
     if (!replace && (hasText(el, text) || fieldsText(scope).includes(norm(text).slice(0, 40)))) return 'already';
     // Exactly this text already, over the composer's blocks: nothing to replace.
     if (replace && !el.matches('textarea, input') && fieldsText(scope) === norm(text)) return 'already';
@@ -375,6 +415,176 @@
     return null;
   }
 
+  // ---- form fields, found by the words that label them --------------------
+
+  const TEXT_FIELDS =
+    'input:not([type]), input[type="text"], input[type="search"], input[type="url"], textarea, [contenteditable="true"], [contenteditable=""], [role="textbox"], [role="combobox"]';
+  const CHOICES = 'input[type="checkbox"], input[type="radio"], [role="checkbox"], [role="radio"], [role="switch"]';
+
+  /**
+   * The words that label form field [el], one entry per source: its <label>,
+   * its ARIA name and placeholder, its name, id or form-control name, and
+   * short text right before (or, for a tick box, right after) it.
+   */
+  function labelsOf(el) {
+    const parts = [];
+    for (const l of el.labels ?? []) parts.push(l.textContent);
+    const by = el.getAttribute?.('aria-labelledby');
+    if (by) for (const id of by.split(/\s+/)) parts.push(document.getElementById(id)?.textContent);
+    for (const a of ['aria-label', 'placeholder', 'aria-placeholder', 'data-placeholder', 'title', 'name', 'id', 'formcontrolname', 'data-testid']) {
+      parts.push(el.getAttribute?.(a));
+    }
+    parts.push(el.closest?.('label')?.textContent);
+    if (el.matches?.('[role="checkbox"], [role="radio"], [role="switch"]')) parts.push(el.textContent);
+    if (el.matches?.(CHOICES)) {
+      const next = el.nextElementSibling;
+      if (next && norm(next.textContent).length <= 100) parts.push(next.textContent);
+    }
+    // A caption laid out above the field.
+    let node = el;
+    for (let level = 0; level < 3 && node && node !== document.body; level++) {
+      let sib = node.previousElementSibling;
+      for (let k = 0; k < 2 && sib; k++, sib = sib.previousElementSibling) {
+        const t = norm(sib.textContent);
+        if (t && t.length <= 100 && !sib.querySelector?.(`${TEXT_FIELDS}, ${CHOICES}, select`)) parts.push(t);
+      }
+      node = node.parentElement;
+    }
+    return parts.filter(Boolean).map(norm).filter(Boolean);
+  }
+
+  /** All the words that label form field [el], in one line. */
+  const fieldLabel = (el) => labelsOf(el).join(' | ');
+
+  /** Can a person see [el], or the label or box a hidden native tick box sits in? */
+  const displayed = (el) => visible(el) || (el.matches?.('input') && (visible(el.closest('label')) || visible(el.labels?.[0]) || visible(el.parentElement)));
+
+  /**
+   * The first field under [root] one of whose labels matches [pattern]
+   * (each label on its own, so /^NSFW$/ does not take "SFW" or the reverse).
+   * [kind]: 'text' (inputs, text areas, rich editors), 'choice' (tick boxes,
+   * radio buttons, switches) or 'select' (drop-down lists).
+   */
+  function findField(pattern, { root = document, kind = 'text' } = {}) {
+    const selector = kind === 'choice' ? CHOICES : kind === 'select' ? 'select, [role="combobox"], [role="listbox"]' : TEXT_FIELDS;
+    const seen = new Set();
+    for (const el of root.querySelectorAll(selector)) {
+      const target = kind === 'text' ? editableOf(el) ?? el : el;
+      if (!target || seen.has(target)) continue;
+      seen.add(target);
+      if (!displayed(target) || target.disabled || target.readOnly || target.closest('[aria-hidden="true"]')) continue;
+      if (labelsOf(target).some((l) => pattern.test(l))) return target;
+    }
+    return null;
+  }
+
+  /** The group of choices (fieldset, radio group, or a short heading's box) whose heading matches [pattern]. */
+  function findGroup(pattern, root = document) {
+    for (const g of root.querySelectorAll('fieldset, [role="radiogroup"], [role="group"]')) {
+      const head = [g.querySelector('legend')?.textContent, g.getAttribute('aria-label'), ...(g.getAttribute('aria-labelledby') ?? '').split(/\s+/).map((id) => id && document.getElementById(id)?.textContent)]
+        .filter(Boolean)
+        .map(norm)
+        .join(' ');
+      if (head && pattern.test(head)) return g;
+    }
+    for (const h of root.querySelectorAll('legend, label, h1, h2, h3, h4, h5, h6, p, span, div, dt')) {
+      if (h.childElementCount > 2) continue;
+      const t = norm(h.textContent);
+      if (!t || t.length > 80 || !pattern.test(t)) continue;
+      for (let box = h.parentElement, i = 0; box && i < 3; box = box.parentElement, i++) {
+        if (box.querySelector(`${CHOICES}, select`)) return box;
+      }
+    }
+    return null;
+  }
+
+  const isOn = (el) => (el.matches('input') ? el.checked : el.getAttribute('aria-checked') === 'true' || el.getAttribute('aria-pressed') === 'true');
+
+  /** Ticks (or unticks) a tick box, radio button or switch. True when it ends up as wanted. */
+  async function setChecked(el, on = true) {
+    if (!el) return false;
+    if (isOn(el) === on) return true;
+    // One press: the box itself, or its label when the box is hidden.
+    press(el.matches('input') && !visible(el) ? el.closest('label') ?? el.labels?.[0] ?? el : el);
+    await sleep(150);
+    if (isOn(el) === on) return true;
+    if (el.matches('input')) {
+      // The page ignored the press: set it the way form libraries listen for.
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked').set.call(el, on);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    return isOn(el) === on;
+  }
+
+  /** Chooses the option whose text (or value) matches [pattern] in a drop-down list. */
+  async function chooseOption(list, pattern) {
+    if (!list) return false;
+    if (list.matches('select')) {
+      const option = [...list.options].find((o) => pattern.test(norm(o.textContent)) || pattern.test(o.value));
+      if (!option) return false;
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(list, option.value);
+      list.dispatchEvent(new Event('input', { bubbles: true }));
+      list.dispatchEvent(new Event('change', { bubbles: true }));
+      return list.value === option.value;
+    }
+    // A list drawn by the site: open it, then press the option.
+    press(list);
+    const option = await waitFor(() => findByText('[role="option"], [role="menuitem"], [role="menuitemradio"], li', pattern), { timeout: 2500 });
+    if (!option) return false;
+    press(option);
+    await sleep(150);
+    return true;
+  }
+
+  /**
+   * Picks the choice labelled [pattern]: a radio button, tick box or switch,
+   * or an option of a drop-down list, inside the group headed [group] when
+   * given (the age rating of a form, not another question with the same
+   * answers).
+   */
+  async function choose(pattern, { root = document, group = null } = {}) {
+    const scope = group ? findGroup(group, root) : root;
+    if (!scope) return false;
+    const box = findField(pattern, { root: scope, kind: 'choice' });
+    if (box) return setChecked(box, true);
+    for (const list of scope.querySelectorAll('select')) {
+      if (displayed(list) && [...list.options].some((o) => pattern.test(norm(o.textContent)))) return chooseOption(list, pattern);
+    }
+    return false;
+  }
+
+  const pressKey = (el, key, code = key, keyCode = 0) => {
+    for (const type of ['keydown', 'keypress', 'keyup']) {
+      el.dispatchEvent(new KeyboardEvent(type, { key, code, keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true }));
+    }
+  };
+
+  /**
+   * Puts [tags] into a tag field: one at a time, each confirmed with Enter
+   * (fields that turn every tag into a chip), or, with [separator] or when
+   * Enter makes no chip, all at once joined by it. Returns how many went in.
+   */
+  async function insertTags(field, tags, { separator = null, fallbackSeparator = ', ' } = {}) {
+    if (!field || !tags?.length) return 0;
+    if (separator) return (await insertText(field, tags.join(separator), { replace: true })) ? tags.length : 0;
+    let n = 0;
+    for (const tag of tags) {
+      if (!field.isConnected) break;
+      field.focus({ preventScroll: true });
+      // Replace, so a tag that also appears in the description still goes in.
+      if (!(await insertText(field, tag, { replace: true }))) break;
+      pressKey(field, 'Enter', 'Enter', 13);
+      await sleep(180);
+      if (n === 0 && field.isConnected && contentOf(field) === norm(tag)) {
+        // Enter made no chip: a plain field that takes them all at once.
+        return (await insertText(field, tags.join(fallbackSeparator), { replace: true })) ? tags.length : 0;
+      }
+      n++;
+    }
+    return n;
+  }
+
   // ---- the Post button ------------------------------------------------------
 
   const BUTTONS = 'button, [role="button"], input[type="submit"]';
@@ -414,18 +624,19 @@
 
   /**
    * The composer's Post button: the first of [selectors] that finds one,
-   * else a button that says exactly one of [words]; the one nearest [from]
+   * else a button that says exactly one of [words] (or matches [pattern],
+   * for labels with a count: "Upload 3 photos"); the one nearest [from]
    * either way. Greyed-out buttons count (they may be waiting for an upload).
    */
-  function findPostButton({ from = null, root = document, selectors = [], words = ['post', 'post now', 'publish'] } = {}) {
+  function findPostButton({ from = null, root = document, selectors = [], words = ['post', 'post now', 'publish'], pattern = null } = {}) {
     root ??= document;
     for (const sel of selectors) {
       const hits = [...root.querySelectorAll(sel)].map((e) => e.closest(BUTTONS) ?? e).filter(visible);
       const found = nearest(hits, from, root);
       if (found) return found;
     }
-    const want = new Set(words.map((w) => w.toLowerCase()));
-    const hits = [...root.querySelectorAll(BUTTONS)].filter((b) => visible(b) && namesOf(b).some((n) => want.has(n)));
+    const want = new Set((words ?? []).map((w) => w.toLowerCase()));
+    const hits = [...root.querySelectorAll(BUTTONS)].filter((b) => visible(b) && namesOf(b).some((n) => want.has(n) || (pattern && pattern.test(n))));
     return nearest(hits, from, root);
   }
 
@@ -447,11 +658,15 @@
     return false;
   }
 
-  /** Presses the Post button (main.js calls this only for the user's own key press or click). */
+  /**
+   * Presses the Post button. main.js calls this only for the user's own key
+   * press or click, or when an automatic job's countdown ends unstopped.
+   */
   const pressPost = (button) => press(button);
 
   NF.fill = {
     sleep, visible, waitFor, label, findByText, press, findEditor, editableOf, hasText, insertText, attachFiles, findFileInput, setInputFiles, dropOn, firePaste, accepts,
     enabled, findPostButton, waitPosted, pressPost,
+    norm, contentOf, restAfter, labelsOf, fieldLabel, findField, findGroup, setChecked, chooseOption, choose, insertTags, pressKey,
   };
 })();
