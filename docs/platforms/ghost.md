@@ -1,6 +1,33 @@
-# Ghost
+# Ghost setup guide
 
-NEFORUM publishes to **Ghost** sites through the **Admin API**, using the key from a *custom integration* that you create on your own site.
+This guide connects a **Ghost** site to NEFORUM with the Admin API key of a *custom integration* that you create on your own site. Afterwards NEFORUM publishes your posts there automatically; Ghost(Pro) Starter sites, which can't create the key, use the hand-off steps.
+
+## Steps
+
+1. Open your Ghost admin: `https://your-site/ghost/`.
+2. Go to **Settings > Advanced > Integrations**.
+   - In older versions this is **Settings > Integrations**.
+3. Press **Add custom integration**.
+4. Name it `NEFORUM` and press **Create**.
+5. Copy the **API URL** from the integration page, for example `https://your-site.ghost.io`.
+   - This can differ from your public address.
+6. Copy the **Admin API key**: a long value with a colon in the middle.
+   - Don't use the *Content API key*. That key is read-only.
+7. In NEFORUM, add **Ghost** and paste the **API URL** and the **Admin API key**.
+8. Choose **Publish as**: `published` or `draft`.
+9. Press **Connect**.
+
+## Steps: Hand-off without an integration
+
+1. In NEFORUM, add **Ghost** and choose **Hand off to the app**.
+2. Enter your **Site address**: the address you use to open Ghost admin, without `/ghost/`.
+3. Click **Add Ghost**.
+4. Publish the post in NEFORUM. It copies the post text to the clipboard and opens `https://your-site/ghost/#/editor/post`.
+5. Paste the text.
+6. Type the title and add the tags NEFORUM shows you.
+7. Press **Publish**.
+
+## How it works
 
 Status as of October 2026:
 
@@ -8,28 +35,18 @@ Status as of October 2026:
 - **Ghost(Pro)**: custom integrations and the Admin API are included in the **Publisher**, **Business** and **Custom** plans (plan comparison on ghost.org/pricing, checked 2026-10-11). **Starter** sites can't create an Admin API key. Use **Hand-off** there.
 - You don't need a developer account, app registration or app review.
 
-## Ways to connect
-
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
 | **Open API** (recommended) | Owner or Administrator access to a Ghost site that allows custom integrations | Free when self-hosted. Ghost(Pro) Publisher or higher. | Ghost doesn't publish an API quota. Upload size depends on your Ghost setup. |
 | **Hand-off** | Any Ghost site you can sign in to | Free | NEFORUM copies the text to the clipboard and opens the editor. You paste it and press **Publish**. |
 
-## Create the integration (Open API)
-
-1. Open your Ghost admin: `https://your-site/ghost/`.
-2. Go to **Settings > Advanced > Integrations**. In older versions this is **Settings > Integrations**.
-3. Press **Add custom integration**, name it `NEFORUM` and press **Create**.
-4. The integration page shows:
-   - **API URL**: for example `https://your-site.ghost.io`. This can differ from your public address.
-   - **Admin API key**: a long value with a colon in the middle. Don't use the *Content API key*. That key is read-only.
-5. In NEFORUM, add **Ghost** and paste the **API URL** and the **Admin API key**. Choose **Publish as**: `published` or `draft`.
-
 You don't register any redirect address. Ghost has no browser sign-in for integrations.
 
 To revoke access, delete the integration or press **Regenerate** on its Admin API key. Keep the key private: it can change everything on your site.
 
-## How NEFORUM signs requests
+Ghost's editor can't be filled in from a link, and Ghost has no mobile app that receives shared posts. That is why hand-off copies the text and tells you the title and tags.
+
+### How NEFORUM signs requests
 
 The Admin API key is never sent as is. For each request NEFORUM creates a short-lived token (a JWT):
 
@@ -41,7 +58,7 @@ The token is sent as `Authorization: Ghost <token>`, together with `Accept-Versi
 
 When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site title and public address. It then checks the key with `GET /ghost/api/admin/posts/?limit=1`.
 
-## Posting
+## What gets posted
 
 - **Title** is required, up to 255 characters. If you leave it empty, NEFORUM uses the first line of the post.
 - **Text** becomes simple HTML and is sent with `POST /ghost/api/admin/posts/?source=html`. A blank line starts a new paragraph and `https://` links become clickable. Ghost turns the HTML into normal editor cards. To send your own HTML, set the per-network option `html: true`. Add `ghostHtmlCard: true` to keep it exactly as written inside a single HTML card. Ghost's HTML conversion is lossy otherwise.
@@ -57,15 +74,7 @@ When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site tit
 - **Other options**: `excerpt` (sent as `custom_excerpt`), `canonicalUrl` (sent as `canonical_url`, useful when the post first appeared elsewhere) and `slug`.
 - **Newsletters**: NEFORUM never asks Ghost to email a post. Posts are published on the site only.
 
-## Hand-off
-
-Ghost's editor can't be filled in from a link, and Ghost has no mobile app that receives shared posts. NEFORUM:
-
-1. copies the post text to the clipboard,
-2. opens `https://your-site/ghost/#/editor/post`,
-3. tells you the title to type and the tags to add.
-
-## Known limitations
+## Limits
 
 - **Ghost(Pro) Starter** has no Admin API. Use Hand-off.
 - **No video, audio or file uploads.** Ghost has endpoints for these, but they aren't documented in the official API pages, so NEFORUM doesn't use them.

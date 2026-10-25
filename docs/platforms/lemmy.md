@@ -1,27 +1,42 @@
-# Lemmy
+# Lemmy setup guide
 
-NEFORUM posts to **Lemmy** instances such as lemmy.world, lemmy.ml, programming.dev or sh.itjust.works. Lemmy is a federated, Reddit-like link aggregator: every post has a **title**, goes into a **community**, and can carry a link or an image plus Markdown text.
+This guide connects an account on a **Lemmy** instance, such as lemmy.world, lemmy.ml, programming.dev or sh.itjust.works, to NEFORUM. Afterwards NEFORUM posts into the community you choose automatically, with no app to create and no redirect URI to register.
+
+## Steps
+
+1. In NEFORUM, add **Lemmy** and enter your instance, for example `lemmy.world`.
+   - You can also paste your handle (`@you@lemmy.world`).
+2. Enter your **username** (without `@instance`) or your **email**.
+3. Enter your **password**.
+4. If you turned on two-factor authentication (Settings > Account > 2FA), also enter the current 6-digit code from your authenticator app.
+   - If you leave it out, NEFORUM asks for it.
+5. Optionally enter a **default community**, for example `!technology@lemmy.world`.
+   - You can also paste the community's web address (`https://lemmy.world/c/technology`).
+   - For communities on your own instance, the bare name (`asklemmy`) is enough.
+6. Press **Connect**.
+7. Optional: tick **Bot account** in your Lemmy settings if you mostly cross-post. Many communities and instances ask automated or cross-posting accounts to do this.
+
+## Steps: Hand-off without a password
+
+1. Log in to your instance in your browser.
+2. In NEFORUM, add **Lemmy**, choose **Hand off to the app** and enter your instance and, optionally, a default community.
+3. Click **Add Lemmy**.
+4. Publish the post in NEFORUM. It opens the instance's **Create post** page with the title, link, text and community filled in, and puts your text on the clipboard.
+5. Upload the image on the page with the image button next to the URL field, if your post has one.
+6. Press **Create**.
+
+## How it works
+
+Lemmy is a federated, Reddit-like link aggregator: every post has a **title**, goes into a **community**, and can carry a link or an image plus Markdown text.
 
 Status as of October 2026: the Lemmy API is free and open on every instance. There is no developer portal, no app registration and no app review. Any ordinary account can post. NEFORUM uses HTTP API **v3**. Lemmy 0.19.x (current stable: 0.19.20) has it, and Lemmy 1.0 (in open beta since May 2026) still supports it.
-
-## Ways to connect
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
 | **Open API** (recommended) | An account on a Lemmy instance: username or email and password, plus the 6-digit code if you use two-factor authentication. | Free | By default, **6 posts per 10 minutes** and **6 image uploads per hour** per IP address. Each instance can change these limits and sets its own image size limit. |
 | **Hand-off** | An account on the instance, logged in in your browser | Free | NEFORUM opens the instance's **Create post** page with the title, link, text and community filled in. You press **Create** yourself. Images can't be attached automatically. |
 
-### Connect with your username and password
-
-Lemmy has no OAuth login for apps, so there's no app to create and no redirect URI to register. NEFORUM logs in the same way the website does.
-
-1. In NEFORUM, add **Lemmy** and enter your instance, for example `lemmy.world`. You can also paste your handle (`@you@lemmy.world`).
-2. Enter your **username** (without `@instance`) or your **email**, and your **password**.
-3. If you turned on two-factor authentication (Settings > Account > 2FA), also enter the current 6-digit code from your authenticator app. If you leave it out, NEFORUM asks for it.
-4. Optionally enter a **default community**, for example `!technology@lemmy.world`. You can also paste the community's web address (`https://lemmy.world/c/technology`). For communities on your own instance, the bare name (`asklemmy`) is enough.
-5. Press **Connect**.
-
-What happens:
+Lemmy has no OAuth login for apps, so NEFORUM logs in the same way the website does. When you connect:
 
 - NEFORUM calls `POST /api/v3/user/login` once. Your instance answers with a login token (a JWT), and NEFORUM keeps **only that token**, in your device's secure storage. **Your password is not stored.**
 - It reads `GET /api/v3/site` for your profile name, avatar, the Lemmy version and the instance's list of languages.
@@ -29,9 +44,7 @@ What happens:
 
 The token does not expire. It stops working when you log out of that session, change your password, or remove the account in NEFORUM (which logs it out with `POST /api/v3/user/logout`). If that happens, connect again.
 
-**Tip:** if you mostly cross-post, consider ticking **Bot account** in your Lemmy settings. Many communities and instances ask automated or cross-posting accounts to do this.
-
-## Posting
+## What gets posted
 
 - **Title:** required, 3 to 200 characters, on one line. NEFORUM turns line breaks into spaces. If you leave the title empty, NEFORUM uses the first line of your text.
 - **Community:** required. NEFORUM uses the account's default community. To post somewhere else, set `community` (`!name@instance`) or `communityId` in the per-network options for that post.
@@ -43,7 +56,7 @@ The token does not expire. It stops working when you log out of that session, ch
 - **Language:** if your post has a language that your instance knows, NEFORUM sends it. If the community doesn't allow that language, NEFORUM tries once more without a language.
 - **Hashtags and content warnings:** Lemmy has neither, so NEFORUM doesn't add `#tags`.
 
-## Known limitations
+## Limits
 
 - **One community per post.** Cross-posting the same item to several communities on one account takes several targets, and it quickly runs into the 6-posts-per-10-minutes limit. Many communities also treat repeated cross-posts as spam.
 - **Image size is set by each instance.** NEFORUM assumes 20 MB, the stock nginx limit, but some instances accept much less (some only a few hundred kB). Some disable uploads for normal users entirely. If your instance refuses the image, post it with a link to an image hosted elsewhere.

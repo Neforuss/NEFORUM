@@ -25,6 +25,38 @@ void main() {
     expect(guideAssetForLink(null), isNull);
   });
 
+  test('links name the heading they point to as GitHub anchors', () {
+    expect(guideAnchorForLink('#fallback-host'), 'fallback-host');
+    expect(guideAnchorForLink('media-hosts.md#litterbox'), 'litterbox');
+    expect(guideAnchorForLink('../media-hosts.md'), isNull);
+    expect(guideAnchorForLink('https://neforus.com/neforum/privacy/#data-deletion'), isNull);
+    expect(guideAnchorForLink(null), isNull);
+    expect(guideHeadingAnchor('Fallback host'), 'fallback-host');
+    expect(guideHeadingAnchor('Steps: Hand-off without keys'), 'steps-hand-off-without-keys');
+    expect(guideHeadingAnchor('Nextcloud, ownCloud, WebDAV'), 'nextcloud-owncloud-webdav');
+    expect(guideHeadingAnchor('Limits (BitChute help centre)'), 'limits-bitchute-help-centre');
+  });
+
+  test('every link to a heading names a heading of its guide', () {
+    final docs = Directory('assets/docs').listSync().whereType<File>().where((f) => f.path.endsWith('.md')).toList();
+    final names = {for (final f in docs) f.uri.pathSegments.last: f.readAsStringSync()};
+    final link = RegExp(r'\]\(([^)\s]+)\)');
+    final anchorsOf = <String, Set<String>>{
+      for (final e in names.entries) e.key: {for (final s in parseGuide(e.value)) ...s.anchors},
+    };
+    final broken = <String>[];
+    for (final e in names.entries) {
+      for (final m in link.allMatches(e.value)) {
+        final href = m.group(1)!;
+        final anchor = guideAnchorForLink(href);
+        if (anchor == null) continue;
+        final target = href.startsWith('#') ? e.key : guideAssetForLink(href);
+        if (target == null || !(anchorsOf[target]?.contains(anchor) ?? false)) broken.add('${e.key} -> $href');
+      }
+    }
+    expect(broken, isEmpty);
+  });
+
   test('every relative guide link points to a guide the app ships', () {
     final docs = Directory('assets/docs').listSync().whereType<File>().where((f) => f.path.endsWith('.md')).toList();
     final names = {for (final f in docs) f.uri.pathSegments.last};

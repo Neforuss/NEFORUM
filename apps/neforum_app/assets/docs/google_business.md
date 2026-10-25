@@ -1,6 +1,27 @@
-# Google Business Profile
+# Google Business Profile setup guide
 
-NEFORUM reaches Google Business Profile (formerly Google My Business) by **hand-off only**. Nothing to set up, no Google Cloud project, no sign-in.
+This guide adds Google Business Profile (formerly Google My Business) to NEFORUM by hand-off: NEFORUM copies your text and opens Google, and you add the update there. There is nothing to set up, no Google Cloud project and no sign-in.
+
+## Steps
+
+1. In NEFORUM, add an account and choose **Google Business Profile**.
+2. Optionally type a label, for example the business name.
+   - If you manage several businesses, add one account per business.
+3. Tap **Add Google Business Profile**.
+
+## Steps: When you publish
+
+1. Publish the post in NEFORUM. It copies your text to the clipboard and opens <https://business.google.com/>.
+   - On a phone it opens **Google Maps**: open your Business Profile there.
+2. Choose **Posts > Add post**.
+3. Pick **Update**. For an offer or event, pick that type instead.
+4. Paste your text.
+5. Add your photo or video.
+6. If your post has a link, NEFORUM shows it: under **Button**, pick **Learn more** and paste the link there.
+7. Select **Post**.
+   - Google's form can also schedule the post (**Schedule this post**); NEFORUM does not control that.
+
+## How it works
 
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
@@ -8,7 +29,7 @@ NEFORUM reaches Google Business Profile (formerly Google My Business) by **hand-
 
 Status as of October 2026.
 
-## Why there is no automatic posting
+### Why there is no automatic posting
 
 Google does have an API for this (Business Profile API v4, `localPosts.create`), but in practice nobody can use it from NEFORUM:
 
@@ -16,19 +37,6 @@ Google does have an API for this (Business Profile API v4, `localPosts.create`),
 - To apply, you must "manage a Google Business Profile that is verified and active for 60+ days", have a website for the business, and apply with an email listed as an owner or manager.
 - An approved project belongs to whoever applied. A free, open-source app cannot share one approved project between all its users, so every user would need their own approved project.
 - Even then, the API takes photos only from a public URL and cannot create Product posts.
-
-## Setting it up
-
-1. In NEFORUM, add an account and choose **Google Business Profile**.
-2. Optionally type a label, for example the business name. If you manage several businesses, add one account per business. Tap **Connect**.
-
-## What happens when you publish
-
-1. NEFORUM copies your text to the clipboard and opens <https://business.google.com/>. On a phone it opens **Google Maps**: open your Business Profile there.
-2. Choose **Posts > Add post** and pick **Update**. For an offer or event, pick that type instead.
-3. Paste your text and add your photo or video.
-4. If your post has a link, NEFORUM shows it. Under **Button**, pick **Learn more** and paste the link there.
-5. Select **Post**. Google's form can also schedule the post (**Schedule this post**); NEFORUM does not control that.
 
 ## Limits
 
@@ -39,9 +47,6 @@ Google does have an API for this (Business Profile API v4, `localPosts.create`),
 - Google "may remove posts with unverified contact information". Use the **Call now** button instead of typing a phone number. NEFORUM warns when your text seems to contain one.
 - Posts stay **Pending** until your profile is verified.
 - Event and offer titles, dates and coupon codes are entered in Google's form. NEFORUM has no fields for them.
-
-## Known limitations
-
 - Google has no link that opens a prefilled update, so you always paste the text yourself.
 - The old Google My Business app (`com.google.android.apps.vega`) was shut down in 2022. On phones, NEFORUM opens Google Maps instead.
 
