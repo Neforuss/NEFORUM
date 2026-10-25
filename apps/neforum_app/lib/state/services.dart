@@ -194,6 +194,12 @@ class AppServices {
   /// Call after the user edits media-host secrets.
   Future<void> refreshMediaHost() => _rebuildMediaHost();
 
+  /// Hand-offs go to the NEFORUM browser extension: a computer with a paired
+  /// browser, outside the demo workspace. The demo's sample posts never
+  /// reach the extension, so nothing is filled in or posted on the user's
+  /// real accounts.
+  bool get extensionFillsHandoffs => !demo && Env.isDesktop && browserBridge.canFill;
+
   /// A publisher configured with the current settings.
   PublishService publisher() => PublishService(
         registry: registry,
@@ -205,7 +211,7 @@ class AppServices {
         broker: broker,
         handoffLauncher: handoff,
         mediaHostProvider: () => _mediaHost,
-        browserFills: () => Env.isDesktop && browserBridge.canFill,
+        browserFills: () => extensionFillsHandoffs,
         resolver: VariantResolver(_settings.resolverOptions),
         options: _settings.publishOptions,
         secretsCoordinator: cloudSync.active ? cloudSync : null,

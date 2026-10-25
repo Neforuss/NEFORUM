@@ -7,15 +7,35 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-/** Loads fill.js and recipes.js as the browser would, without a page. */
-function loadContent() {
-  const sandbox = { console, setTimeout, clearTimeout };
+/** Loads fill.js and recipes.js as the browser would, without a page ([globals]: stand-ins such as document). */
+function loadContent(globals = {}) {
+  const sandbox = { console, setTimeout, clearTimeout, ...globals };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   for (const file of ['fill.js', 'recipes.js']) {
     vm.runInContext(readFileSync(new URL(`../src/content/${file}`, import.meta.url), 'utf8'), sandbox, { filename: file });
   }
   return sandbox.NEFORUM_EXT;
+}
+
+/** Loads recipes.js over stand-in page helpers ([fill]), to run a recipe's own steps. */
+function loadRecipes(fill) {
+  const sandbox = { console, setTimeout, clearTimeout, NEFORUM_EXT: { fill } };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(readFileSync(new URL('../src/content/recipes.js', import.meta.url), 'utf8'), sandbox, { filename: 'recipes.js' });
+  return sandbox.NEFORUM_EXT.recipes;
+}
+
+/** A plain text field holding [value], inside [composer] (an element whose fields are [composer.fields]). */
+function textField(value, composer) {
+  return {
+    value,
+    matches: (selector) => /textarea/.test(selector),
+    closest: () => composer,
+    focus() {},
+    setSelectionRange() {},
+  };
 }
 
 const manifest = (browser) => JSON.parse(readFileSync(new URL(`../manifest.${browser}.json`, import.meta.url), 'utf8'));
@@ -51,6 +71,74 @@ test('a field that shows how the text begins gets only the rest (no part twice)'
   assert.equal(restAfter('Hello world', 'Goodbye'), null);
   assert.equal(restAfter('Hi', 'Hi there'), null, 'the field holds more than the text');
   assert.equal(restAfter('Same', 'Same'), '', 'all of it is there already');
+});
+
+test('a thread\'s new post box is filled even when an earlier part begins the same way', async () => {
+  const thread = { fields: [], querySelectorAll() {
+    return this.fields;
+  } };
+  const first = textField('New release notes: https://example.org/blog/2026/10/release-notes (1/3)', thread);
+  const third = textField('', thread);
+  thread.fields = [first, third];
+  const part = 'https://example.org/blog/2026/10/release-notes (3/3)';
+  const document = {
+    activeElement: null,
+    execCommand(command, ui, text) {
+      if (command !== 'insertText') return false;
+      third.value += text;
+      return true;
+    },
+  };
+  const { holdsAlready, insertText } = loadContent({ document }).fill;
+  // Judged by the whole composer, the earlier part looks like this one.
+  assert.equal(holdsAlready(third, part), true);
+  assert.equal(holdsAlready(third, part, { fieldOnly: true }), false);
+  assert.equal(await insertText(third, part, { fieldOnly: true }), 'insertText');
+  assert.equal(third.value, part);
+  assert.equal(await insertText(third, part, { fieldOnly: true }), 'already', 'the box itself holds it now');
+});
+
+test('pixiv: mature work gets "All ages" and the box for slightly sexual content; without the box it is not rated', async () => {
+  const box = { on: false };
+  let boxFound = true;
+  // The form's answers: "All ages" for the age restriction, "No" for AI.
+  const answers = ['All ages', 'No'];
+  const recipes = loadRecipes({
+    waitFor: async (find) => find(),
+    choose: async (pattern) => answers.some((a) => pattern.test(a)),
+    findField: (pattern, options) => (options?.kind === 'choice' && boxFound && pattern.test('Slightly sexual content') ? box : null),
+    async setChecked(el, on) {
+      if (!el) return false;
+      el.on = on;
+      return true;
+    },
+  });
+  const job = { artwork: { maturity: 'mature', aiGenerated: false } };
+  let r = await recipes.pixiv.fields(job, []);
+  assert.equal(box.on, true, 'the box is ticked');
+  assert.ok(r.lines.includes('Rated mature.'));
+  assert.deepEqual([...r.problems], []);
+
+  boxFound = false;
+  box.on = false;
+  r = await recipes.pixiv.fields(job, []);
+  assert.ok(r.problems.includes('Could not set the mature rating: set it yourself before posting.'), 'not posted automatically as All ages');
+  assert.ok(!r.lines.includes('Rated mature.'));
+
+  // ArtStation has only the box, which still rates mature work.
+  boxFound = true;
+  const artstation = loadRecipes({
+    waitFor: async (find) => find(),
+    choose: async () => false,
+    findField: (pattern, options) => (options?.kind === 'choice' && pattern.test('Has mature content') ? box : null),
+    async setChecked(el, on) {
+      if (!el) return false;
+      el.on = on;
+      return true;
+    },
+  }).artstation;
+  r = await artstation.fields(job, []);
+  assert.ok(r.lines.includes('Rated mature.'));
 });
 
 test('thread parts: X, Bluesky, Threads and Mastodon add post boxes; the others take the text as one post', () => {

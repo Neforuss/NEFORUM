@@ -227,6 +227,7 @@ class IoBrowserBridge extends BrowserBridge {
   final ValueNotifier<List<PairedBrowser>> _browsers = ValueNotifier(const []);
   final ValueNotifier<PairingCode?> _pairing = ValueNotifier(null);
   final StreamController<BrowserFillResult> _results = StreamController.broadcast();
+  final StreamController<String> _served = StreamController.broadcast();
 
   HttpServer? _server;
   Future<void>? _starting;
@@ -237,6 +238,17 @@ class IoBrowserBridge extends BrowserBridge {
 
   /// The site that last fetched [_job] (shown in "Filled in on ...").
   String? _jobHost;
+
+  /// The page that may post [_job] by itself: the first page of the browser
+  /// it was opened in to fetch it, by the id the page sends. An automatic
+  /// job is posted from that one page only, never from another tab.
+  String? _automaticPage;
+
+  /// [endAutomaticPosting] was called for [_job]: no page posts it by itself.
+  bool _automaticEnded = false;
+
+  /// What a page id looks like (`?page=`): random letters and digits.
+  static final RegExp _pageId = RegExp(r'^[A-Za-z0-9_-]{8,64}$');
 
   /// Keychain writes, one after the other.
   Future<void>? _writes;
@@ -253,6 +265,8 @@ class IoBrowserBridge extends BrowserBridge {
   @override
   Stream<BrowserFillResult> get results => _results.stream;
   @override
+  Stream<String> get served => _served.stream;
+  @override
   DateTime now() => _clock();
 
   @override
@@ -260,11 +274,19 @@ class IoBrowserBridge extends BrowserBridge {
     final j = _job;
     if (j == null) return null;
     if (j.isExpiredAt(_clock())) {
-      _job = null;
-      _jobHost = null;
+      _setJob(null);
       return null;
     }
     return j;
+  }
+
+  /// Makes [job] the one served (null: none), with nobody fetching or
+  /// posting it yet.
+  void _setJob(BrowserJob? job) {
+    _job = job;
+    _jobHost = null;
+    _automaticPage = null;
+    _automaticEnded = false;
   }
 
   // ---- lifecycle -----------------------------------------------------------
@@ -318,8 +340,7 @@ class IoBrowserBridge extends BrowserBridge {
     if (starting != null) await starting;
     final server = _server;
     _server = null;
-    _job = null;
-    _jobHost = null;
+    _setJob(null);
     cancelPairing();
     if (!_disposed) _status.value = const BrowserBridgeStatus(BrowserBridgeState.off);
     await server?.close(force: true);
@@ -332,6 +353,7 @@ class IoBrowserBridge extends BrowserBridge {
     _disposed = true;
     await _writes;
     await _results.close();
+    await _served.close();
   }
 
   // ---- paired browsers -----------------------------------------------------
@@ -542,27 +564,37 @@ class IoBrowserBridge extends BrowserBridge {
       createdAt: now,
       expiresAt: now.add(kBrowserJobLifetime),
     );
-    _job = job;
-    _jobHost = null;
+    _setJob(job);
     return job;
   }
 
   @override
   void clearJob([String? id]) {
     if (id != null && _job?.id != id) return;
-    _job = null;
-    _jobHost = null;
+    _setJob(null);
+  }
+
+  @override
+  void endAutomaticPosting(String id) {
+    if (_job?.id == id) _automaticEnded = true;
   }
 
   /// The job for `?host=`, with `preferred`: whether [browser] is the one
-  /// NEFORUM opened the page in (only that one fills in on its own).
+  /// NEFORUM opened the page in (only that one fills in on its own). An
+  /// automatic job says `autoPost: true` only to the page that may post it
+  /// (`?page=`, see [_automaticPage]); every other page gets it to fill in.
   Future<void> _getJob(HttpRequest req, PairedBrowser browser) {
     final host = req.uri.queryParameters['host']?.trim() ?? '';
     if (host.isEmpty) return _send(req, 400, {'error': 'Add ?host=<location.host>.'});
     final j = job;
     if (j == null || !j.matchesHost(host)) return _send(req, 204);
     _jobHost = host.toLowerCase();
-    return _send(req, 200, {...j.toJson(), 'preferred': j.prefers(browser)});
+    final preferred = j.prefers(browser);
+    final page = req.uri.queryParameters['page']?.trim() ?? '';
+    final automatic = j.autoPost && !_automaticEnded;
+    if (automatic && preferred && _automaticPage == null && _pageId.hasMatch(page)) _automaticPage = page;
+    if (!_served.isClosed) _served.add(j.id);
+    return _send(req, 200, {...j.toJson(), 'autoPost': automatic && page == _automaticPage, 'preferred': preferred});
   }
 
   Future<void> _media(HttpRequest req, String id, String index) async {
@@ -577,6 +609,7 @@ class IoBrowserBridge extends BrowserBridge {
       debugPrint('Browser bridge: could not read ${m.name}: $e');
       return _send(req, 500, {'error': 'NEFORUM could not read ${m.name}.'});
     }
+    if (!_served.isClosed) _served.add(j.id);
     final res = req.response;
     res.statusCode = 200;
     try {

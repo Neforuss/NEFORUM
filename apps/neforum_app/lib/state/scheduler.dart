@@ -109,8 +109,9 @@ class AppScheduler {
           await fitPhotosOfSavedPost(_s, p.id);
           final published = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal);
           // With automatic posting on, the browser extension posts the
-          // hand-off targets now instead of leaving them waiting.
-          done = await AutomaticHandoff(_s).complete(published, unattended: !interactive);
+          // hand-off targets now instead of leaving them waiting; Cancel in
+          // Activity stops that too.
+          done = await AutomaticHandoff(_s).complete(published, unattended: !interactive, cancellation: signal);
         } on Object catch (e) {
           // Never leave the post looking busy without a run.
           await _s.concludeStoppedRun(p.id, e);
@@ -271,10 +272,13 @@ Future<void> announcePublishResult(AppServices s, Post p, {bool discarded = fals
   // The user stopped this run in Activity and has seen how it ended.
   if (waiting == 0 && p.targets.any((t) => t.status == TargetStatus.cancelled)) return null;
   if (waiting > 0) {
+    // Automatic posting filled a page in without a confirmed post: say what
+    // to check there, so the post is not made a second time.
+    final note = p.targets.where((t) => t.status == TargetStatus.awaitingHandoff).map((t) => t.handoffNote).nonNulls.firstOrNull;
     return (
       key: 'handoff:${p.id}',
       title: 'Time to post to ${_join(waitingNetworks)}',
-      body: '${ok > 0 ? 'Already posted to $ok. ' : ''}Tap to finish in ${waitingNetworks.length == 1 ? 'the app' : 'each app'}.',
+      body: '${ok > 0 ? 'Already posted to $ok. ' : ''}${note == null ? '' : '$note '}Tap to finish in ${waitingNetworks.length == 1 ? 'the app' : 'each app'}.',
       payload: 'post:${p.id}',
     );
   }

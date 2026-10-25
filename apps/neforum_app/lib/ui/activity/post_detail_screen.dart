@@ -246,6 +246,11 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
               ]),
               Text(a?.handle ?? a?.displayName ?? '', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
               if (timeLabel != null && timeAt != null) Text('$timeLabel ${format.moment(timeAt)}', style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+              // Automatic posting filled the page in without a confirmed post.
+              if (t.status == TargetStatus.awaitingHandoff && t.handoffNote != null) ...[
+                const SizedBox(height: Space.xs + 2),
+                Text(t.handoffNote!, style: context.text.bodySmall?.copyWith(color: nf.warning)),
+              ],
               if (err != null) ...[
                 const SizedBox(height: Space.xs + 2),
                 Text(err.message, style: context.text.bodySmall?.copyWith(color: nf.danger)),

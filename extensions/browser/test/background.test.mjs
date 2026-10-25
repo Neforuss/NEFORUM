@@ -29,7 +29,7 @@ const TOKEN = 'tok_0123456789abcdefghijklmnopqrstuvwxyzABCD';
 const media = Buffer.alloc(2 * 1024 * 1024 + 123, 7); // > 2 chunks
 media[0] = 1;
 media[media.length - 1] = 9;
-const state = { results: [], tokenValid: true, job: true };
+const state = { results: [], tokenValid: true, job: true, pages: [] };
 
 function job() {
   return {
@@ -68,6 +68,7 @@ const server = http.createServer((req, res) => {
   }
   if (!authed) return send(401, { error: 'Pair again' });
   if (url.pathname === '/v1/job') {
+    state.pages.push(url.searchParams.get('page'));
     return state.job && url.searchParams.get('host') === 'www.youtube.com' ? send(200, job()) : send(204);
   }
   if (url.pathname === '/v1/job/j_1/media/0') return send(200, media, 'image/jpeg');
@@ -80,6 +81,8 @@ const server = http.createServer((req, res) => {
     });
     return;
   }
+  // As the app answers for a job it no longer has (closed or replaced there).
+  if (/^\/v1\/job\/[^/]+\/result$/.test(url.pathname)) return send(404, { error: 'That hand-off has expired.' });
   send(404, { error: 'nope' });
 });
 
@@ -172,6 +175,23 @@ test('pairing, status, job, media in chunks, result, and a revoked token', async
   assert.equal(r.ok, false);
   assert.equal(r.code, 'not-paired');
   assert.equal(bg.store.token, undefined);
+});
+
+test('the page id goes with the job request; a report NEFORUM did not take fails, so the page can say so', async () => {
+  state.tokenValid = true;
+  const bg = loadBackground();
+  assert.equal((await bg.send({ type: 'pair', code: '123456' })).ok, true);
+
+  state.pages.length = 0;
+  let r = await bg.send({ type: 'job', host: 'www.youtube.com', page: '0123456789abcdef01234567' });
+  assert.equal(r.value.job.id, 'j_1');
+  await bg.send({ type: 'job', host: 'www.youtube.com' });
+  assert.deepEqual(state.pages, ['0123456789abcdef01234567', null], 'sent only when the page has one');
+
+  r = await bg.send({ type: 'result', jobId: 'j_gone', result: { status: 'filled', text: true, media: 0, posted: 'confirmed' } });
+  assert.equal(r.ok, false);
+  assert.equal(r.code, 'result-refused');
+  assert.equal(r.error, 'That hand-off has expired.');
 });
 
 test('browser name: only Google Chrome says Chrome; other Chromium browsers say so', () => {

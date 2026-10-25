@@ -141,16 +141,22 @@ const handlers = {
     return { paired: false };
   },
 
-  async job({ host }) {
+  /** The job for [host]; [page] is the asking page's id (see PROTOCOL.md: only one page posts an automatic job). */
+  async job({ host, page }) {
     if (!(await getToken())) return { job: null, reason: 'not-paired' };
-    const r = await call(`/v1/job?host=${encodeURIComponent(host)}`);
+    const r = await call(`/v1/job?host=${encodeURIComponent(host)}${page ? `&page=${encodeURIComponent(page)}` : ''}`);
     if (r.status === 204) return { job: null };
     if (!r.ok) throw new BridgeError('job-failed', `NEFORUM answered HTTP ${r.status}.`);
     return { job: await r.json() };
   },
 
+  /** Fails when NEFORUM did not take the report (the hand-off was closed or replaced there). */
   async result({ jobId, result }) {
-    await call(`/v1/job/${encodeURIComponent(jobId)}/result`, { method: 'POST', body: result });
+    const r = await call(`/v1/job/${encodeURIComponent(jobId)}/result`, { method: 'POST', body: result });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new BridgeError('result-refused', j.error ?? `NEFORUM answered HTTP ${r.status}.`);
+    }
     return { ok: true };
   },
 
