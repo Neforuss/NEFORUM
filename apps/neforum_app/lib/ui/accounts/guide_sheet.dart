@@ -66,7 +66,7 @@ class GuideSheet extends ConsumerWidget {
                 ),
               );
             }
-            return GuideBody(markdown: snap.data!, section: section);
+            return GuideBody(markdown: snap.data!, section: section, title: platformGuide ? '$name setup guide' : null);
           },
         ),
       ),
@@ -169,11 +169,15 @@ String _plainHeading(String heading) => heading
 /// PrimaryScrollController, which desktop scroll views do not attach to, and
 /// fails as soon as the guide scrolls.
 class GuideBody extends StatefulWidget {
-  const GuideBody({super.key, required this.markdown, this.section});
+  const GuideBody({super.key, required this.markdown, this.section, this.title});
   final String markdown;
 
   /// Anchor of the heading to show first, or null for the top.
   final String? section;
+
+  /// The title the sheet already shows above the text. A `#` title with the
+  /// same words at the top of the guide is not repeated.
+  final String? title;
 
   @override
   State<GuideBody> createState() => _GuideBodyState();
@@ -204,6 +208,21 @@ class _GuideBodyState extends State<GuideBody> {
 
   void _parse() {
     _sections = parseGuide(widget.markdown);
+    final title = widget.title?.trim().toLowerCase();
+    final intro = _sections.isEmpty ? null : _sections.first;
+    if (title != null && intro != null && intro.title == null) {
+      final lines = intro.body.split('\n');
+      final h1 = RegExp(r'^#\s+(.*?)\s*$').firstMatch(lines.first);
+      final words = h1 == null ? null : _plainHeading(h1.group(1)!).toLowerCase();
+      const suffix = ' setup guide';
+      if (words != null && (words == title || (title.endsWith(suffix) && words.endsWith(suffix)))) {
+        final rest = lines.skip(1).join('\n').trim();
+        _sections = [
+          if (rest.isNotEmpty) GuideSection(title: null, heading: '', body: rest, anchors: intro.anchors, open: true),
+          ..._sections.skip(1),
+        ];
+      }
+    }
     _keys = [for (final _ in _sections) GlobalKey()];
   }
 
