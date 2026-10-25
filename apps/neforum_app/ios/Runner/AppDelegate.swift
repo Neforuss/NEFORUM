@@ -43,6 +43,7 @@ import workmanager_apple
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     SyncFolderPlugin.register(in: engineBridge.pluginRegistry)
     ClipboardPlugin.register(in: engineBridge.pluginRegistry)
+    VideoCompositorPlugin.register(in: engineBridge.pluginRegistry)
   }
 }
 

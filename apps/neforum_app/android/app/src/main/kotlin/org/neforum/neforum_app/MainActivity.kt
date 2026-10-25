@@ -38,6 +38,7 @@ class MainActivity : FlutterActivity() {
         // Hand-offs: sharing straight into an app, and photos on the clipboard.
         ShareChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
         ClipboardChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
+        VideoCompositor(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     /**

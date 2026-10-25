@@ -10,6 +10,7 @@ add_executable(${BINARY_NAME} WIN32
   "flutter_window.cpp"
   "main.cpp"
   "utils.cpp"
+  "video_compositor.cpp"
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
@@ -34,6 +35,14 @@ target_compile_definitions(${BINARY_NAME} PRIVATE "NOMINMAX")
 # dependencies here.
 target_link_libraries(${BINARY_NAME} PRIVATE flutter flutter_wrapper_app)
 target_link_libraries(${BINARY_NAME} PRIVATE "dwmapi.lib")
+# Video caption compositor (video_compositor.cpp): Media Foundation decodes
+# and encodes, Direct2D and WIC draw the frames. Windows N editions without
+# the Media Feature Pack have no mfplat.dll or mfreadwrite.dll, so those load
+# on first use, after a check, instead of when NEFORUM starts.
+target_link_libraries(${BINARY_NAME} PRIVATE "d2d1.lib" "windowscodecs.lib"
+  "mfplat.lib" "mfreadwrite.lib" "mfuuid.lib" "delayimp.lib")
+target_link_options(${BINARY_NAME} PRIVATE "/DELAYLOAD:mfplat.dll"
+  "/DELAYLOAD:mfreadwrite.dll")
 target_include_directories(${BINARY_NAME} PRIVATE "${CMAKE_SOURCE_DIR}")
 
 # Run the Flutter tool portions of the build. This must not be removed.
