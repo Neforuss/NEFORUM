@@ -5,6 +5,65 @@ import '../media/text_card.dart';
 import '../theme/tokens.dart';
 import '../theme/zoom.dart';
 
+/// Networks whose terms explicitly forbid scripting their website: automatic
+/// hand-off posting stays off for them unless the user removes them from the
+/// exclusion list.
+const kAutomationRestrictedPlatforms = ['x', 'linkedin', 'snapchat'];
+
+/// A stored phone text size that can be used: 0.85 to 1.5, 1 otherwise.
+double validTextScale(Object? scale) {
+  if (scale is! num || !scale.isFinite) return 1;
+  return scale.toDouble().clamp(0.85, 1.5);
+}
+
+/// What happens to a post once every network has it (published, handed off
+/// or skipped).
+enum PublishedPostRetention {
+  /// Delete the post and its media files right away.
+  discardOnCompletion,
+  retainSevenDays,
+  retainThirtyDays,
+  retainIndefinitely,
+}
+
+/// How Activity, the Queue and post details show times.
+enum TimestampDisplay {
+  /// "5 min ago", "Yesterday".
+  relative,
+
+  /// Weekday, date and time: "Saturday, 25 October 2026, 14:05".
+  exact,
+}
+
+enum ClockFormat { system, twelveHour, twentyFourHour }
+
+/// How the words of a text card are lined up, as in a word processor.
+enum TextCardAlignment {
+  left,
+  center,
+  right,
+  justify,
+
+  /// Every line, the last one included, spread across the full width.
+  distributed,
+}
+
+enum CornerStyle { rounded, square }
+
+/// Color of the navigation sidebar, rail and phone tab bar.
+enum NavigationChromeStyle {
+  /// NEFORUM purple in every theme.
+  brand,
+
+  /// Light in the light theme, dark in the dark theme.
+  theme,
+
+  /// The accent color.
+  accent,
+}
+
+enum InterfaceDensity { comfortable, compact }
+
 /// Everything the user can change in Settings. Persisted as settings.json.
 @immutable
 class AppSettings {
@@ -44,6 +103,24 @@ class AppSettings {
     this.syncProviderId,
     this.syncConfig = const {},
     this.uiZoom = 1,
+    this.publishedPostRetention = PublishedPostRetention.discardOnCompletion,
+    this.timestampDisplay = TimestampDisplay.relative,
+    this.clockFormat = ClockFormat.system,
+    this.discordMentionEveryone = true,
+    this.textCardHandleHiddenPlatforms = const [],
+    this.textCardAlignment = TextCardAlignment.left,
+    this.captionStyle = const {},
+    this.cornerStyle = CornerStyle.rounded,
+    this.navigationChrome = NavigationChromeStyle.brand,
+    this.customAccentColor,
+    this.interfaceDensity = InterfaceDensity.comfortable,
+    this.mobileTextScale = 1,
+    this.collapsedSettingsSections = const [],
+    this.automaticHandoffPosting = false,
+    this.automaticHandoffExcludedPlatforms = kAutomationRestrictedPlatforms,
+    this.advanceHandoffOnReturn = true,
+    this.artworkMaturity = ArtworkMaturity.general,
+    this.artworkDisallowAiTraining = true,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -82,6 +159,26 @@ class AppSettings {
         syncProviderId: j['syncProviderId'] as String?,
         syncConfig: Map<String, String>.from(j['syncConfig'] as Map? ?? const {}),
         uiZoom: validZoom(j['uiZoom']),
+        publishedPostRetention:
+            PublishedPostRetention.values.asNameMap()[j['publishedPostRetention']] ?? PublishedPostRetention.discardOnCompletion,
+        timestampDisplay: TimestampDisplay.values.asNameMap()[j['timestampDisplay']] ?? TimestampDisplay.relative,
+        clockFormat: ClockFormat.values.asNameMap()[j['clockFormat']] ?? ClockFormat.system,
+        discordMentionEveryone: j['discordMentionEveryone'] as bool? ?? true,
+        textCardHandleHiddenPlatforms: (j['textCardHandleHiddenPlatforms'] as List? ?? const []).cast<String>(),
+        textCardAlignment: TextCardAlignment.values.asNameMap()[j['textCardAlignment']] ?? TextCardAlignment.left,
+        captionStyle: Map<String, dynamic>.from(j['captionStyle'] as Map? ?? const {}),
+        cornerStyle: CornerStyle.values.asNameMap()[j['cornerStyle']] ?? CornerStyle.rounded,
+        navigationChrome: NavigationChromeStyle.values.asNameMap()[j['navigationChrome']] ?? NavigationChromeStyle.brand,
+        customAccentColor: j['customAccentColor'] as int?,
+        interfaceDensity: InterfaceDensity.values.asNameMap()[j['interfaceDensity']] ?? InterfaceDensity.comfortable,
+        mobileTextScale: validTextScale(j['mobileTextScale']),
+        collapsedSettingsSections: (j['collapsedSettingsSections'] as List? ?? const []).cast<String>(),
+        automaticHandoffPosting: j['automaticHandoffPosting'] as bool? ?? false,
+        automaticHandoffExcludedPlatforms:
+            (j['automaticHandoffExcludedPlatforms'] as List? ?? kAutomationRestrictedPlatforms).cast<String>(),
+        advanceHandoffOnReturn: j['advanceHandoffOnReturn'] as bool? ?? true,
+        artworkMaturity: ArtworkMaturity.values.asNameMap()[j['artworkMaturity']] ?? ArtworkMaturity.general,
+        artworkDisallowAiTraining: j['artworkDisallowAiTraining'] as bool? ?? true,
       );
 
   final ThemeMode themeMode;
@@ -188,6 +285,61 @@ class AppSettings {
   /// Device-only: each screen needs its own.
   final double uiZoom;
 
+  /// What happens to a post once every network has it.
+  final PublishedPostRetention publishedPostRetention;
+
+  final TimestampDisplay timestampDisplay;
+  final ClockFormat clockFormat;
+
+  /// Discord server posts start with @everyone (which notifies the channel).
+  final bool discordMentionEveryone;
+
+  /// Networks whose text cards leave out the account's @handle.
+  final List<String> textCardHandleHiddenPlatforms;
+
+  bool textCardShowsHandle(String platformId) => !textCardHandleHiddenPlatforms.contains(platformId);
+
+  /// Default alignment of a text card's words.
+  final TextCardAlignment textCardAlignment;
+
+  /// Default style of captions written on photos (CaptionStyle.toJson).
+  final Map<String, dynamic> captionStyle;
+
+  final CornerStyle cornerStyle;
+  final NavigationChromeStyle navigationChrome;
+
+  /// ARGB of the user's own accent color, used when [accent] is the custom
+  /// choice.
+  final int? customAccentColor;
+
+  final InterfaceDensity interfaceDensity;
+
+  /// Phones and tablets: text size, 1 = the system size. Device-only.
+  final double mobileTextScale;
+
+  /// Settings sections the user folded away. Device-only.
+  final List<String> collapsedSettingsSections;
+
+  /// Desktop only: the browser extension fills in hand-offs and presses the
+  /// network's Post button itself, also for scheduled posts while NEFORUM
+  /// runs. Device-only.
+  final bool automaticHandoffPosting;
+
+  /// Networks that never get automatic posting, even when it is on (their
+  /// terms forbid scripted posting). Device-only.
+  final List<String> automaticHandoffExcludedPlatforms;
+
+  bool postsHandoffAutomatically(String platformId) =>
+      automaticHandoffPosting && !automaticHandoffExcludedPlatforms.contains(platformId);
+
+  /// After the user copies one part of a hand-off and comes back to NEFORUM,
+  /// the next part is copied for them.
+  final bool advanceHandoffOnReturn;
+
+  /// Defaults for new artwork posts.
+  final ArtworkMaturity artworkMaturity;
+  final bool artworkDisallowAiTraining;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -237,6 +389,24 @@ class AppSettings {
     Map<String, String>? syncConfig,
     bool clearSync = false,
     double? uiZoom,
+    PublishedPostRetention? publishedPostRetention,
+    TimestampDisplay? timestampDisplay,
+    ClockFormat? clockFormat,
+    bool? discordMentionEveryone,
+    List<String>? textCardHandleHiddenPlatforms,
+    TextCardAlignment? textCardAlignment,
+    Map<String, dynamic>? captionStyle,
+    CornerStyle? cornerStyle,
+    NavigationChromeStyle? navigationChrome,
+    int? customAccentColor,
+    InterfaceDensity? interfaceDensity,
+    double? mobileTextScale,
+    List<String>? collapsedSettingsSections,
+    bool? automaticHandoffPosting,
+    List<String>? automaticHandoffExcludedPlatforms,
+    bool? advanceHandoffOnReturn,
+    ArtworkMaturity? artworkMaturity,
+    bool? artworkDisallowAiTraining,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -274,6 +444,24 @@ class AppSettings {
         syncProviderId: clearSync ? null : (syncProviderId ?? this.syncProviderId),
         syncConfig: clearSync ? const {} : (syncConfig ?? this.syncConfig),
         uiZoom: uiZoom ?? this.uiZoom,
+        publishedPostRetention: publishedPostRetention ?? this.publishedPostRetention,
+        timestampDisplay: timestampDisplay ?? this.timestampDisplay,
+        clockFormat: clockFormat ?? this.clockFormat,
+        discordMentionEveryone: discordMentionEveryone ?? this.discordMentionEveryone,
+        textCardHandleHiddenPlatforms: textCardHandleHiddenPlatforms ?? this.textCardHandleHiddenPlatforms,
+        textCardAlignment: textCardAlignment ?? this.textCardAlignment,
+        captionStyle: captionStyle ?? this.captionStyle,
+        cornerStyle: cornerStyle ?? this.cornerStyle,
+        navigationChrome: navigationChrome ?? this.navigationChrome,
+        customAccentColor: customAccentColor ?? this.customAccentColor,
+        interfaceDensity: interfaceDensity ?? this.interfaceDensity,
+        mobileTextScale: mobileTextScale ?? this.mobileTextScale,
+        collapsedSettingsSections: collapsedSettingsSections ?? this.collapsedSettingsSections,
+        automaticHandoffPosting: automaticHandoffPosting ?? this.automaticHandoffPosting,
+        automaticHandoffExcludedPlatforms: automaticHandoffExcludedPlatforms ?? this.automaticHandoffExcludedPlatforms,
+        advanceHandoffOnReturn: advanceHandoffOnReturn ?? this.advanceHandoffOnReturn,
+        artworkMaturity: artworkMaturity ?? this.artworkMaturity,
+        artworkDisallowAiTraining: artworkDisallowAiTraining ?? this.artworkDisallowAiTraining,
       );
 
   Map<String, dynamic> toJson() => {
@@ -312,5 +500,23 @@ class AppSettings {
         if (syncProviderId != null) 'syncProviderId': syncProviderId,
         if (syncConfig.isNotEmpty) 'syncConfig': syncConfig,
         if (uiZoom != 1) 'uiZoom': uiZoom,
+        'publishedPostRetention': publishedPostRetention.name,
+        'timestampDisplay': timestampDisplay.name,
+        'clockFormat': clockFormat.name,
+        'discordMentionEveryone': discordMentionEveryone,
+        'textCardHandleHiddenPlatforms': textCardHandleHiddenPlatforms,
+        'textCardAlignment': textCardAlignment.name,
+        if (captionStyle.isNotEmpty) 'captionStyle': captionStyle,
+        'cornerStyle': cornerStyle.name,
+        'navigationChrome': navigationChrome.name,
+        if (customAccentColor != null) 'customAccentColor': customAccentColor,
+        'interfaceDensity': interfaceDensity.name,
+        if (mobileTextScale != 1) 'mobileTextScale': mobileTextScale,
+        if (collapsedSettingsSections.isNotEmpty) 'collapsedSettingsSections': collapsedSettingsSections,
+        'automaticHandoffPosting': automaticHandoffPosting,
+        'automaticHandoffExcludedPlatforms': automaticHandoffExcludedPlatforms,
+        'advanceHandoffOnReturn': advanceHandoffOnReturn,
+        'artworkMaturity': artworkMaturity.name,
+        'artworkDisallowAiTraining': artworkDisallowAiTraining,
       };
 }

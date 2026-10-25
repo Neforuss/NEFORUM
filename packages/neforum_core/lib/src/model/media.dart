@@ -21,6 +21,7 @@ class MediaAttachment {
     this.generated = false,
     this.derivedFrom,
     this.fitKey,
+    this.renderParameters,
   });
 
   factory MediaAttachment.fromJson(Map<String, dynamic> json) => MediaAttachment(
@@ -36,6 +37,9 @@ class MediaAttachment {
         generated: json['generated'] as bool? ?? false,
         derivedFrom: json['derivedFrom'] as String?,
         fitKey: json['fitKey'] as String?,
+        renderParameters: json['renderParameters'] == null
+            ? null
+            : Map<String, dynamic>.from(json['renderParameters'] as Map),
       );
 
   final String id;
@@ -60,6 +64,11 @@ class MediaAttachment {
   /// For a fitted photo: the rules and mode it was made for
   /// ([PhotoFit.keyFor]), so it can be reused.
   final String? fitKey;
+
+  /// For generated media: the settings it was rendered with (text card
+  /// style, caption style, background photo and blur...), so it can be
+  /// rendered again or reused. JSON values only. Null for user files.
+  final Map<String, dynamic>? renderParameters;
 
   /// A NEFORUM text card (generated, not made from a photo).
   bool get isTextCard => generated && derivedFrom == null;
@@ -89,6 +98,7 @@ class MediaAttachment {
         generated: generated,
         derivedFrom: derivedFrom,
         fitKey: fitKey,
+        renderParameters: renderParameters,
       );
 
   Map<String, dynamic> toJson() => {
@@ -104,5 +114,6 @@ class MediaAttachment {
         if (generated) 'generated': true,
         if (derivedFrom != null) 'derivedFrom': derivedFrom,
         if (fitKey != null) 'fitKey': fitKey,
+        if (renderParameters != null) 'renderParameters': renderParameters,
       };
 }

@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../media/text_card.dart';
 import 'composer.dart';
 import 'providers.dart';
+import 'settings.dart';
 
 /// File in the data folder holding the post being written.
 const String kComposerDraftFile = 'composer.json';
@@ -69,6 +70,12 @@ Map<String, dynamic> composerDraftToJson(ComposerState c) => {
       if (c.textCardBranded.isNotEmpty) 'textCardBranded': c.textCardBranded,
       if (c.captionOnPhoto.isNotEmpty) 'captionOnPhoto': c.captionOnPhoto,
       if (c.differentiate) 'differentiate': true,
+      // Kept even while empty, so an added part survives a restart.
+      if (c.additionalParts.isNotEmpty) 'additionalParts': c.additionalParts,
+      if (c.textCardAlignment != null) 'textCardAlignment': c.textCardAlignment!.name,
+      if (c.textCardHandle.isNotEmpty) 'textCardHandle': c.textCardHandle,
+      if (c.captionStyle != null) 'captionStyle': c.captionStyle,
+      if (c.textCardBackground != null) 'textCardBackground': c.textCardBackground,
     };
 
 /// Null when [j] holds no post (cleared, or from a newer NEFORUM).
@@ -97,5 +104,11 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
     captionOnPhoto: flags(j['captionOnPhoto']),
     poll: p.poll,
     differentiate: j['differentiate'] == true,
+    additionalParts: (j['additionalParts'] as List?)?.cast<String>() ?? p.additionalParts,
+    artwork: p.artwork,
+    textCardAlignment: TextCardAlignment.values.asNameMap()[j['textCardAlignment']],
+    textCardHandle: flags(j['textCardHandle']),
+    captionStyle: j['captionStyle'] is Map ? Map<String, dynamic>.from(j['captionStyle'] as Map) : null,
+    textCardBackground: j['textCardBackground'] is Map ? Map<String, dynamic>.from(j['textCardBackground'] as Map) : null,
   );
 }

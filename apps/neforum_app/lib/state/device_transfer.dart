@@ -37,6 +37,20 @@ const Set<String> kExportableSettings = {
   'fillFramePlatforms',
   'captionPhotoPlatforms',
   'defaultTargetIds',
+  'publishedPostRetention',
+  'timestampDisplay',
+  'clockFormat',
+  'discordMentionEveryone',
+  'textCardHandleHiddenPlatforms',
+  'textCardAlignment',
+  'captionStyle',
+  'cornerStyle',
+  'navigationChrome',
+  'customAccentColor',
+  'interfaceDensity',
+  'advanceHandoffOnReturn',
+  'artworkMaturity',
+  'artworkDisallowAiTraining',
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {

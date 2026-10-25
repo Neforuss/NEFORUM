@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'artwork.dart';
 import 'media.dart';
 import 'poll.dart';
 import 'publish_result.dart';
@@ -35,6 +36,10 @@ enum TargetStatus {
   /// The platform accepted the post and publishes it itself at the
   /// scheduled time (server-side scheduling). The device can be off.
   heldByPlatform,
+
+  /// The user cancelled publishing before this target was posted. It can be
+  /// retried.
+  cancelled,
 }
 
 /// Visibility mapped onto whatever the platform supports.
@@ -218,6 +223,8 @@ class Post {
     this.status = PostStatus.draft,
     this.tags = const [],
     this.poll,
+    this.additionalParts = const [],
+    this.artwork,
   });
 
   factory Post.fromJson(Map<String, dynamic> json) => Post(
@@ -243,6 +250,10 @@ class Post {
         status: PostStatus.values.byName(json['status'] as String? ?? 'draft'),
         tags: (json['tags'] as List? ?? const []).cast<String>(),
         poll: json['poll'] == null ? null : PostPoll.fromJson(Map<String, dynamic>.from(json['poll'] as Map)),
+        additionalParts: (json['additionalParts'] as List? ?? const []).cast<String>(),
+        artwork: json['artwork'] == null
+            ? null
+            : ArtworkDetails.fromJson(Map<String, dynamic>.from(json['artwork'] as Map)),
       );
 
   final String id;
@@ -271,6 +282,14 @@ class Post {
 
   /// Poll or quiz; the text is the question. Only platforms with polls get it.
   final PostPoll? poll;
+
+  /// Thread parts the user wrote after the first one ([text]). Platforms
+  /// with threads post them as replies; the others get every part joined
+  /// with blank lines.
+  final List<String> additionalParts;
+
+  /// Set when the post is artwork for art portfolio sites.
+  final ArtworkDetails? artwork;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -281,6 +300,14 @@ class Post {
   bool get needsDeviceAtSchedule => targets.any((t) => !t.isDone && !t.isHeldByPlatform && t.status != TargetStatus.failed);
 
   bool get hasHeldTargets => targets.any((t) => t.isHeldByPlatform);
+
+  /// Every part of the post in order: [text], then [additionalParts].
+  List<String> get parts => [text, ...additionalParts];
+
+  /// True when the user wrote more than one part.
+  bool get isThread => additionalParts.isNotEmpty;
+
+  bool get isArtwork => artwork != null;
 
   PostTarget? targetFor(String accountId) {
     for (final t in targets) {
@@ -304,10 +331,13 @@ class Post {
     List<String>? tags,
     DateTime? updatedAt,
     PostPoll? poll,
+    List<String>? additionalParts,
+    ArtworkDetails? artwork,
     bool clearScheduledAt = false,
     bool clearTitle = false,
     bool clearLink = false,
     bool clearPoll = false,
+    bool clearArtwork = false,
   }) =>
       Post(
         id: id,
@@ -326,6 +356,8 @@ class Post {
         status: status ?? this.status,
         tags: tags ?? this.tags,
         poll: clearPoll ? null : (poll ?? this.poll),
+        additionalParts: additionalParts ?? this.additionalParts,
+        artwork: clearArtwork ? null : (artwork ?? this.artwork),
       );
 
   /// Replaces the target with the same account id.
@@ -353,5 +385,7 @@ class Post {
         'status': status.name,
         'tags': tags,
         if (poll != null) 'poll': poll!.toJson(),
+        if (additionalParts.isNotEmpty) 'additionalParts': additionalParts,
+        if (artwork != null) 'artwork': artwork!.toJson(),
       };
 }

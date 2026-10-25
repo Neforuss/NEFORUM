@@ -11,6 +11,7 @@ import 'captioned_photos.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
 import 'scheduler.dart';
+import 'settings.dart';
 import 'text_cards.dart';
 
 const _uuid = Uuid();
@@ -39,6 +40,12 @@ class ComposerState {
     this.captionOnPhoto = const {},
     this.poll,
     this.differentiate = false,
+    this.additionalParts = const [],
+    this.artwork,
+    this.textCardAlignment,
+    this.textCardHandle = const {},
+    this.captionStyle,
+    this.textCardBackground,
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -87,7 +94,35 @@ class ComposerState {
   /// DIFFERENTIATION: the composer shows one editable version per network.
   final bool differentiate;
 
-  bool get isEmpty => text.trim().isEmpty && media.isEmpty && (title ?? '').trim().isEmpty && (link ?? '').trim().isEmpty;
+  /// Thread parts after the first one ([text]), see [Post.additionalParts].
+  final List<String> additionalParts;
+
+  /// Set while the post is artwork for art portfolio sites.
+  final ArtworkDetails? artwork;
+
+  /// Alignment of the text card's words; null = the Settings default.
+  final TextCardAlignment? textCardAlignment;
+
+  /// Per network (platform id): whether its text card shows the account's
+  /// @handle; missing = the Settings default.
+  final Map<String, bool> textCardHandle;
+
+  /// Style of the caption written on photos (CaptionStyle.toJson); null =
+  /// the Settings default.
+  final Map<String, dynamic>? captionStyle;
+
+  /// A photo behind the text card's words, with its blur and dimming
+  /// (TextCardBackground.toJson); null = a plain colour background.
+  final Map<String, dynamic>? textCardBackground;
+
+  bool get isArtwork => artwork != null;
+
+  bool get isEmpty =>
+      text.trim().isEmpty &&
+      additionalParts.every((p) => p.trim().isEmpty) &&
+      media.isEmpty &&
+      (title ?? '').trim().isEmpty &&
+      (link ?? '').trim().isEmpty;
 
   ComposerState copyWith({
     String? editingPostId,
@@ -110,12 +145,20 @@ class ComposerState {
     Map<String, bool>? captionOnPhoto,
     PostPoll? poll,
     bool? differentiate,
+    List<String>? additionalParts,
+    ArtworkDetails? artwork,
+    TextCardAlignment? textCardAlignment,
+    Map<String, bool>? textCardHandle,
+    Map<String, dynamic>? captionStyle,
+    Map<String, dynamic>? textCardBackground,
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
     bool clearLink = false,
     bool clearCw = false,
     bool clearFocus = false,
+    bool clearArtwork = false,
+    bool clearTextCardBackground = false,
   }) =>
       ComposerState(
         editingPostId: editingPostId ?? this.editingPostId,
@@ -138,6 +181,12 @@ class ComposerState {
         captionOnPhoto: captionOnPhoto ?? this.captionOnPhoto,
         poll: clearPoll ? null : (poll ?? this.poll),
         differentiate: differentiate ?? this.differentiate,
+        additionalParts: additionalParts ?? this.additionalParts,
+        artwork: clearArtwork ? null : (artwork ?? this.artwork),
+        textCardAlignment: textCardAlignment ?? this.textCardAlignment,
+        textCardHandle: textCardHandle ?? this.textCardHandle,
+        captionStyle: captionStyle ?? this.captionStyle,
+        textCardBackground: clearTextCardBackground ? null : (textCardBackground ?? this.textCardBackground),
       );
 
   /// Builds the master [Post] for this composer state.
@@ -152,6 +201,11 @@ class ComposerState {
         visibility: visibility,
         tags: tags,
         poll: poll,
+        additionalParts: [
+          for (final p in additionalParts)
+            if (p.trim().isNotEmpty) p,
+        ],
+        artwork: artwork,
         scheduledAt: scheduledAt,
         status: status,
         createdAt: createdAt ?? now,
@@ -205,6 +259,44 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setCaptionOnPhoto(String platformId, bool on) => state = state.copyWith(captionOnPhoto: {...state.captionOnPhoto, platformId: on});
   void setPoll(PostPoll? poll) => state = poll == null ? state.copyWith(clearPoll: true) : state.copyWith(poll: poll);
   void setDifferentiate(bool on) => state = state.copyWith(differentiate: on);
+  void setTextCardAlignment(TextCardAlignment a) => state = state.copyWith(textCardAlignment: a);
+  void setTextCardHandle(String platformId, bool show) => state = state.copyWith(textCardHandle: {...state.textCardHandle, platformId: show});
+  void setCaptionStyle(Map<String, dynamic> style) => state = state.copyWith(captionStyle: style);
+  void setTextCardBackground(Map<String, dynamic>? background) =>
+      state = background == null ? state.copyWith(clearTextCardBackground: true) : state.copyWith(textCardBackground: background);
+
+  /// Artwork mode on or off. On, the post goes to art sites only.
+  void setArtwork(ArtworkDetails? artwork) =>
+      state = artwork == null ? state.copyWith(clearArtwork: true) : state.copyWith(artwork: artwork);
+
+  /// Text of thread part [index]: 0 is the first part ([ComposerState.text]).
+  void setPart(int index, String text) {
+    if (index == 0) {
+      setText(text);
+      return;
+    }
+    final parts = [...state.additionalParts];
+    if (index - 1 >= parts.length) return;
+    parts[index - 1] = text;
+    state = state.copyWith(additionalParts: parts);
+  }
+
+  /// Adds an empty thread part after part [after] (default: at the end).
+  /// Returns the new part's index.
+  int addPart({int? after}) {
+    final parts = [...state.additionalParts];
+    final at = after == null ? parts.length : after.clamp(0, parts.length);
+    parts.insert(at, '');
+    state = state.copyWith(additionalParts: parts, revision: state.revision + 1);
+    return at + 1;
+  }
+
+  /// Removes thread part [index] (1 or more; part 0 is cleared with [reset]).
+  void removePart(int index) {
+    if (index < 1 || index - 1 >= state.additionalParts.length) return;
+    final parts = [...state.additionalParts]..removeAt(index - 1);
+    state = state.copyWith(additionalParts: parts, revision: state.revision + 1);
+  }
 
   /// DIFFERENTIATION: [text] becomes this account's own version; null goes
   /// back to the main post.
@@ -293,6 +385,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
         captionOnPhoto: captionChoicesOfPost(post, platformOf),
         poll: p.poll,
         differentiate: p.targets.any((t) => t.overrides.text != null),
+        additionalParts: p.additionalParts,
+        artwork: p.artwork,
       );
   }
 
@@ -327,6 +421,12 @@ class ComposerNotifier extends Notifier<ComposerState> {
       captionOnPhoto: state.captionOnPhoto,
       poll: state.poll,
       differentiate: state.differentiate,
+      additionalParts: state.additionalParts,
+      artwork: state.artwork,
+      textCardAlignment: state.textCardAlignment,
+      textCardHandle: state.textCardHandle,
+      captionStyle: state.captionStyle,
+      textCardBackground: state.textCardBackground,
     );
   }
 }

@@ -203,6 +203,12 @@ class QuotaRule {
   final PlatformTier? appliesToTier;
 }
 
+/// Kinds of site that change how posts are routed to them.
+enum PlatformCategory {
+  /// Art portfolio and gallery sites (DeviantArt, ArtStation, Behance, ...).
+  art,
+}
+
 /// Everything the UI and the publishing pipeline need to know about one
 /// platform, independent of any particular account.
 @immutable
@@ -225,6 +231,7 @@ class PlatformDescriptor {
     this.supportsLinkField = false,
     this.family,
     this.polls,
+    this.categories = const {},
   });
 
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
@@ -266,6 +273,13 @@ class PlatformDescriptor {
 
   /// Set when posts can carry a poll or quiz ([PostPoll]).
   final PollRules? polls;
+
+  /// What kind of site this is, where it matters for choosing targets.
+  final Set<PlatformCategory> categories;
+
+  /// A portfolio or gallery site for artwork: it only receives artwork posts
+  /// ([Post.artwork]).
+  bool get isArtPlatform => categories.contains(PlatformCategory.art);
 
   bool supportsTier(PlatformTier t) => tiers.contains(t);
 
