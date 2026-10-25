@@ -34,7 +34,11 @@ jobs:
           flutter pub get
           dart run tool/sync_docs.dart
           flutter analyze --fatal-infos
-          flutter test --exclude-tags screenshots
+          flutter test --exclude-tags screenshots --file-reporter json:test-report.json
+      - name: Report failed app tests
+        if: failure()
+        working-directory: apps/neforum_app
+        run: dart run tool/report_test_failures.dart test-report.json
 
   android:
     needs: test
