@@ -1,7 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:neforum_core/neforum_core.dart' show HandoffSnippet, SecretStore;
+import 'package:neforum_core/neforum_core.dart' show ArtworkDetails, HandoffSnippet, MediaAttachment, PostPoll, PostVariant, SecretStore;
+import 'package:path/path.dart' as p;
 
 import 'browser_bridge_web.dart' if (dart.library.io) 'browser_bridge_io.dart' as impl;
 import 'env.dart';
@@ -194,6 +195,76 @@ class BrowserJobMedia {
   String get kind => isVideo ? 'video' : 'image';
 }
 
+/// The name a hand-off file gets on the page: its own file name, else
+/// "NEFORUM card" for a generated card, else its id, with its extension.
+String browserJobFileName(MediaAttachment m) {
+  if ((m.fileName ?? '').isNotEmpty) return m.fileName!;
+  final ext = p.extension(m.path).isEmpty ? (m.isVideo ? '.mp4' : '.jpg') : p.extension(m.path);
+  return m.generated ? 'NEFORUM card$ext' : '${m.id}$ext';
+}
+
+/// The files of a hand-off for the extension, each read only when asked for.
+List<BrowserJobMedia> browserJobMedia(List<MediaAttachment> files, Future<Uint8List> Function(MediaAttachment m) read) => [
+      for (final m in files)
+        BrowserJobMedia(name: browserJobFileName(m), mimeType: m.mimeType, size: m.sizeBytes, isVideo: m.isVideo, read: () => read(m)),
+    ];
+
+/// The parts of a post that sites keep in fields of their own, so the
+/// extension can fill each one: the thread's parts, the description apart
+/// from the title, the tags, the poll or quiz, and the artwork labels.
+@immutable
+class BrowserJobDetails {
+  const BrowserJobDetails({this.parts = const [], this.description, this.tags = const [], this.poll, this.artwork});
+
+  /// What [variant] holds of these.
+  factory BrowserJobDetails.fromVariant(PostVariant variant) => BrowserJobDetails(
+        parts: variant.isThread ? List.unmodifiable(variant.threadParts) : const [],
+        description: variant.text.trim().isEmpty ? null : variant.text,
+        tags: List.unmodifiable(variant.tags),
+        poll: variant.poll,
+        artwork: variant.artwork,
+      );
+
+  /// Every part of a thread, the first one included; empty for a single post.
+  final List<String> parts;
+
+  /// The post's text alone (no title, no tags), for sites with a description
+  /// field (video uploads, art sites).
+  final String? description;
+
+  /// Tags without `#`.
+  final List<String> tags;
+  final PostPoll? poll;
+  final ArtworkDetails? artwork;
+
+  /// The fields of the job's JSON (only those with something in them).
+  Map<String, Object?> toJson() {
+    final poll = this.poll;
+    final answers = poll?.cleanOptions ?? const <String>[];
+    return {
+      if (parts.length > 1) 'parts': parts,
+      if (description != null) 'description': description,
+      if (tags.isNotEmpty) 'tags': tags,
+      if (poll != null && answers.isNotEmpty)
+        'poll': {
+          'kind': poll.kind.name,
+          'imageOptions': poll.imageOptions,
+          'options': answers,
+          if (poll.isQuiz && _correctAnswer(poll) != null) 'correctIndex': _correctAnswer(poll),
+          if (poll.isQuiz && (poll.explanation ?? '').trim().isNotEmpty) 'explanation': poll.explanation!.trim(),
+        },
+      if (artwork != null) 'artwork': artwork!.toJson(),
+    };
+  }
+
+  /// Index of the quiz's correct answer among the non-empty answers.
+  static int? _correctAnswer(PostPoll poll) {
+    final c = poll.correctIndex;
+    if (c == null || c < 0 || c >= poll.options.length || poll.options[c].trim().isEmpty) return null;
+    return poll.options.take(c).where((o) => o.trim().isNotEmpty).length;
+  }
+}
+
 /// A hand-off waiting for the extension (`GET /v1/job`).
 @immutable
 class BrowserJob {
@@ -209,6 +280,8 @@ class BrowserJob {
     this.media = const [],
     this.steps = '',
     this.quickPost = false,
+    this.autoPost = false,
+    this.details = const BrowserJobDetails(),
     this.target,
     required this.createdAt,
     required this.expiresAt,
@@ -228,6 +301,15 @@ class BrowserJob {
   /// The extension may post when the user presses Ctrl+Enter (⌘+Enter) or
   /// its Post now button.
   final bool quickPost;
+
+  /// Automatic posting (Settings > Browser extension > Post automatically,
+  /// for this network): once the page is filled in, the extension counts
+  /// down 3 seconds (the user can stop it) and presses Post itself.
+  final bool autoPost;
+
+  /// The thread's parts, title-free description, tags, poll and artwork
+  /// labels, for sites that take them in fields of their own.
+  final BrowserJobDetails details;
 
   /// The program NEFORUM opened the page in ([InstalledBrowser.id]): paired
   /// browsers set to that program fill it in on their own, others only when
@@ -263,6 +345,8 @@ class BrowserJob {
         ],
         'steps': steps,
         'quickPost': quickPost,
+        'autoPost': autoPost,
+        ...details.toJson(),
         'createdAt': _isoSeconds(createdAt),
         'expiresAt': _isoSeconds(expiresAt),
       };
@@ -285,6 +369,25 @@ enum BrowserPostState {
   confirmed,
 }
 
+/// Where automatic posting stands on the page (jobs with
+/// [BrowserJob.autoPost] only).
+enum BrowserAutomaticState {
+  /// Nothing reported about automatic posting.
+  none,
+
+  /// The page is filled in; the extension presses Post when its 3-second
+  /// countdown ends.
+  countdown,
+
+  /// The user stopped the countdown on the page: nothing was posted.
+  stopped,
+
+  /// The extension did not post: something was not filled in, the site asks
+  /// for a choice, or its Post button was not found. The page stays filled
+  /// in for the user.
+  manual,
+}
+
 /// What the extension reported after filling in a page
 /// (`POST /v1/job/<id>/result`).
 @immutable
@@ -297,6 +400,7 @@ class BrowserFillResult {
     this.media = 0,
     this.message,
     this.posted = BrowserPostState.none,
+    this.automatic = BrowserAutomaticState.none,
     this.browser,
     required this.at,
   });
@@ -313,6 +417,7 @@ class BrowserFillResult {
   final int media;
   final String? message;
   final BrowserPostState posted;
+  final BrowserAutomaticState automatic;
 
   /// The label of the browser that reported ("Firefox").
   final String? browser;
@@ -352,13 +457,36 @@ const List<List<String>> _hostAliases = [
   ['bsky.app'],
   ['substack.com'],
   ['tumblr.com', 'www.tumblr.com'],
-  ['web.whatsapp.com'],
+  // wa.me forwards to api.whatsapp.com, which hands over to WhatsApp Web.
+  ['web.whatsapp.com', 'wa.me', 'api.whatsapp.com'],
   ['business.google.com'],
   ['snapchat.com', 'www.snapchat.com'],
+  // Art and portfolio sites.
+  ['behance.net', 'www.behance.net'],
+  ['artstation.com', 'www.artstation.com'],
+  ['cara.app'],
+  ['pixiv.net', 'www.pixiv.net'],
+  ['itaku.ee'],
+  ['newgrounds.com', 'www.newgrounds.com'],
+  ['furaffinity.net', 'www.furaffinity.net'],
+  ['weasyl.com', 'www.weasyl.com'],
+  ['ko-fi.com'],
+  ['artfol.app', 'artfol.co'],
+  ['500px.com', 'web.500px.com'],
+  ['dribbble.com'],
+  ['flickr.com', 'www.flickr.com'],
 ];
 
-/// The hosts a job for [url] should match: its own host and known aliases.
-List<String> browserJobHosts(Uri url) {
+/// Hosts that only one platform's job matches besides its own page:
+/// youtube.com/upload forwards to YouTube Studio's upload dialog, and only a
+/// video hand-off belongs there (a YouTube Posts job must not fill in Studio).
+const Map<String, List<String>> _platformHosts = {
+  'youtube': ['studio.youtube.com'],
+};
+
+/// The hosts a job for [url] should match: its own host and known aliases,
+/// plus the hosts only [platformId]'s page forwards to.
+List<String> browserJobHosts(Uri url, {String? platformId}) {
   final host = url.host.toLowerCase();
   if (host.isEmpty) return const [];
   final bare = bareHost(host);
@@ -366,6 +494,7 @@ List<String> browserJobHosts(Uri url) {
   for (final group in _hostAliases) {
     if (group.any((h) => bareHost(h) == bare)) out.addAll(group);
   }
+  out.addAll(_platformHosts[platformId] ?? const []);
   return out.toList();
 }
 
@@ -488,6 +617,8 @@ abstract class BrowserBridge {
 
   /// Makes the hand-off the extension gets next, replacing any other.
   /// [target]: the program the page was opened in (see [BrowserJob.target]).
+  /// [autoPost]: the extension posts by itself once the page is filled in
+  /// (see [BrowserJob.autoPost]).
   BrowserJob? createJob({
     required String platformId,
     required String platformName,
@@ -499,6 +630,8 @@ abstract class BrowserBridge {
     List<BrowserJobMedia> media = const [],
     String steps = '',
     bool quickPost = false,
+    bool autoPost = false,
+    BrowserJobDetails details = const BrowserJobDetails(),
     String? target,
   });
 

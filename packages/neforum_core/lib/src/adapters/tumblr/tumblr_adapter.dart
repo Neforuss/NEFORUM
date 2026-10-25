@@ -975,6 +975,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     final photos = v.media.where((m) => m.isImage).length;
     final composer = composerFor(v).path.split('/').last;
     final hasText = _fullText(v).isNotEmpty;
+    final tags = TumblrApi.tagsField(v.tags) != null;
     final what = [
       if (photos > 0) photos == 1 ? 'your photo' : 'your $photos photos',
       if (photos == 0 && v.media.isNotEmpty) v.media.length == 1 ? 'your video' : 'your videos',
@@ -987,14 +988,15 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
           'chat' => 'the chat lines',
           _ => 'the text',
         },
+      if (tags) 'your tags',
     ];
     final filled = what.length < 2 ? what.join() : '${what.sublist(0, what.length - 1).join(', ')} and ${what.last}';
-    final tags = TumblrApi.tagsField(v.tags) != null;
     return _numbered([
       'Tumblr opens a new $composer post (sign in if asked), and the NEFORUM browser extension adds $filled.',
       if (composer == 'quote' && quoteSource(v) != null)
         'Add the source: click Tumblr\'s source field, then **Insert** next to Quote source in the NEFORUM panel.',
-      if (tags) 'Add the tags: click Tumblr\'s tags field, then **Insert** next to Tags in the NEFORUM panel (they are also listed below).',
+      if (tags)
+        'If the tags are missing, click Tumblr\'s tags field, then **Insert** next to Tags in the NEFORUM panel (they are also listed below).',
       if (_hasAltText(v)) 'Add the alt text listed below to ${photos == 1 ? 'the photo' : 'each photo'}.',
       'Check the post, then click **Post now**.',
     ]);

@@ -548,6 +548,16 @@ class BlueskyAdapter extends PlatformAdapter {
         : '1. The Bluesky composer opens with your text filled in (sign in if asked).\n'
             '2. Check the text and tap **Post**.'
             '${variant.isThread ? '\n3. Only the first part is prefilled; reply to your post with the rest (copied to your clipboard).' : ''}';
+    final added = [
+      if (hasMedia) 'your images or video',
+      if (variant.isThread) 'the other ${variant.threadParts.length - 1} posts of the thread',
+    ];
+    final composerSteps = added.isEmpty
+        ? '1. The Bluesky composer opens with your text filled in (sign in if asked).\n'
+            '2. Check the text and select **Post**.'
+        : '1. The Bluesky composer opens with your text filled in (sign in if asked), and the NEFORUM browser extension '
+            'adds ${added.join(' and ')}.\n'
+            '2. Check the post${hasMedia ? ', add alt text' : ''} and select **${variant.isThread ? 'Post all' : 'Post'}**.';
     return HandoffPlan(
       platformId: platformId,
       instructions: steps,
@@ -563,6 +573,10 @@ class BlueskyAdapter extends PlatformAdapter {
           ? 'The Bluesky compose link cannot carry images or video. On a phone, pick Bluesky in the share sheet; '
               'on desktop, attach the files in the composer yourself.'
           : null,
+      // With the browser extension the compose page also gets the files and
+      // every post of a thread.
+      composerUrl: intent,
+      composerInstructions: composerSteps,
     );
   }
 

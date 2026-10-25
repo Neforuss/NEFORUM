@@ -114,7 +114,7 @@ WhatsApp app). You then pick a chat, **My status** or one of your **Channels**, 
       shareFiles: variant.media,
       androidPackage: androidPackage,
       iosScheme: iosScheme,
-      desktopUrl: 'https://web.whatsapp.com/',
+      desktopUrl: webUrl,
       instructions: hasMedia
           ? '1. Pick **WhatsApp** in the share sheet (on a computer, open WhatsApp Web or Desktop and attach the files).\n'
               '2. Choose **My status**, one of your **Channels**, or a chat.\n'
@@ -125,6 +125,18 @@ WhatsApp app). You then pick a chat, **My status** or one of your **Channels**, 
               '3. For a text **Status**: open **Updates**, tap the pencil, paste the text (it is on the clipboard) and send.',
       mediaNote: 'WhatsApp decides where the post goes: NEFORUM cannot preselect Status or a Channel. '
           'Your text is also on the clipboard in case WhatsApp drops it.',
+      // On a computer: WhatsApp Web, where the browser extension adds the
+      // text and files to the chat the user opens (wa.me forwards there).
+      composerUrl: text.isEmpty ? Uri.parse(webUrl) : webIntentFor(text),
+      composerInstructions: '1. WhatsApp Web opens (if WhatsApp offers its desktop app, choose **use WhatsApp Web**; '
+          'link your phone if asked).\n'
+          '2. Choose a chat or one of your **Channels**.\n'
+          '3. The NEFORUM browser extension adds ${hasMedia && text.isNotEmpty ? 'your text and files' : hasMedia ? 'your files' : 'your text'}. '
+          'If it did so before the chat was open, click **Fill in again** in its panel.\n'
+          '4. Check it and select **Send**.',
     );
   }
+
+  /// WhatsApp Web, where the browser extension fills in the open chat.
+  static const String webUrl = 'https://web.whatsapp.com/';
 }

@@ -3,6 +3,10 @@
 // through the background script, fills in the composer with the site's
 // recipe and tells NEFORUM how it went. When the job allows it, the user's
 // own Ctrl+Enter (⌘+Enter) or Post now click presses the site's Post button.
+// When NEFORUM marked the job automatic (the user turned on automatic
+// posting for this site), the extension presses Post itself after a
+// 3-second countdown the user can stop, and only when everything was filled
+// in.
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -10,7 +14,10 @@
   NF.main = true;
 
   const api = globalThis.browser ?? globalThis.chrome;
-  const { waitFor, findEditor, editableOf, insertText, attachFiles, setInputFiles, sleep, enabled, findPostButton, waitPosted, pressPost } = NF.fill;
+  const { waitFor, findEditor, editableOf, insertText, attachFiles, setInputFiles, sleep, enabled, findPostButton, waitPosted, pressPost, visible } = NF.fill;
+
+  /** How long an automatic job's countdown lasts before Post is pressed. */
+  const COUNTDOWN_SECONDS = 3;
 
   async function ask(type, extra = {}) {
     const r = await api.runtime.sendMessage({ type, ...extra });
@@ -76,22 +83,39 @@
   let attached = null;
   const mediaKey = (job) => JSON.stringify((job.media ?? []).map((m) => [m.name, m.size]));
 
+  /** The other parts of the thread were added on this page, so a refill does not add them twice. */
+  let partsAdded = false;
+
+  /** The thread's parts (the first one included), or null for a single post. */
+  const partsOf = (job) => (Array.isArray(job.parts) && job.parts.length > 1 ? job.parts : null);
+
+  /** Tells NEFORUM what happened ([extra] goes over the last fill's result). */
+  function report(job, extra = {}) {
+    const result = { ...(lastResult ?? { status: 'filled', text: !!job.text, media: job.media?.length ?? 0, message: '' }), ...extra };
+    ask('result', { jobId: job.id, result }).catch(() => {});
+  }
+
   /**
    * Fills in the composer. [refill]: the user asked again, so NEFORUM's text
    * replaces what is in the box and files already attached are not added again.
+   * [automatic]: this fill may end in automatic posting; the result says
+   * whether it will ('countdown') or why not ('manual'). Returns that.
    */
-  async function fill(job, panel, { refill = false } = {}) {
-    if (busy) return;
+  async function fill(job, panel, { refill = false, automatic = false } = {}) {
+    if (busy) return null;
     busy = true;
     const recipe = NF.recipeFor(job.platformId);
     const root = () => recipe.root?.() ?? document;
-    const done = { text: !job.text, media: 0, title: !job.title, problems: [], notes: [] };
+    const parts = partsOf(job);
+    const done = { text: true, media: 0, title: !job.title, problems: [], notes: [] };
+    let titleExpected = false;
     try {
       panel.set('Opening the composer…');
       await recipe.open?.(job);
-      // What goes into the text box (a recipe may have put part of it elsewhere).
-      const text = recipe.textFor?.(job) ?? job.text;
-      if (!text) done.text = true;
+      // What goes into the text box: what the recipe says, else the first
+      // part of a thread (the others get boxes of their own), else the text.
+      const text = recipe.textFor ? recipe.textFor(job) : parts ? parts[0] : job.text;
+      done.text = !text;
 
       if (job.media?.length && !files) {
         files = await loadMedia(job, (i) => panel.set(`Getting ${job.media.length === 1 ? 'the file' : `file ${i + 1} of ${job.media.length}`} from NEFORUM…`));
@@ -111,9 +135,12 @@
       };
 
       const doTitle = async () => {
-        if (!job.title || !recipe.title) return;
-        const field = recipe.title();
-        done.title = !!(field && (await insertText(field, job.title)));
+        const title = recipe.titleFor?.(job) ?? job.title;
+        if (!title || !recipe.title) return;
+        titleExpected = true;
+        panel.set('Filling in the title…');
+        const field = await recipe.title();
+        done.title = !!(field && (await insertText(field, title, { replace: !!recipe.replaceTitle || refill })));
       };
 
       const doMedia = async () => {
@@ -124,6 +151,12 @@
           return;
         }
         panel.set(`Adding ${files.length === 1 ? 'the file' : `${files.length} files`}…`);
+        // A recipe that places the files itself (an image poll: one per answer).
+        if (await recipe.attach?.(files, job)) {
+          done.media = files.length;
+          attached = mediaKey(job);
+          return;
+        }
         await recipe.beforeMedia?.();
         await sleep(300);
         let how = null;
@@ -139,15 +172,44 @@
         }
       };
 
-      if (recipe.mediaFirst) {
-        await doMedia();
-        await doTitle();
-        await doText();
-      } else {
-        await doTitle();
-        await doText();
-        await doMedia();
-      }
+      // The site's own fields: tags, poll answers, age rating, AI labels.
+      const doFields = async () => {
+        if (!recipe.fields) return;
+        panel.set('Filling in the other fields…');
+        const r = await recipe.fields(job, files ?? []);
+        if (!r) return;
+        done.notes.push(...(r.lines ?? []));
+        done.problems.push(...(r.problems ?? []));
+        if (r.title) done.title = true;
+      };
+
+      // The other parts of a thread, each in a post box of its own.
+      const doParts = async () => {
+        if (!parts) return;
+        if (refill && partsAdded) {
+          done.notes.push('The other parts of the thread were already added, so they were not added again.');
+          return;
+        }
+        if (!recipe.addPart) {
+          done.problems.push(`This composer takes one post at a time: post the other ${parts.length - 1} parts as replies (they are in this panel).`);
+          return;
+        }
+        let added = 0;
+        for (let i = 1; i < parts.length; i++) {
+          panel.set(`Adding part ${i + 1} of ${parts.length}…`);
+          const box = await recipe.addPart(i);
+          if (!box || !(await insertText(box, parts[i]))) break;
+          added++;
+        }
+        if (added > 0) partsAdded = true;
+        if (added === parts.length - 1) done.notes.push(`All ${parts.length} parts of the thread filled in.`);
+        else if (added > 0) done.problems.push(`Only ${added + 1} of ${parts.length} parts went in: add the rest from this panel.`);
+        else done.problems.push(`Could not add the other ${parts.length - 1} parts here: post them as replies (they are in this panel).`);
+      };
+
+      // Media goes with the first post of a thread, so before the other parts.
+      const steps = recipe.mediaFirst ? [doMedia, doTitle, doText, doFields, doParts] : [doTitle, doText, doMedia, doFields, doParts];
+      for (const step of steps) await step();
     } catch (e) {
       done.problems.push(e.message || String(e));
     } finally {
@@ -159,25 +221,48 @@
     if (job.title) lines.push(done.title ? 'Title filled in.' : 'Add the title yourself.');
     if (job.media?.length) lines.push(done.media ? `${done.media === 1 ? 'File' : `${done.media} files`} added.` : 'Files not added.');
     lines.push(...done.notes, ...done.problems);
-    const all = done.text && (!job.media?.length || done.media > 0);
+    const all = done.text && (!job.media?.length || done.media > 0) && (!titleExpected || done.title);
     const status = all && !done.problems.length ? 'filled' : done.text || done.media ? 'partial' : 'failed';
+    lastResult = { status, text: done.text, media: done.media, message: done.problems.join(' ') };
+
+    // Automatic posting goes ahead only when everything went in and the site
+    // asks for nothing only the user can decide.
+    let state = null;
+    if (automatic) {
+      const why = status !== 'filled' ? 'Not everything was filled in.' : recipe.manualPublish ?? null;
+      state = why ? 'manual' : 'countdown';
+      lastResult.automatic = state;
+      if (why) lastResult.message = [why, lastResult.message].filter(Boolean).join(' ');
+    }
     const check = job.quickPost ? `Check it, then press ${NF.postKeys} to post.` : 'Check it and press Post.';
     panel.done({
-      headline: status === 'filled' ? `Filled in. ${check}` : status === 'partial' ? 'Partly filled in.' : 'Could not fill this page in.',
+      headline:
+        state === 'countdown'
+          ? `Filled in. Posting on ${job.platformName} in ${COUNTDOWN_SECONDS} seconds…`
+          : state === 'manual'
+            ? status === 'filled'
+              ? `Filled in, not posted automatically. ${recipe.manualPublish}`
+              : 'Partly filled in, so not posted automatically. Finish it, then press Post.'
+            : status === 'filled'
+              ? `Filled in. ${check}`
+              : status === 'partial'
+                ? 'Partly filled in.'
+                : 'Could not fill this page in.',
       tone: status === 'filled' ? 'ok' : status === 'partial' ? 'warn' : 'err',
       lines,
     });
-    lastResult = { status, text: done.text, media: done.media, message: done.problems.join(' ') };
-    if (!posted) panel.setPost(job.quickPost ? 'ready' : 'off');
-    ask('result', { jobId: job.id, result: lastResult }).catch(() => {});
+    if (!posted) panel.setPost(state === 'countdown' ? 'busy' : job.quickPost ? 'ready' : 'off');
+    report(job);
+    return state;
   }
 
-  // ---- posting: only for the user's own key press or click ------------------
+  // ---- posting: the user's own key press or click, or an automatic job ------
 
   /** The job and panel on this page; [ready]: filling is over, posting may start. */
   let current = null;
   let posting = false;
   let posted = false;
+  let counting = false;
   let stopRequested = false;
 
   /** Where this job's Post button is: { button, scope, before } or null. */
@@ -185,7 +270,7 @@
     const recipe = NF.recipeFor(job.platformId);
     const root = recipe.postRoot?.() ?? recipe.root?.() ?? document;
     const editor = lastEditor?.isConnected ? lastEditor : findEditor(root);
-    const found = findPostButton({ from: editor, root, selectors: recipe.postSelectors ?? [], words: recipe.postWords });
+    const found = findPostButton({ from: editor, root, selectors: recipe.postSelectors ?? [], words: recipe.postWords, pattern: recipe.postPattern ?? null });
     if (found) return { ...found, editor };
     // A Next screen before Post (Facebook): pressing Next is part of posting.
     const next = recipe.beforePostWords && findPostButton({ from: editor, root, words: recipe.beforePostWords });
@@ -199,14 +284,35 @@
     return !scope.contains(ae);
   }
 
+  /** The dialog on top, if one is open. */
+  const topDialog = () => [...document.querySelectorAll('[role="dialog"], [role="alertdialog"], dialog[open]')].filter(visible).pop() ?? null;
+
   /**
-   * Presses Post for the user: waits while it is greyed out (an upload still
-   * running), goes through a Next screen if there is one, presses Post once,
-   * then watches for the composer to close and tells NEFORUM.
+   * After Post: some sites ask once more in a dialog ("Upload 3 photos?",
+   * "Did you check the ratings?"). Presses the recipe's confirming button
+   * there, once, when one appears.
+   */
+  async function confirmAfterPost(job, pressed) {
+    const words = NF.recipeFor(job.platformId).afterPostWords;
+    if (!words?.length) return;
+    const found = await waitFor(() => {
+      const d = topDialog();
+      const b = d && findPostButton({ root: d, words });
+      return b && b.button !== pressed && enabled(b.button) ? b : null;
+    }, { timeout: 4000, interval: 200 });
+    if (found) pressPost(found.button);
+  }
+
+  /**
+   * Presses Post: waits while it is greyed out (an upload still running),
+   * goes through a Next screen if there is one, presses Post once, then
+   * watches for the composer to close and tells NEFORUM. Returns what
+   * happened: 'posted', 'pressed' (no sign it went), 'stopped', 'greyed'
+   * (stayed greyed out), 'missing' (no Post button) or 'busy'.
    */
   async function postNow(target) {
     const c = current;
-    if (!c || posting || posted) return;
+    if (!c || posting || posted) return 'busy';
     const { job, panel } = c;
     posting = true;
     stopRequested = false;
@@ -225,13 +331,13 @@
           if (t === 'stop' || !t) {
             panel.set(t ? 'Stopped. Nothing was posted.' : 'The Post button stayed greyed out. Check the page, then press Post yourself.', 'warn');
             panel.setPost('ready');
-            return;
+            return t ? 'stopped' : 'greyed';
           }
         }
         if (stopped()) {
           panel.set('Stopped. Nothing was posted.', 'warn');
           panel.setPost('ready');
-          return;
+          return 'stopped';
         }
         if (!t.before) break;
         // The Next screen: press it, then find Post on the next screen.
@@ -245,13 +351,13 @@
         if (!t) {
           panel.set(after === 'stop' ? 'Stopped. Nothing was posted.' : 'Could not find the Post button on the next screen: press it yourself.', 'warn');
           panel.setPost(after === 'stop' ? 'ready' : 'off');
-          return;
+          return after === 'stop' ? 'stopped' : 'missing';
         }
       }
       if (!t) {
         panel.set('Could not find the Post button: press it yourself.', 'warn');
         panel.setPost('ready');
-        return;
+        return 'missing';
       }
 
       // Once per hand-off, even if the page is reloaded.
@@ -263,6 +369,7 @@
       }
       panel.set('Posting…');
       pressPost(t.button);
+      await confirmAfterPost(job, t.button);
       const ok = await waitPosted({ button: t.button, editor: t.editor, text: job.text });
       panel.done({
         headline: ok ? `Posted on ${job.platformName}.` : 'Pressed Post.',
@@ -270,17 +377,59 @@
         lines: ok ? [] : [`${job.platformName} did not close the composer. Check the page: it may want something else first. If the post did not go, press its Post button.`],
       });
       panel.setPost(ok ? 'done' : 'off');
-      const result = lastResult ?? { status: 'filled', text: !!job.text, media: job.media?.length ?? 0, message: '' };
-      ask('result', { jobId: job.id, result: { ...result, posted: ok ? 'confirmed' : 'pressed' } }).catch(() => {});
+      report(job, { posted: ok ? 'confirmed' : 'pressed' });
+      return ok ? 'posted' : 'pressed';
     } finally {
       posting = false;
     }
   }
 
+  /** Counts down on the panel; false when the user stopped it (Stop or Esc). */
+  async function countdown(job, panel, seconds) {
+    stopRequested = false;
+    counting = true;
+    panel.setPost('busy');
+    try {
+      for (let s = seconds; s > 0; s--) {
+        panel.set(`Posting on ${job.platformName} in ${s}… Stop (or Esc) keeps it unposted.`);
+        for (let tick = 0; tick < 10; tick++) {
+          if (stopRequested) return false;
+          await sleep(100);
+        }
+      }
+      return !stopRequested;
+    } finally {
+      counting = false;
+    }
+  }
+
+  /**
+   * An automatic job, filled in completely: the countdown, then Post. Tells
+   * NEFORUM when it did not post, so the hand-off goes back to the user.
+   */
+  async function postAutomatically(job, panel) {
+    if (!(await countdown(job, panel, COUNTDOWN_SECONDS))) {
+      panel.set('Stopped. Nothing was posted. Check the post, then press Post yourself.', 'warn');
+      panel.setPost(job.quickPost ? 'ready' : 'off');
+      report(job, { automatic: 'stopped', message: 'Stopped on the page before posting.' });
+      return;
+    }
+    const outcome = await postNow(null);
+    if (outcome === 'posted' || outcome === 'pressed' || outcome === 'busy') return;
+    report(job, {
+      automatic: outcome === 'stopped' ? 'stopped' : 'manual',
+      message: {
+        stopped: 'Stopped on the page before posting.',
+        greyed: `${job.platformName}'s Post button stayed greyed out.`,
+        missing: `Could not find ${job.platformName}'s Post button.`,
+      }[outcome] ?? '',
+    });
+  }
+
   // Ctrl+Enter (⌘+Enter): a real key press only (scripts' events are not trusted).
   addEventListener('keydown', (e) => {
     if (!e.isTrusted || e.repeat || e.isComposing) return;
-    if (e.key === 'Escape' && posting) {
+    if (e.key === 'Escape' && (posting || counting)) {
       stopRequested = true;
       return;
     }
@@ -291,7 +440,7 @@
       e.preventDefault();
       e.stopImmediatePropagation();
     };
-    if (posting) return swallow();
+    if (posting || counting) return swallow();
     if (busy) {
       swallow();
       c.panel.set(`Still filling in. Press ${NF.postKeys} again when it is done.`, 'warn');
@@ -382,9 +531,17 @@
       return;
     }
 
-    // Fill in once per hand-off automatically; again only when asked.
-    const key = `neforum-filled-${job.id}`;
-    if (trigger === 'auto' && sessionStorage.getItem(key)) {
+    // Fill in once per hand-off automatically (once per page, for a form
+    // over several pages); again only when asked.
+    const recipe = NF.recipeFor(job.platformId);
+    const key = recipe.stepPages ? `neforum-filled-${job.id}-${location.pathname}` : `neforum-filled-${job.id}`;
+    let filledBefore = false;
+    try {
+      filledBefore = !!sessionStorage.getItem(key);
+    } catch {
+      filledBefore = false;
+    }
+    if (trigger === 'auto' && filledBefore) {
       panel.set(job.quickPost ? `Already filled in once. Press ${NF.postKeys} to post, or Fill in again if something is missing.` : 'Already filled in once. Use Fill in again if something is missing.');
       current.ready = true;
       panel.setPost(job.quickPost ? 'ready' : 'off');
@@ -397,8 +554,12 @@
     }
     if (document.readyState !== 'complete') await new Promise((r) => addEventListener('load', r, { once: true }));
     await sleep(800); // let the site's own scripts build the composer
-    await fill(job, panel);
+    // Automatic posting only for a job NEFORUM marked so, in the browser it
+    // opened the page in, and only on its first fill here.
+    const automatic = job.autoPost === true && job.preferred !== false && !filledBefore;
+    const state = await fill(job, panel, { automatic });
     current.ready = true;
+    if (state === 'countdown') await postAutomatically(job, panel);
   }
 
   api.runtime.onMessage.addListener((msg) => {

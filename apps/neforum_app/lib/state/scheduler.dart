@@ -8,6 +8,7 @@ import 'package:workmanager/workmanager.dart';
 import '../platform/desktop.dart';
 import '../platform/env.dart';
 import '../platform/notifications.dart';
+import 'automatic_handoff.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
 import 'services.dart';
@@ -22,8 +23,9 @@ const String kPublishDueTask = 'org.neforum.publish_due';
 /// * iOS: background refresh is best effort, so every scheduled post also
 ///   gets a notification at its time; tapping it publishes.
 ///
-/// Hand-off targets can never be fully automatic, so they always get a
-/// "time to post" notification.
+/// Hand-off targets get a "time to post" notification, except on a desktop
+/// where automatic posting through the paired browser extension posts them
+/// while NEFORUM runs (automatic_handoff.dart).
 class AppScheduler {
   AppScheduler(this.ref);
   final Ref ref;
@@ -66,8 +68,9 @@ class AppScheduler {
   }
 
   /// Publishes everything that is due. Non-interactive: hand-off targets are
-  /// left waiting and announced with a notification. Each run can be
-  /// cancelled from Activity while it goes.
+  /// left waiting and announced with a notification, unless automatic posting
+  /// through the browser extension posts them. Each run can be cancelled from
+  /// Activity while it goes.
   Future<List<Post>> runDue({bool interactive = false}) async {
     if (_busy) return const [];
     _busy = true;
@@ -83,7 +86,10 @@ class AppScheduler {
         final Post done;
         try {
           await fitPhotosOfSavedPost(_s, p.id);
-          done = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal);
+          final published = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal);
+          // With automatic posting on, the browser extension posts the
+          // hand-off targets now instead of leaving them waiting.
+          done = await AutomaticHandoff(_s).complete(published, unattended: !interactive);
         } finally {
           active.end(p.id, signal);
         }

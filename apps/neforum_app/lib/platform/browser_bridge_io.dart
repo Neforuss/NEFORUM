@@ -518,6 +518,8 @@ class IoBrowserBridge extends BrowserBridge {
     List<BrowserJobMedia> media = const [],
     String steps = '',
     bool quickPost = false,
+    bool autoPost = false,
+    BrowserJobDetails details = const BrowserJobDetails(),
     String? target,
   }) {
     final now = _clock();
@@ -534,6 +536,8 @@ class IoBrowserBridge extends BrowserBridge {
       media: List.unmodifiable(media),
       steps: steps,
       quickPost: quickPost,
+      autoPost: autoPost,
+      details: details,
       target: target,
       createdAt: now,
       expiresAt: now.add(kBrowserJobLifetime),
@@ -603,7 +607,8 @@ class IoBrowserBridge extends BrowserBridge {
       media: media is num ? media.toInt().clamp(0, 999) : 0,
       message: message.isEmpty ? null : message,
       // Only a job that allowed it can be posted from the page.
-      posted: j.quickPost ? BrowserPostState.values.asNameMap()[body['posted']] ?? BrowserPostState.none : BrowserPostState.none,
+      posted: j.quickPost || j.autoPost ? BrowserPostState.values.asNameMap()[body['posted']] ?? BrowserPostState.none : BrowserPostState.none,
+      automatic: j.autoPost ? BrowserAutomaticState.values.asNameMap()[body['automatic']] ?? BrowserAutomaticState.none : BrowserAutomaticState.none,
       browser: browser.label,
       at: _clock(),
     ));

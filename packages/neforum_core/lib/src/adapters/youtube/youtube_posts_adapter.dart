@@ -282,7 +282,37 @@ and must not be set as Made for Kids. There is no subscriber minimum.''';
       mediaNote: 'YouTube has no link that opens a prefilled post, so your ${poll == null ? 'text is' : 'question is'} on the '
           'clipboard${images > 0 ? ' and you add the images in its post editor' : ''}'
           '${answers.isNotEmpty ? '; copy the ${poll!.imageOptions ? 'captions' : 'answers'} one by one below' : ''}.',
+      // On a computer the NEFORUM browser extension opens the post box on
+      // this page and fills it in: text, images, poll or quiz answers.
+      composerUrl: Uri.parse(postsTab ?? desktopUrl),
+      composerInstructions: _composerSteps(poll, answers.length, images, postsTab != null),
     );
+  }
+
+  /// The steps when the browser extension fills in the post box.
+  static String _composerSteps(PostPoll? poll, int answers, int images, bool postsTab) {
+    final kind = poll == null
+        ? null
+        : poll.imageOptions
+            ? 'image poll'
+            : poll.isQuiz
+                ? 'quiz'
+                : 'poll';
+    final filled = [
+      if (poll == null) 'your text' else 'your question',
+      if (poll == null && images > 0) images == 1 ? 'your image' : 'your $images images',
+      if (kind != null) 'the $kind with its $answers ${poll!.imageOptions ? 'images and captions' : 'answers'}',
+      if (poll != null && poll.isQuiz && _correct(poll) != null) 'the correct answer',
+      if (poll != null && poll.isQuiz && (poll.explanation ?? '').trim().isNotEmpty) 'the explanation',
+    ];
+    final list = filled.length < 2 ? filled.join() : '${filled.sublist(0, filled.length - 1).join(', ')} and ${filled.last}';
+    final steps = [
+      '${postsTab ? 'Your channel\'s **Posts** tab opens' : 'youtube.com opens'} (sign in if asked), and the NEFORUM browser '
+          'extension opens the post box and adds $list.',
+      'If something is missing, use the **Insert** buttons in the NEFORUM panel or the copy buttons below.',
+      'Check the post, then select **Post** (or the arrow next to it to schedule).',
+    ];
+    return [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n');
   }
 
   /// Index of the quiz's correct answer within [PostPoll.cleanOptions].

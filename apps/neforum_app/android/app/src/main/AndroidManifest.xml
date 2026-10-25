@@ -45,6 +45,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Hand-off files shared into an app and photos put on the clipboard
+             (HandoffFileProvider.kt): read only, through grants. -->
+        <provider
+            android:name=".HandoffFileProvider"
+            android:authorities="${applicationId}.handoff"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

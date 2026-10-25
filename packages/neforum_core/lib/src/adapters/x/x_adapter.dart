@@ -609,6 +609,16 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       '${hasMedia ? 3 : 2}. Read it over and press **Post**.',
       if (variant.isThread) '${hasMedia ? 4 : 3}. For the rest of the thread, reply to your post and paste the next part.',
     ];
+    final added = [
+      if (hasMedia) 'your photos or video',
+      if (variant.isThread) 'the other ${variant.threadParts.length - 1} parts of the thread',
+    ];
+    final composerSteps = <String>[
+      added.isEmpty
+          ? 'NEFORUM opens the X composer with your text filled in.'
+          : 'NEFORUM opens the X composer with your text filled in, and the NEFORUM browser extension adds ${added.join(' and ')}.',
+      'Read it over and press **${variant.isThread ? 'Post all' : 'Post'}**.',
+    ];
     return HandoffPlan(
       platformId: id,
       instructions: steps.join('\n'),
@@ -624,6 +634,10 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
           ? 'The X website composer cannot receive files. On Android and iOS the share sheet attaches them; '
               'on a computer attach them by hand in the composer.'
           : null,
+      // With the browser extension the same composer page also gets the
+      // files and every part of a thread.
+      composerUrl: intent,
+      composerInstructions: [for (var i = 0; i < composerSteps.length; i++) '${i + 1}. ${composerSteps[i]}'].join('\n'),
     );
   }
 

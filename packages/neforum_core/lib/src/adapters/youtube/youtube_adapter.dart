@@ -578,34 +578,57 @@ class YouTubeAdapter extends PlatformAdapter {
 
   // ------------------------------------------------------------ hand-off
 
+  /// YouTube's upload page. It forwards to the upload dialog of YouTube
+  /// Studio (studio.youtube.com), where the browser extension fills in the
+  /// video, title and description.
+  static const String uploadUrl = 'https://www.youtube.com/upload';
+
   @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
     final title = sanitizeYouTubeText(variant.title ?? '').trim();
     final description = sanitizeYouTubeText(variant.text).trim();
     final tags = cleanTags(variant.tags);
-    final clip = [
-      if (title.isNotEmpty) title,
-      if (description.isNotEmpty) description,
-      if (tags.isNotEmpty) 'Tags: ${tags.join(', ')}',
-    ].join('\n\n');
     final hasVideo = variant.media.any((m) => m.isVideo);
+    // The description is the text to paste; the title and tags are separate
+    // fields, so they are snippets (copied one by one, filled in by the
+    // browser extension on YouTube Studio's upload page).
+    final paste = [
+      if (title.isNotEmpty) 'Paste the title listed below into **Title**.',
+      if (description.isNotEmpty) 'Paste the description into **Description**: it is on the clipboard.',
+      if (tags.isNotEmpty) 'Under **Show more**, paste the tags listed below into **Tags**.',
+    ];
+    final steps = [
+      hasVideo
+          ? 'Pick **YouTube** in the share sheet (on a computer, drop the file onto the YouTube upload page).'
+          : 'YouTube needs a video; add one in NEFORUM or pick it on the YouTube upload page.',
+      ...paste,
+      hasVideo
+          ? 'Choose who the video is for and the visibility (and the schedule, if any), then tap **Upload** / **Publish**.'
+          : 'Choose who the video is for and the visibility, then click **Publish**.',
+    ];
+    final composerSteps = [
+      'YouTube Studio opens its upload page (sign in if asked), and the NEFORUM browser extension adds '
+          '${[if (hasVideo) 'your video', if (title.isNotEmpty) 'the title', if (description.isNotEmpty) 'the description', if (tags.isNotEmpty) 'the tags'].join(', ')}.',
+      'Answer **Is this video made for kids?**: YouTube requires your own answer.',
+      'Go through the next screens, choose the visibility, then click **Publish** (or **Save**).',
+    ];
     return HandoffPlan(
       platformId: id,
       preferred: hasVideo ? HandoffMethod.shareSheet : HandoffMethod.manual,
-      clipboardText: clip.isEmpty ? null : clip,
+      clipboardText: description.isEmpty ? null : description,
       shareFiles: variant.media.where((m) => m.isVideo).toList(),
       androidPackage: 'com.google.android.youtube',
       iosScheme: 'youtube://',
-      desktopUrl: 'https://www.youtube.com/upload',
-      instructions: hasVideo
-          ? '1. Pick **YouTube** in the share sheet (on desktop, drop the file onto the YouTube upload page).\n'
-              '2. Your title and description are on the clipboard: paste them into the matching boxes.\n'
-              '3. Choose the visibility (and the schedule, if any), then tap **Upload** / **Publish**.'
-          : '1. YouTube needs a video; add one in NEFORUM or pick it on the YouTube upload page.\n'
-              '2. Your title and description are on the clipboard: paste them into the matching boxes.\n'
-              '3. Choose the visibility, then click **Publish**.',
+      desktopUrl: uploadUrl,
+      instructions: [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n'),
+      snippets: [
+        if (title.isNotEmpty) HandoffSnippet('Title', title),
+        if (tags.isNotEmpty) HandoffSnippet('Tags', tags.join(', ')),
+      ],
       mediaNote: 'YouTube takes only the video file from the share sheet and has no link that prefills a title or '
-          'description, so NEFORUM copies them to your clipboard. Tags, schedule and thumbnail are set in YouTube.',
+          'description, so NEFORUM copies them for you one by one. Schedule and thumbnail are set in YouTube.',
+      composerUrl: hasVideo ? Uri.parse(uploadUrl) : null,
+      composerInstructions: hasVideo ? [for (var i = 0; i < composerSteps.length; i++) '${i + 1}. ${composerSteps[i]}'].join('\n') : null,
     );
   }
 }

@@ -4,11 +4,14 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:neforum_core/neforum_core.dart' show PlatformTier;
 import 'package:path/path.dart' as p;
 
+import '../../brand/platform_brand.dart';
 import '../../platform/browser_bridge.dart';
 import '../../platform/env.dart';
 import '../../state/providers.dart';
+import '../../state/settings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
@@ -159,7 +162,7 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
         builder: (context, browsers, _) => SettingsSection(
           title: 'Browser extension',
           icon: Icons.extension_outlined,
-          subtitle: 'Fills in hand-offs on the website for you. You check the post, then post it.',
+          subtitle: 'Fills in hand-offs on the website for you. You check the post and post it, or let it post for you.',
           children: [
             SettingSwitch(
               title: 'Let the extension fill in posts',
@@ -229,13 +232,90 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
             SettingSwitch(
               title: 'Post with ${_postKeys()}',
               description: 'After filling in a page, the extension presses the site\'s Post button when you press ${_postKeys()} '
-                  'or its Post now button. Never on its own. Sites may count scripted clicks as automation, so check the post first.',
+                  'or its Post now button. Sites may count scripted clicks as automation, so check the post first.',
               value: s.browserQuickPost,
               onChanged: (v) => n.update((x) => x.copyWith(browserQuickPost: v)),
+            ),
+            SettingSwitch(
+              title: 'Post automatically',
+              description: 'NEFORUM opens each hand-off in your browser by itself. The extension fills it in, counts down 3 seconds '
+                  '(Stop on the page keeps it unposted), then presses the site\'s Post button. Scheduled posts go out the same way '
+                  'while NEFORUM is open on this computer. If anything is missing, nothing is posted and the hand-off waits for you. '
+                  'Sites may treat this as automation, so read their rules.',
+              value: s.automaticHandoffPosting,
+              onChanged: (v) => n.update((x) => x.copyWith(automaticHandoffPosting: v)),
+            ),
+            if (s.automaticHandoffPosting) _automaticNetworks(context, s, n),
+            SettingSwitch(
+              title: 'Copy the next part when I come back',
+              description: 'Without a paired browser, a hand-off copies its text first. When you come back to NEFORUM after pasting '
+                  'it, the next part (a poll answer, the tags, a photo) is already copied, and the hand-off says what it is.',
+              value: s.advanceHandoffOnReturn,
+              onChanged: (v) => n.update((x) => x.copyWith(advanceHandoffOnReturn: v)),
             ),
           ],
         ),
       ),
+    );
+  }
+
+  /// The networks automatic posting can apply to: those of the user's
+  /// accounts that can hand off (also API accounts, which hand off when
+  /// their quota runs out), and always the ones whose terms forbid it, so
+  /// their warning is seen.
+  List<String> _handoffNetworks() {
+    final registry = ref.read(registryProvider);
+    final ids = <String>{
+      for (final a in ref.watch(accountListProvider))
+        if (registry.descriptor(a.platformId)?.tiers.contains(PlatformTier.handoff) ?? false) a.platformId,
+      ...kAutomationRestrictedPlatforms,
+    };
+    String name(String id) => registry.descriptor(id)?.name ?? id;
+    return ids.toList()..sort((a, b) => name(a).toLowerCase().compareTo(name(b).toLowerCase()));
+  }
+
+  Widget _automaticNetworks(BuildContext context, AppSettings s, SettingsNotifier n) {
+    final nf = context.nf;
+    final registry = ref.watch(registryProvider);
+    final restricted = [for (final id in kAutomationRestrictedPlatforms) registry.descriptor(id)?.name ?? id];
+    final named = '${restricted.sublist(0, restricted.length - 1).join(', ')} and ${restricted.last}';
+    return SettingRow(
+      title: 'Networks that post automatically',
+      description: 'Tap a network to leave it out (it then waits for you, as before) or to put it back.',
+      stackOnCompact: true,
+      below: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.warning_amber_rounded, size: 18, color: nf.warning),
+          const SizedBox(width: Space.sm),
+          Expanded(
+            child: Text(
+              'The terms of $named forbid scripted posting, and they can suspend accounts for it, so they start left out. '
+              'You can still put them in.',
+              style: context.text.bodySmall?.copyWith(color: nf.warning),
+            ),
+          ),
+        ]),
+        const SizedBox(height: Space.sm),
+        Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          for (final id in _handoffNetworks())
+            FilterChip(
+              key: ValueKey('automatic-$id'),
+              label: Text(registry.descriptor(id)?.name ?? id),
+              avatar: kAutomationRestrictedPlatforms.contains(id) ? Icon(Icons.warning_amber_rounded, size: 18, color: nf.warning) : PlatformTile(id, size: 18),
+              selected: s.postsHandoffAutomatically(id),
+              onSelected: (on) {
+                n.update((x) => x.copyWith(
+                      automaticHandoffExcludedPlatforms: on
+                          ? x.automaticHandoffExcludedPlatforms.where((p) => p != id).toList()
+                          : {...x.automaticHandoffExcludedPlatforms, id}.toList(),
+                    ));
+                if (on && kAutomationRestrictedPlatforms.contains(id)) {
+                  showToast(context, '${registry.descriptor(id)?.name ?? id} forbids scripted posting: your account may be suspended.', icon: Icons.warning_amber_rounded);
+                }
+              },
+            ),
+        ]),
+      ]),
     );
   }
 

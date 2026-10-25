@@ -42,6 +42,37 @@ import workmanager_apple
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     SyncFolderPlugin.register(in: engineBridge.pluginRegistry)
+    ClipboardPlugin.register(in: engineBridge.pluginRegistry)
+  }
+}
+
+/// "neforum/clipboard" on iOS (lib/platform/clipboard_media.dart): puts a
+/// hand-off photo on the pasteboard as PNG, so it can be pasted into another
+/// app's post editor. Answers true when it is there.
+class ClipboardPlugin: NSObject, FlutterPlugin {
+  static func register(in registry: FlutterPluginRegistry) {
+    if let registrar = registry.registrar(forPlugin: "NeforumClipboard") {
+      register(with: registrar)
+    }
+  }
+
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(name: "neforum/clipboard", binaryMessenger: registrar.messenger())
+    registrar.addMethodCallDelegate(ClipboardPlugin(), channel: channel)
+  }
+
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "copyImage" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    let args = call.arguments as? [String: Any] ?? [:]
+    guard let png = (args["png"] as? FlutterStandardTypedData)?.data, !png.isEmpty, UIImage(data: png) != nil else {
+      result(false)
+      return
+    }
+    UIPasteboard.general.setItems([[UTType.png.identifier: png]], options: [:])
+    result(true)
   }
 }
 

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: thread test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  .composer { border: 1px solid #bbb; border-radius: 10px; padding: 10px; max-width: 520px; display: grid; gap: 8px; }
+  .editor { min-height: 40px; outline: 1px dashed #ccc; padding: 6px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <!--
+    An X-like thread composer: the link prefilled the first part (as X's
+    intent page does), "Add post" makes another post box, "Post all" posts.
+      ?p=x        the X recipe (data-testid boxes and buttons)
+      ?prefill=0  the first box starts empty
+      ?auto=1     automatic posting (see harness.js)
+    window.postBoxes() lists what each box holds: every part exactly once.
+  -->
+  <div id="dialog" role="dialog" aria-label="Compose post">
+    <div class="composer" id="composer">
+      <div class="editor" contenteditable="true" data-testid="tweetTextarea_0" aria-label="Post text"></div>
+      <input data-testid="fileInput" type="file" accept="image/*" multiple hidden>
+      <div>
+        <button type="button" data-testid="addButton" aria-label="Add post">+</button>
+        <button type="button" data-testid="tweetButton" id="post">Post all</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const q = new URLSearchParams(location.search);
+    window.NEFORUM_TEST_PARTS = ['Short first', 'The second part of the thread.', 'And the third.'];
+    window.NEFORUM_TEST_TEXT = window.NEFORUM_TEST_PARTS.join('\n\n');
+    const composer = document.getElementById('composer');
+    const first = composer.querySelector('[data-testid="tweetTextarea_0"]');
+    if (q.get('prefill') !== '0') first.textContent = window.NEFORUM_TEST_PARTS[0];
+    let n = 1;
+    document.querySelector('[data-testid="addButton"]').addEventListener('click', () => {
+      const box = Object.assign(document.createElement('div'), { className: 'editor', contentEditable: 'true' });
+      box.dataset.testid = `tweetTextarea_${n++}`;
+      box.setAttribute('aria-label', 'Post text');
+      composer.insertBefore(box, composer.querySelector('input'));
+      box.focus();
+    });
+    window.posted = 0;
+    document.getElementById('post').addEventListener('click', () => {
+      window.posted++;
+      setTimeout(() => (document.getElementById('dialog').hidden = true), 300);
+    });
+    window.postBoxes = () => [...composer.querySelectorAll('[data-testid^="tweetTextarea_"]')].map((b) => b.innerText.trim());
+  </script>
+  <script src="harness.js"></script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>

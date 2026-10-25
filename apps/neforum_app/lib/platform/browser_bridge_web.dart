@@ -65,6 +65,8 @@ class _NoBrowserBridge extends BrowserBridge {
     List<BrowserJobMedia> media = const [],
     String steps = '',
     bool quickPost = false,
+    bool autoPost = false,
+    BrowserJobDetails details = const BrowserJobDetails(),
     String? target,
   }) =>
       null;

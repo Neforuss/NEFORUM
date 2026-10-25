@@ -763,6 +763,27 @@ class MastodonAdapter extends PlatformAdapter {
       mediaNote: variant.hasMedia
           ? 'The web share page cannot attach files; use the mobile share sheet, or attach them yourself in the composer.'
           : null,
+      // The share page is the server's own composer: the browser extension
+      // adds the files and the other parts of a thread there.
+      composerUrl: intent,
+      composerInstructions: intent == null ? null : _composerSteps(where, variant, cw),
     );
+  }
+
+  /// The steps when the browser extension fills in the server's composer.
+  /// Mastodon servers have their own addresses, which the extension does not
+  /// know in advance, so the user starts it from its toolbar button.
+  static String _composerSteps(String where, PostVariant variant, String cw) {
+    final steps = [
+      'NEFORUM opens the composer on $where with your text filled in (sign in there if asked).',
+      if (variant.hasMedia || variant.isThread)
+        'Click the NEFORUM extension\'s toolbar button and choose **Fill in this page**.'
+            '${variant.hasMedia ? ' It adds your files.' : ''}'
+            '${variant.isThread ? ' Where the composer can hold a whole thread it adds the other parts too; otherwise they are in its panel.' : ''}',
+      if (cw.isNotEmpty) 'Add the content warning "$cw" with the CW button.',
+      'Press **Publish**.',
+      if (variant.isThread) 'If the other parts are still in the panel, reply to your post and **Insert** the next part.',
+    ];
+    return [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n');
   }
 }

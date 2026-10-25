@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: artwork form test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  [hidden] { display: none !important; }
+  form { display: grid; gap: 10px; max-width: 520px; }
+  .chips span { display: inline-block; background: #eee; border-radius: 8px; padding: 2px 6px; margin-right: 4px; }
+  .custom-radio input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  dialog { border: 1px solid #888; border-radius: 10px; }
+</style>
+</head>
+<body>
+  <!--
+    An art site's upload form like Itaku's, filled in by the words that label
+    each field: an Angular-style title and description (formcontrolname), a
+    tag box that turns each tag into a chip on Enter, a maturity question with
+    hidden native radio buttons, a "made with AI" tick box, and a confirmation
+    dialog after Submit.
+      ?p=itaku     the Itaku recipe (Submit, then Yes in the dialog)
+      ?auto=1      automatic posting (see harness.js)
+      ?rating=adult|mature|general
+    window.form() has what the form holds; window.submitted counts submits.
+  -->
+  <form id="form" onsubmit="return false">
+    <label>Images <input id="file" type="file" accept="image/*" multiple></label>
+    <div><div>Title</div><input formcontrolname="title" maxlength="100"></div>
+    <div><div>Description</div><textarea formcontrolname="description" rows="4"></textarea></div>
+    <div>
+      <label for="tag-input">Tags</label>
+      <div class="chips" id="chips"></div>
+      <input id="tag-input" placeholder="Add a tag and press Enter">
+    </div>
+    <fieldset>
+      <legend>Maturity rating</legend>
+      <label class="custom-radio"><input type="radio" name="maturity" value="SFW"><span>SFW</span></label>
+      <label class="custom-radio"><input type="radio" name="maturity" value="QUESTIONABLE"><span>Questionable</span></label>
+      <label class="custom-radio"><input type="radio" name="maturity" value="NSFW"><span>NSFW</span></label>
+    </fieldset>
+    <label><input type="checkbox" id="ai"> Made with AI</label>
+    <div><button type="button" id="submit">Submit</button></div>
+  </form>
+  <dialog id="confirm"><p>Did you double-check all your maturity ratings?</p><button type="button" id="cancel">Cancel</button> <button type="button" id="yes">Yes</button></dialog>
+  <p id="done" hidden>Submitted.</p>
+  <script>
+    window.NEFORUM_TEST_TITLE = 'Violet study';
+    window.NEFORUM_TEST_DESCRIPTION = 'A colour study in violet.';
+    window.NEFORUM_TEST_TEXT = 'Violet study\n\nA colour study in violet.\n\n#violet #study';
+    window.NEFORUM_TEST_TAGS = ['violet', 'study', 'colour'];
+    window.NEFORUM_TEST_ARTWORK = { maturity: 'mature', aiGenerated: false, disallowAiTraining: true };
+    const chips = document.getElementById('chips');
+    const tagInput = document.getElementById('tag-input');
+    tagInput.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || !tagInput.value.trim()) return;
+      e.preventDefault();
+      chips.append(Object.assign(document.createElement('span'), { textContent: tagInput.value.trim() }));
+      tagInput.value = '';
+    });
+    window.submitted = 0;
+    const dialog = document.getElementById('confirm');
+    dialog.setAttribute('role', 'dialog');
+    document.getElementById('submit').addEventListener('click', () => dialog.showModal());
+    document.getElementById('cancel').addEventListener('click', () => dialog.close());
+    document.getElementById('yes').addEventListener('click', () => {
+      window.submitted++;
+      dialog.close();
+      document.getElementById('form').hidden = true;
+      document.getElementById('done').hidden = false;
+    });
+    window.form = () => ({
+      title: document.querySelector('[formcontrolname="title"]').value,
+      description: document.querySelector('[formcontrolname="description"]').value,
+      tags: [...chips.children].map((c) => c.textContent),
+      maturity: document.querySelector('input[name="maturity"]:checked')?.value ?? null,
+      ai: document.getElementById('ai').checked,
+      files: document.getElementById('file').files.length,
+    });
+  </script>
+  <script src="harness.js"></script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>

@@ -35,6 +35,9 @@ class MainActivity : FlutterActivity() {
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neforum/syncfolder")
             .setMethodCallHandler { call, result -> handleSyncFolder(call, result) }
+        // Hand-offs: sharing straight into an app, and photos on the clipboard.
+        ShareChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
+        ClipboardChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
     }
 
     /**

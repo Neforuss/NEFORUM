@@ -745,6 +745,10 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
     ];
     final intent = Uri.parse('https://www.threads.com/intent/post?${query.join('&')}');
     final hasMedia = variant.hasMedia;
+    final added = [
+      if (hasMedia) 'your photos or videos',
+      if (variant.isThread) 'the other ${variant.threadParts.length - 1} parts of the thread',
+    ];
     return HandoffPlan(
       platformId: platformId,
       webIntent: intent,
@@ -769,6 +773,15 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
           ? 'Threads cannot prefill images or videos from a link. On a phone they travel through the share sheet; '
               'on a computer, drag the files into the composer. Your text is on the clipboard.'
           : null,
+      // With the browser extension the composer page also gets the files and
+      // every part of a thread.
+      composerUrl: intent,
+      composerInstructions: added.isEmpty
+          ? '1. The Threads composer opens with your text filled in (sign in if asked).\n'
+              '2. Check the text and select **Post**.'
+          : '1. The Threads composer opens with your text filled in (sign in if asked), and the NEFORUM browser '
+              'extension adds ${added.join(' and ')}.\n'
+              '2. Check the post and select **Post**.',
     );
   }
 }

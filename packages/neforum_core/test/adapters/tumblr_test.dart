@@ -1097,7 +1097,8 @@ void main() {
     test('the full composer\'s steps say what the extension adds', () {
       final photo = adapter.buildHandoff(PostVariant(text: 'Pic', media: [fakeImage(altText: 'Cat'), fakeImage(id: 'img2')], tags: const ['cats']))!;
       expect(photo.composerInstructions, startsWith('1. Tumblr opens a new photo post'));
-      expect(photo.composerInstructions, contains('adds your 2 photos and the text'));
+      expect(photo.composerInstructions, contains('adds your 2 photos, the text and your tags'));
+      expect(photo.composerInstructions, contains('If the tags are missing'), reason: 'the panel still has them to insert');
       expect(photo.composerInstructions, contains('**Insert** next to Tags'));
       expect(photo.composerInstructions, contains('alt text listed below to each photo'));
       expect(photo.composerInstructions, isNot(contains('Save media to Downloads')));
@@ -1401,7 +1402,7 @@ void main() {
       expect(audio.clipboardText, 'New single');
       expect(audio.snippets.first.label, 'Track link');
       expect(audio.snippets.first.text, 'https://soundcloud.com/me/t');
-      expect(audio.composerInstructions, contains("adds the track's link and the text"));
+      expect(audio.composerInstructions, contains("adds the track's link, the text and your tags"));
     });
   });
 }
