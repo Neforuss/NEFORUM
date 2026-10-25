@@ -8,6 +8,7 @@ import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
+import '../../text/text_splitter.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
@@ -32,6 +33,14 @@ const int discordMaxAltText = 1024;
 
 /// Forum post (thread) names: max 100 characters.
 const int discordMaxThreadName = 100;
+
+/// Posts with `extra['mentionEveryone'] == true` start with this line
+/// (unless the text already mentions @everyone or @here).
+const String discordEveryoneMention = '@everyone';
+
+/// @everyone or @here in the text. Discord's `everyone` mention type covers
+/// both.
+final RegExp _everyoneOrHere = RegExp(r'@(?:everyone|here)(?!\w)');
 
 const String _apiBase = 'https://discord.com/api/v10';
 
@@ -88,8 +97,9 @@ class DiscordAdapter extends PlatformAdapter {
       supportsHashtags: false,
       linkInText: true,
       notes: 'Messages up to 2000 characters; longer posts are sent as several messages in a row. '
-          'Discord Markdown (**bold**, *italic*, `code`, > quote) is shown as-is. @everyone/@here and '
-          'role mentions in cross-posted text are not pinged.',
+          'Discord Markdown (**bold**, *italic*, `code`, > quote) is shown as-is. With "Mention @everyone" on '
+          '(the default; Settings > Posting, or per post in Customize) the first message starts with @everyone '
+          'and notifies the channel once. Otherwise @everyone/@here and role mentions are not pinged.',
     ),
     media: MediaRules(
       maxImages: discordMaxFiles,
@@ -256,6 +266,13 @@ class DiscordAdapter extends PlatformAdapter {
       issues.add(const ValidationIssue.info('title.forum',
           'Forum post title: the first line of the text will be used', field: 'title'));
     }
+    if (variant.extra['mentionEveryone'] == true) {
+      final parts = variant.isThread ? variant.threadParts : [variant.text];
+      issues.add(parts.any(_everyoneOrHere.hasMatch)
+          ? const ValidationIssue.info('mention.everyone', 'Your @everyone or @here notifies the channel', field: 'text')
+          : const ValidationIssue.info('mention.everyone', 'Starts with @everyone, which notifies everyone in the channel',
+              field: 'text'));
+    }
     return issues;
   }
 
@@ -298,8 +315,19 @@ class DiscordAdapter extends PlatformAdapter {
     if (variant.media.length > discordMaxFiles) {
       throw const AdapterException(PublishError.validation('Discord takes at most 10 files per message'));
     }
-    final parts = (variant.isThread ? variant.threadParts : [variant.text]).where((p) => p.trim().isNotEmpty).toList();
+    var parts = (variant.isThread ? variant.threadParts : [variant.text]).where((p) => p.trim().isNotEmpty).toList();
     if (parts.isEmpty) parts.add('');
+    // "Mention @everyone": exactly one message may notify the channel, the
+    // first that names @everyone or @here. Without one, the post gets an
+    // @everyone line at the top.
+    var mentionAt = -1;
+    if (variant.extra['mentionEveryone'] == true) {
+      mentionAt = parts.indexWhere(_everyoneOrHere.hasMatch);
+      if (mentionAt < 0) {
+        parts = [...discordWithEveryone(parts.first), ...parts.skip(1)];
+        mentionAt = 0;
+      }
+    }
     final forum = account.config['forum'] == true;
     var threadId = chatStr(account.config['threadId']);
     final ids = sent.ids;
@@ -311,7 +339,7 @@ class DiscordAdapter extends PlatformAdapter {
       final payload = <String, Object?>{
         if (parts[i].isNotEmpty) 'content': parts[i],
         if (chatStr(account.config['username']) != null) 'username': account.config['username'],
-        'allowed_mentions': {'parse': <String>[]},
+        'allowed_mentions': {'parse': i == mentionAt ? const ['everyone'] : <String>[]},
         if (variant.extra['disableLinkPreview'] == true) 'flags': 4,
         if (forum && i == 0 && threadId == null) 'thread_name': discordThreadName(variant),
       };
@@ -378,6 +406,18 @@ class DiscordAdapter extends PlatformAdapter {
 /// How long Discord asked to wait when [e] is a 429 answer.
 Duration? _discordFloodWait(Object e) =>
     e is AdapterException && e.error.statusCode == 429 ? (e.error.retryAfter ?? const Duration(seconds: 1)) : null;
+
+/// [part] with [discordEveryoneMention] on a line of its own above it. A part
+/// the extra line makes longer than a message may be is split again.
+List<String> discordWithEveryone(String part) {
+  const lead = '$discordEveryoneMention\n';
+  if (part.trim().isEmpty) return const [discordEveryoneMention];
+  if (part.length + lead.length <= discordMaxContent) return ['$lead$part'];
+  final pieces = TextSplitter.split(
+      part, const TextRules(maxLength: discordMaxContent - lead.length, counting: CountingRule.utf16),
+      numbering: false);
+  return ['$lead${pieces.first}', ...pieces.skip(1)];
+}
 
 /// Forum post name: the variant title, else the first line, max 100 chars.
 String discordThreadName(PostVariant v) {
