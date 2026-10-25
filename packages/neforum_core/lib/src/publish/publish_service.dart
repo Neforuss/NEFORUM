@@ -286,8 +286,37 @@ class PublishService {
     final updated = target.copyWith(
       status: completed ? TargetStatus.handedOff : TargetStatus.awaitingHandoff,
       result: completed ? PublishResult.handedOff() : null,
+      clearHandoffNote: completed,
     );
     post = _rollup(post.withTarget(updated)).copyWith(updatedAt: _now());
+    await posts.upsert(post);
+    return post;
+  }
+
+  /// An automatic hand-off of [accountId]'s target ended without a confirmed
+  /// post: the target keeps waiting, with [note] saying what to check before
+  /// posting it by hand (see [PostTarget.handoffNote]).
+  Future<Post> noteHandoff(String postId, String accountId, String note) async {
+    var post = await _require(postId);
+    final target = post.targetFor(accountId);
+    if (target == null || target.status != TargetStatus.awaitingHandoff) return post;
+    post = post.withTarget(target.copyWith(handoffNote: note)).copyWith(updatedAt: _now());
+    await posts.upsert(post);
+    return post;
+  }
+
+  /// The user stopped a run after [publish] returned, while the hand-offs
+  /// of [accountIds] were still to be posted automatically: those targets
+  /// that are not done become [TargetStatus.cancelled], to retry like failed
+  /// ones.
+  Future<Post> cancelTargets(String postId, Iterable<String> accountIds) async {
+    var post = await _require(postId);
+    final ids = accountIds.toSet();
+    for (final target in post.targets) {
+      if (!ids.contains(target.accountId) || target.isDone) continue;
+      post = post.withTarget(_cancel(target));
+    }
+    post = _rollup(post).copyWith(updatedAt: _now());
     await posts.upsert(post);
     return post;
   }
@@ -616,6 +645,7 @@ class PublishService {
       HandoffOutcome.launched => attempt.copyWith(
           status: TargetStatus.handedOff,
           result: PublishResult.handedOff(remoteUrl: plan.webIntent?.toString()),
+          clearHandoffNote: true,
         ),
       HandoffOutcome.deferred => attempt.copyWith(status: TargetStatus.awaitingHandoff),
       HandoffOutcome.unavailable => _fail(attempt, const PublishError.configuration('Hand-off is not available in this environment')),

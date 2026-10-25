@@ -397,6 +397,28 @@ void main() {
       expect(p.status, PostStatus.cancelled);
     });
 
+    test('after the run: hand-offs still to be posted automatically are cancelled; what went out stays', () async {
+      await accounts.upsert(fakeAccount('fake', id: 'acct-2'));
+      await accounts.upsert(fakeAccount('fake', id: 'acct-3'));
+      await posts.upsert(Post(
+        id: 'p1',
+        text: 'Hello there',
+        createdAt: testNow,
+        updatedAt: testNow,
+        status: PostStatus.partial,
+        targets: const [
+          PostTarget(accountId: 'acct-1', status: TargetStatus.handedOff),
+          PostTarget(accountId: 'acct-2', status: TargetStatus.awaitingHandoff),
+          PostTarget(accountId: 'acct-3', status: TargetStatus.awaitingHandoff),
+        ],
+      ));
+      final p = await service().cancelTargets('p1', ['acct-1', 'acct-2']);
+      expect(p.targets.map((t) => t.status), [TargetStatus.handedOff, TargetStatus.cancelled, TargetStatus.awaitingHandoff]);
+      expect(p.targets[1].result!.error!.kind, PublishErrorKind.cancelled);
+      expect(p.status, PostStatus.partial);
+      expect((await posts.get('p1'))!.targetFor('acct-2')!.status, TargetStatus.cancelled);
+    });
+
     test('rollUpStatus matches what a run leaves', () {
       final base = Post(id: 'x', text: 'hi', createdAt: testNow, updatedAt: testNow, status: PostStatus.failed);
       PostStatus of(List<TargetStatus> s) =>
@@ -408,6 +430,30 @@ void main() {
       expect(of([TargetStatus.failed]), PostStatus.failed);
       expect(of([TargetStatus.awaitingHandoff, TargetStatus.cancelled]), PostStatus.partial);
     });
+  });
+
+  test('a note from an automatic hand-off stays with the waiting target until it is handed off', () async {
+    await posts.upsert(Post(
+      id: 'p1',
+      text: 'Hello there',
+      createdAt: testNow,
+      updatedAt: testNow,
+      status: PostStatus.partial,
+      targets: const [PostTarget(accountId: 'acct-1', status: TargetStatus.awaitingHandoff)],
+    ));
+    var p = await service().noteHandoff('p1', 'acct-1', 'Post was pressed on example.test, but the post was not seen going up.');
+    expect(p.targets.single.status, TargetStatus.awaitingHandoff);
+    expect(p.targets.single.handoffNote, startsWith('Post was pressed'));
+    final back = Post.fromJson(p.toJson());
+    expect(back.targets.single.handoffNote, p.targets.single.handoffNote);
+    expect(const PostTarget(accountId: 'a').toJson().containsKey('handoffNote'), isFalse);
+
+    p = await service().confirmHandoff('p1', 'acct-1');
+    expect(p.targets.single.status, TargetStatus.handedOff);
+    expect(p.targets.single.handoffNote, isNull);
+    // Only a waiting hand-off takes a note.
+    p = await service().noteHandoff('p1', 'acct-1', 'Too late.');
+    expect(p.targets.single.handoffNote, isNull);
   });
 
   test('held results survive a JSON round trip', () {

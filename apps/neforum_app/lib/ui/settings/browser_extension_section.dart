@@ -241,6 +241,7 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
               description: 'NEFORUM opens each hand-off in your browser by itself. The extension fills it in, counts down 3 seconds '
                   '(Stop on the page keeps it unposted), then presses the site\'s Post button. Scheduled posts go out the same way '
                   'while NEFORUM is open on this computer. If anything is missing, nothing is posted and the hand-off waits for you. '
+                  'A network where you have more than one account always waits for you, since the browser posts as whichever one is signed in. '
                   'Sites may treat this as automation, so read their rules.',
               value: s.automaticHandoffPosting,
               onChanged: (v) => n.update((x) => x.copyWith(automaticHandoffPosting: v)),
@@ -261,13 +262,13 @@ class _BrowserExtensionSectionState extends ConsumerState<BrowserExtensionSectio
 
   /// The networks automatic posting can apply to: those of the user's
   /// accounts that can hand off (also API accounts, which hand off when
-  /// their quota runs out), and always the ones whose terms forbid it, so
-  /// their warning is seen.
+  /// their quota runs out) on sites the extension fills in by itself, and
+  /// always the ones whose terms forbid it, so their warning is seen.
   List<String> _handoffNetworks() {
     final registry = ref.read(registryProvider);
     final ids = <String>{
       for (final a in ref.watch(accountListProvider))
-        if (registry.descriptor(a.platformId)?.tiers.contains(PlatformTier.handoff) ?? false) a.platformId,
+        if (kAutomaticPostingPlatforms.contains(a.platformId) && (registry.descriptor(a.platformId)?.tiers.contains(PlatformTier.handoff) ?? false)) a.platformId,
       ...kAutomationRestrictedPlatforms,
     };
     String name(String id) => registry.descriptor(id)?.name ?? id;

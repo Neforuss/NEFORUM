@@ -46,11 +46,15 @@ with at most 5 wrong tries (then it is cancelled and a new one must be made).
 
 Forgets this token. `204`.
 
-### `GET /v1/job?host=<location.host>` (token)
+### `GET /v1/job?host=<location.host>&page=<page id>` (token)
 
 The hand-off waiting for this site, if any. `204` when there is none (or it has expired).
 A job matches when `host`, without a leading `www.`, equals one of the job's `hosts` without
 `www.`.
+
+`page` (added with extension 1.1.0) is a random id the content script makes once per page load
+(8 to 64 letters, digits, `-` or `_`) and sends with every request for the job. The app uses it to
+let only one page post an automatic job (see `autoPost`).
 
 ```json
 {
@@ -87,6 +91,13 @@ A job matches when `host`, without a leading `www.`, equals one of the job's `ho
 older extensions ignore them (they fill the page in and never post by themselves). Fields without
 content are left out, except `autoPost`, which is always sent.
 
+`autoPost` is per request too. For an automatic job it is `true` only for one page: the first page
+of a browser with `preferred: true` that asks with a `page` id. Every other page (another tab of
+the site, a reload, a page that sent no `page`) gets `false` and only fills the job in. It becomes
+`false` for that page as well once the app ends automatic posting for the job: the user stopped it
+or took over, the hand-off sheet gave up waiting, or the run was cancelled. The job itself stays,
+so a post the user makes from the page is still reported.
+
 There is at most one job at a time (the newest). It expires 10 minutes after it was made.
 
 `preferred` is per request: when NEFORUM opened the page in a particular program (the one set
@@ -108,19 +119,24 @@ The file's bytes with its `Content-Type`. `404` for an unknown or expired job or
 What the extension managed to do, so the app's hand-off sheet can say so.
 Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed", "automatic": "countdown" | "stopped" | "manual"}`.
 `204`. The job stays available until it expires, so the user can fill the page in again. The
-extension may report more than once for a job (after filling in, then after posting).
+extension may report more than once for a job (after filling in, then after posting). `404` when
+the job is no longer the app's (the hand-off was closed, replaced or has expired): the app did not
+take the report, and the extension says so on the page.
 
 `posted` (optional, only for jobs with `quickPost` or `autoPost`): Post was pressed, by the user's
 shortcut or by automatic posting. `confirmed` means the composer closed or emptied afterwards (or
 the page moved on), and the app then marks the hand-off as posted; `pressed` means Post was pressed
-but the page gave no sign. The app ignores `posted` for jobs with neither flag.
+but the page gave no sign. The app ignores `posted` for jobs with neither flag. When pressing Post
+loaded a new page before the extension could report (a form sent the classic way), the next page
+of the site in that tab reports it once: `confirmed` when its address differs from the page Post
+was pressed on, else `pressed`.
 
 `automatic` (optional, only for jobs with `autoPost`; ignored for others):
 
 - `countdown`: everything was filled in; the extension presses Post when its 3-second countdown
   ends. A report with `posted` follows.
-- `stopped`: the user stopped the countdown (or the wait for a greyed-out button) on the page.
-  Nothing was posted.
+- `stopped`: the user stopped the countdown (or the wait for a greyed-out button) on the page, or
+  the app ended automatic posting before Post was pressed. Nothing was posted.
 - `manual`: the extension did not post: something was not filled in, the site asks for a choice
   only the user can make, or no Post button was found. `message` says why. The page stays filled
   in for the user.
@@ -136,13 +152,17 @@ before 1.1.0: the app hands the post back to the user.
   typing elsewhere on the page, or clicks the panel's **Post now**. Once per job. When the button
   is greyed out (an upload still running), wait for it; Esc or Stop cancels. Two candidate buttons
   at the same distance from the composer means no click.
-- Automatic posting: only for a job whose `autoPost` is `true` (the app sets it only when the user
-  turned on automatic posting for that network), only in the browser the page was opened in
-  (`preferred` not `false`), only on the first fill of the job on that page (never after **Fill in
-  again** or a reload), and only when every part was filled in and the site's recipe does not need
-  the user. Then show a 3-second countdown in the panel with **Stop** (Esc does the same), press
-  Post once, wait for it as above, and report `posted`. In every other case report `automatic`
-  `manual` (or `stopped`) and leave the page as it is.
+- Automatic posting: only for a job whose `autoPost` is `true` for this page (the app sets it only
+  when the user turned on automatic posting for that network, and only for one page), only in the
+  browser the page was opened in (`preferred` not `false`), only on the first fill of the job on
+  that page (never after **Fill in again** or a reload), and only when every part was filled in
+  and the site's recipe does not need the user. Then show a 3-second countdown in the panel with
+  **Stop** (Esc does the same), press Post once, wait for it as above, and report `posted`. Right
+  before every press (a Next screen's included, and after any wait for a greyed-out button), ask
+  for the job again with the same `page`: press only when the same job comes back with `autoPost`
+  `true`. Otherwise press nothing, say so in the panel, and report `automatic` `stopped` when the
+  job is still there. In every other case report `automatic` `manual` (or `stopped`) and leave the
+  page as it is.
 - After Post, a confirmation dialog the recipe knows (`afterPostWords`) may be answered once.
 - Never send anything from the page back to the app other than the result above.
 - Keep the token in `storage.local`; forget it on `401`.

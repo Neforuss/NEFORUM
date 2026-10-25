@@ -10,6 +10,17 @@ import '../theme/zoom.dart';
 /// exclusion list.
 const kAutomationRestrictedPlatforms = ['x', 'linkedin', 'snapchat'];
 
+/// Networks whose hand-off pages the NEFORUM browser extension fills in by
+/// itself (its content scripts run on their sites: kExtensionPageHosts), so
+/// automatic posting can apply to them. On other sites (blogs, Mastodon and
+/// Misskey servers, Telegram...) no page could ever report back.
+const kAutomaticPostingPlatforms = {
+  'x', 'bluesky', 'threads', 'linkedin', 'facebook', 'youtube_posts', 'youtube', 'substack', //
+  'tiktok', 'instagram', 'pinterest', 'reddit', 'tumblr', 'whatsapp', 'google_business', 'snapchat', //
+  'behance', 'artstation', 'cara', 'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', //
+  'kofi', 'artfol', 'fivehundredpx', 'dribbble', 'flickr',
+};
+
 /// A stored phone text size that can be used: 0.85 to 1.5, 1 otherwise.
 double validTextScale(Object? scale) {
   if (scale is! num || !scale.isFinite) return 1;
@@ -329,8 +340,10 @@ class AppSettings {
   /// terms forbid scripted posting). Device-only.
   final List<String> automaticHandoffExcludedPlatforms;
 
+  /// Automatic posting is on, applies to [platformId]'s site, and the user
+  /// did not leave that network out.
   bool postsHandoffAutomatically(String platformId) =>
-      automaticHandoffPosting && !automaticHandoffExcludedPlatforms.contains(platformId);
+      automaticHandoffPosting && kAutomaticPostingPlatforms.contains(platformId) && !automaticHandoffExcludedPlatforms.contains(platformId);
 
   /// After the user copies one part of a hand-off and comes back to NEFORUM,
   /// the next part is copied for them.

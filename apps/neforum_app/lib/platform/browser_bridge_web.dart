@@ -34,6 +34,8 @@ class _NoBrowserBridge extends BrowserBridge {
   @override
   Stream<BrowserFillResult> get results => const Stream.empty();
   @override
+  Stream<String> get served => const Stream.empty();
+  @override
   BrowserJob? get job => null;
   @override
   DateTime now() => _clock();
@@ -72,6 +74,8 @@ class _NoBrowserBridge extends BrowserBridge {
       null;
   @override
   void clearJob([String? id]) {}
+  @override
+  void endAutomaticPosting(String id) {}
   @override
   Future<void> dispose() async {}
 }

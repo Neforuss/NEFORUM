@@ -304,7 +304,9 @@ class BrowserJob {
 
   /// Automatic posting (Settings > Browser extension > Post automatically,
   /// for this network): once the page is filled in, the extension counts
-  /// down 3 seconds (the user can stop it) and presses Post itself.
+  /// down 3 seconds (the user can stop it) and presses Post itself. Only
+  /// one page posts it: the first one of the browser it was opened in that
+  /// fetches it (see [BrowserBridge.endAutomaticPosting]).
   final bool autoPost;
 
   /// The thread's parts, title-free description, tags, poll and artwork
@@ -498,6 +500,33 @@ List<String> browserJobHosts(Uri url, {String? platformId}) {
   return out.toList();
 }
 
+/// The sites the extension's content scripts run on by themselves: the
+/// `matches` of extensions/browser/manifest.chrome.json and
+/// manifest.firefox.json, without `https://` and `/*` (test/
+/// browser_bridge_test.dart keeps them the same). On any other site the
+/// extension fills a page in only when the user asks from its popup.
+const List<String> kExtensionPageHosts = [
+  'x.com', 'twitter.com', 'bsky.app', //
+  'www.threads.com', 'www.threads.net', 'threads.com', 'threads.net', //
+  'www.linkedin.com', 'www.facebook.com', 'm.facebook.com', //
+  'www.youtube.com', 'studio.youtube.com', 'substack.com', 'www.tiktok.com', 'www.instagram.com', //
+  '*.pinterest.com', 'www.reddit.com', 'www.tumblr.com', //
+  'web.whatsapp.com', 'business.google.com', 'www.snapchat.com', //
+  'www.behance.net', 'www.artstation.com', 'cara.app', 'www.pixiv.net', 'itaku.ee', //
+  'www.newgrounds.com', 'www.furaffinity.net', 'www.weasyl.com', 'ko-fi.com', 'artfol.app', //
+  '500px.com', 'web.500px.com', 'dribbble.com', 'www.flickr.com',
+];
+
+/// Does the extension fill in the page at [url] by itself: do its content
+/// scripts run there, or on the page that host forwards to (wa.me goes on
+/// to WhatsApp Web)? Only such a page can report back, so automatic
+/// posting opens no other.
+bool extensionFillsPage(Uri url, {String? platformId}) {
+  if (!url.isScheme('https')) return false;
+  bool runsOn(String host) => kExtensionPageHosts.any((m) => m.startsWith('*.') ? host == m.substring(2) || host.endsWith(m.substring(1)) : host == m);
+  return browserJobHosts(url, platformId: platformId).any((h) => runsOn(h.toLowerCase()));
+}
+
 /// Finds installed browsers and opens pages in a chosen one. Windows: the
 /// browsers registered with Windows (the list Default Apps shows); macOS:
 /// browser apps in the Applications folders; Linux: browser commands on the
@@ -572,6 +601,10 @@ abstract class BrowserBridge {
   /// What the extension managed to fill in, per job.
   Stream<BrowserFillResult> get results;
 
+  /// The id of the job each time a page fetches it or one of its files: the
+  /// page is still at work on it, though it has not reported yet.
+  Stream<String> get served;
+
   /// The hand-off waiting for the extension (null when none or expired).
   BrowserJob? get job;
 
@@ -637,6 +670,11 @@ abstract class BrowserBridge {
 
   /// Drops the job (only if it is still [id], when given).
   void clearJob([String? id]);
+
+  /// No page posts the job [id] by itself any more (automatic posting ended
+  /// without a post, or was cancelled). The job stays, to fill in again and
+  /// to take the page's reports, a post made from the page included.
+  void endAutomaticPosting(String id);
 
   Future<void> dispose();
 }

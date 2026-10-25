@@ -5,8 +5,8 @@
 // own Ctrl+Enter (⌘+Enter) or Post now click presses the site's Post button.
 // When NEFORUM marked the job automatic (the user turned on automatic
 // posting for this site), the extension presses Post itself after a
-// 3-second countdown the user can stop, and only when everything was filled
-// in.
+// 3-second countdown the user can stop, only when everything was filled
+// in, and only while NEFORUM still says this page posts that job.
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -19,10 +19,43 @@
   /** How long an automatic job's countdown lasts before Post is pressed. */
   const COUNTDOWN_SECONDS = 3;
 
+  /**
+   * This page's id, sent with every job request: NEFORUM lets only one page
+   * post an automatic job (the first page of the right browser to ask for
+   * it), never a second tab of the site.
+   */
+  const PAGE = Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+
   async function ask(type, extra = {}) {
     const r = await api.runtime.sendMessage({ type, ...extra });
     if (!r?.ok) throw Object.assign(new Error(r?.error ?? 'The extension did not answer.'), { code: r?.code });
     return r.value;
+  }
+
+  /** NEFORUM's job for this page as it is now; null when there is none (or no answer). */
+  async function jobNow() {
+    try {
+      return (await ask('job', { host: location.host, page: PAGE })).job ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** sessionStorage for this tab, which may be blocked: then nothing is kept. */
+  function stored(key) {
+    try {
+      return sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  function remember(key, value = '1') {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch {
+      // Storage blocked: the flags in this script still hold for this page.
+    }
   }
 
   /** The editable field the user clicked last (outside our panel). */
@@ -89,10 +122,22 @@
   /** The thread's parts (the first one included), or null for a single post. */
   const partsOf = (job) => (Array.isArray(job.parts) && job.parts.length > 1 ? job.parts : null);
 
-  /** Tells NEFORUM what happened ([extra] goes over the last fill's result). */
+  /**
+   * Tells NEFORUM what happened ([extra] goes over the last fill's result).
+   * When NEFORUM does not take it (the hand-off was closed or replaced
+   * there), the panel says so: NEFORUM does not know what happened here.
+   */
   function report(job, extra = {}) {
     const result = { ...(lastResult ?? { status: 'filled', text: !!job.text, media: job.media?.length ?? 0, message: '' }), ...extra };
-    ask('result', { jobId: job.id, result }).catch(() => {});
+    return ask('result', { jobId: job.id, result }).then(
+      () => true,
+      (e) => {
+        if (current?.job.id === job.id) {
+          current.panel.set(`NEFORUM did not take this report: ${e.message}${extra.posted ? ' If the post went up, mark it as posted in NEFORUM.' : ''}`, 'warn');
+        }
+        return false;
+      },
+    );
   }
 
   /**
@@ -198,7 +243,9 @@
         for (let i = 1; i < parts.length; i++) {
           panel.set(`Adding part ${i + 1} of ${parts.length}…`);
           const box = await recipe.addPart(i);
-          if (!box || !(await insertText(box, parts[i]))) break;
+          // Each part has a box of its own: what an earlier part says does
+          // not mean this one is in already.
+          if (!box || !(await insertText(box, parts[i], { fieldOnly: true }))) break;
           added++;
         }
         if (added > 0) partsAdded = true;
@@ -308,9 +355,14 @@
    * goes through a Next screen if there is one, presses Post once, then
    * watches for the composer to close and tells NEFORUM. Returns what
    * happened: 'posted', 'pressed' (no sign it went), 'stopped', 'greyed'
-   * (stayed greyed out), 'missing' (no Post button) or 'busy'.
+   * (stayed greyed out), 'missing' (no Post button), 'withdrawn' (an
+   * automatic job NEFORUM no longer has this page post) or 'busy'.
+   * [automatic]: no key press or click of the user's; before every press
+   * NEFORUM is asked again whether this page still posts the job (the user
+   * may have closed the hand-off there, opened it again or cancelled the run
+   * while an upload kept Post greyed out).
    */
-  async function postNow(target) {
+  async function postNow(target, { automatic = false } = {}) {
     const c = current;
     if (!c || posting || posted) return 'busy';
     const { job, panel } = c;
@@ -318,6 +370,17 @@
     stopRequested = false;
     panel.setPost('busy');
     const stopped = () => stopRequested;
+    /** True while NEFORUM still has this page post the automatic job; otherwise says so and stops. */
+    const stillAutomatic = async () => {
+      if (!automatic) return true;
+      const fresh = await jobNow();
+      const same = fresh?.id === job.id;
+      if (same && fresh.autoPost === true && fresh.preferred !== false) return true;
+      panel.set(same ? 'NEFORUM stopped automatic posting for this hand-off, so nothing was posted.' : 'NEFORUM no longer has this hand-off, so nothing was posted.', 'warn');
+      panel.setPost(same && job.quickPost ? 'ready' : 'off');
+      if (same) report(job, { automatic: 'stopped', message: 'NEFORUM stopped automatic posting before Post was pressed.' });
+      return false;
+    };
     try {
       let t = target ?? locate(job);
       for (let step = 0; step < 3 && t; step++) {
@@ -341,6 +404,7 @@
         }
         if (!t.before) break;
         // The Next screen: press it, then find Post on the next screen.
+        if (!(await stillAutomatic())) return 'withdrawn';
         pressPost(t.button);
         panel.set('Going to the last screen…');
         const after = await waitFor(() => (stopped() ? 'stop' : (() => {
@@ -360,13 +424,12 @@
         return 'missing';
       }
 
-      // Once per hand-off, even if the page is reloaded.
+      if (!(await stillAutomatic())) return 'withdrawn';
+      // Once per hand-off, even if the page is reloaded. Where it was pressed
+      // from goes with it: a Post that sends a form the classic way loads a
+      // new page before this script can report, so that page reports it.
       posted = true;
-      try {
-        sessionStorage.setItem(`neforum-posted-${job.id}`, '1');
-      } catch {
-        // Storage blocked: [posted] still stops a second press on this page.
-      }
+      remember(`neforum-posted-${job.id}`, JSON.stringify({ from: location.href, at: Date.now() }));
       panel.set('Posting…');
       pressPost(t.button);
       await confirmAfterPost(job, t.button);
@@ -377,6 +440,7 @@
         lines: ok ? [] : [`${job.platformName} did not close the composer. Check the page: it may want something else first. If the post did not go, press its Post button.`],
       });
       panel.setPost(ok ? 'done' : 'off');
+      remember(`neforum-reported-${job.id}`);
       report(job, { posted: ok ? 'confirmed' : 'pressed' });
       return ok ? 'posted' : 'pressed';
     } finally {
@@ -414,8 +478,8 @@
       report(job, { automatic: 'stopped', message: 'Stopped on the page before posting.' });
       return;
     }
-    const outcome = await postNow(null);
-    if (outcome === 'posted' || outcome === 'pressed' || outcome === 'busy') return;
+    const outcome = await postNow(null, { automatic: true });
+    if (outcome === 'posted' || outcome === 'pressed' || outcome === 'withdrawn' || outcome === 'busy') return;
     report(job, {
       automatic: outcome === 'stopped' ? 'stopped' : 'manual',
       message: {
@@ -459,22 +523,19 @@
 
   /** The newest job for this page (NEFORUM's "Fill in again" makes a new one). */
   async function latest(job) {
-    try {
-      const { job: fresh } = await ask('job', { host: location.host });
-      if (fresh && fresh.id !== job.id) {
-        files = null;
-        return fresh;
-      }
-    } catch {
-      // Keep the job we have.
+    const fresh = await jobNow();
+    if (fresh && fresh.id !== job.id) {
+      files = null;
+      return fresh;
     }
+    // Keep the job we have.
     return job;
   }
 
   async function start(trigger) {
     let job = null;
     try {
-      ({ job } = await ask('job', { host: location.host }));
+      ({ job } = await ask('job', { host: location.host, page: PAGE }));
     } catch (e) {
       if (trigger === 'popup') alert(`NEFORUM: ${e.message}`);
       return;
@@ -487,13 +548,8 @@
     // that one fills it in. Here only "Fill in this page" does.
     if (trigger === 'auto' && job.preferred === false) return;
 
-    posted = (() => {
-      try {
-        return !!sessionStorage.getItem(`neforum-posted-${job.id}`);
-      } catch {
-        return false;
-      }
-    })();
+    const pressed = stored(`neforum-posted-${job.id}`);
+    posted = !!pressed;
     const panel = NF.panel.mount(job, {
       fill: async () => {
         job = await latest(job);
@@ -528,6 +584,19 @@
     if (posted) {
       panel.set('Already posted from this page.', 'ok');
       panel.setPost('done');
+      // Post was pressed on the page before this one, and sent it away (a
+      // form posted the classic way) before it could tell NEFORUM: this page
+      // does, once. A new address means the site moved on: the post went.
+      if (!stored(`neforum-reported-${job.id}`)) {
+        remember(`neforum-reported-${job.id}`);
+        let from = null;
+        try {
+          from = JSON.parse(pressed)?.from ?? null;
+        } catch {
+          from = null;
+        }
+        report(job, { posted: from && from !== location.href ? 'confirmed' : 'pressed' });
+      }
       return;
     }
 
@@ -535,27 +604,20 @@
     // over several pages); again only when asked.
     const recipe = NF.recipeFor(job.platformId);
     const key = recipe.stepPages ? `neforum-filled-${job.id}-${location.pathname}` : `neforum-filled-${job.id}`;
-    let filledBefore = false;
-    try {
-      filledBefore = !!sessionStorage.getItem(key);
-    } catch {
-      filledBefore = false;
-    }
+    const filledBefore = !!stored(key);
     if (trigger === 'auto' && filledBefore) {
       panel.set(job.quickPost ? `Already filled in once. Press ${NF.postKeys} to post, or Fill in again if something is missing.` : 'Already filled in once. Use Fill in again if something is missing.');
       current.ready = true;
       panel.setPost(job.quickPost ? 'ready' : 'off');
       return;
     }
-    try {
-      sessionStorage.setItem(key, '1');
-    } catch {
-      // Storage blocked: the panel still works, it may just fill in twice.
-    }
+    // Where storage is blocked the panel still works; a reload may fill in twice.
+    remember(key);
     if (document.readyState !== 'complete') await new Promise((r) => addEventListener('load', r, { once: true }));
     await sleep(800); // let the site's own scripts build the composer
-    // Automatic posting only for a job NEFORUM marked so, in the browser it
-    // opened the page in, and only on its first fill here.
+    // Automatic posting only for a job NEFORUM marked so for this page (the
+    // first page of the browser it opened the page in to ask), and only on
+    // its first fill here.
     const automatic = job.autoPost === true && job.preferred !== false && !filledBefore;
     const state = await fill(job, panel, { automatic });
     current.ready = true;

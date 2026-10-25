@@ -79,6 +79,11 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
 
   late final BrowserBridge _bridge;
   StreamSubscription<BrowserFillResult>? _fillSub;
+  StreamSubscription<String>? _servedSub;
+
+  /// Hand-offs go to the extension: a computer with a paired browser, not
+  /// the demo workspace.
+  bool get _extensionFills => ref.read(servicesProvider).extensionFillsHandoffs;
 
   /// The hand-off the extension was given, the page it is for, and what it
   /// reported back.
@@ -106,18 +111,28 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   String? _automaticProblem;
   Timer? _automaticTimer;
 
+  /// Automatic posting is under way: the page is the extension's until it
+  /// posts or gives up, so nothing else opens or fills it in meanwhile.
+  bool get _automaticRunning => _automatic && _automaticProblem == null && _fill?.posted != BrowserPostState.confirmed;
+
+  /// What an earlier automatic attempt left to check on this target (Post
+  /// may have been pressed already): it is never posted automatically again.
+  String? get _handoffNote => widget.post.targetFor(widget.account.id)?.handoffNote;
+
   /// The page automatic posting opens: the platform's full composer, else its
   /// prefilled composer link, else its page. Null when this hand-off is not
-  /// posted automatically: not a computer, no paired browser, automatic
-  /// posting off for this network, or nothing to open in a browser.
-  Uri? _automaticPage() {
-    if (!Env.isDesktop || !_bridge.canFill) return null;
-    if (!ref.read(settingsProvider).postsHandoffAutomatically(widget.account.platformId)) return null;
+  /// posted automatically: not a computer, no paired browser, the demo,
+  /// automatic posting off for this network, another account of the user's
+  /// on it, an earlier attempt left to check, or no page the extension
+  /// fills in by itself.
+  Future<Uri?> _automaticPage() async {
+    if (_handoffNote != null) return null;
+    if (!await automaticPostingApplies(ref.read(servicesProvider), widget.account)) return null;
     return automaticHandoffPage(plan);
   }
 
   Future<void> _startAutomatic() async {
-    final url = _automaticPage();
+    final url = await _automaticPage();
     if (url == null || !mounted) return;
     setState(() => _automatic = true);
     _waitForExtension(_automaticWait);
@@ -134,8 +149,13 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     });
   }
 
+  /// Automatic posting is over without a post: no page posts this job by
+  /// itself any more (another tab of the site included), though a post the
+  /// user makes from the page still finishes the hand-off.
   void _endAutomatic(String problem) {
     _automaticTimer?.cancel();
+    final job = _job;
+    if (job != null && job.autoPost) _bridge.endAutomaticPosting(job.id);
     if (mounted) setState(() => _automaticProblem = problem);
   }
 
@@ -181,6 +201,11 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
         });
       }
     });
+    // The page is still fetching the job or its files: the wait for its
+    // first report starts over.
+    _servedSub = _bridge.served.listen((id) {
+      if (mounted && id == _job?.id && _automaticRunning && _fill == null) _waitForExtension(_automaticWait);
+    });
     _lifecycle = AppLifecycleListener(onStateChange: _onLifecycle);
     // Automatic posting opens the page by itself, once the sheet is up.
     WidgetsBinding.instance.addPostFrameCallback((_) => unawaited(_startAutomatic()));
@@ -189,6 +214,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   @override
   void dispose() {
     unawaited(_fillSub?.cancel());
+    unawaited(_servedSub?.cancel());
     _automaticTimer?.cancel();
     _lifecycle.dispose();
     // Closed sheet, finished hand-off: the page must not be filled in again.
@@ -201,7 +227,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   /// at [url] (when a browser is paired and [url] is a web page).
   /// [automatic]: it posts by itself once everything is filled in.
   void _sendToExtension(Uri url, {bool automatic = false}) {
-    if (!_bridge.canFill || !(url.isScheme('http') || url.isScheme('https'))) return;
+    if (!_extensionFills || !(url.isScheme('http') || url.isScheme('https'))) return;
     final media = ref.read(servicesProvider).media;
     final d = ref.read(registryProvider).descriptor(widget.account.platformId);
     final job = _bridge.createJob(
@@ -269,13 +295,18 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       icon: icon,
       color: color,
       text: text,
-      action: _jobUrl == null
+      // Not while automatic posting is under way: a second fill could post
+      // from a page the extension is about to post from.
+      action: _jobUrl == null || _automaticRunning
           ? null
           : TextButton.icon(
               onPressed: () {
                 // By hand from here: the new job is not automatic.
                 _automaticTimer?.cancel();
-                setState(() => _automaticProblem = null);
+                setState(() {
+                  _automatic = false;
+                  _automaticProblem = null;
+                });
                 _sendToExtension(_jobUrl!);
               },
               icon: const Icon(Icons.replay_rounded, size: 16),
@@ -389,7 +420,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   String? _clipboardNote;
 
   bool get _advancesOnReturn =>
-      ref.read(settingsProvider).advanceHandoffOnReturn && (Env.isMobile || (Env.isDesktop && !_bridge.canFill)) && _pasteItems.length > 1;
+      ref.read(settingsProvider).advanceHandoffOnReturn && (Env.isMobile || (Env.isDesktop && !_extensionFills)) && _pasteItems.length > 1;
 
   /// The item of [_pasteItems] copied last, by any button; the part copied on
   /// return is the one after it.
@@ -450,7 +481,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   /// be started, when hand-offs should open there; null for the system's
   /// default browser.
   Future<InstalledBrowser?> _firstChoice(Uri url) async {
-    if (!Env.isDesktop || !_bridge.canFill || !ref.read(settingsProvider).browserOpenInFirst) return null;
+    if (!_extensionFills || !ref.read(settingsProvider).browserOpenInFirst) return null;
     if (!(url.isScheme('http') || url.isScheme('https'))) return null;
     return (await _bridge.firstChoice())?.program;
   }
@@ -559,12 +590,21 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final name = d?.name ?? widget.account.platformId;
     // With the extension, the platform's full composer (it fills in files
     // too) instead of a simplified text-only intent page.
-    final composer = Env.isDesktop && _bridge.canFill ? plan.composerUrl : null;
+    final composer = _extensionFills ? plan.composerUrl : null;
     final steps = _steps(composer != null ? plan.composerInstructions ?? plan.instructions : plan.instructions);
     final appTarget = _appUrl();
     final extensionStatus = _extensionStatus(nf);
-    // Listening, nobody paired, and something to open: say the extension exists.
-    final extensionHint = Env.isDesktop && _job == null && _bridge.status.value.listening && _bridge.browsers.value.isEmpty && (plan.webIntent != null || appTarget != null);
+    // Listening, nobody paired, and something to open: say the extension
+    // exists (the demo gives it nothing to fill in).
+    final extensionHint = Env.isDesktop &&
+        !ref.read(servicesProvider).demo &&
+        _job == null &&
+        _bridge.status.value.listening &&
+        _bridge.browsers.value.isEmpty &&
+        (plan.webIntent != null || appTarget != null);
+    // While the extension posts automatically, nothing opens the page again.
+    final opens = !_automaticRunning;
+    final note = _handoffNote;
 
     final actions = <Widget>[];
     void addAction(Widget w) => actions.add(
@@ -578,7 +618,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     // the network's app, so there the composer link or manual steps lead.
     final shareFirst = plan.preferred == HandoffMethod.shareSheet && Env.isMobile;
     if (composer != null) {
-      addAction(PrimaryAction(label: 'Open $name composer', icon: Icons.open_in_new_rounded, expand: true, onPressed: () => _openUrl(composer)));
+      if (opens) addAction(PrimaryAction(label: 'Open $name composer', icon: Icons.open_in_new_rounded, expand: true, onPressed: () => _openUrl(composer)));
     } else if (shareFirst) {
       addAction(
         Builder(
@@ -591,7 +631,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
         ),
       );
     }
-    if (composer == null && plan.webIntent != null) {
+    if (composer == null && plan.webIntent != null && opens) {
       final w = PrimaryAction(label: 'Open $name composer', icon: Icons.open_in_new_rounded, expand: true, onPressed: () => _openUrl(plan.webIntent!));
       addAction(
         shareFirst
@@ -611,9 +651,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
         ),
       );
     }
-    if (composer == null && appTarget != null && plan.webIntent == null && !shareFirst) {
+    if (opens && composer == null && appTarget != null && plan.webIntent == null && !shareFirst) {
       addAction(PrimaryAction(label: 'Open $name', icon: Icons.open_in_new_rounded, expand: true, onPressed: () => _openUrl(appTarget)));
-    } else if (composer == null && appTarget != null && (plan.webIntent == null || shareFirst)) {
+    } else if (opens && composer == null && appTarget != null && (plan.webIntent == null || shareFirst)) {
       addAction(OutlinedButton.icon(onPressed: () => _openUrl(appTarget), icon: const Icon(Icons.open_in_new_rounded, size: 18), label: Text('Open $name')));
     }
     // On a computer: hand out the text, snippets and photos one per click,
@@ -772,6 +812,11 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                   const SizedBox(height: Space.md),
                   _Callout(icon: Icons.info_outline_rounded, color: nf.info, text: plan.mediaNote!),
                 ],
+                // An earlier automatic attempt: check the page before posting.
+                if (note != null) ...[
+                  const SizedBox(height: Space.md),
+                  _Callout(icon: Icons.warning_amber_rounded, color: nf.warning, text: note),
+                ],
                 if (extensionStatus != null) ...[
                   const SizedBox(height: Space.md),
                   AnimatedSwitcher(
@@ -804,7 +849,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
                 ...actions,
                 // Where parts are copied in turn: the switch for it, at hand
                 // (phones have no Browser extension settings).
-                if ((Env.isMobile || (Env.isDesktop && !_bridge.canFill)) && pasteItems.length > 1)
+                if ((Env.isMobile || (Env.isDesktop && !_extensionFills)) && pasteItems.length > 1)
                   SwitchListTile.adaptive(
                     contentPadding: EdgeInsets.zero,
                     dense: true,

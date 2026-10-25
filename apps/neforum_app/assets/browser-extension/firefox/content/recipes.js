@@ -131,7 +131,13 @@
           let rated = false;
           if (m?.[level]) rated = await choose(m[level], { group: m.group ?? null });
           if (!rated && level !== 'general' && spec.adultBox) rated = await setChecked(findField(spec.adultBox, { kind: 'choice' }), true);
-          if (!rated && level === 'mature' && m?.matureBox) rated = await setChecked(findField(m.matureBox, { kind: 'choice' }), true);
+          // Mature work needs its box ticked as well as the answer (pixiv:
+          // "All ages" plus the box for slightly sexual content). The rating
+          // counts only once the box is ticked.
+          if (level === 'mature' && m?.matureBox) {
+            const boxed = await setChecked(findField(m.matureBox, { kind: 'choice' }), true);
+            rated = boxed && (rated || !m[level]);
+          }
           if (rated) lines.push(`Rated ${level === 'general' ? 'for everyone' : level}.`);
           // A site that rates for everyone by default needs nothing for general work.
           else if (level !== 'general' || m?.required) problems.push(`Could not set the ${level === 'general' ? 'age' : level} rating: set it yourself before posting.`);

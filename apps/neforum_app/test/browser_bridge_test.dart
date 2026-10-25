@@ -64,12 +64,14 @@ Future<int> _freePort() async {
   return port;
 }
 
+/// Settings and media in memory; accounts and posts in [dataDir] (outside
+/// the demo).
 class _MemoryStorage implements AppStorage {
-  _MemoryStorage([Uint8List? media]) : _mediaBytes = media ?? Uint8List(0);
+  _MemoryStorage([Uint8List? media, this.dataDir]) : _mediaBytes = media ?? Uint8List(0);
   final Uint8List _mediaBytes;
   final Map<String, Object> _json = {};
   @override
-  String? get dataDir => null;
+  final String? dataDir;
   @override
   Future<Map<String, dynamic>?> readJson(String name) async => _json[name] as Map<String, dynamic>?;
   @override
@@ -419,7 +421,7 @@ void main() {
         autoPost: true,
         details: BrowserJobDetails.fromVariant(variant),
       );
-      final j = (await call('GET', '/v1/job?host=www.youtube.com', token: token)).json;
+      final j = (await call('GET', '/v1/job?host=www.youtube.com&page=page0000aaaa1111', token: token)).json;
       expect(j['autoPost'], isTrue);
       expect(j['parts'], ['Which is the capital?', 'Answer below.']);
       expect(j['description'], 'Which is the capital?');
@@ -448,7 +450,7 @@ void main() {
 
       // An automatic job need not allow the shortcut to report its post.
       var job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload', hosts: const ['www.tiktok.com'], text: 'Hi', autoPost: true)!;
-      expect((await call('GET', '/v1/job?host=www.tiktok.com', token: token)).json['autoPost'], isTrue);
+      expect((await call('GET', '/v1/job?host=www.tiktok.com&page=page0000aaaa1111', token: token)).json['autoPost'], isTrue);
       for (final body in [
         {'status': 'filled', 'text': true, 'automatic': 'countdown'},
         {'status': 'filled', 'text': true, 'automatic': 'countdown', 'posted': 'confirmed'},
@@ -471,6 +473,70 @@ void main() {
         (BrowserAutomaticState.none, BrowserPostState.none), // neither automatic nor quick post
       ]);
       expect(results[3].message, 'Not everything was filled in.');
+    });
+
+    test('automatic: one page posts it, the first of the browser it was opened in to ask; ending automatic posting keeps the job for the user\'s own post', () async {
+      final chrome = await pair('Chrome');
+      final firefox = await pair('Firefox');
+      await pumpEventQueue();
+      final results = <BrowserFillResult>[];
+      final sub = bridge.results.listen(results.add);
+      addTearDown(sub.cancel);
+      Future<Object?> autoPost(String token, [String? page]) async =>
+          (await call('GET', '/v1/job?host=www.tiktok.com${page == null ? '' : '&page=$page'}', token: token)).json['autoPost'];
+
+      var job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload', hosts: const ['www.tiktok.com'], text: 'Hi', autoPost: true, target: _chrome.id)!;
+      expect(await autoPost(firefox, 'page0000ffff0000'), isFalse, reason: 'not the browser it was opened in, and it takes nothing away');
+      expect(await autoPost(chrome), isFalse, reason: 'a page that sends no id');
+      expect(await autoPost(chrome, 'bad id!'), isFalse);
+      expect(await autoPost(chrome, 'page0000aaaa1111'), isTrue, reason: 'the first page to ask');
+      expect(await autoPost(chrome, 'page0000bbbb2222'), isFalse, reason: 'another tab of the site only fills it in');
+      expect(await autoPost(chrome, 'page0000aaaa1111'), isTrue, reason: 'the same page asking again before Post');
+
+      bridge.endAutomaticPosting('j_not_this_one');
+      expect(await autoPost(chrome, 'page0000aaaa1111'), isTrue);
+      bridge.endAutomaticPosting(job.id);
+      expect(await autoPost(chrome, 'page0000aaaa1111'), isFalse);
+      expect(bridge.job?.id, job.id, reason: 'the job stays');
+      expect(bridge.job!.autoPost, isTrue, reason: 'the app still knows it was automatic');
+      // A post the user makes from the page still counts (the job has no quick post).
+      await call('POST', '/v1/job/${job.id}/result', token: chrome, body: {'status': 'filled', 'text': true, 'posted': 'confirmed'});
+      await pumpEventQueue();
+      expect(results.last.posted, BrowserPostState.confirmed);
+
+      // A new job starts afresh.
+      job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload', hosts: const ['www.tiktok.com'], text: 'Hi', autoPost: true)!;
+      expect(await autoPost(firefox, 'page0000bbbb2222'), isTrue, reason: 'opened in the default browser: any paired browser may');
+      expect(await autoPost(chrome, 'page0000aaaa1111'), isFalse);
+    });
+
+    test('served: each fetch of the job or of one of its files says the page is still at work', () async {
+      final token = await pair();
+      final served = <String>[];
+      final sub = bridge.served.listen(served.add);
+      addTearDown(sub.cancel);
+      final job = youtubeJob(media: [BrowserJobMedia(name: 'a.png', mimeType: 'image/png', size: 3, read: () async => Uint8List(3))]);
+      await call('GET', '/v1/job?host=www.youtube.com', token: token);
+      await call('GET', '/v1/job/${job.id}/media/0', token: token);
+      await call('GET', '/v1/job?host=x.com', token: token);
+      await pumpEventQueue();
+      expect(served, [job.id, job.id], reason: 'not for another site');
+    });
+
+    test('the extension fills in by itself exactly the pages in both manifests', () {
+      List<String> matches(String browser) => [
+            for (final m in ((jsonDecode(File('../../extensions/browser/manifest.$browser.json').readAsStringSync()) as Map)['content_scripts'] as List).single['matches'] as List)
+              (m as String).replaceFirst('https://', '').replaceFirst(RegExp(r'/\*$'), ''),
+          ];
+      expect(kExtensionPageHosts, matches('chrome'));
+      expect(kExtensionPageHosts, matches('firefox'));
+      for (final url in ['https://www.youtube.com/@a/posts', 'https://x.com/intent/post?text=hi', 'https://wa.me/?text=hi', 'https://www.pinterest.com/pin-creation-tool/', 'https://uk.pinterest.com/']) {
+        expect(extensionFillsPage(Uri.parse(url)), isTrue, reason: url);
+      }
+      expect(extensionFillsPage(Uri.parse('https://www.youtube.com/upload'), platformId: 'youtube'), isTrue);
+      for (final url in ['https://mastodon.social/share?text=hi', 'https://myblog.wordpress.com/wp-admin/post-new.php', 'https://myblog.substack.com/publish', 'https://t.me/share/url?url=x', 'http://x.com/intent/post', 'instagram://']) {
+        expect(extensionFillsPage(Uri.parse(url)), isFalse, reason: url);
+      }
     });
 
     test('the extension\'s pages: every site with a host alias of its own is in both manifests', () {
@@ -956,7 +1022,10 @@ HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
 
     final photoBytes = Uint8List.fromList([0xFF, 0xD8, 0xFF, 0xE0, 9, 9, 9]);
     final bridge = (await tester.runAsync(() async => BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0])))!;
-    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(photoBytes), browserBridge: bridge)))!;
+    // Outside the demo, which gives the extension nothing.
+    final dir = (await tester.runAsync(() => Directory.systemTemp.createTemp('neforum-bridge-')))!;
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final services = (await tester.runAsync(() => AppServices.create(demo: false, storage: _MemoryStorage(photoBytes, dir.path), browserBridge: bridge)))!;
     await tester.runAsync(services.startBrowserBridge);
     final port = bridge.status.value.port!;
 
@@ -1073,7 +1142,10 @@ HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
     });
 
     final bridge = (await tester.runAsync(() async => BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0])))!;
-    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(), browserBridge: bridge)))!;
+    // Outside the demo, which gives the extension nothing.
+    final dir = (await tester.runAsync(() => Directory.systemTemp.createTemp('neforum-bridge-')))!;
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final services = (await tester.runAsync(() => AppServices.create(demo: false, storage: _MemoryStorage(null, dir.path), browserBridge: bridge)))!;
     await tester.runAsync(services.startBrowserBridge);
     final port = bridge.status.value.port!;
     final client = (await tester.runAsync(() async => _client()))!;
@@ -1187,7 +1259,10 @@ HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
     });
 
     final bridge = (await tester.runAsync(() async => BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0])))!;
-    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(Uint8List(3)), browserBridge: bridge)))!;
+    // Outside the demo, which gives the extension nothing.
+    final dir = (await tester.runAsync(() => Directory.systemTemp.createTemp('neforum-bridge-')))!;
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final services = (await tester.runAsync(() => AppServices.create(demo: false, storage: _MemoryStorage(Uint8List(3), dir.path), browserBridge: bridge)))!;
     await tester.runAsync(services.startBrowserBridge);
     final port = bridge.status.value.port!;
 

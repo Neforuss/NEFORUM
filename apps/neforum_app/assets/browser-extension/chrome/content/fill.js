@@ -6,7 +6,8 @@
 // that label them, since sites rename their markup more often than their
 // labels. Only pressPost presses a Post button, and main.js calls it only
 // for the user's own Ctrl+Enter (⌘+Enter) or Post now click, or, for a job
-// NEFORUM marked automatic, when the countdown the user could stop ends.
+// NEFORUM marked automatic, when the countdown the user could stop ends and
+// NEFORUM, asked once more, still has that page post it.
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -261,10 +262,24 @@
   }
 
   /**
-   * Puts [text] into [el]. With [replace] the field's current text goes
-   * (TikTok prefills the file name). Returns the method that worked, or null.
+   * Does [el] hold [text] already, so it need not go in? By the field
+   * itself, and, unless [fieldOnly], by the composer around it too (block
+   * editors keep a post's paragraphs in fields of their own). A thread's
+   * post boxes are separate editors: there an earlier part that says the
+   * same must not count, so they ask with [fieldOnly].
    */
-  async function insertText(el, text, { replace = false } = {}) {
+  function holdsAlready(el, text, { fieldOnly = false } = {}) {
+    if (hasText(el, text)) return true;
+    return !fieldOnly && fieldsText(composerOf(el)).includes(norm(text).slice(0, 40));
+  }
+
+  /**
+   * Puts [text] into [el]. With [replace] the field's current text goes
+   * (TikTok prefills the file name). [fieldOnly]: whether the text is in
+   * already is judged by [el] alone (see holdsAlready). Returns the method
+   * that worked, 'already', or null.
+   */
+  async function insertText(el, text, { replace = false, fieldOnly = false } = {}) {
     if (!el || !text) return null;
     const scope = composerOf(el);
     if (!replace) {
@@ -274,9 +289,9 @@
       // short one for none of it (and put it in a second time).
       const have = contentOf(el);
       const rest = have && have !== norm(text) ? restAfter(text, have) : null;
-      if (rest !== null) return norm(rest) ? insertText(el, rest) : 'already';
+      if (rest !== null) return norm(rest) ? insertText(el, rest, { fieldOnly }) : 'already';
     }
-    if (!replace && (hasText(el, text) || fieldsText(scope).includes(norm(text).slice(0, 40)))) return 'already';
+    if (!replace && holdsAlready(el, text, { fieldOnly })) return 'already';
     // Exactly this text already, over the composer's blocks: nothing to replace.
     if (replace && !el.matches('textarea, input') && fieldsText(scope) === norm(text)) return 'already';
     const textField = el.matches('textarea, input');
@@ -665,7 +680,7 @@
   const pressPost = (button) => press(button);
 
   NF.fill = {
-    sleep, visible, waitFor, label, findByText, press, findEditor, editableOf, hasText, insertText, attachFiles, findFileInput, setInputFiles, dropOn, firePaste, accepts,
+    sleep, visible, waitFor, label, findByText, press, findEditor, editableOf, hasText, holdsAlready, insertText, attachFiles, findFileInput, setInputFiles, dropOn, firePaste, accepts,
     enabled, findPostButton, waitPosted, pressPost,
     norm, contentOf, restAfter, labelsOf, fieldLabel, findField, findGroup, setChecked, chooseOption, choose, insertTags, pressKey,
   };

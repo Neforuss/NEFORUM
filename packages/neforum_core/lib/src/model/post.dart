@@ -145,6 +145,7 @@ class PostTarget {
     this.result,
     this.attempts = 0,
     this.lastAttemptAt,
+    this.handoffNote,
   });
 
   factory PostTarget.fromJson(Map<String, dynamic> json) => PostTarget(
@@ -159,6 +160,7 @@ class PostTarget {
         lastAttemptAt: json['lastAttemptAt'] == null
             ? null
             : DateTime.parse(json['lastAttemptAt'] as String).toLocal(),
+        handoffNote: json['handoffNote'] as String?,
       );
 
   final String accountId;
@@ -167,6 +169,13 @@ class PostTarget {
   final PublishResult? result;
   final int attempts;
   final DateTime? lastAttemptAt;
+
+  /// What an automatic hand-off left for the user to check, when it ended
+  /// without a confirmed post ("Post was pressed on facebook.com, but the
+  /// post was not seen going up."). Post may already have been pressed, so
+  /// while it is set the hand-off is finished by the user only, never posted
+  /// automatically again. Cleared once the target is handed off.
+  final String? handoffNote;
 
   bool get isDone =>
       status == TargetStatus.published ||
@@ -181,7 +190,9 @@ class PostTarget {
     PublishResult? result,
     int? attempts,
     DateTime? lastAttemptAt,
+    String? handoffNote,
     bool clearResult = false,
+    bool clearHandoffNote = false,
   }) =>
       PostTarget(
         accountId: accountId,
@@ -190,6 +201,7 @@ class PostTarget {
         result: clearResult ? null : (result ?? this.result),
         attempts: attempts ?? this.attempts,
         lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
+        handoffNote: clearHandoffNote ? null : (handoffNote ?? this.handoffNote),
       );
 
   Map<String, dynamic> toJson() => {
@@ -200,6 +212,7 @@ class PostTarget {
         'attempts': attempts,
         if (lastAttemptAt != null)
           'lastAttemptAt': lastAttemptAt!.toUtc().toIso8601String(),
+        if (handoffNote != null) 'handoffNote': handoffNote,
       };
 }
 
