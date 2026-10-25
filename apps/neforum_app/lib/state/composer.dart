@@ -800,7 +800,8 @@ class PostActions {
     post = await attachTextCards(s, post, ref.read(settingsProvider));
     final choices = await captionChoicesOfSavedPost(s, post);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
-    post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: choices);
+    // A caption block above a video is made when the post is saved, never here.
+    post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: choices, composeVideos: false);
     await s.posts.upsert(post);
     final run = ref.read(publishRunProvider.notifier);
     run.start(postId, accountIds ?? post.targets.map((t) => t.accountId));

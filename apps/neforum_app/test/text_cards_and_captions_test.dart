@@ -1,7 +1,9 @@
 // Text cards and captions on photos (1.2.0): caption styles, the block above
 // the photo (and its overlay for videos), the five alignments, the @handle,
-// background photos on cards, render parameters, and the two fixes (card
-// reuse per account, captions kept for scheduled posts).
+// background photos on cards, render parameters, and the fixes (card reuse
+// per account, captions kept for scheduled posts, every thread part on the
+// card, a network's own photo list kept under its card, captioned photos made
+// before 1.2.0 kept in their style).
 
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -293,6 +295,30 @@ void main() {
       expect(takesTextCards(builtinRegistry().descriptor('mastodon')!), isFalse);
     });
 
+    test('fix: the words of a thread are every part, as networks without threads get them; an empty first part is left out', () {
+      final now = DateTime(2026, 10, 25);
+      const target = PostTarget(accountId: 'ig');
+      final thread = Post(
+        id: 'p-parts',
+        text: 'Big news',
+        additionalParts: const ['We launched today; details in the link', '#launch https://example.com/launch'],
+        targets: const [target],
+        createdAt: now,
+        updatedAt: now,
+      );
+      expect(textCardText(thread, target), 'Big news\n\nWe launched today; details in the link', reason: 'the trailing tag line stays in the caption');
+      expect(captionWords(thread, target), textCardText(thread, target), reason: 'the caption on a photo has the same words');
+
+      final plain = thread.copyWith(additionalParts: const ['We launched today; details in the link']);
+      final instagram = const VariantResolver().resolve(plain, target, builtinRegistry().descriptor('instagram')!);
+      expect(textCardText(plain, target), instagram.text, reason: 'the words Instagram receives');
+
+      final secondOnly = thread.copyWith(text: '', additionalParts: const ['Only the second part has words']);
+      expect(textCardText(secondOnly, target), 'Only the second part has words', reason: 'never a blank card');
+      const version = PostTarget(accountId: 'ig', overrides: PostOverrides(text: 'Words for Instagram only'));
+      expect(textCardText(thread, version), 'Words for Instagram only', reason: 'the network\'s own version replaces every part');
+    });
+
     test('the composer keeps the new choices across restarts', () {
       const photo = MediaAttachment(id: 'bg', path: '/data/media/bg.jpg', mimeType: 'image/jpeg', sizeBytes: 3);
       final c = ComposerState(
@@ -437,6 +463,78 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('fix: a card over the photo a network kept leaves that network\'s own photo list in place, for publishing and editing', (tester) async {
+      final (s, c) = await boot(tester);
+      final ig = c.read(accountListProvider).firstWhere((a) => a.platformId == 'instagram');
+      final masto = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon');
+      final none = account('ig-none', 'instagram', '@none');
+      await tester.runAsync(() => s.accounts.upsert(none));
+      final red = (await tester.runAsync(() => s.media.importBytes(_photo(600, 600, img.ColorRgb8(230, 20, 20)), fileName: 'red.jpg')))!;
+      final blue = (await tester.runAsync(() => s.media.importBytes(_photo(600, 600, img.ColorRgb8(20, 40, 230)), fileName: 'blue.jpg')))!;
+      final now = DateTime(2026, 10, 25);
+      var post = Post(
+        id: 'p-subset',
+        text: 'Words over the red photo.',
+        media: [red, blue],
+        targets: [
+          // Instagram keeps only the red photo (Customize); the second
+          // Instagram account is set to no photos.
+          PostTarget(accountId: ig.id, overrides: PostOverrides(mediaIds: [red.id])),
+          PostTarget(accountId: none.id, overrides: const PostOverrides(mediaIds: [])),
+          PostTarget(accountId: masto.id),
+        ],
+        createdAt: now,
+        updatedAt: now,
+      );
+      post = (await tester.runAsync(() => attachTextCards(s, post, s.settings, background: TextCardBackground(photo: red).toJson())))!;
+      final card = cardOf(post, ig.id);
+      final noneCard = cardOf(post, none.id);
+      expect(card.renderParameters!['background']['mediaId'], red.id);
+
+      // Publish now makes the cards again from the saved post.
+      final again = (await tester.runAsync(() => attachTextCards(s, post, s.settings)))!;
+      expect(cardOf(again, ig.id).id, card.id, reason: 'the card the preview showed is the one posted');
+      expect(cardOf(again, none.id).id, noneCard.id);
+      expect(await exists(tester, s, card), isTrue);
+      final instagram = const VariantResolver().resolve(again, again.targetFor(ig.id)!, s.registry.descriptor('instagram')!, account: ig);
+      expect(instagram.media.map((m) => m.id), [card.id], reason: 'not the blue photo the user left out');
+      expect(again.targetFor(masto.id)!.overrides.mediaIds, isNull, reason: 'Mastodon gets both photos');
+
+      // Edited again: each network lists what the user chose.
+      final shown = withoutTextCards(again);
+      expect(shown.targetFor(ig.id)!.overrides.mediaIds, [red.id]);
+      expect(shown.targetFor(none.id)!.overrides.mediaIds, isEmpty);
+      expect(shown.targetFor(ig.id)!.overrides.extra, isEmpty, reason: 'the record of the replaced list stays out of the composer');
+      c.read(composerProvider.notifier).load(again);
+      expect(c.read(composerProvider).overrides[ig.id]!.mediaIds, [red.id]);
+      final preview = c.read(composerPreviewsProvider).firstWhere((p) => p.account.id == ig.id);
+      expect(isTextCardPlaceholder(preview.variant.media.single), isTrue, reason: 'the card is still shown for Instagram');
+
+      // Text cards turned off: the network gets its own photo back, not every photo.
+      await tester.runAsync(() => s.saveSettings(s.settings.copyWith(textCards: false)));
+      final off = (await tester.runAsync(() => attachTextCards(s, again, s.settings)))!;
+      expect(off.targetFor(ig.id)!.overrides.mediaIds, [red.id]);
+      await finish(tester);
+    });
+
+    testWidgets('fix: a thread\'s card holds every part; an empty first part does not make a blank card', (tester) async {
+      final (s, c) = await boot(tester);
+      final ig = c.read(accountListProvider).firstWhere((a) => a.platformId == 'instagram');
+      final now = DateTime(2026, 10, 25);
+      var post = Post(
+        id: 'p-thread-card',
+        text: '',
+        additionalParts: const ['We launched today'],
+        targets: [PostTarget(accountId: ig.id)],
+        createdAt: now,
+        updatedAt: now,
+      );
+      post = (await tester.runAsync(() => attachTextCards(s, post, s.settings)))!;
+      expect(cardOf(post, ig.id).altText, 'We launched today');
+      expect(cardOf(post, ig.id).renderParameters!['textHash'], stableHash('We launched today'));
+      await finish(tester);
+    });
+
     testWidgets('a photo picked only for the cards is kept with the post, never posted, and deleted when replaced', (tester) async {
       final (s, c) = await boot(tester);
       final ig = c.read(accountListProvider).firstWhere((a) => a.platformId == 'instagram');
@@ -523,6 +621,46 @@ void main() {
       });
       final after = (await tester.runAsync(() => s.posts.get(post.id)))!;
       expect(after.targetFor(tiktok.id)!.overrides.mediaIds, [legacy.id]);
+      await finish(tester);
+    });
+
+    testWidgets('fix: a captioned photo made before 1.2.0 is kept when a different default caption style is saved later', (tester) async {
+      final (s, c) = await boot(tester);
+      final tiktok = c.read(accountListProvider).firstWhere((a) => a.platformId == 'tiktok');
+      final photo = (await tester.runAsync(() => s.media.importBytes(_photo(600, 800, img.ColorRgb8(90, 60, 160)), fileName: 'old.jpg')))!;
+      final now = DateTime(2026, 10, 25);
+      var post = Post(id: 'p-old-style', text: 'Saved by 1.1', media: [photo], targets: [PostTarget(accountId: tiktok.id)], createdAt: now, updatedAt: now);
+      late MediaAttachment legacy;
+      await tester.runAsync(() async {
+        post = await attachFittedPhotos(s, post, s.settings);
+        final fitted = post.media.singleWhere((m) => m.derivedFrom != null);
+        final made = await s.media.importBytes(_photo(1080, 1920, img.ColorRgb8(90, 60, 160)), fileName: 'old (captioned).jpg');
+        legacy = MediaAttachment(
+          id: made.id,
+          path: made.path,
+          mimeType: 'image/jpeg',
+          sizeBytes: made.sizeBytes,
+          width: 1080,
+          height: 1920,
+          generated: true,
+          derivedFrom: photo.id,
+          fitKey: 'caption|tiktok|${fitted.id}|${stableHash('Saved by 1.1')}',
+        );
+        post = post.copyWith(media: [...post.media, legacy]).withTarget(PostTarget(accountId: tiktok.id, overrides: PostOverrides(mediaIds: [legacy.id])));
+        await s.posts.upsert(post);
+        // After the update: a new default caption style in Settings.
+        await s.saveSettings(s.settings.copyWith(
+          captionStyle: const CaptionStyle(placement: CaptionPlacement.blockAbove, background: CaptionBackground.solid, backgroundColor: 0xFFFFFF00).toJson(),
+        ));
+      });
+      expect(CaptionStyle.fromJson(captionStyleOfPost(post)), const CaptionStyle(), reason: 'the style the old copy was made in');
+      expect(captionStyleOfPost(Post(id: 'p-none', text: 'x', createdAt: now, updatedAt: now)), isNull);
+
+      await tester.runAsync(() => fitPhotosOfSavedPost(s, post.id));
+      final after = (await tester.runAsync(() => s.posts.get(post.id)))!;
+      expect(after.targetFor(tiktok.id)!.overrides.mediaIds, [legacy.id], reason: 'TikTok gets the picture that was scheduled');
+      expect(after.media.where(isCaptionedCopy).map((m) => m.id), [legacy.id]);
+      expect(await exists(tester, s, legacy), isTrue);
       await finish(tester);
     });
 

@@ -142,11 +142,17 @@ bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgrou
 /// and takes a JPEG), whatever the post holds.
 bool takesTextCards(PlatformDescriptor d) => d.media.requiresMedia && d.media.maxImages > 0 && d.media.imageMimeTypes.contains('image/jpeg');
 
-/// The words on the card: the post as written (or the network's own version),
-/// without trailing lines that are only hashtags or links; those belong in
-/// the caption.
+/// The words on the card: the post as written (every part with words in it,
+/// joined with blank lines, as networks without threads receive it) or the
+/// network's own version, without trailing lines that are only hashtags or
+/// links; those belong in the caption.
 String textCardText(Post post, PostTarget target) {
-  final lines = (target.overrides.text ?? post.text).trim().split('\n');
+  final written = target.overrides.text ??
+      [
+        for (final p in post.parts)
+          if (p.trim().isNotEmpty) p.trimRight(),
+      ].join('\n\n');
+  final lines = written.trim().split('\n');
   final tagOrLink = RegExp(r'^(\s*(#[\p{L}\p{N}_]+|https?://\S+)\s*)+$', unicode: true);
   while (lines.length > 1 && (lines.last.trim().isEmpty || tagOrLink.hasMatch(lines.last))) {
     lines.removeLast();

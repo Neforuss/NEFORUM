@@ -52,8 +52,13 @@ CaptionStyle captionStyleFor(Map<String, dynamic>? postStyle, AppSettings settin
 /// cards are left alone (a video's block is made by [renderCaptionBlockOverlay]
 /// for the video compositor). Copies made with the same photo, words and
 /// style are reused; the rest are deleted. Call after [attachFittedPhotos].
+///
+/// [composeVideos] false, for a saved post that is being published, only
+/// reuses the video copies the post already has: a caption block goes above a
+/// video when the post is saved, as its preview showed, never later from the
+/// Settings of that moment.
 Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings settings,
-    {Map<String, bool> choices = const {}, Map<String, dynamic>? style}) async {
+    {Map<String, bool> choices = const {}, Map<String, dynamic>? style, bool composeVideos = true}) async {
   final pool = {for (final m in post.media.where(isCaptionedCopy)) m.fitKey!: m};
   final look = captionStyleFor(style ?? captionStyleOfPost(post), settings);
   final block = look.placement == CaptionPlacement.blockAbove;
@@ -93,7 +98,9 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
         'video': true,
       };
       final key = '$_captionKeyPrefix$platform|${first.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
-      final copy = used[key] ?? pool[key] ?? await _composeCaptionedVideo(s, first, words: words, style: look, platform: platform, frame: frame, key: key, params: params);
+      final copy = used[key] ??
+          pool[key] ??
+          (composeVideos ? await _composeCaptionedVideo(s, first, words: words, style: look, platform: platform, frame: frame, key: key, params: params) : null);
       if (copy == null) continue;
       used[key] = copy;
       p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(mediaIds: [copy.id, ...ids.skip(1)])));
@@ -203,16 +210,22 @@ Future<Map<String, bool>> captionChoicesOfSavedPost(AppServices s, Post post) as
 
 /// The caption style the copies on [post] were made with
 /// ([CaptionStyle.toJson]), for the composer when a saved post is edited
-/// again; null when there are none (or only copies made before 1.2.0, which
-/// used the default style).
+/// again and for publishing a saved post; null when there are none. Copies
+/// made before 1.2.0 carry no style: they were made in the default style, so
+/// they are kept (not made again in a style chosen later in Settings).
 Map<String, dynamic>? captionStyleOfPost(Post post) {
+  var legacyCopy = false;
   for (final m in post.media) {
+    if (!isCaptionedCopy(m)) continue;
     final p = m.renderParameters;
-    if (!isCaptionedCopy(m) || p == null || p['kind'] != RenderKind.caption) continue;
+    if (p == null || p['kind'] != RenderKind.caption) {
+      legacyCopy = true;
+      continue;
+    }
     final style = p['style'];
     if (style is Map) return Map<String, dynamic>.from(style);
   }
-  return null;
+  return legacyCopy ? const CaptionStyle().toJson() : null;
 }
 
 /// A copy of [video] in the network's whole frame of [frame] aspect, with the
