@@ -8,6 +8,8 @@ import 'package:share_plus/share_plus.dart';
 
 import '../../platform/env.dart';
 import '../../platform/media_library.dart';
+import '../../state/composer.dart';
+import '../../state/composer_draft.dart';
 import '../../state/media_host_config.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
@@ -79,11 +81,15 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
       await s.secrets.delete(a.id);
       await s.accounts.delete(a.id);
     }
-    for (final p in await s.posts.all()) {
-      for (final m in p.media) {
-        await s.media.discard(m);
-      }
-      await s.posts.delete(p.id);
+    // The post being written goes too, then every post with its
+    // notifications, then any media file left over.
+    ref.read(composerProvider.notifier).reset();
+    await ref.read(composerDraftKeeperProvider)?.keep(ref.read(composerProvider));
+    await s.discardPosts(await s.posts.all());
+    try {
+      await s.deleteUnreferencedMedia(grace: Duration.zero);
+    } on Object catch (e) {
+      debugPrint('Some media files were kept: $e');
     }
     // Media host keys are keys too: remove both hosts and their secrets.
     var next = await clearMediaHost(ref.read(settingsProvider), s.secrets, slot: MediaHostSlot.fallback);

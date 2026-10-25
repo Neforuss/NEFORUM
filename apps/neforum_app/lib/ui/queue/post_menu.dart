@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../state/composer.dart';
+import '../../state/providers.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
+import '../activity/time_format.dart';
 import '../compose/schedule_sheet.dart';
 import '../router.dart';
 
@@ -30,7 +31,10 @@ List<PostMenuAction> postMenuActions(BuildContext context, WidgetRef ref, Post p
           if (done != null && context.mounted) showToast(context, 'Moved to drafts', icon: Icons.inventory_2_outlined);
         } else {
           final done = await guardHeldCopies(context, () => actions.reschedule(p, when));
-          if (done != null && context.mounted) showToast(context, 'Scheduled for ${DateFormat.MMMEd().add_jm().format(when)}', icon: Icons.event_available_rounded);
+          if (done != null && context.mounted) {
+            final format = TimeFormatting.from(ref.read(settingsProvider), context);
+            showToast(context, 'Scheduled for ${format.scheduled(when)}', icon: Icons.event_available_rounded);
+          }
         }
       }),
     if (p.status == PostStatus.scheduled)
@@ -102,6 +106,7 @@ void showPublishedToast(BuildContext context, Post p) {
   final ok = p.targets.where((t) => t.status == TargetStatus.published || t.status == TargetStatus.handedOff).length;
   final failed = p.targets.where((t) => t.status == TargetStatus.failed).length;
   final waiting = p.targets.where((t) => t.status == TargetStatus.awaitingHandoff).length;
-  final parts = ['Posted to $ok', if (failed > 0) '$failed failed', if (waiting > 0) '$waiting waiting for you'];
+  final cancelled = p.targets.where((t) => t.status == TargetStatus.cancelled).length;
+  final parts = ['Posted to $ok', if (failed > 0) '$failed failed', if (cancelled > 0) '$cancelled cancelled', if (waiting > 0) '$waiting waiting for you'];
   showToast(context, parts.join(' · '), icon: failed > 0 ? Icons.error_outline_rounded : Icons.check_circle_rounded);
 }

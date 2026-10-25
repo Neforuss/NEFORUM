@@ -24,6 +24,7 @@ import '../storage/secret_store.dart';
 import '../sync/secrets_coordinator.dart';
 import '../text/variant_resolver.dart';
 import '../util/logger.dart';
+import 'cancellation_signal.dart';
 
 /// What happened when the environment tried to execute a [HandoffPlan].
 enum HandoffOutcome {
@@ -152,7 +153,7 @@ class PublishService {
   final Logger _log;
   final Future<Uint8List> Function(MediaAttachment media)? _readMedia;
 
-  AdapterContext context({void Function(String message)? onProgress, Logger? log}) => AdapterContext(
+  AdapterContext context({void Function(String message)? onProgress, Logger? log, CancellationSignal? cancellation}) => AdapterContext(
         http: http,
         broker: broker,
         mediaHost: mediaHostProvider?.call(),
@@ -161,6 +162,7 @@ class PublishService {
         onProgress: onProgress,
         browserFills: browserFills?.call() ?? false,
         readMedia: _readMedia,
+        cancellation: cancellation,
       );
 
   // ---------------------------------------------------------------------
@@ -203,13 +205,19 @@ class PublishService {
   // ---------------------------------------------------------------------
 
   /// Publishes every pending target of [postId]. With [interactive] false
-  /// (background run) hand-off targets are only marked as waiting.
+  /// (background run) hand-off targets are only marked as waiting. With
+  /// [retryFailed] failed and cancelled targets are tried again.
+  ///
+  /// When [cancellation] fires, the request in flight is aborted and the
+  /// target being posted plus every target still to come become
+  /// [TargetStatus.cancelled]; targets already posted stay posted.
   Future<Post> publish(
     String postId, {
     bool interactive = true,
     Set<String>? onlyAccountIds,
     bool retryFailed = true,
     void Function(String accountId, String message)? onProgress,
+    CancellationSignal? cancellation,
   }) async {
     var post = await _require(postId);
     post = post.copyWith(status: PostStatus.publishing, updatedAt: _now());
@@ -229,22 +237,35 @@ class PublishService {
         continue;
       }
       if (target.isDone) continue;
-      if (target.status == TargetStatus.failed && !retryFailed) continue;
+      if (_isFailedOrCancelled(target) && !retryFailed) continue;
       if (target.status == TargetStatus.awaitingHandoff && !interactive) continue;
+      if (cancellation != null && cancellation.isCancelled) {
+        // Waiting retries included: the scheduler must not pick them up later.
+        post = post.withTarget(_cancel(target));
+        continue;
+      }
       if (_inBackoff(target)) continue;
       final updated = await _publishTarget(
         post,
         target,
         interactive: interactive,
         onProgress: onProgress == null ? null : (m) => onProgress(target.accountId, m),
+        cancellation: cancellation,
       );
       post = post.withTarget(updated);
       await posts.upsert(post); // persist progress target by target
     }
+    if (cancellation != null && cancellation.isCancelled) _log.info('Publishing "${_short(post.text)}" was cancelled');
     post = _rollup(post).copyWith(updatedAt: _now());
     await posts.upsert(post);
     return post;
   }
+
+  /// [post] with its status worked out from its targets, as a publish run
+  /// leaves it: published when every target is done, scheduled while a
+  /// target waits for a retry or its platform, otherwise partial, cancelled
+  /// or failed.
+  Post rollUpStatus(Post post) => _rollup(post);
 
   /// The user triggered a hand-off (tapped the notification / "Post now").
   Future<Post> runHandoff(String postId, String accountId) async {
@@ -443,6 +464,8 @@ class PublishService {
       return (null, e.error);
     } on AuthCancelled {
       return (null, const PublishError(kind: PublishErrorKind.cancelled, message: 'Sign-in cancelled'));
+    } on OperationCancelledException {
+      return (null, _cancelledError);
     } on HttpFailure catch (e) {
       // A 5xx/429 from the token endpoint is the platform having a bad
       // moment, not a revoked login.
@@ -464,7 +487,9 @@ class PublishService {
     required bool interactive,
     required void Function(String message)? onProgress,
     bool forceHandoff = false,
+    CancellationSignal? cancellation,
   }) async {
+    bool cancelled() => cancellation != null && cancellation.isCancelled;
     final account = await accounts.get(target.accountId);
     if (account == null) {
       return _fail(target, const PublishError.configuration('This account was removed'));
@@ -475,13 +500,14 @@ class PublishService {
       return _fail(target, PublishError.unsupported('No adapter for platform "${account.platformId}"'));
     }
     final log = _log.child(account.platformId);
-    final ctx = context(onProgress: onProgress, log: log);
+    final ctx = context(onProgress: onProgress, log: log, cancellation: cancellation);
 
     final variant = resolver.resolve(post, target, adapter.descriptorForAccount(account), account: account);
     final issues = [...variant.issues, ...adapter.validate(variant, account)];
     if (issues.hasErrors) {
       return _fail(target, PublishError.validation(issues.errors.map((i) => i.message).join('; ')));
     }
+    if (cancelled()) return _cancel(target);
 
     final attempt = target.copyWith(
       attempts: target.attempts + 1,
@@ -490,11 +516,13 @@ class PublishService {
     );
 
     if (account.tier == PlatformTier.handoff || forceHandoff) {
-      return _handoff(post, attempt, variant, account, adapter, interactive: interactive);
+      return _handoff(post, attempt, variant, account, adapter, interactive: interactive, cancellation: cancellation);
     }
 
     // ---- API tiers ----------------------------------------------------
     final (freshSecrets, secretError) = await _freshSecrets(account, adapter, ctx);
+    // A renewal cut short by the user is not a broken sign-in.
+    if (cancelled()) return _cancel(attempt);
     if (freshSecrets == null) return _fail(attempt, secretError!, account: account);
     final secretMap = freshSecrets;
 
@@ -507,7 +535,7 @@ class PublishService {
       );
       if (options.fallbackToHandoffOnQuota && adapter.buildHandoff(variant, account: account) != null) {
         log.warn('${account.displayName}: ${err.message}; falling back to hand-off');
-        return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message);
+        return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message, cancellation: cancellation);
       }
       return _fail(attempt, err);
     }
@@ -521,6 +549,8 @@ class PublishService {
       result = PublishResult.failure(e.toPublishError(context: adapter.descriptor.name));
     } on AuthCancelled {
       result = PublishResult.failure(const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'));
+    } on OperationCancelledException {
+      result = PublishResult.failure(_cancelledError);
     } on Object catch (e, st) {
       result = PublishResult.failure(_classifyUnexpected(e, adapter.descriptor.name));
       if (result.error!.kind == PublishErrorKind.platform) {
@@ -535,18 +565,20 @@ class PublishService {
       return attempt.copyWith(status: TargetStatus.heldByPlatform, result: result);
     }
     if (result.success) {
+      // Posted, even if the user pressed Cancel a moment too late.
       await quota.record(account, adapter.descriptor, count: math.max(1, result.threadRemoteIds.length));
       if (account.lastError != null) await accounts.upsert(account.copyWith(clearLastError: true));
       log.info('Published to ${account.displayName}: ${result.remoteUrl ?? result.remoteId ?? 'ok'}');
       return attempt.copyWith(status: TargetStatus.published, result: result);
     }
+    if (cancelled()) return _cancel(attempt, cause: result.error);
 
     final err = result.error!;
     // A quota error after part of a thread went out is not retryable; handing
     // the whole post off then would post those parts a second time.
     if (err.kind == PublishErrorKind.quota && err.retryable && options.fallbackToHandoffOnQuota && adapter.buildHandoff(variant, account: account) != null) {
       log.warn('${account.displayName}: ${err.message}; falling back to hand-off');
-      return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message);
+      return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message, cancellation: cancellation);
     }
     return _fail(attempt, err, account: account);
   }
@@ -559,14 +591,18 @@ class PublishService {
     PlatformAdapter adapter, {
     required bool interactive,
     String? reason,
+    CancellationSignal? cancellation,
   }) async {
     HandoffPlan? plan;
     try {
-      plan = await adapter.prepareHandoff(variant, account, context(log: _log.child(account.platformId)));
+      plan = await adapter.prepareHandoff(variant, account, context(log: _log.child(account.platformId), cancellation: cancellation));
     } on Object catch (e) {
+      if (cancellation != null && cancellation.isCancelled) return _cancel(attempt);
       _log.warn('Preparing the ${adapter.descriptor.name} hand-off failed ($e); using the plain plan');
       plan = adapter.buildHandoff(variant, account: account);
     }
+    // Never open the hand-off sheet for a run the user cancelled.
+    if (cancellation != null && cancellation.isCancelled) return _cancel(attempt);
     if (plan == null) {
       return _fail(attempt, PublishError.unsupported('${adapter.descriptor.name} has no hand-off route'));
     }
@@ -596,6 +632,28 @@ class PublishService {
     return t.copyWith(status: retry ? TargetStatus.pending : TargetStatus.failed, result: PublishResult.failure(error));
   }
 
+  static const _cancelledError = PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled before it was posted');
+
+  /// [t] stopped by the user. [cause] is the error the interrupted attempt
+  /// ended with, if any.
+  PostTarget _cancel(PostTarget t, {PublishError? cause}) {
+    // A thread cut off halfway keeps the adapter's explanation: its first
+    // parts are live, and a retry would post them again.
+    final error = cause != null && _isPartialThread(cause)
+        ? PublishError(kind: PublishErrorKind.cancelled, message: cause.message, statusCode: cause.statusCode, raw: cause.raw)
+        : _cancelledError;
+    _log.info('${t.accountId}: cancelled');
+    return t.copyWith(status: TargetStatus.cancelled, result: PublishResult.failure(error));
+  }
+
+  /// The wording of [PublishError.asPartialThread].
+  static final _partialThread = RegExp(r'^Part \d+ of \d+ failed: ');
+
+  static bool _isPartialThread(PublishError e) => !e.retryable && _partialThread.hasMatch(e.message);
+
+  /// Failed and cancelled targets are only tried again when the run asks.
+  static bool _isFailedOrCancelled(PostTarget t) => t.status == TargetStatus.failed || t.status == TargetStatus.cancelled;
+
   bool _inBackoff(PostTarget t) {
     if (t.status != TargetStatus.pending || t.attempts == 0 || t.lastAttemptAt == null) return false;
     final wait = options.retryBackoffBase * math.pow(2, t.attempts - 1).toInt();
@@ -609,6 +667,7 @@ class PublishService {
     final anyHeld = ts.any((t) => t.isHeldByPlatform);
     final anyWaiting = ts.any((t) => t.status == TargetStatus.awaitingHandoff);
     final anyFailed = ts.any((t) => t.status == TargetStatus.failed);
+    final anyCancelled = ts.any((t) => t.status == TargetStatus.cancelled);
     final allDone = ts.every((t) => t.isDone);
     if (allDone) return p.copyWith(status: PostStatus.published);
     if (anyRetrying || anyHeld) {
@@ -616,7 +675,8 @@ class PublishService {
       // get "now" as their schedule so they are picked up too.
       return p.copyWith(status: PostStatus.scheduled, scheduledAt: p.scheduledAt ?? _now());
     }
-    if (anyWaiting || (anyFailed && ts.any((t) => t.isDone))) return p.copyWith(status: PostStatus.partial);
+    if (anyWaiting || ((anyFailed || anyCancelled) && ts.any((t) => t.isDone))) return p.copyWith(status: PostStatus.partial);
+    if (anyCancelled) return p.copyWith(status: PostStatus.cancelled);
     return p.copyWith(status: PostStatus.failed);
   }
 

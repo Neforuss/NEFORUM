@@ -2,13 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
+import '../activity/time_format.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
 import 'action_bar.dart';
@@ -99,16 +99,23 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> {
         await actions.schedule();
         if (!mounted) return;
         ref.read(composerProvider.notifier).reset();
-        showToast(context, 'Scheduled for ${DateFormat.MMMEd().add_jm().format(when)}',
+        showToast(context, 'Scheduled for ${TimeFormatting.from(settings, context).scheduled(when)}',
             icon: Icons.event_available_rounded, actionLabel: 'View queue', onAction: () => context.go(AppSection.queue.path));
       } else {
+        // publishNow empties the composer once the post is saved; the sheet
+        // follows the run, and shows why it stopped if it fails.
         final future = actions.publishNow();
         if (mounted) {
           // Shown alongside the run; it watches the live progress.
           // ignore: unawaited_futures
           showPublishProgress(context);
         }
-        await future;
+        try {
+          await future;
+        } on Object catch (e) {
+          // The sheet shows the error with a Close button.
+          debugPrint('Publishing stopped: $e');
+        }
       }
     } on HeldCopiesException catch (e) {
       if (mounted) await showHeldCopiesDialog(context, e);

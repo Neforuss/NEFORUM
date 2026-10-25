@@ -184,7 +184,7 @@ void main() {
       await applyBackup(p, candidates: previewImport(p, const []), accounts: toAccounts, posts: toPosts, secrets: toSecrets);
       final sched = (await toPosts.get('sched'))!;
       expect(sched.status, PostStatus.draft);
-      expect(sched.scheduledAt, when);
+      expect(sched.scheduledAt, when.toLocal());
       expect(sched.targets.map((t) => t.accountId), ['x:9']);
       expect(sched.media, isEmpty);
       expect((await toPosts.get('draft'))!.status, PostStatus.draft);

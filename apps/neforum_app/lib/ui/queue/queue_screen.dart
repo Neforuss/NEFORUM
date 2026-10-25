@@ -93,7 +93,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
           Padding(
             padding: const EdgeInsets.only(bottom: Space.md),
             child: Row(children: [
-              Text(dayLabel(e.key), style: context.text.titleLarge),
+              Flexible(child: Text(TimeFormatting.of(context, ref).day(e.key), style: context.text.titleLarge)),
               const SizedBox(width: Space.sm),
               Text('${e.value.length} ${e.value.length == 1 ? 'post' : 'posts'}', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
             ]),
@@ -231,6 +231,7 @@ class _AgendaRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final t = post.scheduledAt!;
+    final format = TimeFormatting.of(context, ref);
     final soon = t.difference(DateTime.now()).inMinutes < 60;
     if (context.isCompact) {
       // Phones: no separate time column; the card shows the time.
@@ -260,8 +261,8 @@ class _AgendaRow extends ConsumerWidget {
           width: timeW,
           child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
             const SizedBox(height: Space.md + 2),
-            Text(DateFormat.jm().format(t), style: monoStyle(context, size: 13, color: nf.text, weight: FontWeight.w600)),
-            if (soon) Text(inFuture(t), style: context.text.bodySmall?.copyWith(color: nf.accent, fontSize: 11)),
+            Text(format.clock(t), style: monoStyle(context, size: 13, color: nf.text, weight: FontWeight.w600)),
+            if (soon) Text(inFuture(t, use24Hour: format.use24Hour), style: context.text.bodySmall?.copyWith(color: nf.accent, fontSize: 11)),
           ]),
         ),
         SizedBox(

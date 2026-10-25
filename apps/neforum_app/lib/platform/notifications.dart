@@ -236,6 +236,18 @@ class NotificationService {
     }
   }
 
+  /// Keys of every notification NEFORUM shows about one post: the
+  /// due-time reminder, the publish result and the hand-off request.
+  static List<String> postKeys(String postId) => ['due:$postId', 'result:$postId', 'handoff:$postId'];
+
+  /// Removes the post's reminders and delivered notifications (they quote
+  /// its text) when the post is deleted.
+  Future<void> cancelPostNotifications(String postId) async {
+    for (final key in postKeys(postId)) {
+      await cancel(key);
+    }
+  }
+
   /// Stable 31-bit id from a string key.
   static int _id(String key) {
     var h = 0x811C9DC5;

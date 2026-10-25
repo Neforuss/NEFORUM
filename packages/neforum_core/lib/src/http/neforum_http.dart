@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 
 import '../model/publish_result.dart';
+import '../publish/cancellation_signal.dart';
 import '../util/logger.dart';
 import 'transient_stub.dart' if (dart.library.io) 'transient_io.dart';
 
@@ -113,7 +114,17 @@ class NeforumHttp {
     this.timeout = const Duration(seconds: 60),
     Logger? log,
   })  : _client = client ?? http.Client(),
-        _log = log ?? Logger('http');
+        _log = log ?? Logger('http'),
+        cancellation = null,
+        _ownsClient = true;
+
+  NeforumHttp._bound(NeforumHttp base, CancellationSignal this.cancellation)
+      : _client = base._client,
+        userAgent = base.userAgent,
+        maxRetries = base.maxRetries,
+        timeout = base.timeout,
+        _log = base._log,
+        _ownsClient = false;
 
   final http.Client _client;
   final String userAgent;
@@ -121,7 +132,22 @@ class NeforumHttp {
   final Duration timeout;
   final Logger _log;
 
-  void close() => _client.close();
+  /// When set, cancelling it aborts the request in flight and every later
+  /// one fails with [OperationCancelledException] (see [withCancellation]).
+  final CancellationSignal? cancellation;
+  final bool _ownsClient;
+
+  /// The same connection pool, with every request bound to [signal]: the
+  /// client is shared by publishing, sync and media hosts, so a publish run
+  /// is stopped request by request instead of by closing it.
+  NeforumHttp withCancellation(CancellationSignal? signal) =>
+      signal == null || identical(signal, cancellation) ? this : NeforumHttp._bound(this, signal);
+
+  /// Closes the client. A view made by [withCancellation] leaves the shared
+  /// client open.
+  void close() {
+    if (_ownsClient) _client.close();
+  }
 
   Future<NeforumResponse> get(Uri url,
           {Map<String, String>? headers, HeaderSigner? signHeaders, bool throwOnError = true}) =>
@@ -189,21 +215,23 @@ class NeforumHttp {
     // publish service retries the whole target later instead.
     final idempotent = _idempotentMethods.contains(method.toUpperCase()) ||
         (headers?.keys.any((k) => k.toLowerCase() == 'idempotency-key') ?? false);
+    final signal = cancellation;
     var attempt = 0;
     while (true) {
       attempt++;
+      signal?.throwIfCancelled();
       try {
         final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
-        final req = _build(method, url, attemptHeaders, jsonBody, form, fields, files, bytes);
+        final req = _build(method, url, attemptHeaders, jsonBody, form, fields, files, bytes, abortTrigger: signal?.whenCancelled);
         _log.debug('$method $url (attempt $attempt)');
-        final streamed = await _client.send(req).timeout(effectiveTimeout);
-        final res = await http.Response.fromStream(streamed).timeout(effectiveTimeout);
+        final streamed = await _unlessCancelled(_client.send(req).timeout(effectiveTimeout), signal);
+        final res = await _unlessCancelled(http.Response.fromStream(streamed).timeout(effectiveTimeout), signal);
         final out = NeforumResponse(res.statusCode, _lowercase(res.headers), res.bodyBytes, url);
         if (!out.ok && attempt <= retries && (idempotent ? _retryable(out.statusCode) : _notProcessed(out))) {
           final wait = out.retryAfter ?? _backoff(attempt);
           if (wait <= const Duration(seconds: 30)) {
             _log.warn('HTTP ${out.statusCode} from ${url.host}; retrying in ${wait.inSeconds}s');
-            await Future<void>.delayed(wait);
+            await _pause(wait, signal);
             continue;
           }
         }
@@ -211,17 +239,36 @@ class NeforumHttp {
         return out;
       } on HttpFailure {
         rethrow;
+      } on OperationCancelledException {
+        rethrow;
       } on Object catch (e) {
+        // An aborted request surfaces as a ClientException; report it as
+        // the cancellation it is, never as a network error to retry.
+        if (signal != null && signal.isCancelled) throw const OperationCancelledException();
         final transient = e is TimeoutException || e is http.ClientException || isTransientIoError(e);
         if (transient && idempotent && attempt <= retries) {
           final wait = _backoff(attempt);
           _log.warn('Network error calling ${url.host} ($e); retrying in ${wait.inSeconds}s');
-          await Future<void>.delayed(wait);
+          await _pause(wait, signal);
           continue;
         }
         rethrow;
       }
     }
+  }
+
+  /// [future], or [OperationCancelledException] as soon as [signal] fires,
+  /// even with a client that ignores the abort trigger.
+  static Future<T> _unlessCancelled<T>(Future<T> future, CancellationSignal? signal) {
+    if (signal == null) return future;
+    return Future.any([future, signal.whenCancelled.then<T>((_) => throw const OperationCancelledException())]);
+  }
+
+  /// Waits [wait] before a retry; a cancellation ends the wait at once.
+  static Future<void> _pause(Duration wait, CancellationSignal? signal) async {
+    if (signal == null) return Future<void>.delayed(wait);
+    await Future.any([Future<void>.delayed(wait), signal.whenCancelled]);
+    signal.throwIfCancelled();
   }
 
   http.BaseRequest _build(
@@ -232,11 +279,12 @@ class NeforumHttp {
     Map<String, String>? form,
     Map<String, String>? fields,
     List<HttpFilePart>? files,
-    Uint8List? bytes,
-  ) {
+    Uint8List? bytes, {
+    Future<void>? abortTrigger,
+  }) {
     final h = <String, String>{'User-Agent': userAgent, ...?headers};
     if (files != null || fields != null) {
-      final req = http.MultipartRequest(method, url)..headers.addAll(h);
+      final req = http.AbortableMultipartRequest(method, url, abortTrigger: abortTrigger)..headers.addAll(h);
       if (fields != null) req.fields.addAll(fields);
       for (final f in files ?? const <HttpFilePart>[]) {
         req.files.add(http.MultipartFile.fromBytes(f.field, f.bytes,
@@ -244,7 +292,7 @@ class NeforumHttp {
       }
       return req;
     }
-    final req = http.Request(method, url)..headers.addAll(h);
+    final req = http.AbortableRequest(method, url, abortTrigger: abortTrigger)..headers.addAll(h);
     if (jsonBody != null) {
       req.headers.putIfAbsent('Content-Type', () => 'application/json; charset=utf-8');
       req.body = jsonEncode(jsonBody);

@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/text_card.dart';
+import '../platform/storage.dart';
 import 'composer.dart';
 import 'providers.dart';
 import 'settings.dart';
@@ -13,32 +14,21 @@ import 'settings.dart';
 const String kComposerDraftFile = 'composer.json';
 
 /// Keeps the post in the composer across restarts: written to
-/// [kComposerDraftFile] a moment after every change, put back when NEFORUM
-/// starts, and cleared as soon as the composer is empty again, which is what
-/// publishing or scheduling the post (or saving it as a draft) does. Quitting
-/// NEFORUM, tray included, keeps it. Not used in the demo workspace.
+/// [kComposerDraftFile] a moment after every change and put back when
+/// NEFORUM starts. When the composer becomes empty (the post was published,
+/// scheduled or saved as a draft, or the user started over) the file is
+/// emptied at once, without the usual pause, so a posted post never comes
+/// back after a restart. Quitting NEFORUM, tray included, keeps an unsent
+/// post, and a change still waiting to be written is written when the
+/// keeper goes away. Null in the demo workspace, which keeps nothing.
 ///
 /// Watched by the app shell, which keeps it alive.
-final composerDraftKeeperProvider = Provider<void>((ref) {
+final composerDraftKeeperProvider = Provider<ComposerDraftKeeper?>((ref) {
   final services = ref.watch(servicesProvider);
-  if (services.demo) return;
-  Timer? pending;
-  var restored = false;
-
-  Future<void> write(ComposerState c) async {
-    try {
-      await services.storage.writeJson(kComposerDraftFile, isComposerBlank(c) ? const <String, dynamic>{} : composerDraftToJson(c));
-    } on Object catch (e) {
-      debugPrint('Could not keep the post being written: $e');
-    }
-  }
-
-  ref.listen<ComposerState>(composerProvider, (prev, next) {
-    if (!restored) return;
-    pending?.cancel();
-    pending = Timer(const Duration(milliseconds: 300), () => write(next));
-  });
-  ref.onDispose(() => pending?.cancel());
+  if (services.demo) return null;
+  final keeper = ComposerDraftKeeper(services.storage);
+  ref.listen<ComposerState>(composerProvider, (prev, next) => keeper.changed(next));
+  ref.onDispose(() => unawaited(keeper.flush()));
 
   () async {
     try {
@@ -51,10 +41,67 @@ final composerDraftKeeperProvider = Provider<void>((ref) {
     } on Object catch (e) {
       debugPrint('Could not restore the post being written: $e');
     } finally {
-      restored = true;
+      keeper.restored = true;
     }
   }();
+  return keeper;
 });
+
+/// Writes the composer to [kComposerDraftFile] for
+/// [composerDraftKeeperProvider].
+class ComposerDraftKeeper {
+  ComposerDraftKeeper(this._storage);
+
+  final AppStorage _storage;
+  Timer? _pending;
+  ComposerState? _unsaved;
+  Future<void> _lastWrite = Future<void>.value();
+
+  /// False until the file was read at startup: nothing is written before
+  /// that, so an empty composer never overwrites a post waiting to be put
+  /// back.
+  bool restored = false;
+
+  /// The composer changed: written 300 ms after the last change, or at once
+  /// when it is empty.
+  void changed(ComposerState c) {
+    if (!restored) return;
+    _unsaved = c;
+    _pending?.cancel();
+    if (isComposerBlank(c)) {
+      unawaited(flush());
+    } else {
+      _pending = Timer(const Duration(milliseconds: 300), () => unawaited(flush()));
+    }
+  }
+
+  /// Writes [c] now (publishing calls this right after clearing the
+  /// composer) and completes when the file is written.
+  Future<void> keep(ComposerState c) {
+    if (!restored) return _lastWrite;
+    _unsaved = c;
+    return flush();
+  }
+
+  /// Writes a change still waiting for its moment now. Completes when the
+  /// latest write is done.
+  Future<void> flush() {
+    _pending?.cancel();
+    _pending = null;
+    final c = _unsaved;
+    _unsaved = null;
+    if (c != null) _lastWrite = _write(c);
+    return _lastWrite;
+  }
+
+  Future<void> _write(ComposerState c) async {
+    try {
+      await _storage.writeJson(kComposerDraftFile, isComposerBlank(c) ? const <String, dynamic>{} : composerDraftToJson(c));
+    } on Object catch (e) {
+      debugPrint('Could not keep the post being written: $e');
+    }
+  }
+}
 
 /// Nothing worth keeping: no words, title, link, photos or poll, and not an
 /// edit of a saved post.

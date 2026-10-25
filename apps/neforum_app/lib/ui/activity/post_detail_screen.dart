@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -47,16 +46,25 @@ class PostDetailScreen extends ConsumerWidget {
     if (post == null) {
       return PageBody(maxWidth: 860, children: [
         backButton,
-        const EmptyState(icon: Icons.search_off_rounded, title: 'This post no longer exists', body: 'It may have been deleted.'),
+        const EmptyState(
+          icon: Icons.search_off_rounded,
+          title: 'This post is no longer in NEFORUM',
+          body: 'It was deleted, by you or because every network has it (Settings > Activity and history).',
+        ),
       ]);
     }
 
     final (label, tone, icon) = postStatusStyle(post.status);
+    final format = TimeFormatting.of(context, ref);
     final timeLine = switch (post.status) {
-      PostStatus.scheduled when post.scheduledAt != null => 'Scheduled for ${DateFormat.yMMMEd().add_jm().format(post.scheduledAt!)}',
-      PostStatus.draft => 'Draft · edited ${relativeTime(post.updatedAt)}',
-      _ => 'Posted ${DateFormat.yMMMEd().add_jm().format(post.updatedAt)}',
+      PostStatus.scheduled when post.scheduledAt != null => 'Scheduled for ${format.scheduled(post.scheduledAt!)}',
+      PostStatus.draft => 'Draft · edited ${format.moment(post.updatedAt)}',
+      PostStatus.publishing => 'Started ${format.moment(post.updatedAt)}',
+      PostStatus.failed => 'Last tried ${format.moment(post.updatedAt)}',
+      PostStatus.cancelled => 'Cancelled ${format.moment(post.updatedAt)}',
+      _ => 'Posted ${format.moment(post.updatedAt)}',
     };
+    final publishing = ref.watch(activePublishingProvider)[post.id];
     final style = context.text.bodyLarge!.copyWith(height: 1.55);
 
     return Scaffold(
@@ -115,6 +123,12 @@ class PostDetailScreen extends ConsumerWidget {
         ),
         const SizedBox(height: Space.x3),
         Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          if (publishing != null)
+            OutlinedButton.icon(
+              onPressed: publishing.isCancelled ? null : () => ref.read(postActionsProvider).cancelPublishing(post.id),
+              icon: const Icon(Icons.block_rounded, size: 18),
+              label: Text(publishing.isCancelled ? 'Cancelling…' : 'Cancel publishing'),
+            ),
           for (final a in postMenuActions(context, ref, post).where((a) => !a.destructive))
             OutlinedButton.icon(onPressed: a.onSelected, icon: Icon(a.icon, size: 18), label: Text(a.label)),
           OutlinedButton.icon(
@@ -172,6 +186,10 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
     setState(() => _busy = true);
     try {
       await action();
+    } on HeldCopiesException catch (e) {
+      if (mounted) await showHeldCopiesDialog(context, e);
+    } on Object catch (e) {
+      if (mounted) showToast(context, 'Could not do that: $e', icon: Icons.error_outline_rounded);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -187,6 +205,15 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
     final err = t.result?.error;
     final url = t.result?.remoteUrl;
     final actions = ref.read(postActionsProvider);
+    final format = TimeFormatting.of(context, ref);
+    // This network's own time, not the post's last change.
+    final (String? timeLabel, DateTime? timeAt) = switch (t.status) {
+      TargetStatus.published => ('Posted', t.result?.publishedAt ?? t.lastAttemptAt),
+      TargetStatus.handedOff => ('Handed off', t.lastAttemptAt),
+      TargetStatus.failed || TargetStatus.cancelled => ('Last tried', t.lastAttemptAt),
+      _ => (null, null),
+    };
+    final busyElsewhere = ref.watch(activePublishingProvider).containsKey(widget.post.id);
 
     final buttons = <Widget>[
       if (url != null && t.status == TargetStatus.published)
@@ -197,7 +224,7 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
       ],
       if (t.status == TargetStatus.handedOff)
         TextButton(onPressed: _busy ? null : () => _run(() => actions.markHandedOff(widget.post.id, t.accountId, done: false)), child: const Text('Mark as not posted')),
-      if (t.status == TargetStatus.failed)
+      if (needsRetry(t) && !busyElsewhere)
         OutlinedButton.icon(
           onPressed: _busy ? null : () => _run(() => actions.publishExisting(widget.post.id, accountIds: {t.accountId})),
           icon: const Icon(Icons.refresh_rounded, size: 16),
@@ -218,13 +245,14 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
                 StatusPill(label, tone: tone, icon: icon, dense: true),
               ]),
               Text(a?.handle ?? a?.displayName ?? '', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
+              if (timeLabel != null && timeAt != null) Text('$timeLabel ${format.moment(timeAt)}', style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
               if (err != null) ...[
                 const SizedBox(height: Space.xs + 2),
                 Text(err.message, style: context.text.bodySmall?.copyWith(color: nf.danger)),
               ] else if (t.isHeldByPlatform && t.result?.scheduledFor != null) ...[
                 const SizedBox(height: Space.xs),
                 Text(
-                  '${d?.name ?? 'The platform'} holds this post and publishes it itself on ${DateFormat.MMMEd().add_jm().format(t.result!.scheduledFor!.toLocal())}, even if this device is off. Editing or deleting the post here takes it back.',
+                  '${d?.name ?? 'The platform'} holds this post and publishes it itself on ${format.exactTime(t.result!.scheduledFor!)}, even if this device is off. Editing or deleting the post here takes it back.',
                   style: context.text.bodySmall,
                 ),
               ] else if (t.result?.threadRemoteIds.isNotEmpty ?? false) ...[

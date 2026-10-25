@@ -9,6 +9,7 @@ import '../media/text_card.dart';
 import '../platform/notifications.dart';
 import 'artwork_targets.dart';
 import 'captioned_photos.dart';
+import 'composer_draft.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
 import 'scheduler.dart';
@@ -632,17 +633,48 @@ class PostActions {
     return p;
   }
 
-  /// Publishes the composer's post right now. Returns the final post.
+  /// Publishes the composer's post right now. As soon as the post is saved
+  /// for publishing, the composer starts over and its draft file is written
+  /// empty: the progress sheet follows the run, and Activity has the post
+  /// (for a retry) until the retention setting deletes it. A failure before
+  /// that leaves the composer as it was. Returns the final post.
   Future<Post> publishNow() async {
+    final run = ref.read(publishRunProvider.notifier);
+    run.prepare();
     final c = ref.read(composerProvider);
-    final p = (await _save(PostStatus.publishing)).copyWith(clearScheduledAt: true);
-    await ref.read(servicesProvider).posts.upsert(p);
+    final Post p;
+    try {
+      p = (await _save(PostStatus.publishing)).copyWith(clearScheduledAt: true);
+      await ref.read(servicesProvider).posts.upsert(p);
+    } on Object catch (e) {
+      run.fail(null, e);
+      rethrow;
+    }
+    ref.read(composerProvider.notifier).reset();
+    await ref.read(composerDraftKeeperProvider)?.keep(ref.read(composerProvider));
     return publishExisting(p.id, accountIds: c.selected);
   }
 
   /// Runs (or re-runs) publishing for an existing post. Copies held by
-  /// platforms are taken back first, so nothing goes out twice.
+  /// platforms are taken back first, so nothing goes out twice. The run can
+  /// be cancelled from its progress sheet or from Activity; whatever stops
+  /// it is shown in the sheet.
   Future<Post> publishExisting(String postId, {Set<String>? accountIds, bool retryFailed = true}) async {
+    final run = ref.read(publishRunProvider.notifier);
+    if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
+    final signal = ref.read(publishRunProvider)!.cancellation;
+    final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
+    try {
+      return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed);
+    } on Object catch (e) {
+      run.fail(postId, e);
+      rethrow;
+    } finally {
+      active.end(postId, signal);
+    }
+  }
+
+  Future<Post> _publishExisting(String postId, CancellationSignal signal, {Set<String>? accountIds, required bool retryFailed}) async {
     final s = ref.read(servicesProvider);
     await _releaseHeld(postId, onlyAccountIds: accountIds);
     var post = await s.posts.get(postId);
@@ -663,12 +695,40 @@ class PostActions {
           onlyAccountIds: accountIds,
           retryFailed: retryFailed,
           onProgress: run.progress,
+          cancellation: signal,
         );
     final finalPost = await s.applySkips(postId) ?? done;
     run.finish(finalPost);
-    await ref.read(schedulerProvider).cancelReminders(finalPost);
-    await _notifyResult(finalPost);
+    try {
+      await ref.read(schedulerProvider).cancelReminders(finalPost);
+      await _notifyResult(finalPost);
+      await _discardIfComplete(postId);
+    } on Object catch (e) {
+      // The post went out; tidying up afterwards must not look like a failure.
+      debugPrint('After publishing $postId: $e');
+    }
     return finalPost;
+  }
+
+  /// Asks the run publishing [postId] in this process to stop.
+  void cancelPublishing(String postId) {
+    ref.read(activePublishingProvider.notifier).cancel(postId);
+    if (ref.read(publishRunProvider)?.postId == postId) ref.read(publishRunProvider.notifier).cancel();
+  }
+
+  /// What the composer mentions, so deleting a post never takes a file the
+  /// composer still shows (a duplicated post shares its photos).
+  List<Object?> _composerReferences() {
+    final c = ref.read(composerProvider);
+    return [c.toPost(id: 'composer', status: PostStatus.draft, now: DateTime.now()).toJson(), c.captionStyle, c.textCardBackground];
+  }
+
+  /// Deletes [postId] once every network has it, when the setting keeps
+  /// nothing after posting.
+  Future<void> _discardIfComplete(String postId) async {
+    if (await ref.read(servicesProvider).discardIfComplete(postId, inUse: _composerReferences())) {
+      ref.read(schedulerProvider).updateTrayStatus();
+    }
   }
 
   Future<void> _notifyResult(Post p) async {
@@ -687,17 +747,24 @@ class PostActions {
   }
 
   /// Hand-off for one target, triggered from a list or a notification.
+  /// The last hand-off of a post can complete it (see [_discardIfComplete]).
   Future<Post> runHandoff(String postId, String accountId) async {
     final s = ref.read(servicesProvider);
     final p = await s.publisher().runHandoff(postId, accountId);
-    return await s.applySkips(postId) ?? p;
+    final done = await s.applySkips(postId) ?? p;
+    await _discardIfComplete(postId);
+    return done;
   }
 
-  Future<Post> markHandedOff(String postId, String accountId, {bool done = true}) =>
-      ref.read(servicesProvider).publisher().confirmHandoff(postId, accountId, completed: done);
+  Future<Post> markHandedOff(String postId, String accountId, {bool done = true}) async {
+    final p = await ref.read(servicesProvider).publisher().confirmHandoff(postId, accountId, completed: done);
+    if (done) await _discardIfComplete(postId);
+    return p;
+  }
 
-  /// Deletes [p] from NEFORUM. Copies held by platforms are removed first;
-  /// when that fails a [HeldCopiesException] is thrown unless [force].
+  /// Deletes [p] from NEFORUM, with its notifications and the media files
+  /// nothing else uses. Copies held by platforms are removed first; when
+  /// that fails a [HeldCopiesException] is thrown unless [force].
   Future<void> delete(Post p, {bool force = false}) async {
     final s = ref.read(servicesProvider);
     try {
@@ -706,13 +773,41 @@ class PostActions {
       if (!force) rethrow;
     }
     await ref.read(schedulerProvider).cancelReminders(p);
-    await s.posts.delete(p.id);
-    // Drop media files no other post uses.
-    final others = await s.posts.all();
-    final inUse = {for (final o in others) ...o.media.map((m) => m.path)};
-    for (final m in p.media) {
-      if (!inUse.contains(m.path)) await s.media.discard(m);
+    // The stored post: it may have more generated media than the list's copy.
+    final current = await s.posts.get(p.id) ?? p;
+    await s.discardPosts([current], inUse: _composerReferences());
+  }
+
+  /// Activity > Clear failed. Posts that reached no network (every target
+  /// failed or cancelled) are deleted. Posts that reached some keep those;
+  /// their failed and cancelled targets become skipped, and the retention
+  /// setting then applies to them like to any finished post. Posts this
+  /// process is publishing are left alone.
+  Future<({int deleted, int kept})> clearFailed(Iterable<Post> listed) async {
+    final s = ref.read(servicesProvider);
+    final active = ref.read(activePublishingProvider);
+    final publisher = s.publisher();
+    final doomed = <Post>[];
+    var kept = 0;
+    for (final l in listed) {
+      if (active.containsKey(l.id)) continue;
+      final p = await s.posts.get(l.id);
+      if (p == null || !p.targets.any(needsRetry)) continue;
+      if (p.targets.every(needsRetry)) {
+        doomed.add(p);
+        continue;
+      }
+      var next = p;
+      for (final t in p.targets.where(needsRetry)) {
+        next = next.withTarget(t.copyWith(status: TargetStatus.skipped));
+      }
+      await s.posts.upsert(publisher.rollUpStatus(next).copyWith(updatedAt: DateTime.now()));
+      kept++;
     }
+    await s.discardPosts(doomed, inUse: _composerReferences());
+    if (kept > 0) await s.applyRetention(inUse: _composerReferences());
+    ref.read(schedulerProvider).updateTrayStatus();
+    return (deleted: doomed.length, kept: kept);
   }
 
   Future<Post> unschedule(Post p) async {

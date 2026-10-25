@@ -142,7 +142,7 @@ void main() {
       expect(back.tags, ['neforum']);
       expect(back.selected, {'acct-1', 'acct-2'});
       expect(back.overrides['acct-2']!.text, 'Short');
-      expect(back.scheduledAt, DateTime.utc(2026, 11, 1, 9));
+      expect(back.scheduledAt, DateTime.utc(2026, 11, 1, 9).toLocal());
       expect(back.textCardTheme, TextCardTheme.light);
       expect(back.textCardFont, TextCardFont.timesNewRoman);
       expect(back.textCardBranded, {'instagram': false});

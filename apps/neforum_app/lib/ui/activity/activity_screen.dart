@@ -5,6 +5,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/settings.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
@@ -31,18 +32,41 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
   bool _matches(Post p) => switch (_filter) {
         _Filter.all => true,
         _Filter.attention => p.targets.any((t) => t.status == TargetStatus.awaitingHandoff),
-        _Filter.failed => p.targets.any((t) => t.status == TargetStatus.failed),
+        _Filter.failed => p.targets.any(needsRetry),
         _Filter.published => p.status == PostStatus.published,
       };
+
+  /// Deletes the posts that reached no network and skips the failed networks
+  /// of the others, after the user confirms.
+  Future<void> _clearFailed(List<Post> failedPosts) async {
+    final active = ref.read(activePublishingProvider);
+    final clearable = failedPosts.where((p) => !active.containsKey(p.id)).toList();
+    if (clearable.isEmpty) return;
+    final n = clearable.length;
+    final ok = await confirmDialog(
+      context,
+      title: 'Clear $n failed ${n == 1 ? 'post' : 'posts'}?',
+      message: 'Posts that reached no network are deleted. Posts that reached some networks keep them, and the networks that failed '
+          'or were cancelled are marked as skipped. This cannot be undone.',
+      confirmLabel: 'Clear failed',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    final (:deleted, :kept) = await ref.read(postActionsProvider).clearFailed(clearable);
+    if (!mounted) return;
+    final cleared = deleted + kept;
+    showToast(context, 'Cleared $cleared failed ${cleared == 1 ? 'post' : 'posts'}', icon: Icons.delete_sweep_outlined);
+  }
 
   @override
   Widget build(BuildContext context) {
     final history = ref.watch(historyPostsProvider);
+    final failedPosts = ref.watch(failedPostsProvider);
     final weekAgo = DateTime.now().subtract(const Duration(days: 7));
     final recent = history.where((p) => p.updatedAt.isAfter(weekAgo)).toList();
     final reached = recent.expand((p) => p.targets).where((t) => t.status == TargetStatus.published || t.status == TargetStatus.handedOff).length;
     final waiting = history.expand((p) => p.targets).where((t) => t.status == TargetStatus.awaitingHandoff).length;
-    final failed = history.expand((p) => p.targets).where((t) => t.status == TargetStatus.failed).length;
+    final failed = history.expand((p) => p.targets).where(needsRetry).length;
     final list = history.where(_matches).toList();
 
     void newPost() {
@@ -51,7 +75,25 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
     }
 
     return PageBody(maxWidth: 1080, children: [
-      const PageHeader(eyebrow: 'Activity', title: "Everything you've posted"),
+      PageHeader(
+        eyebrow: 'Activity',
+        title: "Everything you've posted",
+        actions: [
+          if (failedPosts.isNotEmpty)
+            PopupMenuButton<int>(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert_rounded),
+              position: PopupMenuPosition.under,
+              onSelected: (_) => _clearFailed(failedPosts),
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 0,
+                  child: Row(children: [Icon(Icons.delete_sweep_outlined, size: 18), SizedBox(width: Space.md), Text('Clear failed')]),
+                ),
+              ],
+            ),
+        ],
+      ),
       const SizedBox(height: Space.xxl),
       ResponsiveGrid(minItemWidth: 200, spacing: Space.md, children: [
         _Stat(label: 'Posts this week', value: '${recent.length}', icon: Icons.edit_note_rounded, tone: Tone.accent, spark: _perDay(history, (p) => 1)),
@@ -77,11 +119,25 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
           ),
         ),
       ),
+      if (_filter == _Filter.failed && failedPosts.isNotEmpty) ...[
+        const SizedBox(height: Space.md),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: () => _clearFailed(failedPosts),
+            icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+            label: const Text('Clear failed'),
+          ),
+        ),
+      ],
       const SizedBox(height: Space.lg),
       if (history.isEmpty)
         EmptyState(
           title: 'No posts yet',
-          body: 'Everything you publish shows up here, with a live link for every network.',
+          body: ref.watch(settingsProvider).publishedPostRetention == PublishedPostRetention.discardOnCompletion
+              ? 'Posts show up here while they go out and while a network still needs you. Once every network has a post, NEFORUM deletes '
+                  'its copy (Settings > Activity and history).'
+              : 'Everything you publish shows up here, with a live link for every network.',
           action: PrimaryAction(label: 'Write your first post', icon: Icons.edit_rounded, onPressed: newPost),
         )
       else if (list.isEmpty)
@@ -107,7 +163,8 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
       for (var i = 6; i >= 0; i--)
         posts.where((p) {
           final d = today.subtract(Duration(days: i));
-          return p.updatedAt.year == d.year && p.updatedAt.month == d.month && p.updatedAt.day == d.day;
+          final at = p.updatedAt.toLocal();
+          return at.year == d.year && at.month == d.month && at.day == d.day;
         }).fold<int>(0, (s, p) => s + weight(p)).toDouble(),
     ];
   }
@@ -119,11 +176,21 @@ class _Footer extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final signal = ref.watch(activePublishingProvider)[post.id];
     final waiting = post.targets.where((t) => t.status == TargetStatus.awaitingHandoff).toList();
-    final failed = post.targets.where((t) => t.status == TargetStatus.failed).toList();
+    final retry = post.targets.where(needsRetry).toList();
+    final onlyFailed = retry.every((t) => t.status == TargetStatus.failed);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Wrap(spacing: Space.xs + 2, runSpacing: Space.xs + 2, children: [for (final t in post.targets) TargetChip(post: post, target: t)]),
-      if (waiting.isNotEmpty || failed.isNotEmpty) ...[
+      if (signal != null) ...[
+        // Being published by this process right now.
+        const SizedBox(height: Space.md),
+        OutlinedButton.icon(
+          onPressed: signal.isCancelled ? null : () => ref.read(postActionsProvider).cancelPublishing(post.id),
+          icon: const Icon(Icons.block_rounded, size: 17),
+          label: Text(signal.isCancelled ? 'Cancelling…' : 'Cancel'),
+        ),
+      ] else if (waiting.isNotEmpty || retry.isNotEmpty) ...[
         const SizedBox(height: Space.md),
         Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
           if (waiting.isNotEmpty)
@@ -137,14 +204,20 @@ class _Footer extends ConsumerWidget {
               icon: const Icon(Icons.ios_share_rounded, size: 17),
               label: Text('Finish ${waiting.length} hand-off${waiting.length == 1 ? '' : 's'}'),
             ),
-          if (failed.isNotEmpty)
+          if (retry.isNotEmpty)
             OutlinedButton.icon(
               onPressed: () async {
-                final done = await ref.read(postActionsProvider).publishExisting(post.id, accountIds: failed.map((t) => t.accountId).toSet());
-                if (context.mounted) showPublishedToast(context, done);
+                try {
+                  final done = await ref.read(postActionsProvider).publishExisting(post.id, accountIds: retry.map((t) => t.accountId).toSet());
+                  if (context.mounted) showPublishedToast(context, done);
+                } on HeldCopiesException catch (e) {
+                  if (context.mounted) await showHeldCopiesDialog(context, e);
+                } on Object catch (e) {
+                  if (context.mounted) showToast(context, 'Could not publish: $e', icon: Icons.error_outline_rounded);
+                }
               },
               icon: const Icon(Icons.refresh_rounded, size: 17),
-              label: const Text('Retry failed'),
+              label: Text(onlyFailed ? 'Retry failed' : 'Retry'),
             ),
         ]),
       ],

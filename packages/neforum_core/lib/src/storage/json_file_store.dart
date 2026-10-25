@@ -36,9 +36,12 @@ class JsonFileStore {
 
 /// One JSON file with serialised atomic writes.
 class JsonFile {
-  JsonFile(this.path);
+  JsonFile(this.path, {this.writeAttempts = 20});
 
   final String path;
+
+  /// How often [write] tries before giving up (about 20 seconds in all).
+  final int writeAttempts;
   Future<void> _chain = Future<void>.value();
 
   /// Antivirus, backup, sync and indexing tools can hold a file open for a
@@ -61,16 +64,53 @@ class JsonFile {
 
   static const readAttempts = 20;
 
+  /// Writes are retried the same way: the temp file or the rename can hit
+  /// the same sharing violation. Throws when the file stays locked, and the
+  /// file on disk then still holds the previous content.
   Future<void> write(Object data) {
+    final text = const JsonEncoder.withIndent('  ').convert(data);
     final next = _chain.then((_) async {
       final target = File(path);
-      await target.parent.create(recursive: true);
-      final tmp = File('$path.tmp');
-      await tmp.writeAsString(const JsonEncoder.withIndent('  ').convert(data), flush: true);
-      await tmp.rename(target.path);
+      for (var attempt = 0;; attempt++) {
+        try {
+          await target.parent.create(recursive: true);
+          final tmp = File('$path.tmp');
+          await tmp.writeAsString(text, flush: true);
+          await tmp.rename(target.path);
+          return;
+        } on FileSystemException {
+          if (attempt >= writeAttempts - 1) rethrow;
+          await Future<void>.delayed(Duration(milliseconds: math.min(2000, 100 * (attempt + 1))));
+        }
+      }
     });
     _chain = next.catchError((Object _) {});
     return next;
+  }
+}
+
+/// Puts [previous] back under [id] (or removes [id] when there was nothing)
+/// unless a later change replaced the entry meanwhile: the entry must still
+/// be [ifStill], the value the failed change left there.
+void _restore<T>(Map<String, T> cache, String id, T? previous, {required T? ifStill}) {
+  if (!identical(cache[id], ifStill)) return;
+  if (previous == null) {
+    cache.remove(id);
+  } else {
+    cache[id] = previous;
+  }
+}
+
+/// Runs [save] after a change to a repository cache; when the file cannot
+/// be written, [undo] takes the change back so the cache never claims
+/// something the file does not hold (a deleted post would otherwise come
+/// back after a restart).
+Future<void> _saveOrUndo(Future<void> Function() save, void Function() undo) async {
+  try {
+    await save();
+  } on Object {
+    undo();
+    rethrow;
   }
 }
 
@@ -102,14 +142,17 @@ class JsonAccountRepository implements AccountRepository {
 
   @override
   Future<void> upsert(ConnectedAccount account) async {
-    (await _load())[account.id] = account;
-    await _save();
+    final cache = await _load();
+    final previous = cache[account.id];
+    cache[account.id] = account;
+    await _saveOrUndo(_save, () => _restore(cache, account.id, previous, ifStill: account));
   }
 
   @override
   Future<void> delete(String id) async {
-    (await _load()).remove(id);
-    await _save();
+    final cache = await _load();
+    final removed = cache.remove(id);
+    await _saveOrUndo(_save, () => _restore(cache, id, removed, ifStill: null));
   }
 
   void dispose() => _changes.close();
@@ -143,14 +186,17 @@ class JsonPostRepository implements PostRepository {
 
   @override
   Future<void> upsert(Post post) async {
-    (await _load())[post.id] = post;
-    await _save();
+    final cache = await _load();
+    final previous = cache[post.id];
+    cache[post.id] = post;
+    await _saveOrUndo(_save, () => _restore(cache, post.id, previous, ifStill: post));
   }
 
   @override
   Future<void> delete(String id) async {
-    (await _load()).remove(id);
-    await _save();
+    final cache = await _load();
+    final removed = cache.remove(id);
+    await _saveOrUndo(_save, () => _restore(cache, id, removed, ifStill: null));
   }
 
   @override
@@ -177,8 +223,9 @@ class JsonQuotaRepository implements QuotaRepository {
 
   @override
   Future<void> record(QuotaEvent event) async {
-    (await _load()).add(event);
-    await _save();
+    final cache = await _load();
+    cache.add(event);
+    await _saveOrUndo(_save, () => cache.remove(event));
   }
 
   @override
@@ -224,13 +271,17 @@ class JsonSecretStore extends SecretStore {
 
   @override
   Future<void> write(String accountId, Map<String, String> secrets) async {
-    (await _load())[accountId] = Map.of(secrets);
-    await _file.write(await _load());
+    final cache = await _load();
+    final previous = cache[accountId];
+    final next = Map.of(secrets);
+    cache[accountId] = next;
+    await _saveOrUndo(() => _file.write(cache), () => _restore(cache, accountId, previous, ifStill: next));
   }
 
   @override
   Future<void> delete(String accountId) async {
-    (await _load()).remove(accountId);
-    await _file.write(await _load());
+    final cache = await _load();
+    final removed = cache.remove(accountId);
+    await _saveOrUndo(() => _file.write(cache), () => _restore(cache, accountId, removed, ifStill: null));
   }
 }

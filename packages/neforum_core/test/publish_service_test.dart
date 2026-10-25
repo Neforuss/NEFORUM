@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
@@ -54,6 +56,46 @@ class _FakeAdapter extends PlatformAdapter {
     final e = cancelError;
     if (e != null) throw e;
     cancelled.add(held.remoteId!);
+  }
+}
+
+/// Publishing that only ends when the user cancels.
+class _AwaitingAdapter extends _FakeAdapter {
+  _AwaitingAdapter(this.signal);
+  final CancellationSignal signal;
+
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    published.add(variant);
+    Future<void>.delayed(const Duration(milliseconds: 20), signal.cancel);
+    await ctx.cancellation!.whenCancelled;
+    ctx.throwIfCancelled();
+    return PublishResult.ok(remoteId: 'never');
+  }
+}
+
+/// Posts through the context's HTTP client, as real adapters do.
+class _HttpAdapter extends _FakeAdapter {
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final res = await ctx.http.postJson(Uri.parse('https://fake.example.test/posts'), {'text': variant.text});
+    return PublishResult.ok(remoteId: res.jsonMap['id'] as String?);
+  }
+}
+
+/// Holds every request until it is aborted.
+class _HangingClient extends http.BaseClient {
+  final requests = <http.BaseRequest>[];
+  final aborted = <Uri>[];
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    final trigger = request is http.Abortable ? request.abortTrigger : null;
+    if (trigger == null) return Completer<http.StreamedResponse>().future;
+    await trigger;
+    aborted.add(request.url);
+    throw http.RequestAbortedException(request.url);
   }
 }
 
@@ -251,6 +293,121 @@ void main() {
     expect(resolver.resolve(post, post.targets[1], d).media.map((m) => m.id), ['card']);
     final json = MediaAttachment.fromJson(card.toJson());
     expect(json.generated, isTrue);
+  });
+
+  group('cancelling', () {
+    Future<void> twoTargets() async {
+      await accounts.upsert(fakeAccount('fake', id: 'acct-2'));
+      await posts.upsert(Post(
+        id: 'p1',
+        text: 'Hello there',
+        createdAt: testNow,
+        updatedAt: testNow,
+        status: PostStatus.publishing,
+        targets: const [PostTarget(accountId: 'acct-1'), PostTarget(accountId: 'acct-2')],
+      ));
+    }
+
+    test('before the run: nothing is posted, every target is cancelled', () async {
+      await twoTargets();
+      final signal = CancellationSignal()..cancel();
+      final p = await service().publish('p1', cancellation: signal);
+      expect(adapter.published, isEmpty);
+      expect(p.targets.map((t) => t.status), [TargetStatus.cancelled, TargetStatus.cancelled]);
+      expect(p.targets.first.result!.error!.kind, PublishErrorKind.cancelled);
+      expect(p.status, PostStatus.cancelled);
+      expect((await posts.get('p1'))!.status, PostStatus.cancelled);
+    });
+
+    test('during a target: it and the rest are cancelled, nothing is retried later', () async {
+      await twoTargets();
+      final signal = CancellationSignal();
+      adapter = _AwaitingAdapter(signal);
+      final p = await service().publish('p1', cancellation: signal, interactive: false);
+      expect(p.targets.map((t) => t.status), [TargetStatus.cancelled, TargetStatus.cancelled]);
+      expect(p.targets.first.attempts, 1);
+      expect(p.targets.last.attempts, 0);
+      expect(p.status, PostStatus.cancelled, reason: 'not scheduled: the scheduler must not post it again');
+      expect(await posts.due(testNow.add(const Duration(days: 1))), isEmpty);
+    });
+
+    test('after the first target: what went out stays published', () async {
+      await twoTargets();
+      final signal = CancellationSignal();
+      adapter.onPublish = (v) {
+        signal.cancel();
+        return PublishResult.ok(remoteId: 'live');
+      };
+      final p = await service().publish('p1', cancellation: signal);
+      expect(p.targets.first.status, TargetStatus.published);
+      expect(p.targets.last.status, TargetStatus.cancelled);
+      expect(adapter.published, hasLength(1));
+      expect(p.status, PostStatus.partial);
+    });
+
+    test('cancelled targets wait for the user: skipped by unattended runs, posted by a retry', () async {
+      await twoTargets();
+      await service().publish('p1', cancellation: CancellationSignal()..cancel());
+      final unattended = await service().publish('p1', interactive: false, retryFailed: false);
+      expect(unattended.targets.map((t) => t.status), [TargetStatus.cancelled, TargetStatus.cancelled]);
+      expect(adapter.published, isEmpty);
+      final retried = await service().publish('p1', onlyAccountIds: {'acct-2'});
+      expect(retried.targets.last.status, TargetStatus.published);
+      expect(retried.targets.first.status, TargetStatus.cancelled);
+      expect(retried.status, PostStatus.partial);
+    });
+
+    test('a thread cut off halfway says which parts are live', () async {
+      await twoTargets();
+      final signal = CancellationSignal();
+      adapter.onPublish = (v) {
+        signal.cancel();
+        return PublishResult.failure(const PublishError.network('aborted').asPartialThread(postedIds: ['a'], total: 3));
+      };
+      final p = await service().publish('p1', cancellation: signal);
+      final t = p.targets.first;
+      expect(t.status, TargetStatus.cancelled);
+      expect(t.result!.error!.kind, PublishErrorKind.cancelled);
+      expect(t.result!.error!.message, contains('Parts already posted (a)'));
+    });
+
+    test('the adapter\'s request is aborted', () async {
+      final client = _HangingClient();
+      final signal = CancellationSignal();
+      adapter = _HttpAdapter();
+      final svc = PublishService(
+        registry: AdapterRegistry([adapter]),
+        accounts: accounts,
+        posts: posts,
+        secrets: InMemorySecretStore(),
+        quota: QuotaTracker(InMemoryQuotaRepository()),
+        http: NeforumHttp(client: client, maxRetries: 0),
+        clock: () => now,
+        log: Logger('test', sink: (level, area, msg, [err]) {}),
+      );
+      await scheduled(when: testNow);
+      final run = svc.publish('p1', cancellation: signal);
+      while (client.requests.isEmpty) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      signal.cancel();
+      final p = await run;
+      expect(client.aborted, hasLength(1));
+      expect(p.targets.single.status, TargetStatus.cancelled);
+      expect(p.status, PostStatus.cancelled);
+    });
+
+    test('rollUpStatus matches what a run leaves', () {
+      final base = Post(id: 'x', text: 'hi', createdAt: testNow, updatedAt: testNow, status: PostStatus.failed);
+      PostStatus of(List<TargetStatus> s) =>
+          service().rollUpStatus(base.copyWith(targets: [for (var i = 0; i < s.length; i++) PostTarget(accountId: 'a$i', status: s[i])])).status;
+      expect(of([TargetStatus.published, TargetStatus.skipped]), PostStatus.published);
+      expect(of([TargetStatus.published, TargetStatus.failed]), PostStatus.partial);
+      expect(of([TargetStatus.published, TargetStatus.cancelled]), PostStatus.partial);
+      expect(of([TargetStatus.failed, TargetStatus.cancelled]), PostStatus.cancelled);
+      expect(of([TargetStatus.failed]), PostStatus.failed);
+      expect(of([TargetStatus.awaitingHandoff, TargetStatus.cancelled]), PostStatus.partial);
+    });
   });
 
   test('held results survive a JSON round trip', () {

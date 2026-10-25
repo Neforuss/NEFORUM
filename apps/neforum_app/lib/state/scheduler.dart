@@ -29,6 +29,7 @@ class AppScheduler {
   final Ref ref;
 
   Timer? _timer;
+  Timer? _retentionTimer;
   bool _busy = false;
 
   AppServices get _s => ref.read(servicesProvider);
@@ -38,15 +39,35 @@ class AppScheduler {
     _timer = Timer.periodic(const Duration(seconds: 30), (_) => runDue());
     unawaited(runDue());
     if (Env.isAndroid || Env.isIOS) unawaited(_registerPeriodic());
+    // Startup applied retention already (main.dart); kept posts expire by
+    // the hour after that.
+    _retentionTimer = Timer.periodic(const Duration(hours: 1), (_) => unawaited(applyRetention()));
   }
 
   void stop() {
     _timer?.cancel();
     _timer = null;
+    _retentionTimer?.cancel();
+    _retentionTimer = null;
+  }
+
+  /// Deletes the finished posts Settings > Activity and history no longer
+  /// keeps. The demo keeps its sample history.
+  Future<int> applyRetention() async {
+    if (_s.demo) return 0;
+    try {
+      final n = await _s.applyRetention();
+      if (n > 0) updateTrayStatus();
+      return n;
+    } on Object catch (e) {
+      debugPrint('Retention run failed: $e');
+      return 0;
+    }
   }
 
   /// Publishes everything that is due. Non-interactive: hand-off targets are
-  /// left waiting and announced with a notification.
+  /// left waiting and announced with a notification. Each run can be
+  /// cancelled from Activity while it goes.
   Future<List<Post>> runDue({bool interactive = false}) async {
     if (_busy) return const [];
     _busy = true;
@@ -56,12 +77,21 @@ class AppScheduler {
       for (final p in due) {
         // With cloud sync, the device the post was scheduled on publishes it.
         if (!await _s.cloudSync.mayPublish(p)) continue;
-        await fitPhotosOfSavedPost(_s, p.id);
-        final done = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false);
+        final active = ref.read(activePublishingProvider.notifier);
+        final signal = CancellationSignal();
+        active.begin(p.id, signal);
+        final Post done;
+        try {
+          await fitPhotosOfSavedPost(_s, p.id);
+          done = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal);
+        } finally {
+          active.end(p.id, signal);
+        }
         out.add(done);
-        await _announce(done);
+        final discarded = await _s.discardIfComplete(p.id);
+        await announcePublishResult(_s, done, discarded: discarded);
       }
-      _updateTray();
+      updateTrayStatus();
       return out;
     } on Object catch (e) {
       debugPrint('Scheduler run failed: $e');
@@ -70,8 +100,6 @@ class AppScheduler {
       _busy = false;
     }
   }
-
-  Future<void> _announce(Post p) => announcePublishResult(_s, p);
 
   /// Sets up OS-level reminders and background work for a scheduled post.
   Future<void> planReminders(Post p) async {
@@ -128,7 +156,7 @@ class AppScheduler {
         debugPrint('Could not register background task: $e');
       }
     }
-    _updateTray();
+    updateTrayStatus();
   }
 
   Future<void> cancelReminders(Post p) async {
@@ -140,7 +168,7 @@ class AppScheduler {
         // Nothing registered.
       }
     }
-    _updateTray();
+    updateTrayStatus();
   }
 
   Future<void> _registerPeriodic() async {
@@ -159,7 +187,9 @@ class AppScheduler {
     }
   }
 
-  void _updateTray() {
+  /// Shows how many posts are scheduled and how many need the user in the
+  /// tray tooltip (desktop).
+  void updateTrayStatus() {
     if (!Env.isDesktop) return;
     final scheduled = ref.read(scheduledPostsProvider).length;
     final waiting = ref.read(needsAttentionProvider).length;
@@ -180,10 +210,24 @@ String _join(List<String> names) {
 }
 
 /// Notifies the user about the outcome of an unattended publish run.
-Future<void> announcePublishResult(AppServices s, Post p) async {
+/// [discarded]: the finished post was deleted right away (Settings >
+/// Activity and history), so the notification neither quotes nor opens it.
+Future<void> announcePublishResult(AppServices s, Post p, {bool discarded = false}) async {
   final waiting = p.targets.where((t) => t.status == TargetStatus.awaitingHandoff).toList();
   final failed = p.targets.where((t) => t.status == TargetStatus.failed).length;
   final ok = p.targets.where((t) => t.status == TargetStatus.published).length;
+  // The user stopped this run in Activity and has seen how it ended.
+  if (waiting.isEmpty && p.targets.any((t) => t.status == TargetStatus.cancelled)) return;
+  if (discarded) {
+    if (s.settings.notifyOnPublish) {
+      await NotificationService.instance.show(
+        key: 'result:${p.id}',
+        title: 'Posted to $ok ${ok == 1 ? 'network' : 'networks'}',
+        body: 'Your scheduled post is live.',
+      );
+    }
+    return;
+  }
   if (waiting.isNotEmpty) {
     final names = <String>[];
     for (final t in waiting) {
@@ -208,13 +252,15 @@ Future<void> announcePublishResult(AppServices s, Post p) async {
 }
 
 /// Publishes all due posts without UI (WorkManager / iOS background task).
+/// Finished posts are deleted right away when the setting keeps nothing.
 Future<int> publishDueHeadless(AppServices s) async {
   final due = await s.posts.due(DateTime.now());
   for (final p in due) {
     if (!await s.cloudSync.mayPublish(p)) continue;
     await fitPhotosOfSavedPost(s, p.id);
     final done = await s.publisher().publish(p.id, interactive: false, retryFailed: false);
-    await announcePublishResult(s, done);
+    final discarded = await s.discardIfComplete(p.id);
+    await announcePublishResult(s, done, discarded: discarded);
   }
   return due.length;
 }

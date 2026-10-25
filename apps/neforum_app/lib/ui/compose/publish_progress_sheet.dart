@@ -26,6 +26,8 @@ Future<void> showPublishProgress(BuildContext context) {
   );
 }
 
+/// The run's progress, with Cancel while it goes. It cannot be swiped
+/// away, so every state, an error included, offers a way to close it.
 class PublishProgressSheet extends ConsumerWidget {
   const PublishProgressSheet({super.key});
 
@@ -33,55 +35,84 @@ class PublishProgressSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final run = ref.watch(publishRunProvider);
-    // Null while the sheet animates out after "Done"; render nothing.
-    if (run == null) return const SizedBox(height: 120);
+    // A Cancel pressed in Activity changes this map.
+    ref.watch(activePublishingProvider);
+    // Null only while the sheet animates out after "Done".
+    if (run == null) return _Closing(onClose: () => Navigator.pop(context));
     final registry = ref.watch(registryProvider);
     final done = run.done;
+    final error = run.error;
     final targets = run.progress.entries.toList();
     final post = run.result;
 
     int count(TargetStatus s) => targets.where((e) => e.value.status == s).length;
     final ok = count(TargetStatus.published) + count(TargetStatus.handedOff);
     final failed = count(TargetStatus.failed);
+    final cancelled = count(TargetStatus.cancelled);
     final waiting = count(TargetStatus.awaitingHandoff);
     final total = targets.length;
 
     final String headline;
     final String sub;
-    if (!done) {
-      headline = 'Posting to $total ${total == 1 ? 'network' : 'networks'}…';
-      sub = 'You can keep this open. Hand-off networks will ask you to finish in their app.';
-    } else if (failed == 0 && waiting == 0) {
+    if (error != null) {
+      headline = 'Could not post';
+      sub = error;
+    } else if (run.preparing) {
+      headline = run.cancelling ? 'Cancelling…' : 'Getting your post ready…';
+      sub = 'Saving it and preparing the photos each network needs.';
+    } else if (!done) {
+      headline = run.cancelling ? 'Cancelling…' : 'Posting to $total ${total == 1 ? 'network' : 'networks'}…';
+      sub = run.cancelling
+          ? 'Stopping after the network being posted to now. Anything already posted stays online.'
+          : 'You can keep this open. Hand-off networks will ask you to finish in their app.';
+    } else if (cancelled > 0 && ok == 0 && failed == 0 && waiting == 0) {
+      headline = 'Posting cancelled';
+      sub = 'Nothing was posted. You can post it later from Activity.';
+    } else if (failed == 0 && waiting == 0 && cancelled == 0) {
       headline = ok == total ? 'Posted everywhere' : 'Posted to $ok of $total';
       sub = 'Your post is live on $ok ${ok == 1 ? 'network' : 'networks'}.';
     } else {
       headline = 'Posted to $ok of $total';
       sub = [
         if (failed > 0) '$failed failed',
+        if (cancelled > 0) '$cancelled cancelled',
         if (waiting > 0) '$waiting waiting for you',
       ].join(' · ');
     }
+
+    final Widget badge;
+    if (!done) {
+      badge = const NeforumMark(key: ValueKey('busy'), size: 64, animate: true);
+    } else {
+      final problem = error != null || failed > 0;
+      final onlyCancelled = !problem && cancelled > 0 && ok == 0;
+      badge = Container(
+        key: const ValueKey('done'),
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          color: error != null ? nf.dangerSoft : (problem ? nf.warningSoft : (onlyCancelled ? nf.surfaceSunken : nf.successSoft)),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          error != null ? Icons.error_outline_rounded : (problem ? Icons.priority_high_rounded : (onlyCancelled ? Icons.block_rounded : Icons.check_rounded)),
+          size: 34,
+          color: error != null ? nf.danger : (problem ? nf.warning : (onlyCancelled ? nf.textMuted : nf.success)),
+        ),
+      );
+    }
+
+    final retryIds = post == null ? const <String>{} : post.targets.where(needsRetry).map((t) => t.accountId).toSet();
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xxl, Space.xxl, Space.md),
         child: Column(children: [
-          AnimatedSwitcher(
-            duration: Motion.medium,
-            child: done
-                ? Container(
-                    key: const ValueKey('done'),
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(color: failed > 0 ? nf.warningSoft : nf.successSoft, shape: BoxShape.circle),
-                    child: Icon(failed > 0 ? Icons.priority_high_rounded : Icons.check_rounded, size: 34, color: failed > 0 ? nf.warning : nf.success),
-                  )
-                : const NeforumMark(key: ValueKey('busy'), size: 64, animate: true),
-          ),
+          AnimatedSwitcher(duration: Motion.medium, child: badge),
           const SizedBox(height: Space.lg),
           Text(headline, textAlign: TextAlign.center, style: context.text.headlineSmall),
           const SizedBox(height: Space.xs),
-          Text(sub, textAlign: TextAlign.center, style: context.text.bodySmall),
+          Text(sub, textAlign: TextAlign.center, style: context.text.bodySmall?.copyWith(color: error != null ? nf.danger : null)),
           if (!done) ...[
             const SizedBox(height: Space.lg),
             ClipRRect(
@@ -94,71 +125,77 @@ class PublishProgressSheet extends ConsumerWidget {
           ],
         ]),
       ),
-      Flexible(
-        child: ListView.separated(
-          shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(horizontal: Space.lg),
-          itemCount: targets.length,
-          separatorBuilder: (_, _) => Divider(height: 1, color: nf.border, indent: 60),
-          itemBuilder: (context, i) {
-            final e = targets[i];
-            final account = ref.watch(accountByIdProvider(e.key));
-            final target = post?.targetFor(e.key);
-            return _Row(
-              account: account,
-              platformName: account == null ? 'Removed account' : (registry.descriptor(account.platformId)?.name ?? account.platformId),
-              progress: e.value,
-              url: target?.result?.remoteUrl,
-            );
-          },
+      if (targets.isNotEmpty)
+        Flexible(
+          child: ListView.separated(
+            shrinkWrap: true,
+            padding: const EdgeInsets.symmetric(horizontal: Space.lg),
+            itemCount: targets.length,
+            separatorBuilder: (_, _) => Divider(height: 1, color: nf.border, indent: 60),
+            itemBuilder: (context, i) {
+              final e = targets[i];
+              final account = ref.watch(accountByIdProvider(e.key));
+              final target = post?.targetFor(e.key);
+              return _Row(
+                account: account,
+                platformName: account == null ? 'Removed account' : (registry.descriptor(account.platformId)?.name ?? account.platformId),
+                progress: e.value,
+                url: target?.result?.remoteUrl,
+                stopped: done,
+              );
+            },
+          ),
         ),
-      ),
       const SizedBox(height: Space.md),
       Divider(height: 1, color: nf.border),
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xl, Space.md, Space.xl, Space.lg),
         child: Wrap(alignment: WrapAlignment.end, spacing: Space.sm, runSpacing: Space.sm, children: [
-          if (done && failed > 0 && post != null)
+          if (done && error == null && retryIds.isNotEmpty && post != null)
             OutlinedButton.icon(
-              onPressed: () {
-                final ids = post.targets.where((t) => t.status == TargetStatus.failed).map((t) => t.accountId).toSet();
-                ref.read(postActionsProvider).publishExisting(post.id, accountIds: ids);
-              },
+              // A failure shows in this sheet (the run's error).
+              onPressed: () => ref.read(postActionsProvider).publishExisting(post.id, accountIds: retryIds).then((_) {}, onError: (Object _) {}),
               icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Retry failed'),
+              label: Text(cancelled == 0 ? 'Retry failed' : 'Retry'),
             ),
-          if (done && waiting > 0 && post != null)
+          if (done && error == null && waiting > 0 && post != null)
             OutlinedButton.icon(
               onPressed: () async {
                 final actions = ref.read(postActionsProvider);
+                Post? last;
                 for (final t in post.targets.where((t) => t.status == TargetStatus.awaitingHandoff)) {
-                  await actions.runHandoff(post.id, t.accountId);
+                  last = await actions.runHandoff(post.id, t.accountId);
                 }
-                final fresh = await ref.read(servicesProvider).posts.get(post.id);
+                // The last hand-off can complete the post, which may then be
+                // deleted (Settings > Activity and history).
+                final fresh = await ref.read(servicesProvider).posts.get(post.id) ?? last;
                 if (fresh != null) ref.read(publishRunProvider.notifier).finish(fresh);
               },
               icon: const Icon(Icons.ios_share_rounded, size: 18),
               label: Text('Finish $waiting hand-off${waiting == 1 ? '' : 's'}'),
             ),
           if (done)
-            TextButton(
+            FilledButton(
               onPressed: () {
                 Navigator.pop(context);
-                ref.read(composerProvider.notifier).reset();
                 _clearLater(ref);
               },
-              child: const Text('New post'),
+              child: Text(error != null ? 'Close' : 'Done'),
+            )
+          else
+            OutlinedButton(
+              onPressed: run.cancelling
+                  ? null
+                  : () {
+                      final id = run.postId;
+                      if (id == null) {
+                        ref.read(publishRunProvider.notifier).cancel();
+                      } else {
+                        ref.read(postActionsProvider).cancelPublishing(id);
+                      }
+                    },
+              child: Text(run.cancelling ? 'Cancelling…' : 'Cancel'),
             ),
-          FilledButton(
-            onPressed: done
-                ? () {
-                    Navigator.pop(context);
-                    if (failed == 0) ref.read(composerProvider.notifier).reset();
-                    _clearLater(ref);
-                  }
-                : null,
-            child: Text(done ? 'Done' : 'Posting…'),
-          ),
         ]),
       ),
     ]);
@@ -172,18 +209,35 @@ void _clearLater(WidgetRef ref) {
   Future<void>.delayed(Motion.slow, notifier.clear);
 }
 
+/// What the sheet shows when there is no run (normally only while it
+/// animates out): still a way to close it.
+class _Closing extends StatelessWidget {
+  const _Closing({required this.onClose});
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        height: 120,
+        child: Center(child: TextButton(onPressed: onClose, child: const Text('Close'))),
+      );
+}
+
 class _Row extends StatelessWidget {
-  const _Row({required this.account, required this.platformName, required this.progress, this.url});
+  const _Row({required this.account, required this.platformName, required this.progress, this.url, this.stopped = false});
   final ConnectedAccount? account;
   final String platformName;
   final TargetProgress progress;
   final String? url;
 
+  /// The run is over: nothing is waiting any more, even a target the run
+  /// never reached (it stopped with an error).
+  final bool stopped;
+
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
     final (label, tone, icon) = targetStatusStyle(progress.status);
-    final busy = progress.status == TargetStatus.publishing || progress.status == TargetStatus.pending;
+    final busy = !stopped && (progress.status == TargetStatus.publishing || progress.status == TargetStatus.pending);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Space.md, horizontal: Space.sm),
       child: Row(children: [
