@@ -16,26 +16,36 @@ import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
+import 'art_handoff_common.dart' show artworkFiles;
 
 /// The checks every art site makes: the post is artwork
-/// ([PostVariant.artwork]) and carries at least one image.
-List<ValidationIssue> artworkIssues(PostVariant v, String siteName) => [
-      if (!v.isArtwork)
-        ValidationIssue.error(
-          'art.not_artwork',
-          '$siteName only receives artwork. Turn on Artwork for this post, or leave $siteName out.',
-          field: 'account',
-        ),
-      if (!v.media.any((m) => m.isImage))
-        ValidationIssue.error('art.image_required', '$siteName needs at least one image.', field: 'media'),
-    ];
+/// ([PostVariant.artwork]) and carries the work itself, an image (or a video
+/// where [d], the descriptor of the account's tier, takes one).
+List<ValidationIssue> artworkIssues(PostVariant v, PlatformDescriptor d) {
+  final m = d.media;
+  final works = artworkFiles(v).where((x) => x.isVideo ? m.maxVideos > 0 : m.maxImages > 0);
+  return [
+    if (!v.isArtwork)
+      ValidationIssue.error(
+        'art.not_artwork',
+        '${d.name} only receives artwork. Turn on Artwork for this post, or leave ${d.name} out.',
+        field: 'account',
+      ),
+    if (works.isEmpty)
+      ValidationIssue.error(
+        'art.media_required',
+        m.maxVideos > 0 ? '${d.name} needs at least one image or video.' : '${d.name} needs at least one image.',
+        field: 'media',
+      ),
+  ];
+}
 
 /// [RulesValidator.validate] for an art site, with [artworkIssues] in place
 /// of the generic "needs an image or a video".
 List<ValidationIssue> validateArtwork(PostVariant v, PlatformDescriptor d, {PlatformTier? tier}) =>
     RulesValidator.validate(v, d, tier: tier)
       ..removeWhere((i) => i.code == 'media.required')
-      ..addAll(artworkIssues(v, d.name));
+      ..addAll(artworkIssues(v, d));
 
 /// The error [validateArtwork] stops a publish with: every error message,
 /// as one validation failure. Null when there is none.
@@ -134,13 +144,16 @@ HandoffPlan artworkHandoff(
   final description = artworkDescription(v);
   final tags = maxTags == null ? v.tags : v.tags.take(maxTags).toList();
   final files = v.media.length;
+  // A video is the work where the site takes one (see [artworkIssues]).
+  final noun = v.media.any((m) => m.isVideo) ? 'files' : 'images';
   final steps = [
     openStep.isNotEmpty ? openStep : "$name's upload page opens (sign in if asked).",
     if (files == 0)
       '$name needs an image: add one in NEFORUM first, or pick it on $name.'
     else
-      "Add your ${files == 1 ? 'image' : '$files files'}: click **Save media to Downloads** here, then pick "
-          "${files == 1 ? 'it' : 'them'} in $name's file picker (or drag ${files == 1 ? 'it' : 'them'} in).",
+      "Add your ${files == 1 ? (v.media.single.isVideo ? 'video' : 'image') : '$files files'}: click **Save media to "
+          "Downloads** here, then pick ${files == 1 ? 'it' : 'them'} in $name's file picker (or drag "
+          "${files == 1 ? 'it' : 'them'} in).",
     if (title.isNotEmpty) 'Copy the **Title** into the title field.',
     if (description.isNotEmpty)
       descriptionStep.isNotEmpty ? descriptionStep : 'Paste the description (it is on the clipboard).',
@@ -175,9 +188,9 @@ HandoffPlan artworkHandoff(
     mediaNote: files == 0
         ? null
         : hasApp
-            ? 'On a phone, share the images to the $name app. On a computer, upload them on $name\'s website: '
+            ? 'On a phone, share the $noun to the $name app. On a computer, upload them on $name\'s website: '
                 'NEFORUM prepares the title, description and tags.'
-            : '$name has no app to share to, so you upload the images on its website; NEFORUM prepares the title, '
+            : '$name has no app to share to, so you upload the $noun on its website; NEFORUM prepares the title, '
                 'description and tags.',
   );
 }

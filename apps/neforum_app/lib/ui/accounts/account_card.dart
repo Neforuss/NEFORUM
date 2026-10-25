@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../state/artwork_targets.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
@@ -23,10 +24,13 @@ class AccountCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final a = account;
-    final d = ref.watch(registryProvider).descriptor(a.platformId);
+    final registry = ref.watch(registryProvider);
+    final d = registry.descriptor(a.platformId);
     final settings = ref.watch(settingsProvider);
     final quotas = a.tier == PlatformTier.handoff ? null : ref.watch(quotaStatusProvider(a.id)).value;
-    final isDefault = settings.defaultTargetIds.isEmpty || settings.defaultTargetIds.contains(a.id);
+    // What the composer chooses for a new post (art sites and the other
+    // accounts each fall back to all of theirs when none is marked).
+    final isDefault = includedInNewPosts(ref.watch(accountListProvider), registry, settings, a);
 
     return NfCard(
       padding: EdgeInsets.zero,
@@ -83,10 +87,8 @@ class AccountCard extends ConsumerWidget {
           value: a.enabled && isDefault,
           onChanged: a.enabled
               ? (v) async {
-                  final all = ref.read(accountListProvider).where((x) => x.enabled).map((x) => x.id).toList();
-                  final current = settings.defaultTargetIds.isEmpty ? all : settings.defaultTargetIds;
-                  final next = v ? {...current, a.id}.toList() : current.where((id) => id != a.id).toList();
-                  await ref.read(settingsProvider.notifier).update((s) => s.copyWith(defaultTargetIds: next.length == all.length ? const [] : next));
+                  final next = defaultTargetIdsWith(ref.read(accountListProvider), registry, ref.read(settingsProvider), a, included: v);
+                  await ref.read(settingsProvider.notifier).update((s) => s.copyWith(defaultTargetIds: next));
                 }
               : null,
         ),

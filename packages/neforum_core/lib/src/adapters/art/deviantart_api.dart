@@ -28,10 +28,10 @@ class DeviantArtDeviation {
 /// user and the two-step Sta.sh post (submit a file as a private draft, then
 /// publish it as a deviation).
 ///
-/// Endpoints and fields follow deviantart.readme.io (stash/submit,
-/// stash/publish, authentication, errors; read 2026-10-25). Every request
-/// carries a User-Agent and accepts gzip, which DeviantArt requires (both
-/// come from [NeforumHttp] and dart:io).
+/// Endpoints and fields follow deviantart.readme.io (user/whoami,
+/// stash/submit, stash/publish, authentication, errors; read 2026-10-25).
+/// Every request carries a User-Agent and accepts gzip, which DeviantArt
+/// requires (both come from [NeforumHttp] and dart:io).
 class DeviantArtApi {
   DeviantArtApi({required this.ctx, required this.accessToken});
 
@@ -42,8 +42,9 @@ class DeviantArtApi {
   static final Uri submitEndpoint = Uri.parse('https://www.deviantart.com/api/v1/oauth2/stash/submit');
   static final Uri publishEndpoint = Uri.parse('https://www.deviantart.com/api/v1/oauth2/stash/publish');
 
-  /// `stash` for submit, `publish` for publish, `basic` for whoami.
-  static const List<String> scopes = ['basic', 'stash', 'publish'];
+  /// Every endpoint needs `basic` plus its own scope: `user` for whoami,
+  /// `stash` for submit, `publish` for publish.
+  static const List<String> scopes = ['basic', 'user', 'stash', 'publish'];
 
   /// The API version NEFORUM was written against (`dA-minor-version`).
   static const String minorVersion = '20240701';

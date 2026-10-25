@@ -90,6 +90,18 @@ PostVariant _artwork({
 
 Iterable<String> _codes(List<ValidationIssue> issues) => issues.map((i) => i.code);
 
+/// The tiers whose descriptor takes a video, so a video alone is the work:
+/// the Dribbble uploader, Flickr and Inkbunny. DeviantArt and Dribbble's API
+/// take images only; Pixelfed takes video only where the server does (see
+/// the Pixelfed group).
+const _videoWork = {
+  ('dribbble', PlatformTier.handoff),
+  ('flickr', PlatformTier.handoff),
+  ('flickr', PlatformTier.byokApi),
+  ('inkbunny', PlatformTier.openApi),
+  ('inkbunny', PlatformTier.handoff),
+};
+
 void main() {
   group('the five API art platforms', () {
     final registry = builtinRegistry();
@@ -115,15 +127,25 @@ void main() {
       });
 
       for (final tier in tiers) {
-        test('$id ($tier): refuses posts that are not artwork or have no image', () {
+        test('$id ($tier): refuses posts that are not artwork or carry no work', () {
           final adapter = registry.byId(id)!;
           final account = fakeAccount(id, tier: tier);
           final notArt = PostVariant(text: 'Hello', title: 'Hi', tags: const ['a', 'b', 'c', 'd'], media: [fakeImage()]);
           expect(_codes(adapter.validate(notArt, account)), contains('art.not_artwork'));
-          final videoOnly = _artwork(media: [fakeVideo()]);
-          expect(_codes(adapter.validate(videoOnly, account)), contains('art.image_required'));
-          expect(_codes(adapter.validate(_artwork(media: const []), account)), contains('art.image_required'));
-          expect(_codes(adapter.validate(_artwork(media: const []), account)), isNot(contains('media.required')));
+          final empty = adapter.validate(_artwork(media: const []), account);
+          expect(_codes(empty), contains('art.media_required'));
+          expect(_codes(empty), isNot(contains('media.required')));
+          final videoOnly = adapter.validate(_artwork(media: [fakeVideo()]), account);
+          if (_videoWork.contains((id, tier))) {
+            expect(videoOnly.where((i) => i.isError), isEmpty, reason: 'a video alone is the work on $id $tier');
+            expect(empty.firstWhere((i) => i.code == 'art.media_required').message, contains('image or video'));
+          } else {
+            expect(_codes(videoOnly), contains('art.media_required'));
+            expect(empty.firstWhere((i) => i.code == 'art.media_required').message, endsWith('needs at least one image.'));
+          }
+          // A NEFORUM text card is never the work.
+          final card = MediaAttachment(id: 'card', path: '/tmp/card.png', mimeType: 'image/png', sizeBytes: 64, width: 800, height: 600, generated: true);
+          expect(_codes(adapter.validate(_artwork(media: [card]), account)), contains('art.media_required'));
           final fine = _artwork(media: [fakeImage(width: 800, height: 600)]);
           expect(adapter.validate(fine, account).where((i) => i.isError), isEmpty, reason: '$id $tier');
         });
@@ -179,30 +201,41 @@ void main() {
       expect(adapter.rotatesRefreshTokensFor(apiAccount), isTrue);
     });
 
-    test('connect: OAuth 2.0 with PKCE on the loopback address, then whoami', () async {
-      final server = _Server({
+    /// DeviantArt's token endpoint grants the scopes the user approved, and
+    /// whoami refuses a token without `basic` and `user` (403
+    /// insufficient_scope), as deviantart.readme.io/reference/user_whoami
+    /// documents.
+    _Server scopedServer(FakeAuthBroker broker) {
+      Set<String> granted() => (broker.lastAuthorizationUrl?.queryParameters['scope'] ?? '').split(' ').toSet();
+      return _Server({
         'POST /oauth2/token': (_) => _one({
               'status': 'success',
               'access_token': 'tok',
               'token_type': 'Bearer',
               'expires_in': 3600,
               'refresh_token': 'ref',
-              'scope': 'basic stash publish',
+              'scope': granted().join(' '),
             }),
-        'GET /api/v1/oauth2/user/whoami': (_) => _one({
-              'userid': 'A1B2',
-              'username': 'harbourpainter',
-              'usericon': 'https://a.deviantart.net/avatars/h.png',
-            }),
+        'GET /api/v1/oauth2/user/whoami': (_) => granted().containsAll(const ['basic', 'user'])
+            ? _one({
+                'userid': 'A1B2',
+                'username': 'harbourpainter',
+                'usericon': 'https://a.deviantart.net/avatars/h.png',
+              })
+            : _one({'error': 'insufficient_scope', 'error_description': 'Insufficient scope.', 'status': 'error'}, 403),
       });
+    }
+
+    test('connect: OAuth 2.0 with PKCE on the loopback address, then whoami', () async {
       final broker = FakeAuthBroker(code: 'the-code');
+      final server = scopedServer(broker);
       final r = await adapter.connect(
           PlatformTier.byokApi, {'clientId': ' 12345 '}, testContext(handler: server.handle, broker: broker));
 
       final auth = broker.lastAuthorizationUrl!;
       expect(auth.toString(), startsWith('https://www.deviantart.com/oauth2/authorize'));
       expect(auth.queryParameters['client_id'], '12345');
-      expect(auth.queryParameters['scope'], 'basic stash publish');
+      expect(auth.queryParameters['scope'], 'basic user stash publish');
       expect(auth.queryParameters['redirect_uri'], 'http://127.0.0.1:52771/callback');
       expect(auth.queryParameters['code_challenge_method'], 'S256');
 
@@ -437,6 +470,14 @@ void main() {
       expect(plan.snippets.last.text.split(', '), hasLength(12));
       expect(plan.instructions, allOf(contains('Final Touches'), contains('**Publish**')));
     });
+
+    test('hand-off: a video alone is the shot; the API takes images only', () {
+      final video = _artwork(media: [fakeVideo(mimeType: 'video/quicktime')]);
+      final handoff = fakeAccount('dribbble', tier: PlatformTier.handoff);
+      expect(adapter.validate(video, handoff).where((i) => i.isError), isEmpty);
+      expect(adapter.buildHandoff(video)!.instructions, contains('Add your video'));
+      expect(_codes(adapter.validate(video, apiAccount)), contains('art.media_required'));
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -531,6 +572,24 @@ void main() {
       expect(_codes(adapter.validate(_artwork(), short)), contains('text.too_long'));
       final handoff = fakeAccount('pixelfed', tier: PlatformTier.handoff, config: config);
       expect(_codes(adapter.validate(_artwork(), handoff)), isNot(contains('handoff.media')));
+    });
+
+    test('a video alone is the work on a server that takes video, never on one that does not', () async {
+      final video = _artwork(media: [fakeVideo()]);
+      expect(adapter.validate(video, account).where((i) => i.isError), isEmpty);
+      final handoff = fakeAccount('pixelfed', tier: PlatformTier.handoff, config: config);
+      expect(adapter.validate(video, handoff).where((i) => i.isError), isEmpty);
+      expect(adapter.buildHandoff(video, account: handoff)!.instructions, contains('Add your video'));
+      final imagesOnly = fakeAccount('pixelfed', config: {...config, 'supportedMimeTypes': ['image/jpeg', 'image/png']});
+      expect(_codes(adapter.validate(video, imagesOnly)), contains('art.media_required'));
+
+      final calls = <http.Request>[];
+      final refused = await adapter.publish(video, imagesOnly, secrets, testContext(handler: (r) async {
+        calls.add(r);
+        return _json({});
+      }));
+      expect(refused.error!.kind, PublishErrorKind.validation);
+      expect(calls, isEmpty, reason: 'refused before any request');
     });
 
     test('hand-off: the server\'s Create New Post page with the caption copied', () {
@@ -709,6 +768,19 @@ void main() {
       expect(edit['visibility'], 'yes');
       expect(edit['tag[4]'], 'yes');
       expect(edit.containsKey('tag[2]'), isFalse);
+    });
+
+    test('publish: one MP4 video alone becomes the submission', () async {
+      final server = _Server({
+        'POST /api_upload.php': (_) => _one({'sid': 'S1D', 'submission_id': '9003'}),
+        'POST /api_editsubmission.php': (_) => _one({'sid': 'S1D', 'submission_id': '9003'}),
+      });
+      final res = await adapter.publish(_artwork(media: [fakeVideo()]), account, secrets, testContext(handler: server.handle));
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(res.remoteUrl, 'https://inkbunny.net/s/9003');
+      final upload = server.call('/api_upload.php');
+      expect(_all(upload, 'uploadedfile[]'), ['<vid1.mp4>']);
+      expect(utf8.decode(upload.bodyBytes, allowMalformed: true), contains('Content-Type: video/mp4'));
     });
 
     test('an ended session asks to reconnect; a failed edit names the hidden submission', () async {

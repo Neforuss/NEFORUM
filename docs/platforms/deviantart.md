@@ -22,7 +22,7 @@ This guide connects DeviantArt through your own free DeviantArt app, so NEFORUM 
 8. Paste the client_id into **Client ID** and leave **Client secret** empty.
 9. Click **Connect**.
 10. In the browser window that opens, allow access.
-    - NEFORUM asks for `basic` (your username), `stash` (put a file in your Sta.sh) and `publish` (publish it).
+    - NEFORUM asks for `basic` and `user` (read your username), `stash` (put a file in your Sta.sh) and `publish` (publish it).
 
 ## Steps: post by hand-off
 
@@ -78,6 +78,7 @@ Your client secret, if your app is Confidential, stays in this device's secure s
 
 ## Sources
 
+- The signed-in user (`user/whoami`, scopes `basic` and `user`): <https://deviantart.readme.io/reference/user_whoami.md>
 - Sta.sh submit (fields `file`, `title`, `artist_comments`, `tags[]`, `is_ai_generated`, `noai`): <https://deviantart.readme.io/reference/stash_submit.md>
 - Sta.sh publish (`itemid`, `is_mature`, `mature_level` strict or moderate, error codes 0 to 9): <https://deviantart.readme.io/reference/stash_publish.md>
 - Authentication (Public and Confidential clients, PKCE, token lifetimes, exact redirect URIs): <https://deviantart.readme.io/docs/authentication.md>

@@ -9,7 +9,8 @@ enum ArtworkMaturity {
   /// Suggestive themes, mild nudity or violence.
   mature,
 
-  /// Explicit content; only sites that allow it receive the post.
+  /// Explicit content. Sites that do not allow it refuse the post with a
+  /// validation error.
   adult,
 }
 

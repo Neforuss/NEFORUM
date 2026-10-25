@@ -27,7 +27,7 @@ This guide sets up Flickr. By default NEFORUM hands your photos to Flickr's uplo
 
 ## How it works
 
-Flickr only receives posts marked as artwork, with at least one image.
+Flickr only receives posts marked as artwork, with at least one image or video.
 
 Signing in uses OAuth 1.0a: NEFORUM gets a temporary token, you allow it on Flickr's authorization page, and NEFORUM swaps the temporary token for your own. That token never expires and never changes, so the account stays connected on every device you copy it to.
 

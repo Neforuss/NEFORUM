@@ -58,8 +58,9 @@ PlatformDescriptor pixelfedDescriptorFor(MastodonInstanceProfile p) {
       imageMimeTypes: p.imageMimeTypes ?? PixelfedDefaults.mimeTypes,
       videoMimeTypes: videoTypes,
       supportsAltText: true,
-      notes: 'Every post needs an image. Each server sets its own limits (by default 4 photos of up to 15,000 KB as '
-          'JPEG, PNG or GIF; pixelfed.social takes 20 files of 15 MB, including WebP and MP4).',
+      notes: 'Every post needs an image, or a video on servers that take video. Each server sets its own limits (by '
+          'default 4 photos of up to 15,000 KB as JPEG, PNG or GIF; pixelfed.social takes 20 files of 15 MB, including '
+          'WebP and MP4).',
     ),
     defaultQuotas: const [
       QuotaRule(
@@ -202,7 +203,8 @@ class PixelfedAdapter extends MastodonAdapter {
     // The Mastodon share page notes do not apply: Pixelfed's hand-off opens
     // its own composer.
     ..removeWhere((i) => i.code == 'media.required' || i.code == 'handoff.no_share_page' || i.code == 'handoff.media')
-    ..addAll(artworkIssues(variant, descriptor.name));
+    // The server's own limits say whether a video can be the work.
+    ..addAll(artworkIssues(variant, descriptorForAccount(account)));
 
   @override
   Future<PublishResult> publish(
@@ -212,7 +214,7 @@ class PixelfedAdapter extends MastodonAdapter {
     AdapterContext ctx,
   ) async {
     if (account.tier != PlatformTier.handoff) {
-      final rejection = artworkRejection(artworkIssues(variant, descriptor.name));
+      final rejection = artworkRejection(artworkIssues(variant, descriptorForAccount(account)));
       if (rejection != null) return PublishResult.failure(rejection);
     }
     return super.publish(captionVariant(variant), account, secrets, ctx);
@@ -238,14 +240,16 @@ class PixelfedAdapter extends MastodonAdapter {
     final where = hasServer ? p.domain : 'your Pixelfed server';
     final rated = captionVariant(variant).sensitive;
     final cw = variant.contentWarning?.trim() ?? '';
+    // A video is the work on servers that take video (see [validate]).
+    final noun = variant.media.any((m) => m.isVideo) ? 'files' : 'images';
     final steps = [
       'The **Create New Post** page on $where opens (sign in if asked).',
       if (files == 0)
         'Pixelfed needs an image: add one in NEFORUM first, or pick it there.'
       else
-        'Add your ${files == 1 ? 'image' : '$files images'}: click **Save media to Downloads** here, then pick '
-            '${files == 1 ? 'it' : 'them'} in the file picker. On a phone, share ${files == 1 ? 'it' : 'them'} to your '
-            'Pixelfed app instead.',
+        'Add your ${files == 1 ? (variant.media.single.isVideo ? 'video' : 'image') : '$files $noun'}: click **Save '
+            'media to Downloads** here, then pick ${files == 1 ? 'it' : 'them'} in the file picker. On a phone, share '
+            '${files == 1 ? 'it' : 'them'} to your Pixelfed app instead.',
       if (caption.isNotEmpty) 'Paste the caption (it is on the clipboard).',
       if (rated) 'Turn on **Sensitive** (contains NSFW content).',
       if (cw.isNotEmpty) 'Add the content warning "$cw".',
@@ -261,7 +265,7 @@ class PixelfedAdapter extends MastodonAdapter {
       instructions: [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n'),
       mediaNote: files == 0
           ? null
-          : 'On a phone the images go through the share sheet to your Pixelfed app. On a computer, add them on the '
+          : 'On a phone the $noun go through the share sheet to your Pixelfed app. On a computer, add them on the '
               'Create New Post page; the caption is on the clipboard.',
     );
   }
