@@ -79,6 +79,9 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     };
     final key = '$_captionKeyPrefix$platform|${source.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
     var copy = used[key] ?? pool[key];
+    // Copies made before 1.2.0 have the default style and no style in their
+    // key; reusing them spares a scheduled post rendering in the background.
+    if (copy == null && look == const CaptionStyle()) copy = pool['$_captionKeyPrefix$platform|${source.id}|${stableHash(words)}'];
     if (copy == null) {
       try {
         final out = await renderCaptionedPhoto(

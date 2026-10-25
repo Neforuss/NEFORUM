@@ -495,6 +495,37 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('a captioned photo made before 1.2.0 is still used by a scheduled post', (tester) async {
+      final (s, c) = await boot(tester);
+      final tiktok = c.read(accountListProvider).firstWhere((a) => a.platformId == 'tiktok');
+      final photo = (await tester.runAsync(() => s.media.importBytes(_photo(600, 800, img.ColorRgb8(90, 60, 160)), fileName: 'old.jpg')))!;
+      final now = DateTime(2026, 10, 25);
+      var post = Post(id: 'p-old', text: 'Saved by 1.1', media: [photo], targets: [PostTarget(accountId: tiktok.id)], createdAt: now, updatedAt: now);
+      late MediaAttachment legacy;
+      await tester.runAsync(() async {
+        post = await attachFittedPhotos(s, post, s.settings);
+        final fitted = post.media.singleWhere((m) => m.derivedFrom != null);
+        final made = await s.media.importBytes(_photo(1080, 1920, img.ColorRgb8(90, 60, 160)), fileName: 'old (captioned).jpg');
+        legacy = MediaAttachment(
+          id: made.id,
+          path: made.path,
+          mimeType: 'image/jpeg',
+          sizeBytes: made.sizeBytes,
+          width: 1080,
+          height: 1920,
+          generated: true,
+          derivedFrom: photo.id,
+          fitKey: 'caption|tiktok|${fitted.id}|${stableHash('Saved by 1.1')}',
+        );
+        post = post.copyWith(media: [...post.media, legacy]).withTarget(PostTarget(accountId: tiktok.id, overrides: PostOverrides(mediaIds: [legacy.id])));
+        await s.posts.upsert(post);
+        await fitPhotosOfSavedPost(s, post.id);
+      });
+      final after = (await tester.runAsync(() => s.posts.get(post.id)))!;
+      expect(after.targetFor(tiktok.id)!.overrides.mediaIds, [legacy.id]);
+      await finish(tester);
+    });
+
     testWidgets('a post saved with the caption off stays off when the Settings default is turned on', (tester) async {
       final (s, c) = await boot(tester);
       final tiktok = c.read(accountListProvider).firstWhere((a) => a.platformId == 'tiktok');
