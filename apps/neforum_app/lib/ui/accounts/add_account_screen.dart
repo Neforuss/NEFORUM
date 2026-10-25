@@ -11,6 +11,7 @@ import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
+import '../compose/target_picker.dart';
 import '../router.dart';
 import 'connect_form.dart';
 import 'platform_picker.dart';
@@ -105,7 +106,11 @@ class _AddAccountScreenState extends ConsumerState<AddAccountScreen> {
             _go(_Step.done);
           },
         ),
-      _Step.done => _Success(account: _connected!, onAnother: () => _go(_Step.platform, forward: false)),
+      _Step.done => _Success(
+          account: _connected!,
+          onAnother: () => _go(_Step.platform, forward: false),
+          onAnotherHere: () => _pickPlatform(_connected!.platformId),
+        ),
     };
 
     final title = switch (_step) {
@@ -181,9 +186,14 @@ class _Stepper extends StatelessWidget {
 }
 
 class _Success extends ConsumerWidget {
-  const _Success({required this.account, required this.onAnother});
+  const _Success({required this.account, required this.onAnother, required this.onAnotherHere});
   final ConnectedAccount account;
+
+  /// Back to the platform gallery.
   final VoidCallback onAnother;
+
+  /// Another account on the same platform.
+  final VoidCallback onAnotherHere;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -228,11 +238,21 @@ class _Success extends ConsumerWidget {
             icon: Icons.edit_rounded,
             onPressed: () {
               final c = ref.read(composerProvider);
-              if (!c.selected.contains(account.id)) ref.read(composerProvider.notifier).toggleAccount(account.id);
+              if (d?.isArtPlatform ?? false) {
+                // Art sites only receive artwork.
+                setArtworkMode(ref, on: true, accountId: account.id);
+              } else if (!c.selected.contains(account.id)) {
+                ref.read(composerProvider.notifier).toggleAccount(account.id);
+              }
               context.go(AppSection.compose.path);
             },
           ),
           OutlinedButton.icon(onPressed: onAnother, icon: const Icon(Icons.add_rounded, size: 18), label: const Text('Add another')),
+          TextButton.icon(
+            onPressed: onAnotherHere,
+            icon: const Icon(Icons.person_add_alt_outlined, size: 18),
+            label: Text('Another ${d?.name ?? account.platformId} account'),
+          ),
         ]),
       ]),
     );

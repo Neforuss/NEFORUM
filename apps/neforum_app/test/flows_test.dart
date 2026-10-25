@@ -151,7 +151,13 @@ void main() {
         router.go('/accounts/add');
         await settle('add account');
         // Inactive tabs stay mounted, so scope finders to this screen.
-        final mastodon = find.descendant(of: find.byType(AddAccountScreen), matching: find.text('Mastodon')).first;
+        Finder onScreen(String text) => find.descendant(of: find.byType(AddAccountScreen), matching: find.text(text));
+        // Platforms with an account (Mastodon in the demo) are under Added.
+        expect(onScreen('Mastodon'), findsNothing);
+        await tester.ensureVisible(onScreen('Added'));
+        await tester.tap(onScreen('Added'));
+        await settle('show added platforms');
+        final mastodon = onScreen('Mastodon').first;
         await tester.ensureVisible(mastodon);
         await settle('scroll to mastodon');
         await tester.tap(mastodon);

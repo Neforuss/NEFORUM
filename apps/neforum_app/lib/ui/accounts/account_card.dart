@@ -78,7 +78,8 @@ class AccountCard extends ConsumerWidget {
         const SizedBox(height: Space.xs),
         Divider(height: 1, color: nf.border),
         _Toggle(
-          label: 'Include in new posts',
+          // Art sites only receive artwork, so they join artwork posts only.
+          label: (d?.isArtPlatform ?? false) ? 'Include in new artwork posts' : 'Include in new posts',
           value: a.enabled && isDefault,
           onChanged: a.enabled
               ? (v) async {
@@ -135,6 +136,8 @@ class _Menu extends ConsumerWidget {
       position: PopupMenuPosition.under,
       onSelected: (v) async {
         switch (v) {
+          case 'another':
+            context.go('${AppSection.accounts.path}/add?platform=${account.platformId}');
           case 'guide':
             await showGuideSheet(context, account.platformId);
           case 'copy':
@@ -145,6 +148,9 @@ class _Menu extends ConsumerWidget {
         }
       },
       itemBuilder: (_) => [
+        const PopupMenuItem(
+            value: 'another',
+            child: ListTile(leading: Icon(Icons.person_add_alt_outlined), title: Text('Add another account'), dense: true, contentPadding: EdgeInsets.zero)),
         const PopupMenuItem(value: 'guide', child: ListTile(leading: Icon(Icons.menu_book_outlined), title: Text('Setup guide'), dense: true, contentPadding: EdgeInsets.zero)),
         if (account.profileUrl != null)
           const PopupMenuItem(value: 'copy', child: ListTile(leading: Icon(Icons.link_rounded), title: Text('Copy profile link'), dense: true, contentPadding: EdgeInsets.zero)),
