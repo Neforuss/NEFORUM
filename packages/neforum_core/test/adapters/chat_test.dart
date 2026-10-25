@@ -703,6 +703,34 @@ void discordTests() {
       expect(bodyOf(calls[1]).containsKey('thread_name'), isFalse);
     });
 
+    test('forum channel: a written thread is named after its first line, without the numbering', () async {
+      final calls = <http.Request>[];
+      var n = 0;
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({'id': '${++n}', 'channel_id': '8888'});
+      });
+      final account = _dcAccount(extra: {'forum': true});
+      final post = Post(
+        id: 'p',
+        text: 'Release 2.0 is out',
+        additionalParts: const ['What changed, in detail.'],
+        createdAt: testNow,
+        updatedAt: testNow,
+        targets: [PostTarget(accountId: account.id)],
+      );
+      final variant = const VariantResolver().resolve(post, post.targets.single, adapter.descriptor, account: account);
+      expect(variant.threadParts, ['Release 2.0 is out (1/2)', 'What changed, in detail. (2/2)']);
+      await adapter.publish(variant, account, secrets, ctx);
+      expect(bodyOf(calls[0])['thread_name'], 'Release 2.0 is out');
+      expect(bodyOf(calls[0])['content'], 'Release 2.0 is out (1/2)', reason: 'the message keeps its numbering');
+
+      // Words of the post that only look like numbering stay in the name.
+      calls.clear();
+      await adapter.publish(const PostVariant(text: 'Plan (1/3)', threadParts: ['Plan (1/3)', 'Step one']), account, secrets, ctx);
+      expect(bodyOf(calls[0])['thread_name'], 'Plan (1/3)');
+    });
+
     test('error mapping', () async {
       Future<PublishError> run(http.Response r) async => (await adapter.publish(
               const PostVariant(text: 'x'), _dcAccount(), secrets, testContext(handler: (_) async => r)))

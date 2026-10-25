@@ -227,21 +227,24 @@ class ResponsiveGrid extends StatelessWidget {
   }
 }
 
-/// Toast helper with tone-colored icon.
-void showToast(BuildContext context, String message, {IconData? icon, Color? iconColor, String? actionLabel, VoidCallback? onAction}) {
+/// Toast helper with tone-colored icon. A toast with an action stays until
+/// it is used or replaced; with [persist] false it goes after a few seconds,
+/// as one without an action does.
+ScaffoldFeatureController<SnackBar, SnackBarClosedReason>? showToast(BuildContext context, String message,
+    {IconData? icon, Color? iconColor, String? actionLabel, VoidCallback? onAction, bool? persist}) {
   final messenger = ScaffoldMessenger.maybeOf(context);
-  if (messenger == null) return;
+  if (messenger == null) return null;
   final nf = context.nf;
-  messenger
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(
-      content: Row(children: [
-        if (icon != null) ...[Icon(icon, size: 18, color: iconColor ?? nf.bg), const SizedBox(width: Space.md)],
-        Expanded(child: Text(message)),
-      ]),
-      action: actionLabel == null ? null : SnackBarAction(label: actionLabel, onPressed: onAction ?? () {}),
-      width: context.isCompact ? null : 460,
-    ));
+  messenger.hideCurrentSnackBar();
+  return messenger.showSnackBar(SnackBar(
+    content: Row(children: [
+      if (icon != null) ...[Icon(icon, size: 18, color: iconColor ?? nf.bg), const SizedBox(width: Space.md)],
+      Expanded(child: Text(message)),
+    ]),
+    action: actionLabel == null ? null : SnackBarAction(label: actionLabel, onPressed: onAction ?? () {}),
+    persist: persist,
+    width: context.isCompact ? null : 460,
+  ));
 }
 
 /// Confirmation dialog. Returns true when confirmed.

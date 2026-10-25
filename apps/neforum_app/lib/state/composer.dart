@@ -73,8 +73,10 @@ class ComposerState {
   /// The preview tab the user is looking at (narrow layouts).
   final String? focusedAccountId;
 
-  /// Increments when the whole state is replaced (load/reset) so text fields
-  /// know to resync their controllers.
+  /// Increments when the main fields are replaced (load, reset, clear post,
+  /// restore, prefill) so text fields know to resync their controllers. Adding or
+  /// removing a thread part leaves it alone: the part editors follow the
+  /// number of parts, and the main editor keeps its cursor and open fields.
   final int revision;
 
   /// Style of the text card for image-only platforms; null = the default
@@ -315,7 +317,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
     final parts = [...state.additionalParts];
     final at = after == null ? parts.length : after.clamp(0, parts.length);
     parts.insert(at, '');
-    state = state.copyWith(additionalParts: parts, revision: state.revision + 1);
+    state = state.copyWith(additionalParts: parts);
     return at + 1;
   }
 
@@ -324,7 +326,18 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void removePart(int index) {
     if (index < 1 || index - 1 >= state.additionalParts.length) return;
     final parts = [...state.additionalParts]..removeAt(index - 1);
-    state = state.copyWith(additionalParts: parts, revision: state.revision + 1);
+    state = state.copyWith(additionalParts: parts);
+  }
+
+  /// Undo of [removePart]: puts [text] back as part [index] and keeps what
+  /// was written since. [revision] is the one [removePart] left; once the
+  /// post was replaced (published, scheduled, loaded, reset or cleared) the
+  /// undo is void and nothing changes. Returns whether the part is back.
+  bool undoRemovePart(int index, String text, {required int revision}) {
+    if (index < 1 || state.revision != revision) return false;
+    final parts = [...state.additionalParts]..insert((index - 1).clamp(0, state.additionalParts.length), text);
+    state = state.copyWith(additionalParts: parts);
+    return true;
   }
 
   /// Empties the post: every part, media, title, link, poll, content
@@ -339,6 +352,16 @@ class ComposerNotifier extends Notifier<ComposerState> {
       artwork: state.artwork,
       revision: state.revision + 1,
     );
+  }
+
+  /// Undo of [clearPost]: puts [before] back while the composer still holds
+  /// [cleared], the state clearing left. Anything changed since (new words,
+  /// a publish, a load or a reset) would be overwritten, so the undo is
+  /// then void and nothing changes. Returns whether the post is back.
+  bool undoClearPost(ComposerState before, ComposerState cleared) {
+    if (!identical(state, cleared)) return false;
+    restore(before);
+    return true;
   }
 
   /// DIFFERENTIATION: [text] becomes this account's own version; null goes
