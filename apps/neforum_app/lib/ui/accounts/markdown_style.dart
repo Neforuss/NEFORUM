@@ -64,15 +64,40 @@ String? guideAssetForLink(String? href) {
   return RegExp(r'^[a-z0-9_-]+\.md$').hasMatch(name) ? name : null;
 }
 
+/// The heading a relative link points to, as an anchor: `#fallback-host` and
+/// `media-hosts.md#fallback-host` both give `fallback-host`. Null for a link
+/// without one and for links to other sites.
+String? guideAnchorForLink(String? href) {
+  if (href == null) return null;
+  final uri = Uri.tryParse(href);
+  if (uri == null || uri.hasScheme || uri.hasAuthority || !uri.hasFragment || uri.fragment.isEmpty) return null;
+  return uri.fragment.toLowerCase();
+}
+
+/// The anchor of a heading as GitHub makes it, so that links between and
+/// within the guides work the same on GitHub and in NEFORUM: lower case,
+/// punctuation removed, spaces become hyphens ("Fallback host" gives
+/// `fallback-host`, "Steps: Hand-off" gives `steps-hand-off`).
+String guideHeadingAnchor(String heading) => heading
+    .trim()
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^\p{L}\p{M}\p{N} _-]', unicode: true), '')
+    .replaceAll(' ', '-');
+
 /// Convenience widget. Selectable by default: setup steps are full of
 /// addresses, scopes and redirect URIs people copy into other sites, so the
 /// whole block can be drag-selected (across paragraphs) and copied, while
 /// links still open on tap.
+///
+/// A link to another guide opens that guide (at the heading it names, if
+/// any). A link to a heading of the same text (`#anchor`) goes to
+/// [onAnchor]; without it such links do nothing.
 class NfMarkdown extends StatelessWidget {
-  const NfMarkdown(this.data, {super.key, this.small = false, this.selectable = true});
+  const NfMarkdown(this.data, {super.key, this.small = false, this.selectable = true, this.onAnchor});
   final String data;
   final bool small;
   final bool selectable;
+  final ValueChanged<String>? onAnchor;
 
   @override
   Widget build(BuildContext context) {
@@ -80,9 +105,14 @@ class NfMarkdown extends StatelessWidget {
       data: data,
       styleSheet: neforumMarkdown(context, small: small),
       onTapLink: (text, href, title) {
+        final anchor = guideAnchorForLink(href);
+        if (href != null && href.startsWith('#')) {
+          if (anchor != null) onAnchor?.call(anchor);
+          return;
+        }
         final guide = guideAssetForLink(href);
         if (guide == null) return openMarkdownLink(text, href, title);
-        showGuideSheet(context, guide.substring(0, guide.length - 3));
+        showGuideSheet(context, guide.substring(0, guide.length - 3), section: anchor);
       },
     );
     return selectable ? SelectionArea(child: body) : body;
