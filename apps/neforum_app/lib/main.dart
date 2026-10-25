@@ -57,7 +57,8 @@ Future<void> _publishInBackground(String postId) async {
     if (post != null && post.status == PostStatus.scheduled && await services.cloudSync.mayPublish(post)) {
       await fitPhotosOfSavedPost(services, postId);
       final done = await services.publisher().publish(postId, interactive: false, retryFailed: false);
-      await announcePublishResult(services, done);
+      final discarded = await services.discardIfComplete(postId);
+      await announcePublishResult(services, done, discarded: discarded);
       await services.cloudSync.syncNow();
     }
     services.dispose();
@@ -82,6 +83,9 @@ Future<void> main(List<String> args) async {
   // The web build is a preview: always a demo workspace.
   final demo = Env.isWeb || (mode?['demo'] as bool? ?? false);
   final services = await AppServices.create(demo: demo, storage: storage);
+  // Before the UI exists, so no run of this process is mistaken for one a
+  // closed NEFORUM left behind, and no file being attached is swept away.
+  await services.performStartupMaintenance();
 
   await DesktopIntegration.instance.setCloseToTray(services.settings.minimizeToTray);
   unawaited(services.startBrowserBridge());

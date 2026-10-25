@@ -70,11 +70,16 @@ final postByIdProvider = Provider.family<Post?, String>((ref, id) {
   return null;
 });
 
-/// Posts waiting for the user (hand-offs not yet done, failures to retry).
+/// Posts waiting for the user (hand-offs not yet done, failures and
+/// cancelled runs to retry).
 final needsAttentionProvider = Provider<List<Post>>((ref) => ref
     .watch(postListProvider)
-    .where((p) => p.status == PostStatus.partial || p.status == PostStatus.failed)
+    .where((p) => p.status == PostStatus.partial || p.status == PostStatus.failed || p.status == PostStatus.cancelled)
     .toList());
+
+/// A network that did not get the post and waits for the user to retry:
+/// it failed, or the user cancelled the run.
+bool needsRetry(PostTarget t) => t.status == TargetStatus.failed || t.status == TargetStatus.cancelled;
 
 final scheduledPostsProvider = Provider<List<Post>>((ref) {
   final list = ref.watch(postListProvider).where((p) => p.status == PostStatus.scheduled && p.scheduledAt != null).toList()
@@ -88,6 +93,10 @@ final historyPostsProvider = Provider<List<Post>>((ref) => ref
     .watch(postListProvider)
     .where((p) => p.status != PostStatus.draft && p.status != PostStatus.scheduled)
     .toList());
+
+/// History posts with a network that failed or was cancelled (Activity >
+/// Failed).
+final failedPostsProvider = Provider<List<Post>>((ref) => ref.watch(historyPostsProvider).where((p) => p.targets.any(needsRetry)).toList());
 
 /// Quota usage for one account; refreshes whenever posts change.
 final quotaStatusProvider = FutureProvider.family<List<QuotaStatus>, String>((ref, accountId) async {
@@ -130,23 +139,60 @@ class TargetProgress {
 
 /// State of the publish run currently in flight (or the last one).
 class PublishRun {
-  const PublishRun({required this.postId, required this.progress, this.done = false, this.result});
+  const PublishRun({
+    required this.postId,
+    required this.progress,
+    required this.cancellation,
+    this.done = false,
+    this.result,
+    this.error,
+  });
 
-  final String postId;
+  /// Null while the composer's post is still being saved.
+  final String? postId;
   final Map<String, TargetProgress> progress;
+
+  /// Cancels this run (the progress sheet's Cancel button).
+  final CancellationSignal cancellation;
   final bool done;
   final Post? result;
 
-  PublishRun copyWith({Map<String, TargetProgress>? progress, bool? done, Post? result}) =>
-      PublishRun(postId: postId, progress: progress ?? this.progress, done: done ?? this.done, result: result ?? this.result);
+  /// Why the run could not start or stopped early (the post could not be
+  /// saved, a platform still holds a copy, ...). The run is done then.
+  final String? error;
+
+  bool get preparing => postId == null && !done;
+  bool get cancelling => cancellation.isCancelled && !done;
+
+  PublishRun copyWith({String? postId, Map<String, TargetProgress>? progress, bool? done, Post? result, String? error}) => PublishRun(
+        postId: postId ?? this.postId,
+        progress: progress ?? this.progress,
+        cancellation: cancellation,
+        done: done ?? this.done,
+        result: result ?? this.result,
+        error: error ?? this.error,
+      );
 }
 
 class PublishRunNotifier extends Notifier<PublishRun?> {
   @override
   PublishRun? build() => null;
 
-  void start(String postId, Iterable<String> accountIds) {
-    state = PublishRun(postId: postId, progress: {for (final id in accountIds) id: const TargetProgress(status: TargetStatus.pending)});
+  /// The composer's post is being saved for publishing; the sheet shows
+  /// that it is getting ready.
+  void prepare() => state = PublishRun(postId: null, progress: const {}, cancellation: CancellationSignal());
+
+  /// Starts showing the run for [postId] and returns its signal. A Cancel
+  /// pressed while the post was being prepared carries over.
+  CancellationSignal start(String postId, Iterable<String> accountIds) {
+    final s = state;
+    final signal = s != null && s.preparing ? s.cancellation : CancellationSignal();
+    state = PublishRun(
+      postId: postId,
+      cancellation: signal,
+      progress: {for (final id in accountIds) id: const TargetProgress(status: TargetStatus.pending)},
+    );
+    return signal;
   }
 
   void progress(String accountId, String message) {
@@ -165,10 +211,51 @@ class PublishRunNotifier extends Notifier<PublishRun?> {
     );
   }
 
+  /// The run for [postId] (or the one being prepared, when null) ended with
+  /// [error] instead of a result.
+  void fail(String? postId, Object error) {
+    final s = state;
+    if (s == null || s.done || (s.postId != null && s.postId != postId)) return;
+    state = s.copyWith(done: true, error: '$error');
+  }
+
+  /// Asks the run in flight to stop; it ends as soon as the request in
+  /// flight is aborted.
+  void cancel() {
+    final s = state;
+    if (s == null || s.done) return;
+    s.cancellation.cancel();
+    state = s.copyWith();
+  }
+
   void clear() => state = null;
 }
 
 final publishRunProvider = NotifierProvider<PublishRunNotifier, PublishRun?>(PublishRunNotifier.new);
+
+/// Posts this process is publishing right now (a run from the composer, a
+/// list or the scheduler), each with the signal that cancels its run.
+/// Activity shows Cancel for them.
+class ActivePublishingNotifier extends Notifier<Map<String, CancellationSignal>> {
+  @override
+  Map<String, CancellationSignal> build() => const {};
+
+  void begin(String postId, CancellationSignal signal) => state = {...state, postId: signal};
+
+  void end(String postId, CancellationSignal signal) {
+    if (identical(state[postId], signal)) state = {...state}..remove(postId);
+  }
+
+  void cancel(String postId) {
+    final signal = state[postId];
+    if (signal == null) return;
+    signal.cancel();
+    // A new map so Cancel buttons turn into "Cancelling…".
+    state = {...state};
+  }
+}
+
+final activePublishingProvider = NotifierProvider<ActivePublishingNotifier, Map<String, CancellationSignal>>(ActivePublishingNotifier.new);
 
 /// Bumps whenever something outside the repositories changed (e.g. a media
 /// host was reconfigured) so dependent widgets can refresh.

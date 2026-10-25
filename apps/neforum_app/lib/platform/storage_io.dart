@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
@@ -51,12 +52,25 @@ class _IoStorage implements AppStorage {
     return write;
   }
 
+  /// Antivirus, backup and sync tools can hold the file for a moment; try
+  /// again for about 20 seconds before giving up, as the core's JSON files
+  /// do.
   Future<void> _writeNow(String name, String json) async {
     final target = File(p.join(dataDir, name));
     final tmp = File('${target.path}.tmp');
-    await tmp.writeAsString(json, flush: true);
-    await tmp.rename(target.path);
+    for (var attempt = 0;; attempt++) {
+      try {
+        await tmp.writeAsString(json, flush: true);
+        await tmp.rename(target.path);
+        return;
+      } on FileSystemException {
+        if (attempt >= _writeAttempts - 1) rethrow;
+        await Future<void>.delayed(Duration(milliseconds: math.min(2000, 100 * (attempt + 1))));
+      }
+    }
   }
+
+  static const _writeAttempts = 20;
 
   @override
   Future<String> saveMedia(String id, String extension, Uint8List bytes) async {
