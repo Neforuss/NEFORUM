@@ -68,6 +68,10 @@ class PublishProgressSheet extends ConsumerWidget {
     } else if (cancelled > 0 && ok == 0 && failed == 0 && waiting == 0) {
       headline = 'Posting cancelled';
       sub = 'Nothing was posted. You can post it later from Activity.';
+    } else if (ok == 0 && failed == 0 && waiting == 0 && cancelled == 0) {
+      // Every network was skipped (or its account is switched off).
+      headline = 'Nothing was posted';
+      sub = 'Every network was skipped. The post stays in Activity.';
     } else if (failed == 0 && waiting == 0 && cancelled == 0) {
       headline = ok == total ? 'Posted everywhere' : 'Posted to $ok of $total';
       sub = 'Your post is live on $ok ${ok == 1 ? 'network' : 'networks'}.';
@@ -85,19 +89,20 @@ class PublishProgressSheet extends ConsumerWidget {
       badge = const NeforumMark(key: ValueKey('busy'), size: 64, animate: true);
     } else {
       final problem = error != null || failed > 0;
-      final onlyCancelled = !problem && cancelled > 0 && ok == 0;
+      // Cancelled or skipped everywhere: nothing went out, nothing failed.
+      final nothingPosted = !problem && ok == 0 && waiting == 0;
       badge = Container(
         key: const ValueKey('done'),
         width: 64,
         height: 64,
         decoration: BoxDecoration(
-          color: error != null ? nf.dangerSoft : (problem ? nf.warningSoft : (onlyCancelled ? nf.surfaceSunken : nf.successSoft)),
+          color: error != null ? nf.dangerSoft : (problem ? nf.warningSoft : (nothingPosted ? nf.surfaceSunken : nf.successSoft)),
           shape: Radii.circleShape,
         ),
         child: Icon(
-          error != null ? Icons.error_outline_rounded : (problem ? Icons.priority_high_rounded : (onlyCancelled ? Icons.block_rounded : Icons.check_rounded)),
+          error != null ? Icons.error_outline_rounded : (problem ? Icons.priority_high_rounded : (nothingPosted ? Icons.block_rounded : Icons.check_rounded)),
           size: 34,
-          color: error != null ? nf.danger : (problem ? nf.warning : (onlyCancelled ? nf.textMuted : nf.success)),
+          color: error != null ? nf.danger : (problem ? nf.warning : (nothingPosted ? nf.textMuted : nf.success)),
         ),
       );
     }

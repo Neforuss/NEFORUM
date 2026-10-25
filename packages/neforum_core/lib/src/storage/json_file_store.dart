@@ -7,6 +7,8 @@ import 'package:path/path.dart' as p;
 
 import '../model/account.dart';
 import '../model/post.dart';
+import '../publish/publish_journal.dart';
+import '../util/logger.dart';
 import 'repositories.dart';
 import 'secret_store.dart';
 
@@ -14,19 +16,35 @@ import 'secret_store.dart';
 /// atomically (temp file + rename). Used by the CLI and, on desktop/mobile,
 /// by the app for everything except secrets (which go to the OS keychain).
 ///
-/// Files: `accounts.json`, `posts.json`, `quota.json`, `secrets.json`.
+/// Files: `accounts.json`, `posts.json`, `quota.json`, `secrets.json`,
+/// `publish-journal.json`.
 class JsonFileStore {
   JsonFileStore(this.directory)
       : accounts = JsonAccountRepository(JsonFile(p.join(directory, 'accounts.json'))),
         posts = JsonPostRepository(JsonFile(p.join(directory, 'posts.json'))),
         quota = JsonQuotaRepository(JsonFile(p.join(directory, 'quota.json'))),
-        secrets = JsonSecretStore(JsonFile(p.join(directory, 'secrets.json')));
+        secrets = JsonSecretStore(JsonFile(p.join(directory, 'secrets.json'))),
+        publishJournal = openPublishJournal(directory);
 
   final String directory;
   final JsonAccountRepository accounts;
   final JsonPostRepository posts;
   final JsonQuotaRepository quota;
   final JsonSecretStore secrets;
+
+  /// The publish runs of this process and of every other isolate that
+  /// opened the same directory.
+  final PublishJournal publishJournal;
+
+  /// The publish journal in [directory] as one process sees it. Every call
+  /// is another owner; [owner] and [clock] let tests stand in for another
+  /// process. Every read goes to the file, since other isolates write it
+  /// too. A write that keeps failing gives up after a few tries: a run that
+  /// is not on record is never recovered, which costs nothing else.
+  static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock}) {
+    final file = JsonFile(p.join(directory, 'publish-journal.json'), writeAttempts: 3);
+    return PublishJournal(read: file.read, write: file.write, owner: owner, clock: clock);
+  }
 
   void dispose() {
     accounts.dispose();

@@ -35,6 +35,7 @@ class AppServices {
     required this.broker,
     required this.handoff,
     required this.browserBridge,
+    required this.publishJournal,
     required this.demo,
     required this._settings,
   }) : quota = QuotaTracker(quotaRepo);
@@ -42,6 +43,10 @@ class AppServices {
   final AppStorage storage;
   final AccountRepository accounts;
   final PostRepository posts;
+
+  /// The publish runs of this process and of the background isolates that
+  /// share its data folder (see [recoverInterruptedPublishing]).
+  final PublishJournal publishJournal;
   final QuotaRepository quotaRepo;
   final SecretStore secrets;
   final AdapterRegistry registry;
@@ -82,6 +87,7 @@ class AppServices {
     late final PostRepository posts;
     late final QuotaRepository quota;
     late final SecretStore secrets;
+    late final PublishJournal journal;
     final AdapterRegistry registry;
 
     if (demo) {
@@ -89,6 +95,7 @@ class AppServices {
       posts = _NotificationCancellingPostRepository(InMemoryPostRepository());
       quota = InMemoryQuotaRepository();
       secrets = InMemorySecretStore();
+      journal = PublishJournal.inMemory();
       registry = demoRegistry(real);
       await seedDemo(registry: registry, accounts: accounts, posts: posts, quota: quota, media: MediaLibrary(st));
     } else {
@@ -97,6 +104,7 @@ class AppServices {
       posts = _NotificationCancellingPostRepository(store.posts);
       quota = store.quota;
       secrets = SecureSecretStore();
+      journal = store.publishJournal;
       registry = real;
     }
 
@@ -122,6 +130,7 @@ class AppServices {
       // keeps them in the real keychain too, so trying the demo does not
       // unpair the extension.
       browserBridge: browserBridge ?? BrowserBridge.create(secrets: demo && Env.isDesktop ? SecureSecretStore() : secrets),
+      publishJournal: journal,
       demo: demo,
       settings: settings,
     );
@@ -200,6 +209,7 @@ class AppServices {
         resolver: VariantResolver(_settings.resolverOptions),
         options: _settings.publishOptions,
         secretsCoordinator: cloudSync.active ? cloudSync : null,
+        journal: publishJournal,
         readMedia: media.read,
       );
 
@@ -267,15 +277,17 @@ class AppServices {
   }
 
   /// Applies Settings > Activity and history: deletes the complete posts
-  /// the setting no longer keeps. Returns how many were deleted.
+  /// the setting no longer keeps (see [expiredPosts] for what the first
+  /// start after an update deletes). Returns how many were deleted.
   Future<int> applyRetention({DateTime? now, Iterable<Object?> inUse = const []}) async {
     final expired = expiredPosts(await posts.all(), _settings.publishedPostRetention, now ?? DateTime.now());
     await discardPosts(expired, inUse: inUse);
     return expired.length;
   }
 
-  /// Deletes post [postId] right away when every network has it and the
-  /// setting keeps nothing after posting. True when it was deleted.
+  /// Deletes post [postId] right away when it is complete ([isPostComplete]:
+  /// finished, and some network has it) and the setting keeps nothing after
+  /// posting. True when it was deleted.
   Future<bool> discardIfComplete(String postId, {Iterable<Object?> inUse = const []}) async {
     if (_settings.publishedPostRetention != PublishedPostRetention.discardOnCompletion) return false;
     final post = await posts.get(postId);
@@ -287,27 +299,99 @@ class AppServices {
   /// Shown on targets a closed or crashed NEFORUM left unposted.
   static const interruptedMessage = 'NEFORUM closed before this was posted. Retry it.';
 
-  /// Posts NEFORUM was publishing when it closed: their targets still
-  /// waiting or posting become failed, so they show under Activity > Failed
-  /// with Retry instead of looking busy for ever. Call at startup, before
-  /// this process publishes anything. Returns how many posts were fixed.
-  Future<int> recoverInterruptedPublishing() async {
+  /// Shown on targets a run of this process did not reach because it
+  /// stopped with [error].
+  static String stoppedMessage(Object error) => 'Posting stopped before this was posted ($error). Retry it.';
+
+  /// Outcomes of this process's runs that could not be saved yet, because
+  /// posts.json stayed locked. They know which networks have each post, so
+  /// the next recovery pass saves them before anything else.
+  final Map<String, Post> _unsavedOutcomes = {};
+
+  /// Posts whose run on this device ended without saving its outcome
+  /// (NEFORUM closed, crashed or was killed, a background task was stopped):
+  /// their targets still waiting or posting become failed, so they show
+  /// under Activity > Failed with Retry instead of looking busy for ever.
+  /// Returns how many posts were settled.
+  ///
+  /// Only runs [publishJournal] proves abandoned are touched. A post with no
+  /// run on record came from another device through sync, and that device's
+  /// own result follows. A run whose heartbeat is recent may belong to a
+  /// background isolate still publishing it (Android WorkManager, iOS),
+  /// and runs in [exclude] are this process's own. A settled post keeps its
+  /// last change time, so a newer real result still wins a sync merge.
+  Future<int> recoverInterruptedPublishing({DateTime? now, Set<String> exclude = const {}}) async {
     var recovered = 0;
+    for (final outcome in _unsavedOutcomes.values.toList()) {
+      if (await _saveOutcome(outcome)) recovered++;
+    }
+    final runs = await publishJournal.entries();
+    if (runs.isEmpty) return recovered;
+    final at = now ?? DateTime.now();
     final roller = publisher();
-    for (final post in await posts.all()) {
-      if (post.status != PostStatus.publishing) continue;
-      var fixed = post;
-      for (final t in post.targets) {
-        if (t.status != TargetStatus.pending && t.status != TargetStatus.publishing) continue;
-        fixed = fixed.withTarget(t.copyWith(
-          status: TargetStatus.failed,
-          result: PublishResult.failure(const PublishError(kind: PublishErrorKind.network, message: interruptedMessage)),
-        ));
-      }
-      await posts.upsert(roller.rollUpStatus(fixed).copyWith(updatedAt: DateTime.now()));
+    final settled = <String>[];
+    for (final run in runs.values) {
+      if (exclude.contains(run.postId) || _unsavedOutcomes.containsKey(run.postId) || !publishJournal.isAbandoned(run, now: at)) continue;
+      final post = await posts.get(run.postId);
+      settled.add(run.postId);
+      if (post == null || post.status != PostStatus.publishing) continue;
+      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage)));
       recovered++;
     }
+    await publishJournal.remove(settled);
     return recovered;
+  }
+
+  /// Settles post [postId] after its run in this process stopped with
+  /// [error] instead of an outcome, so that it never looks busy without a
+  /// run: the targets the run did not reach become failed with the error,
+  /// and show Retry. When [error] carries the run's outcome
+  /// ([PublishOutcomeNotSaved]), that outcome is saved instead, since it
+  /// knows which networks already have the post. A post another isolate is
+  /// publishing is left alone. When posts.json still cannot be written, the
+  /// next recovery pass saves it.
+  Future<void> concludeStoppedRun(String postId, Object error) async {
+    try {
+      final run = (await publishJournal.entries())[postId];
+      if (run != null && run.owner != publishJournal.owner && !publishJournal.isAbandoned(run)) return;
+      final Post outcome;
+      if (error is PublishOutcomeNotSaved) {
+        outcome = error.post;
+      } else {
+        final stored = await posts.get(postId);
+        if (stored == null || stored.status != PostStatus.publishing) {
+          await publishJournal.release(postId);
+          return;
+        }
+        outcome = publisher().rollUpStatus(failUnfinishedTargets(stored, stoppedMessage(error))).copyWith(updatedAt: DateTime.now());
+      }
+      _unsavedOutcomes[postId] = outcome;
+      await _saveOutcome(outcome);
+    } on Object catch (e) {
+      debugPrint('Could not settle the stopped run of $postId: $e');
+    }
+  }
+
+  /// Saves [outcome] unless the post was deleted or changed since its run
+  /// stopped. True when it was saved.
+  Future<bool> _saveOutcome(Post outcome) async {
+    final bool saved;
+    try {
+      final stored = await posts.get(outcome.id);
+      saved = stored != null && stored.status == PostStatus.publishing;
+      if (saved) await posts.upsert(outcome);
+    } on Object catch (e) {
+      debugPrint('Could not save the outcome of ${outcome.id} yet: $e');
+      return false;
+    }
+    _unsavedOutcomes.remove(outcome.id);
+    try {
+      await publishJournal.release(outcome.id);
+    } on Object catch (e) {
+      // The post is settled; recovery takes the stale run off the record.
+      debugPrint('Could not take the run of ${outcome.id} off the publish journal: $e');
+    }
+    return saved;
   }
 
   /// Deletes media files that no post and no draft mentions: photos taken
@@ -325,7 +409,7 @@ class AppServices {
   }
 
   /// Housekeeping when the app starts, before anything is published:
-  /// interrupted runs become failures, retention applies, and unused media
+  /// abandoned runs become failures, retention applies, and unused media
   /// files and day-old share-sheet copies are deleted. Not in the demo,
   /// whose sample history stays as it is.
   Future<void> performStartupMaintenance() async {
@@ -391,14 +475,31 @@ class _NotificationCancellingPostRepository implements PostRepository {
   Future<List<Post>> due(DateTime now) => _posts.due(now);
 }
 
-/// Whether every network has [post]: each target published, handed off or
-/// skipped, or held by its platform past its scheduled time. Nothing failed,
-/// cancelled, waiting or posting. Drafts and posts in a run never are.
+/// Whether [t] really reached its network: published, handed off, or held
+/// by its platform past its scheduled time (the platform has published it).
+/// A skipped network never got the post.
+bool reachedNetwork(PostTarget t, DateTime now) =>
+    t.status == TargetStatus.published || t.status == TargetStatus.handedOff || _releasedByPlatform(t, now);
+
+bool _releasedByPlatform(PostTarget t, DateTime now) =>
+    t.isHeldByPlatform && t.result != null && !(t.result!.scheduledFor?.isAfter(now) ?? false);
+
+/// Drafts, posts in a run and posts without targets are never finished.
+bool _settled(Post post) => post.status != PostStatus.draft && post.status != PostStatus.publishing && post.targets.isNotEmpty;
+
+/// Whether [post] is finished and some network has it: each target
+/// published, handed off or skipped, or held by its platform past its
+/// scheduled time, and at least one of them [reachedNetwork]. Nothing
+/// failed, cancelled, waiting or posting. A post that reached no network
+/// (every account switched off, every hand-off skipped) never is: it stays
+/// in Activity, where it can be duplicated or deleted.
 bool isPostComplete(Post post, DateTime now) =>
-    post.status != PostStatus.draft &&
-    post.status != PostStatus.publishing &&
-    post.targets.isNotEmpty &&
-    post.targets.every((t) => t.isDone || (t.isHeldByPlatform && t.result != null && !(t.result!.scheduledFor?.isAfter(now) ?? false)));
+    _settled(post) &&
+    post.targets.every((t) => t.isDone || _releasedByPlatform(t, now)) &&
+    post.targets.any((t) => reachedNetwork(t, now));
+
+/// Whether every target of [post] [reachedNetwork], none skipped.
+bool reachedEveryNetwork(Post post, DateTime now) => _settled(post) && post.targets.every((t) => reachedNetwork(t, now));
 
 /// How long [retention] keeps a complete post after its last change; null
 /// keeps it until the user deletes it.
@@ -411,13 +512,38 @@ Duration? retentionPeriod(PublishedPostRetention retention) => switch (retention
 
 /// The complete posts in [all] that [retention] no longer keeps at [now].
 /// A post's completion time is its last change ([Post.updatedAt]).
+///
+/// [PublishedPostRetention.discardOnCompletion] deletes a post the moment
+/// it completes ([AppServices.discardIfComplete]). Its sweeps, at startup
+/// and by the hour, delete only the posts that [reachedEveryNetwork],
+/// because they also see what earlier versions kept: settings saved before
+/// 1.2.0 have no retention choice and read as this default, so the first
+/// start after the update finds the whole history here. Posts every network
+/// really got are deleted then, as the setting says. A post with a skipped
+/// network, which may still be wanted there, and a post that reached no
+/// network at all stay in Activity.
 List<Post> expiredPosts(Iterable<Post> all, PublishedPostRetention retention, DateTime now) {
   final keep = retentionPeriod(retention);
   if (keep == null) return const [];
+  if (keep == Duration.zero) return [for (final post in all) if (reachedEveryNetwork(post, now)) post];
   return [
     for (final post in all)
-      if (isPostComplete(post, now) && (keep == Duration.zero || now.difference(post.updatedAt) >= keep)) post,
+      if (isPostComplete(post, now) && now.difference(post.updatedAt) >= keep) post,
   ];
+}
+
+/// [post] with every target still waiting or being posted marked failed
+/// with [message], so that it can be retried.
+Post failUnfinishedTargets(Post post, String message) {
+  var fixed = post;
+  for (final t in post.targets) {
+    if (t.status != TargetStatus.pending && t.status != TargetStatus.publishing) continue;
+    fixed = fixed.withTarget(t.copyWith(
+      status: TargetStatus.failed,
+      result: PublishResult.failure(PublishError(kind: PublishErrorKind.network, message: message)),
+    ));
+  }
+  return fixed;
 }
 
 /// How media files are matched: the last segment of a path, in lower case
