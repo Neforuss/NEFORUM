@@ -1,16 +1,20 @@
 // A video on TikTok or Instagram with the caption in a block above it: the
 // caption pipeline asks the video compositor for a copy in the 9:16 frame,
-// posts that copy, reuses it, and leaves the video alone for captions on it.
-// The native compositor is replaced by a channel stub that writes a file.
+// posts that copy, reuses it, and leaves the video alone for captions on it;
+// publishing a saved post never makes a copy the save did not make. The
+// native compositor is replaced by a channel stub that writes a file.
 
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_app/media/caption_style.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/captioned_photos.dart';
+import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/fitted_photos.dart';
+import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
@@ -95,6 +99,48 @@ void main() {
     final saved = (await tester.runAsync(() => s.posts.get(post.id)))!;
     expect(saved.targetFor(tiktok.id)!.overrides.mediaIds!.first, copy.id);
     expect(composed, hasLength(1));
+  });
+
+  testWidgets('fix: publishing a saved post puts no caption block above a video that was saved without one', (tester) async {
+    final (s, tiktok, video, dir) = await workspace(tester);
+    addTearDown(() => tester.runAsync(() => dir.delete(recursive: true)));
+    // Settings: the caption on for TikTok, by default in a block above. This
+    // post's own style writes it on the picture, which leaves a video as it
+    // is, as the preview showed.
+    final saved = (await tester.runAsync(() async {
+      await s.saveSettings(s.settings.copyWith(
+        captionPhotoPlatforms: ['tiktok'],
+        captionStyle: const CaptionStyle(placement: CaptionPlacement.blockAbove).toJson(),
+      ));
+      var post = await attachFittedPhotos(s, postWith(tiktok, video), s.settings);
+      post = await attachCaptionedPhotos(s, post, s.settings,
+          choices: const {'tiktok': true}, style: const CaptionStyle(placement: CaptionPlacement.bottom).toJson());
+      await s.posts.upsert(post);
+      return post;
+    }))!;
+    expect(saved.media.where(isCaptionedCopy), isEmpty);
+
+    // At the scheduled time.
+    await tester.runAsync(() => fitPhotosOfSavedPost(s, saved.id));
+    final scheduled = (await tester.runAsync(() => s.posts.get(saved.id)))!;
+    expect(composed, isEmpty, reason: 'not composed from the Settings default');
+    expect(scheduled.media.where(isCaptionedCopy), isEmpty);
+    expect(scheduled.targetFor(tiktok.id)!.overrides.mediaIds, isNull, reason: 'TikTok receives the original video');
+
+    // Publish now from a list.
+    final done = (await tester.runAsync(() async {
+      final c = ProviderContainer(overrides: [servicesProvider.overrideWithValue(s)]);
+      try {
+        c.listen(postsProvider, (_, _) {});
+        c.listen(accountsProvider, (_, _) {});
+        await c.read(accountsProvider.future);
+        return await c.read(postActionsProvider).publishExisting(saved.id);
+      } finally {
+        c.dispose();
+      }
+    }))!;
+    expect(composed, isEmpty);
+    expect(done.media.where(isCaptionedCopy), isEmpty);
   });
 
   testWidgets('a caption on the photo leaves a video as it is', (tester) async {

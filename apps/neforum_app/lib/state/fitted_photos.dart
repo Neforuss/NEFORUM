@@ -125,8 +125,9 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
 /// reminder): posts saved before photos were fitted, or before a setting
 /// changed. The caption stays written on the photos it was written on when
 /// the post was saved, in the same style ([attachCaptionedPhotos]), and is
-/// left off where it was off. Best effort; the post is left as it is on any
-/// problem.
+/// left off where it was off; a video keeps the caption block it was saved
+/// with, and gets none it was saved without. Best effort; the post is left as
+/// it is on any problem.
 Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
   try {
     final post = await s.posts.get(postId);
@@ -134,7 +135,7 @@ Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
     // Read first: fitting lists the original photos on the targets again.
     final choices = await captionChoicesOfSavedPost(s, post);
     final fitted = await attachFittedPhotos(s, post, s.settings);
-    await s.posts.upsert(await attachCaptionedPhotos(s, fitted, s.settings, choices: choices));
+    await s.posts.upsert(await attachCaptionedPhotos(s, fitted, s.settings, choices: choices, composeVideos: false));
   } on Object catch (e) {
     debugPrint('Could not fit the photos of $postId: $e');
   }

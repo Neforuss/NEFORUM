@@ -16,6 +16,28 @@ bool isTextCardBackground(MediaAttachment m) => m.generated && renderKindOf(m) =
 /// A rendered NEFORUM text card (not a card's background photo).
 bool isRenderedTextCard(MediaAttachment m) => m.isTextCard && !isTextCardBackground(m);
 
+/// `PostOverrides.extra` key of the photo list (media ids) a text card took
+/// the place of on a target that had a list of its own (the photo under the
+/// card, or no photos). [attachTextCards] and [withoutTextCards] put the list
+/// back, so the target keeps the user's choice when the cards are made again
+/// and when the post is edited.
+const String kTextCardReplacedMediaIdsKey = 'textCardReplacedMediaIds';
+
+/// The photo list a card took the place of on a target
+/// ([kTextCardReplacedMediaIdsKey]); null when the target had no list of its
+/// own (every photo).
+List<String>? _replacedMediaIds(PostOverrides o) {
+  final raw = o.extra[kTextCardReplacedMediaIdsKey];
+  return raw is List ? [for (final id in raw) if (id is String) id] : null;
+}
+
+/// [o] with its photo list as it was before a card took its place: [own], or
+/// every photo when [own] is null.
+PostOverrides _withOwnMediaIds(PostOverrides o, List<String>? own) {
+  final rest = o.extra.containsKey(kTextCardReplacedMediaIdsKey) ? o.copyWith(extra: {...o.extra}..remove(kTextCardReplacedMediaIdsKey)) : o;
+  return own == null ? rest.copyWith(clearMediaIds: true) : rest.copyWith(mediaIds: own);
+}
+
 /// Gives every target that needs an image but has none (Instagram,
 /// Pinterest, TikTok photos, Snapchat) a rendered NEFORUM text card, and
 /// removes cards that are no longer needed. Safe to call repeatedly: a
@@ -72,7 +94,9 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     final oldCard = own?.map((id) => cards[id]).whereType<MediaAttachment>().firstOrNull;
     final userIds = own?.where((id) => !cards.containsKey(id)).toList();
     final onlyCards = own != null && own.isNotEmpty && userIds!.isEmpty;
-    final base = t.copyWith(overrides: onlyCards ? t.overrides.copyWith(clearMediaIds: true) : t.overrides.copyWith(mediaIds: userIds));
+    // A target that lists only a card gets back the list the card took the
+    // place of (every photo when it had none of its own).
+    final base = t.copyWith(overrides: _withOwnMediaIds(t.overrides, onlyCards ? _replacedMediaIds(t.overrides) : userIds));
     p = p.withTarget(base);
     if (!settings.textCards) continue;
 
@@ -158,7 +182,11 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     }
     made[key] = card;
     used.add(card.id);
-    p = p.withTarget(base.copyWith(overrides: base.overrides.copyWith(mediaIds: [card.id])));
+    // The target's own photo list (the photo under the card, or none) is kept
+    // beside the card, for the next run and for editing the post.
+    final replaced = base.overrides.mediaIds;
+    final extra = replaced == null ? null : {...base.overrides.extra, kTextCardReplacedMediaIdsKey: replaced};
+    p = p.withTarget(base.copyWith(overrides: base.overrides.copyWith(mediaIds: [card.id], extra: extra)));
   }
   backdrop?.dispose();
 
@@ -236,7 +264,7 @@ TextCardBackground? _backgroundOfPost(Post post) {
 
 /// [post] as the composer should show it: generated cards, card backgrounds
 /// and fitted photos removed (they are rebuilt on save), the original photos
-/// listed again.
+/// listed again (a target's own list where a card took its place).
 Post withoutTextCards(Post post) {
   post = withoutFittedPhotos(post);
   final ids = {for (final m in post.media.where((m) => m.isTextCard)) m.id};
@@ -251,7 +279,7 @@ Post withoutTextCards(Post post) {
           () {
             final rest = t.overrides.mediaIds!.where((id) => !ids.contains(id)).toList();
             final onlyCards = rest.isEmpty && t.overrides.mediaIds!.isNotEmpty;
-            return t.copyWith(overrides: onlyCards ? t.overrides.copyWith(clearMediaIds: true) : t.overrides.copyWith(mediaIds: rest));
+            return t.copyWith(overrides: _withOwnMediaIds(t.overrides, onlyCards ? _replacedMediaIds(t.overrides) : rest));
           }(),
     ],
   );
