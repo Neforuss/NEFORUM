@@ -649,13 +649,14 @@ class PostActions {
   /// two never overwrite each other.
   final Map<String, Future<void>> _delegations = {};
 
-  Future<Post> _save(PostStatus status) async {
+  /// Saves the composer's post with [status], under [id] when given.
+  Future<Post> _save(PostStatus status, {String? id}) async {
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
     final now = DateTime.now();
     final existing = c.editingPostId == null ? null : await s.posts.get(c.editingPostId!);
     if (existing != null) await _releaseHeld(existing.id);
-    var post = c.toPost(id: c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
+    var post = c.toPost(id: id ?? c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
     post = withMentionDefaults(post, ref.read(accountListProvider), ref.read(settingsProvider));
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
@@ -731,15 +732,29 @@ class PostActions {
   /// empty: the progress sheet follows the run, and Activity has the post
   /// (for a retry) until the retention setting deletes it. A failure before
   /// that leaves the composer as it was. Returns the final post.
+  ///
+  /// The run is on record in the publish journal before the post is saved
+  /// as publishing, so a NEFORUM that closes before the run starts leaves a
+  /// post that recovery can settle.
   Future<Post> publishNow() async {
     final run = ref.read(publishRunProvider.notifier);
     run.prepare();
+    final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
+    final id = c.editingPostId ?? _uuid.v7();
+    try {
+      await s.publishJournal.record(id);
+    } on Object catch (e) {
+      // Only recovery after a crash needs the record; posting goes on.
+      debugPrint('Could not record the run of $id in the publish journal: $e');
+    }
     final Post p;
     try {
-      p = (await _save(PostStatus.publishing)).copyWith(clearScheduledAt: true);
-      await ref.read(servicesProvider).posts.upsert(p);
+      p = (await _save(PostStatus.publishing, id: id)).copyWith(clearScheduledAt: true);
+      await s.posts.upsert(p);
     } on Object catch (e) {
+      // Nothing is publishing: the post keeps its previous state, if any.
+      unawaited(s.publishJournal.release(id).catchError((Object _) {}));
       run.fail(null, e);
       rethrow;
     }
@@ -751,7 +766,8 @@ class PostActions {
   /// Runs (or re-runs) publishing for an existing post. Copies held by
   /// platforms are taken back first, so nothing goes out twice. The run can
   /// be cancelled from its progress sheet or from Activity; whatever stops
-  /// it is shown in the sheet.
+  /// it is shown in the sheet, and a post it leaves publishing is settled
+  /// at once: the networks it did not reach get Retry.
   Future<Post> publishExisting(String postId, {Set<String>? accountIds, bool retryFailed = true}) async {
     final run = ref.read(publishRunProvider.notifier);
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
@@ -760,6 +776,7 @@ class PostActions {
     try {
       return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed);
     } on Object catch (e) {
+      await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
       rethrow;
     } finally {
@@ -872,15 +889,15 @@ class PostActions {
 
   /// Activity > Clear failed. Posts that reached no network (every target
   /// failed or cancelled) are deleted. Posts that reached some keep those;
-  /// their failed and cancelled targets become skipped, and the retention
-  /// setting then applies to them like to any finished post. Posts this
-  /// process is publishing are left alone.
+  /// their failed and cancelled targets become skipped, which completes
+  /// them, and the retention setting then applies to them like to any post
+  /// that just completed. Posts this process is publishing are left alone.
   Future<({int deleted, int kept})> clearFailed(Iterable<Post> listed) async {
     final s = ref.read(servicesProvider);
     final active = ref.read(activePublishingProvider);
     final publisher = s.publisher();
     final doomed = <Post>[];
-    var kept = 0;
+    final kept = <String>[];
     for (final l in listed) {
       if (active.containsKey(l.id)) continue;
       final p = await s.posts.get(l.id);
@@ -894,12 +911,14 @@ class PostActions {
         next = next.withTarget(t.copyWith(status: TargetStatus.skipped));
       }
       await s.posts.upsert(publisher.rollUpStatus(next).copyWith(updatedAt: DateTime.now()));
-      kept++;
+      kept.add(p.id);
     }
     await s.discardPosts(doomed, inUse: _composerReferences());
-    if (kept > 0) await s.applyRetention(inUse: _composerReferences());
+    for (final id in kept) {
+      await s.discardIfComplete(id, inUse: _composerReferences());
+    }
     ref.read(schedulerProvider).updateTrayStatus();
-    return (deleted: doomed.length, kept: kept);
+    return (deleted: doomed.length, kept: kept.length);
   }
 
   Future<Post> unschedule(Post p) async {

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -83,6 +84,71 @@ class _HttpAdapter extends _FakeAdapter {
   }
 }
 
+/// Renews its sign-in through the context's HTTP client, and the network
+/// retires the old refresh token as it answers (X, Tumblr, DeviantArt).
+class _RenewingAdapter extends _FakeAdapter {
+  @override
+  bool rotatesRefreshTokensFor(ConnectedAccount account) => true;
+
+  @override
+  Future<Map<String, String>?> refreshSecrets(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final res = await ctx.http.postJson(Uri.parse('https://fake.example.test/token'), {'refresh_token': secrets['refresh']});
+    return {'refresh': res.jsonMap['refresh'] as String};
+  }
+}
+
+/// Takes a while to upload, and looks around while it does.
+class _SlowAdapter extends _FakeAdapter {
+  _SlowAdapter(this.whileUploading);
+  final Future<void> Function() whileUploading;
+
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    published.add(variant);
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    await whileUploading();
+    return PublishResult.ok(remoteId: 'slow');
+  }
+}
+
+/// A platform whose checks break instead of returning issues.
+class _BrokenCheckAdapter extends _FakeAdapter {
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => throw StateError('rules table missing');
+}
+
+/// Answers the token request only when the test lets it.
+class _GatedClient extends http.BaseClient {
+  final requests = <http.BaseRequest>[];
+  final answer = Completer<void>();
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    await answer.future;
+    return http.StreamedResponse(Stream.value(utf8.encode('{"refresh":"new-token"}')), 200,
+        headers: const {'content-type': 'application/json'}, request: request);
+  }
+}
+
+/// Posts whose writes fail while [fails] says so, the way a posts.json held
+/// by a backup program does.
+class _UnwritablePostRepository extends InMemoryPostRepository {
+  bool Function(Post post) fails = (_) => false;
+
+  @override
+  Future<void> upsert(Post post) async {
+    if (fails(post)) throw StateError('posts.json is locked');
+    await super.upsert(post);
+  }
+}
+
+/// A usage count that cannot be written.
+class _UnwritableQuotaRepository extends InMemoryQuotaRepository {
+  @override
+  Future<void> record(QuotaEvent event) async => throw StateError('quota.json is locked');
+}
+
 /// Holds every request until it is aborted.
 class _HangingClient extends http.BaseClient {
   final requests = <http.BaseRequest>[];
@@ -106,13 +172,14 @@ void main() {
   late DateTime now;
   final at = testNow.add(const Duration(hours: 2));
 
-  PublishService service() => PublishService(
+  PublishService service({SecretStore? secrets, NeforumHttp? network, QuotaRepository? quotaRepo, PublishJournal? journal}) => PublishService(
         registry: AdapterRegistry([adapter]),
         accounts: accounts,
         posts: posts,
-        secrets: InMemorySecretStore(),
-        quota: QuotaTracker(InMemoryQuotaRepository()),
-        http: NeforumHttp(client: MockClient((_) async => http.Response('', 500)), maxRetries: 0),
+        secrets: secrets ?? InMemorySecretStore(),
+        quota: QuotaTracker(quotaRepo ?? InMemoryQuotaRepository()),
+        http: network ?? NeforumHttp(client: MockClient((_) async => http.Response('', 500)), maxRetries: 0),
+        journal: journal,
         clock: () => now,
         log: Logger('test', sink: (level, area, msg, [err]) {}),
       );
@@ -397,6 +464,28 @@ void main() {
       expect(p.status, PostStatus.cancelled);
     });
 
+    test('a sign-in renewal under way finishes and keeps its new keys; then the run stops', () async {
+      final client = _GatedClient();
+      final secrets = InMemorySecretStore();
+      await secrets.write('acct-1', const {'refresh': 'old-token'});
+      adapter = _RenewingAdapter();
+      final svc = service(secrets: secrets, network: NeforumHttp(client: client, maxRetries: 0));
+      await scheduled(when: testNow);
+      final signal = CancellationSignal();
+      final run = svc.publish('p1', cancellation: signal);
+      while (client.requests.isEmpty) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      // The network has retired the old token; its answer is on the way.
+      signal.cancel();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      client.answer.complete();
+      final p = await run;
+      expect((await secrets.read('acct-1'))!['refresh'], 'new-token', reason: 'the old refresh token no longer works');
+      expect(p.targets.single.status, TargetStatus.cancelled);
+      expect(adapter.published, isEmpty);
+    });
+
     test('rollUpStatus matches what a run leaves', () {
       final base = Post(id: 'x', text: 'hi', createdAt: testNow, updatedAt: testNow, status: PostStatus.failed);
       PostStatus of(List<TargetStatus> s) =>
@@ -407,6 +496,107 @@ void main() {
       expect(of([TargetStatus.failed, TargetStatus.cancelled]), PostStatus.cancelled);
       expect(of([TargetStatus.failed]), PostStatus.failed);
       expect(of([TargetStatus.awaitingHandoff, TargetStatus.cancelled]), PostStatus.partial);
+    });
+  });
+
+  group('a run never leaves the post looking busy', () {
+    Future<void> twoTargets() async {
+      await accounts.upsert(fakeAccount('fake', id: 'acct-2'));
+      await posts.upsert(Post(
+        id: 'p1',
+        text: 'Hello there',
+        createdAt: testNow,
+        updatedAt: testNow,
+        status: PostStatus.publishing,
+        targets: const [PostTarget(accountId: 'acct-1'), PostTarget(accountId: 'acct-2')],
+      ));
+    }
+
+    test('a check that breaks fails its target with Retry instead of ending the run', () async {
+      adapter = _BrokenCheckAdapter();
+      await scheduled(when: testNow);
+      final p = await service().publish('p1');
+      final t = p.targets.single;
+      expect(t.status, TargetStatus.failed);
+      expect(t.result!.error!.message, contains('rules table missing'));
+      expect(p.status, PostStatus.failed);
+      expect((await posts.get('p1'))!.status, PostStatus.failed);
+      expect(adapter.published, isEmpty);
+    });
+
+    test('progress that cannot be saved is kept and saved with the next write', () async {
+      final repo = posts = _UnwritablePostRepository();
+      await twoTargets();
+      // Every write during the run fails; the final one works.
+      repo.fails = (p) => p.status == PostStatus.publishing && p.targets.first.status == TargetStatus.published;
+      final p = await service().publish('p1');
+      expect(adapter.published, hasLength(2));
+      expect((await posts.get('p1'))!.targets.map((t) => t.status), [TargetStatus.published, TargetStatus.published]);
+      expect(p.status, PostStatus.published);
+    });
+
+    test('an outcome that cannot be saved comes with the error and stays on record', () async {
+      final repo = posts = _UnwritablePostRepository();
+      await twoTargets();
+      final journal = PublishJournal.inMemory();
+      repo.fails = (p) => p.status != PostStatus.publishing;
+      final error = await service(journal: journal).publish('p1').then<Object?>((_) => null, onError: (Object e) => e);
+      expect(error, isA<PublishOutcomeNotSaved>());
+      final outcome = (error! as PublishOutcomeNotSaved).post;
+      expect(outcome.targets.map((t) => t.status), [TargetStatus.published, TargetStatus.published], reason: 'which networks have it');
+      expect(outcome.status, PostStatus.published);
+      expect((await journal.entries()).keys, ['p1'], reason: 'recovery finds the run once its heartbeat stops');
+    });
+
+    test('a usage count that cannot be written never turns a post back into an unposted one', () async {
+      await scheduled(when: testNow);
+      final p = await service(quotaRepo: _UnwritableQuotaRepository()).publish('p1');
+      expect(p.targets.single.status, TargetStatus.published);
+      expect(p.status, PostStatus.published);
+    });
+  });
+
+  test('a switched-off account is skipped with a reason, and nothing is posted to it', () async {
+    await accounts.upsert(fakeAccount('fake').copyWith(enabled: false));
+    await scheduled(when: testNow);
+    final p = await service().publish('p1', interactive: false);
+    final t = p.targets.single;
+    expect(t.status, TargetStatus.skipped);
+    expect(t.result!.error!.message, contains('switched off'));
+    expect(adapter.published, isEmpty);
+  });
+
+  group('publish journal', () {
+    test('a run is on record while it goes, with a heartbeat, and off it once its outcome is saved', () async {
+      final journal = PublishJournal.inMemory(heartbeatInterval: const Duration(milliseconds: 5));
+      final seen = <PublishJournalEntry>[];
+      adapter = _SlowAdapter(() async => seen.addAll((await journal.entries()).values));
+      await scheduled(when: testNow);
+      await service(journal: journal).publish('p1');
+      final entry = seen.single;
+      expect(entry.postId, 'p1');
+      expect(entry.owner, journal.owner);
+      expect(entry.heartbeatAt.isAfter(entry.startedAt), isTrue, reason: 'refreshed during the upload');
+      expect(await journal.entries(), isEmpty);
+    });
+
+    test('each process releases only its own runs; a silent run counts as abandoned', () async {
+      Object? shared;
+      PublishJournal process(String owner, DateTime at) =>
+          PublishJournal(read: () async => shared, write: (d) async => shared = d, owner: owner, clock: () => at);
+      final background = process('background', testNow);
+      final ui = process('ui', testNow.add(const Duration(minutes: 5)));
+      await background.record('p1');
+      await ui.release('p1');
+      final entry = (await ui.entries())['p1']!;
+      expect(entry.owner, 'background');
+      expect(ui.isAbandoned(entry), isFalse, reason: 'five minutes without a heartbeat may be a suspended isolate');
+      expect(ui.isAbandoned(entry, now: testNow.add(const Duration(minutes: 11))), isTrue);
+      await background.release('p1');
+      expect(await ui.entries(), isEmpty);
+
+      shared = 'not a journal';
+      expect(await ui.entries(), isEmpty, reason: 'unreadable data recovers nothing');
     });
   });
 

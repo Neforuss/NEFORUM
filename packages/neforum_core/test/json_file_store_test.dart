@@ -69,6 +69,22 @@ void main() {
     expect((await posts.get('p1'))!.text, 'Post p1');
   });
 
+  test('the publish journal is shared by every process that opens the folder, and each owns its runs', () async {
+    final background = JsonFileStore(dir.path).publishJournal;
+    final ui = JsonFileStore(dir.path).publishJournal;
+    expect(ui.owner, isNot(background.owner));
+    await background.record('p1');
+    await ui.record('p2');
+    expect((await background.entries()).keys, unorderedEquals(['p1', 'p2']), reason: 'read from the file, never from a cache');
+    await ui.release('p1');
+    expect((await background.entries())['p1']!.owner, background.owner);
+
+    await File(p.join(dir.path, 'publish-journal.json')).writeAsString('{"p1": {"owner": ');
+    expect(await ui.entries(), isEmpty, reason: 'a damaged journal recovers nothing');
+    await ui.record('p3');
+    expect((await background.entries()).keys, ['p3']);
+  });
+
   test('posts come back with local times, the same moments that were saved', () async {
     final saved = Post(
       id: 'p1',
