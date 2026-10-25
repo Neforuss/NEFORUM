@@ -1,4 +1,15 @@
 import 'adapter_registry.dart';
+import 'art/artfol_adapter.dart';
+import 'art/artstation_adapter.dart';
+import 'art/behance_adapter.dart';
+import 'art/cara_adapter.dart';
+import 'art/fivehundredpx_adapter.dart';
+import 'art/furaffinity_adapter.dart';
+import 'art/itaku_adapter.dart';
+import 'art/kofi_adapter.dart';
+import 'art/newgrounds_adapter.dart';
+import 'art/pixiv_adapter.dart';
+import 'art/weasyl_adapter.dart';
 import 'blogs_a/ghost_adapter.dart';
 import 'blogs_a/wordpress_adapter.dart';
 import 'blogs_a/writefreely_adapter.dart';
@@ -74,6 +85,18 @@ List<PlatformAdapter> builtinAdapters() => [
       SubstackAdapter(),
       // Business
       GoogleBusinessAdapter(),
+      // Art and portfolios (hand-off)
+      BehanceAdapter(),
+      ArtStationAdapter(),
+      CaraAdapter(),
+      PixivAdapter(),
+      ItakuAdapter(),
+      NewgroundsAdapter(),
+      FurAffinityAdapter(),
+      WeasylAdapter(),
+      KofiAdapter(),
+      ArtfolAdapter(),
+      FiveHundredPxAdapter(),
     ];
 
 /// A registry with every built-in adapter.
