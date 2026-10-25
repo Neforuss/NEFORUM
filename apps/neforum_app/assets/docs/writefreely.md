@@ -1,10 +1,30 @@
-# Write.as and WriteFreely
+# Write.as and WriteFreely setup guide
 
-NEFORUM publishes to **Write.as** and to any self-hosted **WriteFreely** server. Both use the same API.
+This guide connects **Write.as** or any self-hosted **WriteFreely** server (both use the same API), so NEFORUM publishes your posts there. You sign in with your normal username and password.
 
-Status as of October 2026: the API is open and free. You don't need a developer account, app registration or app review. You sign in with your normal username and password.
+## Steps
+
+1. In NEFORUM, add **Write.as / WriteFreely**.
+2. Under **Server**, keep `https://write.as`, or enter your WriteFreely server, for example `https://blog.example.org`.
+3. Enter your **Username** and **Password**.
+   - For **anonymous posting** on Write.as, leave the username empty.
+4. Optionally enter a **Blog alias**: the blog to post to, for example `poems` for `write.as/poems`.
+   - If you leave it empty, NEFORUM uses your first blog.
+5. Turn on **Upload images to Snap.as** only for a Write.as account that has Snap.as access (see *Images*).
+6. Press **Connect**.
+
+You don't register any redirect address: there is no OAuth.
+
+## Steps: hand-off
+
+1. In NEFORUM, add **Write.as / WriteFreely**, choose **Hand-off** and enter your server.
+2. Sign in to your account in the browser.
+3. When you publish, paste the text into a new post on the site NEFORUM opens.
+4. Press **Publish**.
 
 ## Ways to connect
+
+Status as of October 2026: the API is open and free. You don't need a developer account, app registration or app review.
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
@@ -12,25 +32,15 @@ Status as of October 2026: the API is open and free. You don't need a developer 
 | **Open API**, anonymous | Nothing (Write.as) | Free | Anonymous posts can't be edited or deleted from NEFORUM later. |
 | **Hand-off** | An account you are signed in to in the browser | Free | NEFORUM copies the post to the clipboard and opens the site. You paste it and press **Publish**. |
 
-## Connect
+## How it works
 
-1. In NEFORUM, add **Write.as / WriteFreely**.
-2. **Server**: keep `https://write.as`, or enter your WriteFreely server, for example `https://blog.example.org`.
-3. Enter your **Username** and **Password**.
-   - NEFORUM sends them once to `POST /api/auth/login` and receives an **access token**.
-   - Only the token is stored, never the password.
-4. **Blog alias** (optional): the blog to post to, for example `poems` for `write.as/poems`. If you leave it empty, NEFORUM uses your first blog. NEFORUM reads your blogs with `GET /api/me/collections`.
-5. **Upload images to Snap.as**: turn this on only for a Write.as account that has Snap.as access. See *Images* below.
+### Signing in
 
-If the server answers "User doesn't exist", check the username. NEFORUM only reports a wrong server address when the server doesn't answer like WriteFreely at all.
+- NEFORUM sends your username and password once to `POST /api/auth/login` and receives an **access token**. Only the token is stored, never the password.
+- NEFORUM reads your blogs with `GET /api/me/collections`.
+- When you remove the account, NEFORUM revokes the token with `DELETE /api/auth/me`. Tokens don't expire on their own.
 
-For **anonymous posting**, leave the username empty.
-
-You don't register any redirect address: there is no OAuth.
-
-When you remove the account, NEFORUM revokes the token with `DELETE /api/auth/me`. Tokens don't expire on their own.
-
-## Posting
+### Posting
 
 - **Body** is Markdown and is sent unchanged. `#hashtags` in the text become the post's tags on the blog. NEFORUM adds the post's tags to the end of the text as `#tags`.
 - **Title** is optional.
@@ -48,11 +58,11 @@ WriteFreely has **no image upload API**. NEFORUM first puts each image at a publ
 
 If neither is set up, posts with images fail with a clear message. Videos can't be posted.
 
-## Hand-off
+### Hand-off
 
 Write.as and WriteFreely editors can't be filled in from a link. NEFORUM copies the post to the clipboard, with the title as a first line `# Title`, and opens your server. Paste the text into a new post and press **Publish**. The editor uses the first `#` line as the title.
 
-## Known limitations
+## Limits
 
 - **Daily post limits on free Write.as accounts.** NEFORUM reports them as "quota" errors. Write.as doesn't publish the exact numbers.
 - **Who can read a post** is set by the blog's own visibility setting on the server (public, unlisted, private or password). It isn't set per post. NEFORUM warns when a post isn't public.
@@ -60,6 +70,10 @@ Write.as and WriteFreely editors can't be filled in from a link. NEFORUM copies 
 - **No threads, no content warnings.**
 - **Anonymous posts**: Write.as returns an edit token for each anonymous post, but NEFORUM doesn't keep it. You can't edit or delete these posts through NEFORUM.
 - **Self-hosted servers** may have anonymous posting or new sign-ups turned off. NEFORUM then shows the server's own error.
+
+## Troubleshooting
+
+- **"User doesn't exist"**: check the username. NEFORUM only reports a wrong server address when the server doesn't answer like WriteFreely at all.
 
 ## Sources
 

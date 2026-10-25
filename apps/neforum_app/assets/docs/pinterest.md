@@ -1,70 +1,79 @@
-# Pinterest
+# Pinterest setup guide
 
-NEFORUM can create **Pins on one of your boards**. Every Pin needs an image or a video. NEFORUM uses your text as the Pin **description**, your post title as the Pin **title**, and your post link as the page the Pin **links to**.
+This guide connects Pinterest, so NEFORUM creates **Pins on one of your boards**, automatically with your own API keys or by hand-off. Every Pin needs an image or a video; NEFORUM uses your text as the Pin **description**, your post title as the Pin **title**, and your post link as the page the Pin **links to**.
 
-You can connect Pinterest in two ways:
+## Steps
 
-| Tier | What you need | Cost | Limits | Review (as of October 2026) |
-|---|---|---|---|---|
-| **Your own API keys** (automatic) | A Pinterest **business** account (converting is free) and your own Pinterest developer app | Free | **Trial access:** 300 new Pins (and other writes) per app per day, 1000 API calls per app per day. **Standard access:** 100 writes per minute | **Two reviews.** Pinterest must approve the app for **Trial access** before it works at all. With Trial access, **your Pins are only visible to you**. To make them public you must pass a second review for **Standard access**, which needs a screen recording |
-| **Hand-off** (you press Save) | Nothing | Free | None | None |
+These steps set up "Your own API keys". Read *Before you start* below first: Pinterest must approve your app, and until it grants Standard access your Pins are only visible to you. Do the NEFORUM part on Windows or macOS: Pinterest cannot send you back to a phone after you sign in.
 
-**Be aware before you start:**
-
-- **Trial access keeps your Pins private.** Pinterest's own docs say that all Pins and boards created with Trial access are "only visible to their creator". Your followers will not see them until your app has Standard access.
-- **Approval can be slow.** Pinterest says it reviews Trial requests on business days. In 2025 and 2026 many developers reported waiting more than a week, and some were refused without a reason. While the app is waiting, the app secret is hidden and every API call fails. NEFORUM then shows "Your Pinterest developer app is not approved yet".
-- **Every NEFORUM user needs their own app and their own approval.** NEFORUM is open source and has no central server, so it cannot share one approved app between users.
-
-What the automatic tier **cannot** do:
-
-- **Schedule on Pinterest's side.** The API has no "publish at" field (checked against the v5 OpenAPI description and the Create Pin reference on 2026-10-11). NEFORUM's own scheduler sends the Pin at the right time, so NEFORUM has to be running then. Pinterest's developer guidelines also require you to choose every Pin yourself. NEFORUM never creates Pins you did not write.
-- **Post GIF or WebP images.** The API accepts uploaded images only as JPEG or PNG.
-- **Post to secret boards.** NEFORUM only lists your public boards and group boards.
-- **Set alt text on carousels.** Alt text is sent only for single-image Pins.
-- **Connect from a phone.** Pinterest needs a web address to send you back to after you sign in. It does not document app links such as `neforum://callback`. Connect from NEFORUM on Windows or macOS. On phones, use the hand-off tier.
-
-## Set up "Your own API keys"
-
-1. **Use a business account.** If your Pinterest account is personal, open Pinterest **Settings > Account management** and choose **Convert to a business account**. It is free and keeps your profile, Pins and followers. Pinterest no longer shows developer apps that belong to personal accounts.
-2. Open <https://developers.pinterest.com/apps/> while signed in and click **Connect app** (or **Create app**).
-3. Fill in the request form:
+1. Use a business account.
+   - If your Pinterest account is personal, open Pinterest **Settings > Account management** and choose **Convert to a business account**. It is free and keeps your profile, Pins and followers. Pinterest no longer shows developer apps that belong to personal accounts.
+2. Open <https://developers.pinterest.com/apps/> while signed in.
+3. Click **Connect app** (or **Create app**).
+4. Fill in the request form:
    - **App name**: anything, e.g. `NEFORUM for Ada`.
    - **Description**: e.g. "Personal cross-posting: I create Pins on my own boards from the NEFORUM app."
    - **Website** and **privacy policy**: a page you control. Your profile page or a short page on GitHub is fine.
-4. Under **Redirect URIs**, add **both** of these addresses exactly as written:
+5. Under **Redirect URIs**, add **both** of these addresses exactly as written:
 
    ```
    http://localhost:52771/callback
    http://127.0.0.1:52771/callback
    ```
 
-   Add them now. Pinterest locks redirect URIs while it reviews the app. Pinterest compares them character for character: `http`, port `52771`, path `/callback`, no trailing slash.
-5. Submit the form and wait until the app card shows **Trial access**. Only then does Pinterest show the **App secret key**.
-6. In NEFORUM, open **Accounts > Add account > Pinterest > Your own API keys** and fill in:
+   - Add them now. Pinterest locks redirect URIs while it reviews the app.
+   - Pinterest compares them character for character: `http`, port `52771`, path `/callback`, no trailing slash.
+6. Submit the form.
+7. Wait until the app card shows **Trial access**. Only then does Pinterest show the **App secret key**.
+8. In NEFORUM, open **Accounts > Add account > Pinterest > Your own API keys**.
+9. Fill in the form:
    - **App ID** and **App secret key**, both from the app's page at developers.pinterest.com. Click **Show key** to see the secret.
    - **Board**: the name of the board your Pins should go to, for example `Summer Recipes`. You can also paste its id or the board's web address. You can leave it empty if you have only one board.
    - **Access level of your app**: `trial` or `standard`, as shown on your app card. This only controls a reminder in the composer.
    - **Redirect URI you registered**: keep `localhost` unless you registered only the `127.0.0.1` address.
-7. Click **Connect**. Your browser opens Pinterest. Sign in if asked, then allow every permission NEFORUM asks for:
-   - see and edit your boards (`boards:read`, `boards:write`)
-   - see and create Pins (`pins:read`, `pins:write`)
-   - see your account (`user_accounts:read`)
+10. Click **Connect**. Your browser opens Pinterest.
+11. Sign in if asked.
+12. Allow every permission NEFORUM asks for:
+    - see and edit your boards (`boards:read`, `boards:write`)
+    - see and create Pins (`pins:read`, `pins:write`)
+    - see your account (`user_accounts:read`)
 
-   Pinterest refuses to create Pins without the board-editing permission.
+    Pinterest refuses to create Pins without the board-editing permission.
 
-### Get Standard access (public Pins)
+## Steps: get Standard access (public Pins)
 
 1. On <https://developers.pinterest.com/apps/>, click **Upgrade** on your app card.
-2. Check the app details. Upload a screen recording that shows NEFORUM sending you through the Pinterest sign-in and then creating a Pin.
-3. Submit and wait. Developers report waits of about 1 to 4 weeks, and rejections are common when the video does not show the sign-in. Once you are approved, change **Access level** to `standard` by reconnecting the account. Then raise the daily limit in NEFORUM's quota settings, because Standard allows 100 writes per minute.
+2. Check the app details.
+3. Upload a screen recording that shows NEFORUM sending you through the Pinterest sign-in and then creating a Pin.
+4. Submit and wait.
+   - Developers report waits of about 1 to 4 weeks, and rejections are common when the video does not show the sign-in.
+5. Once you are approved, reconnect the account and change **Access level** to `standard`.
+6. Raise the daily limit in NEFORUM's quota settings, because Standard allows 100 writes per minute.
 
-### Staying signed in
+## Steps: hand-off (you press Save)
 
-- A Pinterest sign-in lasts **30 days**. NEFORUM renews it automatically when it is close to expiring, using Pinterest's refresh token.
-- The refresh token itself lapses after **60 days without use**. Every renewal starts a new 60 days. If you do not use NEFORUM for Pinterest for two months, you have to reconnect. (NEFORUM asks for this "continuous" refresh token also for developer apps created before 25 September 2025, which would otherwise get the legacy one-year token.)
-- If Pinterest is briefly unavailable or rate limits the renewal, NEFORUM tries again later instead of asking you to reconnect.
+1. In NEFORUM, open **Accounts > Add account > Pinterest > Hand-off**.
+2. When you publish, NEFORUM copies the description to the clipboard and opens Pinterest (see *Hand-off* under *How it works*).
+3. Add the image if it is not filled in, and paste the description.
+4. Choose a board.
+5. Press **Save**.
 
-## What gets posted
+## Ways to connect
+
+| Tier | What you need | Cost | Limits | Review (as of October 2026) |
+|---|---|---|---|---|
+| **Your own API keys** (automatic) | A Pinterest **business** account (converting is free) and your own Pinterest developer app | Free | **Trial access:** 300 new Pins (and other writes) per app per day, 1000 API calls per app per day. **Standard access:** 100 writes per minute | **Two reviews.** Pinterest must approve the app for **Trial access** before it works at all. With Trial access, **your Pins are only visible to you**. To make them public you must pass a second review for **Standard access**, which needs a screen recording |
+| **Hand-off** (you press Save) | Nothing | Free | None | None |
+
+### Before you start
+
+- **Trial access keeps your Pins private.** Pinterest's own docs say that all Pins and boards created with Trial access are "only visible to their creator". Your followers will not see them until your app has Standard access.
+- **Approval can be slow.** Pinterest says it reviews Trial requests on business days. In 2025 and 2026 many developers reported waiting more than a week, and some were refused without a reason. While the app is waiting, the app secret is hidden and every API call fails. NEFORUM then shows "Your Pinterest developer app is not approved yet".
+- **Every NEFORUM user needs their own app and their own approval.** NEFORUM is open source and has no central server, so it cannot share one approved app between users.
+
+## How it works
+
+### What gets posted
 
 | NEFORUM | Pinterest |
 |---|---|
@@ -84,7 +93,13 @@ Advanced settings for each post (in the post's per-platform options):
 - `pinterestCoverImageUrl`: a public image to use as the video cover.
 - `pinterestCoverKeyFrameSeconds`: which second of the video to use as the cover (default 1).
 
-## Hand-off
+### Staying signed in
+
+- A Pinterest sign-in lasts **30 days**. NEFORUM renews it automatically when it is close to expiring, using Pinterest's refresh token.
+- The refresh token itself lapses after **60 days without use**. Every renewal starts a new 60 days. If you do not use NEFORUM for Pinterest for two months, you have to reconnect. (NEFORUM asks for this "continuous" refresh token also for developer apps created before 25 September 2025, which would otherwise get the legacy one-year token.)
+- If Pinterest is briefly unavailable or rate limits the renewal, NEFORUM tries again later instead of asking you to reconnect.
+
+### Hand-off
 
 NEFORUM copies the description to the clipboard and then does one of two things:
 
@@ -93,7 +108,17 @@ NEFORUM copies the description to the clipboard and then does one of two things:
 
 Then you choose a board and press **Save**.
 
-## Known limitations
+## Limits
+
+What the automatic tier **cannot** do:
+
+- **Schedule on Pinterest's side.** The API has no "publish at" field (checked against the v5 OpenAPI description and the Create Pin reference on 2026-10-11). NEFORUM's own scheduler sends the Pin at the right time, so NEFORUM has to be running then. Pinterest's developer guidelines also require you to choose every Pin yourself. NEFORUM never creates Pins you did not write.
+- **Post GIF or WebP images.** The API accepts uploaded images only as JPEG or PNG.
+- **Post to secret boards.** NEFORUM only lists your public boards and group boards.
+- **Set alt text on carousels.** Alt text is sent only for single-image Pins.
+- **Connect from a phone.** Pinterest needs a web address to send you back to after you sign in. It does not document app links such as `neforum://callback`. Connect from NEFORUM on Windows or macOS. On phones, use the hand-off tier.
+
+### Known limitations
 
 - The `127.0.0.1` redirect address has not been confirmed for Pinterest. Pinterest's own sample app uses `localhost`, which is why NEFORUM uses `localhost` by default and asks you to register both addresses.
 - Pinterest community reports say a video Pin without a cover image fails with a confusing "unauthorized" error. NEFORUM sends a cover frame time (`cover_image_key_frame_time`). It is not confirmed that this is enough. If video Pins fail, set `pinterestCoverImageUrl`.

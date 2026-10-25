@@ -1,10 +1,35 @@
-# Micropub: Micro.blog and IndieWeb sites
+# Micropub setup guide
 
-NEFORUM can post to any website that speaks **Micropub**, the W3C standard for posting to your own site. This includes Micro.blog, WordPress with the IndieAuth and Micropub plugins, Known, and many static-site setups.
+This guide connects your own website or Micro.blog blog through **Micropub**, the W3C standard for posting to your own site, so NEFORUM posts there for you. It works with Micro.blog, WordPress with the IndieAuth and Micropub plugins, Known, and many static-site setups.
 
-As of October 2026, Micropub and IndieAuth are open standards. There is no developer portal, no app registration and no app review.
+## Steps
+
+1. In NEFORUM, add **Micropub**.
+2. Enter **your site URL**, for example `alice.micro.blog` or `https://alice.example/`.
+   - WordPress: first install the **IndieAuth** and **Micropub** plugins and check that your home page shows the `rel` links listed under *How it works*.
+3. Leave **App token** empty and press **Connect**. Your site's sign-in page opens in the browser.
+4. Approve the request. NEFORUM asks for:
+   - **create** (write posts)
+   - **media** (upload files)
+   - **profile** (so your server may send your name and photo)
+5. Wait for the browser to send you back to NEFORUM:
+   - Windows and macOS: `http://127.0.0.1:52771/callback`
+   - Android and iOS: `neforum://callback`
+
+You don't register anything. On a phone, servers that check redirect addresses refuse this sign-in (see *Client ids*): sign in on a computer, or use a Micro.blog app token.
+
+## Steps: Micro.blog app token
+
+1. Sign in at https://micro.blog and open **Account > App tokens**.
+2. Create a token named `NEFORUM`.
+3. In NEFORUM, add **Micropub** and enter your blog address (`yourname.micro.blog` or your custom domain).
+4. Paste the token into **App token**.
+
+App tokens don't expire until you delete them.
 
 ## Ways to connect
+
+As of October 2026, Micropub and IndieAuth are open standards. There is no developer portal, no app registration and no app review.
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
@@ -12,42 +37,17 @@ As of October 2026, Micropub and IndieAuth are open standards. There is no devel
 
 If NEFORUM can't post automatically, it can still hand the post off to you. The text goes on the clipboard, and on Micro.blog the app opens. See *Hand-off* below.
 
-### Option A: sign in through the browser (IndieAuth)
+**WordPress:** with the **IndieAuth** and **Micropub** plugins, use the browser sign-in above. If you'd rather use WordPress's own API, add the site with the WordPress option instead.
 
-1. In NEFORUM, add **Micropub** and enter **your site URL**. Examples: `alice.micro.blog`, `https://alice.example/`.
-2. Leave **App token** empty and press **Connect**.
-3. NEFORUM reads your home page. It looks for these things:
-   - `rel="indieauth-metadata"`, or the older `rel="authorization_endpoint"` and `rel="token_endpoint"`
-   - `rel="micropub"`
+## How it works
 
-   It checks both the HTTP `Link` header and the HTML `<link>` tags.
-4. Your site's sign-in page opens in the browser. NEFORUM asks for **create** (write posts), **media** (upload files) and **profile** (so your server may send your name and photo). Approve it.
-5. The browser sends you back to NEFORUM:
-   - Windows and macOS: `http://127.0.0.1:52771/callback`
-   - Android and iOS: `neforum://callback`
+### When you connect
 
-You don't register anything. IndieAuth identifies an app by a *client id* URL:
+- **Discovery.** NEFORUM reads your home page, then the IndieAuth metadata document, if there is one. On the home page it looks for:
+  - `rel="indieauth-metadata"`, or the older `rel="authorization_endpoint"` and `rel="token_endpoint"`
+  - `rel="micropub"`
 
-- **On a computer** NEFORUM uses the loopback client id `http://127.0.0.1:52771/`. The IndieAuth spec says servers must not fetch a loopback client id, and the redirect address is on the same host and port, so your server has nothing to check.
-- **On a phone** the redirect `neforum://callback` is on a different "host" than any web client id. A server that checks redirect addresses only accepts it if the client id page lists it. NEFORUM uses `https://neforum.app/`, but as of October 2026 that page does not exist yet, so servers that check will refuse the sign-in. Sign in on a computer, or use an app token (Micro.blog).
-
-Leave **Client ID (advanced)** empty unless you host your own client metadata page that lists NEFORUM's redirect address. Some servers refuse loopback client ids; then you need such a page or an app token.
-
-### Option B: Micro.blog app token
-
-1. Sign in at https://micro.blog and open **Account > App tokens**.
-2. Create a token named `NEFORUM`.
-3. In NEFORUM, enter your blog address (`yourname.micro.blog` or your custom domain) and paste the token into **App token**.
-
-App tokens don't expire until you delete them.
-
-### WordPress
-
-Install the **IndieAuth** and **Micropub** plugins and check that your home page shows the `rel` links listed above. Then use Option A. If you'd rather use WordPress's own API, add the site with the WordPress option instead.
-
-## What NEFORUM does when you connect
-
-- **Discovery.** It reads your home page, then the IndieAuth metadata document, if there is one.
+  It checks both the HTTP `Link` header and the HTML `<link>` tags.
 - **Sign-in.** It uses the IndieAuth authorization code flow with PKCE (S256), the `me` parameter and a random `state`. If your server sends an `iss` value back, NEFORUM checks it against the metadata's `issuer`.
 - **Token.** It exchanges the code at your token endpoint. If the token response names a different `me`, NEFORUM checks that the new URL uses the same authorization server, or it refuses.
 - **Configuration.** It calls `GET <micropub>?q=config` to find:
@@ -56,7 +56,16 @@ Install the **IndieAuth** and **Micropub** plugins and check that your home page
   - your **destinations** (Micro.blog blogs)
 - **Token refresh.** If your server issues expiring tokens with a refresh token, NEFORUM renews them before posting. If it can't, you're asked to reconnect.
 
-## Posting
+### Client ids
+
+You don't register anything. IndieAuth identifies an app by a *client id* URL:
+
+- **On a computer** NEFORUM uses the loopback client id `http://127.0.0.1:52771/`. The IndieAuth spec says servers must not fetch a loopback client id, and the redirect address is on the same host and port, so your server has nothing to check.
+- **On a phone** the redirect `neforum://callback` is on a different "host" than any web client id. A server that checks redirect addresses only accepts it if the client id page lists it. NEFORUM uses `https://neforum.app/`, but as of October 2026 that page does not exist yet, so servers that check will refuse the sign-in. Sign in on a computer, or use an app token (Micro.blog).
+
+Leave **Client ID (advanced)** empty unless you host your own client metadata page that lists NEFORUM's redirect address. Some servers refuse loopback client ids; then you need such a page or an app token.
+
+### Posting
 
 NEFORUM sends a form-encoded `h=entry` request. Every Micropub server must accept this format. The post uses these properties:
 
@@ -82,12 +91,12 @@ Your server answers with `201 Created` or `202 Accepted`. The `Location` header 
 | `syndicateTo: [uid, ...]` | Cross-posts to targets from `q=config`. You can also save a default in the account settings. | `mp-syndicate-to[]` |
 | `destination: uid` | Picks one blog on a multi-blog Micro.blog account | `mp-destination` |
 
-## Hand-off
+### Hand-off
 
 - **Micro.blog:** NEFORUM shares the post to the Micro.blog app. On Android that's `blog.micro.android`. On iOS it uses `microblog://post?text=...`. The text is also on the clipboard. Attach photos in the app.
 - **Other sites:** NEFORUM copies the text and opens your home page. You start a post in your own editor.
 
-## Known limitations
+## Limits
 
 - **Alt text.** In form-encoded and multipart requests, the Micropub spec has no standard field for alt text. NEFORUM sends `mp-photo-alt`. Micro.blog uses it, but other servers may ignore it.
 - **Micro.blog timeline.** Untitled posts longer than 300 characters are shortened in the timeline (600 if the post contains a block quote). Add a title to publish a full article.
