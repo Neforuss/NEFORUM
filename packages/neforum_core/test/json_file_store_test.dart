@@ -69,6 +69,53 @@ void main() {
     expect((await posts.get('p1'))!.text, 'Post p1');
   });
 
+  test('what another process saves is seen before the cache is used, and never written over', () async {
+    final ui = JsonFileStore(dir.path).posts;
+    final background = JsonFileStore(dir.path).posts;
+    await ui.upsert(post('p1').copyWith(status: PostStatus.publishing));
+    await ui.upsert(post('p2'));
+    var changes = 0;
+    final listening = ui.changes.listen((_) => changes++);
+    addTearDown(listening.cancel);
+
+    // The background isolate publishes p1, deletes p2 and adds p3.
+    await background.upsert((await background.get('p1'))!.copyWith(status: PostStatus.published));
+    await background.delete('p2');
+    await background.upsert(post('p3'));
+
+    expect((await ui.get('p1'))!.status, PostStatus.published);
+    await pumpEventQueue();
+    expect(changes, 1, reason: 'whoever shows the posts reads them again');
+    expect((await ui.all()).map((x) => x.id), unorderedEquals(['p1', 'p3']));
+    await ui.reload();
+    await pumpEventQueue();
+    expect(changes, 1, reason: 'an unchanged file read again announces nothing, so cloud sync does not run for it');
+
+    // Another change from the background isolate, then one from the UI.
+    await background.upsert((await background.get('p3'))!.copyWith(text: 'edited'));
+    await ui.upsert(post('p4'));
+    final onDisk = await JsonFileStore(dir.path).posts.all();
+    expect(onDisk.map((x) => x.id), unorderedEquals(['p1', 'p3', 'p4']));
+    expect(onDisk.firstWhere((x) => x.id == 'p1').status, PostStatus.published);
+    expect(onDisk.firstWhere((x) => x.id == 'p3').text, 'edited');
+  });
+
+  test('reload reads the file again even when its size and change time stayed the same', () async {
+    final path = p.join(dir.path, 'posts.json');
+    final ui = JsonFileStore(dir.path).posts;
+    await ui.upsert(post('p1').copyWith(text: 'Draft A'));
+    final before = File(path).statSync();
+
+    // Same length, and the change time put back: the stamp cannot tell.
+    await JsonFileStore(dir.path).posts.upsert(post('p1').copyWith(text: 'Draft B'));
+    File(path).setLastModifiedSync(before.modified);
+    expect(File(path).statSync().size, before.size);
+    expect((await ui.get('p1'))!.text, 'Draft A');
+
+    await ui.reload();
+    expect((await ui.get('p1'))!.text, 'Draft B');
+  });
+
   test('the publish journal is shared by every process that opens the folder, and each owns its runs', () async {
     final background = JsonFileStore(dir.path).publishJournal;
     final ui = JsonFileStore(dir.path).publishJournal;

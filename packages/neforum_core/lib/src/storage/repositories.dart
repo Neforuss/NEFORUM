@@ -24,6 +24,11 @@ abstract class PostRepository {
   /// Scheduled posts whose time has come (`scheduledAt <= now`).
   Future<List<Post>> due(DateTime now);
   Stream<void> get changes;
+
+  /// Reads the posts again from where they are kept, so that what another
+  /// process (a background isolate) saved there is seen, and never written
+  /// over. Called before acting on posts such a process may have changed.
+  Future<void> reload();
 }
 
 /// One successful (or quota-consuming) publish, used for local quota tracking.
@@ -118,6 +123,10 @@ class InMemoryPostRepository implements PostRepository {
       .where((p) => p.status == PostStatus.scheduled && p.scheduledAt != null && !p.scheduledAt!.isAfter(now))
       .toList()
     ..sort((a, b) => a.scheduledAt!.compareTo(b.scheduledAt!));
+
+  /// Nothing is kept anywhere else.
+  @override
+  Future<void> reload() async {}
 }
 
 class InMemoryQuotaRepository implements QuotaRepository {

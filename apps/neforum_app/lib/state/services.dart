@@ -314,37 +314,61 @@ class AppServices {
   /// the next recovery pass saves them before anything else.
   final Map<String, Post> _unsavedOutcomes = {};
 
+  /// How long a post may stay publishing with no run on record and no
+  /// change before startup settles it (see [recoverInterruptedPublishing]):
+  /// longer than any upload takes.
+  static const unrecordedRunTimeout = Duration(hours: 2);
+
   /// Posts whose run on this device ended without saving its outcome
   /// (NEFORUM closed, crashed or was killed, a background task was stopped):
   /// their targets still waiting or posting become failed, so they show
   /// under Activity > Failed with Retry instead of looking busy for ever.
   /// Returns how many posts were settled.
   ///
-  /// Only runs [publishJournal] proves abandoned are touched. A post with no
-  /// run on record came from another device through sync, and that device's
-  /// own result follows. A run whose heartbeat is recent may belong to a
-  /// background isolate still publishing it (Android WorkManager, iOS),
-  /// and runs in [exclude] are this process's own. A settled post keeps its
-  /// last change time, so a newer real result still wins a sync merge.
-  Future<int> recoverInterruptedPublishing({DateTime? now, Set<String> exclude = const {}}) async {
+  /// Runs [publishJournal] proves abandoned are settled. A run whose
+  /// heartbeat is recent may belong to a background isolate still
+  /// publishing it (Android WorkManager, iOS), and runs in [exclude] are
+  /// this process's own. The posts are read from posts.json first, since
+  /// such an isolate saves its progress there: what it posted stays posted.
+  ///
+  /// A post with no run on record came from another device through sync,
+  /// and that device's own result follows. At startup ([atStartup]) such a
+  /// post is settled too once it has not changed for [unrecordedRunTimeout]:
+  /// no run is still posting it by then. NEFORUM 1.1.5 and earlier kept no
+  /// journal, so the posts they left publishing are settled this way.
+  ///
+  /// A settled post keeps its last change time, so a newer real result
+  /// still wins a sync merge.
+  Future<int> recoverInterruptedPublishing({DateTime? now, Set<String> exclude = const {}, bool atStartup = false}) async {
+    await posts.reload();
     var recovered = 0;
     for (final outcome in _unsavedOutcomes.values.toList()) {
       if (await _saveOutcome(outcome)) recovered++;
     }
     final runs = await publishJournal.entries();
-    if (runs.isEmpty) return recovered;
     final at = now ?? DateTime.now();
     final roller = publisher();
+    Future<void> settle(Post post) async {
+      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage)));
+      recovered++;
+    }
+
     final settled = <String>[];
     for (final run in runs.values) {
       if (exclude.contains(run.postId) || _unsavedOutcomes.containsKey(run.postId) || !publishJournal.isAbandoned(run, now: at)) continue;
       final post = await posts.get(run.postId);
       settled.add(run.postId);
       if (post == null || post.status != PostStatus.publishing) continue;
-      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage)));
-      recovered++;
+      await settle(post);
     }
     await publishJournal.remove(settled);
+    if (atStartup) {
+      for (final post in await posts.all()) {
+        if (post.status != PostStatus.publishing || runs.containsKey(post.id) || exclude.contains(post.id) || _unsavedOutcomes.containsKey(post.id)) continue;
+        if (at.difference(lastChangeOf(post)) < unrecordedRunTimeout) continue;
+        await settle(post);
+      }
+    }
     return recovered;
   }
 
@@ -354,12 +378,16 @@ class AppServices {
   /// and show Retry. When [error] carries the run's outcome
   /// ([PublishOutcomeNotSaved]), that outcome is saved instead, since it
   /// knows which networks already have the post. A post another isolate is
-  /// publishing is left alone. When posts.json still cannot be written, the
-  /// next recovery pass saves it.
+  /// publishing is left alone, and one whose run another isolate abandoned
+  /// is settled from what that isolate saved. When posts.json still cannot
+  /// be written, the next recovery pass saves it.
   Future<void> concludeStoppedRun(String postId, Object error) async {
     try {
       final run = (await publishJournal.entries())[postId];
-      if (run != null && run.owner != publishJournal.owner && !publishJournal.isAbandoned(run)) return;
+      if (run != null && run.owner != publishJournal.owner) {
+        if (!publishJournal.isAbandoned(run)) return;
+        await posts.reload();
+      }
       final Post outcome;
       if (error is PublishOutcomeNotSaved) {
         outcome = error.post;
@@ -428,7 +456,7 @@ class AppServices {
       }
     }
 
-    await step('interrupted posts', recoverInterruptedPublishing);
+    await step('interrupted posts', () => recoverInterruptedPublishing(atStartup: true));
     await step('retention', applyRetention);
     await step('unused media', deleteUnreferencedMedia);
     await step('share-sheet copies', deleteExpiredShareExports);
@@ -479,6 +507,9 @@ class _NotificationCancellingPostRepository implements PostRepository {
 
   @override
   Future<List<Post>> due(DateTime now) => _posts.due(now);
+
+  @override
+  Future<void> reload() => _posts.reload();
 }
 
 /// Whether [t] really reached its network: published, handed off, or held
@@ -537,6 +568,11 @@ List<Post> expiredPosts(Iterable<Post> all, PublishedPostRetention retention, Da
       if (isPostComplete(post, now) && now.difference(post.updatedAt) >= keep) post,
   ];
 }
+
+/// The last time [post] changed: its own change time, or a later attempt at
+/// one of its targets (a run saves its progress target by target without
+/// changing the post's time).
+DateTime lastChangeOf(Post post) => post.targets.map((t) => t.lastAttemptAt).nonNulls.fold(post.updatedAt, (last, t) => t.isAfter(last) ? t : last);
 
 /// [post] with every target still waiting or being posted marked failed
 /// with [message], so that it can be retried.
