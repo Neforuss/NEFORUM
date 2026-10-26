@@ -63,6 +63,11 @@ Future<bool> confirmDeletePost(BuildContext context, WidgetRef ref, Post p) asyn
   );
   if (!ok) return false;
   final actions = ref.read(postActionsProvider);
+  // Taking back the copies the networks hold for their own scheduling goes
+  // over the network and can take a few seconds: say so at once.
+  if (p.hasHeldTargets && context.mounted) {
+    showToast(context, 'Deleting: taking the scheduled copies back from the networks…', icon: Icons.hourglass_top_rounded);
+  }
   try {
     await actions.delete(p);
   } on HeldCopiesException catch (e) {
