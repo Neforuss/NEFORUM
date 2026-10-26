@@ -1,6 +1,7 @@
 // Thread parts, "Clear post", the phone keyboard and Discord's @everyone in
 // the composer, driven through the demo workspace.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -199,11 +200,18 @@ void main() {
       expect(find.text('Part 3 removed'), findsOneWidget);
       final undo = _undoAction(tester);
 
-      // In the test's own clock, so the toast's exit runs in it too.
-      final publishing = c.read(postActionsProvider).publishNow();
+      // Started in the test's own clock, so the toast's exit runs in it too.
+      // Publishing also does real work (files) that only finishes in real
+      // time: let real time and the test's clock run in turns until it is done.
+      Post? published;
+      unawaited(c.read(postActionsProvider).publishNow().then((p) => published = p));
+      for (var i = 0; i < 300 && published == null; i++) {
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
       await settle(tester);
-      await settle(tester);
-      expect((await publishing).additionalParts, ['Two']);
+      expect(published, isNotNull, reason: 'publishing finished');
+      expect(published!.additionalParts, ['Two']);
       expect(find.text('Part 3 removed'), findsNothing, reason: 'the Undo goes with the post it belonged to');
 
       undo();
