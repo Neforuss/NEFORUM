@@ -29,14 +29,17 @@ import '../../widgets/surfaces.dart';
 import '../accounts/guide_sheet.dart';
 
 /// Shows the hand-off sheet (bottom sheet on phones, dialog elsewhere).
-Future<HandoffChoice> showHandoffSheet(
+/// However it closes, the decision carries the note an automatic attempt
+/// there left ([HandoffSheet.onHandoffNote]).
+Future<HandoffDecision> showHandoffSheet(
   BuildContext context, {
   required HandoffPlan plan,
   required Post post,
   required ConnectedAccount account,
   required PostVariant variant,
 }) async {
-  final sheet = HandoffSheet(plan: plan, post: post, account: account, variant: variant);
+  String? note;
+  final sheet = HandoffSheet(plan: plan, post: post, account: account, variant: variant, onHandoffNote: (n) => note = n);
   final HandoffChoice? r;
   if (context.isCompact) {
     r = await showModalBottomSheet<HandoffChoice>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => sheet);
@@ -49,16 +52,23 @@ Future<HandoffChoice> showHandoffSheet(
       ),
     );
   }
-  return r ?? HandoffChoice.later;
+  return (choice: r ?? HandoffChoice.later, note: note);
 }
 
 class HandoffSheet extends ConsumerStatefulWidget {
-  const HandoffSheet({super.key, required this.plan, required this.post, required this.account, required this.variant});
+  const HandoffSheet({super.key, required this.plan, required this.post, required this.account, required this.variant, this.onHandoffNote});
 
   final HandoffPlan plan;
   final Post post;
   final ConnectedAccount account;
   final PostVariant variant;
+
+  /// Called when automatic posting in this sheet ended without a confirmed
+  /// post, with what the user should check before posting by hand (Post may
+  /// have been pressed). The run keeps it as the target's
+  /// [PostTarget.handoffNote], so the hand-off is never posted automatically
+  /// again, whether the sheet closes with Later, Skip or a click outside it.
+  final ValueChanged<String>? onHandoffNote;
 
   @override
   ConsumerState<HandoffSheet> createState() => _HandoffSheetState();
@@ -145,41 +155,63 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     _automaticTimer?.cancel();
     _automaticTimer = Timer(wait, () {
       if (!mounted || !_automatic || _fill?.posted == BrowserPostState.confirmed) return;
-      _endAutomatic('The NEFORUM extension did not report back, so nothing was posted automatically. Check the page, or click Fill in again.');
+      final r = _fill;
+      if (r != null && r.automatic == BrowserAutomaticState.countdown) {
+        // The countdown ran, and nothing came after it: Post may have been pressed.
+        _endAutomatic('The NEFORUM extension started posting on ${_hostOf(r)} but did not report back. Check the page; if the post went up, click I posted it.',
+            note: automaticHandoffNote(r, _hostOf(r)));
+      } else {
+        _endAutomatic('The NEFORUM extension did not report back, so nothing was posted automatically. Check the page, or click Fill in again.');
+      }
     });
   }
 
   /// Automatic posting is over without a post: no page posts this job by
   /// itself any more (another tab of the site included), though a post the
-  /// user makes from the page still finishes the hand-off.
-  void _endAutomatic(String problem) {
+  /// user makes from the page still finishes the hand-off. [note]: what the
+  /// page was left with (Post may have been pressed), kept with the target
+  /// ([HandoffSheet.onHandoffNote]); null when nothing came back from it.
+  void _endAutomatic(String problem, {String? note}) {
     _automaticTimer?.cancel();
     final job = _job;
     if (job != null && job.autoPost) _bridge.endAutomaticPosting(job.id);
+    if (note != null) widget.onHandoffNote?.call(note);
     if (mounted) setState(() => _automaticProblem = problem);
   }
 
+  /// "youtube.com", or "the page" when the report does not say.
+  static String _hostOf(BrowserFillResult r) => bareHost(r.host).isEmpty ? 'the page' : bareHost(r.host);
+
   /// What the extension reported on an automatic job.
   void _onAutomaticResult(BrowserFillResult r) {
-    final host = bareHost(r.host).isEmpty ? 'the page' : bareHost(r.host);
+    final host = _hostOf(r);
     final message = r.message == null ? '' : ' ${_sentence(r.message!)}';
+    final note = automaticHandoffNote(r, host);
     if (r.posted == BrowserPostState.confirmed) {
       _automaticTimer?.cancel();
+      // Perhaps from another page of the site: the page that claimed the job
+      // must not post it a second time.
+      _bridge.endAutomaticPosting(r.jobId);
     } else if (r.posted == BrowserPostState.pressed) {
-      _endAutomatic('Pressed Post on $host, but the page did not close the composer. Check it there; if the post went up, click I posted it.');
+      _endAutomatic('Pressed Post on $host, but the page did not close the composer. Check it there; if the post went up, click I posted it.', note: note);
     } else {
       switch (r.automatic) {
         case BrowserAutomaticState.countdown:
           _waitForExtension(_automaticPostingWait);
         case BrowserAutomaticState.stopped:
-          _endAutomatic('You stopped automatic posting on $host, so nothing was posted. Finish the post there, then click I posted it.');
+          _endAutomatic('You stopped automatic posting on $host, so nothing was posted. Finish the post there, then click I posted it.', note: note);
         case BrowserAutomaticState.manual:
-          _endAutomatic('Not posted automatically.$message Finish the post on $host, then click I posted it.');
+          _endAutomatic('Not posted automatically.$message Finish the post on $host, then click I posted it.', note: note);
         case BrowserAutomaticState.none:
           // An extension before 1.1.0 fills the page in but never posts by itself.
-          _endAutomatic(r.status == BrowserFillStatus.filled
-              ? 'Filled in on $host, but your NEFORUM extension is older than 1.1.0 and does not post by itself. Post it there, or update the extension.'
-              : 'Not posted automatically: not everything was filled in.$message Finish the post on $host, then click I posted it.');
+          _endAutomatic(
+              r.status == BrowserFillStatus.filled
+                  ? 'Filled in on $host, but your NEFORUM extension is older than 1.1.0 and does not post by itself. Post it there, or update the extension.'
+                  : 'Not posted automatically: not everything was filled in.$message Finish the post on $host, then click I posted it.',
+              note: note);
+        case BrowserAutomaticState.otherPage:
+          // Another page's fill: the page that posts the job reports for itself.
+          break;
       }
     }
   }
@@ -190,6 +222,9 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     _bridge = ref.read(servicesProvider).browserBridge;
     _fillSub = _bridge.results.listen((r) {
       if (!mounted || r.jobId != _job?.id) return;
+      // Another page of the site filled the job in (another tab, a reload)
+      // while the page that claimed it posts it: only a post made there counts.
+      if (_automaticRunning && r.automatic == BrowserAutomaticState.otherPage && r.posted == BrowserPostState.none) return;
       setState(() => _fill = r);
       if (_job!.autoPost && _automaticProblem == null) _onAutomaticResult(r);
       // Posted from the page (with the extension's shortcut, or by itself on

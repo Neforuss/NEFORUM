@@ -641,11 +641,31 @@ class IoBrowserBridge extends BrowserBridge {
       message: message.isEmpty ? null : message,
       // Only a job that allowed it can be posted from the page.
       posted: j.quickPost || j.autoPost ? BrowserPostState.values.asNameMap()[body['posted']] ?? BrowserPostState.none : BrowserPostState.none,
-      automatic: j.autoPost ? BrowserAutomaticState.values.asNameMap()[body['automatic']] ?? BrowserAutomaticState.none : BrowserAutomaticState.none,
+      automatic: j.autoPost ? _automaticState(body) : BrowserAutomaticState.none,
       browser: browser.label,
       at: _clock(),
     ));
     return _send(req, 204);
+  }
+
+  /// Where automatic posting stands, by a report on the automatic job: only
+  /// the page that posts it ([_automaticPage]) says. Any other page that
+  /// sends its id (`page`, from extension 1.1.0 on) filled the job in only.
+  /// The posting page always says how its automatic fill went; a report of
+  /// its own without that comes from a fill the user asked for there (Fill
+  /// in this page), which never posts by itself. A report without a page id
+  /// comes from an extension before 1.1.0.
+  BrowserAutomaticState _automaticState(Map<String, dynamic> body) {
+    final page = body['page'] is String ? (body['page'] as String).trim() : '';
+    final reported = switch (body['automatic']) {
+      'countdown' => BrowserAutomaticState.countdown,
+      'stopped' => BrowserAutomaticState.stopped,
+      'manual' => BrowserAutomaticState.manual,
+      _ => null,
+    };
+    if (!_pageId.hasMatch(page)) return reported ?? BrowserAutomaticState.none;
+    if (page != _automaticPage) return BrowserAutomaticState.otherPage;
+    return reported ?? BrowserAutomaticState.manual;
   }
 
   // ---- HTTP ----------------------------------------------------------------

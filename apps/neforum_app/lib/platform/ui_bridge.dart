@@ -12,6 +12,12 @@ enum HandoffChoice {
   skip,
 }
 
+/// How the hand-off sheet closed: the user's [choice], and [note], what an
+/// automatic attempt in the sheet left for the user to check before posting
+/// by hand when it ended without a confirmed post ([PostTarget.handoffNote]);
+/// null when there was none.
+typedef HandoffDecision = ({HandoffChoice choice, String? note});
+
 /// Lets non-UI services (auth, hand-off) ask the UI to show something.
 /// The app shell registers the real implementation at startup; until then
 /// (and in background isolates) the defaults below make everything wait or
@@ -26,7 +32,7 @@ abstract class UiBridge {
   Future<String?> askPaste(Uri authorizationUrl, Uri redirectUri);
 
   /// Shows the hand-off sheet and returns what the user did.
-  Future<HandoffChoice> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant});
+  Future<HandoffDecision> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant});
 }
 
 class _HeadlessBridge implements UiBridge {
@@ -37,8 +43,8 @@ class _HeadlessBridge implements UiBridge {
   Future<String?> askPaste(Uri authorizationUrl, Uri redirectUri) async => null;
 
   @override
-  Future<HandoffChoice> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant}) async =>
-      HandoffChoice.later;
+  Future<HandoffDecision> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant}) async =>
+      (choice: HandoffChoice.later, note: null);
 }
 
 /// [HandoffLauncher] that shows the hand-off sheet through [UiBridge].
@@ -50,18 +56,20 @@ class AppHandoffLauncher implements HandoffLauncher {
   final void Function(String postId, String accountId)? onSkip;
 
   @override
-  Future<HandoffOutcome> launch(HandoffPlan plan, {required Post post, required PostTarget target, required PostVariant variant, required ConnectedAccount account}) async {
+  Future<HandoffResult> launch(HandoffPlan plan, {required Post post, required PostTarget target, required PostVariant variant, required ConnectedAccount account}) async {
     final ui = UiBridge.instance;
-    if (!ui.interactive) return HandoffOutcome.deferred;
-    final choice = await ui.showHandoff(plan, post: post, account: account, variant: variant);
+    if (!ui.interactive) return HandoffResult.deferred;
+    final (:choice, :note) = await ui.showHandoff(plan, post: post, account: account, variant: variant);
     switch (choice) {
       case HandoffChoice.posted:
-        return HandoffOutcome.launched;
+        return HandoffResult.launched;
       case HandoffChoice.later:
-        return HandoffOutcome.deferred;
+        // The run keeps the note with the target, so the hand-off is never
+        // posted automatically again.
+        return HandoffResult(HandoffOutcome.deferred, note: note);
       case HandoffChoice.skip:
         onSkip?.call(post.id, account.id);
-        return HandoffOutcome.deferred;
+        return HandoffResult(HandoffOutcome.deferred, note: note);
     }
   }
 }

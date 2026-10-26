@@ -143,6 +143,20 @@ class _UnwritablePostRepository extends InMemoryPostRepository {
   }
 }
 
+/// Ends each hand-off the way the next of [results] says, and keeps the
+/// target each one was shown with.
+class _ScriptedLauncher implements HandoffLauncher {
+  _ScriptedLauncher(this.results);
+  final List<HandoffResult> results;
+  final shown = <PostTarget>[];
+
+  @override
+  Future<HandoffResult> launch(HandoffPlan plan, {required Post post, required PostTarget target, required PostVariant variant, required ConnectedAccount account}) async {
+    shown.add(post.targetFor(account.id)!);
+    return results.removeAt(0);
+  }
+}
+
 /// A usage count that cannot be written.
 class _UnwritableQuotaRepository extends InMemoryQuotaRepository {
   @override
@@ -172,13 +186,14 @@ void main() {
   late DateTime now;
   final at = testNow.add(const Duration(hours: 2));
 
-  PublishService service({SecretStore? secrets, NeforumHttp? network, QuotaRepository? quotaRepo, PublishJournal? journal}) => PublishService(
+  PublishService service({SecretStore? secrets, NeforumHttp? network, QuotaRepository? quotaRepo, PublishJournal? journal, HandoffLauncher? launcher}) => PublishService(
         registry: AdapterRegistry([adapter]),
         accounts: accounts,
         posts: posts,
         secrets: secrets ?? InMemorySecretStore(),
         quota: QuotaTracker(quotaRepo ?? InMemoryQuotaRepository()),
         http: network ?? NeforumHttp(client: MockClient((_) async => http.Response('', 500)), maxRetries: 0),
+        handoffLauncher: launcher,
         journal: journal,
         clock: () => now,
         log: Logger('test', sink: (level, area, msg, [err]) {}),
@@ -643,6 +658,30 @@ void main() {
     expect(p.targets.single.handoffNote, isNull);
     // Only a waiting hand-off takes a note.
     p = await service().noteHandoff('p1', 'acct-1', 'Too late.');
+    expect(p.targets.single.handoffNote, isNull);
+  });
+
+  test('a hand-off left with a note from an automatic attempt in the sheet keeps it, through Later, until it is handed off', () async {
+    await accounts.upsert(fakeAccount('fake', tier: PlatformTier.handoff));
+    await posts.upsert(Post(id: 'p1', text: 'Hello there', createdAt: testNow, updatedAt: testNow, targets: const [PostTarget(accountId: 'acct-1')]));
+    const note = 'Post was pressed on example.test, but the post was not seen going up. Check the page before you post it again.';
+    final launcher = _ScriptedLauncher([const HandoffResult(HandoffOutcome.deferred, note: note), HandoffResult.deferred, HandoffResult.launched]);
+
+    // Publish now: the extension pressed Post without a sign it went, and the user chose Later.
+    var p = await service(launcher: launcher).publish('p1');
+    expect(p.targets.single.status, TargetStatus.awaitingHandoff);
+    expect(p.targets.single.handoffNote, note);
+    expect((await posts.get('p1'))!.targets.single.handoffNote, note, reason: 'saved by the run itself');
+
+    // Opened again: the sheet is shown the note (so nothing posts by itself), and Later keeps it.
+    p = await service(launcher: launcher).runHandoff('p1', 'acct-1');
+    expect(launcher.shown.last.handoffNote, note);
+    expect(p.targets.single.handoffNote, note);
+    expect((await posts.get('p1'))!.targets.single.handoffNote, note);
+
+    // I posted it.
+    p = await service(launcher: launcher).runHandoff('p1', 'acct-1');
+    expect(p.targets.single.status, TargetStatus.handedOff);
     expect(p.targets.single.handoffNote, isNull);
   });
 

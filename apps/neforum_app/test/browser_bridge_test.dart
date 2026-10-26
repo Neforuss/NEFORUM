@@ -510,6 +510,41 @@ void main() {
       expect(await autoPost(chrome, 'page0000aaaa1111'), isFalse);
     });
 
+    test('automatic: only the page that posts it says how it stands; other pages that send their id only filled it in; a report without an id is from an extension before 1.1.0', () async {
+      final token = await pair();
+      final results = <BrowserFillResult>[];
+      final sub = bridge.results.listen(results.add);
+      addTearDown(sub.cancel);
+      const posting = 'page0000aaaa1111';
+      const other = 'page0000bbbb2222';
+      final job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload', hosts: const ['www.tiktok.com'], text: 'Hi', autoPost: true)!;
+      await call('GET', '/v1/job?host=www.tiktok.com&page=$posting', token: token);
+      await call('GET', '/v1/job?host=www.tiktok.com&page=$other', token: token);
+      for (final body in [
+        {'status': 'filled', 'text': true, 'automatic': 'countdown', 'page': posting},
+        {'status': 'filled', 'text': true, 'page': other}, // another tab's fill
+        {'status': 'filled', 'text': true, 'automatic': 'countdown', 'page': other}, // only the posting page says
+        {'status': 'filled', 'text': true, 'posted': 'confirmed', 'page': other}, // a post made there counts
+        {'status': 'filled', 'text': true, 'page': posting}, // filled in again there at the user's request
+        {'status': 'filled', 'text': true}, // no page id: an extension before 1.1.0
+        {'status': 'filled', 'text': true, 'page': 'bad id!'},
+        {'status': 'filled', 'text': true, 'automatic': 'otherPage'}, // never taken from the extension
+      ]) {
+        await call('POST', '/v1/job/${job.id}/result', token: token, body: body);
+      }
+      await pumpEventQueue();
+      expect([for (final r in results) (r.automatic, r.posted)], [
+        (BrowserAutomaticState.countdown, BrowserPostState.none),
+        (BrowserAutomaticState.otherPage, BrowserPostState.none),
+        (BrowserAutomaticState.otherPage, BrowserPostState.none),
+        (BrowserAutomaticState.otherPage, BrowserPostState.confirmed),
+        (BrowserAutomaticState.manual, BrowserPostState.none),
+        (BrowserAutomaticState.none, BrowserPostState.none),
+        (BrowserAutomaticState.none, BrowserPostState.none),
+        (BrowserAutomaticState.none, BrowserPostState.none),
+      ]);
+    });
+
     test('served: each fetch of the job or of one of its files says the page is still at work', () async {
       final token = await pair();
       final served = <String>[];
@@ -1176,7 +1211,7 @@ HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
-              onPressed: () async => choice = await showHandoffSheet(context, plan: plan, post: post, account: account, variant: PostVariant(text: 'Hello')),
+              onPressed: () async => choice = (await showHandoffSheet(context, plan: plan, post: post, account: account, variant: PostVariant(text: 'Hello'))).choice,
               child: const Text('Show'),
             ),
           ),
