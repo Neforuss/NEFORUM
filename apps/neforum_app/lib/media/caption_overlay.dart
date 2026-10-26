@@ -8,6 +8,7 @@ import 'package:neforum_core/neforum_core.dart' show PhotoFitMode;
 
 import 'aligned_text.dart';
 import 'caption_style.dart';
+import 'photo_composite.dart';
 import 'photo_pixels.dart';
 import 'text_card.dart';
 
@@ -205,6 +206,11 @@ class CaptionBlockPainter extends CustomPainter {
 /// cut to fill the rest instead. Room the photo leaves is filled the way
 /// Settings fit photos: the photo's own colours for a colour fill, a soft blur
 /// of it otherwise, under the style's background colour.
+///
+/// The engine only rasterizes the words ([rasterizeWordsLayer]); the photo is
+/// placed, blurred and composited on the CPU ([composeCaptionedPhoto]). The
+/// photo never becomes an engine image: on some Windows PCs reading back a
+/// picture that held one never finished (NEFORUM 1.2.0).
 Future<({Uint8List bytes, int width, int height})?> renderCaptionedPhoto(Uint8List bytes,
     {required String text,
     required TextCardFont font,
@@ -214,70 +220,120 @@ Future<({Uint8List bytes, int width, int height})?> renderCaptionedPhoto(Uint8Li
     PhotoFitMode fit = PhotoFitMode.pad}) async {
   final px = await decodePhotoPixels(bytes, maxSide: kCaptionedMaxSide);
   if (px == null) return null;
-  final photo = await imageFromPixels(px);
   final block = style.placement == CaptionPlacement.blockAbove && frameAspect != null;
   final size = block ? captionFrameSize(frameAspect) : Size(px.width.toDouble(), px.height.toDouble());
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder, Offset.zero & size);
-  if (block) {
-    _paintBlockFrame(canvas, size, photo, px, text: text, style: style, font: font, safe: captionSafeArea(platformId, frameAspect), fit: fit);
-  } else {
-    canvas.drawImage(photo, Offset.zero, Paint()..filterQuality = FilterQuality.high);
-    CaptionOverlayPainter(text: text, font: font, style: style, safe: captionSafeArea(platformId, px.width / px.height)).paint(canvas, size);
-  }
-  photo.dispose();
-  final picture = recorder.endRecording();
   final width = size.width.round(), height = size.height.round();
-  final out = await picture.toImage(width, height);
-  picture.dispose();
-  final rgba = await rgbaOf(out);
-  out.dispose();
-  if (rgba == null) return null;
-  return (bytes: await compute(encodeRgbaJpeg, (rgba, width, height)), width: width, height: height);
+  Rect? content;
+  final words = await rasterizeWordsLayer(width, height, (canvas) {
+    if (block) {
+      final layout = CaptionBlockLayout.measure(text: text, style: style, font: font, frame: size, safe: captionSafeArea(platformId, frameAspect));
+      content = layout.content;
+      layout.paintWords(canvas);
+      layout.dispose();
+    } else {
+      CaptionOverlayPainter(text: text, font: font, style: style, safe: captionSafeArea(platformId, px.width / px.height)).paint(canvas, size);
+    }
+  });
+  final job = CaptionComposeJob(
+    photo: px.rgba,
+    photoWidth: px.width,
+    photoHeight: px.height,
+    words: words,
+    width: width,
+    height: height,
+    content: content,
+    fit: fit,
+    topColor: px.topColor,
+    bottomColor: px.bottomColor,
+    backgroundArgb: style.background == CaptionBackground.none ? null : style.backgroundFill.toARGB32(),
+  );
+  return (bytes: await compute(composeCaptionedPhoto, job), width: width, height: height);
 }
 
-void _paintBlockFrame(Canvas canvas, Size size, ui.Image photo, PhotoPixels px,
-    {required String text, required CaptionStyle style, required TextCardFont font, required EdgeInsets safe, required PhotoFitMode fit}) {
-  final layout = CaptionBlockLayout.measure(text: text, style: style, font: font, frame: size, safe: safe);
-  final full = Offset.zero & size;
-  final whole = Rect.fromLTWH(0, 0, photo.width.toDouble(), photo.height.toDouble());
-  final u = size.width / 1080;
-  if (fit == PhotoFitMode.color) {
-    canvas.drawRect(
-      full,
-      Paint()
-        ..shader = ui.Gradient.linear(full.topCenter, full.bottomCenter, [Color(0xFF000000 | px.topColor), Color(0xFF000000 | px.bottomColor)]),
-    );
-  } else {
-    canvas.save();
-    canvas.clipRect(full);
-    canvas.drawImageRect(
-      photo,
-      _coverSource(whole, full.size),
-      full,
-      Paint()
-        ..filterQuality = FilterQuality.medium
-        ..imageFilter = ui.ImageFilter.blur(sigmaX: 48 * u, sigmaY: 48 * u, tileMode: TileMode.clamp),
-    );
-    canvas.restore();
-  }
-  if (style.background != CaptionBackground.none) canvas.drawRect(full, Paint()..color = style.backgroundFill);
-  final content = layout.content;
-  if (fit == PhotoFitMode.crop) {
-    canvas.drawImageRect(photo, _coverSource(whole, content.size), content, Paint()..filterQuality = FilterQuality.high);
-  } else {
-    final scale = math.min(content.width / whole.width, content.height / whole.height);
-    final dst = Rect.fromCenter(center: content.center, width: whole.width * scale, height: whole.height * scale);
-    canvas.drawImageRect(photo, whole, dst, Paint()..filterQuality = FilterQuality.high);
-  }
-  layout.paintWords(canvas);
-  layout.dispose();
+/// Everything [composeCaptionedPhoto] needs, sent to an isolate.
+@immutable
+class CaptionComposeJob {
+  const CaptionComposeJob({
+    required this.photo,
+    required this.photoWidth,
+    required this.photoHeight,
+    required this.words,
+    required this.width,
+    required this.height,
+    this.content,
+    this.fit = PhotoFitMode.pad,
+    this.topColor = 0,
+    this.bottomColor = 0,
+    this.backgroundArgb,
+  });
+
+  /// The photo as straight RGBA, upright.
+  final Uint8List photo;
+  final int photoWidth;
+  final int photoHeight;
+
+  /// The words layer: straight RGBA, [width] x [height], transparent around
+  /// the words (and the label behind them, on the photo).
+  final Uint8List words;
+  final int width;
+  final int height;
+
+  /// Where the photo goes in a frame with a caption block above it
+  /// ([CaptionBlockLayout.content]); null when the words go on the photo,
+  /// which then fills the picture.
+  final Rect? content;
+  final PhotoFitMode fit;
+
+  /// The photo's edge colours (0xRRGGBB), for a colour fill.
+  final int topColor;
+  final int bottomColor;
+
+  /// The style's background colour over the whole frame, in a block above;
+  /// null for none.
+  final int? backgroundArgb;
 }
 
-/// The part of [image] that covers an area of [size], centred.
-Rect _coverSource(Rect image, Size size) {
-  final scale = math.max(size.width / image.width, size.height / image.height);
-  return Rect.fromCenter(center: image.center, width: size.width / scale, height: size.height / scale);
+/// The captioned photo of [job] as a JPEG (quality 92), composed on the CPU:
+/// in a block above, the room around the photo (a blur of it, or its colours
+/// for a colour fill), the style's background colour, the photo fitted (or
+/// cut, for crop) into the content rectangle; then the words over it all.
+/// Run with [compute].
+Uint8List composeCaptionedPhoto(CaptionComposeJob job) {
+  final frame = RgbFrame(job.width, job.height);
+  final content = job.content;
+  if (content == null) {
+    frame.draw(job.photo, job.photoWidth, job.photoHeight, 0, 0);
+  } else {
+    if (job.fit == PhotoFitMode.color) {
+      frame.fillVerticalGradient(job.topColor, job.bottomColor);
+    } else {
+      frame.coverWith(job.photo, job.photoWidth, job.photoHeight, sigma: 48 * job.width / 1080);
+    }
+    if (job.backgroundArgb != null) frame.blendColor(job.backgroundArgb!);
+    final x = content.left.round(), y = content.top.round();
+    final ({double x, double y, double w, double h}) src;
+    final int w, h, dx, dy;
+    if (job.fit == PhotoFitMode.crop) {
+      w = content.right.round() - x;
+      h = content.bottom.round() - y;
+      src = coverSource(job.photoWidth, job.photoHeight, w.toDouble(), h.toDouble());
+      dx = x;
+      dy = y;
+    } else {
+      final scale = math.min(content.width / job.photoWidth, content.height / job.photoHeight);
+      w = math.max(1, (job.photoWidth * scale).round());
+      h = math.max(1, (job.photoHeight * scale).round());
+      src = (x: 0, y: 0, w: job.photoWidth.toDouble(), h: job.photoHeight.toDouble());
+      dx = (content.left + (content.width - w) / 2).round();
+      dy = (content.top + (content.height - h) / 2).round();
+    }
+    if (w > 0 && h > 0) {
+      final placed = resample(job.photo, job.photoWidth, job.photoHeight, 4, x: src.x, y: src.y, w: src.w, h: src.h, dw: w, dh: h);
+      frame.draw(placed, w, h, dx, dy, premultiplied: true);
+    }
+  }
+  frame.draw(job.words, job.width, job.height, 0, 0);
+  return frame.encodeJpeg();
 }
 
 /// A caption block for a video, ready for the video compositor: a picture of

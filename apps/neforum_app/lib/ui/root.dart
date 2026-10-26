@@ -8,6 +8,7 @@ import '../brand/neforum_logo.dart';
 import '../platform/desktop.dart';
 import '../platform/env.dart';
 import '../state/providers.dart';
+import '../state/render_warnings.dart';
 import '../state/services.dart';
 import '../state/settings.dart';
 import '../theme/app_theme.dart';
@@ -92,10 +93,67 @@ class NeforumApp extends ConsumerWidget {
         zoom: settings.uiZoom,
         onChanged: (z) => ref.read(settingsProvider.notifier).update((x) => x.copyWith(uiZoom: z)),
         // Phones and tablets: the text size from Settings > Appearance.
-        child: TextScale(scale: Env.isMobile ? settings.mobileTextScale : 1, child: child ?? const SizedBox.shrink()),
+        child: TextScale(
+          scale: Env.isMobile ? settings.mobileTextScale : 1,
+          child: _RenderWarningBanner(child: child ?? const SizedBox.shrink()),
+        ),
       ),
     );
   }
+}
+
+/// Shows [renderWarnings] (a text card or a caption on a photo left out
+/// because it took too long) in a banner over whatever screen is open, until
+/// it is dismissed. A banner, not a toast: the "Saved" toast that follows a
+/// save would replace a toast at once. Warnings that come while it is up are
+/// added to it.
+class _RenderWarningBanner extends StatefulWidget {
+  const _RenderWarningBanner({required this.child});
+  final Widget child;
+
+  @override
+  State<_RenderWarningBanner> createState() => _RenderWarningBannerState();
+}
+
+class _RenderWarningBannerState extends State<_RenderWarningBanner> {
+  late final StreamSubscription<String> _subscription;
+  final List<String> _messages = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = renderWarnings.listen(_show);
+  }
+
+  void _show(String message) {
+    final messenger = mounted ? ScaffoldMessenger.maybeOf(context) : null;
+    if (messenger == null) return;
+    if (!_messages.contains(message)) _messages.add(message);
+    messenger
+      ..removeCurrentMaterialBanner()
+      ..showMaterialBanner(MaterialBanner(
+        leading: const Icon(Icons.warning_amber_rounded),
+        content: Text(_messages.join('\n')),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _messages.clear();
+              messenger.hideCurrentMaterialBanner();
+            },
+            child: const Text('Dismiss'),
+          ),
+        ],
+      ));
+  }
+
+  @override
+  void dispose() {
+    _subscription.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _SwitchingSplash extends StatelessWidget {

@@ -27,7 +27,7 @@ final cardBackgroundImageProvider = FutureProvider.autoDispose.family<({ui.Image
   final storage = ref.read(servicesProvider).storage;
   final px = await decodePhotoPixels(await storage.readMedia(path), maxSide: _previewMaxSide);
   if (px == null) return null;
-  final image = await imageFromPixels(px);
+  final image = await previewImageOf(px);
   ref.onDispose(image.dispose);
   return (image: image, luminance: px.luminance);
 });

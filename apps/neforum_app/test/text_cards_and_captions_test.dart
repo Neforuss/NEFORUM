@@ -16,6 +16,7 @@ import 'package:image/image.dart' as img;
 import 'package:neforum_app/media/aligned_text.dart';
 import 'package:neforum_app/media/caption_overlay.dart';
 import 'package:neforum_app/media/caption_style.dart';
+import 'package:neforum_app/media/photo_pixels.dart';
 import 'package:neforum_app/media/render_parameters.dart';
 import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/media/text_card_background.dart';
@@ -25,6 +26,7 @@ import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/composer_draft.dart';
 import 'package:neforum_app/state/fitted_photos.dart';
 import 'package:neforum_app/state/providers.dart';
+import 'package:neforum_app/state/render_warnings.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/state/text_cards.dart';
@@ -32,6 +34,7 @@ import 'package:neforum_app/ui/compose/caption_editor_sheet.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
+import 'package:neforum_app/widgets/layout.dart' show showToast;
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 class _MemoryStorage implements AppStorage {
@@ -246,6 +249,96 @@ void main() {
       expect(photo.b > 180 && photo.r < 80, isTrue, reason: 'the photo below the block');
     });
 
+    group('composed on the CPU', () {
+      // A 400 x 200 photo: left half red, right half blue.
+      final halves = Uint8List(400 * 200 * 4);
+      for (var i = 0; i < 400 * 200; i++) {
+        final red = i % 400 < 200;
+        halves.setAll(i * 4, [red ? 230 : 10, 10, red ? 10 : 230, 255]);
+      }
+      const content = Rect.fromLTWH(0, 300, 1080, 1050);
+      img.Image compose({PhotoFitMode fit = PhotoFitMode.pad, int? background, Uint8List? words, Uint8List? photo}) =>
+          img.decodeJpg(composeCaptionedPhoto(CaptionComposeJob(
+            photo: photo ?? halves,
+            photoWidth: 400,
+            photoHeight: 200,
+            words: words ?? Uint8List(1080 * 1350 * 4),
+            width: 1080,
+            height: 1350,
+            content: content,
+            fit: fit,
+            topColor: 0x00FF00,
+            bottomColor: 0x0000FF,
+            backgroundArgb: background,
+          )))!;
+      bool near(img.Pixel p, int r, int g, int b, [int tolerance = 40]) => (p.r - r).abs() < tolerance && (p.g - g).abs() < tolerance && (p.b - b).abs() < tolerance;
+
+      test('fit: the whole photo centred in the content, a blur of it around', () {
+        final f = compose();
+        // Scaled to 1080 x 540, centred in 300..1350: rows 555..1095.
+        expect(near(f.getPixel(100, 820), 230, 10, 10), isTrue, reason: 'red half');
+        expect(near(f.getPixel(980, 820), 10, 10, 230), isTrue, reason: 'blue half');
+        final border = f.getPixel(540, 400);
+        expect(border.r + border.g + border.b, inInclusiveRange(60, 500), reason: 'a blur of the photo, not white or black');
+      });
+
+      test('colour fill: the photo\'s edge colours top to bottom', () {
+        final f = compose(fit: PhotoFitMode.color);
+        expect(near(f.getPixel(540, 2), 0, 255, 0), isTrue, reason: 'top colour');
+        expect(near(f.getPixel(540, 1347), 0, 0, 255), isTrue, reason: 'bottom colour');
+      });
+
+      test('crop: the photo fills the content, cut around its centre', () {
+        final f = compose(fit: PhotoFitMode.crop);
+        // The middle 210 x 200 of the photo: the red/blue edge at x = 540.
+        expect(near(f.getPixel(200, 320), 230, 10, 10), isTrue);
+        expect(near(f.getPixel(880, 1330), 10, 10, 230), isTrue);
+      });
+
+      test('a see-through background colour tints the frame and stays opaque', () {
+        final f = compose(background: 0x80000000);
+        final border = f.getPixel(540, 400);
+        final plain = compose().getPixel(540, 400);
+        expect(border.r + border.g + border.b, lessThan(plain.r + plain.g + plain.b), reason: 'darker, never white');
+        expect(f.numChannels, 3);
+      });
+
+      test('the words layer goes over everything, with its alpha', () {
+        final words = Uint8List(1080 * 1350 * 4);
+        void dot(int x, int y, int a) => words.setAll((y * 1080 + x) * 4, [255, 255, 0, a]);
+        for (var y = 100; y < 140; y++) {
+          for (var x = 100; x < 140; x++) {
+            dot(x, y, 255);
+          }
+        }
+        final f = compose(words: words, fit: PhotoFitMode.color);
+        expect(near(f.getPixel(120, 120), 255, 255, 0, 20), isTrue);
+      });
+
+      test('on the photo: the photo at its own size, a transparent part black', () {
+        final see = Uint8List.fromList(halves);
+        for (var i = 3; i < see.length; i += 4) {
+          if ((i ~/ 4) ~/ 400 < 20) see[i] = 0;
+        }
+        final f = img.decodeJpg(composeCaptionedPhoto(
+            CaptionComposeJob(photo: see, photoWidth: 400, photoHeight: 200, words: Uint8List(400 * 200 * 4), width: 400, height: 200)))!;
+        expect((f.width, f.height), (400, 200));
+        expect(near(f.getPixel(100, 5), 0, 0, 0, 20), isTrue);
+        expect(near(f.getPixel(100, 100), 230, 10, 10), isTrue);
+      });
+
+      test('a text card over a photo: cover-fitted, blurred, dimmed, the card on top', () {
+        final px = PhotoPixels(rgba: halves, width: 400, height: 200, luminance: 0.3, topColor: 0, bottomColor: 0);
+        img.Image card(double dimming) => img.decodeJpg(composeTextCard(
+            TextCardComposeJob(photo: px, words: Uint8List(1080 * 1350 * 4), width: 1080, height: 1350, blur: 12, dimming: dimming)))!;
+        final clear = card(0), dimmed = card(0.5);
+        expect((clear.width, clear.height), (1080, 1350));
+        expect(near(clear.getPixel(60, 675), 230, 10, 10), isTrue, reason: 'red half, cut to cover');
+        expect(near(clear.getPixel(1020, 675), 10, 10, 230), isTrue, reason: 'blue half');
+        expect(near(dimmed.getPixel(60, 675), 115, 5, 5, 25), isTrue, reason: 'half as bright');
+      });
+    });
+
     testWidgets('on the photo: the label goes to the top or the bottom as asked', (tester) async {
       await tester.runAsync(() async {
         Future<ByteData> render(CaptionPlacement p) => _paint(const Size(1080, 1080), (c) {
@@ -361,6 +454,26 @@ void main() {
 
     ConnectedAccount account(String id, String platform, String handle) =>
         ConnectedAccount(id: id, platformId: platform, tier: PlatformTier.handoff, displayName: handle, handle: handle, createdAt: DateTime(2026, 10, 1));
+
+    testWidgets('a picture left out for taking too long: a banner that outlasts the save toast, until dismissed', (tester) async {
+      await boot(tester);
+      reportRenderWarning('The text card for Instagram took too long to make, so Instagram gets no card.');
+      reportRenderWarning('Writing the caption on the photo for TikTok took too long, so the photo goes without it.');
+      await settle(tester);
+      expect(find.byType(MaterialBanner), findsOneWidget);
+      expect(find.textContaining('Instagram gets no card'), findsOneWidget);
+      expect(find.textContaining('for TikTok took too long'), findsOneWidget, reason: 'both warnings in one banner');
+
+      // The toast after a save does not take it away.
+      showToast(tester.element(find.byType(Scaffold).first), 'Saved to drafts');
+      await settle(tester);
+      expect(find.textContaining('Instagram gets no card'), findsOneWidget);
+
+      await tester.tap(find.text('Dismiss'));
+      await settle(tester);
+      expect(find.byType(MaterialBanner), findsNothing);
+      await finish(tester);
+    });
 
     MediaAttachment cardOf(Post post, String accountId) =>
         post.media.firstWhere((m) => m.id == post.targetFor(accountId)!.overrides.mediaIds!.single);

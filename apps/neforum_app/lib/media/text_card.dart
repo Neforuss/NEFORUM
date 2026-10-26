@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -11,6 +10,7 @@ import '../brand/neforum_logo.dart';
 import '../state/settings.dart' show TextCardAlignment;
 import '../theme/tokens.dart';
 import 'aligned_text.dart';
+import 'photo_composite.dart';
 import 'render_parameters.dart';
 import 'text_card_background.dart';
 
@@ -486,7 +486,10 @@ class TextCardView extends StatelessWidget {
       );
 }
 
-/// Renders a card to JPEG bytes (Instagram's API only takes JPEG).
+/// Renders a card to JPEG bytes (Instagram's API only takes JPEG). The engine
+/// rasterizes only the words, rule, footer and colours; a background photo
+/// ([TextCardBackdrop.pixels]) is composited on the CPU ([composeTextCard]),
+/// never as an engine image.
 Future<Uint8List> renderTextCardJpeg(
     {required String text,
     required TextCardTheme theme,
@@ -497,20 +500,27 @@ Future<Uint8List> renderTextCardJpeg(
     EdgeInsets safe = EdgeInsets.zero,
     TextCardAlignment alignment = TextCardAlignment.left,
     TextCardBackdrop? backdrop}) async {
-  final recorder = ui.PictureRecorder();
-  final canvas = Canvas(recorder, Offset.zero & size);
-  TextCardPainter(text: text, theme: theme, byline: byline, branded: branded, font: font, safe: safe, alignment: alignment, backdrop: backdrop)
-      .paint(canvas, size);
-  final picture = recorder.endRecording();
   final width = size.width.round();
   final height = size.height.round();
-  final image = await picture.toImage(width, height);
-  picture.dispose();
-  final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-  image.dispose();
-  if (data == null) throw StateError('Could not read back the rendered text card');
-  final rgba = data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
-  return compute(encodeRgbaJpeg, (rgba, width, height));
+  // A preview's engine image is never drawn here: only the photo's pixels.
+  final photo = backdrop?.pixels;
+  final words = await rasterizeWordsLayer(width, height, (canvas) {
+    TextCardPainter(
+      text: text,
+      theme: theme,
+      byline: byline,
+      branded: branded,
+      font: font,
+      safe: safe,
+      alignment: alignment,
+      backdrop: photo == null ? null : TextCardBackdrop(pixels: photo, luminance: backdrop!.luminance, background: backdrop.background),
+    ).paint(canvas, size);
+  });
+  if (photo == null) return compute(encodeRgbaJpeg, (words, width, height));
+  return compute(
+    composeTextCard,
+    TextCardComposeJob(photo: photo, words: words, width: width, height: height, blur: backdrop!.background.blur, dimming: backdrop.background.dimming),
+  );
 }
 
 /// JPEG (quality 92) from straight RGBA pixels; run with [compute].

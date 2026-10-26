@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' show MediaAttachment;
 
+import 'photo_composite.dart';
 import 'photo_pixels.dart';
 
 /// Colour of a card's words over a background photo.
@@ -103,12 +104,20 @@ class TextCardBackground {
       };
 }
 
-/// A [TextCardBackground] with its photo decoded, ready to paint.
+/// A [TextCardBackground] with its photo decoded: as an engine [image] for a
+/// preview on screen, or as [pixels] for a saved card, which is composited on
+/// the CPU ([composeTextCard]).
 @immutable
 class TextCardBackdrop {
-  const TextCardBackdrop({required this.image, required this.luminance, required this.background});
+  const TextCardBackdrop({this.image, this.pixels, required this.luminance, required this.background})
+      : assert(image != null || pixels != null);
 
-  final ui.Image image;
+  /// For previews on screen only: never drawn into a picture that is read
+  /// back (on some Windows PCs that never finished).
+  final ui.Image? image;
+
+  /// The photo, upright, for a saved card.
+  final PhotoPixels? pixels;
 
   /// Average brightness of the photo, 0 (black) to 1 (white).
   final double luminance;
@@ -122,9 +131,12 @@ class TextCardBackdrop {
         TextCardTextColor.automatic => luminance * (1 - background.dimming) < 0.55 ? const Color(0xFFFFFFFF) : const Color(0xFF000000),
       };
 
-  /// Paints the photo over [frame]: cover-fitted, blurred and dimmed. [unit] is
-  /// the picture's width / 1080.
+  /// Paints the preview [image] over [frame]: cover-fitted, blurred and
+  /// dimmed. [unit] is the picture's width / 1080. Paints nothing for a
+  /// backdrop made for a saved card.
   void paint(Canvas canvas, Rect frame, double unit) {
+    final image = this.image;
+    if (image == null) return;
     final iw = image.width.toDouble(), ih = image.height.toDouble();
     final scale = math.max(frame.width / iw, frame.height / ih);
     final src = Rect.fromCenter(center: Offset(iw / 2, ih / 2), width: frame.width / scale, height: frame.height / scale);
@@ -144,18 +156,46 @@ class TextCardBackdrop {
     canvas.restore();
   }
 
-  void dispose() => image.dispose();
+  void dispose() => image?.dispose();
 }
 
 /// Longest side a card's background photo is decoded at: enough for a
 /// 1080 x 1920 card, which blurs it anyway.
 const int kBackdropMaxSide = 1920;
 
-/// Decodes the photo in [bytes] for [background]. Null when it cannot be read.
+/// Decodes the photo in [bytes] for a saved card with [background]. Null when
+/// it cannot be read.
 Future<TextCardBackdrop?> decodeTextCardBackdrop(Uint8List bytes, TextCardBackground background) async {
   final px = await decodePhotoPixels(bytes, maxSide: kBackdropMaxSide);
   if (px == null) return null;
-  final image = await imageFromPixels(px);
-  return TextCardBackdrop(image: image, luminance: px.luminance, background: background);
+  return TextCardBackdrop(pixels: px, luminance: px.luminance, background: background);
+}
+
+/// Everything [composeTextCard] needs, sent to an isolate.
+@immutable
+class TextCardComposeJob {
+  const TextCardComposeJob({required this.photo, required this.words, required this.width, required this.height, required this.blur, required this.dimming});
+
+  final PhotoPixels photo;
+
+  /// The card without its background: straight RGBA, [width] x [height].
+  final Uint8List words;
+  final int width;
+  final int height;
+
+  /// [TextCardBackground.blur] and [TextCardBackground.dimming].
+  final double blur;
+  final double dimming;
+}
+
+/// A card over a background photo as a JPEG (quality 92), composed on the
+/// CPU: the photo cover-fitted, blurred and dimmed, then the card's words,
+/// rule and footer over it. Run with [compute].
+Uint8List composeTextCard(TextCardComposeJob job) {
+  final frame = RgbFrame(job.width, job.height)
+    ..coverWith(job.photo.rgba, job.photo.width, job.photo.height, sigma: job.blur * job.width / 1080);
+  if (job.dimming > 0) frame.blendColor((job.dimming * 255).round().clamp(0, 255) << 24);
+  frame.draw(job.words, job.width, job.height, 0, 0);
+  return frame.encodeJpeg();
 }
 

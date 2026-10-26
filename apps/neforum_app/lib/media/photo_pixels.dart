@@ -65,15 +65,21 @@ PhotoPixels? _decodePhotoPixels((Uint8List, int) a) {
   );
 }
 
-/// [px] as an image that can be drawn on a canvas.
-Future<ui.Image> imageFromPixels(PhotoPixels px) {
-  final completer = Completer<ui.Image>();
-  ui.decodeImageFromPixels(px.rgba, px.width, px.height, ui.PixelFormat.rgba8888, completer.complete);
-  return completer.future;
+/// [px] as an image for previews on screen, decoded by the engine's image
+/// codec like every photo thumbnail. Never draw it into a picture that is
+/// read back: saved pictures composite photos on the CPU (photo_composite.dart).
+Future<ui.Image> previewImageOf(PhotoPixels px) async {
+  final bmp = await compute(_encodeBmp, (px.rgba, px.width, px.height));
+  final codec = await ui.instantiateImageCodec(bmp);
+  try {
+    return (await codec.getNextFrame()).image;
+  } finally {
+    codec.dispose();
+  }
 }
 
-/// Reads [image] back as straight RGBA bytes. Null when the engine cannot.
-Future<Uint8List?> rgbaOf(ui.Image image) async {
-  final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
-  return data?.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
+Uint8List _encodeBmp((Uint8List, int, int) a) {
+  final (rgba, width, height) = a;
+  return img.encodeBmp(img.Image.fromBytes(
+      width: width, height: height, bytes: rgba.buffer, bytesOffset: rgba.offsetInBytes, numChannels: 4, order: img.ChannelOrder.rgba));
 }

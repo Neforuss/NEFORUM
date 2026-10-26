@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -12,6 +13,7 @@ import '../media/text_card.dart';
 import '../platform/media_files.dart';
 import '../platform/video_compositor.dart';
 import 'fitted_photos.dart';
+import 'render_warnings.dart';
 import 'services.dart';
 import 'settings.dart';
 
@@ -132,7 +134,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
           style: look,
           frameAspect: frame,
           fit: settings.photoFit,
-        );
+        ).timeout(kRenderTimeLimit);
         if (out != null) {
           final made = await s.media.importBytes(out.bytes, fileName: _captionedName(source), mimeHint: 'image/jpeg');
           copy = MediaAttachment(
@@ -150,6 +152,10 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
             renderParameters: params,
           );
         }
+      } on TimeoutException {
+        // Never let a picture hold the post up: the photo goes as it is.
+        reportRenderWarning('Writing the caption on the photo for ${s.registry.descriptor(platform)?.name ?? platform} took too long, '
+            'so the photo goes without it. To try again, open the post and turn Caption on photo back on.');
       } on Object catch (e) {
         debugPrint('Could not write the caption on ${first.fileName ?? first.id}: $e');
       }

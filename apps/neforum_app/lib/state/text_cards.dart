@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
@@ -6,6 +8,7 @@ import '../media/render_parameters.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import 'fitted_photos.dart';
+import 'render_warnings.dart';
 import 'services.dart';
 import 'settings.dart';
 
@@ -110,7 +113,9 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     if (chosenBackground != null && !backdropTried) {
       backdropTried = true;
       try {
-        backdrop = await decodeTextCardBackdrop(await s.media.read(chosenBackground.photo), chosenBackground);
+        backdrop = await decodeTextCardBackdrop(await s.media.read(chosenBackground.photo), chosenBackground).timeout(kRenderTimeLimit);
+      } on TimeoutException {
+        reportRenderWarning('Reading the background photo of the text cards took too long, so the cards are plain.');
       } on Object catch (e) {
         debugPrint('Could not read the background photo of the text cards: $e');
       }
@@ -159,7 +164,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
           safe: safe,
           alignment: align,
           backdrop: backdrop,
-        );
+        ).timeout(kRenderTimeLimit);
         final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face, safe: hasSafe), mimeHint: 'image/jpeg');
         card = MediaAttachment(
           id: m.id,
@@ -173,6 +178,10 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
           generated: true,
           renderParameters: params,
         );
+      } on TimeoutException {
+        // Never let a picture hold the post up.
+        reportRenderWarning('The text card for ${d.name} took too long to make, so ${d.name} gets no card.');
+        continue;
       } on Object catch (e) {
         // Without the card the target fails validation with a clear
         // "needs an image" message, which is the right outcome.
