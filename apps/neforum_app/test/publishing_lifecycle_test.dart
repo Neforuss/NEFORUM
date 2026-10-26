@@ -285,7 +285,7 @@ void main() {
     test('a run another isolate is still executing, and a post that arrived mid-run from another device, are left alone', () async {
       await services.posts.upsert(_post('background', status: PostStatus.publishing, targets: [TargetStatus.pending]));
       await runOnRecord('background', ago: const Duration(seconds: 20), owner: 'workmanager-isolate');
-      await services.posts.upsert(_post('synced', status: PostStatus.publishing, targets: [TargetStatus.published, TargetStatus.pending]));
+      await services.posts.upsert(_post('synced', status: PostStatus.publishing, targets: [TargetStatus.published, TargetStatus.pending], updatedAt: DateTime.now()));
 
       await services.performStartupMaintenance();
 
@@ -299,6 +299,84 @@ void main() {
       expect(await services.recoverInterruptedPublishing(now: DateTime.now().add(const Duration(minutes: 11))), 1);
       expect((await services.posts.get('background'))!.targets.single.status, TargetStatus.failed);
       expect((await services.posts.get('synced'))!.status, PostStatus.publishing);
+    });
+
+    test('a background run that fell silent is settled from what it saved: the networks it reached keep the post', () async {
+      await services.posts.upsert(_post('background', status: PostStatus.publishing, targets: [TargetStatus.pending, TargetStatus.pending, TargetStatus.pending]));
+      expect((await services.posts.get('background'))!.targets.first.status, TargetStatus.pending, reason: 'the UI has the post in its cache');
+
+      // The WorkManager isolate opens the same folder, posts to two networks
+      // and saves that progress, then is stopped during the third upload.
+      final background = JsonFileStore(storage.dataDir!);
+      var progress = (await background.posts.get('background'))!;
+      for (final i in [0, 1]) {
+        progress = progress.withTarget(PostTarget(
+          accountId: 'acct-$i',
+          status: TargetStatus.published,
+          result: PublishResult.ok(remoteId: 'remote-$i', remoteUrl: 'https://example.social/remote-$i'),
+        ));
+        await background.posts.upsert(progress);
+      }
+      await runOnRecord('background', ago: const Duration(minutes: 15), owner: 'workmanager-isolate');
+
+      expect(await services.recoverInterruptedPublishing(), 1);
+      final settled = (await services.posts.get('background'))!;
+      expect(settled.targets.map((t) => t.status), [TargetStatus.published, TargetStatus.published, TargetStatus.failed]);
+      expect(settled.targets.first.result!.remoteUrl, 'https://example.social/remote-0');
+      expect(settled.status, PostStatus.partial);
+      final onDisk = (await JsonFileStore(storage.dataDir!).posts.get('background'))!;
+      expect(onDisk.targets.map((t) => t.status), [TargetStatus.published, TargetStatus.published, TargetStatus.failed]);
+      expect(onDisk.targets[1].result!.remoteId, 'remote-1', reason: 'a retry posts only to the third network');
+    });
+
+    test('what a background run saved is never written over by the copy the UI read before', () async {
+      await services.posts.upsert(_post('kept', status: PostStatus.publishing, targets: [TargetStatus.pending]));
+      await services.posts.upsert(_post('discarded', status: PostStatus.publishing, targets: [TargetStatus.pending]));
+      expect(await services.posts.all(), hasLength(2));
+
+      // The background run posts both, then deletes one of them.
+      final background = JsonFileStore(storage.dataDir!);
+      final kept = (await background.posts.get('kept'))!;
+      await background.posts.upsert(kept.copyWith(
+        status: PostStatus.published,
+        targets: [PostTarget(accountId: 'acct-0', status: TargetStatus.published, result: PublishResult.ok(remoteId: 'remote-0'))],
+      ));
+      await background.posts.delete('discarded');
+
+      // The UI saves another post.
+      await services.posts.upsert(_post('next', status: PostStatus.draft, targets: [TargetStatus.pending]));
+
+      final onDisk = await JsonFileStore(storage.dataDir!).posts.all();
+      expect(onDisk.map((p) => p.id), unorderedEquals(['kept', 'next']), reason: 'a deleted post does not come back');
+      expect(onDisk.firstWhere((p) => p.id == 'kept').targets.single.result!.remoteId, 'remote-0');
+      expect((await services.posts.get('kept'))!.status, PostStatus.published, reason: 'Activity shows it posted, not publishing');
+    });
+
+    test('a post NEFORUM 1.1.5 left publishing gets Retry at startup once it has not changed for two hours', () async {
+      final longAgo = DateTime.now().subtract(const Duration(hours: 3));
+      await services.posts.upsert(_post('left by 1.1.5', status: PostStatus.publishing, targets: [TargetStatus.published, TargetStatus.pending], updatedAt: longAgo));
+      await services.posts.upsert(_post('recent', status: PostStatus.publishing, targets: [TargetStatus.pending], updatedAt: DateTime.now().subtract(const Duration(minutes: 30))));
+      // A run saves its progress without changing the post's own time.
+      final progressing = _post('progressing', status: PostStatus.publishing, targets: [TargetStatus.pending, TargetStatus.pending], updatedAt: longAgo);
+      await services.posts.upsert(progressing.withTarget(
+        progressing.targets.first.copyWith(status: TargetStatus.published, lastAttemptAt: DateTime.now().subtract(const Duration(minutes: 5))),
+      ));
+      expect(await services.publishJournal.entries(), isEmpty, reason: 'no run on record');
+
+      // The recovery pass every few minutes leaves them alone.
+      expect(await services.recoverInterruptedPublishing(), 0);
+      expect((await services.posts.get('left by 1.1.5'))!.status, PostStatus.publishing);
+
+      await services.performStartupMaintenance();
+
+      final left = (await services.posts.get('left by 1.1.5'))!;
+      expect(left.targets.map((t) => t.status), [TargetStatus.published, TargetStatus.failed]);
+      expect(left.targets.last.result!.error!.message, AppServices.interruptedMessage);
+      expect(needsRetry(left.targets.last), isTrue);
+      expect(left.status, PostStatus.partial);
+      expect(left.updatedAt.isAtSameMomentAs(longAgo), isTrue, reason: 'a newer real result from anywhere still wins a sync merge');
+      expect((await services.posts.get('recent'))!.status, PostStatus.publishing, reason: 'changed recently: a run may still be posting it');
+      expect((await services.posts.get('progressing'))!.targets.last.status, TargetStatus.pending);
     });
 
     test('the first start after the update deletes only the posts every network really got', () async {

@@ -809,6 +809,9 @@ class PostActions {
 
   Future<Post> _publishExisting(String postId, CancellationSignal signal, {Set<String>? accountIds, required bool retryFailed}) async {
     final s = ref.read(servicesProvider);
+    // A background isolate may have posted some of it meanwhile: the run
+    // starts from what posts.json says is still to do.
+    await s.posts.reload();
     await _releaseHeld(postId, onlyAccountIds: accountIds);
     var post = await s.posts.get(postId);
     if (post == null) throw StateError('Post $postId not found');
