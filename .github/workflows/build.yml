@@ -102,6 +102,15 @@ jobs:
             flutter test "integration_test/$($file.Name)" -d windows
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Integration test (profile build, AOT-compiled as shipped)
+        working-directory: apps/neforum_app
+        shell: pwsh
+        # A debug build runs on the JIT and never shows AOT compiler faults
+        # (1.2.1 crashed on every save in release, but passed the step above).
+        run: |
+          Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+          flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/captions_test.dart
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows
         working-directory: apps/neforum_app
         shell: pwsh

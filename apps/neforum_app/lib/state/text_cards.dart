@@ -83,7 +83,13 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
             'renderParameters': {...backdropChoice.toRenderParameters(), 'kind': RenderKind.textCardBackground},
           });
   final chosenBackground = backdropChoice?.copyWith(photo: backdropPhoto);
-  final ownPhoto = chosenBackground != null && userPhotos.containsKey(chosenBackground.photo.id);
+  // Worked out here, not in the loop below: Dart 3.13's AOT compiler moved
+  // `chosenBackground.photo.id` (read only when it was set) ahead of the loop
+  // without its null check, and NEFORUM 1.2.1 crashed on every save of a post
+  // without a card background.
+  final backgroundPhoto = chosenBackground?.photo;
+  final String? ownBackgroundId = backgroundPhoto != null && userPhotos.containsKey(backgroundPhoto.id) ? backgroundPhoto.id : null;
+  final ownPhoto = ownBackgroundId != null;
   final resolver = VariantResolver(settings.resolverOptions);
   final made = <String, MediaAttachment>{};
   final used = <String>{};
@@ -108,12 +114,12 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     if (account == null || adapter == null) continue;
     final d = adapter.descriptorForAccount(account);
     final variant = resolver.resolve(p, base, d, account: account);
-    if (!qualifiesForTextCard(d, variant, backgroundMediaId: ownPhoto ? chosenBackground.photo.id : null)) continue;
+    if (!qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId)) continue;
 
-    if (chosenBackground != null && !backdropTried) {
+    if (chosenBackground != null && backgroundPhoto != null && !backdropTried) {
       backdropTried = true;
       try {
-        backdrop = await decodeTextCardBackdrop(await s.media.read(chosenBackground.photo), chosenBackground).timeout(kRenderTimeLimit);
+        backdrop = await decodeTextCardBackdrop(await s.media.read(backgroundPhoto), chosenBackground).timeout(kRenderTimeLimit);
       } on TimeoutException {
         reportRenderWarning('Reading the background photo of the text cards took too long, so the cards are plain.');
       } on Object catch (e) {
@@ -206,7 +212,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
   // The photo picked only for the cards stays with the post while it is the
   // background; one that was replaced is deleted, unless another post (a
   // duplicate) or one of this post's photos still uses the file.
-  final keptBackground = chosenBackground != null && !ownPhoto ? chosenBackground.photo : null;
+  final keptBackground = ownPhoto ? null : backgroundPhoto;
   final dropped = [for (final m in backgrounds) if (m.id != keptBackground?.id) m];
   if (dropped.isNotEmpty) {
     final inUse = {
