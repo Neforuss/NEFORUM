@@ -28,14 +28,19 @@ function standInApp(job) {
 
 /**
  * Loads main.js as "Fill in this page" injects it, on a stand-in page at
- * [href] whose tab keeps [session] (sessionStorage). Returns what happened
- * on the page: Post presses, text insertions and the panel's lines.
+ * [href] whose tab keeps [session] (sessionStorage). [dialog]: a dialog the
+ * site shows after Post, with a confirming button of its own; [onPress] runs
+ * after each press. Returns what happened on the page (Post presses, text
+ * insertions, the panel's lines) and the user's controls: the panel's
+ * buttons and the keyboard.
  */
-function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose', session = new Map() }) {
+function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose', session = new Map(), dialog = null, onPress = null }) {
   const pressed = [];
   const inserted = [];
   const statuses = [];
+  const listeners = {};
   let onMessage = null;
+  let actions = null;
   const editor = { isConnected: true };
   const button = { label: 'Post' };
   const panel = {
@@ -63,9 +68,12 @@ function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose',
     setInputFiles: () => true,
     sleep: () => new Promise((r) => setImmediate(r)),
     enabled: () => true,
-    findPostButton: () => ({ button, scope: { contains: () => true } }),
+    findPostButton: ({ root }) => ({ button: dialog && root === dialog ? dialog.button : button, scope: { contains: () => true } }),
     waitPosted: async () => true,
-    pressPost: (b) => pressed.push(b),
+    pressPost: (b) => {
+      pressed.push(b);
+      onPress?.(b);
+    },
     visible: () => true,
   };
   const chrome = {
@@ -100,15 +108,37 @@ function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose',
     chrome,
     location: { host: url.host, href, pathname: url.pathname },
     sessionStorage: { getItem: (k) => session.get(k) ?? null, setItem: (k, v) => session.set(k, String(v)) },
-    document: { readyState: 'complete', addEventListener() {}, activeElement: null, querySelectorAll: () => [] },
-    addEventListener() {},
+    document: { readyState: 'complete', addEventListener() {}, activeElement: null, querySelectorAll: () => (dialog ? [dialog] : []) },
+    addEventListener: (type, listener) => (listeners[type] = listener),
     alert() {},
-    NEFORUM_EXT: { manual: true, fill, panel: { mount: () => panel }, recipeFor: () => recipe, postKeys: 'Ctrl+Enter' },
+    NEFORUM_EXT: {
+      manual: true,
+      fill,
+      panel: {
+        mount: (_, a) => {
+          actions = a;
+          return panel;
+        },
+      },
+      recipeFor: () => recipe,
+      postKeys: 'Ctrl+Enter',
+    },
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(SOURCE, sandbox, { filename: 'main.js' });
-  return { start: () => onMessage({ type: 'fillNow' }), pressed, inserted, statuses, session };
+  return {
+    start: () => onMessage({ type: 'fillNow' }),
+    /** The user presses [key] on the page (a real key press). */
+    press: (key) => listeners.keydown({ key, isTrusted: true, repeat: false, isComposing: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }),
+    /** The panel's buttons, once it is shown. */
+    actions: () => actions,
+    button,
+    pressed,
+    inserted,
+    statuses,
+    session,
+  };
 }
 
 /** Waits until [ready] holds: the stand-in timers resolve at once, so this is quick. */
@@ -143,6 +173,64 @@ test('automatic job: NEFORUM is asked again right before Post, which is pressed 
   assert.equal(app.state.pages.length, 2, 'the job at the start, and again before pressing Post');
   assert.match(app.state.pages[0], /^[0-9a-f]{24}$/);
   assert.equal(new Set(app.state.pages).size, 1, 'one id for the whole page');
+  assert.deepEqual(app.state.reports.map((r) => r.page), [app.state.pages[0], app.state.pages[0]], 'every report says which page sent it');
+});
+
+test('automatic job: Stop or Esc while NEFORUM is asked before Post keeps it unposted', async () => {
+  for (const how of ['Esc', 'Stop']) {
+    // NEFORUM answers the request before Post only when the test lets it
+    // (a background script that has to start again and find NEFORUM's port).
+    let answer;
+    const answered = new Promise((resolve) => (answer = resolve));
+    const app = standInApp((n) => (n === 1 ? automaticJob() : answered.then(() => automaticJob())));
+    const page = loadPage({ app });
+    page.start();
+    await until(() => app.state.pages.length === 2, 'the request before Post');
+    if (how === 'Esc') page.press('Escape');
+    else page.actions().stop();
+    answer();
+    await until(() => app.state.reports.some((r) => r.automatic === 'stopped'), `the report after ${how}`);
+    assert.equal(page.pressed.length, 0, `${how}: Post is not pressed, though NEFORUM still has this page post it`);
+    assert.ok(page.statuses.includes('Stopped. Nothing was posted.'), how);
+    assert.deepEqual(app.state.reports.map((r) => [r.automatic, r.posted, r.message]), [
+      ['countdown', undefined, ''],
+      ['stopped', undefined, 'Stopped on the page before posting.'],
+    ]);
+  }
+});
+
+test('automatic job: Esc while the page is still being filled in keeps it unposted', async () => {
+  let opened;
+  const opening = new Promise((resolve) => (opened = resolve));
+  const app = standInApp(automaticJob());
+  const page = loadPage({ app, recipe: { open: () => opening } });
+  page.start();
+  await until(() => page.statuses.includes('Opening the composer…'), 'the fill');
+  page.press('Escape');
+  opened();
+  await until(() => app.state.reports.some((r) => r.automatic === 'stopped'), 'the stopped report');
+  assert.equal(page.pressed.length, 0);
+  assert.equal(app.state.pages.length, 1, 'no countdown, so NEFORUM is not even asked before Post');
+  assert.ok(page.statuses.includes('Stopped. Nothing was posted. Check the post, then press Post yourself.'));
+});
+
+test('automatic job: the site\'s question after Post is answered once, but not after Stop or Esc', async () => {
+  // No Stop: Post, then the confirming button of the site's dialog.
+  const dialog = { button: { label: 'Upload' } };
+  let app = standInApp(automaticJob());
+  let page = loadPage({ app, recipe: { afterPostWords: ['Upload'] }, dialog });
+  page.start();
+  await until(() => app.state.reports.some((r) => r.posted), 'the posted report');
+  assert.deepEqual(page.pressed, [page.button, dialog.button]);
+
+  // Esc right after Post: the question stays for the user to answer.
+  app = standInApp(automaticJob());
+  let afterPost = null;
+  page = loadPage({ app, recipe: { afterPostWords: ['Upload'] }, dialog, onPress: (b) => afterPost?.(b) });
+  afterPost = (b) => b === page.button && page.press('Escape');
+  page.start();
+  await until(() => app.state.reports.some((r) => r.posted), 'the posted report');
+  assert.deepEqual(page.pressed, [page.button]);
 });
 
 test('automatic job: dropped, replaced or no longer automatic in NEFORUM by the time of Post, so nothing is pressed', async () => {

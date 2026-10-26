@@ -117,7 +117,7 @@ The file's bytes with its `Content-Type`. `404` for an unknown or expired job or
 ### `POST /v1/job/<id>/result` (token)
 
 What the extension managed to do, so the app's hand-off sheet can say so.
-Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed", "automatic": "countdown" | "stopped" | "manual"}`.
+Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed", "automatic": "countdown" | "stopped" | "manual", "page": "<page id>"}`.
 `204`. The job stays available until it expires, so the user can fill the page in again. The
 extension may report more than once for a job (after filling in, then after posting). `404` when
 the job is no longer the app's (the hand-off was closed, replaced or has expired): the app did not
@@ -135,13 +135,21 @@ was pressed on, else `pressed`.
 
 - `countdown`: everything was filled in; the extension presses Post when its 3-second countdown
   ends. A report with `posted` follows.
-- `stopped`: the user stopped the countdown (or the wait for a greyed-out button) on the page, or
-  the app ended automatic posting before Post was pressed. Nothing was posted.
+- `stopped`: the user pressed Stop or Esc on the page before Post was pressed (during the fill, the
+  countdown, the wait for a greyed-out button or the question to the app before a press), or the
+  app ended automatic posting before Post was pressed. Nothing was posted.
 - `manual`: the extension did not post: something was not filled in, the site asks for a choice
   only the user can make, or no Post button was found. `message` says why. The page stays filled
   in for the user.
 
-A report on an `autoPost` job without `automatic` and without `posted` comes from an extension
+`page` (added with extension 1.1.0): the id the reporting page sends with its job requests. For an
+`autoPost` job the app takes `automatic` only from the page that posts it (the one that got
+`autoPost: true`). A report from any other page (another tab of the site, a reload, another
+browser) says nothing about automatic posting; only its `posted` counts. A report of the posting
+page without `automatic` and without `posted` comes from a fill the user asked for there (**Fill in
+this page**), which never posts by itself: the app reads it as `manual`.
+
+A report on an `autoPost` job without `page`, `automatic` and `posted` comes from an extension
 before 1.1.0: the app hands the post back to the user.
 
 ## Rules for the extension
@@ -163,6 +171,11 @@ before 1.1.0: the app hands the post back to the user.
   `true`. Otherwise press nothing, say so in the panel, and report `automatic` `stopped` when the
   job is still there. In every other case report `automatic` `manual` (or `stopped`) and leave the
   page as it is.
-- After Post, a confirmation dialog the recipe knows (`afterPostWords`) may be answered once.
+- Stop and Esc: from the start of an automatic job's fill to its press, either one keeps the job
+  unposted, whenever it comes: during the fill, the countdown, a wait for a greyed-out button, or
+  while the app is asked before a press (check again once the answer is in). Report `automatic`
+  `stopped`.
+- After Post, a confirmation dialog the recipe knows (`afterPostWords`) may be answered once,
+  unless the user pressed Stop or Esc since Post: then the dialog is left to the user.
 - Never send anything from the page back to the app other than the result above.
 - Keep the token in `storage.local`; forget it on `401`.

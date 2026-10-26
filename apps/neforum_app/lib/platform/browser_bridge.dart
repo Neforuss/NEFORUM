@@ -372,9 +372,12 @@ enum BrowserPostState {
 }
 
 /// Where automatic posting stands on the page (jobs with
-/// [BrowserJob.autoPost] only).
+/// [BrowserJob.autoPost] only). Only the page that posts the job says; see
+/// [otherPage].
 enum BrowserAutomaticState {
-  /// Nothing reported about automatic posting.
+  /// Nothing reported about automatic posting: the job is not automatic, or
+  /// the report came from an extension before 1.1.0, which sends no page id
+  /// and never posts by itself.
   none,
 
   /// The page is filled in; the extension presses Post when its 3-second
@@ -385,9 +388,15 @@ enum BrowserAutomaticState {
   stopped,
 
   /// The extension did not post: something was not filled in, the site asks
-  /// for a choice, or its Post button was not found. The page stays filled
-  /// in for the user.
+  /// for a choice, its Post button was not found, or the user had the page
+  /// filled in again. The page stays filled in for the user.
   manual,
+
+  /// Another page of the site reported (another tab, a reload, another
+  /// browser): it fills the job in but never posts it by itself, so its
+  /// report says nothing about automatic posting. A post made from it still
+  /// counts ([BrowserFillResult.posted]).
+  otherPage,
 }
 
 /// What the extension reported after filling in a page

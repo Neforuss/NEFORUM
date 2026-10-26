@@ -124,11 +124,13 @@
 
   /**
    * Tells NEFORUM what happened ([extra] goes over the last fill's result).
-   * When NEFORUM does not take it (the hand-off was closed or replaced
+   * The page id goes with it: NEFORUM takes how automatic posting stands
+   * only from the page that posts the job, never from another tab of the
+   * site. When NEFORUM does not take it (the hand-off was closed or replaced
    * there), the panel says so: NEFORUM does not know what happened here.
    */
   function report(job, extra = {}) {
-    const result = { ...(lastResult ?? { status: 'filled', text: !!job.text, media: job.media?.length ?? 0, message: '' }), ...extra };
+    const result = { ...(lastResult ?? { status: 'filled', text: !!job.text, media: job.media?.length ?? 0, message: '' }), ...extra, page: PAGE };
     return ask('result', { jobId: job.id, result }).then(
       () => true,
       (e) => {
@@ -312,6 +314,13 @@
   let counting = false;
   let stopRequested = false;
 
+  /**
+   * An automatic job is under way on this page, from the start of its fill
+   * to the end of its press: Stop or Esc at any point keeps it unposted, as
+   * the panel says.
+   */
+  let automaticRun = false;
+
   /** Where this job's Post button is: { button, scope, before } or null. */
   function locate(job) {
     const recipe = NF.recipeFor(job.platformId);
@@ -337,17 +346,19 @@
   /**
    * After Post: some sites ask once more in a dialog ("Upload 3 photos?",
    * "Did you check the ratings?"). Presses the recipe's confirming button
-   * there, once, when one appears.
+   * there, once, when one appears, unless the user pressed Stop or Esc
+   * since Post: then the question stays for the user to answer.
    */
   async function confirmAfterPost(job, pressed) {
     const words = NF.recipeFor(job.platformId).afterPostWords;
     if (!words?.length) return;
     const found = await waitFor(() => {
+      if (stopRequested) return 'stop';
       const d = topDialog();
       const b = d && findPostButton({ root: d, words });
       return b && b.button !== pressed && enabled(b.button) ? b : null;
     }, { timeout: 4000, interval: 200 });
-    if (found) pressPost(found.button);
+    if (found && found !== 'stop') pressPost(found.button);
   }
 
   /**
@@ -360,14 +371,17 @@
    * [automatic]: no key press or click of the user's; before every press
    * NEFORUM is asked again whether this page still posts the job (the user
    * may have closed the hand-off there, opened it again or cancelled the run
-   * while an upload kept Post greyed out).
+   * while an upload kept Post greyed out). A Stop or Esc is honoured up to
+   * the press itself, during that question too.
    */
   async function postNow(target, { automatic = false } = {}) {
     const c = current;
     if (!c || posting || posted) return 'busy';
     const { job, panel } = c;
     posting = true;
-    stopRequested = false;
+    // A press of the user's own starts afresh; an automatic one keeps a Stop
+    // or Esc pressed since its fill began.
+    if (!automatic) stopRequested = false;
     panel.setPost('busy');
     const stopped = () => stopRequested;
     /** True while NEFORUM still has this page post the automatic job; otherwise says so and stops. */
@@ -380,6 +394,19 @@
       panel.setPost(same && job.quickPost ? 'ready' : 'off');
       if (same) report(job, { automatic: 'stopped', message: 'NEFORUM stopped automatic posting before Post was pressed.' });
       return false;
+    };
+    /**
+     * Right before a press: 'go', 'withdrawn' (NEFORUM no longer has this
+     * page post the job) or 'stopped'. Asking NEFORUM can take seconds (its
+     * background script may have to start again and find NEFORUM's port),
+     * and the user may press Stop or Esc meanwhile.
+     */
+    const mayPress = async () => {
+      if (!(await stillAutomatic())) return 'withdrawn';
+      if (!stopped()) return 'go';
+      panel.set('Stopped. Nothing was posted.', 'warn');
+      panel.setPost('ready');
+      return 'stopped';
     };
     try {
       let t = target ?? locate(job);
@@ -404,7 +431,8 @@
         }
         if (!t.before) break;
         // The Next screen: press it, then find Post on the next screen.
-        if (!(await stillAutomatic())) return 'withdrawn';
+        const next = await mayPress();
+        if (next !== 'go') return next;
         pressPost(t.button);
         panel.set('Going to the last screen…');
         const after = await waitFor(() => (stopped() ? 'stop' : (() => {
@@ -424,7 +452,8 @@
         return 'missing';
       }
 
-      if (!(await stillAutomatic())) return 'withdrawn';
+      const go = await mayPress();
+      if (go !== 'go') return go;
       // Once per hand-off, even if the page is reloaded. Where it was pressed
       // from goes with it: a Post that sends a form the classic way loads a
       // new page before this script can report, so that page reports it.
@@ -448,9 +477,11 @@
     }
   }
 
-  /** Counts down on the panel; false when the user stopped it (Stop or Esc). */
+  /**
+   * Counts down on the panel; false when the user stopped it (Stop or Esc),
+   * there or while the page was being filled in.
+   */
   async function countdown(job, panel, seconds) {
-    stopRequested = false;
     counting = true;
     panel.setPost('busy');
     try {
@@ -493,7 +524,7 @@
   // Ctrl+Enter (⌘+Enter): a real key press only (scripts' events are not trusted).
   addEventListener('keydown', (e) => {
     if (!e.isTrusted || e.repeat || e.isComposing) return;
-    if (e.key === 'Escape' && (posting || counting)) {
+    if (e.key === 'Escape' && (posting || counting || automaticRun)) {
       stopRequested = true;
       return;
     }
@@ -619,9 +650,20 @@
     // first page of the browser it opened the page in to ask), and only on
     // its first fill here.
     const automatic = job.autoPost === true && job.preferred !== false && !filledBefore;
-    const state = await fill(job, panel, { automatic });
-    current.ready = true;
-    if (state === 'countdown') await postAutomatically(job, panel);
+    if (automatic) {
+      // From the start of the fill, Stop (shown from now) or Esc keeps it
+      // unposted.
+      stopRequested = false;
+      automaticRun = true;
+      panel.setPost('busy');
+    }
+    try {
+      const state = await fill(job, panel, { automatic });
+      current.ready = true;
+      if (state === 'countdown') await postAutomatically(job, panel);
+    } finally {
+      if (automatic) automaticRun = false;
+    }
   }
 
   api.runtime.onMessage.addListener((msg) => {

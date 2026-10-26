@@ -40,10 +40,29 @@ enum HandoffOutcome {
   unavailable,
 }
 
+/// What [HandoffLauncher.launch] did with a [HandoffPlan].
+@immutable
+class HandoffResult {
+  const HandoffResult(this.outcome, {this.note});
+
+  static const launched = HandoffResult(HandoffOutcome.launched);
+  static const deferred = HandoffResult(HandoffOutcome.deferred);
+  static const unavailable = HandoffResult(HandoffOutcome.unavailable);
+
+  final HandoffOutcome outcome;
+
+  /// With [HandoffOutcome.deferred]: what an automatic attempt to post the
+  /// hand-off left for the user to check before posting it by hand (Post
+  /// may already have been pressed). The target keeps it as its
+  /// [PostTarget.handoffNote], and is then never posted automatically
+  /// again. Null when there was no such attempt.
+  final String? note;
+}
+
 /// Executes hand-off plans. The Flutter app implements this with share_plus,
 /// url_launcher and the clipboard; the CLI prints the plan.
 abstract class HandoffLauncher {
-  Future<HandoffOutcome> launch(
+  Future<HandoffResult> launch(
     HandoffPlan plan, {
     required Post post,
     required PostTarget target,
@@ -742,14 +761,16 @@ class PublishService {
     if (!interactive || launcher == null) {
       return attempt.copyWith(status: TargetStatus.awaitingHandoff);
     }
-    final outcome = await launcher.launch(plan, post: post, target: attempt, variant: variant, account: account);
-    return switch (outcome) {
+    final launched = await launcher.launch(plan, post: post, target: attempt, variant: variant, account: account);
+    return switch (launched.outcome) {
       HandoffOutcome.launched => attempt.copyWith(
           status: TargetStatus.handedOff,
           result: PublishResult.handedOff(remoteUrl: plan.webIntent?.toString()),
           clearHandoffNote: true,
         ),
-      HandoffOutcome.deferred => attempt.copyWith(status: TargetStatus.awaitingHandoff),
+      // An automatic attempt that ended without a confirmed post leaves its
+      // note with the target; an earlier note stays when there is no new one.
+      HandoffOutcome.deferred => attempt.copyWith(status: TargetStatus.awaitingHandoff, handoffNote: launched.note),
       HandoffOutcome.unavailable => _fail(attempt, const PublishError.configuration('Hand-off is not available in this environment')),
     };
   }

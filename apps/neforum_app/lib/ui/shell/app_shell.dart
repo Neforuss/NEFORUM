@@ -515,11 +515,11 @@ class _ShellUiBridge implements UiBridge {
   }
 
   @override
-  Future<HandoffChoice> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant}) async {
+  Future<HandoffDecision> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant}) async {
     final ctx = _ctx;
-    if (ctx == null) return HandoffChoice.later;
+    if (ctx == null) return (choice: HandoffChoice.later, note: null);
     await DesktopIntegration.instance.showWindow();
-    if (!ctx.mounted) return HandoffChoice.later;
+    if (!ctx.mounted) return (choice: HandoffChoice.later, note: null);
     return showHandoffSheet(ctx, plan: plan, post: post, account: account, variant: variant);
   }
 }

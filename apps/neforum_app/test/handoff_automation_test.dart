@@ -88,6 +88,20 @@ class _NoBrowsers extends BrowserLauncher {
   Future<bool> open(String id, Uri url) async => false;
 }
 
+/// A window whose hand-off sheet always closes with [decision].
+class _DecidingBridge implements UiBridge {
+  HandoffDecision decision = (choice: HandoffChoice.later, note: null);
+
+  @override
+  bool get interactive => true;
+
+  @override
+  Future<String?> askPaste(Uri authorizationUrl, Uri redirectUri) async => null;
+
+  @override
+  Future<HandoffDecision> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant}) async => decision;
+}
+
 MediaAttachment _photo(String id) => MediaAttachment(id: id, path: '/data/user/0/org.neforum/files/media/$id.png', mimeType: 'image/png', sizeBytes: _png.length, fileName: '$id.png');
 
 ConnectedAccount _account(String id, String platformId) =>
@@ -260,7 +274,8 @@ void main() {
     );
     const variant = PostVariant(text: 'Tea or coffee?', poll: PostPoll(options: ['Tea', 'Coffee']));
     final post = Post(id: 'p1', text: 'Tea or coffee?', createdAt: DateTime(2026, 10, 25), updatedAt: DateTime(2026, 10, 25));
-    HandoffChoice? choice;
+    HandoffDecision? decision;
+    HandoffChoice? choice() => decision?.choice;
     Future<void> showFor(ConnectedAccount account, HandoffPlan plan, {Post? of}) async {
       await tester.pumpWidget(ProviderScope(
         overrides: [servicesProvider.overrideWithValue(env.services)],
@@ -269,14 +284,14 @@ void main() {
           home: Scaffold(
             body: Builder(
               builder: (context) => TextButton(
-                onPressed: () async => choice = await showHandoffSheet(context, plan: plan, post: of ?? post, account: account, variant: variant),
+                onPressed: () async => decision = await showHandoffSheet(context, plan: plan, post: of ?? post, account: account, variant: variant),
                 child: const Text('Show'),
               ),
             ),
           ),
         ),
       ));
-      choice = null;
+      decision = null;
       await tester.tap(find.text('Show'));
       await tester.pump();
       await tester.pump();
@@ -310,7 +325,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('Posted on youtube.com. Marking this hand-off as done…'), findsOneWidget);
     await tester.pumpAndSettle(const Duration(seconds: 2));
-    expect(choice, HandoffChoice.posted, reason: 'the run moves on to the next hand-off');
+    expect(choice(), HandoffChoice.posted, reason: 'the run moves on to the next hand-off');
+    expect(decision!.note, isNull);
     expect(env.bridge.job, isNull);
 
     // Not posted on the page: the sheet says why and the hand-off is the user's.
@@ -342,7 +358,10 @@ void main() {
     expect(find.textContaining('did not report back'), findsNothing);
     await tester.tap(find.text('Later'));
     await tester.pumpAndSettle();
-    expect(choice, HandoffChoice.later);
+    expect(choice(), HandoffChoice.later);
+    expect(decision!.note,
+        'Not posted automatically. Not everything was filled in. Mark answer 2 as correct yourself. It was left filled in on youtube.com: if you posted it there yourself, mark it as posted.',
+        reason: 'the target keeps it, so opening the hand-off again does not post by itself');
 
     // A page still fetching the job gets more time before the sheet gives up.
     await showFor(_account('yp', 'youtube_posts'), plan);
@@ -356,8 +375,9 @@ void main() {
     expect((await extension('GET', '/v1/job?host=www.youtube.com&page=$_pageA'))!['autoPost'], isFalse, reason: 'a late page does not post');
     await tester.tap(find.text('Later'));
     await tester.pumpAndSettle();
+    expect(decision!.note, isNull, reason: 'nothing came back from the page: nothing was filled in or pressed there');
 
-    // An extension before 1.1.0 fills in but never posts.
+    // An extension before 1.1.0 (it sends no page id) fills in but never posts.
     await showFor(_account('yp', 'youtube_posts'), plan);
     await extension('POST', '/v1/job/${env.bridge.job!.id}/result', {'status': 'filled', 'text': true, 'media': 0});
     await tester.pump();
@@ -365,6 +385,7 @@ void main() {
     expect(find.textContaining('your NEFORUM extension is older than 1.1.0 and does not post by itself'), findsOneWidget);
     await tester.tap(find.text('Later'));
     await tester.pumpAndSettle();
+    expect(decision!.note, 'Filled in on youtube.com, but that NEFORUM extension is older than 1.1.0 and does not post by itself. If you posted it there yourself, mark it as posted.');
 
     // X is left out of automatic posting by default: nothing opens by itself.
     launched.clear();
@@ -399,6 +420,142 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.runAsync(() => _tearDown(env));
     await tester.pump(const Duration(seconds: 5));
+  });
+
+  testWidgets('hand-off: only the page posting it decides automatic posting, though a post counts from any page; whatever it left unconfirmed stays with the target, however the sheet closes',
+      variant: TargetPlatformVariant.only(TargetPlatform.windows), timeout: const Timeout(Duration(minutes: 1)), (tester) async {
+    tester.view.physicalSize = const Size(900, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/url_launcher'), (call) async => true);
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async => null);
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(const MethodChannel('plugins.flutter.io/url_launcher'), null);
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    final env = (await tester.runAsync(() => _setUp()))!;
+    addTearDown(() => env.client.close(force: true));
+    await tester.runAsync(() => env.services.accounts.all());
+    Future<Map<String, dynamic>?> extension(String method, String path, [Object? body]) async =>
+        (await tester.runAsync(() => _call(env.client, env.port, method, path, token: env.token, body: body)))?.$2;
+    Future<Object?> autoPost(String page) async => (await extension('GET', '/v1/job?host=www.youtube.com&page=$page'))!['autoPost'];
+    // A report from extension 1.1.0 or later: it says which page sent it.
+    Future<void> report(String page, [Map<String, Object> extra = const {}]) async {
+      await extension('POST', '/v1/job/${env.bridge.job!.id}/result', {'status': 'filled', 'text': true, 'media': 0, 'message': '', 'page': page, ...extra});
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    const url = 'https://www.youtube.com/@examplechannel/posts';
+    final plan = HandoffPlan(platformId: 'youtube_posts', instructions: '1. Press Post.', clipboardText: 'Tea or coffee?', desktopUrl: url, composerUrl: Uri.parse(url));
+    final post = Post(id: 'p1', text: 'Tea or coffee?', createdAt: DateTime(2026, 10, 25), updatedAt: DateTime(2026, 10, 25));
+    HandoffDecision? decision;
+    Future<void> show() async {
+      await tester.pumpWidget(ProviderScope(
+        overrides: [servicesProvider.overrideWithValue(env.services)],
+        child: MaterialApp(
+          theme: buildTheme(Brightness.light, AccentChoice.neforum),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () async => decision = await showHandoffSheet(context, plan: plan, post: post, account: _account('yp', 'youtube_posts'), variant: const PostVariant(text: 'Tea or coffee?')),
+                child: const Text('Show'),
+              ),
+            ),
+          ),
+        ),
+      ));
+      decision = null;
+      await tester.tap(find.text('Show'));
+      await tester.pump();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(await autoPost(_pageA), isTrue, reason: 'the page that claims the job');
+      expect(await autoPost(_pageB), isFalse, reason: 'another tab of the site, or a reload');
+    }
+
+    // Another tab fills the job in: that is not an old extension, and the page posting it goes on.
+    await show();
+    await report(_pageB);
+    expect(find.text('Posting automatically: the NEFORUM extension is filling this in…'), findsOneWidget);
+    expect(find.textContaining('older than 1.1.0'), findsNothing);
+    expect(await autoPost(_pageA), isTrue);
+    await report(_pageA, {'automatic': 'countdown'});
+    expect(find.textContaining('The extension posts it in 3 seconds'), findsOneWidget);
+    await report(_pageB, {'status': 'partial', 'message': 'Could not find the text box.'});
+    expect(find.textContaining('The extension posts it in 3 seconds'), findsOneWidget, reason: 'still counting down on the page that posts it');
+    // Post pressed without a sign it went; the user clicks outside the sheet to check the page first.
+    await report(_pageA, {'automatic': 'countdown', 'posted': 'pressed'});
+    expect(find.text('Pressed Post on youtube.com, but the page did not close the composer. Check it there; if the post went up, click I posted it.'), findsOneWidget);
+    await tester.tapAt(const Offset(4, 4));
+    await tester.pumpAndSettle();
+    expect(decision, (choice: HandoffChoice.later, note: 'Post was pressed on youtube.com, but the post was not seen going up. Check the page before you post it again.'));
+
+    // Posted from another tab with the extension's shortcut: it counts, and the page counting down does not post it again.
+    await show();
+    await report(_pageA, {'automatic': 'countdown'});
+    await report(_pageB, {'posted': 'confirmed'});
+    expect(find.text('Posted on youtube.com. Marking this hand-off as done…'), findsOneWidget);
+    expect(await autoPost(_pageA), isFalse);
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+    expect(decision, (choice: HandoffChoice.posted, note: null));
+
+    // The countdown ran, and nothing came after it: Post may have been pressed.
+    await show();
+    await report(_pageA, {'automatic': 'countdown'});
+    await tester.pump(const Duration(minutes: 4, seconds: 1));
+    expect(find.text('The NEFORUM extension started posting on youtube.com but did not report back. Check the page; if the post went up, click I posted it.'), findsOneWidget);
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+    expect(decision, (choice: HandoffChoice.later, note: 'The NEFORUM extension started posting on youtube.com but did not report back. Check the page before you post it again.'));
+
+    // Stopped on the page, then Skip.
+    await show();
+    await report(_pageA, {'automatic': 'stopped', 'message': 'Stopped on the page before posting.'});
+    expect(find.text('You stopped automatic posting on youtube.com, so nothing was posted. Finish the post there, then click I posted it.'), findsOneWidget);
+    await tester.tap(find.text('Skip'));
+    await tester.pumpAndSettle();
+    expect(decision, (choice: HandoffChoice.skip, note: 'Automatic posting was stopped on youtube.com before Post was pressed. If you posted it there yourself, mark it as posted.'));
+
+    // The page posting it was filled in again at the user's request (Fill in this page): it no longer posts by itself.
+    await show();
+    await report(_pageA);
+    expect(find.text('Not posted automatically. Finish the post on youtube.com, then click I posted it.'), findsOneWidget);
+    expect(await autoPost(_pageA), isFalse);
+    await tester.tap(find.text('Later'));
+    await tester.pumpAndSettle();
+    expect(decision!.note, 'Not posted automatically. It was left filled in on youtube.com: if you posted it there yourself, mark it as posted.');
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(() => _tearDown(env));
+    await tester.pump(const Duration(seconds: 5));
+  });
+
+  test('the launcher passes the sheet\'s note on to the run: Later and Skip keep it with the target', () async {
+    final previous = UiBridge.instance;
+    addTearDown(() => UiBridge.instance = previous);
+    final bridge = _DecidingBridge();
+    UiBridge.instance = bridge;
+    final skipped = <String>[];
+    final launcher = AppHandoffLauncher(onSkip: (postId, accountId) => skipped.add('$postId|$accountId'));
+    final post = Post(id: 'p1', text: 'Hello', createdAt: DateTime(2026, 10, 25), updatedAt: DateTime(2026, 10, 25));
+    Future<HandoffResult> launch() => launcher.launch(const HandoffPlan(platformId: 'youtube_posts', instructions: ''),
+        post: post, target: const PostTarget(accountId: 'yp'), variant: const PostVariant(text: 'Hello'), account: _account('yp', 'youtube_posts'));
+    const note = 'Post was pressed on youtube.com, but the post was not seen going up. Check the page before you post it again.';
+
+    bridge.decision = (choice: HandoffChoice.later, note: note);
+    var r = await launch();
+    expect((r.outcome, r.note), (HandoffOutcome.deferred, note));
+    bridge.decision = (choice: HandoffChoice.skip, note: note);
+    r = await launch();
+    expect((r.outcome, r.note), (HandoffOutcome.deferred, note));
+    expect(skipped, ['p1|yp']);
+    bridge.decision = (choice: HandoffChoice.later, note: null);
+    r = await launch();
+    expect((r.outcome, r.note), (HandoffOutcome.deferred, null), reason: 'no new attempt: the target keeps any note it has');
+    bridge.decision = (choice: HandoffChoice.posted, note: note);
+    expect((await launch()).outcome, HandoffOutcome.launched);
   });
 
   testWidgets('the demo workspace: hand-offs never reach the extension, so its sample posts are not filled in or posted anywhere',
@@ -526,6 +683,26 @@ void main() {
       expect(post.targetFor('yp')!.handoffNote, isNull);
       expect(post.targetFor('xa')!.status, TargetStatus.awaitingHandoff);
       expect(env.bridge.job, isNull, reason: 'the job is dropped afterwards');
+    });
+
+    test('another tab of the site filling the job in is not taken for an old extension: the page that posts it is still waited for', () async {
+      final served = extension([
+        {...filled, 'automatic': 'countdown', 'page': _pageA},
+        {...filled, 'automatic': 'countdown', 'posted': 'confirmed', 'page': _pageA},
+      ], between: (id) async {
+        // The user reloads a YouTube tab of their own: it gets the job to fill in, and says so.
+        final (_, other) = await _call(env.client, env.port, 'GET', '/v1/job?host=www.youtube.com&page=$_pageB', token: env.token);
+        expect(other!['autoPost'], isFalse);
+        await _call(env.client, env.port, 'POST', '/v1/job/$id/result', token: env.token, body: {...filled, 'page': _pageB});
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        // The page that posts it asks again before Post.
+        final (_, again) = await _call(env.client, env.port, 'GET', '/v1/job?host=www.youtube.com&page=$_pageA', token: env.token);
+        expect(again!['autoPost'], isTrue, reason: 'automatic posting goes on');
+      });
+      final post = await automatic().complete(await due('s13', ['yp']));
+      await served;
+      expect(post.targetFor('yp')!.status, TargetStatus.handedOff);
+      expect(post.targetFor('yp')!.handoffNote, isNull, reason: 'no "older than 1.1.0" note for a current extension');
     });
 
     test('a page still fetching the job gets more time to report', () async {

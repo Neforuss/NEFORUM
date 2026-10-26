@@ -177,7 +177,7 @@ test('pairing, status, job, media in chunks, result, and a revoked token', async
   assert.equal(bg.store.token, undefined);
 });
 
-test('the page id goes with the job request; a report NEFORUM did not take fails, so the page can say so', async () => {
+test('the page id goes with the job request and the report; a report NEFORUM did not take fails, so the page can say so', async () => {
   state.tokenValid = true;
   const bg = loadBackground();
   assert.equal((await bg.send({ type: 'pair', code: '123456' })).ok, true);
@@ -187,6 +187,9 @@ test('the page id goes with the job request; a report NEFORUM did not take fails
   assert.equal(r.value.job.id, 'j_1');
   await bg.send({ type: 'job', host: 'www.youtube.com' });
   assert.deepEqual(state.pages, ['0123456789abcdef01234567', null], 'sent only when the page has one');
+  r = await bg.send({ type: 'result', jobId: 'j_1', result: { status: 'filled', text: true, media: 0, message: '', automatic: 'countdown', page: '0123456789abcdef01234567' } });
+  assert.equal(r.ok, true);
+  assert.equal(state.results.at(-1).page, '0123456789abcdef01234567', 'NEFORUM tells the page that posts the job from the others');
 
   r = await bg.send({ type: 'result', jobId: 'j_gone', result: { status: 'filled', text: true, media: 0, posted: 'confirmed' } });
   assert.equal(r.ok, false);

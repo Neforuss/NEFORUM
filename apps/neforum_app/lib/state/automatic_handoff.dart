@@ -31,6 +31,30 @@ Future<bool> automaticPostingApplies(AppServices s, ConnectedAccount account) as
   return !accounts.any((a) => a.platformId == account.platformId && a.id != account.id);
 }
 
+/// What a hand-off whose automatic posting ended without a confirmed post
+/// leaves for the user to check before posting it by hand
+/// ([PostTarget.handoffNote]), by the last report [r] of the page that posts
+/// it, on [host]. The hand-off sheet and scheduled runs keep the same notes,
+/// and a target with one is never posted automatically again. Null when
+/// there is nothing to check: the post was confirmed, or [r] came from
+/// another page.
+String? automaticHandoffNote(BrowserFillResult r, String host) {
+  if (r.posted == BrowserPostState.confirmed) return null;
+  if (r.posted == BrowserPostState.pressed) return 'Post was pressed on $host, but the post was not seen going up. Check the page before you post it again.';
+  final message = r.message == null ? '' : ' ${_sentence(r.message!)}';
+  return switch (r.automatic) {
+    // The countdown ran, and nothing came after it: Post may have been pressed.
+    BrowserAutomaticState.countdown => 'The NEFORUM extension started posting on $host but did not report back. Check the page before you post it again.',
+    BrowserAutomaticState.stopped => 'Automatic posting was stopped on $host before Post was pressed. If you posted it there yourself, mark it as posted.',
+    BrowserAutomaticState.manual => 'Not posted automatically.$message It was left filled in on $host: if you posted it there yourself, mark it as posted.',
+    // An extension before 1.1.0 fills in but never posts by itself.
+    BrowserAutomaticState.none => 'Filled in on $host, but that NEFORUM extension is older than 1.1.0 and does not post by itself. If you posted it there yourself, mark it as posted.',
+    BrowserAutomaticState.otherPage => null,
+  };
+}
+
+String _sentence(String s) => RegExp(r'[.!?…]$').hasMatch(s) ? s : '$s.';
+
 /// How one automatic hand-off ended.
 enum _Outcome {
   /// The extension pressed Post and saw the post go up.
@@ -207,26 +231,27 @@ class AutomaticHandoff {
     final results = bridge.results.listen((r) {
       final reportedOn = job;
       if (reportedOn == null || r.jobId != reportedOn.id) return;
-      reported = true;
       final host = bareHost(r.host).isEmpty ? bareHost(url.host) : bareHost(r.host);
+      // A post counts from any page of the site.
       if (r.posted == BrowserPostState.confirmed) return finish(const _Attempt(_Outcome.posted));
-      if (r.posted == BrowserPostState.pressed) {
-        return finish(_Attempt(_Outcome.unconfirmed, 'Post was pressed on $host, but the post was not seen going up. Check the page before you post it again.'));
-      }
+      if (r.posted == BrowserPostState.pressed) return finish(_Attempt(_Outcome.unconfirmed, automaticHandoffNote(r, host)));
+      // Another page filled the job in (another tab, a reload): the page that
+      // posts it reports for itself, and is still waited for.
+      if (r.automatic == BrowserAutomaticState.otherPage) return;
+      reported = true;
       if (cancelled) return finish(_Attempt(_Outcome.cancelled, note));
       if (note != null) return;
-      final message = r.message == null ? '' : ' ${_sentence(r.message!)}';
+      final left = automaticHandoffNote(r, host);
       switch (r.automatic) {
         case BrowserAutomaticState.countdown:
           counting = true;
-          wait(posting, _Attempt(_Outcome.unconfirmed, 'The NEFORUM extension started posting on $host but did not report back. Check the page before you post it again.'));
+          wait(posting, _Attempt(_Outcome.unconfirmed, left));
         case BrowserAutomaticState.stopped:
-          leave(reportedOn, 'Automatic posting was stopped on $host before Post was pressed. If you posted it there yourself, mark it as posted.');
         case BrowserAutomaticState.manual:
-          leave(reportedOn, 'Not posted automatically.$message It was left filled in on $host: if you posted it there yourself, mark it as posted.');
-        // An extension before 1.1.0 fills in but never posts by itself.
         case BrowserAutomaticState.none:
-          leave(reportedOn, 'Filled in on $host, but that NEFORUM extension is older than 1.1.0 and does not post by itself. If you posted it there yourself, mark it as posted.');
+          leave(reportedOn, left!);
+        case BrowserAutomaticState.otherPage:
+          break;
       }
     });
     // The page is still loading the job or its files: give it time to report.
@@ -283,6 +308,4 @@ class AutomaticHandoff {
       if (id != null) bridge.clearJob(id);
     }
   }
-
-  static String _sentence(String s) => RegExp(r'[.!?…]$').hasMatch(s) ? s : '$s.';
 }
