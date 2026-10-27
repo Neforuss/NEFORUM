@@ -29,7 +29,7 @@ of them.
 | tumblr | https://assets.tumblr.com/pop/manifest/icon_1024-68ae29e6.png |
 | lemmy | https://join-lemmy.org/static/assets/icons/favicon.svg |
 | misskey | https://misskey-hub.net/img/icons/apple-touch-icon.png |
-| nostr | https://nostr.how/apple-touch-icon.png (the "nostrich") |
+| nostr | https://nostr.com/icon-512.png (nostr.com manifest) |
 | wordpress | https://s1.wp.com/i/webclip.png |
 | ghost | https://ghost.org/favicon.ico |
 | writefreely | https://writefreely.org/favicon.ico |
