@@ -6,8 +6,8 @@ import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import 'badges.dart';
 
-/// The account's profile picture (or initials) with its platform mark as a
-/// small badge in the corner.
+/// The account's profile picture with its platform's icon as a small badge in
+/// the corner; without a picture, the platform's icon itself.
 class AccountAvatar extends StatelessWidget {
   const AccountAvatar(this.account, {super.key, this.size = 40, this.showBadge = true, this.dimmed = false});
 
@@ -21,9 +21,11 @@ class AccountAvatar extends StatelessWidget {
     final nf = context.nf;
     final brand = brandFor(account.platformId);
     final b = Theme.of(context).brightness;
-    final initials = _initials(account.displayName);
+    final icon = platformIconAsset(account.platformId) != null;
+    Widget fallback() => icon ? PlatformTile(account.platformId, size: size, circle: true) : _initialsFace(context, _initials(account.displayName), brand, b);
 
     Widget face;
+    var showBadge = this.showBadge;
     final url = account.avatarUrl;
     if (url != null && url.startsWith('http')) {
       final photo = Image.network(
@@ -31,11 +33,13 @@ class AccountAvatar extends StatelessWidget {
         width: size,
         height: size,
         fit: BoxFit.cover,
-        errorBuilder: (_, _, _) => _initialsFace(context, initials, brand, b),
+        errorBuilder: (_, _, _) => fallback(),
       );
       face = Radii.square ? ClipRect(child: photo) : ClipOval(child: photo);
     } else {
-      face = _initialsFace(context, initials, brand, b);
+      face = fallback();
+      // The face is already the platform's icon.
+      if (icon) showBadge = false;
     }
 
     final badgeSize = (size * 0.44).clamp(14.0, 22.0);

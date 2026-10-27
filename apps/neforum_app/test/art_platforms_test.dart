@@ -26,6 +26,19 @@ void main() {
     }
   });
 
+  test('every platform shows its own bundled icon, a 256 x 256 tile', () {
+    for (final d in builtinRegistry().descriptors) {
+      final asset = platformIconAsset(d.id);
+      expect(asset, isNotNull, reason: '${d.id} has no icon in assets/platforms/');
+      final file = File(asset!);
+      expect(file.existsSync(), isTrue, reason: asset);
+      final tile = img.decodePng(file.readAsBytesSync())!;
+      expect((tile.width, tile.height), (256, 256), reason: asset);
+    }
+    expect(platformIconAsset('youtube_posts'), platformIconAsset('youtube'));
+    expect(platformIconAsset('not-a-platform'), isNull, reason: 'an unknown platform keeps its generated mark');
+  });
+
   test('Dribbble API photos are fitted to exactly 800 x 600, scaled up or down', () async {
     final adapter = builtinRegistry().require('dribbble');
     final account = ConnectedAccount(id: 'd', platformId: 'dribbble', tier: PlatformTier.byokApi, displayName: 'Me', createdAt: DateTime(2026, 10, 25));

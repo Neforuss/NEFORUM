@@ -132,6 +132,27 @@ PlatformBrand fallbackBrand(String id) {
 
 PlatformBrand brandFor(String platformId) => platformBrands[platformId] ?? fallbackBrand(platformId);
 
+/// Platforms whose own icon is bundled in assets/platforms/ (the icon the
+/// platform's website declares; see assets/platforms/SOURCES.md).
+const Set<String> _platformIcons = {
+  'x', 'bluesky', 'mastodon', 'threads', 'instagram', 'facebook', 'linkedin', 'tiktok', 'youtube', 'pinterest', //
+  'reddit', 'telegram', 'discord', 'matrix', 'tumblr', 'lemmy', 'misskey', 'nostr', 'wordpress', 'ghost', //
+  'writefreely', 'micropub', 'devto', 'hashnode', 'snapchat', 'whatsapp', 'google_business', 'substack', 'rumble', //
+  'odysee', 'bitchute', 'deviantart', 'dribbble', 'pixelfed', 'flickr', 'inkbunny', 'behance', 'artstation', 'cara', //
+  'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', 'kofi', 'artfol', 'fivehundredpx',
+};
+
+/// Platforms shown with another platform's icon: YouTube's Posts tab is
+/// YouTube.
+const Map<String, String> _iconAliases = {'youtube_posts': 'youtube'};
+
+/// The bundled icon of [platformId] (a square PNG), or null for a platform
+/// without one, which shows its [PlatformBrand] mark instead.
+String? platformIconAsset(String platformId) {
+  final id = _iconAliases[platformId] ?? platformId;
+  return _platformIcons.contains(id) ? 'assets/platforms/$id.png' : null;
+}
+
 /// The platform's mark, sized to fit a square of [size].
 class PlatformGlyph extends StatelessWidget {
   const PlatformGlyph(this.platformId, {super.key, this.size = 18, this.color});
@@ -169,8 +190,9 @@ class PlatformGlyph extends StatelessWidget {
   }
 }
 
-/// Rounded-square brand tile with the platform mark: the visual unit used for
-/// target chips, account cards and the platform gallery.
+/// Rounded-square tile with the platform's own icon (or, for a platform
+/// without a bundled icon, its brand colour and mark): the visual unit used
+/// for target chips, account cards and the platform gallery.
 class PlatformTile extends StatelessWidget {
   const PlatformTile(this.platformId, {super.key, this.size = 36, this.radius, this.circle = false, this.dimmed = false});
 
@@ -186,17 +208,32 @@ class PlatformTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final b = brandFor(platformId);
     final brightness = Theme.of(context).brightness;
-    final tile = Container(
-      width: size,
-      height: size,
-      decoration: b.tile(
-        brightness,
-        radius: Radii.circular(radius ?? size * 0.28),
-        shape: circle ? Radii.circleShape : BoxShape.rectangle,
-      ),
-      alignment: Alignment.center,
-      child: PlatformGlyph(platformId, size: size * 0.5),
-    );
+    final shape = circle ? Radii.circleShape : BoxShape.rectangle;
+    final corners = shape == BoxShape.circle ? null : Radii.circular(radius ?? size * 0.28);
+    final asset = platformIconAsset(platformId);
+    final tile = asset == null
+        ? Container(
+            width: size,
+            height: size,
+            decoration: b.tile(brightness, radius: corners, shape: shape),
+            alignment: Alignment.center,
+            child: PlatformGlyph(platformId, size: size * 0.5),
+          )
+        : Container(
+            width: size,
+            height: size,
+            // A hairline keeps an icon on white apart from a white surface.
+            foregroundDecoration: BoxDecoration(
+              borderRadius: corners,
+              shape: shape,
+              border: Border.all(color: Theme.of(context).extension<NfColors>()?.border ?? const Color(0x1F000000), width: 0.5),
+            ),
+            decoration: BoxDecoration(
+              borderRadius: corners,
+              shape: shape,
+              image: DecorationImage(image: AssetImage(asset), fit: BoxFit.cover, filterQuality: FilterQuality.medium),
+            ),
+          );
     if (!dimmed) return tile;
     return Opacity(
       opacity: 0.45,

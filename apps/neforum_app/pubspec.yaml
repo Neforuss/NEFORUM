@@ -3,7 +3,7 @@ description: >-
   NEFORUM: one app, one message, every platform. Free and open-source
   cross-poster for Android, iOS, macOS and Windows.
 publish_to: 'none'
-version: 1.2.2+19
+version: 1.2.3+20
 
 environment:
   sdk: ^3.13.0
@@ -70,6 +70,8 @@ flutter:
   generate: false
   assets:
     - assets/brand/
+    # Each platform's own icon (see assets/platforms/SOURCES.md).
+    - assets/platforms/
     - assets/tray/
     - assets/docs/
     # The browser extension, built by tool/build_extension.dart, shipped so

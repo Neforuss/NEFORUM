@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/brand/platform_brand.dart';
 import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
@@ -113,6 +114,12 @@ void main() {
     final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _PrettyStorage())))!;
     await tester.pumpWidget(ProviderScope(overrides: [servicesProvider.overrideWithValue(services)], child: const NeforumApp()));
     await tester.pump(const Duration(milliseconds: 300));
+    // Decode the platform icons for real, so the screens show them.
+    final context = tester.element(find.byType(MaterialApp));
+    await tester.runAsync(() => Future.wait([
+          for (final id in platformBrands.keys)
+            if (platformIconAsset(id) case final asset?) precacheImage(AssetImage(asset), context),
+        ]));
     final container = ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
     container.read(routerProvider).go(route);
     await tester.pump();
