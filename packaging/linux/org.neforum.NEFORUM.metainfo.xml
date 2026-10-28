@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata for software centres and Flathub. Check with
+     `appstreamcli validate --pedantic org.neforum.NEFORUM.metainfo.xml`.
+     Add a <release> for every version that ships for Linux (newest first);
+     the first Linux release is 1.3.0. -->
+<component type="desktop-application">
+  <id>org.neforum.NEFORUM</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+
+  <name>NEFORUM</name>
+  <summary>Write a post once, publish it on every social network</summary>
+  <developer id="com.neforus">
+    <name>NEFORUM contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      NEFORUM is a free and open-source cross-poster. Write a post once: NEFORUM adapts it for
+      each network (character limits, threads, hashtags, links, media rules), shows a live preview
+      of every version, and publishes it everywhere at once or on a schedule.
+    </p>
+    <p>Three ways to post, per account:</p>
+    <ul>
+      <li>Automatic through open APIs: Mastodon and the fediverse, Bluesky, Nostr, Misskey, Lemmy, Matrix, Telegram, Discord, WordPress, Ghost and more</li>
+      <li>Automatic with your own developer keys: X, Threads, LinkedIn, YouTube, Reddit, Pinterest, Tumblr, Facebook Pages and others</li>
+      <li>Hand-off for every other account: the text is copied, the photos saved and the network's composer opened, so you only press Post</li>
+    </ul>
+    <p>
+      NEFORUM is local-first. There is no NEFORUM server or account: posts go straight from your
+      computer to each network, keys and tokens stay in the system keyring, and there are no
+      analytics. An optional update check asks neforus.com for the latest version number only.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">org.neforum.NEFORUM.desktop</launchable>
+
+  <url type="homepage">https://neforus.com/neforum/</url>
+  <url type="bugtracker">https://github.com/Neforuss/NEFORUM/issues</url>
+  <url type="vcs-browser">https://github.com/Neforuss/NEFORUM</url>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>One post with a live preview for every network</caption>
+      <image>https://raw.githubusercontent.com/Neforuss/NEFORUM/main/docs/screenshots/compose-light.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>The queue of scheduled posts</caption>
+      <image>https://raw.githubusercontent.com/Neforuss/NEFORUM/main/docs/screenshots/queue-dark.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Connected accounts</caption>
+      <image>https://raw.githubusercontent.com/Neforuss/NEFORUM/main/docs/screenshots/accounts-dark.png</image>
+    </screenshot>
+  </screenshots>
+
+  <branding>
+    <color type="primary" scheme_preference="light">#B98AFF</color>
+    <color type="primary" scheme_preference="dark">#5C00C4</color>
+  </branding>
+
+  <!-- Review with https://hughsie.github.io/oars/ before submitting: NEFORUM
+       publishes what the user writes to public social networks. -->
+  <content_rating type="oars-1.1" />
+
+  <requires>
+    <display_length compare="ge">420</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+
+  <releases>
+    <release version="1.2.3" date="2026-10-27">
+      <description>
+        <p>Every platform shown with its own icon.</p>
+      </description>
+    </release>
+  </releases>
+</component>

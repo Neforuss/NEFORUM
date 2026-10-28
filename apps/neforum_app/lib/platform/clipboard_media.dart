@@ -19,17 +19,20 @@ class PastedMedia {
 /// text a hand-off already copies.
 ///
 /// Flutter's [Clipboard] only carries text, so this goes through the
-/// "neforum/clipboard" channel in the Windows, macOS, iOS and Android runners
-/// (windows/runner/flutter_window.cpp, macos/Runner/MainFlutterWindow.swift,
+/// "neforum/clipboard" channel in the Windows, macOS, Linux, iOS and Android
+/// runners (windows/runner/flutter_window.cpp,
+/// macos/Runner/MainFlutterWindow.swift, linux/runner/clipboard_channel.cc,
 /// ios/Runner/AppDelegate.swift, android/.../ClipboardChannel.kt).
-/// Browsers and apps read pasted pictures as PNG; on a computer the original
-/// file rides along for places that accept pasted files and keep its own
-/// format. Reading the clipboard ([readImage]) is for computers only.
+/// Browsers and apps read pasted pictures as PNG; on Windows and macOS the
+/// original file rides along for places that accept pasted files and keep
+/// its own format (Linux offers the picture only: there a file list next to
+/// it makes some editors paste the path as text). Reading the clipboard
+/// ([readImage]) is for computers only.
 abstract final class ClipboardMedia {
   static const MethodChannel _channel = MethodChannel('neforum/clipboard');
 
-  /// Photos can be copied here (not on Linux or the web).
-  static bool get supported => Env.isWindows || Env.isMacOS || Env.isIOS || Env.isAndroid;
+  /// Photos can be copied here (not on the web).
+  static bool get supported => Env.isWindows || Env.isMacOS || Env.isLinux || Env.isIOS || Env.isAndroid;
 
   /// Longest side of the pasted picture. Networks scale photos to about this
   /// size anyway, and it keeps the PNG small enough for their upload limits.
@@ -57,11 +60,12 @@ abstract final class ClipboardMedia {
     }
   }
 
-  /// What a paste into the composer can attach (Windows and macOS): files
-  /// copied in Explorer or Finder, or a picture (a screenshot, "Copy image" in
-  /// a browser) as PNG bytes. Null when the clipboard holds neither.
+  /// What a paste into the composer can attach (Windows, macOS and Linux):
+  /// files copied in Explorer, Finder or a Linux file manager, or a picture
+  /// (a screenshot, "Copy image" in a browser) as PNG bytes. Null when the
+  /// clipboard holds neither.
   static Future<PastedMedia?> readImage() async {
-    if (!Env.isWindows && !Env.isMacOS) return null;
+    if (!Env.isDesktop) return null;
     try {
       final r = await _channel.invokeMapMethod<String, Object?>('readImage');
       if (r == null || r.isEmpty) return null;

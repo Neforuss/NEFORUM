@@ -17,11 +17,17 @@ class DesktopSettingsSection extends ConsumerStatefulWidget {
 class _DesktopSettingsSectionState extends ConsumerState<DesktopSettingsSection> {
   bool? _login;
 
+  /// False on a Linux desktop that shows no tray icons.
+  bool _trayAvailable = true;
+
   @override
   void initState() {
     super.initState();
     DesktopIntegration.instance.isLaunchAtLoginEnabled().then((v) {
       if (mounted) setState(() => _login = v);
+    });
+    DesktopIntegration.instance.trayAvailable().then((v) {
+      if (mounted) setState(() => _trayAvailable = v);
     });
   }
 
@@ -33,7 +39,11 @@ class _DesktopSettingsSectionState extends ConsumerState<DesktopSettingsSection>
     return SettingsSection(title: 'Desktop', icon: Icons.desktop_windows_outlined, subtitle: 'Scheduled posts go out while NEFORUM is running.', children: [
       SettingSwitch(
         title: 'Start NEFORUM when I sign in',
-        description: supported ? 'Starts minimized in the tray.' : 'Not available on this system.',
+        description: !supported
+            ? 'Not available on this system.'
+            : _trayAvailable
+                ? 'Starts minimized in the tray.'
+                : 'Starts with its window open (this desktop shows no tray icons).',
         value: _login ?? s.startAtLogin,
         onChanged: !supported
             ? null
@@ -50,9 +60,11 @@ class _DesktopSettingsSectionState extends ConsumerState<DesktopSettingsSection>
       ),
       SettingSwitch(
         title: 'Keep running in the tray when I close the window',
-        description: 'Recommended: scheduled posts only go out while NEFORUM runs.',
-        value: s.minimizeToTray,
-        onChanged: (v) => n.update((x) => x.copyWith(minimizeToTray: v)),
+        description: _trayAvailable
+            ? 'Recommended: scheduled posts only go out while NEFORUM runs.'
+            : 'This desktop shows no tray icons, so closing the window quits NEFORUM. On GNOME, the AppIndicator extension adds them.',
+        value: s.minimizeToTray && _trayAvailable,
+        onChanged: _trayAvailable ? (v) => n.update((x) => x.copyWith(minimizeToTray: v)) : null,
       ),
     ]);
   }

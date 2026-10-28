@@ -21,7 +21,10 @@ abstract final class Env {
   static bool get isMobile => isAndroid || isIOS;
   static bool get isDesktop => isMacOS || isWindows || isLinux;
 
-  /// Native share sheet with files is meaningful here.
+  /// Native share sheet with files is meaningful here. Windows and Linux have
+  /// none that share_plus can fill with files (on Linux it only opens a
+  /// mailto: link), so there hand-offs copy to the clipboard and save media
+  /// to Downloads/NEFORUM instead, and exports go through a save dialog.
   static bool get hasShareSheet => isMobile || isMacOS;
 
   /// Can run a loopback HTTP server for OAuth redirects.

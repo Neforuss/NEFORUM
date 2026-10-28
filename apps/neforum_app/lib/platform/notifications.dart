@@ -119,12 +119,12 @@ class NotificationService {
       ],
     );
     // Apple platforms show the app icon (AppIcon in the asset catalog) on
-    // notifications by themselves; Android and Windows need to be told.
+    // notifications by themselves; Android, Windows and Linux need to be told.
     final settings = InitializationSettings(
       android: const AndroidInitializationSettings(kAndroidNotificationIcon),
       iOS: darwin,
       macOS: darwin,
-      linux: LinuxInitializationSettings(defaultActionName: 'Open NEFORUM'),
+      linux: LinuxInitializationSettings(defaultActionName: 'Open NEFORUM', defaultIcon: AssetsLinuxIcon('assets/brand/notify_icon.png')),
       windows: WindowsInitializationSettings(
         appName: 'NEFORUM',
         appUserModelId: 'org.neforum.NEFORUM',

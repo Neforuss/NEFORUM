@@ -106,6 +106,13 @@ void main(List<String> args) {
     _bmp(at('installer/wizard_large_$pct.bmp'), _panel(wide, tall));
   }
 
+  // ---- Linux (freedesktop icon theme sizes; packaging/linux, used by the
+  // tarball, the AppImage and the Flatpak manifest) --------------------------------
+  for (final s in [128, 256, 512]) {
+    final icon = File(at('../../packaging/linux/icons/hicolor/${s}x$s/apps/org.neforum.NEFORUM.png'))..parent.createSync(recursive: true);
+    _png(icon.path, _render(s, tile: _Tile.rounded, inset: 0.04));
+  }
+
   // ---- Tray ---------------------------------------------------------------------
   final trayFrames = [for (final s in [16, 20, 24, 32, 48]) _render(s, tile: _Tile.rounded)];
   File(at('assets/tray/tray_icon.ico')).writeAsBytesSync(img.IcoEncoder().encodeImages(trayFrames));
