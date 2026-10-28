@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/text_card.dart';
+import '../platform/update_check.dart';
 import '../theme/tokens.dart';
 import '../theme/zoom.dart';
 
@@ -132,6 +133,11 @@ class AppSettings {
     this.advanceHandoffOnReturn = true,
     this.artworkMaturity = ArtworkMaturity.general,
     this.artworkDisallowAiTraining = true,
+    // 1.3: updates
+    this.updateCheck = UpdateCheckMode.ask,
+    this.updateCheckedAt,
+    this.updateLatestRelease = const {},
+    this.updateDismissedVersion,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -190,6 +196,11 @@ class AppSettings {
         advanceHandoffOnReturn: j['advanceHandoffOnReturn'] as bool? ?? true,
         artworkMaturity: ArtworkMaturity.values.asNameMap()[j['artworkMaturity']] ?? ArtworkMaturity.general,
         artworkDisallowAiTraining: j['artworkDisallowAiTraining'] as bool? ?? true,
+        // 1.3: updates
+        updateCheck: UpdateCheckMode.values.asNameMap()[j['updateCheck']] ?? UpdateCheckMode.ask,
+        updateCheckedAt: DateTime.tryParse('${j['updateCheckedAt'] ?? ''}'),
+        updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
+        updateDismissedVersion: j['updateDismissedVersion'] as String?,
       );
 
   final ThemeMode themeMode;
@@ -353,6 +364,24 @@ class AppSettings {
   final ArtworkMaturity artworkMaturity;
   final bool artworkDisallowAiTraining;
 
+  // 1.3: updates
+
+  /// Settings > Updates: whether NEFORUM looks for new versions by itself.
+  /// Device-only.
+  final UpdateCheckMode updateCheck;
+
+  /// When neforus.com last answered an update check. Device-only.
+  final DateTime? updateCheckedAt;
+
+  /// The latest.json from that check (LatestRelease.toJson), so the banner
+  /// survives a restart without asking again. Device-only.
+  final Map<String, dynamic> updateLatestRelease;
+
+  /// The newer version whose banner the user closed: it stays closed until
+  /// a later one comes out (critical ones come back at the next start).
+  /// Device-only.
+  final String? updateDismissedVersion;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -420,6 +449,11 @@ class AppSettings {
     bool? advanceHandoffOnReturn,
     ArtworkMaturity? artworkMaturity,
     bool? artworkDisallowAiTraining,
+    // 1.3: updates
+    UpdateCheckMode? updateCheck,
+    DateTime? updateCheckedAt,
+    Map<String, dynamic>? updateLatestRelease,
+    String? updateDismissedVersion,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -475,6 +509,11 @@ class AppSettings {
         advanceHandoffOnReturn: advanceHandoffOnReturn ?? this.advanceHandoffOnReturn,
         artworkMaturity: artworkMaturity ?? this.artworkMaturity,
         artworkDisallowAiTraining: artworkDisallowAiTraining ?? this.artworkDisallowAiTraining,
+        // 1.3: updates
+        updateCheck: updateCheck ?? this.updateCheck,
+        updateCheckedAt: updateCheckedAt ?? this.updateCheckedAt,
+        updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
+        updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
       );
 
   Map<String, dynamic> toJson() => {
@@ -531,5 +570,10 @@ class AppSettings {
         'advanceHandoffOnReturn': advanceHandoffOnReturn,
         'artworkMaturity': artworkMaturity.name,
         'artworkDisallowAiTraining': artworkDisallowAiTraining,
+        // 1.3: updates
+        'updateCheck': updateCheck.name,
+        if (updateCheckedAt != null) 'updateCheckedAt': updateCheckedAt!.toUtc().toIso8601String(),
+        if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
+        if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
       };
 }

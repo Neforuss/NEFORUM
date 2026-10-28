@@ -12,10 +12,12 @@ import '../../platform/files_app_folder.dart';
 import '../../platform/notifications.dart';
 import '../../platform/secure_secret_store.dart';
 import '../../platform/ui_bridge.dart';
+import '../../platform/update_check.dart';
 import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
 import '../../state/providers.dart';
 import '../../state/scheduler.dart';
+import '../../state/update_checks.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/buttons.dart';
@@ -23,6 +25,7 @@ import '../handoff/handoff_sheet.dart';
 import '../root.dart';
 import '../router.dart';
 import '../settings/sync_section.dart';
+import '../settings/updates_section.dart';
 import 'paste_code_dialog.dart';
 
 /// Adaptive frame around the five sections: sidebar on wide windows, an
@@ -54,6 +57,12 @@ class _AppShellState extends ConsumerState<AppShell> {
       // Linux: a desktop without a keyring is named at start, not at the
       // first post (see _KeyringBanner).
       if (Env.isLinux && !ref.read(isDemoProvider)) unawaited(SecureSecretStore.verifyAvailable());
+      // Update checks: asked once, then at most daily (never in the demo).
+      final updates = ref.read(updateCheckProvider.notifier);
+      if (updates.applies && ref.read(settingsProvider).updateCheck == UpdateCheckMode.ask) {
+        unawaited(askAboutUpdateChecks(context, ref));
+      }
+      updates.start();
       if (Env.isIOS) {
         FilesAppFolder.listenForOpened(_takeOpenedSyncFile);
         unawaited(_takeOpenedSyncFile());
@@ -148,6 +157,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     final body = Column(children: [
       if (demo) const _DemoBanner(),
       const _KeyringBanner(),
+      const UpdateBanner(),
       Expanded(child: widget.shell),
     ]);
 

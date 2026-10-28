@@ -56,6 +56,9 @@ void main() {
     await DesktopIntegration.instance.initWindow();
     await NotificationService.instance.init();
     final storage = await openAppStorage(overrideDir: dir.path);
+    // Answered beforehand, so the one-time update question does not cover
+    // the first-run screen (and nothing asks neforus.com from CI).
+    await storage.writeJson('settings.json', {'updateCheck': 'off'});
     final services = await AppServices.create(demo: false, storage: storage);
     await tester.pumpWidget(NeforumRoot(initial: services));
     await pumpFor(2000);
