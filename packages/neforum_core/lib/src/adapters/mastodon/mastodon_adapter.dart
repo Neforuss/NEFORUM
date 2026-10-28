@@ -518,7 +518,9 @@ class MastodonAdapter extends PlatformAdapter {
     if (requested != null && schedule == null) ctx.log.info('The scheduled time has passed; publishing now');
 
     // Media first, also for a scheduled post: the server stores the ids.
-    final mediaIds = await _uploadAll(api, v.media, p, ctx);
+    // Every part's media is uploaded before the first post goes up.
+    final parts = v.isThread ? v.threadParts : [v.text];
+    final mediaIds = [for (var i = 0; i < parts.length; i++) await _uploadAll(api, v.mediaOfPart(i), p, ctx)];
     if (schedule != null && schedule.isBefore(ctx.now().add(_sendLead))) {
       throw AdapterException(
         PublishError.validation(
@@ -528,7 +530,6 @@ class MastodonAdapter extends PlatformAdapter {
       );
     }
 
-    final parts = v.isThread ? v.threadParts : [v.text];
     final ids = <String>[];
     String? firstUrl;
     for (var i = 0; i < parts.length; i++) {
@@ -537,7 +538,7 @@ class MastodonAdapter extends PlatformAdapter {
         v,
         p,
         parts[i],
-        mediaIds: i == 0 ? mediaIds : const [],
+        mediaIds: mediaIds[i],
         replyTo: i == 0 ? null : ids.last,
         scheduledAt: schedule,
       );
@@ -667,7 +668,7 @@ class MastodonAdapter extends PlatformAdapter {
     final src = v.sourcePostId;
     if (src == null || scheduled) return const Uuid().v4();
     final fields = form.where((e) => e.key != 'media_ids[]').map((e) => '${e.key}=${e.value}').join('\n');
-    final media = part == 0 ? v.media.map((m) => m.id).join(',') : '';
+    final media = v.mediaOfPart(part).map((m) => m.id).join(',');
     final digest = sha256.convert(utf8.encode('neforum|${a.id}|$src|$part|$media|$fields'));
     return digest.toString().substring(0, 40);
   }

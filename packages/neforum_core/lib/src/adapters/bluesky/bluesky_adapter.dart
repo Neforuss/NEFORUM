@@ -85,6 +85,7 @@ class BlueskyAdapter extends PlatformAdapter {
       imageMimeTypes: {'image/jpeg', 'image/png', 'image/webp', 'image/gif'},
       videoMimeTypes: {'video/mp4'},
       supportsAltText: true,
+      mediaPerThreadPart: true,
       notes: 'Up to 4 images (2,000,000 bytes each) or one MP4 video (300 MB, 10 minutes), never both. '
           'GIFs are shown as still images. Video needs a verified email and has a daily upload limit.',
     ),
@@ -401,8 +402,15 @@ class BlueskyAdapter extends PlatformAdapter {
     final api = BlueskyApi(ctx, pds: pds, accessJwt: access);
     final parts = variant.isThread ? variant.threadParts : [variant.text];
 
-    // Embed for the first post: media, else a link card.
-    final embed = variant.hasMedia ? await _mediaEmbed(variant.media, api, did, ctx) : await _linkCardEmbed(variant, api, ctx);
+    // Embeds, made before anything is posted: each post's media, and a link
+    // card on the first post when it has no media.
+    final embeds = <Map<String, dynamic>?>[];
+    for (var i = 0; i < parts.length; i++) {
+      final media = variant.mediaOfPart(i);
+      embeds.add(media.isNotEmpty
+          ? await _mediaEmbed(media, api, did, ctx)
+          : (i == 0 ? await _linkCardEmbed(variant, api, ctx) : null));
+    }
 
     // Resolve every @handle once.
     final handles = {for (final p in parts) ...BlueskyRichText.mentionedHandles(p)};
@@ -428,8 +436,8 @@ class BlueskyAdapter extends PlatformAdapter {
         'createdAt': ctx.now().toUtc().toIso8601String(),
         if (langs.isNotEmpty) 'langs': langs,
         if (facets.isNotEmpty) 'facets': facets,
-        if (i == 0 && embed != null) 'embed': embed,
-        if (i == 0 && labels != null) 'labels': labels,
+        if (embeds[i] case final embed?) 'embed': embed,
+        if (labels != null && (i == 0 || variant.mediaOfPart(i).isNotEmpty)) 'labels': labels,
         if (i > 0) 'reply': {'root': refs.first.toJson(), 'parent': refs.last.toJson()},
       };
       try {

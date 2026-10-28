@@ -29,23 +29,39 @@ class TextSplitter {
   /// that is too long is split further, as [split] does. With [numbering]
   /// every final part gets a ` (i/n)` suffix counted across all of them, and
   /// the suffix is accounted for in the limit.
-  static List<String> splitParts(List<String> parts, TextRules rules, {bool numbering = true}) {
-    if (parts.length == 1) return split(parts.single, rules, numbering: numbering);
+  static List<String> splitParts(List<String> parts, TextRules rules, {bool numbering = true}) =>
+      splitPartsWithStarts(parts, rules, numbering: numbering).parts;
+
+  /// [splitParts], also telling where each written part begins: `starts[i]`
+  /// is the index in `parts` of the first post made from `parts[i]` (what
+  /// carries the media placed in that part).
+  static ({List<String> parts, List<int> starts}) splitPartsWithStarts(List<String> parts, TextRules rules, {bool numbering = true}) {
+    if (parts.length == 1) return (parts: split(parts.single, rules, numbering: numbering), starts: const [0]);
     final max = rules.maxLength;
-    List<String> pieces(int reserve) => [
-          for (final p in parts)
-            if (max == null || TextCounter.count(p, rules) <= max - reserve) p else ..._splitTo(p, rules, max - reserve),
-        ];
+    ({List<String> parts, List<int> starts}) pieces(int reserve) {
+      final out = <String>[];
+      final starts = <int>[];
+      for (final p in parts) {
+        starts.add(out.length);
+        if (max == null || TextCounter.count(p, rules) <= max - reserve) {
+          out.add(p);
+        } else {
+          out.addAll(_splitTo(p, rules, max - reserve));
+        }
+      }
+      return (parts: out, starts: starts);
+    }
+
     if (!numbering) return pieces(0);
     // The suffix grows with the number of parts, and a longer suffix can
     // split a part again; repeat until the count is stable.
     var reserve = _suffix(parts.length).length;
     var out = pieces(reserve);
-    while (_suffix(out.length).length > reserve) {
-      reserve = _suffix(out.length).length;
+    while (_suffix(out.parts.length).length > reserve) {
+      reserve = _suffix(out.parts.length).length;
       out = pieces(reserve);
     }
-    return number(out);
+    return (parts: number(out.parts), starts: out.starts);
   }
 
   /// Adds ` (i/n)` to each part; a single part stays as it is.

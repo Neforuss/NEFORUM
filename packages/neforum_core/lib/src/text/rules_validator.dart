@@ -61,14 +61,22 @@ class RulesValidator {
     if (!m.supportsAnyMedia && v.media.isNotEmpty) {
       issues.add(ValidationIssue.warning('media.unsupported', '${d.name} does not take media; it will be dropped', field: 'media'));
     } else {
-      if (images.length > m.maxImages) {
-        issues.add(ValidationIssue.error('media.too_many_images', '${images.length} images; ${d.name} allows ${m.maxImages}', field: 'media'));
-      }
-      if (videos.length > m.maxVideos) {
-        issues.add(ValidationIssue.error('media.too_many_videos', '${videos.length} videos; ${d.name} allows ${m.maxVideos}', field: 'media'));
-      }
-      if (images.isNotEmpty && videos.isNotEmpty && !m.allowsMixedImageVideo) {
-        issues.add(ValidationIssue.error('media.mixed', '${d.name} cannot mix images and video in one post', field: 'media'));
+      // The limits apply to each post that carries media (one group unless
+      // a thread places media in later parts).
+      final groups = v.mediaGroups;
+      for (final group in groups) {
+        final where = groups.length > 1 ? ' in one post' : '';
+        final groupImages = group.where((x) => x.isImage).length;
+        final groupVideos = group.where((x) => x.isVideo).length;
+        if (groupImages > m.maxImages) {
+          issues.add(ValidationIssue.error('media.too_many_images', '$groupImages images$where; ${d.name} allows ${m.maxImages}', field: 'media'));
+        }
+        if (groupVideos > m.maxVideos) {
+          issues.add(ValidationIssue.error('media.too_many_videos', '$groupVideos videos$where; ${d.name} allows ${m.maxVideos}', field: 'media'));
+        }
+        if (groupImages > 0 && groupVideos > 0 && !m.allowsMixedImageVideo) {
+          issues.add(ValidationIssue.error('media.mixed', '${d.name} cannot mix images and video in one post', field: 'media'));
+        }
       }
       for (final x in images) {
         if (m.imageMaxBytes != null && x.sizeBytes > m.imageMaxBytes!) {

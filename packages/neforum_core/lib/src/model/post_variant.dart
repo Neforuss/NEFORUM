@@ -30,6 +30,7 @@ class PostVariant {
     this.sourcePostId,
     this.poll,
     this.artwork,
+    this.mediaPartIndexes = const [],
   });
 
   /// Body text. When the post was split into a thread this is the first part.
@@ -70,7 +71,37 @@ class PostVariant {
   /// artwork.
   final ArtworkDetails? artwork;
 
+  /// For each item of [media], the index of the [threadParts] post that
+  /// carries it. Empty (the usual case) means every item goes with the first
+  /// post. Only set for networks with [MediaRules.mediaPerThreadPart] when the
+  /// post places media in later parts ([Post.mediaParts]).
+  final List<int> mediaPartIndexes;
+
   bool get isArtwork => artwork != null;
+
+  /// True when media goes with more than the first post of the thread.
+  bool get hasMediaInLaterParts => mediaPartIndexes.any((i) => i > 0);
+
+  /// The media of thread post [part] (0 is the first post, or the only one).
+  List<MediaAttachment> mediaOfPart(int part) {
+    if (!hasMediaInLaterParts) return part == 0 ? media : const [];
+    return [
+      for (var i = 0; i < media.length; i++)
+        if ((i < mediaPartIndexes.length ? mediaPartIndexes[i] : 0) == part) media[i],
+    ];
+  }
+
+  /// The media of each post that carries some, in thread order: one group
+  /// ([media]) unless media goes with later parts. Per-post limits apply to
+  /// each group.
+  List<List<MediaAttachment>> get mediaGroups {
+    if (!hasMediaInLaterParts) return [media];
+    final count = threadParts.isEmpty ? 1 : threadParts.length;
+    return [
+      for (var p = 0; p < count; p++)
+        if (mediaOfPart(p) case final group when group.isNotEmpty) group,
+    ];
+  }
 
   bool get isThread => threadParts.length > 1;
   bool get hasMedia => media.isNotEmpty;
@@ -97,6 +128,7 @@ class PostVariant {
     List<ValidationIssue>? issues,
     PostPoll? poll,
     bool clearPoll = false,
+    List<int>? mediaPartIndexes,
   }) =>
       PostVariant(
         text: text ?? this.text,
@@ -115,6 +147,10 @@ class PostVariant {
         sourcePostId: sourcePostId,
         poll: clearPoll ? null : (poll ?? this.poll),
         artwork: artwork,
+        // Replacing media item for item (a fitted stand-in for a photo) keeps
+        // each item in its part; a different list goes with the first post.
+        mediaPartIndexes: mediaPartIndexes ??
+            (media == null || media.length == this.media.length ? this.mediaPartIndexes : const []),
       );
 
   PostVariant addIssues(Iterable<ValidationIssue> more) =>

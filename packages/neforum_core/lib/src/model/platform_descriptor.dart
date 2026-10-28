@@ -129,6 +129,7 @@ class MediaRules {
     this.videoMimeTypes = const {'video/mp4', 'video/quicktime'},
     this.supportsAltText = false,
     this.requiresPublicMediaUrl = false,
+    this.mediaPerThreadPart = false,
     this.notes,
   });
 
@@ -146,6 +147,12 @@ class MediaRules {
   /// Instagram and Threads cannot accept an upload: the media must already be
   /// reachable at a public HTTPS URL. NEFORUM uses a configured [MediaHost].
   final bool requiresPublicMediaUrl;
+
+  /// Every post of a thread can carry its own media, and the adapter posts
+  /// the media of each part with that part ([PostVariant.mediaOfPart]). The
+  /// limits above then apply to each post. Without it a thread carries all
+  /// its media on the first post.
+  final bool mediaPerThreadPart;
   final String? notes;
 
   bool get supportsAnyMedia => maxImages > 0 || maxVideos > 0;

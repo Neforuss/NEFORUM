@@ -67,20 +67,23 @@ class VariantResolver {
 
     // ---- media ---------------------------------------------------------
     // Generated media (text cards) only goes where a target asks for it.
-    var media = o.mediaIds == null
+    final chosen = o.mediaIds == null
         ? post.media.where((m) => !m.generated).toList()
         : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)];
-    media = _filterMedia(media, d, issues);
 
     // ---- text ----------------------------------------------------------
     // The parts the user wrote ([Post.parts]). A per-network version is one
-    // text and replaces all of them.
-    final written = o.text == null
-        ? [
-            for (final p in post.parts)
-              if (p.trim().isNotEmpty) p.trimRight(),
-          ]
-        : const <String>[];
+    // text and replaces all of them. writtenIndex maps each part of the post
+    // to the written part that takes its media: an empty part's media goes
+    // with the part before it (or the first one).
+    final written = <String>[];
+    final writtenIndex = <int>[];
+    if (o.text == null) {
+      for (final p in post.parts) {
+        if (p.trim().isNotEmpty) written.add(p.trimRight());
+        writtenIndex.add(written.isEmpty ? 0 : written.length - 1);
+      }
+    }
     final canThread = t.supportsThreads && (account == null || account.tier.isAutomatic);
     var text = (o.text ?? written.join('\n\n')).trimRight();
     final link = o.link ?? post.link;
@@ -105,9 +108,13 @@ class VariantResolver {
 
     // ---- overflow ------------------------------------------------------
     var threadParts = const <String>[];
+    // Where each written part begins in threadParts (media placement).
+    var starts = const <int>[0];
     if (written.length > 1 && canThread) {
       // A thread the user wrote: one post per part.
-      threadParts = _writtenThread([...written.take(written.length - 1), withAdditions(written.last)], d, issues);
+      final thread = _writtenThread([...written.take(written.length - 1), withAdditions(written.last)], d, issues);
+      threadParts = thread.parts;
+      starts = thread.starts;
       text = threadParts.first;
     } else {
       // Networks without threads (and hand-offs) get every part in one post.
@@ -137,6 +144,37 @@ class VariantResolver {
         case OverflowStrategy.error:
           issues.add(ValidationIssue.error('text.too_long', 'Text is $n/${t.maxLength} characters for ${d.name}', field: 'text'));
       }
+    }
+
+    // ---- media placement -----------------------------------------------
+    // A written thread on a network that takes media in every post: each
+    // item goes with the first post made from its part, and the limits apply
+    // per post. Anywhere else all media goes with the one (or first) post.
+    var media = const <MediaAttachment>[];
+    var mediaPartIndexes = const <int>[];
+    if (threadParts.length > 1 && written.length > 1 && d.media.mediaPerThreadPart && post.mediaParts.isNotEmpty && chosen.isNotEmpty) {
+      final groups = [for (var i = 0; i < threadParts.length; i++) <MediaAttachment>[]];
+      for (final m in chosen) {
+        final part = post.partOf(m);
+        final w = part >= 0 && part < writtenIndex.length ? writtenIndex[part] : written.length - 1;
+        groups[starts[w.clamp(0, starts.length - 1)].clamp(0, groups.length - 1)].add(m);
+      }
+      if (groups.skip(1).any((g) => g.isNotEmpty)) {
+        final placed = <MediaAttachment>[];
+        final indexes = <int>[];
+        for (var i = 0; i < groups.length; i++) {
+          if (groups[i].isEmpty) continue;
+          final kept = _filterMedia(groups[i], d, issues, part: groups.length > 1 ? i + 1 : null);
+          placed.addAll(kept);
+          indexes.addAll([for (final _ in kept) i]);
+        }
+        media = placed;
+        mediaPartIndexes = indexes;
+      } else {
+        media = _filterMedia(chosen, d, issues);
+      }
+    } else {
+      media = _filterMedia(chosen, d, issues);
     }
 
     // ---- title ---------------------------------------------------------
@@ -183,20 +221,26 @@ class VariantResolver {
       sourcePostId: post.id,
       poll: d.polls == null ? null : poll,
       artwork: post.artwork,
+      mediaPartIndexes: mediaPartIndexes,
     );
   }
 
   /// The thread for [parts] the user wrote. A part longer than the limit is
   /// split further, truncated or reported, as [ResolverOptions.overflow]
   /// says for long text; numbering counts every final part.
-  List<String> _writtenThread(List<String> parts, PlatformDescriptor d, List<ValidationIssue> issues) {
+  ///
+  /// `starts[i]` is the index of the first post made from `parts[i]`.
+  ({List<String> parts, List<int> starts}) _writtenThread(List<String> parts, PlatformDescriptor d, List<ValidationIssue> issues) {
     final t = d.text;
     final numbering = options.threadNumbering;
     List<String> thread;
+    var starts = [for (var i = 0; i < parts.length; i++) i];
     switch (options.overflow) {
       case OverflowStrategy.threadOrError:
       case OverflowStrategy.threadOrTruncate:
-        thread = TextSplitter.splitParts(parts, t, numbering: numbering);
+        final split = TextSplitter.splitPartsWithStarts(parts, t, numbering: numbering);
+        thread = split.parts;
+        starts = split.starts;
       case OverflowStrategy.truncate:
         final reserve = numbering ? TextSplitter.suffixLength(parts.length) : 0;
         final shortened = [for (final p in parts) TextSplitter.truncate(p, t, reserve: reserve)];
@@ -219,10 +263,12 @@ class VariantResolver {
         }
     }
     issues.add(ValidationIssue.info('text.threaded', 'Published as a ${thread.length}-part thread on ${d.name}', field: 'text'));
-    return thread;
+    return (parts: thread, starts: starts);
   }
 
-  List<MediaAttachment> _filterMedia(List<MediaAttachment> media, PlatformDescriptor d, List<ValidationIssue> issues) {
+  /// [part] (from 1) names the thread post the media belongs to in the
+  /// warning, when the limits apply per post.
+  List<MediaAttachment> _filterMedia(List<MediaAttachment> media, PlatformDescriptor d, List<ValidationIssue> issues, {int? part}) {
     final m = d.media;
     if (media.isEmpty) return media;
     if (!m.supportsAnyMedia) {
@@ -267,7 +313,7 @@ class VariantResolver {
       out = kept;
     }
     if (dropped > 0) {
-      issues.add(ValidationIssue.warning('media.dropped', '$dropped file(s) dropped: ${d.name} allows ${m.maxImages} image(s)/${m.maxVideos} video(s)${m.allowsMixedImageVideo ? '' : ', not mixed'}', field: 'media'));
+      issues.add(ValidationIssue.warning('media.dropped', '$dropped file(s) dropped${part == null ? '' : ' from part $part'}: ${d.name} allows ${m.maxImages} image(s)/${m.maxVideos} video(s)${m.allowsMixedImageVideo ? '' : ', not mixed'}', field: 'media'));
     }
     return out;
   }
