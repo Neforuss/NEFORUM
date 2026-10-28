@@ -173,6 +173,17 @@ class _MediaItemState extends ConsumerState<_MediaItem> {
           top: 5,
           child: _RoundIcon(icon: Icons.close_rounded, tooltip: 'Remove', onTap: widget.onRemove),
         ),
+        // In a thread: which part shows this attachment, and a menu to move it.
+        if (ref.watch(composerProvider.select((c) => c.additionalParts.length)) case final more when more > 0)
+          Positioned(
+            left: 5,
+            top: 5,
+            child: _PartChip(
+              part: ref.watch(composerProvider.select((c) => c.partOfMedia(m.id))).clamp(0, more),
+              count: more + 1,
+              onSelected: (part) => ref.read(composerProvider.notifier).setMediaPart(m.id, part),
+            ),
+          ),
         Positioned(
           left: 5,
           bottom: 5,
@@ -213,6 +224,34 @@ class _RoundIcon extends StatelessWidget {
               child: Icon(icon, size: 15, color: Colors.white),
             ),
           ),
+        ),
+      );
+}
+
+/// "Part 2" on an attachment of a thread; picking another part moves it.
+class _PartChip extends StatelessWidget {
+  const _PartChip({required this.part, required this.count, required this.onSelected});
+
+  /// From 0.
+  final int part;
+  final int count;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) => PopupMenuButton<int>(
+        tooltip: 'Choose the part of the thread this goes with',
+        initialValue: part,
+        onSelected: onSelected,
+        itemBuilder: (_) => [
+          for (var i = 0; i < count; i++) PopupMenuItem(value: i, child: Text('Part ${i + 1}')),
+        ],
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+          decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.62), borderRadius: Radii.rXs),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text('Part ${part + 1}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
+            const Icon(Icons.arrow_drop_down_rounded, size: 13, color: Colors.white),
+          ]),
         ),
       );
 }

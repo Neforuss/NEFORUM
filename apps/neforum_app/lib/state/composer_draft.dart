@@ -119,6 +119,8 @@ Map<String, dynamic> composerDraftToJson(ComposerState c) => {
       if (c.differentiate) 'differentiate': true,
       // Kept even while empty, so an added part survives a restart.
       if (c.additionalParts.isNotEmpty) 'additionalParts': c.additionalParts,
+      // By the composer's own part numbers, which count empty parts too.
+      if (c.mediaParts.isNotEmpty) 'mediaParts': c.mediaParts,
       if (c.textCardAlignment != null) 'textCardAlignment': c.textCardAlignment!.name,
       if (c.textCardHandle.isNotEmpty) 'textCardHandle': c.textCardHandle,
       if (c.captionStyle != null) 'captionStyle': c.captionStyle,
@@ -157,5 +159,11 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
     textCardHandle: flags(j['textCardHandle']),
     captionStyle: j['captionStyle'] is Map ? Map<String, dynamic>.from(j['captionStyle'] as Map) : null,
     textCardBackground: j['textCardBackground'] is Map ? Map<String, dynamic>.from(j['textCardBackground'] as Map) : null,
+    mediaParts: j['mediaParts'] is Map
+        ? {
+            for (final e in (j['mediaParts'] as Map).entries)
+              if (e.value is int) '${e.key}': e.value as int,
+          }
+        : p.mediaParts,
   );
 }

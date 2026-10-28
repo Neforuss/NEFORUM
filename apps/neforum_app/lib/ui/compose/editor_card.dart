@@ -11,6 +11,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/char_ring.dart';
 import '../../widgets/layout.dart';
+import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'media_tray.dart';
 import 'poll_sheet.dart';
@@ -565,6 +566,15 @@ class _PartEditor extends ConsumerWidget {
             contentPadding: EdgeInsets.zero,
           ),
         ),
+        // The attachments that go with this part (moved with the part chip
+        // on each attachment above).
+        if ([for (final m in c.media) if (c.partOfMedia(m.id) == index) m] case final own when own.isNotEmpty) ...[
+          const SizedBox(height: Space.sm),
+          Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+            for (final m in own)
+              Tooltip(message: m.altText ?? m.fileName ?? 'Attachment', child: MediaThumb(m, size: 56, showAltTag: false)),
+          ]),
+        ],
       ]),
     );
   }
