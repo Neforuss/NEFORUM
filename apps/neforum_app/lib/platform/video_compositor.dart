@@ -68,6 +68,31 @@ class VideoProbe {
   String toString() => 'VideoProbe(${width}x$height, rotation $rotation, ${durationMs}ms, ${hasAudio ? 'audio' : 'no audio'})';
 }
 
+/// One still frame read from a video by [VideoCompositor.frameAt].
+@immutable
+class VideoFrame {
+  const VideoFrame({required this.png, required this.width, required this.height, required this.positionMs});
+
+  /// The frame as a PNG, upright (rotation applied), at most the requested
+  /// longest side.
+  final Uint8List png;
+  final int width;
+  final int height;
+
+  /// Where in the video the frame was taken.
+  final int positionMs;
+
+  static VideoFrame? fromChannel(Object? value, int positionMs) {
+    if (value is! Map) return null;
+    final png = value['png'];
+    final width = value['width'];
+    final height = value['height'];
+    if (png is! Uint8List || png.isEmpty || width is! int || height is! int || width <= 0 || height <= 0) return null;
+    final at = value['positionMs'];
+    return VideoFrame(png: png, width: width, height: height, positionMs: at is num ? at.round() : positionMs);
+  }
+}
+
 /// Why a video could not be composed. The caller posts the original video
 /// instead: a caption that cannot be burned in never stops a post.
 class VideoCompositionException implements Exception {
@@ -249,6 +274,165 @@ class VideoCompositor {
       throw VideoCompositionException(e.code, e.message ?? 'The video could not be made.');
     } on MissingPluginException {
       throw const VideoCompositionException('unsupported', 'Captions cannot be added to videos on this device.');
+    } finally {
+      _progressListeners.remove(job);
+    }
+  }
+
+  /// A still frame of the video at [path] near [positionMs], upright, scaled
+  /// so its longest side is at most [maxSide]; null when it cannot be read
+  /// or there is no compositor. Frames are quick and do not wait for the
+  /// encoding queue.
+  Future<VideoFrame?> frameAt(String path, int positionMs, {int maxSide = 512}) async {
+    if (path.isEmpty || !await isSupported()) return null;
+    try {
+      final value = await _channel.invokeMethod<Object?>('frame', {
+        'path': path,
+        'positionMs': math.max(0, positionMs),
+        'maxSide': maxSide.clamp(minFrameSide, maxFrameSide),
+      });
+      return VideoFrame.fromChannel(value, positionMs);
+    } on Object catch (e) {
+      debugPrint('Could not read a frame of $path: $e');
+      return null;
+    }
+  }
+
+  /// Re-encodes the video at [inputPath] as an H.264/AAC MP4 at
+  /// [outputPath] with an average video bitrate of [videoBitsPerSecond] and
+  /// audio of [audioBitsPerSecond], scaled down (aspect kept, even sides) so
+  /// that its longest shown side is at most [maxSide]. Used to bring a video
+  /// under a platform's size limit.
+  Future<void> transcode({
+    required String inputPath,
+    required String outputPath,
+    required int videoBitsPerSecond,
+    int audioBitsPerSecond = 128000,
+    int maxSide = 1920,
+    void Function(double progress)? onProgress,
+  }) {
+    final problem = _outputProblem(inputPath, outputPath, '.mp4') ??
+        (videoBitsPerSecond < 50000 ? 'The video bitrate is too low to make a watchable video.' : null);
+    if (problem != null) return Future<void>.error(VideoCompositionException('invalid', problem));
+    return _enqueue('transcode', {
+      'inputPath': inputPath,
+      'outputPath': outputPath,
+      'videoBitrate': videoBitsPerSecond,
+      'audioBitrate': audioBitsPerSecond,
+      'maxSide': maxSide.clamp(minFrameSide, maxFrameSide),
+    }, onProgress);
+  }
+
+  /// Writes an H.264/AAC MP4 at [outputPath] that shows [imagePng] (the
+  /// whole [frameWidth] x [frameHeight] frame) for the full length of the
+  /// sound file at [audioPath], with that sound. This is how an audio track
+  /// reaches networks that only take video.
+  Future<void> renderAudioVideo({
+    required String audioPath,
+    required String outputPath,
+    required Uint8List imagePng,
+    required int frameWidth,
+    required int frameHeight,
+    int audioBitsPerSecond = 256000,
+    void Function(double progress)? onProgress,
+  }) {
+    var problem = _outputProblem(audioPath, outputPath, '.mp4');
+    for (final side in [frameWidth, frameHeight]) {
+      if (side < minFrameSide || side > maxFrameSide || side.isOdd) {
+        problem ??= 'The frame must be an even number of pixels from $minFrameSide to $maxFrameSide on each side.';
+      }
+    }
+    if (imagePng.length < _pngSignature.length || !listEquals(imagePng.sublist(0, _pngSignature.length), _pngSignature)) {
+      problem ??= 'The picture must be a PNG image.';
+    }
+    if (problem != null) return Future<void>.error(VideoCompositionException('invalid', problem));
+    return _enqueue('audioVideo', {
+      'audioPath': audioPath,
+      'outputPath': outputPath,
+      'imagePng': imagePng,
+      'frameWidth': frameWidth,
+      'frameHeight': frameHeight,
+      'audioBitrate': audioBitsPerSecond,
+    }, onProgress);
+  }
+
+  /// The audio formats [transcodeAudio] can write on this device: `m4a`
+  /// (AAC) everywhere there is a compositor, and `mp3` where the system has
+  /// an MP3 encoder (Windows). Empty without a compositor.
+  Future<List<String>> audioOutputFormats() async {
+    if (!await isSupported()) return const [];
+    try {
+      final value = await _channel.invokeMethod<List<Object?>>('audioFormats');
+      return [for (final f in value ?? const []) if (f is String && (f == 'mp3' || f == 'm4a')) f];
+    } on Object catch (e) {
+      debugPrint('Could not list the audio formats: $e');
+      return const [];
+    }
+  }
+
+  /// Converts the sound file at [inputPath] to [format] (`mp3` or `m4a`, see
+  /// [audioOutputFormats]) at [bitsPerSecond], writing [outputPath] (whose
+  /// extension must match).
+  Future<void> transcodeAudio({
+    required String inputPath,
+    required String outputPath,
+    required String format,
+    int bitsPerSecond = 256000,
+    void Function(double progress)? onProgress,
+  }) {
+    final problem = (format == 'mp3' || format == 'm4a') ? _outputProblem(inputPath, outputPath, '.$format') : 'Unknown audio format "$format".';
+    if (problem != null) return Future<void>.error(VideoCompositionException('invalid', problem));
+    return _enqueue('transcodeAudio', {
+      'inputPath': inputPath,
+      'outputPath': outputPath,
+      'format': format,
+      'bitrate': bitsPerSecond,
+    }, onProgress);
+  }
+
+  static String? _outputProblem(String inputPath, String outputPath, String extension) {
+    if (inputPath.isEmpty) return 'No file was given.';
+    if (outputPath.isEmpty || !outputPath.toLowerCase().endsWith(extension)) return 'The new file must be a $extension file.';
+    if (outputPath == inputPath) return 'The new file cannot replace the original.';
+    return null;
+  }
+
+  /// Runs one encoding [method] after the ones before it, with progress
+  /// reported under its job id like [compose].
+  Future<void> _enqueue(String method, Map<String, Object?> args, void Function(double progress)? onProgress) {
+    final run = _queue.then((_) => _runJob(method, args, onProgress));
+    _queue = run.then<void>((_) {}, onError: (Object _) {});
+    return run;
+  }
+
+  Future<void> _runJob(String method, Map<String, Object?> args, void Function(double progress)? onProgress) async {
+    if (!await isSupported()) {
+      throw const VideoCompositionException('unsupported', 'Videos cannot be made on this device.');
+    }
+    final job = ++_lastJob;
+    var reported = -1.0;
+    void report(double value) {
+      if (onProgress == null || !value.isFinite) return;
+      final p = value.clamp(0.0, 1.0);
+      if (p <= reported) return;
+      reported = p;
+      try {
+        onProgress(p);
+      } on Object catch (e) {
+        debugPrint('Video progress listener failed: $e');
+      }
+    }
+
+    _listenForProgress();
+    _progressListeners[job] = report;
+    try {
+      report(0);
+      await _channel.invokeMethod<void>(method, {'id': job, ...args});
+      report(1);
+    } on PlatformException catch (e) {
+      throw VideoCompositionException(e.code, e.message ?? 'The file could not be made.');
+    } on MissingPluginException {
+      throw const VideoCompositionException('unsupported', 'Videos cannot be made on this device.');
     } finally {
       _progressListeners.remove(job);
     }

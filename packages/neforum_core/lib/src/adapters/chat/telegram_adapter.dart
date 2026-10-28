@@ -422,6 +422,7 @@ class TelegramAdapter extends PlatformAdapter {
       MediaKind.image => ('sendPhoto', 'photo'),
       MediaKind.gif => ('sendAnimation', 'animation'),
       MediaKind.video => ('sendVideo', 'video'),
+      MediaKind.audio => ('sendAudio', 'audio'),
     };
     ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} 1 of 1');
     final bytes = await ctx.readMedia(m);

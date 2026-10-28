@@ -2,7 +2,7 @@ import 'package:meta/meta.dart';
 
 import 'photo_fit.dart' show PhotoFit;
 
-enum MediaKind { image, gif, video }
+enum MediaKind { image, gif, video, audio }
 
 /// A media file attached to a post. The bytes live on disk at [path]; NEFORUM
 /// never copies media into its database.
@@ -76,11 +76,13 @@ class MediaAttachment {
   MediaKind get kind {
     if (mimeType == 'image/gif') return MediaKind.gif;
     if (mimeType.startsWith('video/')) return MediaKind.video;
+    if (mimeType.startsWith('audio/')) return MediaKind.audio;
     return MediaKind.image;
   }
 
   bool get isVideo => kind == MediaKind.video;
-  bool get isImage => kind != MediaKind.video;
+  bool get isAudio => kind == MediaKind.audio;
+  bool get isImage => kind == MediaKind.image || kind == MediaKind.gif;
 
   double? get aspectRatio =>
       (width != null && height != null && height! > 0) ? width! / height! : null;

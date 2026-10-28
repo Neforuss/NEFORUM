@@ -259,6 +259,7 @@ class XApi {
         MediaKind.video => 'tweet_video',
         MediaKind.gif => 'tweet_gif',
         MediaKind.image => 'tweet_image',
+        MediaKind.audio => throw ArgumentError('X does not take sound files; they go as a video'),
       };
 
   static String _fileName(MediaAttachment m) {
