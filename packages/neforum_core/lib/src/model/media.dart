@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'audio.dart' show AudioCodecs;
 import 'photo_fit.dart' show PhotoFit;
 
 enum MediaKind { image, gif, video, audio }
@@ -22,6 +23,7 @@ class MediaAttachment {
     this.derivedFrom,
     this.fitKey,
     this.renderParameters,
+    this.audioCodec,
   });
 
   factory MediaAttachment.fromJson(Map<String, dynamic> json) => MediaAttachment(
@@ -40,6 +42,7 @@ class MediaAttachment {
         renderParameters: json['renderParameters'] == null
             ? null
             : Map<String, dynamic>.from(json['renderParameters'] as Map),
+        audioCodec: json['audioCodec'] as String?,
       );
 
   final String id;
@@ -69,6 +72,11 @@ class MediaAttachment {
   /// style, caption style, background photo and blur...), so it can be
   /// rendered again or reused. JSON values only. Null for user files.
   final Map<String, dynamic>? renderParameters;
+
+  /// For a sound file: the codec inside it ([AudioCodecs]), read when it was
+  /// imported; null when unknown. It tells Apple Lossless from AAC in an M4A
+  /// file.
+  final String? audioCodec;
 
   /// A NEFORUM text card (generated, not made from a photo).
   bool get isTextCard => generated && derivedFrom == null;
@@ -101,6 +109,7 @@ class MediaAttachment {
         derivedFrom: derivedFrom,
         fitKey: fitKey,
         renderParameters: renderParameters,
+        audioCodec: audioCodec,
       );
 
   Map<String, dynamic> toJson() => {
@@ -117,5 +126,6 @@ class MediaAttachment {
         if (derivedFrom != null) 'derivedFrom': derivedFrom,
         if (fitKey != null) 'fitKey': fitKey,
         if (renderParameters != null) 'renderParameters': renderParameters,
+        if (audioCodec != null) 'audioCodec': audioCodec,
       };
 }

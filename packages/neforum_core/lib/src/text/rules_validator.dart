@@ -1,5 +1,7 @@
 import 'package:characters/characters.dart';
 
+import '../model/audio.dart';
+import '../model/media.dart';
 import '../model/platform_descriptor.dart';
 import '../model/poll.dart';
 import '../model/post_variant.dart';
@@ -58,7 +60,9 @@ class RulesValidator {
     if (m.requiresMedia && v.media.isEmpty) {
       issues.add(ValidationIssue.error('media.required', '${d.name} posts need at least one image or video', field: 'media'));
     }
-    if (!m.supportsAnyMedia && v.media.isNotEmpty) {
+    final sound = v.media.where((x) => x.isAudio).toList();
+    if (sound.isNotEmpty) issues.addAll(_validateAudio(sound, v, d));
+    if (!m.supportsAnyMedia && v.media.any((x) => !x.isAudio)) {
       issues.add(ValidationIssue.warning('media.unsupported', '${d.name} does not take media; it will be dropped', field: 'media'));
     } else {
       if (images.length > m.maxImages) {
@@ -90,7 +94,7 @@ class RulesValidator {
         }
       }
     }
-    if (m.supportsAltText && v.media.any((x) => (x.altText ?? '').isEmpty)) {
+    if (m.supportsAltText && v.media.any((x) => !x.isAudio && (x.altText ?? '').isEmpty)) {
       issues.add(const ValidationIssue.info('media.no_alt', 'Add alt text for accessibility', field: 'media'));
     }
 
@@ -102,6 +106,39 @@ class RulesValidator {
     // --- tier-specific ---------------------------------------------------
     if (tier == PlatformTier.handoff && v.isThread) {
       issues.add(const ValidationIssue.warning('thread.handoff', 'Threads cannot be handed off; only the first part will be prefilled', field: 'text'));
+    }
+    return issues;
+  }
+
+  /// Sound files: as sound where the network takes it, else as a video or a
+  /// link, which the app and the adapter make; one still here on a network
+  /// that takes sound only as a video means the device could not make it.
+  static List<ValidationIssue> _validateAudio(List<MediaAttachment> sound, PostVariant v, PlatformDescriptor d) {
+    final m = d.media;
+    final issues = <ValidationIssue>[];
+    if (m.supportsAudio) {
+      if (sound.length > m.maxAudios) {
+        issues.add(ValidationIssue.error('media.too_many_audios', '${sound.length} sound files; ${d.name} allows ${m.maxAudios}', field: 'media'));
+      }
+      if (!m.audioWithOtherMedia && v.media.any((x) => !x.isAudio)) {
+        issues.add(ValidationIssue.error('media.audio_mixed', '${d.name} takes a sound file on its own, without photos or videos', field: 'media'));
+      }
+      for (final x in sound) {
+        final max = m.audioMaxBytes;
+        if (max != null && x.sizeBytes > max) {
+          issues.add(ValidationIssue.error('media.audio_too_large', '${x.fileName ?? x.id} is ${_mb(x.sizeBytes)}; ${d.name} takes sound files up to ${_mb(max)}',
+              field: 'media'));
+        }
+        if (!m.audioMimeTypes.contains(x.mimeType)) {
+          issues.add(ValidationIssue.error('media.audio_type', '${d.name} does not take ${audioFormatLabel(x)} files', field: 'media'));
+        }
+      }
+    } else if (m.audioAsVideo) {
+      issues.add(ValidationIssue.error('media.audio_needs_video', "${d.name} takes sound only as a video; this device can't make one", field: 'media'));
+    } else if (m.audioAsLink) {
+      issues.add(ValidationIssue.info('media.audio_link', '${d.name} gets the track as a link to the file on your media host', field: 'media'));
+    } else {
+      issues.add(ValidationIssue.warning('media.audio_unsupported', '${d.name} does not take sound files; the track will be left out', field: 'media'));
     }
     return issues;
   }

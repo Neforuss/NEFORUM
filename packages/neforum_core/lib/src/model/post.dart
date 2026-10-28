@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'artwork.dart';
+import 'audio.dart';
 import 'media.dart';
 import 'poll.dart';
 import 'publish_result.dart';
@@ -238,6 +239,7 @@ class Post {
     this.poll,
     this.additionalParts = const [],
     this.artwork,
+    this.audioQuality = AudioQuality.standard,
   });
 
   /// Times are stored in UTC and come back in local time, so that day and
@@ -269,6 +271,7 @@ class Post {
         artwork: json['artwork'] == null
             ? null
             : ArtworkDetails.fromJson(Map<String, dynamic>.from(json['artwork'] as Map)),
+        audioQuality: AudioQuality.values.asNameMap()[json['audioQuality']] ?? AudioQuality.standard,
       );
 
   final String id;
@@ -305,6 +308,10 @@ class Post {
 
   /// Set when the post is artwork for art portfolio sites.
   final ArtworkDetails? artwork;
+
+  /// How the post's sound file goes out: one MP3 for everyone, or the
+  /// original lossless file where a network takes it.
+  final AudioQuality audioQuality;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -348,6 +355,7 @@ class Post {
     PostPoll? poll,
     List<String>? additionalParts,
     ArtworkDetails? artwork,
+    AudioQuality? audioQuality,
     bool clearScheduledAt = false,
     bool clearTitle = false,
     bool clearLink = false,
@@ -373,6 +381,7 @@ class Post {
         poll: clearPoll ? null : (poll ?? this.poll),
         additionalParts: additionalParts ?? this.additionalParts,
         artwork: clearArtwork ? null : (artwork ?? this.artwork),
+        audioQuality: audioQuality ?? this.audioQuality,
       );
 
   /// Replaces the target with the same account id.
@@ -402,5 +411,6 @@ class Post {
         if (poll != null) 'poll': poll!.toJson(),
         if (additionalParts.isNotEmpty) 'additionalParts': additionalParts,
         if (artwork != null) 'artwork': artwork!.toJson(),
+        if (audioQuality != AudioQuality.standard) 'audioQuality': audioQuality.name,
       };
 }
