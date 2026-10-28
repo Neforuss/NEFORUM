@@ -7,6 +7,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../theme/tokens.dart';
 import '../../theme/zoom.dart';
+import '../../widgets/color_wheel.dart';
 import 'setting_row.dart';
 
 class AppearanceSettingsSection extends ConsumerWidget {
@@ -196,10 +197,12 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
     super.dispose();
   }
 
+  /// A swatch or the color wheel: the hex field follows.
   void _pick(int color) => setState(() {
         _color = color;
         _error = null;
-        _hex.text = hexColor(color);
+        final hex = hexColor(color);
+        _hex.value = TextEditingValue(text: hex, selection: TextSelection.collapsed(offset: hex.length));
       });
 
   void _typed(String text) => setState(() {
@@ -213,37 +216,62 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
     final nf = context.nf;
     final color = _color;
     final shades = color == null ? null : accentShadesOf(Color(color));
+    // The readability adjustment changed what the preview shows.
+    final adjusted = color != null &&
+        shades != null &&
+        (shades.light.toARGB32() != (color | 0xFF000000) || (nf.isDark && shades.dark.toARGB32() != (color | 0xFF000000)));
+    final wheel = ColorWheel(
+      color: Color(color ?? CustomAccentDialog.presets.first),
+      diameter: context.isCompact ? 180 : 164,
+      onChanged: (c) => _pick(c.toARGB32()),
+    );
+    final details = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      TextField(
+        controller: _hex,
+        decoration: InputDecoration(labelText: 'Hex color', hintText: '#7D00FF', errorText: _error),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp('[#0-9a-fA-F]')), LengthLimitingTextInputFormatter(7)],
+        onChanged: _typed,
+      ),
+      if (shades != null) ...[
+        const SizedBox(height: Space.lg),
+        Wrap(spacing: Space.lg, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+            decoration: BoxDecoration(color: shades.light, borderRadius: Radii.rSm),
+            child: Text('Button', style: context.text.labelLarge?.copyWith(color: Colors.white)),
+          ),
+          Text('Link text', style: context.text.labelLarge?.copyWith(color: nf.isDark ? shades.dark : shades.light)),
+        ]),
+        if (adjusted) ...[
+          const SizedBox(height: Space.sm),
+          Text('Adjusted a little so text on it and beside it stays readable.', style: context.text.bodySmall),
+        ],
+      ],
+    ]);
     return AlertDialog(
       title: const Text('Your accent color'),
       content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
+        constraints: const BoxConstraints(maxWidth: 440),
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Pick a color or type its hex code. NEFORUM adjusts it where needed so text stays readable.', style: context.text.bodySmall),
+            Text('Pick a color on the wheel or below it, or type its hex code. NEFORUM adjusts it where needed so text stays readable.',
+                style: context.text.bodySmall),
             const SizedBox(height: Space.lg),
             Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
               for (final p in CustomAccentDialog.presets)
                 _Swatch(tooltip: hexColor(p), color: Color(p), selected: color == p, onTap: () => _pick(p)),
             ]),
             const SizedBox(height: Space.lg),
-            TextField(
-              controller: _hex,
-              decoration: InputDecoration(labelText: 'Hex color', hintText: '#7D00FF', errorText: _error),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp('[#0-9a-fA-F]')), LengthLimitingTextInputFormatter(7)],
-              onChanged: _typed,
-            ),
-            if (shades != null) ...[
-              const SizedBox(height: Space.lg),
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
-                  decoration: BoxDecoration(color: shades.light, borderRadius: Radii.rSm),
-                  child: Text('Button', style: context.text.labelLarge?.copyWith(color: Colors.white)),
-                ),
+            if (context.isCompact) ...[
+              Center(child: wheel),
+              const SizedBox(height: Space.md),
+              details,
+            ] else
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                wheel,
                 const SizedBox(width: Space.lg),
-                Text('Link text', style: context.text.labelLarge?.copyWith(color: nf.isDark ? shades.dark : shades.light)),
+                Expanded(child: Padding(padding: const EdgeInsets.only(top: ColorWheel.margin), child: details)),
               ]),
-            ],
           ]),
         ),
       ),
