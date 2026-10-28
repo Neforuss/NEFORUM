@@ -62,8 +62,12 @@ class PostOverrides {
     this.sensitive,
     this.visibility,
     this.extra = const {},
+    this.scheduledAt,
+    this.storyMediaIds,
   });
 
+  /// Keys NEFORUM 1.2 does not know (it ignores them on load). [scheduledAt]
+  /// comes back in local time, like [Post.scheduledAt].
   factory PostOverrides.fromJson(Map<String, dynamic> json) => PostOverrides(
         text: json['text'] as String?,
         title: json['title'] as String?,
@@ -75,6 +79,8 @@ class PostOverrides {
             ? null
             : Visibility.values.byName(json['visibility'] as String),
         extra: Map<String, dynamic>.from(json['extra'] as Map? ?? const {}),
+        scheduledAt: json['scheduledAt'] == null ? null : DateTime.parse(json['scheduledAt'] as String).toLocal(),
+        storyMediaIds: (json['storyMediaIds'] as List?)?.cast<String>(),
       );
 
   final String? text;
@@ -90,6 +96,16 @@ class PostOverrides {
   /// Adapter-specific knobs: subreddit, flair, board id, community, tags, ...
   final Map<String, dynamic> extra;
 
+  /// This target's own due time when the post is scheduled with a different
+  /// time per network; null = the post's [Post.scheduledAt]. See
+  /// [Post.dueAtFor].
+  final DateTime? scheduledAt;
+
+  /// The story's own copies of the media (subset and order of the master
+  /// media) when the target is placed as Post + Story; null = the story shows
+  /// the feed post's media. See `PostVariant.storyMedia`.
+  final List<String>? storyMediaIds;
+
   bool get isEmpty =>
       text == null &&
       title == null &&
@@ -98,7 +114,9 @@ class PostOverrides {
       contentWarning == null &&
       sensitive == null &&
       visibility == null &&
-      extra.isEmpty;
+      extra.isEmpty &&
+      scheduledAt == null &&
+      storyMediaIds == null;
 
   PostOverrides copyWith({
     String? text,
@@ -109,8 +127,12 @@ class PostOverrides {
     bool? sensitive,
     Visibility? visibility,
     Map<String, dynamic>? extra,
+    DateTime? scheduledAt,
+    List<String>? storyMediaIds,
     bool clearText = false,
     bool clearMediaIds = false,
+    bool clearScheduledAt = false,
+    bool clearStoryMediaIds = false,
   }) =>
       PostOverrides(
         text: clearText ? null : (text ?? this.text),
@@ -121,6 +143,8 @@ class PostOverrides {
         sensitive: sensitive ?? this.sensitive,
         visibility: visibility ?? this.visibility,
         extra: extra ?? this.extra,
+        scheduledAt: clearScheduledAt ? null : (scheduledAt ?? this.scheduledAt),
+        storyMediaIds: clearStoryMediaIds ? null : (storyMediaIds ?? this.storyMediaIds),
       );
 
   Map<String, dynamic> toJson() => {
@@ -132,6 +156,8 @@ class PostOverrides {
         if (sensitive != null) 'sensitive': sensitive,
         if (visibility != null) 'visibility': visibility!.name,
         if (extra.isNotEmpty) 'extra': extra,
+        if (scheduledAt != null) 'scheduledAt': scheduledAt!.toUtc().toIso8601String(),
+        if (storyMediaIds != null) 'storyMediaIds': storyMediaIds,
       };
 }
 
@@ -309,6 +335,47 @@ class Post {
   final DateTime updatedAt;
 
   bool get isDue => scheduledAt != null && status == PostStatus.scheduled;
+
+  /// When [target] is due: its own time ([PostOverrides.scheduledAt]) when
+  /// the post has a different time per network, else the post's
+  /// [scheduledAt]. Null: no schedule, the target goes out right away.
+  DateTime? dueAtFor(PostTarget target) => target.overrides.scheduledAt ?? scheduledAt;
+
+  /// "Different time per network": some target has a time of its own. The
+  /// post's [scheduledAt] is then the next of those times
+  /// ([withScheduleFromTargets]), so lists, sync claims and OS alarms that
+  /// read it see the next moment anything is due.
+  bool get schedulesEachTarget => targets.any((t) => t.overrides.scheduledAt != null);
+
+  /// Whether [target]'s time has come at [now]. A target without a time is
+  /// due right away.
+  bool isTargetDue(PostTarget target, DateTime now) {
+    final at = dueAtFor(target);
+    return at == null || !at.isAfter(now);
+  }
+
+  /// The targets still waiting to be published by this device at their time
+  /// (retries included; held, handed-off, failed and finished ones are not).
+  Iterable<PostTarget> get upcomingTargets => targets.where((t) => t.status == TargetStatus.pending);
+
+  /// The earliest time among [upcomingTargets]; null when none waits or none
+  /// has a time.
+  DateTime? get nextDueAt {
+    DateTime? next;
+    for (final t in upcomingTargets) {
+      final at = dueAtFor(t);
+      if (at != null && (next == null || at.isBefore(next))) next = at;
+    }
+    return next;
+  }
+
+  /// This post with [scheduledAt] set to [nextDueAt] when it has a different
+  /// time per network (and a target still waits); otherwise unchanged.
+  Post withScheduleFromTargets() {
+    if (!schedulesEachTarget) return this;
+    final next = nextDueAt;
+    return next == null || next == scheduledAt ? this : copyWith(scheduledAt: next);
+  }
 
   /// Some target still needs this device at the scheduled time. False when
   /// every remaining target is held by its platform's own scheduler.

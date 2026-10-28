@@ -71,6 +71,9 @@ class VariantResolver {
         ? post.media.where((m) => !m.generated).toList()
         : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)];
     media = _filterMedia(media, d, issues);
+    // The story's own copies (Post + Story), checked by the adapter.
+    final storyIds = o.storyMediaIds;
+    final storyMedia = storyIds == null ? const <MediaAttachment>[] : [for (final id in storyIds) ...post.media.where((m) => m.id == id)];
 
     // ---- text ----------------------------------------------------------
     // The parts the user wrote ([Post.parts]). A per-network version is one
@@ -177,12 +180,14 @@ class VariantResolver {
       tags: tags,
       extra: extra,
       // Only PublishService.delegateSchedules asks for this; a normal publish
-      // must never queue the post on the platform again.
-      scheduledAt: d.serverSideScheduling && delegateSchedule ? post.scheduledAt : null,
+      // must never queue the post on the platform again. Each target gets its
+      // own time when the post has a different time per network.
+      scheduledAt: d.serverSideScheduling && delegateSchedule ? post.dueAtFor(target) : null,
       issues: issues,
       sourcePostId: post.id,
       poll: d.polls == null ? null : poll,
       artwork: post.artwork,
+      storyMedia: storyMedia,
     );
   }
 

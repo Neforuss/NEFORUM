@@ -15,6 +15,7 @@ import '../model/account.dart';
 import '../model/media.dart';
 import '../model/platform_descriptor.dart';
 import '../model/post.dart';
+import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/publish_result.dart';
 import '../model/validation.dart';
@@ -252,6 +253,10 @@ class PublishService {
   /// target being posted plus every target still to come become
   /// [TargetStatus.cancelled]; targets already posted stay posted.
   ///
+  /// With [dueTargetsOnly] (the scheduler) a pending target whose own time
+  /// ([Post.dueAtFor]) has not come yet is left for a later run; the post
+  /// then stays scheduled for the next of those times.
+  ///
   /// Whatever goes wrong with one target fails that target; the run goes on.
   /// When the outcome cannot be saved at the end, [PublishOutcomeNotSaved]
   /// carries it. The run stays on record in [journal] until its outcome is
@@ -263,6 +268,7 @@ class PublishService {
     bool retryFailed = true,
     void Function(String accountId, String message)? onProgress,
     CancellationSignal? cancellation,
+    bool dueTargetsOnly = false,
   }) async {
     var post = await _require(postId);
     await _recordRun(postId);
@@ -286,6 +292,7 @@ class PublishService {
           continue;
         }
         if (target.isDone) continue;
+        if (dueTargetsOnly && target.status == TargetStatus.pending && !post.isTargetDue(target, _now())) continue;
         if (_isFailedOrCancelled(target) && !retryFailed) continue;
         if (target.status == TargetStatus.awaitingHandoff && !interactive) continue;
         if (cancellation != null && cancellation.isCancelled) {
@@ -436,15 +443,19 @@ class PublishService {
     void Function(String accountId, String message)? onProgress,
   }) async {
     var post = await _require(postId);
-    final at = post.scheduledAt;
-    if (post.status != PostStatus.scheduled || at == null || !at.isAfter(_now())) return post;
+    if (post.status != PostStatus.scheduled) return post;
     for (final target in post.targets) {
       if (onlyAccountIds != null && !onlyAccountIds.contains(target.accountId)) continue;
       if (target.status != TargetStatus.pending || target.attempts > 0) continue;
+      // Each target's own time when the post has a different time per network.
+      final at = post.dueAtFor(target);
+      if (at == null || !at.isAfter(_now())) continue;
       final updated = await _delegateTarget(post, target,
           onProgress: onProgress == null ? null : (m) => onProgress(target.accountId, m));
       if (updated == null) continue;
-      post = post.withTarget(updated);
+      // A held target no longer waits for this device: the post's time moves
+      // to the next target that does.
+      post = post.withTarget(updated).withScheduleFromTargets();
       await posts.upsert(post);
     }
     return post;
@@ -561,7 +572,7 @@ class PublishService {
         failed[target.accountId] = _classifyUnexpected(e, name);
       }
     }
-    post = post.copyWith(updatedAt: _now());
+    post = post.withScheduleFromTargets().copyWith(updatedAt: _now());
     await posts.upsert(post);
     for (final e in failed.entries) {
       _log.warn('${e.key}: could not remove the held copy: ${e.value.message}');
@@ -666,7 +677,7 @@ class PublishService {
     if (freshSecrets == null) return _fail(attempt, secretError!, account: account);
     final secretMap = freshSecrets;
 
-    final needed = variant.isThread ? variant.threadParts.length : 1;
+    final needed = _postsNeeded(variant, adapter.supportsStories(account));
     final QuotaStatus? exceeded;
     try {
       exceeded = await quota.firstExceeded(account, adapter.descriptor, needed: needed);
@@ -714,12 +725,36 @@ class PublishService {
     if (result.success) {
       // Posted, even if the user pressed Cancel a moment too late.
       await _bestEffort(log, 'count the post against the quota',
-          () => quota.record(account, adapter.descriptor, count: math.max(1, result.threadRemoteIds.length)));
+          () => quota.record(account, adapter.descriptor, count: math.max(1, result.threadRemoteIds.length) + result.additionalRemoteIds.length));
       if (account.lastError != null) {
         await _bestEffort(log, 'clear the account warning', () => accounts.upsert(account.copyWith(clearLastError: true)));
       }
       log.info('Published to ${account.displayName}: ${result.remoteUrl ?? result.remoteId ?? 'ok'}');
       return attempt.copyWith(status: TargetStatus.published, result: result);
+    }
+    final live = result.allRemoteIds;
+    if (live.isNotEmpty) {
+      // Some copies went live before the rest failed (a feed post before its
+      // story): the target keeps their ids, and is never retried by itself.
+      await _bestEffort(log, 'count the post against the quota', () => quota.record(account, adapter.descriptor, count: live.length));
+      final cause = result.error!;
+      final stopped = cancelled();
+      log.warn('${account.displayName}: ${cause.message}');
+      return attempt.copyWith(
+        status: stopped ? TargetStatus.cancelled : TargetStatus.failed,
+        result: PublishResult.partialFailure(
+          PublishError(
+            kind: stopped ? PublishErrorKind.cancelled : cause.kind,
+            message: cause.message,
+            statusCode: cause.statusCode,
+            raw: cause.raw,
+          ),
+          remoteId: result.remoteId,
+          remoteUrl: result.remoteUrl,
+          additionalRemoteIds: result.additionalRemoteIds,
+          publishedAt: result.publishedAt,
+        ),
+      );
     }
     if (cancelled()) return _cancel(attempt, cause: result.error);
 
@@ -815,6 +850,20 @@ class PublishService {
 
   static bool _isPartialThread(PublishError e) => !e.retryable && _partialThread.hasMatch(e.message);
 
+  /// How many posts [variant] makes on its network, for the quota: one per
+  /// part of a thread, else one feed post plus one per story frame where the
+  /// account takes stories ([PostPlacement]).
+  static int _postsNeeded(PostVariant variant, bool stories) {
+    if (variant.isThread) return variant.threadParts.length;
+    if (!stories) return 1;
+    final frames = math.max(1, variant.storyFrames.length);
+    return switch (variant.placement) {
+      PostPlacement.feed => 1,
+      PostPlacement.story => frames,
+      PostPlacement.feedAndStory => 1 + frames,
+    };
+  }
+
   /// Failed and cancelled targets are only tried again when the run asks.
   static bool _isFailedOrCancelled(PostTarget t) => t.status == TargetStatus.failed || t.status == TargetStatus.cancelled;
 
@@ -836,8 +885,10 @@ class PublishService {
     if (allDone) return p.copyWith(status: PostStatus.published);
     if (anyRetrying || anyHeld) {
       // Keep it in the queue so the scheduler retries; immediate publishes
-      // get "now" as their schedule so they are picked up too.
-      return p.copyWith(status: PostStatus.scheduled, scheduledAt: p.scheduledAt ?? _now());
+      // get "now" as their schedule so they are picked up too. With a
+      // different time per network the post waits for the next target's time.
+      final waiting = p.withScheduleFromTargets();
+      return waiting.copyWith(status: PostStatus.scheduled, scheduledAt: waiting.scheduledAt ?? _now());
     }
     if (anyWaiting || ((anyFailed || anyCancelled) && ts.any((t) => t.isDone))) return p.copyWith(status: PostStatus.partial);
     if (anyCancelled) return p.copyWith(status: PostStatus.cancelled);

@@ -12,9 +12,11 @@ import '../../model/account.dart';
 import '../../model/media.dart';
 import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
+import '../../model/post_placement.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
+import '../../publish/cancellation_signal.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
@@ -329,9 +331,14 @@ class InstagramAdapter extends PlatformAdapter {
 
   // --- validation --------------------------------------------------------------
 
+  /// Post + Story checks the feed post and the story each by its own rules.
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) =>
-      InstagramRules.check(variant, account.tier, super.validate(variant, account));
+      validatePlacements(variant, (copy) => InstagramRules.check(copy, account.tier, super.validate(copy, account)));
+
+  /// Both tiers: the API posts stories itself, a hand-off says to pick Story.
+  @override
+  bool supportsStories(ConnectedAccount account) => true;
 
   @override
   PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) => InstagramRules.photoFit(account.tier, variant);
@@ -377,26 +384,82 @@ class InstagramAdapter extends PlatformAdapter {
       throw const AdapterException(PublishError.configuration('Instagram account id missing; reconnect the account'));
     }
 
-    final urls = await _hostAll(v.media, host, ctx, hosted);
+    final placement = v.placement;
+    final feed = placement.includesFeed ? v.media : const <MediaAttachment>[];
+    final frames = placement.includesStory ? v.storyFrames : const <MediaAttachment>[];
+    // Every file once, even when the story shows the feed post's own files.
+    final files = <String, MediaAttachment>{for (final m in [...feed, ...frames]) m.id: m};
+    final hostedUrls = await _hostAll(files.values.toList(), host, ctx, hosted);
+    final urlOf = {for (final (i, id) in files.keys.indexed) id: hostedUrls[i]};
     final api = _api(ctx);
     final caption = v.text.trim();
-    final String containerId;
-    if (InstagramRules.isStory(v)) {
-      containerId = await _single(api, igUserId, token, {
-        'media_type': 'STORIES',
-        _urlField(v.media.first): urls.first,
-      }, 'your story');
-    } else if (v.media.length == 1) {
-      containerId = await _single(api, igUserId, token, _singleFields(v, urls.first, caption),
-          v.media.first.isVideo ? 'your Reel' : 'your photo');
-    } else {
-      containerId = await _carousel(api, igUserId, token, v, urls, caption, ctx);
+
+    String? mediaId;
+    String? link;
+    if (placement.includesFeed) {
+      final urls = [for (final m in feed) urlOf[m.id]!];
+      final String containerId;
+      if (feed.length == 1) {
+        containerId = await _single(api, igUserId, token, _singleFields(v, urls.first, caption),
+            feed.first.isVideo ? 'your Reel' : 'your photo');
+      } else {
+        containerId = await _carousel(api, igUserId, token, v, urls, caption, ctx);
+      }
+      ctx.progress('Publishing to Instagram…');
+      mediaId = await api.publish(igUserId, token, containerId);
+      link = await api.permalink(mediaId, token);
     }
-    ctx.progress('Publishing to Instagram…');
-    final mediaId = await api.publish(igUserId, token, containerId);
-    final link = await api.permalink(mediaId, token);
-    return PublishResult.ok(remoteId: mediaId, remoteUrl: link, publishedAt: ctx.now());
+
+    // One STORIES container per frame, published one after another.
+    final storyIds = <String>[];
+    for (var i = 0; i < frames.length; i++) {
+      final m = frames[i];
+      final label = frames.length == 1 ? 'your story' : 'story frame ${i + 1} of ${frames.length}';
+      try {
+        final containerId = await _single(api, igUserId, token, {'media_type': 'STORIES', _urlField(m): urlOf[m.id]!}, label);
+        ctx.progress('Publishing $label to Instagram…');
+        storyIds.add(await api.publish(igUserId, token, containerId));
+      } on Object catch (e) {
+        final error = _errorOf(e);
+        if (error == null || (mediaId == null && storyIds.isEmpty)) rethrow;
+        // Copies already live stay recorded; a retry would post them again.
+        final what = [if (mediaId != null) 'the post', if (storyIds.isNotEmpty) '${storyIds.length} story frame${storyIds.length == 1 ? '' : 's'}'].join(' and ');
+        final ids = [?mediaId, ...storyIds];
+        return PublishResult.partialFailure(
+          PublishError(
+            kind: error.kind,
+            message: '${_cap(label)} failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on Instagram '
+                '(${ids.join(', ')}); post the rest by hand.',
+            statusCode: error.statusCode,
+            raw: error.raw,
+          ),
+          remoteId: ids.first,
+          remoteUrl: link,
+          additionalRemoteIds: ids.skip(1).toList(),
+          publishedAt: ctx.now(),
+        );
+      }
+    }
+    if (mediaId == null) {
+      link = await api.permalink(storyIds.first, token);
+      return PublishResult.ok(
+          remoteId: storyIds.first, remoteUrl: link, additionalRemoteIds: storyIds.skip(1).toList(), publishedAt: ctx.now());
+    }
+    return PublishResult.ok(remoteId: mediaId, remoteUrl: link, additionalRemoteIds: storyIds, publishedAt: ctx.now());
   }
+
+  /// The error a failed call ended with, as [publish] reports it; null for
+  /// a programming error.
+  static PublishError? _errorOf(Object e) => switch (e) {
+        AdapterException(:final error) => error,
+        HttpFailure() => mapHttpFailure(e),
+        TimeoutException() => const PublishError.network('Timed out talking to Instagram'),
+        http.ClientException(:final message) => PublishError.network('Network error: $message'),
+        OperationCancelledException() => const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'),
+        _ => null,
+      };
+
+  static String _cap(String s) => '${s[0].toUpperCase()}${s.substring(1)}';
 
   Map<String, String> _singleFields(PostVariant v, String url, String caption) {
     final m = v.media.first;
@@ -510,7 +573,8 @@ class InstagramAdapter extends PlatformAdapter {
   @override
   HandoffPlan buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
     final caption = variant.text.trim();
-    final story = InstagramRules.isStory(variant);
+    final placement = variant.placement;
+    final story = placement == PostPlacement.story;
     final hasCaption = caption.isNotEmpty && !story;
     final steps = <String>[
       if (hasCaption) 'Your caption is already on the clipboard.',
@@ -525,6 +589,9 @@ class InstagramAdapter extends PlatformAdapter {
       else
         'Pick Feed or Reel.',
       'Tap **Share**.',
+      if (placement == PostPlacement.feedAndStory)
+        'For the story, share the same ${variant.media.length == 1 ? 'file' : 'files'} to Instagram once more, pick '
+            '**Story** and tap **Your story** (one frame per file).',
     ];
     final note = StringBuffer(hasCaption
         ? 'Instagram ignores captions sent through the share sheet, so NEFORUM put your caption on the clipboard; paste it in Instagram.'

@@ -25,6 +25,7 @@ export 'src/model/photo_fit.dart';
 export 'src/model/platform_descriptor.dart';
 export 'src/model/poll.dart';
 export 'src/model/post.dart';
+export 'src/model/post_placement.dart';
 export 'src/model/post_variant.dart';
 export 'src/model/publish_result.dart';
 export 'src/model/validation.dart';

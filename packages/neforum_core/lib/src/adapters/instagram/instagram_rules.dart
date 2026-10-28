@@ -1,6 +1,7 @@
 import '../../model/media.dart';
 import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
+import '../../model/post_placement.dart';
 import '../../model/post_variant.dart';
 import '../../model/validation.dart';
 
@@ -121,7 +122,7 @@ class InstagramRules {
           field: 'text'));
     }
 
-    if (v.media.length > carouselMax) {
+    if (v.media.length > carouselMax && !story) {
       out.add(ValidationIssue.error('instagram.carousel_too_big',
           '${v.media.length} files; an Instagram carousel holds at most $carouselMax',
           field: 'media'));
@@ -152,8 +153,8 @@ class InstagramRules {
   static List<ValidationIssue> _storyIssues(PostVariant v, bool handoff) {
     final out = <ValidationIssue>[];
     if (v.media.length > 1) {
-      out.add(const ValidationIssue.error('instagram.story_single',
-          'An Instagram story takes exactly one photo or video', field: 'media'));
+      out.add(ValidationIssue.info('instagram.story_frames',
+          'Each of the ${v.media.length} files becomes a story frame of its own', field: 'media'));
     }
     if (v.text.trim().isNotEmpty && !handoff) {
       out.add(const ValidationIssue.warning('instagram.story_no_caption',
@@ -225,8 +226,10 @@ class InstagramRules {
     );
   }
 
-  /// `extra['storyMode'] == true` posts the media as a story.
-  static bool isStory(PostVariant v) => v.extraAs<bool>('storyMode') ?? false;
+  /// The variant is placed as a story only ([PostPlacement.story]; also the
+  /// 1.2 flag `extra['storyMode']`). A Post + Story variant is checked and
+  /// fitted as its two copies ([validatePlacements]).
+  static bool isStory(PostVariant v) => v.placement == PostPlacement.story;
 
   static String _name(MediaAttachment m) => m.fileName ?? m.id;
 }

@@ -2,6 +2,7 @@ import '../handoff/handoff_plan.dart';
 import '../model/account.dart';
 import '../model/photo_fit.dart';
 import '../model/platform_descriptor.dart';
+import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/publish_result.dart';
 import '../model/validation.dart';
@@ -66,6 +67,11 @@ abstract class PlatformAdapter {
     final d = descriptorForAccount(account);
     return PhotoFit.fromRules(d.media).copyWith(label: d.name);
   }
+
+  /// Whether [account] can place a post as a story as well as in the feed
+  /// ([PostPlacement], read from `PostVariant.extra`). The composer then
+  /// offers Post / Story / Post + Story for the target.
+  bool supportsStories(ConnectedAccount account) => false;
 
   /// Platform-specific validation on top of the generic rules check. Called
   /// by the composer live, so keep it synchronous and cheap.

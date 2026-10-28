@@ -9,9 +9,11 @@ import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
+import '../../model/post_placement.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
+import '../../publish/cancellation_signal.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
@@ -489,8 +491,30 @@ class FacebookAdapter extends PlatformAdapter {
   // validate
   // ---------------------------------------------------------------------
 
+  /// Page stories (`/{page-id}/photo_stories` and `/video_stories`) need the
+  /// Page token the API tier already holds.
+  @override
+  bool supportsStories(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
+  /// Post + Story checks the Page post and the story each by its own rules.
+  /// Facebook cannot hold a story for later, so a target with a story keeps
+  /// its schedule on this device.
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
+    final placement = supportsStories(account) ? variant.placement : PostPlacement.feed;
+    final issues = placement == PostPlacement.feed
+        ? _validateCopy(variant.asFeed(), account)
+        : validatePlacements(variant, (copy) => _validateCopy(copy, account));
+    if (placement.includesStory && variant.scheduledAt != null) {
+      issues.add(const ValidationIssue.error('schedule.story',
+          'Facebook cannot hold a story until later; NEFORUM publishes this one itself at its time.',
+          field: 'scheduledAt'));
+    }
+    return issues;
+  }
+
+  List<ValidationIssue> _validateCopy(PostVariant variant, ConnectedAccount account) {
+    if (variant.placement == PostPlacement.story) return _validateStory(variant, account);
     final issues = super.validate(variant, account);
     if (account.tier == PlatformTier.handoff) {
       if (variant.text.trim().isNotEmpty) {
@@ -543,6 +567,51 @@ class FacebookAdapter extends PlatformAdapter {
 
   static bool _isVideoPost(PostVariant v) => v.media.any((m) => m.isVideo);
 
+  /// Page Stories API media rules (developers.facebook.com/docs/page-stories-api,
+  /// read 2026-10-28): photos up to 10 MB; videos 3 to 60 seconds, 9:16.
+  static const int storyPhotoMaxBytes = 10 * 1024 * 1024;
+  static const int storyVideoMinSeconds = 3;
+  static const int storyVideoMaxSeconds = 60;
+
+  /// Generic findings that describe a Page post, not a story: a story takes
+  /// one file per frame, any mix, and has its own video length.
+  static const Set<String> _feedOnlyCodes = {'post.empty', 'media.too_many_videos', 'media.mixed', 'media.video_too_long', 'media.required'};
+
+  List<ValidationIssue> _validateStory(PostVariant v, ConnectedAccount account) {
+    final issues = [
+      for (final i in super.validate(v, account))
+        if (!_feedOnlyCodes.contains(i.code)) i,
+    ];
+    if (v.media.isEmpty) {
+      issues.add(const ValidationIssue.error('facebook.story_media', 'A Facebook story needs a photo or video', field: 'media'));
+    } else if (v.media.length > 1) {
+      issues.add(ValidationIssue.info('facebook.story_frames', 'Each of the ${v.media.length} files becomes a story frame of its own',
+          field: 'media'));
+    }
+    for (final m in v.media) {
+      final name = m.fileName ?? m.id;
+      if (m.isImage && m.sizeBytes > storyPhotoMaxBytes) {
+        issues.add(ValidationIssue.error('facebook.story_photo_too_large', '$name is larger than 10 MB, the limit for story photos',
+            field: 'media'));
+      }
+      final ms = m.durationMs;
+      if (m.isVideo && ms != null && ms > storyVideoMaxSeconds * 1000) {
+        issues.add(ValidationIssue.error('facebook.story_video_too_long',
+            '$name is longer than $storyVideoMaxSeconds seconds, the limit for story videos', field: 'media'));
+      }
+      if (m.isVideo && ms != null && ms < storyVideoMinSeconds * 1000) {
+        issues.add(ValidationIssue.error('facebook.story_video_too_short',
+            '$name is shorter than $storyVideoMinSeconds seconds, the minimum for story videos', field: 'media'));
+      }
+      final r = m.aspectRatio;
+      if (m.isVideo && r != null && (r - 9 / 16).abs() > 0.02) {
+        issues.add(const ValidationIssue.warning('facebook.story_ratio', 'Facebook story videos should be 9:16 (vertical)',
+            field: 'media'));
+      }
+    }
+    return issues;
+  }
+
   // ---------------------------------------------------------------------
   // publish
   // ---------------------------------------------------------------------
@@ -563,29 +632,58 @@ class FacebookAdapter extends PlatformAdapter {
         return PublishResult.failure(const PublishError.auth('No Facebook Page token stored; reconnect the account.'));
       }
       final call = _PageCall(ctx, pageId, tokens.accessToken, secrets[secAppSecret]);
-      final hold = _holdUntil(variant, ctx);
-      final schedule = hold == null ? const <String, String>{} : _scheduleFields(hold);
-      final text = variant.isThread ? variant.threadParts.join('\n\n') : variant.text;
+      final placement = variant.placement;
+      if (placement.includesStory) {
+        final errors = validate(variant, account).errors;
+        if (errors.isNotEmpty) return PublishResult.failure(PublishError.validation(errors.first.message));
+      }
 
-      final videos = variant.media.where((m) => m.isVideo).toList();
-      final images = variant.media.where((m) => m.isImage).toList();
-      final _Posted posted;
-      if (videos.isNotEmpty) {
-        if (images.isNotEmpty || videos.length > 1) {
-          return PublishResult.failure(const PublishError.validation('Facebook posts take one video and no photos alongside it.'));
+      _Posted? posted;
+      if (placement.includesFeed) {
+        final hold = _holdUntil(variant, ctx);
+        posted = await _publishPagePost(call, variant, hold == null ? const <String, String>{} : _scheduleFields(hold));
+        if (hold != null) {
+          return PublishResult.scheduled(remoteId: posted.id, scheduledFor: hold, remoteUrl: posted.url);
         }
-        posted = await _publishVideo(call, videos.single, variant, _withLink(text, variant.link), schedule);
-      } else if (images.length == 1) {
-        posted = await _publishSinglePhoto(call, images.single, _withLink(text, variant.link), schedule);
-      } else if (images.length > 1) {
-        posted = await _publishMultiPhoto(call, images, _withLink(text, variant.link), schedule);
-      } else {
-        posted = await _publishFeed(call, text, variant.link, schedule);
       }
-      if (hold != null) {
-        return PublishResult.scheduled(remoteId: posted.id, scheduledFor: hold, remoteUrl: posted.url);
+
+      final frames = placement.includesStory ? variant.storyFrames : const <MediaAttachment>[];
+      final storyIds = <String>[];
+      for (var i = 0; i < frames.length; i++) {
+        final label = frames.length == 1 ? 'the story' : 'story frame ${i + 1} of ${frames.length}';
+        try {
+          storyIds.add(await _publishStory(call, frames[i], label));
+        } on Object catch (e) {
+          final error = _errorOf(e);
+          if (error == null || (posted == null && storyIds.isEmpty)) rethrow;
+          // Copies already live stay recorded; a retry would post them again.
+          final ids = [?posted?.id, ...storyIds];
+          final what = [if (posted != null) 'the Page post', if (storyIds.isNotEmpty) '${storyIds.length} story frame${storyIds.length == 1 ? '' : 's'}'].join(' and ');
+          return PublishResult.partialFailure(
+            PublishError(
+              kind: error.kind,
+              message: 'Publishing $label failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on '
+                  'Facebook (${ids.join(', ')}); post the rest by hand.',
+              statusCode: error.statusCode,
+              raw: error.raw,
+            ),
+            remoteId: ids.first,
+            remoteUrl: posted?.url,
+            additionalRemoteIds: ids.skip(1).toList(),
+            publishedAt: ctx.now(),
+          );
+        }
       }
-      return PublishResult.ok(remoteId: posted.id, remoteUrl: posted.url, publishedAt: ctx.now());
+      if (posted == null) {
+        final pageUrl = account.configString(cfgPageUrl);
+        return PublishResult.ok(
+          remoteId: storyIds.first,
+          remoteUrl: pageUrl.isEmpty ? null : pageUrl,
+          additionalRemoteIds: storyIds.skip(1).toList(),
+          publishedAt: ctx.now(),
+        );
+      }
+      return PublishResult.ok(remoteId: posted.id, remoteUrl: posted.url, additionalRemoteIds: storyIds, publishedAt: ctx.now());
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } on HttpFailure catch (f) {
@@ -596,6 +694,79 @@ class FacebookAdapter extends PlatformAdapter {
       return PublishResult.failure(PublishError.network('Could not reach Facebook: $e', raw: '$e'));
     }
   }
+
+  /// The Page post: a video, one or several photos, or text with a link.
+  Future<_Posted> _publishPagePost(_PageCall call, PostVariant variant, Map<String, String> schedule) async {
+    final text = variant.isThread ? variant.threadParts.join('\n\n') : variant.text;
+    final videos = variant.media.where((m) => m.isVideo).toList();
+    final images = variant.media.where((m) => m.isImage).toList();
+    if (videos.isNotEmpty) {
+      if (images.isNotEmpty || videos.length > 1) {
+        throw const AdapterException(PublishError.validation('Facebook posts take one video and no photos alongside it.'));
+      }
+      return _publishVideo(call, videos.single, variant, _withLink(text, variant.link), schedule);
+    }
+    if (images.length == 1) return _publishSinglePhoto(call, images.single, _withLink(text, variant.link), schedule);
+    if (images.length > 1) return _publishMultiPhoto(call, images, _withLink(text, variant.link), schedule);
+    return _publishFeed(call, text, variant.link, schedule);
+  }
+
+  /// One story frame, as the Page Stories API guide describes it
+  /// (developers.facebook.com/docs/page-stories-api, read 2026-10-28). A
+  /// photo is uploaded unpublished to `/{page-id}/photos`, then
+  /// `/{page-id}/photo_stories` publishes it by `photo_id`. A video starts an
+  /// upload session (`/{page-id}/video_stories`, `upload_phase=start`), sends
+  /// its bytes to the returned `upload_url` (headers `offset` and
+  /// `file_size`, the Page token as `Authorization: OAuth`), then finishes
+  /// it (`upload_phase=finish`). Returns the story's `post_id`.
+  Future<String> _publishStory(_PageCall call, MediaAttachment m, String label) async {
+    final bytes = await _read(call.ctx, m);
+    if (m.isVideo) {
+      call.ctx.progress('Uploading $label (${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB)');
+      final start = await call.form('video_stories', {'upload_phase': 'start'});
+      final videoId = requireString(start, 'video_id', 'a video id');
+      final uploadUrl = Uri.tryParse(requireString(start, 'upload_url', 'an upload address'));
+      if (uploadUrl == null || uploadUrl.scheme != 'https') {
+        throw const AdapterException(PublishError.platform('Facebook returned an unusable upload address for the story video'));
+      }
+      final sent = await call.ctx.http.send('POST', uploadUrl,
+          headers: {'Authorization': 'OAuth ${call.token}', 'offset': '0', 'file_size': '${bytes.length}'},
+          bytes: bytes,
+          timeout: _videoTimeout);
+      if (sent.jsonMap['success'] == false) {
+        throw AdapterException(PublishError.platform('Facebook did not take the story video', raw: sent.body));
+      }
+      call.ctx.progress('Publishing $label');
+      final done = await call.form('video_stories', {'upload_phase': 'finish', 'video_id': videoId});
+      return _storyPostId(done, videoId);
+    }
+    call.ctx.progress('Uploading $label');
+    final photo = await call.upload('photos', {'published': 'false'}, m, bytes);
+    final photoId = requireString(photo, 'id', 'a photo id');
+    call.ctx.progress('Publishing $label');
+    final done = await call.form('photo_stories', {'photo_id': photoId});
+    return _storyPostId(done, photoId);
+  }
+
+  /// The `post_id` of a published story; Facebook answers `success: true`
+  /// with it.
+  static String _storyPostId(Map<String, dynamic> json, String mediaId) {
+    if (json['success'] == false) {
+      throw AdapterException(PublishError.platform('Facebook did not publish the story', raw: '$json'));
+    }
+    return optString(json, 'post_id') ?? mediaId;
+  }
+
+  /// The error a failed call ended with, as [publish] reports it; null for
+  /// a programming error.
+  static PublishError? _errorOf(Object e) => switch (e) {
+        AdapterException(:final error) => error,
+        HttpFailure() => mapGraphFailure(e),
+        TimeoutException() => PublishError.network('Facebook did not answer in time', raw: '$e'),
+        OperationCancelledException() => const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'),
+        Exception() => PublishError.network('Could not reach Facebook: $e', raw: '$e'),
+        _ => null,
+      };
 
   Future<_Posted> _publishFeed(_PageCall call, String text, String? link, Map<String, String> schedule) async {
     call.ctx.progress('Posting to Facebook');
@@ -718,8 +889,8 @@ class FacebookAdapter extends PlatformAdapter {
     if (account.tier != PlatformTier.byokApi) {
       throw const AdapterException(PublishError.unsupported('This Facebook account is set up for hand-off only.'));
     }
-    final id = (held.remoteId ?? '').trim();
-    if (id.isEmpty) {
+    final ids = [for (final id in held.allRemoteIds) if (id.trim().isNotEmpty) id.trim()];
+    if (ids.isEmpty) {
       throw const AdapterException(PublishError.platform(
           'NEFORUM did not record which Facebook post is scheduled; delete it in Meta Business Suite > Planner.'));
     }
@@ -727,10 +898,18 @@ class FacebookAdapter extends PlatformAdapter {
     if (tokens == null) {
       throw const AdapterException(PublishError.auth('No Facebook Page token stored; reconnect the account.'));
     }
+    // Every copy recorded for the target (stories next to the post included).
+    for (final id in ids) {
+      await _deleteObject(id, tokens.accessToken, secrets[secAppSecret], ctx);
+    }
+  }
+
+  /// `DELETE /{id}`; an object that no longer exists counts as deleted.
+  Future<void> _deleteObject(String id, String token, String? appSecret, AdapterContext ctx) async {
     final NeforumResponse res;
     try {
       ctx.progress('Removing the post Facebook is holding');
-      res = await ctx.http.delete(graphUri(id, withToken(const {}, tokens.accessToken, secrets[secAppSecret])),
+      res = await ctx.http.delete(graphUri(id, withToken(const {}, token, appSecret)),
           throwOnError: false);
     } on TimeoutException catch (e) {
       throw AdapterException(PublishError.network('Facebook did not answer in time', raw: '$e'));
