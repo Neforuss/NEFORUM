@@ -41,6 +41,8 @@ const PlatformDescriptor redditDescriptor = PlatformDescriptor(
         'Subreddits can add their own rules (required flair, no links, title words).',
   ),
   media: MediaRules(
+    // Sound goes as a link to the file on the media host.
+    audioAsLink: true,
     maxImages: 20,
     maxVideos: 1,
     allowsMixedImageVideo: false,

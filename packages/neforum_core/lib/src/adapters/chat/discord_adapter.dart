@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
@@ -111,7 +112,13 @@ class DiscordAdapter extends PlatformAdapter {
       videoMimeTypes: {'video/mp4', 'video/quicktime', 'video/webm'},
       supportsAltText: true,
       notes: 'Up to 10 files per message, 20 MiB each by default (more on boosted servers) and 25 MiB per message '
-          'in total. Alt text up to 1024 characters. Sensitive media is sent as a spoiler.',
+          'in total. Alt text up to 1024 characters. Sensitive media is sent as a spoiler. Sound files are '
+          'attachments that play in the channel.',
+      maxAudios: discordMaxFiles,
+      audioMaxBytes: discordFileMaxBytes,
+      audioMimeTypes: AudioMimeTypes.all,
+      keepsAudioBytes: true,
+      audioWithOtherMedia: true,
     ),
     defaultQuotas: [
       QuotaRule(
@@ -382,7 +389,7 @@ class DiscordAdapter extends PlatformAdapter {
       final attachments = <Map<String, Object?>>[];
       for (var i = 0; i < media.length; i++) {
         final m = media[i];
-        ctx.progress('Reading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${media.length}');
+        ctx.progress('Reading ${m.noun} ${i + 1} of ${media.length}');
         final name = spoiler ? 'SPOILER_${chatFileName(m)}' : chatFileName(m);
         files.add(HttpFilePart(field: 'files[$i]', bytes: await ctx.readMedia(m), fileName: name, contentType: m.mimeType));
         final alt = m.altText?.trim() ?? '';

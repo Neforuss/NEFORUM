@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../../http/neforum_http.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
@@ -170,8 +171,12 @@ String linkifyEscaped(String line) {
 }
 
 /// HTML for one uploaded media file embedded in a post body.
-String mediaFigureHtml(MediaAttachment m, String url, {String imageClass = 'wp-block-image', String videoClass = 'wp-block-video'}) {
+String mediaFigureHtml(MediaAttachment m, String url,
+    {String imageClass = 'wp-block-image', String videoClass = 'wp-block-video', String audioClass = 'wp-block-audio'}) {
   final src = escapeHtml(url);
+  if (m.isAudio) {
+    return '<figure class="$audioClass"><audio controls src="$src"></audio></figure>';
+  }
   if (m.isVideo) {
     return '<figure class="$videoClass"><video controls src="$src"></video></figure>';
   }
@@ -202,6 +207,8 @@ String safeFileName(MediaAttachment m) {
 
 /// A sensible file extension for a MIME type.
 String extensionForMime(String mime) {
+  final audio = canonicalAudioMimeType(mime);
+  if (audio != null) return audioExtensionFor(audio);
   final sub = mime.split('/').last.toLowerCase();
   return switch (sub) {
     'jpeg' => 'jpg',

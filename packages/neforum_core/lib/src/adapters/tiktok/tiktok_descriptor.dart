@@ -28,6 +28,8 @@ const tiktokDescriptor = PlatformDescriptor(
         'Links in captions are not clickable.',
   ),
   media: MediaRules(
+    // Sound goes as a video of one still picture, made by the app.
+    audioAsVideo: true,
     maxImages: 35,
     maxVideos: 1,
     requiresMedia: true,

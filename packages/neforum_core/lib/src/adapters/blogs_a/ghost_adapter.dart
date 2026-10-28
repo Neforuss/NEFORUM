@@ -1,6 +1,7 @@
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart' show Visibility;
@@ -27,10 +28,15 @@ const int ghostTitleMax = 255;
 /// a custom-integration Admin API key.
 ///
 /// Every request carries a freshly minted 5-minute JWT, so nothing ever
-/// needs refreshing. Publish: `POST images/upload/` per image, then
-/// `POST posts/?source=html`. The first image becomes the feature image.
+/// needs refreshing. Publish: `POST images/upload/` per image and
+/// `POST media/upload/` per sound file, then `POST posts/?source=html`.
+/// The first image becomes the feature image.
 class GhostAdapter extends PlatformAdapter {
   static const Set<String> _imageTypes = {'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'};
+
+  /// Sound types Ghost's media upload takes (MP3, WAV, Ogg, M4A): no FLAC or
+  /// AIFF.
+  static const Set<String> _audioTypes = {AudioMimeTypes.mp3, AudioMimeTypes.wav, AudioMimeTypes.ogg, AudioMimeTypes.m4a};
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'ghost',
@@ -59,8 +65,13 @@ class GhostAdapter extends PlatformAdapter {
       maxVideos: 0,
       imageMimeTypes: _imageTypes,
       supportsAltText: true,
-      notes: 'Images only (JPEG, PNG, GIF, WEBP, SVG). Ghost sets no per-post limit; 20 is NEFORUM\'s. The first image '
-          'becomes the feature image, the others are placed in the post. File size limits depend on your Ghost setup.',
+      notes: 'Images (JPEG, PNG, GIF, WEBP, SVG) and sound files (MP3, WAV, Ogg, M4A); no video. Ghost sets no per-post '
+          'limit; 20 is NEFORUM\'s. The first image becomes the feature image, the others are placed in the post, and '
+          'sound files play in an HTML card. File size limits depend on your Ghost setup.',
+      maxAudios: 5,
+      audioMimeTypes: _audioTypes,
+      keepsAudioBytes: true,
+      audioWithOtherMedia: true,
     ),
     defaultQuotas: [],
     personalAccountOk: true,
@@ -318,9 +329,17 @@ class GhostAdapter extends PlatformAdapter {
     }
 
     final images = <(MediaAttachment, String)>[];
-    for (var i = 0; i < variant.media.length; i++) {
-      images.add((variant.media[i], await _upload(api, variant.media[i], i, variant.media.length, ctx)));
+    final sounds = <String>[];
+    final media = variant.media;
+    for (var i = 0; i < media.length; i++) {
+      final m = media[i];
+      if (m.isAudio) {
+        sounds.add(await _uploadAudio(api, m, i, media.length, ctx));
+      } else {
+        images.add((m, await _upload(api, m, i, media.length, ctx)));
+      }
     }
+    final wholeHtmlCard = variant.extra['ghostHtmlCard'] == true;
     final useFeature = variant.extra['featuredImage'] != false && images.isNotEmpty;
     final feature = useFeature ? images.first : null;
     final inline = useFeature ? images.skip(1) : images;
@@ -328,8 +347,9 @@ class GhostAdapter extends PlatformAdapter {
     var html = [
       bodyHtml(variant),
       for (final (m, url) in inline) mediaFigureHtml(m, url, imageClass: 'kg-card kg-image-card'),
+      for (final url in sounds) ghostAudioHtml(url, htmlCard: !wholeHtmlCard),
     ].where((s) => s.isNotEmpty).join('\n\n');
-    if (variant.extra['ghostHtmlCard'] == true && html.isNotEmpty) {
+    if (wholeHtmlCard && html.isNotEmpty) {
       html = '<!--kg-card-begin: html-->\n$html\n<!--kg-card-end: html-->';
     }
     final status = _status(variant, account);
@@ -414,6 +434,18 @@ class GhostAdapter extends PlatformAdapter {
     return url;
   }
 
+  Future<String> _uploadAudio(GhostApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
+    ctx.progress('Uploading sound file ${index + 1} of $total');
+    final bytes = await readBlogMedia(ctx, m);
+    final what = 'Ghost sound file upload ${index + 1}/$total';
+    final r = await guardGhost(what, () => api.uploadMedia(bytes, fileName: safeFileName(m), contentType: m.mimeType));
+    final url = blogStr(blogMap(blogList(r.jsonMap['media']).firstOrNull)?['url']);
+    if (url == null) {
+      throw AdapterException(PublishError.platform('$what: Ghost did not return a file URL', raw: bodySnippet(r)));
+    }
+    return url;
+  }
+
   // ---------------------------------------------------------------- hand-off
 
   @override
@@ -448,4 +480,12 @@ class GhostAdapter extends PlatformAdapter {
           : null,
     );
   }
+}
+
+/// A player for an uploaded sound file at [url]. Ghost's HTML import drops
+/// an `<audio>` element it does not recognise, so it goes in an HTML card
+/// ([htmlCard]) unless the whole post already is one.
+String ghostAudioHtml(String url, {bool htmlCard = true}) {
+  final player = '<figure class="kg-card kg-audio-card"><audio controls preload="metadata" src="${escapeHtml(url)}"></audio></figure>';
+  return htmlCard ? '<!--kg-card-begin: html-->\n$player\n<!--kg-card-end: html-->' : player;
 }

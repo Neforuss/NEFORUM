@@ -12,6 +12,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
+import '../audio_links.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 import 'blog_common.dart';
@@ -57,6 +58,8 @@ class WriteFreelyAdapter extends PlatformAdapter {
       notes: 'No length limit. The body is Markdown; #hashtags in the text become the post\'s tags. The title is optional.',
     ),
     media: MediaRules(
+      // Sound goes as a link to the file on the media host.
+      audioAsLink: true,
       maxImages: 20,
       maxVideos: 0,
       supportsAltText: true,
@@ -287,7 +290,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     try {
-      return await _publish(variant, account, secrets, ctx);
+      return await _publish(await withAudioLinks(variant, ctx, platform: 'WriteFreely', markdown: true), account, secrets, ctx);
     } on AdapterException catch (e) {
       ctx.log.warn('WriteFreely publish failed: ${e.error.message}');
       return PublishResult.failure(e.error);

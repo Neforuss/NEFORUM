@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
@@ -56,8 +57,12 @@ class OdyseeAdapter extends PlatformAdapter {
       maxVideos: 1,
       requiresMedia: true,
       videoMimeTypes: {'video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska'},
-      notes: 'One video (or picture) per upload. Automatic uploads read the file directly, so large videos are fine; '
-          'the LBRY app finishes sending it in the background, so keep it open until Odysee shows the video.',
+      notes: 'One video, picture or sound file per upload. Automatic uploads read the file directly, so large files are '
+          'fine; the LBRY app finishes sending it in the background, so keep it open until Odysee shows it. A sound '
+          'file is published as it is (no re-encoding).',
+      maxAudios: 1,
+      audioMimeTypes: {AudioMimeTypes.mp3, AudioMimeTypes.m4a, AudioMimeTypes.ogg, AudioMimeTypes.wav, AudioMimeTypes.flac},
+      keepsAudioBytes: true,
     ),
     accountRequirements: 'Automatic: the LBRY desktop app on this computer, signed in with your Odysee account, and a '
         'little LBC for the deposit. Hand-off: any Odysee account.',
@@ -212,7 +217,7 @@ sending the video to Odysee in the background: leave it open until the video pla
       return PublishResult.failure(const PublishError.unsupported('Odysee hand-off accounts are posted by you on odysee.com'));
     }
     final daemon = _daemonUri(account.configString(cfgDaemon)) ?? Uri.parse(defaultDaemon);
-    if (variant.media.isEmpty) return PublishResult.failure(const PublishError.validation('Odysee needs a video or a picture'));
+    if (variant.media.isEmpty) return PublishResult.failure(const PublishError.validation('Odysee needs a video, a picture or a sound file'));
     final media = variant.media.first;
     final title = videoTitle(variant, max: titleMax);
     final name = '${slugFor(title)}-${const Uuid().v4().substring(0, 6)}';

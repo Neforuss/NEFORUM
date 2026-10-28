@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../auth/oauth2_pkce.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
@@ -72,7 +73,12 @@ class MatrixAdapter extends PlatformAdapter {
       imageMimeTypes: _imageTypes,
       videoMimeTypes: _videoTypes,
       supportsAltText: false,
-      notes: 'Each file becomes its own message after the text. The size limit is set by your homeserver '
+      maxAudios: matrixMaxFiles,
+      audioMaxBytes: matrixDefaultUploadBytes,
+      audioMimeTypes: AudioMimeTypes.all,
+      keepsAudioBytes: true,
+      audioWithOtherMedia: true,
+      notes: 'Each file becomes its own message after the text (a sound file as a playable m.audio message). The size limit is set by your homeserver '
           '(Synapse default 50 MB; NEFORUM reads the real value when you connect). Encrypted rooms are not supported.',
     ),
     defaultQuotas: [
@@ -382,6 +388,11 @@ class MatrixAdapter extends PlatformAdapter {
         videoMimeTypes: m.videoMimeTypes,
         supportsAltText: m.supportsAltText,
         notes: m.notes,
+        maxAudios: m.maxAudios,
+        audioMaxBytes: max,
+        audioMimeTypes: m.audioMimeTypes,
+        keepsAudioBytes: m.keepsAudioBytes,
+        audioWithOtherMedia: m.audioWithOtherMedia,
       ),
       defaultQuotas: d.defaultQuotas,
       personalAccountOk: d.personalAccountOk,
@@ -458,7 +469,7 @@ class MatrixAdapter extends PlatformAdapter {
     final uploaded = <(MediaAttachment, String)>[];
     for (var i = 0; i < variant.media.length; i++) {
       final m = variant.media[i];
-      ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${variant.media.length}');
+      ctx.progress('Uploading ${m.noun} ${i + 1} of ${variant.media.length}');
       final bytes = await ctx.readMedia(m);
       uploaded.add((m, await api.upload(bytes, contentType: m.mimeType, fileName: chatFileName(m))));
     }
@@ -473,7 +484,7 @@ class MatrixAdapter extends PlatformAdapter {
     }
     for (var i = 0; i < uploaded.length; i++) {
       final (m, mxc) = uploaded[i];
-      ctx.progress('Sending ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${uploaded.length}');
+      ctx.progress('Sending ${m.noun} ${i + 1} of ${uploaded.length}');
       final content = matrixMediaContent(m, mxc);
       // The transaction id is fixed before the first try, so a retry after
       // a flood wait is idempotent on the homeserver.
@@ -588,11 +599,15 @@ Duration? _matrixFloodWait(Object e) => e is MatrixApiError && (e.errcode == 'M_
     ? (e.retryAfter ?? const Duration(seconds: 1))
     : null;
 
-/// The `m.image` / `m.video` event content for an uploaded file.
+/// The `m.image` / `m.video` / `m.audio` event content for an uploaded file.
 Map<String, Object?> matrixMediaContent(MediaAttachment m, String mxc) {
   final name = chatFileName(m);
   return {
-    'msgtype': m.isVideo ? 'm.video' : 'm.image',
+    'msgtype': switch (m.kind) {
+      MediaKind.video => 'm.video',
+      MediaKind.audio => 'm.audio',
+      MediaKind.image || MediaKind.gif => 'm.image',
+    },
     'body': name,
     'filename': name,
     'url': mxc,
@@ -601,7 +616,7 @@ Map<String, Object?> matrixMediaContent(MediaAttachment m, String mxc) {
       'size': m.sizeBytes,
       if (m.width != null) 'w': m.width,
       if (m.height != null) 'h': m.height,
-      if (m.isVideo && m.durationMs != null) 'duration': m.durationMs,
+      if ((m.isVideo || m.isAudio) && m.durationMs != null) 'duration': m.durationMs,
     },
     'm.mentions': <String, Object?>{},
   };

@@ -77,6 +77,8 @@ class BlueskyAdapter extends PlatformAdapter {
           'Links, @mentions and #hashtags become clickable facets.',
     ),
     media: MediaRules(
+      // Sound goes as a video of one still picture, made by the app.
+      audioAsVideo: true,
       maxImages: 4,
       maxVideos: 1,
       imageMaxBytes: blueskyImageMaxBytes,

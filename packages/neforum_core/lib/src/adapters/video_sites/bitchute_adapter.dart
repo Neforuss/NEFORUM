@@ -35,6 +35,8 @@ class BitChuteAdapter extends HandoffOnlyAdapter {
       notes: 'Title up to 100 characters, description up to 3,000 (5,000 for members), up to three search hashtags.',
     ),
     media: MediaRules(
+      // Sound goes as a video of one still picture, made by the app.
+      audioAsVideo: true,
       maxVideos: 1,
       requiresMedia: true,
       videoMimeTypes: {

@@ -86,6 +86,8 @@ class XAdapter extends PlatformAdapter {
           'Longer posts need X Premium on the posting account, so NEFORUM splits long text into a thread.',
     ),
     media: MediaRules(
+      // Sound goes as a video of one still picture, made by the app.
+      audioAsVideo: true,
       maxImages: 4,
       maxVideos: 1,
       // GIFs are "images" in the generic check; photos are held to 5 MB in validate().

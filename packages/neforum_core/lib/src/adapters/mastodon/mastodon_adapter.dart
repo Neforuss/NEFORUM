@@ -11,6 +11,7 @@ import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../http/transient_stub.dart' if (dart.library.io) '../../http/transient_io.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart' show Visibility;
@@ -590,7 +591,7 @@ class MastodonAdapter extends PlatformAdapter {
     final ids = <String>[];
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
-      ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${media.length}');
+      ctx.progress('Uploading ${m.noun} ${i + 1} of ${media.length}');
       final bytes = await _read(m, ctx);
       ids.add(await api.uploadMedia(m, bytes, descriptionLimit: p.descriptionLimit));
     }

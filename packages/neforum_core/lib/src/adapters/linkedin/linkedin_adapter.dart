@@ -82,6 +82,8 @@ class LinkedInAdapter extends PlatformAdapter {
           'link-card title or the video title. No threads, no content warnings.',
     ),
     media: MediaRules(
+      // Sound goes as a video of one still picture, made by the app.
+      audioAsVideo: true,
       maxImages: 20,
       maxVideos: 1,
       allowsMixedImageVideo: false,

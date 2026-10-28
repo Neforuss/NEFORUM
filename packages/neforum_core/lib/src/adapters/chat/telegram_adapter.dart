@@ -1,6 +1,7 @@
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
@@ -27,12 +28,25 @@ const int telegramMaxAlbum = 10;
 const int telegramPhotoMaxBytes = 10 * 1024 * 1024;
 const int telegramFileMaxBytes = 50 * 1024 * 1024;
 
+/// Whether Telegram plays [m] in the chat: `sendAudio` takes MP3 and M4A.
+/// A lossless file (Apple Lossless in M4A too) goes with `sendDocument`,
+/// which keeps it as the file it is.
+bool telegramPlaysAudio(MediaAttachment m) =>
+    !m.isLosslessAudio && (m.mimeType == AudioMimeTypes.mp3 || m.mimeType == AudioMimeTypes.m4a);
+
+/// The track title `sendAudio` shows: the file name without its extension.
+String telegramTrackTitle(MediaAttachment m) {
+  final name = chatFileName(m);
+  final dot = name.lastIndexOf('.');
+  return dot > 0 ? name.substring(0, dot) : name;
+}
+
 /// Posts to a Telegram channel or group as a bot (Bot API).
 ///
 /// Connect: a bot token from @BotFather plus the chat (`@channelusername`
 /// or a numeric `-100…` id); verified with `getMe`, `getChat` and
 /// `getChatMember`. Publish: `sendMessage`, `sendPhoto` / `sendVideo` /
-/// `sendAnimation` or `sendMediaGroup` (multipart upload). Text longer than
+/// `sendAnimation` / `sendAudio` / `sendDocument` or `sendMediaGroup` (multipart upload). Text longer than
 /// a caption goes out as a separate message after the media; thread parts
 /// are sent as replies to the previous message.
 class TelegramAdapter extends PlatformAdapter {
@@ -65,7 +79,12 @@ class TelegramAdapter extends PlatformAdapter {
       imageMimeTypes: {'image/jpeg', 'image/png', 'image/webp', 'image/gif'},
       videoMimeTypes: {'video/mp4'},
       notes: 'Up to 10 photos/videos per post (sent as an album). Photos max 10 MB with width + height at most '
-          '10000 px and a side ratio of at most 20; videos (MP4) and GIFs max 50 MB. No alt text.',
+          '10000 px and a side ratio of at most 20; videos (MP4) and GIFs max 50 MB. No alt text. One sound file '
+          'per post (50 MB): MP3 and M4A play in the chat; lossless and other files go as a document, unchanged.',
+      maxAudios: 1,
+      audioMaxBytes: telegramFileMaxBytes,
+      audioMimeTypes: AudioMimeTypes.all,
+      keepsAudioBytes: true,
     ),
     defaultQuotas: [
       QuotaRule(
@@ -418,23 +437,27 @@ class TelegramAdapter extends PlatformAdapter {
   Future<String> _sendSingle(
       TelegramApi api, String chat, PostVariant v, String? caption, bool markdown, AdapterContext ctx) async {
     final m = v.media.single;
+    final document = m.isAudio && !telegramPlaysAudio(m);
     final (method, field) = switch (m.kind) {
       MediaKind.image => ('sendPhoto', 'photo'),
       MediaKind.gif => ('sendAnimation', 'animation'),
       MediaKind.video => ('sendVideo', 'video'),
-      MediaKind.audio => ('sendAudio', 'audio'),
+      MediaKind.audio => document ? ('sendDocument', 'document') : ('sendAudio', 'audio'),
     };
-    ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} 1 of 1');
+    ctx.progress('Uploading ${m.noun} 1 of 1');
     final bytes = await ctx.readMedia(m);
     final res = await api.multipart(method, {
       'chat_id': chat,
       ..._captionFields(caption, markdown),
-      if (v.sensitive) 'has_spoiler': 'true',
+      if (v.sensitive && !m.isAudio) 'has_spoiler': 'true',
       if (v.extra['silent'] == true) 'disable_notification': 'true',
       if (m.isVideo) 'supports_streaming': 'true',
       if (m.kind != MediaKind.image && m.width != null) 'width': '${m.width}',
       if (m.kind != MediaKind.image && m.height != null) 'height': '${m.height}',
-      if (m.kind != MediaKind.image && m.durationMs != null) 'duration': '${(m.durationMs! / 1000).round()}',
+      if (m.kind != MediaKind.image && !document && m.durationMs != null) 'duration': '${(m.durationMs! / 1000).round()}',
+      if (m.isAudio && !document) 'title': telegramTrackTitle(m),
+      // A lossless file stays a file: Telegram must not treat it as anything else.
+      if (document) 'disable_content_type_detection': 'true',
     }, [
       HttpFilePart(field: field, bytes: bytes, fileName: chatFileName(m), contentType: m.mimeType),
     ]);
@@ -447,7 +470,7 @@ class TelegramAdapter extends PlatformAdapter {
     final media = <Map<String, Object?>>[];
     for (var i = 0; i < v.media.length; i++) {
       final m = v.media[i];
-      ctx.progress('Reading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${v.media.length}');
+      ctx.progress('Reading ${m.noun} ${i + 1} of ${v.media.length}');
       final name = 'file$i';
       files.add(HttpFilePart(field: name, bytes: await ctx.readMedia(m), fileName: chatFileName(m), contentType: m.mimeType));
       media.add({

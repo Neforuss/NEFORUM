@@ -1,5 +1,7 @@
 import 'package:meta/meta.dart';
 
+import '../../model/audio.dart';
+
 /// Server software NEFORUM knows quirks for. Anything else is treated like
 /// Mastodon.
 abstract final class MastodonSoftware {
@@ -210,6 +212,13 @@ class MastodonInstanceProfile {
   Set<String>? get videoMimeTypes {
     final s = supportedMimeTypes.where((m) => m.startsWith('video/')).toSet();
     return s.isEmpty ? null : s;
+  }
+
+  /// The sound types the server lists, canonical ([canonicalAudioMimeType]);
+  /// empty when it lists types but no sound, null when it lists none.
+  Set<String>? get audioMimeTypes {
+    if (supportedMimeTypes.isEmpty) return null;
+    return {for (final m in supportedMimeTypes) ?canonicalAudioMimeType(m)};
   }
 
   MastodonInstanceProfile withSoftware(String name, String? version) => MastodonInstanceProfile(

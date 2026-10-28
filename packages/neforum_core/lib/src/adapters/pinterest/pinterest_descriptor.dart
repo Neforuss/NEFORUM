@@ -47,6 +47,8 @@ const PlatformDescriptor pinterestDescriptor = PlatformDescriptor(
         'When Pinterest is opened through the web hand-off only 500 characters of description are prefilled.',
   ),
   media: MediaRules(
+    // Sound goes as a video of one still picture, made by the app.
+    audioAsVideo: true,
     maxImages: PinterestLimits.maxImages,
     maxVideos: 1,
     requiresMedia: true,
