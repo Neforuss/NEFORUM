@@ -540,24 +540,33 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     final d = adapter.descriptorForAccount(a);
     var variant = resolver.resolve(post, withMentionDefault(target, a.platformId, settings), d, account: a);
     final issues = <ValidationIssue>[...variant.issues];
-    // Image-only platforms get the words as a NEFORUM text card, rendered
-    // when the post is saved; preview and check a stand-in for it.
-    if (settings.textCards && qualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId)) {
+    // Image-only platforms, and stories, get the words as a NEFORUM text
+    // card, rendered when the post is saved; preview and check a stand-in for
+    // it. A story's card is full screen (9:16).
+    final placement = adapter.supportsStories(a) ? variant.placement : PostPlacement.feed;
+    final storyCard = settings.textCards && placement.includesStory && storyQualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId);
+    final feedCard = settings.textCards && placement != PostPlacement.story && qualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId);
+    if (storyCard || feedCard) {
       final signed = c.textCardBranded[d.id] ?? settings.textCardBranded(d.id);
-      variant = variant.copyWith(media: [
-        textCardPlaceholder(
-          d.id,
-          c.textCardTheme ?? settings.textCardTheme,
-          branded: signed,
-          font: c.textCardFont ?? settings.textCardFont,
-          alignment: c.textCardAlignment ?? settings.textCardAlignment,
-          showsHandle: c.textCardHandle[d.id] ?? settings.textCardShowsHandle(d.id),
-          background: background,
-        ),
-      ]);
+      MediaAttachment placeholder({bool story = false}) => textCardPlaceholder(
+            d.id,
+            c.textCardTheme ?? settings.textCardTheme,
+            branded: signed,
+            font: c.textCardFont ?? settings.textCardFont,
+            alignment: c.textCardAlignment ?? settings.textCardAlignment,
+            showsHandle: c.textCardHandle[d.id] ?? settings.textCardShowsHandle(d.id),
+            background: background,
+            story: story,
+          );
+      variant = placement == PostPlacement.story
+          ? variant.copyWith(media: [placeholder(story: true)])
+          : variant.copyWith(
+              media: feedCard ? [placeholder()] : null,
+              storyMedia: storyCard ? [placeholder(story: true)] : null,
+            );
+      final what = feedCard ? '${d.name} needs an image, so your words go out as' : 'Your ${d.name} story shows your words on';
       issues.add(ValidationIssue.info(
-          'media.text_card',
-          '${d.name} needs an image, so your words go out as ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}',
+          'media.text_card', '$what ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}',
           field: 'media'));
     }
     // Photos this network does not take as they are get a fitted copy on

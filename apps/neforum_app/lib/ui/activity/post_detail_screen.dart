@@ -169,6 +169,13 @@ class PostDetailScreen extends ConsumerWidget {
   }
 }
 
+/// What a target's [PublishResult.additionalRemoteIds] stand for: the frames
+/// of a story ([placement] story, after the first) or the story next to the
+/// feed post (Post + Story).
+String copiesLabel(PostPlacement placement, int additional) => placement == PostPlacement.story
+    ? 'Posted as a story of ${additional + 1} frames'
+    : 'Posted with a story of $additional ${additional == 1 ? 'frame' : 'frames'}';
+
 class _TargetRow extends ConsumerStatefulWidget {
   const _TargetRow({required this.post, required this.target});
   final Post post;
@@ -263,6 +270,9 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
               ] else if (t.result?.threadRemoteIds.isNotEmpty ?? false) ...[
                 const SizedBox(height: Space.xs),
                 Text('Posted as a ${t.result!.threadRemoteIds.length}-part thread', style: context.text.bodySmall),
+              ] else if (t.result?.additionalRemoteIds.isNotEmpty ?? false) ...[
+                const SizedBox(height: Space.xs),
+                Text(copiesLabel(placementOfExtra(t.overrides.extra), t.result!.additionalRemoteIds.length), style: context.text.bodySmall),
               ],
               if (t.attempts > 1) Text('${t.attempts} attempts', style: context.text.bodySmall?.copyWith(color: nf.textFaint, fontSize: 11)),
             ]),

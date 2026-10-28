@@ -51,7 +51,6 @@ const Map<String, List<_Extra>> _extrasByPlatform = {
     _Extra('tumblrQuoteSource', 'Quote source', hint: 'Who said it (for quote posts; otherwise the title is used)'),
     _Extra('state', 'Publish as', options: ['published', 'queue', 'draft']),
   ],
-  'instagram': [_Extra('storyMode', 'Post as a story', boolean: true)],
   'discord': [
     _Extra(kMentionEveryoneKey, 'Mention @everyone',
         boolean: true,
@@ -59,6 +58,31 @@ const Map<String, List<_Extra>> _extrasByPlatform = {
             'The default is in Settings > Posting.'),
   ],
 };
+
+/// Post / Story / Post + Story for a network that takes stories
+/// (`PlatformAdapter.supportsStories`).
+class PlacementSelector extends StatelessWidget {
+  const PlacementSelector({super.key, required this.value, required this.onChanged});
+  final PostPlacement value;
+  final ValueChanged<PostPlacement> onChanged;
+
+  static IconData _icon(PostPlacement p) => switch (p) {
+        PostPlacement.feed => Icons.grid_view_rounded,
+        PostPlacement.story => Icons.amp_stories_outlined,
+        PostPlacement.feedAndStory => Icons.library_add_outlined,
+      };
+
+  @override
+  Widget build(BuildContext context) => SegmentedButton<PostPlacement>(
+        segments: [
+          for (final p in PostPlacement.values)
+            ButtonSegment(value: p, label: Text(p.label, maxLines: 1, overflow: TextOverflow.ellipsis), icon: Icon(_icon(p), size: 18)),
+        ],
+        selected: {value},
+        showSelectedIcon: false,
+        onSelectionChanged: (s) => onChanged(s.single),
+      );
+}
 
 Future<void> showCustomizeSheet(BuildContext context, TargetPreview preview) {
   final sheet = CustomizeSheet(preview: preview);
@@ -163,6 +187,8 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       contentWarning: _cw.text.trim().isEmpty || _cw.text == (c.contentWarning ?? '') ? null : _cw.text.trim(),
       visibility: _visibility,
       extra: extra.cast<String, dynamic>(),
+      // Set in the schedule sheet, not here.
+      scheduledAt: this.o.scheduledAt,
     );
     final notifier = ref.read(composerProvider.notifier);
     if (o.isEmpty) {
@@ -181,6 +207,7 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
     final rules = d.text;
     final used = rules.maxLength == null ? _text.text.characters.length : TextCounter.count(_text.text, rules);
     final extras = _extrasByPlatform[d.id] ?? const <_Extra>[];
+    final stories = ref.watch(registryProvider).byId(p.account.platformId)?.supportsStories(p.account) ?? false;
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
@@ -261,6 +288,22 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
               ],
               onChanged: (v) => setState(() => _visibility = v),
             ),
+            if (stories) ...[
+              const SizedBox(height: Space.xl),
+              Text('Post or story', style: context.text.titleSmall),
+              const SizedBox(height: Space.sm),
+              PlacementSelector(
+                value: placementOfExtra(_extra.cast<String, dynamic>()),
+                onChanged: (v) => setState(() {
+                  final next = extraWithPlacement(_extra.cast<String, dynamic>(), v);
+                  _extra
+                    ..clear()
+                    ..addAll(next);
+                }),
+              ),
+              const SizedBox(height: Space.xs),
+              Text(_placementHelp(placementOfExtra(_extra.cast<String, dynamic>()), d.name), style: context.text.bodySmall),
+            ],
             if (extras.isNotEmpty) ...[
               const SizedBox(height: Space.xl),
               Text('${d.name} options', style: context.text.titleSmall),
@@ -327,6 +370,13 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       decoration: InputDecoration(labelText: e.label, hintText: e.hint, helperText: e.help),
     );
   }
+
+  static String _placementHelp(PostPlacement p, String network) => switch (p) {
+        PostPlacement.feed => 'A regular $network post with your caption.',
+        PostPlacement.story => 'A story without a caption: each photo or video becomes a frame, words only become a 9:16 text card.',
+        PostPlacement.feedAndStory =>
+          'The post with your caption, and the same photos or videos as a story (9:16, no caption) on the same account.',
+      };
 
   static String _visLabel(PostVisibility v) => switch (v) {
         PostVisibility.public => 'Public',

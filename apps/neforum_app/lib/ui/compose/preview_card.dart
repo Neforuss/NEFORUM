@@ -214,7 +214,8 @@ class _Visual extends ConsumerWidget {
     final showsHandle = placeholder == null || textCardShowsHandleOf(placeholder);
     final cardText = card == null ? '' : textCardText(_previewPost(ref), p.target);
     final byline = p.account.handle ?? p.account.displayName;
-    final cardSize = textCardSize(id);
+    // A story's card is full screen (9:16): the placeholder carries its size.
+    final cardSize = placeholder == null ? textCardSize(id) : textCardSizeOf(placeholder, id);
     final settings = ref.watch(settingsProvider);
     final composer = ref.watch(composerProvider);
     final cardBackground = placeholder != null && textCardParametersOf(placeholder)?['background'] != null
@@ -264,7 +265,7 @@ class _Visual extends ConsumerWidget {
                     aspect: aspect,
                     byline: showsHandle ? byline : null,
                     branded: branded,
-                    safe: textCardSafeArea(id),
+                    safe: textCardSafeOf(placeholder!) ? fullScreenSafeArea(id) : EdgeInsets.zero,
                     alignment: alignment,
                     backdrop: previewBackdrop(ref, cardBackground),
                   ),
