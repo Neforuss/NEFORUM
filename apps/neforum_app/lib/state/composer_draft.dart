@@ -123,6 +123,8 @@ Map<String, dynamic> composerDraftToJson(ComposerState c) => {
       if (c.textCardHandle.isNotEmpty) 'textCardHandle': c.textCardHandle,
       if (c.captionStyle != null) 'captionStyle': c.captionStyle,
       if (c.textCardBackground != null) 'textCardBackground': c.textCardBackground,
+      if (c.textCardEveryNetwork != null) 'textCardEveryNetwork': c.textCardEveryNetwork,
+      if (c.textCardWithText.isNotEmpty) 'textCardWithText': c.textCardWithText,
     };
 
 /// Null when [j] holds no post (cleared, or from a newer NEFORUM).
@@ -158,5 +160,7 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
     captionStyle: j['captionStyle'] is Map ? Map<String, dynamic>.from(j['captionStyle'] as Map) : null,
     textCardBackground: j['textCardBackground'] is Map ? Map<String, dynamic>.from(j['textCardBackground'] as Map) : null,
     audioQuality: p.audioQuality,
+    textCardEveryNetwork: j['textCardEveryNetwork'] as bool?,
+    textCardWithText: flags(j['textCardWithText']),
   );
 }

@@ -26,6 +26,47 @@ bool isRenderedTextCard(MediaAttachment m) => m.isTextCard && !isTextCardBackgro
 /// and when the post is edited.
 const String kTextCardReplacedMediaIdsKey = 'textCardReplacedMediaIds';
 
+/// `PostOverrides.extra` key, on every target of a post that gives the same
+/// text card to every network taking images (not only those that need one):
+/// `true`. Absent: cards only where an image is needed, as before 1.3.
+const String kTextCardEveryNetworkKey = 'textCardEveryNetwork';
+
+/// Whether [post] gives its text card to every network that takes images
+/// ([kTextCardEveryNetworkKey]).
+bool textCardEveryNetworkOfPost(Post post) => post.targets.any((t) => t.overrides.extra[kTextCardEveryNetworkKey] == true);
+
+/// Platform id -> whether the post's text goes along with its card there;
+/// only networks where it does not ([kTextCardOnlyKey]) are listed, for the
+/// composer when a saved post is edited again.
+Map<String, bool> textCardWithTextOfPost(Post post, String? Function(String accountId) platformOf) => {
+      for (final t in post.targets)
+        if (t.overrides.extra[kTextCardOnlyKey] == true) ?platformOf(t.accountId): false,
+    };
+
+/// [post] with the composer's card choices written into its targets, so a
+/// scheduled or background run makes the cards the way the post was saved:
+/// [everyNetwork] on every target, and for each network whose
+/// [withText] is false, the card without the post's text.
+Post withTextCardChoices(Post post,
+        {required bool everyNetwork, required Map<String, bool> withText, required String? Function(String accountId) platformOf}) =>
+    post.copyWith(targets: [
+      for (final t in post.targets)
+        t.copyWith(
+          overrides: t.overrides.copyWith(extra: {
+            ...withoutTextCardChoices(t.overrides).extra,
+            if (everyNetwork) kTextCardEveryNetworkKey: true,
+            if (withText[platformOf(t.accountId)] == false) kTextCardOnlyKey: true,
+          }),
+        ),
+    ]);
+
+/// [o] without the card choices [withTextCardChoices] writes: what the
+/// composer shows as the target's own overrides.
+PostOverrides withoutTextCardChoices(PostOverrides o) =>
+    o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey)
+        ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey))
+        : o;
+
 /// The photo list a card took the place of on a target
 /// ([kTextCardReplacedMediaIdsKey]); null when the target had no list of its
 /// own (every photo).
@@ -43,7 +84,10 @@ PostOverrides _withOwnMediaIds(PostOverrides o, List<String>? own) {
 
 /// Gives every target that needs an image but has none (Instagram,
 /// Pinterest, TikTok photos, Snapchat) a rendered NEFORUM text card, and
-/// removes cards that are no longer needed. Safe to call repeatedly: a
+/// removes cards that are no longer needed. A post that gives its card to
+/// every network ([textCardEveryNetworkOfPost]) gives it to every target that
+/// takes images, each at its network's size ([textCardSize]); the card's
+/// words are always its alt text. Safe to call repeatedly: a
 /// card whose words and every rendering choice still match (its render
 /// parameters, [textCardRenderParameters]) is kept.
 ///
@@ -90,6 +134,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
   final backgroundPhoto = chosenBackground?.photo;
   final String? ownBackgroundId = backgroundPhoto != null && userPhotos.containsKey(backgroundPhoto.id) ? backgroundPhoto.id : null;
   final ownPhoto = ownBackgroundId != null;
+  final everyNetwork = textCardEveryNetworkOfPost(post);
   final resolver = VariantResolver(settings.resolverOptions);
   final made = <String, MediaAttachment>{};
   final used = <String>{};
@@ -117,10 +162,12 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     final d = adapter.descriptorForAccount(account);
     final variant = resolver.resolve(p, base, d, account: account);
     // A story (Story, or the story of Post + Story) with words only gets a
-    // full-screen 9:16 card; a feed post on an image-only network its own.
+    // full-screen 9:16 card; a feed post on an image-only network its own,
+    // and with the card on every network, every network that takes images.
     final placement = adapter.supportsStories(account) ? variant.placement : PostPlacement.feed;
     final storyCard = placement.includesStory && storyQualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId);
-    final feedCard = placement != PostPlacement.story && qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId);
+    final feedCard = placement != PostPlacement.story &&
+        qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId, everyNetwork: everyNetwork);
     if (!storyCard && !feedCard) continue;
 
     if (chosenBackground != null && backgroundPhoto != null && !backdropTried) {

@@ -7,6 +7,7 @@ import 'package:intl/intl.dart' show Bidi;
 import 'package:neforum_core/neforum_core.dart' show PhotoFitMode;
 
 import 'aligned_text.dart';
+import 'caption_fonts.dart';
 import 'caption_style.dart';
 import 'photo_composite.dart';
 import 'photo_pixels.dart';
@@ -20,7 +21,9 @@ import 'text_card.dart';
 /// Measurements scale with the width (1080 px reference), so the composer
 /// preview and the saved photo match.
 class CaptionOverlayPainter extends CustomPainter {
-  const CaptionOverlayPainter({required this.text, required this.font, this.style = const CaptionStyle(), this.safe = EdgeInsets.zero});
+  /// Repaints when a caption font finishes loading ([captionFontsRevision]).
+  CaptionOverlayPainter({required this.text, required this.font, this.style = const CaptionStyle(), this.safe = EdgeInsets.zero})
+      : super(repaint: captionFontsRevision);
 
   final String text;
 
@@ -172,7 +175,9 @@ class CaptionBlockLayout {
 /// Paints a caption block's words over a whole frame ([CaptionBlockLayout]);
 /// with [paintBackground], the band's colour behind them too.
 class CaptionBlockPainter extends CustomPainter {
-  const CaptionBlockPainter({required this.text, required this.font, required this.style, this.safe = EdgeInsets.zero, this.paintBackground = false});
+  /// Repaints when a caption font finishes loading ([captionFontsRevision]).
+  CaptionBlockPainter({required this.text, required this.font, required this.style, this.safe = EdgeInsets.zero, this.paintBackground = false})
+      : super(repaint: captionFontsRevision);
 
   final String text;
 

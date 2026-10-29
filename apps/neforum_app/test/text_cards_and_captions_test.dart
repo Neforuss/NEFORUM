@@ -31,6 +31,7 @@ import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/state/text_cards.dart';
 import 'package:neforum_app/ui/compose/caption_editor_sheet.dart';
+import 'package:neforum_app/ui/compose/card_background_sheet.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
@@ -519,6 +520,151 @@ void main() {
         expect(again.targetFor(t.accountId)!.overrides.mediaIds, t.overrides.mediaIds, reason: 'the same card for ${t.accountId}');
       }
       expect(again.media.where(isRenderedTextCard).length, 4);
+      await finish(tester);
+    });
+
+    testWidgets('1.3: the same card on every network goes to each target that takes images, at its size, with its words as alt text',
+        (tester) async {
+      final (s, c) = await boot(tester);
+      final youtube = account('yt-1', 'youtube', '@robin');
+      await tester.runAsync(() => s.accounts.upsert(youtube));
+      final demo = c.read(accountListProvider);
+      final byPlatform = {for (final p in ['mastodon', 'bluesky', 'x', 'instagram']) p: demo.firstWhere((a) => a.platformId == p)};
+      final platforms = {for (final a in [...byPlatform.values, youtube]) a.id: a.platformId};
+      final now = DateTime(2026, 10, 28);
+      final written = Post(
+        id: 'p-every',
+        text: 'One card, every network.\n\n#cards',
+        targets: [for (final id in platforms.keys) PostTarget(accountId: id)],
+        createdAt: now,
+        updatedAt: now,
+      );
+
+      // Off (the default): only the network that needs an image gets a card.
+      final before = (await tester.runAsync(() => attachTextCards(s, written, s.settings)))!;
+      expect([for (final t in before.targets) if (t.overrides.mediaIds != null) platforms[t.accountId]], ['instagram']);
+
+      // On, with Mastodon getting the card alone.
+      var post = withTextCardChoices(written, everyNetwork: true, withText: const {'mastodon': false}, platformOf: (id) => platforms[id]);
+      expect(textCardEveryNetworkOfPost(post), isTrue);
+      post = (await tester.runAsync(() => attachTextCards(s, post, s.settings)))!;
+      final words = textCardText(post, post.targets.first);
+      expect(words, 'One card, every network.', reason: 'trailing hashtags stay in the text');
+      for (final platform in ['mastodon', 'bluesky', 'x', 'instagram']) {
+        final card = cardOf(post, byPlatform[platform]!.id);
+        expect(isRenderedTextCard(card), isTrue, reason: platform);
+        expect(card.altText, words, reason: '$platform: the card\'s words are its alt text');
+        expect(Size(card.width!.toDouble(), card.height!.toDouble()), textCardSize(platform), reason: platform);
+      }
+      expect(post.targetFor(youtube.id)!.overrides.mediaIds, isNull, reason: 'YouTube takes no images: plain text');
+
+      // What each network receives: Mastodon only the card, the others the text too.
+      final resolver = VariantResolver(s.settings.resolverOptions);
+      PostVariant variant(ConnectedAccount a) => resolver.resolve(post, post.targetFor(a.id)!, s.registry.byId(a.platformId)!.descriptorForAccount(a), account: a);
+      final mastodon = variant(byPlatform['mastodon']!);
+      expect(mastodon.text, isEmpty);
+      expect(mastodon.media.single.altText, words);
+      expect(variant(byPlatform['bluesky']!).text, contains('One card, every network.'));
+
+      // Published later from the saved post: the same choices, the same cards.
+      final again = (await tester.runAsync(() => attachTextCards(s, post, s.settings)))!;
+      for (final t in post.targets) {
+        expect(again.targetFor(t.accountId)!.overrides.mediaIds, t.overrides.mediaIds, reason: 'kept for ${platforms[t.accountId]}');
+      }
+
+      // Edited again: the choices come back as the composer's, not as overrides.
+      await settle(tester);
+      c.read(composerProvider.notifier).load(again);
+      final composer = c.read(composerProvider);
+      expect(composer.textCardEveryNetwork, isTrue);
+      expect(composer.textCardWithText, {'mastodon': false});
+      for (final o in composer.overrides.values) {
+        expect(o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey), isFalse);
+      }
+      await finish(tester);
+    });
+
+    testWidgets('1.3: the composer previews the card on every network and says which networks keep plain text', (tester) async {
+      final (s, c) = await boot(tester);
+      final youtube = account('yt-2', 'youtube', '@robin');
+      await tester.runAsync(() => s.accounts.upsert(youtube));
+      await settle(tester);
+      final demo = c.read(accountListProvider);
+      final mastodon = demo.firstWhere((a) => a.platformId == 'mastodon');
+      final instagram = demo.firstWhere((a) => a.platformId == 'instagram');
+      final notifier = c.read(composerProvider.notifier)
+        ..selectAccounts([mastodon.id, instagram.id, youtube.id])
+        ..prefill('Words for everyone.');
+      TargetPreview preview(ConnectedAccount a) => c.read(composerPreviewsProvider).firstWhere((p) => p.account.id == a.id);
+
+      expect(preview(mastodon).variant.media, isEmpty, reason: 'off by default');
+      expect(isTextCardPlaceholder(preview(instagram).variant.media.single), isTrue);
+
+      notifier.setTextCardEveryNetwork(true);
+      final card = preview(mastodon).variant.media.single;
+      expect(isTextCardPlaceholder(card), isTrue);
+      expect(card.altText, 'Words for everyone.');
+      expect(preview(mastodon).variant.text, 'Words for everyone.');
+      expect(preview(youtube).issues.map((i) => i.code), contains('media.text_card_unsupported'));
+
+      notifier.setTextCardWithText('mastodon', false);
+      expect(preview(mastodon).variant.text, isEmpty);
+      expect(isTextCardPlaceholder(preview(mastodon).variant.media.single), isTrue);
+      expect(preview(instagram).variant.text, 'Words for everyone.', reason: 'per network');
+
+      // The per-post choice leaves the Settings default alone.
+      await settle(tester);
+      expect(c.read(settingsProvider).textCardEveryNetwork, isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('1.3: the card background editor groups its controls and edits the composer live', (tester) async {
+      final (s, c) = await boot(tester);
+      const photo = MediaAttachment(id: 'bg-photo', path: 'missing/bg.jpg', mimeType: 'image/jpeg', sizeBytes: 1, width: 800, height: 600);
+      c.read(composerProvider.notifier).setTextCardBackground(const TextCardBackground(photo: photo).toJson());
+      showCardBackgroundSheet(
+        tester.element(find.byType(Scaffold).first),
+        CardLook(
+          platform: s.registry.descriptor('instagram')!,
+          text: 'Words over a photo.',
+          theme: TextCardTheme.dark,
+          font: TextCardFont.original,
+          branded: true,
+          alignment: TextCardAlignment.left,
+        ),
+      );
+      await settle(tester);
+      TextCardBackground current() => TextCardBackground.tryParse(c.read(composerProvider).textCardBackground)!;
+
+      await tester.tap(find.byKey(const Key('card-background-fit-contain')));
+      await tester.tap(find.byKey(const Key('card-background-rotate')));
+      await tester.tap(find.byKey(const Key('card-background-flip')));
+      await settle(tester);
+      expect((current().fit, current().quarterTurns, current().flipHorizontal), (TextCardBackgroundFit.contain, 1, true));
+
+      await tester.tap(find.text('Adjust'));
+      await settle(tester);
+      expect(find.byKey(const Key('card-background-blur')), findsOneWidget);
+      await tester.tap(find.byKey(const Key('card-background-black-and-white')));
+      await settle(tester);
+      expect(current().blackAndWhite, isTrue);
+      expect(find.byKey(const Key('card-background-saturation')), findsNothing, reason: 'no saturation in black and white');
+
+      await tester.tap(find.text('Overlay'));
+      await settle(tester);
+      await tester.enterText(find.widgetWithText(TextField, 'Tint hex'), '00FF88');
+      await settle(tester);
+      expect((current().tintColor, current().tintStrength), (0xFF00FF88, 0.4), reason: 'picking a colour turns the tint on');
+
+      await tester.tap(find.text('Words'));
+      await settle(tester);
+      await tester.tap(find.byKey(const Key('card-background-position-bottom')));
+      await settle(tester);
+      expect(current().textPosition, TextCardTextPosition.bottom);
+
+      await tester.tap(find.byKey(const Key('card-background-reset')));
+      await settle(tester);
+      expect(current().toRenderParameters().length, 5, reason: 'back to what 1.2 recorded');
       await finish(tester);
     });
 

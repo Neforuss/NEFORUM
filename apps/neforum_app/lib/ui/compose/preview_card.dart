@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../media/aligned_text.dart';
+import '../../media/caption_fonts.dart' show captionFontReadyProvider;
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/text_card.dart';
@@ -229,6 +230,7 @@ class _Visual extends ConsumerWidget {
     final original = isPhoto && first.derivedFrom != null ? composer.media.where((m) => m.id == first.derivedFrom).firstOrNull : null;
     final captionOn = isPhoto && captionOnPhotoFor(id, settings, composer.captionOnPhoto);
     final captionStyle = captionStyleFor(composer.captionStyle, settings);
+    if (captionOn) ref.watch(captionFontReadyProvider(captionStyle.customFont)); // 1.3: loads the caption's own font
     // A video on Instagram or TikTok can get the caption in a block above it
     // where this device can compose videos.
     final isVideo = card == null && first != null && first.isVideo;
@@ -388,6 +390,7 @@ class _Visual extends ConsumerWidget {
               alignment: alignment,
               showsHandle: showsHandle,
               background: cardBackground,
+              withText: composer.textCardWithText[id] ?? true,
             ),
           ),
         ],
@@ -622,6 +625,7 @@ class _CardStylePicker extends ConsumerStatefulWidget {
     required this.alignment,
     required this.showsHandle,
     required this.background,
+    required this.withText,
   });
   final TextCardTheme current;
   final TextCardFont font;
@@ -632,6 +636,9 @@ class _CardStylePicker extends ConsumerStatefulWidget {
   final TextCardAlignment alignment;
   final bool showsHandle;
   final TextCardBackground? background;
+
+  /// The post's text goes along with the card on this network.
+  final bool withText;
 
   @override
   ConsumerState<_CardStylePicker> createState() => _CardStylePickerState();
@@ -807,6 +814,15 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
                     on ? x.textCardHandleHiddenPlatforms.where((p) => p != id).toList() : {...x.textCardHandleHiddenPlatforms, id}.toList(),
               ));
         },
+      ),
+      pill(
+        selected: widget.withText,
+        label: 'Post text too',
+        tooltip: widget.withText
+            ? 'Your text goes out with the card on ${widget.platform.name}: tap to post the card alone (its description keeps your words)'
+            : 'Only the card goes to ${widget.platform.name}: tap to post your text with it',
+        leading: Icon(widget.withText ? Icons.notes_rounded : Icons.image_outlined, size: 14, color: widget.withText ? nf.accent : nf.textFaint),
+        onTap: () => ref.read(composerProvider.notifier).setTextCardWithText(id, !widget.withText),
       ),
       pill(
         selected: background != null,

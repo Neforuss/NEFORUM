@@ -54,6 +54,8 @@ class ComposerState {
     this.captionStyle,
     this.textCardBackground,
     this.audioQuality = AudioQuality.standard,
+    this.textCardEveryNetwork,
+    this.textCardWithText = const {},
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -127,6 +129,16 @@ class ComposerState {
 
   /// How the post's sound file goes out ([Post.audioQuality]).
   final AudioQuality audioQuality;
+  /// A text-only post gets the same text card on every network that takes
+  /// images, not only where one is needed; null = the Settings default.
+  final bool? textCardEveryNetwork;
+
+  /// Per network (platform id): whether the post's text goes along with its
+  /// text card; missing = it does.
+  final Map<String, bool> textCardWithText;
+
+  /// [textCardEveryNetwork], or the Settings default.
+  bool cardOnEveryNetwork(AppSettings settings) => textCardEveryNetwork ?? settings.textCardEveryNetwork;
 
   bool get isArtwork => artwork != null;
 
@@ -179,6 +191,8 @@ class ComposerState {
     Map<String, dynamic>? captionStyle,
     Map<String, dynamic>? textCardBackground,
     AudioQuality? audioQuality,
+    bool? textCardEveryNetwork,
+    Map<String, bool>? textCardWithText,
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -216,6 +230,8 @@ class ComposerState {
         captionStyle: captionStyle ?? this.captionStyle,
         textCardBackground: clearTextCardBackground ? null : (textCardBackground ?? this.textCardBackground),
         audioQuality: audioQuality ?? this.audioQuality,
+        textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork,
+        textCardWithText: textCardWithText ?? this.textCardWithText,
       );
 
   /// Builds the master [Post] for this composer state. With a different time
@@ -353,6 +369,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setAudioQuality(AudioQuality quality) => state = state.copyWith(audioQuality: quality);
   void setTextCardBackground(Map<String, dynamic>? background) =>
       state = background == null ? state.copyWith(clearTextCardBackground: true) : state.copyWith(textCardBackground: background);
+  void setTextCardEveryNetwork(bool on) => state = state.copyWith(textCardEveryNetwork: on);
+  void setTextCardWithText(String platformId, bool on) => state = state.copyWith(textCardWithText: {...state.textCardWithText, platformId: on});
 
   /// Artwork mode on or off. On, the post goes to art sites only.
   void setArtwork(ArtworkDetails? artwork) =>
@@ -498,9 +516,14 @@ class ComposerNotifier extends Notifier<ComposerState> {
     // A "Mention @everyone" value that matches Settings was written on save
     // (withMentionDefault); it is not a choice of this post.
     final mentionDefault = ref.read(settingsProvider).discordMentionEveryone;
-    PostOverrides ownOverrides(PostTarget t) => platformOf(t.accountId) == 'discord' && t.overrides.extra[kMentionEveryoneKey] == mentionDefault
-        ? t.overrides.copyWith(extra: {...t.overrides.extra}..remove(kMentionEveryoneKey))
-        : t.overrides;
+    // The card choices written on save (withTextCardChoices) are the
+    // composer's own fields, not the target's.
+    PostOverrides ownOverrides(PostTarget t) {
+      final o = withoutTextCardChoices(t.overrides);
+      return platformOf(t.accountId) == 'discord' && o.extra[kMentionEveryoneKey] == mentionDefault
+          ? o.copyWith(extra: {...o.extra}..remove(kMentionEveryoneKey))
+          : o;
+    }
     state = ComposerState(
         editingPostId: p.id,
         text: p.text,
@@ -531,6 +554,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
         captionStyle: captionStyleOfPost(post),
         textCardBackground: textCardBackgroundOfPost(post),
         audioQuality: p.audioQuality,
+        textCardEveryNetwork: textCardEveryNetworkOfPost(post),
+        textCardWithText: textCardWithTextOfPost(post, platformOf),
       );
   }
 
@@ -581,6 +606,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
       captionStyle: state.captionStyle,
       textCardBackground: state.textCardBackground,
       audioQuality: state.audioQuality,
+      textCardEveryNetwork: state.textCardEveryNetwork,
+      textCardWithText: state.textCardWithText,
     );
   }
 }
@@ -604,6 +631,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final sound = c.audio;
   final standardFormat = sound == null ? null : standardAudioFormat(ref.watch(audioOutputFormatsProvider).value ?? const []);
   final canRenderVideo = sound != null && (ref.watch(videoCaptionsSupportedProvider).value ?? false);
+  final everyNetwork = c.cardOnEveryNetwork(settings);
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -615,10 +643,13 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     final issues = <ValidationIssue>[...variant.issues];
     // Image-only platforms, and stories, get the words as a NEFORUM text
     // card, rendered when the post is saved; preview and check a stand-in for
-    // it. A story's card is full screen (9:16).
+    // it. A story's card is full screen (9:16). With the card on every
+    // network, so does every network that takes images.
     final placement = adapter.supportsStories(a) ? variant.placement : PostPlacement.feed;
     final storyCard = settings.textCards && placement.includesStory && storyQualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId);
-    final feedCard = settings.textCards && placement != PostPlacement.story && qualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId);
+    final feedCard = settings.textCards &&
+        placement != PostPlacement.story &&
+        qualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId, everyNetwork: everyNetwork);
     if (storyCard || feedCard) {
       final signed = c.textCardBranded[d.id] ?? settings.textCardBranded(d.id);
       MediaAttachment placeholder({bool story = false}) => textCardPlaceholder(
@@ -630,17 +661,34 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             showsHandle: c.textCardHandle[d.id] ?? settings.textCardShowsHandle(d.id),
             background: background,
             story: story,
-          );
-      variant = placement == PostPlacement.story
-          ? variant.copyWith(media: [placeholder(story: true)])
-          : variant.copyWith(
-              media: feedCard ? [placeholder()] : null,
-              storyMedia: storyCard ? [placeholder(story: true)] : null,
-            );
-      final what = feedCard ? '${d.name} needs an image, so your words go out as' : 'Your ${d.name} story shows your words on';
+          ).copyWith(altText: textCardAltText(textCardText(post, target)));
+      if (feedCard && placement == PostPlacement.feed && c.textCardWithText[d.id] == false) {
+        // The card alone: resolved again with it, as publishing will.
+        final card = placeholder();
+        final alone = post.copyWith(media: [...post.media, card]).withTarget(target.copyWith(
+            overrides: target.overrides.copyWith(mediaIds: [card.id], extra: {...target.overrides.extra, kTextCardOnlyKey: true})));
+        variant = resolver.resolve(alone, withMentionDefault(alone.targetFor(a.id)!, a.platformId, settings), d, account: a);
+        issues
+          ..removeWhere((i) => i.field == 'text')
+          ..addAll(variant.issues.where((i) => i.field == 'text'));
+      } else {
+        variant = placement == PostPlacement.story
+            ? variant.copyWith(media: [placeholder(story: true)])
+            : variant.copyWith(
+                media: feedCard ? [placeholder()] : null,
+                storyMedia: storyCard ? [placeholder(story: true)] : null,
+              );
+      }
+      final what = !feedCard
+          ? 'Your ${d.name} story shows your words on'
+          : d.media.requiresMedia
+              ? '${d.name} needs an image, so your words go out as'
+              : '${d.name} gets your words as';
       issues.add(ValidationIssue.info(
           'media.text_card', '$what ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}',
           field: 'media'));
+    } else if (settings.textCards && everyNetwork && !acceptsTextCardImages(d) && variant.media.isEmpty && variant.text.trim().isNotEmpty) {
+      issues.add(ValidationIssue.info('media.text_card_unsupported', '${d.name} takes no images, so it gets your words as plain text', field: 'media'));
     }
     // Photos this network does not take as they are get a fitted copy on
     // save; check what that copy will be.
@@ -813,7 +861,12 @@ class PostActions {
             t,
       ]).withScheduleFromTargets();
     }
-    post = withMentionDefaults(post, ref.read(accountListProvider), ref.read(settingsProvider));
+    final accounts = ref.read(accountListProvider);
+    post = withMentionDefaults(post, accounts, ref.read(settingsProvider));
+    post = withTextCardChoices(post,
+        everyNetwork: c.cardOnEveryNetwork(ref.read(settingsProvider)),
+        withText: c.textCardWithText,
+        platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);

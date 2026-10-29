@@ -165,6 +165,7 @@ class AppSettings {
     this.updateCheckedAt,
     this.updateLatestRelease = const {},
     this.updateDismissedVersion,
+    this.textCardEveryNetwork = false, // 1.3: cards
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -234,6 +235,7 @@ class AppSettings {
         updateCheckedAt: DateTime.tryParse('${j['updateCheckedAt'] ?? ''}'),
         updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
+        textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
       );
 
   final ThemeMode themeMode;
@@ -433,6 +435,10 @@ class AppSettings {
   /// a later one comes out (critical ones come back at the next start).
   /// Device-only.
   final String? updateDismissedVersion;
+  /// 1.3: cards. New text-only posts start with the same text card on every
+  /// network that takes images, not only on those that need one. Each post
+  /// can change it.
+  final bool textCardEveryNetwork;
 
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
@@ -513,6 +519,7 @@ class AppSettings {
     DateTime? updateCheckedAt,
     Map<String, dynamic>? updateLatestRelease,
     String? updateDismissedVersion,
+    bool? textCardEveryNetwork, // 1.3: cards
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -579,6 +586,7 @@ class AppSettings {
         updateCheckedAt: updateCheckedAt ?? this.updateCheckedAt,
         updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
+        textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
       );
 
   Map<String, dynamic> toJson() => {
@@ -646,5 +654,6 @@ class AppSettings {
         if (updateCheckedAt != null) 'updateCheckedAt': updateCheckedAt!.toUtc().toIso8601String(),
         if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
+        'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
       };
 }

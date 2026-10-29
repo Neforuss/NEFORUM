@@ -15,6 +15,7 @@ import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
+import '../../widgets/color_swatch_field.dart';
 import '../../widgets/layout.dart' show showToast;
 import '../../widgets/media_thumb.dart';
 
@@ -96,6 +97,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
   /// back to Photo restores it.
   TextCardBackground? _last;
   bool _picking = false;
+  _Group _group = _Group.photo;
 
   @override
   void initState() {
@@ -106,6 +108,13 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
   void _set(TextCardBackground? background) {
     if (background != null) _last = background;
     ref.read(composerProvider.notifier).setTextCardBackground(background?.toJson());
+  }
+
+  /// Changes the background as it is now in the composer, not as the last
+  /// frame showed it, so quick edits in a row all count.
+  void _edit(TextCardBackground Function(TextCardBackground b) change) {
+    final now = TextCardBackground.tryParse(ref.read(composerProvider).textCardBackground);
+    if (now != null) _set(change(now));
   }
 
   /// Picks a photo for the card only; it is not attached to the post.
@@ -158,10 +167,6 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
     // A photo picked for the card only, shown next to the post's own.
     final separate = picked != null && !photos.any((m) => m.id == picked.photo.id) ? picked.photo : null;
 
-    Widget label(String text) => Padding(
-          padding: const EdgeInsets.only(top: Space.lg, bottom: Space.sm),
-          child: Text(text, style: context.text.titleSmall),
-        );
     Widget thumb(MediaAttachment m) {
       final selected = current?.photo.id == m.id;
       return Semantics(
@@ -183,7 +188,19 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
       constraints: const BoxConstraints(maxWidth: 220, maxHeight: 360),
       child: ClipRRect(
         borderRadius: Radii.rMd,
-        child: TextCardView(
+        child: GestureDetector(
+          key: const Key('card-background-preview'),
+          // Dragging moves the photo with the finger: its focal point goes
+          // the other way.
+          onPanUpdate: current == null
+              ? null
+              : (d) {
+                  // About one preview width (200 px) across the whole range.
+                  final step = 2 / (200 * current.zoom);
+                  double moved(double v, double by) => ((v - by * step).clamp(-1.0, 1.0) * 100).round() / 100;
+                  _edit((b) => b.copyWith(offsetX: moved(b.offsetX, d.delta.dx), offsetY: moved(b.offsetY, d.delta.dy)));
+                },
+          child: TextCardView(
           text: look.text.isEmpty ? 'Your words, over your photo.' : look.text,
           theme: look.theme,
           font: look.font.resolve(id),
@@ -193,6 +210,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           safe: textCardSafeArea(id),
           alignment: look.alignment,
           backdrop: previewBackdrop(ref, current),
+          ),
         ),
       ),
     );
@@ -222,39 +240,32 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           child: Text('The card is ${look.theme.label.toLowerCase()}. Choose Photo to set your words over a photo.', style: context.text.bodySmall),
         )
       else ...[
-        label('Photo'),
-        Wrap(spacing: Space.sm, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          for (final m in photos) thumb(m),
-          if (separate != null) thumb(separate),
-          OutlinedButton.icon(
-            onPressed: _picking ? null : () => _pick(current),
-            icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
-            label: Text(_picking ? 'Opening…' : 'Pick a photo'),
-          ),
-        ]),
-        const SizedBox(height: Space.xs),
-        Text('The photo is only used inside the card. It is not posted by itself.', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
-        _slider(context, 'Blur', current.blur, 0, TextCardBackground.maxBlur, current.blur.round().toString(),
-            (v) => _set(current.copyWith(blur: v.roundToDouble())),
-            key: const Key('card-background-blur')),
-        _slider(context, 'Dimming', current.dimming, 0, TextCardBackground.maxDimming, '${(current.dimming * 100).round()}%',
-            (v) => _set(current.copyWith(dimming: (v * 100).round() / 100)),
-            key: const Key('card-background-dimming')),
-        label('Text colour'),
-        Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
-          for (final c in TextCardTextColor.values)
-            ChoiceChip(
-              label: Text(c.label),
-              selected: current.textColor == c,
-              onSelected: (_) => _set(current.copyWith(textColor: c)),
+        const SizedBox(height: Space.md),
+        SegmentedButton<_Group>(
+          key: const Key('card-background-groups'),
+          showSelectedIcon: false,
+          segments: [for (final g in _Group.values) ButtonSegment(value: g, label: Text(g.label))],
+          selected: {_group},
+          onSelectionChanged: (s) => setState(() => _group = s.first),
+        ),
+        ...switch (_group) {
+          _Group.photo => _photoControls(context, current, [for (final m in photos) thumb(m), if (separate != null) thumb(separate)]),
+          _Group.adjust => _adjustControls(context, current),
+          _Group.overlay => _overlayControls(context, current),
+          _Group.words => _wordsControls(context, current),
+        },
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Padding(
+            padding: const EdgeInsets.only(top: Space.md),
+            child: TextButton.icon(
+              key: const Key('card-background-reset'),
+              onPressed: () => _edit((b) => b.withDefaultEffects()),
+              icon: const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('Reset placement, adjustments and overlays'),
+              style: TextButton.styleFrom(foregroundColor: nf.textMuted),
             ),
-        ]),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text('Box behind the words', style: context.text.bodyMedium),
-          subtitle: Text('Helps the words stand out on a busy photo.', style: context.text.bodySmall),
-          value: current.textBox,
-          onChanged: (v) => _set(current.copyWith(textBox: v)),
+          ),
         ),
       ],
     ]);
@@ -290,13 +301,179 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
     ]);
   }
 
+  Widget _label(BuildContext context, String text) => Padding(
+        padding: const EdgeInsets.only(top: Space.lg, bottom: Space.sm),
+        child: Text(text, style: context.text.titleSmall),
+      );
+
+  /// The photo, how it fills the card, zoom, focal point, turning and
+  /// mirroring.
+  List<Widget> _photoControls(BuildContext context, TextCardBackground current, List<Widget> thumbs) {
+    final nf = context.nf;
+    String percent(double v) => '${(v * 100).round()}';
+    return [
+      _label(context, 'Photo'),
+      Wrap(spacing: Space.sm, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        ...thumbs,
+        OutlinedButton.icon(
+          onPressed: _picking ? null : () => _pick(current),
+          icon: const Icon(Icons.add_photo_alternate_outlined, size: 18),
+          label: Text(_picking ? 'Opening…' : 'Pick a photo'),
+        ),
+      ]),
+      const SizedBox(height: Space.xs),
+      Text('The photo is only used inside the card. It is not posted by itself. Drag the preview to move it.',
+          style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
+      _label(context, 'Fit'),
+      Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+        for (final f in TextCardBackgroundFit.values)
+          ChoiceChip(
+            key: Key('card-background-fit-${f.name}'),
+            label: Text(f.label),
+            selected: current.fit == f,
+            onSelected: (_) => _edit((b) => b.copyWith(fit: f)),
+          ),
+      ]),
+      _slider(context, 'Zoom', current.zoom, 1, TextCardBackground.maxZoom, '${current.zoom.toStringAsFixed(1)}×',
+          (v) => _edit((b) => b.copyWith(zoom: (v * 10).round() / 10)),
+          key: const Key('card-background-zoom')),
+      _slider(context, 'Across', current.offsetX, -1, 1, percent(current.offsetX), (v) => _edit((b) => b.copyWith(offsetX: (v * 100).round() / 100)),
+          key: const Key('card-background-offset-x')),
+      _slider(context, 'Down', current.offsetY, -1, 1, percent(current.offsetY), (v) => _edit((b) => b.copyWith(offsetY: (v * 100).round() / 100)),
+          key: const Key('card-background-offset-y')),
+      const SizedBox(height: Space.sm),
+      Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+        OutlinedButton.icon(
+          key: const Key('card-background-rotate'),
+          onPressed: () => _edit((b) => b.copyWith(quarterTurns: b.quarterTurns + 1)),
+          icon: const Icon(Icons.rotate_90_degrees_cw_outlined, size: 18),
+          label: Text(current.quarterTurns == 0 ? 'Turn' : 'Turned ${current.quarterTurns * 90}°'),
+        ),
+        FilterChip(
+          key: const Key('card-background-flip'),
+          avatar: const Icon(Icons.flip_rounded, size: 16),
+          label: const Text('Mirror'),
+          selected: current.flipHorizontal,
+          onSelected: (v) => _edit((b) => b.copyWith(flipHorizontal: v)),
+        ),
+        if (current.offsetX != 0 || current.offsetY != 0 || current.zoom != 1)
+          TextButton(
+            onPressed: () => _edit((b) => b.copyWith(offsetX: 0, offsetY: 0, zoom: 1)),
+            child: const Text('Centre'),
+          ),
+      ]),
+    ];
+  }
+
+  /// Blur, dimming, brightness, contrast, saturation, black and white.
+  List<Widget> _adjustControls(BuildContext context, TextCardBackground current) {
+    String signed(double v) => '${v > 0 ? '+' : ''}${(v * 100).round()}';
+    double hundredths(double v) => (v * 100).round() / 100;
+    return [
+      _label(context, 'Adjust'),
+      _slider(context, 'Blur', current.blur, 0, TextCardBackground.maxBlur, current.blur.round().toString(),
+          (v) => _edit((b) => b.copyWith(blur: v.roundToDouble())),
+          key: const Key('card-background-blur')),
+      _slider(context, 'Dimming', current.dimming, 0, TextCardBackground.maxDimming, '${(current.dimming * 100).round()}%',
+          (v) => _edit((b) => b.copyWith(dimming: hundredths(v))),
+          key: const Key('card-background-dimming')),
+      _slider(context, 'Brightness', current.brightness, -1, 1, signed(current.brightness), (v) => _edit((b) => b.copyWith(brightness: hundredths(v))),
+          key: const Key('card-background-brightness')),
+      _slider(context, 'Contrast', current.contrast, -1, 1, signed(current.contrast), (v) => _edit((b) => b.copyWith(contrast: hundredths(v))),
+          key: const Key('card-background-contrast')),
+      if (!current.blackAndWhite)
+        _slider(context, 'Saturation', current.saturation, -1, 1, signed(current.saturation), (v) => _edit((b) => b.copyWith(saturation: hundredths(v))),
+            key: const Key('card-background-saturation')),
+      SwitchListTile(
+        key: const Key('card-background-black-and-white'),
+        contentPadding: EdgeInsets.zero,
+        title: Text('Black and white', style: context.text.bodyMedium),
+        value: current.blackAndWhite,
+        onChanged: (v) => _edit((b) => b.copyWith(blackAndWhite: v)),
+      ),
+    ];
+  }
+
+  /// A colour tint, a gradient and a vignette.
+  List<Widget> _overlayControls(BuildContext context, TextCardBackground current) {
+    String percent(double v) => '${(v * 100).round()}%';
+    double hundredths(double v) => (v * 100).round() / 100;
+    return [
+      _label(context, 'Tint'),
+      _colorChoice(current.tintColor, (c) => _edit((b) => b.copyWith(tintColor: c, tintStrength: b.tintStrength > 0 ? null : 0.4)), label: 'Tint'),
+      _slider(context, 'Strength', current.tintStrength, 0, 1, percent(current.tintStrength), (v) => _edit((b) => b.copyWith(tintStrength: hundredths(v))),
+          key: const Key('card-background-tint')),
+      _label(context, 'Gradient'),
+      _colorChoice(current.gradientStart, (c) => _edit((b) => b.copyWith(gradientStart: c, gradientStrength: b.gradientStrength > 0 ? null : 0.6)),
+          label: 'Gradient start'),
+      const SizedBox(height: Space.sm),
+      _colorChoice(current.gradientEnd, (c) => _edit((b) => b.copyWith(gradientEnd: c, gradientStrength: b.gradientStrength > 0 ? null : 0.6)),
+          label: 'Gradient end'),
+      _slider(context, 'Angle', current.gradientAngle, 0, 360, '${current.gradientAngle.round()}°',
+          (v) => _edit((b) => b.copyWith(gradientAngle: (v / 15).round() * 15.0)),
+          key: const Key('card-background-gradient-angle')),
+      _slider(context, 'Strength', current.gradientStrength, 0, 1, percent(current.gradientStrength),
+          (v) => _edit((b) => b.copyWith(gradientStrength: hundredths(v))),
+          key: const Key('card-background-gradient')),
+      _label(context, 'Vignette'),
+      _slider(context, 'Strength', current.vignette, 0, 1, percent(current.vignette), (v) => _edit((b) => b.copyWith(vignette: hundredths(v))),
+          key: const Key('card-background-vignette')),
+    ];
+  }
+
+  /// Where the words sit, their colour and the box behind them.
+  List<Widget> _wordsControls(BuildContext context, TextCardBackground current) => [
+        _label(context, 'Position'),
+        Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+          for (final p in TextCardTextPosition.values)
+            ChoiceChip(
+              key: Key('card-background-position-${p.name}'),
+              label: Text(p.label),
+              selected: current.textPosition == p,
+              onSelected: (_) => _edit((b) => b.copyWith(textPosition: p)),
+            ),
+        ]),
+        _label(context, 'Text colour'),
+        Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+          for (final c in TextCardTextColor.values)
+            ChoiceChip(
+              label: Text(c.label),
+              selected: current.textColor == c,
+              onSelected: (_) => _edit((b) => b.copyWith(textColor: c)),
+            ),
+        ]),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text('Box behind the words', style: context.text.bodyMedium),
+          subtitle: Text('Helps the words stand out on a busy photo.', style: context.text.bodySmall),
+          value: current.textBox,
+          onChanged: (v) => _edit((b) => b.copyWith(textBox: v)),
+        ),
+      ];
+
+  /// The one place the editor picks a colour. To use the colour wheel
+  /// (lib/widgets/color_wheel.dart) instead, change only this method.
+  Widget _colorChoice(int value, ValueChanged<int> onChanged, {required String label}) =>
+      ColorSwatchField(value: value, onChanged: onChanged, label: label);
+
   Widget _slider(BuildContext context, String title, double value, double min, double max, String shown, ValueChanged<double> onChanged, {Key? key}) =>
       Padding(
         padding: const EdgeInsets.only(top: Space.sm),
         child: Row(children: [
-          SizedBox(width: 80, child: Text(title, style: context.text.bodyMedium)),
+          SizedBox(width: 88, child: Text(title, style: context.text.bodyMedium)),
           Expanded(child: Slider(key: key, value: value.clamp(min, max), min: min, max: max, label: shown, onChanged: onChanged)),
           SizedBox(width: 48, child: Text(shown, textAlign: TextAlign.end, style: context.text.bodySmall)),
         ]),
       );
+}
+
+/// The groups of the background editor's photo controls.
+enum _Group {
+  photo('Photo'),
+  adjust('Adjust'),
+  overlay('Overlay'),
+  words('Words');
+
+  const _Group(this.label);
+  final String label;
 }

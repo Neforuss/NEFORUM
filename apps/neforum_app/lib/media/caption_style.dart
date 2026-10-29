@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../state/settings.dart' show TextCardAlignment;
+import 'caption_fonts.dart';
 import 'text_card.dart';
 
 /// Where the caption goes on a photo.
@@ -69,6 +70,7 @@ class CaptionStyle {
     this.shadow = false,
     this.lineSpacing = 1.22,
     this.padding = 30,
+    this.customFont, // 1.3: cards
   });
 
   /// Reads the JSON of [toJson]; anything missing or out of range takes the
@@ -95,6 +97,7 @@ class CaptionStyle {
       shadow: j['shadow'] == true,
       lineSpacing: number('lineSpacing', minLineSpacing, maxLineSpacing) ?? 1.22,
       padding: number('padding', 0, maxPadding) ?? 30,
+      customFont: CaptionFont.tryParse(j['customFont']), // 1.3: cards
     );
   }
 
@@ -132,6 +135,11 @@ class CaptionStyle {
   /// (above and below: 60% of it).
   final double padding;
 
+  /// 1.3: cards. A font installed on the device or imported, drawn instead of
+  /// [font] once it is loaded ([registeredCaptionFontAlias]). Where it is
+  /// missing, [font] is drawn. Null: [font].
+  final CaptionFont? customFont;
+
   /// Sets the words at a fixed size, never shrinking them to fit.
   bool get fixedSize => textScale != null;
 
@@ -153,13 +161,28 @@ class CaptionStyle {
   /// The style of the words at [fontSize] in [resolved] (the network's font
   /// when the choice is [TextCardFont.platform]), for a picture whose
   /// 1080-pixel unit is [unit].
+  ///
+  /// With a [customFont] that is loaded, the words are in that font, and what
+  /// it lacks (emoji, other scripts) in [resolved] and the
+  /// [kCaptionFontFallbacks]; until it is loaded (or where it is missing),
+  /// in [resolved] alone.
   TextStyle textStyle(TextCardFont resolved, double fontSize, {double unit = 1}) {
     final color = Color(textColor);
-    final base = resolved.style(fontSize: fontSize, height: lineSpacing, color: color);
+    final alias = registeredCaptionFontAlias(customFont);
+    final base = alias == null
+        ? resolved.style(fontSize: fontSize, height: lineSpacing, color: color)
+        : TextStyle(
+            fontFamily: alias,
+            fontFamilyFallback: [resolved.family, ...resolved.fallback, ...kCaptionFontFallbacks],
+            fontWeight: FontWeight.w400,
+            fontSize: fontSize,
+            height: lineSpacing,
+            color: color,
+          );
     final darkWords = color.computeLuminance() < 0.4;
     return base.copyWith(
       fontWeight: bold ? FontWeight.w800 : null,
-      fontVariations: bold && resolved.variations.isNotEmpty ? const [FontVariation('wght', 800)] : null,
+      fontVariations: bold && alias == null && resolved.variations.isNotEmpty ? const [FontVariation('wght', 800)] : null,
       shadows: shadow
           ? [Shadow(color: darkWords ? const Color(0xB3FFFFFF) : const Color(0xB3000000), blurRadius: 10 * unit, offset: Offset(0, 2 * unit))]
           : null,
@@ -182,6 +205,8 @@ class CaptionStyle {
     bool? shadow,
     double? lineSpacing,
     double? padding,
+    CaptionFont? customFont, // 1.3: cards
+    bool clearCustomFont = false,
   }) =>
       CaptionStyle(
         text: clearText ? null : (text ?? this.text),
@@ -197,6 +222,7 @@ class CaptionStyle {
         shadow: shadow ?? this.shadow,
         lineSpacing: lineSpacing ?? this.lineSpacing,
         padding: padding ?? this.padding,
+        customFont: clearCustomFont ? null : (customFont ?? this.customFont), // 1.3: cards
       );
 
   /// Every field, so a recorded rendering never depends on later defaults.
@@ -214,6 +240,8 @@ class CaptionStyle {
         'shadow': shadow,
         'lineSpacing': lineSpacing,
         'padding': padding,
+        // 1.3: cards. Only when set, so styles without one read as before.
+        if (customFont != null) 'customFont': customFont!.toJson(),
       };
 
   @override
@@ -231,9 +259,10 @@ class CaptionStyle {
       other.bold == bold &&
       other.shadow == shadow &&
       other.lineSpacing == lineSpacing &&
-      other.padding == padding;
+      other.padding == padding &&
+      other.customFont == customFont; // 1.3: cards
 
   @override
-  int get hashCode =>
-      Object.hash(text, placement, textScale, textColor, background, backgroundColor, opacity, alignment, font, bold, shadow, lineSpacing, padding);
+  int get hashCode => Object.hash(text, placement, textScale, textColor, background, backgroundColor, opacity, alignment, font, bold, shadow,
+      lineSpacing, padding, customFont); // 1.3: cards
 }

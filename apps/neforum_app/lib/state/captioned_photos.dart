@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
+import '../media/caption_fonts.dart';
 import '../media/caption_overlay.dart';
 import '../media/caption_style.dart';
 import '../media/render_parameters.dart';
@@ -68,6 +69,13 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
   final resolver = VariantResolver(settings.resolverOptions);
   var p = post.copyWith(media: [for (final m in post.media) if (!isCaptionedCopy(m)) m]);
   final used = <String, MediaAttachment>{};
+  // 1.3: cards. A font installed or imported for the caption is loaded once,
+  // when the first copy needs it. Where it is missing the copy is drawn in
+  // the built-in font and says so in its render parameters, so it is made
+  // again once the font is here.
+  final customFont = look.customFont;
+  Future<bool>? fontReady;
+  Future<bool> fontMissing() async => customFont != null && !await (fontReady ??= prepareCaptionFontForRender(s.storage, customFont));
 
   for (final original in post.targets) {
     final t = p.targetFor(original.accountId)!;
@@ -99,6 +107,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
         'textHash': stableHash(words),
         'frameAspect': frame,
         'video': true,
+        if (await fontMissing()) 'fontFallback': true, // 1.3: cards
       };
       final key = '$_captionKeyPrefix$platform|${first.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
       final copy = used[key] ??
@@ -119,6 +128,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
       'textHash': stableHash(words),
       'frameAspect': ?frame,
       if (frame != null) 'fit': settings.photoFit.name,
+      if (await fontMissing()) 'fontFallback': true, // 1.3: cards
     };
     final key = '$_captionKeyPrefix$platform|${source.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
     var copy = used[key] ?? pool[key];

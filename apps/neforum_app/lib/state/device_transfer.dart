@@ -54,6 +54,7 @@ const Set<String> kExportableSettings = {
   'artworkDisallowAiTraining',
   // 1.3: video
   'shrinkOversizedVideos',
+  'textCardEveryNetwork', // 1.3: cards
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {
