@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.3.1" date="2026-10-29">
+      <description>
+        <p>Sound files bring their own details: title, artist, album, year and cover from the file's tags go to every network that shows them, and every detail can be edited. A card designer for text cards and sound-video pictures, with templates, any installed font, cover art and waveforms. Every network shows its text card preview. A see-through sidebar.</p>
+      </description>
+    </release>
     <release version="1.3.0" date="2026-10-28">
       <description>
         <p>The first Linux release. Also new: sound files (MP3 or the lossless original), documents turned into threads, Stories, a time per network, smaller copies of videos that are too big, video previews, installed fonts for captions, more text card backgrounds, the colour wheel and background pictures.</p>
