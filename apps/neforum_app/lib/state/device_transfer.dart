@@ -55,6 +55,9 @@ const Set<String> kExportableSettings = {
   // 1.3: video
   'shrinkOversizedVideos',
   'textCardEveryNetwork', // 1.3: cards
+  // 1.3.1: sidebar
+  'navigationChromeOpacity',
+  'navigationChromeBlur',
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {

@@ -49,6 +49,24 @@ double validBackgroundDim(Object? dim) {
   return dim.toDouble().clamp(0, 1);
 }
 
+/// The strongest frosted-glass blur of the see-through navigation chrome
+/// (Gaussian sigma in logical pixels).
+const double kMaxNavigationChromeBlur = 24;
+
+/// A stored opacity of the see-through navigation chrome that can be used:
+/// 0 (fully see-through) to 1, 0 otherwise.
+double validNavigationChromeOpacity(Object? opacity) {
+  if (opacity is! num || !opacity.isFinite) return 0;
+  return opacity.toDouble().clamp(0, 1);
+}
+
+/// A stored blur of the see-through navigation chrome that can be used: 0 to
+/// [kMaxNavigationChromeBlur], 0 otherwise.
+double validNavigationChromeBlur(Object? blur) {
+  if (blur is! num || !blur.isFinite) return 0;
+  return blur.toDouble().clamp(0, kMaxNavigationChromeBlur);
+}
+
 /// What happens to a post once every network has it (published, handed off
 /// or skipped).
 enum PublishedPostRetention {
@@ -93,6 +111,11 @@ enum NavigationChromeStyle {
 
   /// The accent color.
   accent,
+
+  /// See-through: the background picture, or the page, shows through
+  /// (AppSettings.navigationChromeOpacity, navigationChromeBlur), with the
+  /// theme's text colors kept readable over it.
+  transparent,
 }
 
 enum InterfaceDensity { comfortable, compact }
@@ -166,6 +189,9 @@ class AppSettings {
     this.updateLatestRelease = const {},
     this.updateDismissedVersion,
     this.textCardEveryNetwork = false, // 1.3: cards
+    // 1.3.1: sidebar
+    this.navigationChromeOpacity = 0,
+    this.navigationChromeBlur = 0,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -236,6 +262,9 @@ class AppSettings {
         updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
+        // 1.3.1: sidebar
+        navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
+        navigationChromeBlur: validNavigationChromeBlur(j['navigationChromeBlur']),
       );
 
   final ThemeMode themeMode;
@@ -439,6 +468,17 @@ class AppSettings {
   /// network that takes images, not only on those that need one. Each post
   /// can change it.
   final bool textCardEveryNetwork;
+  // 1.3.1: sidebar
+
+  /// How much of the theme's surface color covers what shows through the
+  /// see-through navigation chrome ([NavigationChromeStyle.transparent]): 0
+  /// (fully see-through) to 1. NEFORUM covers more where its labels need it
+  /// to stay readable over the background picture.
+  final double navigationChromeOpacity;
+
+  /// The frosted-glass blur of the background picture under the see-through
+  /// navigation chrome: 0 (sharp) to [kMaxNavigationChromeBlur].
+  final double navigationChromeBlur;
 
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
@@ -520,6 +560,9 @@ class AppSettings {
     Map<String, dynamic>? updateLatestRelease,
     String? updateDismissedVersion,
     bool? textCardEveryNetwork, // 1.3: cards
+    // 1.3.1: sidebar
+    double? navigationChromeOpacity,
+    double? navigationChromeBlur,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -587,6 +630,9 @@ class AppSettings {
         updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
+        // 1.3.1: sidebar
+        navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
+        navigationChromeBlur: navigationChromeBlur ?? this.navigationChromeBlur,
       );
 
   Map<String, dynamic> toJson() => {
@@ -655,5 +701,8 @@ class AppSettings {
         if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
+        // 1.3.1: sidebar
+        if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,
+        if (navigationChromeBlur != 0) 'navigationChromeBlur': navigationChromeBlur,
       };
 }
