@@ -14,6 +14,14 @@ abstract final class RenderKind {
   /// A photo picked only for the background of the text cards; never posted
   /// by itself.
   static const String textCardBackground = 'textCardBackground';
+
+  /// The Standard copy of a sound file: one MP3 (or M4A) for every network
+  /// that takes sound.
+  static const String audioTranscode = 'audioTranscode';
+
+  /// A sound file as a video of one still picture, for a network that takes
+  /// only video.
+  static const String audioVideo = 'audioVideo';
 }
 
 /// The kind of generated file [m] is ([RenderKind]); null for user files and

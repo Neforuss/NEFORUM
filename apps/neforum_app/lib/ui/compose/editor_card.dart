@@ -12,6 +12,7 @@ import '../../widgets/buttons.dart';
 import '../../widgets/char_ring.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
+import 'audio_quality_option.dart';
 import 'media_tray.dart';
 import 'poll_sheet.dart';
 import 'rich_text.dart';
@@ -214,6 +215,11 @@ class _EditorCardState extends ConsumerState<EditorCard> {
           const Padding(
             padding: EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.lg, Space.sm),
             child: MediaTray(),
+          ),
+        if (c.audio != null)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.md),
+            child: AudioQualityOption(),
           ),
         Divider(height: 1, color: nf.border),
         _Toolbar(
@@ -636,7 +642,7 @@ class _Toolbar extends ConsumerWidget {
             child: Row(children: [
               ToolButton(
                 icon: Icons.add_photo_alternate_outlined,
-                tooltip: 'Add photos or videos',
+                tooltip: 'Add photos, videos or sound',
                 onPressed: onMedia,
                 size: s,
                 badge: c.media.isEmpty ? null : '${c.media.length}',

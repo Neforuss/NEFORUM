@@ -5,11 +5,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
+import '../media/audio_plan.dart';
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
 import 'artwork_targets.dart';
+import 'audio_renditions.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
@@ -50,6 +52,7 @@ class ComposerState {
     this.textCardHandle = const {},
     this.captionStyle,
     this.textCardBackground,
+    this.audioQuality = AudioQuality.standard,
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -121,7 +124,13 @@ class ComposerState {
   /// (TextCardBackground.toJson); null = a plain colour background.
   final Map<String, dynamic>? textCardBackground;
 
+  /// How the post's sound file goes out ([Post.audioQuality]).
+  final AudioQuality audioQuality;
+
   bool get isArtwork => artwork != null;
+
+  /// The user's sound file, when one is attached.
+  MediaAttachment? get audio => media.where((m) => m.isAudio && !m.generated).firstOrNull;
 
   /// Every part with words in it ([text], then [additionalParts]) joined with
   /// blank lines: what networks without threads receive.
@@ -164,6 +173,7 @@ class ComposerState {
     Map<String, bool>? textCardHandle,
     Map<String, dynamic>? captionStyle,
     Map<String, dynamic>? textCardBackground,
+    AudioQuality? audioQuality,
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -200,6 +210,7 @@ class ComposerState {
         textCardHandle: textCardHandle ?? this.textCardHandle,
         captionStyle: captionStyle ?? this.captionStyle,
         textCardBackground: clearTextCardBackground ? null : (textCardBackground ?? this.textCardBackground),
+        audioQuality: audioQuality ?? this.audioQuality,
       );
 
   /// Builds the master [Post] for this composer state.
@@ -219,6 +230,7 @@ class ComposerState {
             if (p.trim().isNotEmpty) p,
         ],
         artwork: artwork,
+        audioQuality: audioQuality,
         scheduledAt: scheduledAt,
         status: status,
         createdAt: createdAt ?? now,
@@ -292,6 +304,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setTextCardAlignment(TextCardAlignment a) => state = state.copyWith(textCardAlignment: a);
   void setTextCardHandle(String platformId, bool show) => state = state.copyWith(textCardHandle: {...state.textCardHandle, platformId: show});
   void setCaptionStyle(Map<String, dynamic> style) => state = state.copyWith(captionStyle: style);
+  void setAudioQuality(AudioQuality quality) => state = state.copyWith(audioQuality: quality);
   void setTextCardBackground(Map<String, dynamic>? background) =>
       state = background == null ? state.copyWith(clearTextCardBackground: true) : state.copyWith(textCardBackground: background);
 
@@ -428,7 +441,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// Loads an existing post into the composer (edit draft / reschedule).
   /// Generated text cards stay out of the editor; they are rebuilt on save.
   void load(Post post) {
-    final p = withoutTextCards(post);
+    final p = withoutTextCards(withoutAudioRenditions(post));
     final accounts = ref.read(accountListProvider);
     String? platformOf(String id) => accounts.where((a) => a.id == id).map((a) => a.platformId).firstOrNull;
     // A "Mention @everyone" value that matches Settings was written on save
@@ -466,6 +479,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardHandle: textCardHandleOfPost(post, platformOf),
         captionStyle: captionStyleOfPost(post),
         textCardBackground: textCardBackgroundOfPost(post),
+        audioQuality: p.audioQuality,
       );
   }
 
@@ -511,6 +525,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardHandle: state.textCardHandle,
       captionStyle: state.captionStyle,
       textCardBackground: state.textCardBackground,
+      audioQuality: state.audioQuality,
     );
   }
 }
@@ -531,6 +546,9 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   // place on image-only networks.
   final backgroundPhotoId = background != null && c.media.any((m) => m.id == background.photo.id) ? background.photo.id : null;
   final captionStyle = captionStyleFor(c.captionStyle, settings);
+  final sound = c.audio;
+  final standardFormat = sound == null ? null : standardAudioFormat(ref.watch(audioOutputFormatsProvider).value ?? const []);
+  final canRenderVideo = sound != null && (ref.watch(videoCaptionsSupportedProvider).value ?? false);
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -575,6 +593,14 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
         }
       }
     }
+    // A sound file: what this network gets is made when the post is saved
+    // (the Standard copy, or a video for video-only networks); check a
+    // stand-in for it.
+    if (sound != null && variant.media.any((m) => m.id == sound.id)) {
+      final audio = previewAudio(variant.media, sound, d, c.audioQuality, standardFormat: standardFormat, canRenderVideo: canRenderVideo);
+      variant = variant.copyWith(media: audio.media);
+      issues.addAll(audio.notes);
+    }
     final firstMedia = variant.media.firstOrNull;
     if (captionOnPhotoFor(d.id, settings, c.captionOnPhoto) && firstMedia != null && firstMedia.kind == MediaKind.image && !firstMedia.isTextCard) {
       issues.add(ValidationIssue.info(
@@ -601,6 +627,11 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     final services = ref.read(servicesProvider);
     if (!services.demo && d.media.requiresPublicMediaUrl && a.tier != PlatformTier.handoff && variant.hasMedia && services.mediaHost == null) {
       issues.add(ValidationIssue.error('media.host_missing', '${d.name} needs a public media host (Settings → Media hosting)', field: 'media'));
+    }
+    // Nostr checks its own media server (NIP-96) first.
+    if (!services.demo && d.media.audioAsLink && d.id != 'nostr' && a.tier != PlatformTier.handoff && variant.media.any((m) => m.isAudio) && services.mediaHost == null) {
+      issues.add(ValidationIssue.error(
+          'media.audio_host_missing', '${d.name} takes sound only as a link: set up a media host (Settings → Media hosting)', field: 'media'));
     }
     // An empty composer is not a problem worth shouting about on every card.
     if (c.isEmpty) issues.removeWhere((i) => i.code == 'post.empty' || i.code.endsWith('.empty') || i.code.contains('required') && i.field != 'account');
@@ -684,6 +715,7 @@ class PostActions {
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
+    post = withoutAudioRenditions(post, keepFiles: true);
     post = await attachTextCards(s, post, ref.read(settingsProvider),
         theme: c.textCardTheme,
         font: c.textCardFont,
@@ -693,6 +725,7 @@ class PostActions {
         background: c.textCardBackground ?? const {});
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
+    post = await attachAudioRenditions(s, post, ref.read(settingsProvider));
     await s.posts.upsert(post);
     return post;
   }
@@ -817,11 +850,14 @@ class PostActions {
     if (post == null) throw StateError('Post $postId not found');
     // Posts saved before text cards existed, or drafts published from a
     // list, get their cards here; every choice is read back from the post.
+    post = withoutAudioRenditions(post, keepFiles: true);
     post = await attachTextCards(s, post, ref.read(settingsProvider));
     final choices = await captionChoicesOfSavedPost(s, post);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     // A caption block above a video is made when the post is saved, never here.
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: choices, composeVideos: false);
+    // The quality is the post's own, so a missing rendition is made here.
+    post = await attachAudioRenditions(s, post, ref.read(settingsProvider));
     await s.posts.upsert(post);
     final run = ref.read(publishRunProvider.notifier);
     run.start(postId, accountIds ?? post.targets.map((t) => t.accountId));
