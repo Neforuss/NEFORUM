@@ -498,7 +498,7 @@ class _DemoBanner extends StatelessWidget {
         Expanded(
           child: Text(
             Env.isWeb
-                ? 'Web preview: a demo workspace. Nothing is posted for real. Install the app for Android, iOS, macOS or Windows to post.'
+                ? 'Web preview: a demo workspace. Nothing is posted for real. Install the app for Android, iOS, macOS, Windows or Linux to post.'
                 : 'Demo workspace: sample accounts, nothing is posted for real.',
             style: context.text.bodySmall?.copyWith(color: nf.text),
             maxLines: 2,
