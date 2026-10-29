@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../media/aligned_text.dart';
+import '../../media/caption_fonts.dart' show captionFontReadyProvider;
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/text_card.dart';
@@ -227,6 +228,7 @@ class _Visual extends ConsumerWidget {
     final original = isPhoto && first.derivedFrom != null ? composer.media.where((m) => m.id == first.derivedFrom).firstOrNull : null;
     final captionOn = isPhoto && captionOnPhotoFor(id, settings, composer.captionOnPhoto);
     final captionStyle = captionStyleFor(composer.captionStyle, settings);
+    if (captionOn) ref.watch(captionFontReadyProvider(captionStyle.customFont)); // 1.3: loads the caption's own font
     // A video on Instagram or TikTok can get the caption in a block above it
     // where this device can compose videos.
     final isVideo = card == null && first != null && first.isVideo;

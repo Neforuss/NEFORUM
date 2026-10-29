@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../media/aligned_text.dart';
+import '../../media/caption_fonts.dart';
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/photo_fitter.dart';
@@ -15,6 +16,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart' show showToast;
+import 'font_picker_sheet.dart';
 
 /// The colours a colour fill would use around the photo at a path; `.$2` =
 /// borders above and below.
@@ -42,6 +44,8 @@ class CaptionBlockFrame extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final storage = ref.read(servicesProvider).storage;
     final font = style.font.resolve(platformId);
+    // The block's height follows the font: measured again once it loads.
+    ref.watch(captionFontReadyProvider(style.customFont));
     return LayoutBuilder(builder: (context, c) {
       final size = Size(c.maxWidth, c.maxHeight);
       final aspect = size.width / size.height;
@@ -105,6 +109,8 @@ class CaptionPhotoPreview extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final storage = ref.read(servicesProvider).storage;
     final settings = ref.watch(settingsProvider);
+    // Loads the caption's own font; the painter repaints when it is ready.
+    ref.watch(captionFontReadyProvider(style.customFont));
     final frame = platformId == 'instagram' && !storyMode ? 4 / 5 : 9 / 16;
     final Widget body;
     final double aspect;
@@ -184,6 +190,12 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
     } else {
       ref.read(composerProvider.notifier).setCaptionStyle(next.toJson());
     }
+  }
+
+  /// Opens the font picker; the chosen font applies at once.
+  Future<void> _pickFont(String platformId) async {
+    final next = await showFontPickerSheet(context, style: _style, platformId: platformId);
+    if (next != null && mounted) _apply(next);
   }
 
   void _setCaptionOn(String platformId, bool on) {
@@ -349,10 +361,34 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
         for (final f in TextCardFont.values)
           ChoiceChip(
             label: Text(f == TextCardFont.original ? 'Inter' : f.label),
-            selected: _style.font == f,
-            onSelected: (_) => _apply(_style.copyWith(font: f)),
+            selected: _style.customFont == null && _style.font == f,
+            onSelected: (_) => _apply(_style.copyWith(font: f, clearCustomFont: true)),
           ),
+        // 1.3: cards. A font installed on this device or imported.
+        if (_style.customFont case final custom?)
+          ChoiceChip(
+            key: const Key('caption-custom-font'),
+            avatar: const Icon(Icons.font_download_outlined, size: 16),
+            label: Text(custom.family),
+            selected: true,
+            onSelected: (_) => _pickFont(platform),
+          ),
+        ActionChip(
+          key: const Key('caption-more-fonts'),
+          avatar: const Icon(Icons.more_horiz_rounded, size: 16),
+          label: const Text('More fonts…'),
+          onPressed: () => _pickFont(platform),
+        ),
       ]),
+      if (_style.customFont case final custom?)
+        if (ref.watch(captionFontReadyProvider(custom)) case AsyncData(value: false))
+          Padding(
+            padding: const EdgeInsets.only(top: Space.xs),
+            child: Text(
+              '${custom.family} is not on this device, so the caption uses ${_style.font == TextCardFont.original ? 'Inter' : _style.font.label} here.',
+              style: context.text.bodySmall?.copyWith(color: nf.textFaint),
+            ),
+          ),
       const SizedBox(height: Space.md),
       Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
         FilterChip(
