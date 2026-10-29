@@ -56,6 +56,7 @@ class ComposerState {
     this.audioQuality = AudioQuality.standard,
     this.textCardEveryNetwork,
     this.textCardWithText = const {},
+    this.mediaParts = const {},
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -149,6 +150,15 @@ class ComposerState {
   /// (`PostOverrides.scheduledAt`). Off, every network goes at [scheduledAt].
   bool get schedulesEachTarget => selected.any((id) => overrides[id]?.scheduledAt != null);
 
+  /// The thread part (0 = [text], 1 = the first of [additionalParts]...)
+  /// each attachment goes with, by media id; missing = the first part
+  /// ([Post.mediaParts]). Indexes count empty parts too; [toPost] closes the
+  /// gaps.
+  final Map<String, int> mediaParts;
+
+  /// The part [mediaId] goes with.
+  int partOfMedia(String mediaId) => mediaParts[mediaId] ?? 0;
+
   /// Every part with words in it ([text], then [additionalParts]) joined with
   /// blank lines: what networks without threads receive.
   String get joinedParts => [
@@ -193,6 +203,7 @@ class ComposerState {
     AudioQuality? audioQuality,
     bool? textCardEveryNetwork,
     Map<String, bool>? textCardWithText,
+    Map<String, int>? mediaParts,
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -232,7 +243,27 @@ class ComposerState {
         audioQuality: audioQuality ?? this.audioQuality,
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork,
         textCardWithText: textCardWithText ?? this.textCardWithText,
+        mediaParts: mediaParts ?? this.mediaParts,
       );
+
+  /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
+  /// an empty part's media goes with the part before it, and media on the
+  /// first part (or no longer attached) is not listed.
+  Map<String, int> get postMediaParts {
+    if (mediaParts.isEmpty) return const {};
+    // Index in the post of each composer part.
+    final remap = <int>[0];
+    var kept = 0;
+    for (final p in additionalParts) {
+      if (p.trim().isNotEmpty) kept++;
+      remap.add(kept);
+    }
+    final ids = {for (final m in media) m.id};
+    return {
+      for (final e in mediaParts.entries)
+        if (ids.contains(e.key) && e.value > 0 && remap[e.value.clamp(0, remap.length - 1)] > 0) e.key: remap[e.value.clamp(0, remap.length - 1)],
+    };
+  }
 
   /// Builds the master [Post] for this composer state. With a different time
   /// per network every target carries its time (a target added since gets
@@ -263,6 +294,7 @@ class ComposerState {
       ],
       artwork: artwork,
       audioQuality: audioQuality,
+      mediaParts: postMediaParts,
       scheduledAt: scheduledAt,
       status: status,
       createdAt: createdAt ?? now,
@@ -394,16 +426,60 @@ class ComposerNotifier extends Notifier<ComposerState> {
     final parts = [...state.additionalParts];
     final at = after == null ? parts.length : after.clamp(0, parts.length);
     parts.insert(at, '');
-    state = state.copyWith(additionalParts: parts);
+    // Media of the parts after the new one moves along with them.
+    state = state.copyWith(additionalParts: parts, mediaParts: _shiftParts(state.mediaParts, from: at + 1, by: 1));
     return at + 1;
   }
 
   /// Removes thread part [index] (1 or more; part 0 is cleared with
-  /// [clearPost]).
+  /// [clearPost]). Its media goes with the part before it.
   void removePart(int index) {
     if (index < 1 || index - 1 >= state.additionalParts.length) return;
     final parts = [...state.additionalParts]..removeAt(index - 1);
-    state = state.copyWith(additionalParts: parts);
+    final mediaParts = {
+      for (final e in state.mediaParts.entries)
+        if (e.value != index) e.key: e.value
+        else if (index - 1 > 0) e.key: index - 1,
+    };
+    state = state.copyWith(additionalParts: parts, mediaParts: _shiftParts(mediaParts, from: index + 1, by: -1));
+  }
+
+  /// [mediaParts] with every part index from [from] on moved by [by].
+  static Map<String, int> _shiftParts(Map<String, int> mediaParts, {required int from, required int by}) => {
+        for (final e in mediaParts.entries) e.key: e.value >= from ? e.value + by : e.value,
+      };
+
+  /// Puts attachment [mediaId] in thread part [part] (0 is the first).
+  void setMediaPart(String mediaId, int part) {
+    final parts = {...state.mediaParts};
+    if (part <= 0) {
+      parts.remove(mediaId);
+    } else {
+      parts[mediaId] = part.clamp(1, state.additionalParts.length);
+    }
+    state = state.copyWith(mediaParts: parts);
+  }
+
+  /// Fills the composer with a thread made elsewhere (a document): [parts]
+  /// become the thread's parts, [media] its attachments, each in the part
+  /// [mediaParts] names. Targets, schedule, artwork mode and the post being
+  /// edited stay; everything else of the post is replaced.
+  void fillThread(List<String> parts, List<MediaAttachment> media, Map<String, int> mediaParts) {
+    state = ComposerState(
+      editingPostId: state.editingPostId,
+      visibility: state.visibility,
+      selected: state.selected,
+      scheduledAt: state.scheduledAt,
+      artwork: state.artwork,
+      text: parts.isEmpty ? '' : parts.first,
+      additionalParts: parts.skip(1).toList(),
+      media: media,
+      mediaParts: {
+        for (final e in mediaParts.entries)
+          if (e.value > 0) e.key: e.value,
+      },
+      revision: state.revision + 1,
+    );
   }
 
   /// Undo of [removePart]: puts [text] back as part [index] and keeps what
@@ -412,8 +488,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// undo is void and nothing changes. Returns whether the part is back.
   bool undoRemovePart(int index, String text, {required int revision}) {
     if (index < 1 || state.revision != revision) return false;
-    final parts = [...state.additionalParts]..insert((index - 1).clamp(0, state.additionalParts.length), text);
-    state = state.copyWith(additionalParts: parts);
+    final at = (index - 1).clamp(0, state.additionalParts.length);
+    final parts = [...state.additionalParts]..insert(at, text);
+    state = state.copyWith(additionalParts: parts, mediaParts: _shiftParts(state.mediaParts, from: at + 1, by: 1));
     return true;
   }
 
@@ -474,6 +551,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void removeMedia(String mediaId) {
     state = state.copyWith(
       media: state.media.where((m) => m.id != mediaId).toList(),
+      mediaParts: {...state.mediaParts}..remove(mediaId),
       overrides: {
         for (final e in state.overrides.entries)
           e.key: e.value.mediaIds == null ? e.value : e.value.copyWith(mediaIds: e.value.mediaIds!.where((x) => x != mediaId).toList()),
@@ -556,6 +634,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         audioQuality: p.audioQuality,
         textCardEveryNetwork: textCardEveryNetworkOfPost(post),
         textCardWithText: textCardWithTextOfPost(post, platformOf),
+        mediaParts: p.mediaParts,
       );
   }
 
@@ -608,6 +687,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       audioQuality: state.audioQuality,
       textCardEveryNetwork: state.textCardEveryNetwork,
       textCardWithText: state.textCardWithText,
+      mediaParts: state.mediaParts,
     );
   }
 }

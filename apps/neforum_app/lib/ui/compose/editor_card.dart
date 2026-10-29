@@ -11,8 +11,10 @@ import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/char_ring.dart';
 import '../../widgets/layout.dart';
+import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'audio_quality_option.dart';
+import 'document_import.dart';
 import 'media_tray.dart';
 import 'poll_sheet.dart';
 import 'rich_text.dart';
@@ -224,6 +226,7 @@ class _EditorCardState extends ConsumerState<EditorCard> {
         Divider(height: 1, color: nf.border),
         _Toolbar(
           onMedia: () => pickAndAttachMedia(context, ref),
+          onDocument: () => pickDocumentForThread(context, ref),
           onLink: () => _editLink(context),
           onTags: () => _editTags(context),
           onCw: cwUseful || _showCw ? () => setState(() => _showCw = !_showCw) : null,
@@ -242,7 +245,11 @@ class _EditorCardState extends ConsumerState<EditorCard> {
       onDragExited: (_) => setState(() => _dragging = false),
       onDragDone: (d) async {
         setState(() => _dragging = false);
-        await attachDroppedFiles(context, ref, d.files);
+        // A document becomes a draft thread; photos and videos are attached.
+        final document = d.files.where((f) => isDocumentFile(f.name)).firstOrNull;
+        final media = d.files.where((f) => !isDocumentFile(f.name)).toList();
+        if (media.isNotEmpty) await attachDroppedFiles(context, ref, media);
+        if (document != null && context.mounted) await importDroppedDocument(context, ref, document);
       },
       child: Stack(children: [
         // Ctrl+V / ⌘V attaches a pasted picture or copied files; anything else
@@ -268,6 +275,8 @@ class _EditorCardState extends ConsumerState<EditorCard> {
                   Icon(Icons.file_download_outlined, size: 36, color: nf.accent),
                   const SizedBox(height: Space.sm),
                   Text('Drop to attach', style: context.text.titleLarge?.copyWith(color: nf.accent)),
+                  const SizedBox(height: Space.xs),
+                  Text('Photos and videos are attached; a document becomes a thread', style: context.text.bodySmall?.copyWith(color: nf.accent)),
                 ]),
               ),
             ),
@@ -571,6 +580,15 @@ class _PartEditor extends ConsumerWidget {
             contentPadding: EdgeInsets.zero,
           ),
         ),
+        // The attachments that go with this part (moved with the part chip
+        // on each attachment above).
+        if ([for (final m in c.media) if (c.partOfMedia(m.id) == index) m] case final own when own.isNotEmpty) ...[
+          const SizedBox(height: Space.sm),
+          Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+            for (final m in own)
+              Tooltip(message: m.altText ?? m.fileName ?? 'Attachment', child: MediaThumb(m, size: 56, showAltTag: false)),
+          ]),
+        ],
       ]),
     );
   }
@@ -605,6 +623,7 @@ class _PartEditor extends ConsumerWidget {
 class _Toolbar extends ConsumerWidget {
   const _Toolbar({
     required this.onMedia,
+    required this.onDocument,
     required this.onLink,
     required this.onTags,
     required this.onCw,
@@ -617,6 +636,7 @@ class _Toolbar extends ConsumerWidget {
   });
 
   final VoidCallback onMedia;
+  final VoidCallback onDocument;
   final VoidCallback onLink;
   final VoidCallback onTags;
   final VoidCallback? onCw;
@@ -649,6 +669,7 @@ class _Toolbar extends ConsumerWidget {
                 size: s,
                 badge: c.media.isEmpty ? null : '${c.media.length}',
               ),
+              ToolButton(icon: Icons.description_outlined, tooltip: 'Make a thread from a document (PDF, Word, EPUB, Markdown, text, web page)', onPressed: onDocument, size: s),
               ToolButton(icon: Icons.link_rounded, tooltip: 'Add a link', onPressed: onLink, active: c.link != null, size: s),
               ToolButton(icon: Icons.tag_rounded, tooltip: 'Hashtags', onPressed: onTags, active: c.tags.isNotEmpty, size: s),
               if (onCw != null) ToolButton(icon: Icons.warning_amber_rounded, tooltip: 'Content warning', onPressed: onCw, active: cwActive, size: s),

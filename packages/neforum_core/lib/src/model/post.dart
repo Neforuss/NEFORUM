@@ -266,6 +266,7 @@ class Post {
     this.additionalParts = const [],
     this.artwork,
     this.audioQuality = AudioQuality.standard,
+    this.mediaParts = const {},
   });
 
   /// Times are stored in UTC and come back in local time, so that day and
@@ -298,6 +299,10 @@ class Post {
             ? null
             : ArtworkDetails.fromJson(Map<String, dynamic>.from(json['artwork'] as Map)),
         audioQuality: AudioQuality.values.asNameMap()[json['audioQuality']] ?? AudioQuality.standard,
+        mediaParts: {
+          for (final e in (json['mediaParts'] as Map? ?? const {}).entries)
+            if (e.value is int) '${e.key}': e.value as int,
+        },
       );
 
   final String id;
@@ -338,6 +343,14 @@ class Post {
   /// How the post's sound file goes out: one MP3 for everyone, or the
   /// original lossless file where a network takes it.
   final AudioQuality audioQuality;
+  /// The thread part (index into [parts]) that carries each attachment, by
+  /// media id. Media not listed goes with the first part, so a post without
+  /// the map (every post before 1.3) keeps all its media on the first part.
+  /// A fitted or captioned copy of a photo ([MediaAttachment.derivedFrom])
+  /// goes where its original goes. Networks without threads, or without
+  /// media in every post of a thread ([MediaRules.mediaPerThreadPart]), get
+  /// all the media on their one post or on the first part, as before.
+  final Map<String, int> mediaParts;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -398,6 +411,9 @@ class Post {
 
   bool get isArtwork => artwork != null;
 
+  /// The part [media] goes with ([mediaParts]); 0 when it is not listed.
+  int partOf(MediaAttachment media) => mediaParts[media.id] ?? mediaParts[media.derivedFrom] ?? 0;
+
   PostTarget? targetFor(String accountId) {
     for (final t in targets) {
       if (t.accountId == accountId) return t;
@@ -423,6 +439,7 @@ class Post {
     List<String>? additionalParts,
     ArtworkDetails? artwork,
     AudioQuality? audioQuality,
+    Map<String, int>? mediaParts,
     bool clearScheduledAt = false,
     bool clearTitle = false,
     bool clearLink = false,
@@ -449,6 +466,7 @@ class Post {
         additionalParts: additionalParts ?? this.additionalParts,
         artwork: clearArtwork ? null : (artwork ?? this.artwork),
         audioQuality: audioQuality ?? this.audioQuality,
+        mediaParts: mediaParts ?? this.mediaParts,
       );
 
   /// Replaces the target with the same account id.
@@ -479,5 +497,6 @@ class Post {
         if (additionalParts.isNotEmpty) 'additionalParts': additionalParts,
         if (artwork != null) 'artwork': artwork!.toJson(),
         if (audioQuality != AudioQuality.standard) 'audioQuality': audioQuality.name,
+        if (mediaParts.isNotEmpty) 'mediaParts': mediaParts,
       };
 }

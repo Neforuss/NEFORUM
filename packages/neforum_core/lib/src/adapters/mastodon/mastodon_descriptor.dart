@@ -30,6 +30,7 @@ const _media = MediaRules(
   imageMimeTypes: {'image/jpeg', 'image/png', 'image/gif', 'image/webp'},
   videoMimeTypes: {'video/mp4', 'video/webm', 'video/quicktime', 'video/ogg'},
   supportsAltText: true,
+  mediaPerThreadPart: true,
   notes:
       'Up to 4 images (16 MB each) or 1 video (99 MB) on vanilla Mastodon; images and video cannot be mixed. '
       'Each server reports its own limits (GoToSocial: 6 files, 40 MB). Pixelfed requires at least one image. '
@@ -180,6 +181,9 @@ PlatformDescriptor mastodonDescriptorFor(MastodonInstanceProfile p) {
     imageMimeTypes: p.imageMimeTypes ?? _media.imageMimeTypes,
     videoMimeTypes: p.videoMimeTypes ?? (p.isPixelfed ? const <String>{} : _media.videoMimeTypes),
     supportsAltText: true,
+    // Pixelfed wants media on every post, so its threads keep the media on
+    // the first one.
+    mediaPerThreadPart: !p.isPixelfed,
     notes: _media.notes,
     // A server that lists no sound types takes the track as a video.
     maxAudios: audio.isEmpty ? 0 : _media.maxAudios,

@@ -53,9 +53,20 @@ dependencies:
   path: ^1.9.0
   uuid: ^4.6.0
 
-dev_dependencies:
-  # tool/build_extension.dart zips the browser extension.
+  # Document ingest (lib/documents/): DOCX and EPUB are ZIP packages of XML
+  # (tool/build_extension.dart also zips the browser extension with
+  # archive), web pages and EPUB chapters are read with html, Markdown is
+  # turned into HTML first, and PDF text, layout and page rendering come from
+  # PDFium (pdfrx, with pdfium_dart for the calls pdfrx does not wrap).
   archive: ^4.4.0
+  xml: ^6.6.1
+  pdfrx: ^2.10.1
+  pdfium_dart: ^0.4.0
+  ffi: ^2.2.0
+  html: ^0.15.7
+  markdown: ^7.3.1
+
+dev_dependencies:
   flutter_test:
     sdk: flutter
   integration_test:

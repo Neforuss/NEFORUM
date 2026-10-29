@@ -97,6 +97,7 @@ class XAdapter extends PlatformAdapter {
       imageMimeTypes: {'image/jpeg', 'image/png', 'image/gif', 'image/webp'},
       videoMimeTypes: {'video/mp4', 'video/quicktime'},
       supportsAltText: true,
+      mediaPerThreadPart: true,
       notes: 'Up to 4 photos (5 MB each), or 1 animated GIF (15 MB), or 1 video (MP4/MOV, up to 20 minutes and 8 GB; '
           'longer with Premium). Alt text up to 1000 characters.',
     ),
@@ -483,8 +484,7 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
     final issues = super.validate(variant, account);
-    final gifs = variant.media.where((m) => m.kind == MediaKind.gif).toList();
-    if (gifs.isNotEmpty && variant.media.length > 1) {
+    if (variant.mediaGroups.any((g) => g.length > 1 && g.any((m) => m.kind == MediaKind.gif))) {
       issues.add(const ValidationIssue.error(
           'x.gif_alone', 'An animated GIF must be the only media in an X post', field: 'media'));
     }
@@ -545,13 +545,18 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     final parts = variant.isThread ? variant.threadParts : [variant.text];
     final ids = <String>[];
     try {
-      final mediaIds = variant.hasMedia ? await api.uploadAll(variant.media) : const <String>[];
+      // Every part's media is uploaded before the first post goes up, so a
+      // refused file stops the thread before anything is public.
+      final mediaIds = [
+        for (var i = 0; i < parts.length; i++)
+          if (variant.mediaOfPart(i) case final m when m.isNotEmpty) await api.uploadAll(m) else const <String>[],
+      ];
       final replySettings = variant.extraAs<String>('replySettings');
       for (var i = 0; i < parts.length; i++) {
         if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length}');
         final id = await api.createPost(
           text: parts[i],
-          mediaIds: i == 0 ? mediaIds : const [],
+          mediaIds: mediaIds[i],
           inReplyTo: i == 0 ? null : ids.last,
           replySettings: _replySettings.contains(replySettings) ? replySettings : null,
         );

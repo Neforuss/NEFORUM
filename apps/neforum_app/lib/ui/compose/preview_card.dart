@@ -182,11 +182,11 @@ class _Microblog extends StatelessWidget {
                   if (i == 0 && v.poll != null) ...[
                     const SizedBox(height: Space.sm + 2),
                     PollPreview(poll: v.poll!, media: v.media),
-                  ] else if (i == 0 && v.media.isNotEmpty) ...[
+                  ] else if (v.mediaOfPart(i).isNotEmpty) ...[
                     const SizedBox(height: Space.sm + 2),
-                    MediaGrid(media: v.media),
+                    MediaGrid(media: v.mediaOfPart(i)),
                   ],
-                  if (i == 0 && v.media.isEmpty && v.link != null) ...[
+                  if (i == 0 && v.mediaOfPart(0).isEmpty && v.link != null) ...[
                     const SizedBox(height: Space.sm + 2),
                     _LinkCard(url: v.link!),
                   ],

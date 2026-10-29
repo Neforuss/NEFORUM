@@ -102,6 +102,7 @@ class MisskeyAdapter extends PlatformAdapter {
       imageMimeTypes: _imageTypes,
       videoMimeTypes: _videoTypes,
       supportsAltText: true,
+      mediaPerThreadPart: true,
       notes: 'Up to 16 files per note, images, videos and sound files mixed. Per-file size and Drive capacity are '
           'set by your instance (default 30 MB per file, 100 MB Drive). Alt text max 512 characters.',
       maxAudios: misskeyMaxFilesPerNote,
@@ -381,6 +382,7 @@ class MisskeyAdapter extends PlatformAdapter {
         imageMimeTypes: m.imageMimeTypes,
         videoMimeTypes: m.videoMimeTypes,
         supportsAltText: m.supportsAltText,
+        mediaPerThreadPart: m.mediaPerThreadPart,
         notes: m.notes,
         maxAudios: m.maxAudios,
         audioMaxBytes: maxBytes ?? m.audioMaxBytes,
@@ -410,9 +412,11 @@ class MisskeyAdapter extends PlatformAdapter {
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
     final issues = RulesValidator.validate(variant, descriptorFor(account), tier: account.tier);
-    if (variant.media.length > misskeyMaxFilesPerNote) {
-      issues.add(ValidationIssue.error('media.too_many',
-          '${variant.media.length} files; Misskey allows $misskeyMaxFilesPerNote per note', field: 'media'));
+    for (final group in variant.mediaGroups) {
+      if (group.length > misskeyMaxFilesPerNote) {
+        issues.add(ValidationIssue.error('media.too_many',
+            '${group.length} files; Misskey allows $misskeyMaxFilesPerNote per note', field: 'media'));
+      }
     }
     final cw = variant.contentWarning?.trim() ?? '';
     if (cw.runes.length > misskeyMaxCwLength) {
@@ -475,17 +479,21 @@ class MisskeyAdapter extends PlatformAdapter {
     }
     final api = MisskeyApi(instance, ctx, token: token);
 
-    final fileIds = <String>[];
-    for (var i = 0; i < variant.media.length; i++) {
-      fileIds.add(await _upload(api, variant.media[i], i, variant.media.length, variant.sensitive, ctx));
+    // Every part's files are uploaded before the first note goes up.
+    final parts = variant.isThread ? variant.threadParts : [variant.text];
+    final fileIds = [for (var i = 0; i < parts.length; i++) <String>[]];
+    var uploaded = 0;
+    for (var i = 0; i < parts.length; i++) {
+      for (final m in variant.mediaOfPart(i)) {
+        fileIds[i].add(await _upload(api, m, uploaded++, variant.media.length, variant.sensitive, ctx));
+      }
     }
 
-    final parts = variant.isThread ? variant.threadParts : [variant.text];
     final ids = <String>[];
     String? replyId = _str(variant.extra['replyId']);
     for (var i = 0; i < parts.length; i++) {
       ctx.progress(parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting note');
-      final body = _noteBody(variant, account, parts[i], i == 0 ? fileIds : const [], replyId);
+      final body = _noteBody(variant, account, parts[i], fileIds[i], replyId);
       try {
         final res = await guardMisskey(
             parts.length > 1 ? 'Misskey note ${i + 1}/${parts.length}' : 'Misskey note', ctx, () => api.callMap('notes/create', body));
