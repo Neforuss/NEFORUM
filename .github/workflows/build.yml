@@ -149,6 +149,13 @@ jobs:
           # reports SKIPPED, which must show on the run, not pass unnoticed.
           if ($drive -match 'SKIPPED') { Write-Output '::warning::Video tools test skipped: this runner has no Media Foundation encoders' }
           if ($code -ne 0) { exit $code }
+      - name: 1.3 release probe (profile build)
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
+          Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+          flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/release_probe_test.dart
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows
         working-directory: apps/neforum_app
         shell: pwsh
