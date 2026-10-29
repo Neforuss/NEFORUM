@@ -10,6 +10,8 @@ import '../../media/aligned_text.dart';
 import '../../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider, prepareCaptionFont;
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
+import '../../media/card_design.dart';
+import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../media/text_card_background.dart';
 import '../../platform/file_export.dart';
@@ -30,6 +32,8 @@ import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'caption_editor_sheet.dart';
 import 'card_background_sheet.dart';
+import 'card_design_view.dart';
+import 'card_designer_sheet.dart';
 import 'font_picker_sheet.dart';
 import 'rich_text.dart';
 
@@ -423,6 +427,10 @@ class _TextCardPreview extends ConsumerWidget {
     final size = textCardSizeOf(placeholder, id);
     final aspect = size.width / size.height;
     final background = textCardParametersOf(placeholder)?['background'] != null ? TextCardBackground.tryParse(composer.textCardBackground) : null;
+    final safe = textCardSafeOf(placeholder) ? fullScreenSafeArea(id) : EdgeInsets.zero;
+    // 1.3.1: cards. A card from the card designer is drawn by the renderer
+    // of the saved card, at this network's size.
+    final design = textCardDesignOf(placeholder);
     return LayoutBuilder(builder: (context, c) {
       // Portrait cards at phone width; square and wider ones fill the column
       // up to a comfortable size.
@@ -437,18 +445,31 @@ class _TextCardPreview extends ConsumerWidget {
               child: DecoratedBox(
                 position: DecorationPosition.foreground,
                 decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
-                child: TextCardView(
-                  text: text,
-                  theme: theme,
-                  font: font.resolve(id),
-                  aspect: aspect,
-                  byline: showsHandle ? byline : null,
-                  branded: branded,
-                  safe: textCardSafeOf(placeholder) ? fullScreenSafeArea(id) : EdgeInsets.zero,
-                  alignment: alignment,
-                  backdrop: previewBackdrop(ref, background),
-                  customFont: customFont,
-                ),
+                child: design != null
+                    ? CardDesignView(
+                        request: CardPreviewRequest.text(
+                          design: design,
+                          platformId: id,
+                          size: size,
+                          safe: safe,
+                          text: text,
+                          byline: showsHandle ? byline : null,
+                          signed: branded,
+                          background: background,
+                        ),
+                      )
+                    : TextCardView(
+                        text: text,
+                        theme: theme,
+                        font: font.resolve(id),
+                        aspect: aspect,
+                        byline: showsHandle ? byline : null,
+                        branded: branded,
+                        safe: safe,
+                        alignment: alignment,
+                        backdrop: previewBackdrop(ref, background),
+                        customFont: customFont,
+                      ),
               ),
             ),
           ),
@@ -468,6 +489,7 @@ class _TextCardPreview extends ConsumerWidget {
             showsHandle: showsHandle,
             background: background,
             withText: composer.textCardWithText[id] ?? true,
+            design: design,
           ),
         ),
       ]);
@@ -670,6 +692,7 @@ class _CardStylePicker extends ConsumerStatefulWidget {
     required this.showsHandle,
     required this.background,
     required this.withText,
+    this.design,
   });
   final TextCardTheme current;
   final TextCardFont font;
@@ -686,6 +709,10 @@ class _CardStylePicker extends ConsumerStatefulWidget {
 
   /// The post's text goes along with the card on this network.
   final bool withText;
+
+  /// 1.3.1: cards. The card designer's design the card is drawn from; null
+  /// for the classic card.
+  final CardDesign? design;
 
   @override
   ConsumerState<_CardStylePicker> createState() => _CardStylePickerState();
@@ -706,7 +733,19 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
       }
       final customFont = widget.customFont;
       if (customFont != null) await prepareCaptionFont(ref.read(servicesProvider).storage, customFont);
-      final bytes = await renderTextCardJpeg(
+      final design = widget.design;
+      final bytes = design != null
+          ? await CardPreviewRequest.text(
+              design: design,
+              platformId: widget.platform.id,
+              size: textCardSize(widget.platform.id),
+              safe: textCardSafeArea(widget.platform.id),
+              text: widget.text,
+              byline: widget.showsHandle ? widget.byline : null,
+              signed: widget.branded,
+              background: background,
+            ).render(ref.read(servicesProvider).storage)
+          : await renderTextCardJpeg(
         text: widget.text,
         theme: widget.current,
         size: textCardSize(widget.platform.id),
@@ -802,11 +841,22 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
 
     final id = widget.platform.id;
     final background = widget.background;
+    final designed = widget.design != null;
     return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
-      if (background == null) for (final t in TextCardTheme.values) themeOption(t),
-      for (final f in TextCardFont.values) fontOption(f),
-      // 1.3.1: cards. Any installed or imported font, from the caption's picker.
+      // 1.3.1: cards. Every layer, font and colour of the card, in the designer.
       pill(
+        key: const Key('text-card-design'),
+        selected: designed,
+        label: designed ? 'Design: ${cardTemplateLabel(widget.design!)}' : 'Design card…',
+        tooltip: 'Templates, backgrounds, gradients, patterns, a framed photo and every text block, with any font',
+        leading: Icon(Icons.palette_outlined, size: 14, color: designed ? nf.accent : nf.textFaint),
+        onTap: () => showCardDesignerSheet(context, kind: CardKind.text),
+      ),
+      // The classic card's own choices; a design sets all of them itself.
+      if (!designed && background == null) for (final t in TextCardTheme.values) themeOption(t),
+      if (!designed) for (final f in TextCardFont.values) fontOption(f),
+      // 1.3.1: cards. Any installed or imported font, from the caption's picker.
+      if (!designed) pill(
         key: const Key('text-card-font-more'),
         selected: widget.customFont != null,
         label: widget.customFont?.family ?? 'More fonts…',
@@ -828,7 +878,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           }
         },
       ),
-      PopupMenuButton<TextCardAlignment>(
+      if (!designed) PopupMenuButton<TextCardAlignment>(
         tooltip: 'Alignment: ${widget.alignment.label}',
         initialValue: widget.alignment,
         position: PopupMenuPosition.under,

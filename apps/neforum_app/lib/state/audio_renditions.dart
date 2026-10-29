@@ -1,16 +1,19 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart' show EdgeInsets, Size;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
 import '../media/audio_card.dart';
 import '../media/audio_plan.dart';
+import '../media/card_design.dart';
 import '../media/render_parameters.dart';
-import '../media/text_card.dart' show textCardText;
+import '../media/text_card.dart' show fullScreenSafeArea, textCardText;
 import '../platform/media_files.dart';
 import '../platform/video_compositor.dart';
+import 'card_designs.dart';
 import 'services.dart';
 import 'settings.dart';
 
@@ -114,6 +117,9 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
   final standardMime = standardAudioMimeType(format) ?? _pooledStandardMime(pool.values);
   final byId = {for (final m in p.media) m.id: m};
   final userIds = [for (final m in p.media) if (!m.generated) m.id];
+  // 1.3.1: cards. The card designer's design of the video's picture, read
+  // once, before the loop (the 1.2.1 AOT crash).
+  final design = effectiveCardDesign(audioCardDesignChoiceOfPost(post), settings.audioCardDesign);
 
   for (final original in post.targets) {
     final t = p.targetFor(original.accountId)!;
@@ -144,7 +150,7 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
           made = await _standardCopy(s, source, format, pool, used, render: canRender);
         } else if (route == AudioRoute.video) {
           final picture = _pictureFor(list, byId);
-          made = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender);
+          made = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender, design: design);
           if (made != null && picture != null) consumed.add(picture.$1);
         }
         if (made == null) {
@@ -257,18 +263,30 @@ Future<MediaAttachment?> _standardCopy(AppServices s, MediaAttachment source, St
 
 Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, MediaAttachment source, (String, MediaAttachment)? picture,
     String platformId, Map<String, MediaAttachment> pool, Map<String, MediaAttachment> used,
-    {required bool render}) async {
+    {required bool render, CardDesign? design}) async {
   final (width, height) = audioVideoFrame(platformId);
   final photo = picture?.$2;
   final title = audioTrackTitle(source, postTitle: post.title);
   final words = _firstWords(textCardText(post, target), title);
   final ms = source.durationMs;
   final details = [audioFormatLabel(source), if (ms != null) formatAudioDuration(ms)].join(' · ');
+  // 1.3.1: cards. A designed card is drawn from the track's tags (the user's
+  // edits over the file's own) and shows its cover art, else the photo.
+  final tags = (source.audioTags ?? AudioTags.none).overriddenBy(post.audioDetails);
+  final coverPath = tags.coverPath;
+  final texts = design == null ? null : audioCardTexts(tags, fallbackTitle: title);
   final params = <String, dynamic>{
     'kind': RenderKind.audioVideo,
     'width': width,
     'height': height,
-    if (photo != null) 'picture': photo.id else 'card': stableHash('$title|$words|$details'),
+    if (design != null && texts != null) ...{
+      'design': design.toJson(),
+      'card': stableHash(jsonEncode({for (final e in texts.entries) e.key.name: e.value})),
+      'cover': ?(coverPath ?? photo?.id),
+    } else if (photo != null)
+      'picture': photo.id
+    else
+      'card': stableHash('$title|$words|$details'),
   };
   final key = 'audio|${source.id}|${stableHash(jsonEncode(params))}';
   final reused = used[key] ?? pool[key];
@@ -279,8 +297,22 @@ Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, Med
   if (out == null) return null;
   final made = MediaAttachment(id: id, path: out, mimeType: 'video/mp4', sizeBytes: 0);
   try {
-    final png = (photo == null ? null : await coverPhotoPng(await s.media.read(photo), width: width, height: height)) ??
-        await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details);
+    final Uint8List png;
+    if (design != null && texts != null) {
+      final cover = (coverPath == null ? null : await decodeCardPicture(s.storage, coverPath)) ??
+          (photo == null ? null : await decodeCardPicture(s.storage, photo.path));
+      png = await renderDesignedAudioCard(s.storage,
+          design: design,
+          platformId: platformId,
+          size: Size(width.toDouble(), height.toDouble()),
+          safe: width / height < 0.62 ? fullScreenSafeArea(platformId) : EdgeInsets.zero,
+          texts: texts,
+          cover: cover,
+          waveform: design.waveform.visible ? await waveformOfSound(s.storage, source) : null);
+    } else {
+      png = (photo == null ? null : await coverPhotoPng(await s.media.read(photo), width: width, height: height)) ??
+          await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details);
+    }
     await VideoCompositor.instance.renderAudioVideo(audioPath: source.path, outputPath: out, imagePng: png, frameWidth: width, frameHeight: height);
     return used[key] = MediaAttachment(
       id: id,

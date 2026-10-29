@@ -7,12 +7,14 @@ import 'package:uuid/uuid.dart';
 
 import '../media/audio_plan.dart';
 import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
+import '../media/card_design.dart';
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
+import 'card_designs.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
@@ -59,6 +61,8 @@ class ComposerState {
     this.textCardWithText = const {},
     this.mediaParts = const {},
     this.textCardCustomFont, // 1.3.1: cards
+    this.textCardDesign, // 1.3.1: cards
+    this.audioCardDesign, // 1.3.1: cards
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -170,6 +174,21 @@ class ComposerState {
   CaptionFont? cardCustomFont(AppSettings settings) =>
       textCardCustomFont == null ? settings.textCardCustomFontChoice : CaptionFont.tryParse(textCardCustomFont);
 
+  /// 1.3.1: cards. The card designer's design of this post's text cards
+  /// (CardDesign.toJson); an empty map for the classic card, null = the
+  /// Settings default.
+  final Map<String, dynamic>? textCardDesign;
+
+  /// 1.3.1: cards. The design of the picture in this post's sound file video,
+  /// like [textCardDesign].
+  final Map<String, dynamic>? audioCardDesign;
+
+  /// [textCardDesign], or the Settings default; null for the classic card.
+  CardDesign? textDesign(AppSettings settings) => effectiveCardDesign(textCardDesign, settings.textCardDesign);
+
+  /// [audioCardDesign], or the Settings default; null for the classic card.
+  CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
+
   /// Every part with words in it ([text], then [additionalParts]) joined with
   /// blank lines: what networks without threads receive.
   String get joinedParts => [
@@ -216,6 +235,8 @@ class ComposerState {
     Map<String, bool>? textCardWithText,
     Map<String, int>? mediaParts,
     Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
+    Map<String, dynamic>? textCardDesign, // 1.3.1: cards
+    Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -257,6 +278,8 @@ class ComposerState {
         textCardWithText: textCardWithText ?? this.textCardWithText,
         mediaParts: mediaParts ?? this.mediaParts,
         textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
+        textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
+        audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -408,6 +431,12 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// 1.3.1: cards. An installed or imported font for the card's words; null
   /// for the built-in [ComposerState.textCardFont].
   void setTextCardCustomFont(CaptionFont? font) => state = state.copyWith(textCardCustomFont: font?.toJson() ?? const {});
+
+  /// 1.3.1: cards. This post's text card design; null for the classic card.
+  void setTextCardDesign(CardDesign? design) => state = state.copyWith(textCardDesign: design?.toJson() ?? const {});
+
+  /// 1.3.1: cards. This post's audio card design; null for the classic card.
+  void setAudioCardDesign(CardDesign? design) => state = state.copyWith(audioCardDesign: design?.toJson() ?? const {});
   void setTextCardBranded(String platformId, bool branded) =>
       state = state.copyWith(textCardBranded: {...state.textCardBranded, platformId: branded});
   void setCaptionOnPhoto(String platformId, bool on) => state = state.copyWith(captionOnPhoto: {...state.captionOnPhoto, platformId: on});
@@ -662,6 +691,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardWithText: textCardWithTextOfPost(post, platformOf),
         mediaParts: p.mediaParts,
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
+        textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
+        audioCardDesign: audioCardDesignChoiceOfPost(post), // 1.3.1: cards
       );
   }
 
@@ -716,6 +747,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardWithText: state.textCardWithText,
       mediaParts: state.mediaParts,
       textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
+      textCardDesign: state.textCardDesign, // 1.3.1: cards
+      audioCardDesign: state.audioCardDesign, // 1.3.1: cards
     );
   }
 }
@@ -746,6 +779,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   // 1.3.1: cards. Watching the card's own font starts loading it; read once,
   // before the loop (the 1.2.1 AOT crash).
   final cardFont = c.cardCustomFont(settings);
+  final cardDesign = c.textDesign(settings);
   final cardFontMissing = settings.textCards && cardFont != null && ref.watch(captionFontReadyProvider(cardFont)).value == false;
   final out = <TargetPreview>[];
   for (final a in accounts) {
@@ -777,6 +811,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             background: background,
             story: story,
             customFont: cardFont,
+            design: cardDesign,
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
@@ -995,6 +1030,8 @@ class PostActions {
         everyNetwork: c.cardOnEveryNetwork(ref.read(settingsProvider)),
         withText: c.textCardWithText,
         platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
+    // 1.3.1: cards. After the card choices, which replace the targets' extras.
+    post = withCardDesigns(post, text: c.textCardDesign, audio: c.audioCardDesign);
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
@@ -1006,7 +1043,8 @@ class PostActions {
         alignment: c.textCardAlignment,
         handle: c.textCardHandle,
         background: c.textCardBackground ?? const {},
-        customFont: c.textCardCustomFont);
+        customFont: c.textCardCustomFont,
+        design: c.textCardDesign);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
     post = await attachAudioRenditions(s, post, ref.read(settingsProvider));

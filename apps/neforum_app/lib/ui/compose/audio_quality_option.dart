@@ -3,10 +3,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../media/audio_plan.dart';
+import '../../media/card_design.dart' show CardKind;
 import '../../state/audio_renditions.dart';
 import '../../state/composer.dart';
 import '../../theme/tokens.dart';
 import '../accounts/guide_sheet.dart';
+import 'card_designer_sheet.dart';
 
 /// "Audio quality" for a post with a sound file: Standard (one MP3 for every
 /// network) or Lossless (the original file where a network takes it).
@@ -50,6 +52,13 @@ class AudioQualityOption extends ConsumerWidget {
           onSelectionChanged: (s) => ref.read(composerProvider.notifier).setAudioQuality(s.single),
         ),
         TextButton(onPressed: () => showGuideSheet(context, 'audio', asset: 'audio.md'), child: const Text('How it works')),
+        // 1.3.1: cards. The picture of the video for networks that take only video.
+        TextButton.icon(
+          key: const Key('audio-card-design'),
+          onPressed: () => showCardDesignerSheet(context, kind: CardKind.audio),
+          icon: const Icon(Icons.palette_outlined, size: 16),
+          label: const Text('Design the video picture…'),
+        ),
       ]),
       const SizedBox(height: Space.xs),
       Text(audioQualityExplanation(sound, quality, formats), style: context.text.bodySmall?.copyWith(color: nf.textMuted)),

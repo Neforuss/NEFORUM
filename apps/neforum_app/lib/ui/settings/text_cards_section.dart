@@ -6,16 +6,24 @@ import '../../brand/platform_brand.dart';
 import '../../media/aligned_text.dart';
 import '../../media/caption_fonts.dart';
 import '../../media/caption_style.dart';
+import '../../media/card_design.dart';
+import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
 import '../compose/caption_editor_sheet.dart';
+import '../compose/card_designer_sheet.dart';
 import '../compose/font_picker_sheet.dart';
 import 'setting_row.dart';
 
 class TextCardSettingsSection extends ConsumerWidget {
   const TextCardSettingsSection({super.key});
+
+  static String _designLabel(Map<String, dynamic> json) {
+    final d = CardDesign.tryParse(json);
+    return d == null ? 'the classic card' : cardTemplateLabel(d);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -158,6 +166,30 @@ class TextCardSettingsSection extends ConsumerWidget {
                               on ? x.textCardHandleHiddenPlatforms.where((p) => p != id).toList() : {...x.textCardHandleHiddenPlatforms, id}.toList(),
                         )),
               ),
+          ]),
+        ),
+        // 1.3.1: cards. The card designer's defaults, for text cards and for the
+        // picture of a sound file's video.
+        SettingRow(
+          title: 'Card designer',
+          description: 'Templates, gradients, patterns, grain, a framed photo or cover art, the waveform of a sound, and every text block '
+              'in any font. Text cards: ${_designLabel(s.textCardDesign)}. Sound videos: ${_designLabel(s.audioCardDesign)}. '
+              'Each post can change it under its preview.',
+          enabled: s.textCards,
+          stackOnCompact: true,
+          below: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+            OutlinedButton.icon(
+              key: const Key('text-card-design-setting'),
+              onPressed: !s.textCards ? null : () => showCardDesignerSheet(context, kind: CardKind.text, scope: CardDesignerScope.defaults),
+              icon: const Icon(Icons.palette_outlined, size: 18),
+              label: const Text('Design text cards…'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('audio-card-design-setting'),
+              onPressed: () => showCardDesignerSheet(context, kind: CardKind.audio, scope: CardDesignerScope.defaults),
+              icon: const Icon(Icons.album_outlined, size: 18),
+              label: const Text('Design sound video pictures…'),
+            ),
           ]),
         ),
         SettingRow(
