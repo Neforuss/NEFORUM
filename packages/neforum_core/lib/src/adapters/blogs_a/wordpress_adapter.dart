@@ -1,3 +1,4 @@
+import '../../audio/audio_text_template.dart';
 import '../../auth/auth_broker.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
@@ -444,7 +445,8 @@ class WordPressAdapter extends PlatformAdapter {
 
     final html = [
       bodyHtml(variant),
-      for (final u in embedded) u.$1.isAudio ? wordPressAudioBlock(u.$2, u.$3) : mediaFigureHtml(u.$1, u.$3),
+      for (final u in embedded)
+        u.$1.isAudio ? wordPressAudioBlock(u.$2, u.$3, caption: wordPressAudioDetails(u.$1)['caption'] as String?) : mediaFigureHtml(u.$1, u.$3),
     ].where((s) => s.isNotEmpty).join('\n\n');
     final status = _status(variant, account);
     final excerpt = blogStr(variant.extra['excerpt']);
@@ -541,6 +543,13 @@ class WordPressAdapter extends PlatformAdapter {
       ctx.progress('Adding alt text to $label ${index + 1}');
       await guardWordPress('WordPress alt text ${index + 1}/$total',
           () => api.postJson('wp/v2/media/$mediaId', {'alt_text': alt}));
+    }
+    // A sound file's track details name it in the media library and under
+    // its player.
+    final details = wordPressAudioDetails(m);
+    if (details.isNotEmpty) {
+      ctx.progress('Adding the track details to $label ${index + 1}');
+      await guardWordPress('WordPress track details ${index + 1}/$total', () => api.postJson('wp/v2/media/$mediaId', details));
     }
     return (m, mediaId, src);
   }
@@ -665,6 +674,23 @@ class WordPressAdapter extends PlatformAdapter {
 
 /// The block editor's audio block for an uploaded sound file (media id
 /// [mediaId] at [url]), so the post opens in the editor as an audio block.
-String wordPressAudioBlock(int mediaId, String url) => '<!-- wp:audio {"id":$mediaId} -->\n'
-    '<figure class="wp-block-audio"><audio controls src="${escapeHtml(url)}"></audio></figure>\n'
+/// [caption] goes under the player, as the block editor writes it.
+String wordPressAudioBlock(int mediaId, String url, {String? caption}) => '<!-- wp:audio {"id":$mediaId} -->\n'
+    '<figure class="wp-block-audio"><audio controls src="${escapeHtml(url)}"></audio>'
+    '${caption == null || caption.isEmpty ? '' : '<figcaption class="wp-element-caption">${escapeHtml(caption)}</figcaption>'}</figure>\n'
     '<!-- /wp:audio -->';
+
+/// The media library fields (`wp/v2/media/<id>`) for a sound file's track
+/// details: the title as the attachment's `title`, and "Artist – Title
+/// (Album, 2024)" as its `caption` and `description`. Empty without details.
+Map<String, Object?> wordPressAudioDetails(MediaAttachment m) {
+  final t = m.isAudio ? m.audioTags : null;
+  if (t == null) return const {};
+  final caption = renderAudioText(kDefaultAudioTextTemplate, t);
+  final title = t.title?.trim().isNotEmpty == true ? t.title!.trim() : caption;
+  return {
+    if (title.isNotEmpty) 'title': title,
+    if (caption.isNotEmpty) 'caption': caption,
+    if (caption.isNotEmpty) 'description': caption,
+  };
+}

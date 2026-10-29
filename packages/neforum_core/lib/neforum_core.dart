@@ -9,6 +9,7 @@ export 'src/adapters/adapter_registry.dart';
 export 'src/adapters/builtin_adapters.dart';
 export 'src/adapters/connect_spec.dart';
 export 'src/adapters/platform_adapter.dart';
+export 'src/audio/audio_publishing.dart';
 export 'src/audio/audio_tag_reader.dart';
 export 'src/audio/audio_tag_writer.dart';
 export 'src/audio/audio_text_template.dart';

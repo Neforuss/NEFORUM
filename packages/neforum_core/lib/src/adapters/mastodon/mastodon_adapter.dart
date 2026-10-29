@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
+import '../../audio/audio_publishing.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
@@ -594,7 +595,19 @@ class MastodonAdapter extends PlatformAdapter {
       final m = media[i];
       ctx.progress('Uploading ${m.noun} ${i + 1} of ${media.length}');
       final bytes = await _read(m, ctx);
-      ids.add(await api.uploadMedia(m, bytes, descriptionLimit: p.descriptionLimit));
+      // A sound file: "Artist – Title" when it has no alt text of its own,
+      // and its cover as the picture the player shows.
+      final caption = m.isAudio && (m.altText ?? '').trim().isEmpty ? m.audioCaption : null;
+      final cover = m.isAudio ? m.audioCover : null;
+      HttpFilePart? thumbnail;
+      if (cover != null) {
+        try {
+          thumbnail = HttpFilePart(field: 'thumbnail', bytes: await ctx.readMedia(cover), fileName: cover.fileName!, contentType: cover.mimeType);
+        } on Exception catch (e) {
+          ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
+        }
+      }
+      ids.add(await api.uploadMedia(m, bytes, descriptionLimit: p.descriptionLimit, description: caption, thumbnail: thumbnail));
     }
     return ids;
   }

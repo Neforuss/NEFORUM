@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import '../../audio/audio_publishing.dart';
 import '../../auth/auth_broker.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
@@ -521,10 +522,13 @@ class MisskeyAdapter extends PlatformAdapter {
   Future<String> _upload(MisskeyApi api, MediaAttachment m, int index, int total, bool sensitive, AdapterContext ctx) async {
     ctx.progress('Uploading ${m.noun} ${index + 1} of $total');
     final bytes = await ctx.readMedia(m);
-    final alt = _clip(m.altText?.trim(), misskeyMaxAltLength);
+    // A sound file: "Artist - Title.mp3" in the Drive and "Artist – Title" as
+    // its caption unless it has one of its own.
+    final own = m.altText?.trim() ?? '';
+    final alt = _clip(own.isEmpty && m.isAudio ? m.audioCaption : own, misskeyMaxAltLength);
     final res = await guardMisskey('Misskey upload ${index + 1}/$total', ctx, () => api.uploadDriveFile(
           bytes: bytes,
-          fileName: m.fileName ?? '${m.id}.${_ext(m.mimeType)}',
+          fileName: m.audioTaggedFileName ?? m.fileName ?? '${m.id}.${_ext(m.mimeType)}',
           contentType: m.mimeType,
           comment: alt,
           isSensitive: sensitive,

@@ -197,8 +197,12 @@ class MastodonApi {
   /// Uploads one file with `POST /api/v2/media` (falling back to the old
   /// synchronous `/api/v1/media` on servers without v2) and waits until the
   /// server has processed it. Returns the attachment id.
-  Future<String> uploadMedia(MediaAttachment media, Uint8List bytes, {int? descriptionLimit}) async {
-    final alt = _truncate(media.altText?.trim() ?? '', descriptionLimit);
+  ///
+  /// [description] replaces the file's alt text (a sound file's "Artist –
+  /// Title"); [thumbnail] is the picture shown for a sound file or video
+  /// (Mastodon 3.2 and later).
+  Future<String> uploadMedia(MediaAttachment media, Uint8List bytes, {int? descriptionLimit, String? description, HttpFilePart? thumbnail}) async {
+    final alt = _truncate((description ?? media.altText)?.trim() ?? '', descriptionLimit);
     final fields = <String, String>{if (alt.isNotEmpty) 'description': alt};
     final file = HttpFilePart(
       field: 'file',
@@ -209,7 +213,7 @@ class MastodonApi {
     var res = await ctx.http.multipart(
       url('/api/v2/media'),
       fields: fields,
-      files: [file],
+      files: [file, ?thumbnail],
       headers: _auth,
       throwOnError: false,
     );
@@ -217,7 +221,7 @@ class MastodonApi {
       res = await ctx.http.multipart(
         url('/api/v1/media'),
         fields: fields,
-        files: [file],
+        files: [file, ?thumbnail],
         headers: _auth,
         throwOnError: false,
       );

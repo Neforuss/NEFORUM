@@ -1,3 +1,6 @@
+import 'dart:typed_data';
+
+import '../../audio/audio_publishing.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
@@ -34,8 +37,11 @@ const int telegramFileMaxBytes = 50 * 1024 * 1024;
 bool telegramPlaysAudio(MediaAttachment m) =>
     !m.isLosslessAudio && (m.mimeType == AudioMimeTypes.mp3 || m.mimeType == AudioMimeTypes.m4a);
 
-/// The track title `sendAudio` shows: the file name without its extension.
+/// The track title `sendAudio` shows: the title from the track's details,
+/// else the file name without its extension.
 String telegramTrackTitle(MediaAttachment m) {
+  final tagged = m.audioTags?.title?.trim() ?? '';
+  if (tagged.isNotEmpty) return tagged;
   final name = chatFileName(m);
   final dot = name.lastIndexOf('.');
   return dot > 0 ? name.substring(0, dot) : name;
@@ -446,6 +452,8 @@ class TelegramAdapter extends PlatformAdapter {
     };
     ctx.progress('Uploading ${m.noun} 1 of 1');
     final bytes = await ctx.readMedia(m);
+    final thumbnail = m.isAudio ? await _audioThumbnail(m, ctx) : null;
+    final performer = m.audioTags?.artist?.trim() ?? '';
     final res = await api.multipart(method, {
       'chat_id': chat,
       ..._captionFields(caption, markdown),
@@ -456,12 +464,29 @@ class TelegramAdapter extends PlatformAdapter {
       if (m.kind != MediaKind.image && m.height != null) 'height': '${m.height}',
       if (m.kind != MediaKind.image && !document && m.durationMs != null) 'duration': '${(m.durationMs! / 1000).round()}',
       if (m.isAudio && !document) 'title': telegramTrackTitle(m),
+      if (m.isAudio && !document && performer.isNotEmpty) 'performer': performer,
+      // The cover, uploaded alongside under its own name.
+      if (thumbnail != null) 'thumbnail': 'attach://cover',
       // A lossless file stays a file: Telegram must not treat it as anything else.
       if (document) 'disable_content_type_detection': 'true',
     }, [
-      HttpFilePart(field: field, bytes: bytes, fileName: chatFileName(m), contentType: m.mimeType),
+      HttpFilePart(field: field, bytes: bytes, fileName: m.isAudio ? m.audioTaggedFileName ?? chatFileName(m) : chatFileName(m), contentType: m.mimeType),
+      if (thumbnail != null) HttpFilePart(field: 'cover', bytes: thumbnail, fileName: 'cover.jpg', contentType: 'image/jpeg'),
     ]);
     return _messageId(res);
+  }
+
+  /// The track's cover as Telegram's thumbnail (a JPEG under 200 kB, at most
+  /// 320 px on each side); null without a cover or when it cannot be read.
+  Future<Uint8List?> _audioThumbnail(MediaAttachment m, AdapterContext ctx) async {
+    final cover = m.audioCover;
+    if (cover == null) return null;
+    try {
+      return await audioThumbnailJpeg(await ctx.readMedia(cover));
+    } on Exception catch (e) {
+      ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
+      return null;
+    }
   }
 
   Future<String> _sendAlbum(

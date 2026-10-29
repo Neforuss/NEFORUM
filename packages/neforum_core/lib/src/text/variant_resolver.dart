@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import '../audio/audio_publishing.dart';
 import '../model/account.dart';
 import '../model/media.dart';
 import '../model/platform_descriptor.dart';
@@ -73,9 +74,11 @@ class VariantResolver {
 
     // ---- media ---------------------------------------------------------
     // Generated media (text cards) only goes where a target asks for it.
-    final chosen = o.mediaIds == null
+    // Sound files (and the copies made from them) carry the tags they go out
+    // with: the file's own under the user's edits.
+    final chosen = post.withEffectiveAudioTags(o.mediaIds == null
         ? post.media.where((m) => !m.generated).toList()
-        : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)];
+        : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)]);
     // The story's own copies (Post + Story), checked by the adapter.
     final storyIds = o.storyMediaIds;
     final storyMedia = storyIds == null ? const <MediaAttachment>[] : [for (final id in storyIds) ...post.media.where((m) => m.id == id)];

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../../audio/audio_publishing.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/audio.dart';
@@ -390,9 +391,12 @@ class DiscordAdapter extends PlatformAdapter {
       for (var i = 0; i < media.length; i++) {
         final m = media[i];
         ctx.progress('Reading ${m.noun} ${i + 1} of ${media.length}');
-        final name = spoiler ? 'SPOILER_${chatFileName(m)}' : chatFileName(m);
+        // Discord's player shows the file name: "Artist - Title.mp3".
+        final file = m.audioTaggedFileName ?? chatFileName(m);
+        final name = spoiler ? 'SPOILER_$file' : file;
         files.add(HttpFilePart(field: 'files[$i]', bytes: await ctx.readMedia(m), fileName: name, contentType: m.mimeType));
-        final alt = m.altText?.trim() ?? '';
+        final own = m.altText?.trim() ?? '';
+        final alt = own.isEmpty && m.isAudio ? m.audioCaption ?? '' : own;
         attachments.add({
           'id': i,
           'filename': name,

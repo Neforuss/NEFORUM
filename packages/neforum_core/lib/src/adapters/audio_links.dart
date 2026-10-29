@@ -1,7 +1,10 @@
 import 'dart:typed_data';
 
+import '../audio/audio_publishing.dart';
+import '../audio/audio_text_template.dart';
 import '../media_hosts/media_host.dart';
 import '../model/audio.dart';
+import '../model/audio_tags.dart';
 import '../model/media.dart';
 import '../model/post_variant.dart';
 import '../model/publish_result.dart';
@@ -17,8 +20,13 @@ import 'platform_adapter.dart';
 /// file.
 ///
 /// Throws [AdapterException] when there is no media host or the upload fails.
+///
+/// With [linkCard] (Tumblr), a single sound file in a post without a link of
+/// its own becomes the post's link instead, titled with its track details
+/// (`linkTitle` and `linkDescription` in [PostVariant.extra], unless the
+/// user set them), so the network shows a card rather than a bare address.
 Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
-    {required String platform, bool markdown = false}) async {
+    {required String platform, bool markdown = false, bool linkCard = false}) async {
   final sound = [for (final m in variant.media) if (m.isAudio) m];
   if (sound.isEmpty) return variant;
   final host = ctx.mediaHost;
@@ -40,10 +48,24 @@ Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
     final url = await _hostPermanently(host, m, bytes, platform, ctx);
     links.add(markdown ? '[${audioLinkLabel(m)}]($url)' : url);
   }
-  final addition = links.join('\n');
-  String withLinks(String text) => text.trim().isEmpty ? addition : '${text.trimRight()}\n\n$addition';
   // The photos and videos stay in the parts they go with.
   final rest = variant.withoutMedia((m) => m.isAudio);
+  if (linkCard && sound.length == 1 && (variant.link ?? '').trim().isEmpty) {
+    final tags = sound.single.audioTags;
+    final title = (variant.extraAs<String>('linkTitle') ?? '').trim().isNotEmpty
+        ? variant.extraAs<String>('linkTitle')
+        : tags?.artistAndTitle ?? audioLinkLabel(sound.single);
+    final description = (variant.extraAs<String>('linkDescription') ?? '').trim().isNotEmpty
+        ? variant.extraAs<String>('linkDescription')
+        : _albumLine(tags);
+    return rest.copyWith(link: links.single, extra: {
+      ...variant.extra,
+      'linkTitle': ?title,
+      'linkDescription': ?description,
+    });
+  }
+  final addition = links.join('\n');
+  String withLinks(String text) => text.trim().isEmpty ? addition : '${text.trimRight()}\n\n$addition';
   if (variant.isThread) {
     final parts = [...variant.threadParts];
     parts[parts.length - 1] = withLinks(parts.last);
@@ -52,11 +74,20 @@ Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
   return rest.copyWith(text: withLinks(variant.text));
 }
 
-/// The words of a link to a sound file: its name and type, "Demo (FLAC)".
+/// "Album · 2024" (or one of them, or the genre) for a link card's
+/// description; null when the track says none of them.
+String? _albumLine(AudioTags? t) {
+  if (t == null) return null;
+  final line = renderAudioText('{album} · {year}', t);
+  return line.isEmpty ? null : line;
+}
+
+/// The words of a link to a sound file: "Artist – Title" from its track
+/// details, else its name, with its type: "Demo (FLAC)".
 String audioLinkLabel(MediaAttachment m) {
   final name = (m.fileName ?? '').trim();
   final dot = name.lastIndexOf('.');
-  final title = (dot > 0 ? name.substring(0, dot) : name).replaceAll(RegExp(r'[\[\]]'), '');
+  final title = (m.audioCaption ?? (dot > 0 ? name.substring(0, dot) : name)).replaceAll(RegExp(r'[\[\]]'), '');
   final format = audioFormatLabel(m);
   return title.isEmpty ? 'Listen ($format)' : '$title ($format)';
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:uuid/uuid.dart';
 
+import '../../audio/audio_publishing.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../model/account.dart';
 import '../../model/audio.dart';
@@ -466,12 +467,27 @@ class MatrixAdapter extends PlatformAdapter {
     final api = MatrixApi(Uri.parse(hs), ctx, token: token);
 
     // Upload everything first so a failed upload does not leave half a post.
-    final uploaded = <(MediaAttachment, String)>[];
+    final uploaded = <(MediaAttachment, String, String?)>[];
+    // m.audio has no picture of its own: a sound file's cover goes just
+    // before it as an m.image, unless the post brings photos of its own.
+    final hasPictures = variant.media.any((m) => m.isImage);
     for (var i = 0; i < variant.media.length; i++) {
       final m = variant.media[i];
+      final cover = m.isAudio && !hasPictures ? m.audioCover : null;
+      if (cover != null) {
+        try {
+          final picture = await ctx.readMedia(cover);
+          final sized = MediaAttachment(id: cover.id, path: cover.path, mimeType: cover.mimeType, sizeBytes: picture.length, fileName: cover.fileName);
+          uploaded.add((sized, await api.upload(picture, contentType: cover.mimeType, fileName: cover.fileName ?? 'cover.jpg'), m.audioCaption));
+        } on MatrixApiError {
+          rethrow;
+        } on Exception catch (e) {
+          ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
+        }
+      }
       ctx.progress('Uploading ${m.noun} ${i + 1} of ${variant.media.length}');
       final bytes = await ctx.readMedia(m);
-      uploaded.add((m, await api.upload(bytes, contentType: m.mimeType, fileName: chatFileName(m))));
+      uploaded.add((m, await api.upload(bytes, contentType: m.mimeType, fileName: _fileName(m)), null));
     }
 
     final ids = sent.ids;
@@ -483,9 +499,9 @@ class MatrixAdapter extends PlatformAdapter {
       sent.add(await _send(api, roomId, _textContent(text, account.configString('formatting', 'markdown') != 'plain')));
     }
     for (var i = 0; i < uploaded.length; i++) {
-      final (m, mxc) = uploaded[i];
+      final (m, mxc, caption) = uploaded[i];
       ctx.progress('Sending ${m.noun} ${i + 1} of ${uploaded.length}');
-      final content = matrixMediaContent(m, mxc);
+      final content = matrixMediaContent(m, mxc, caption: caption);
       // The transaction id is fixed before the first try, so a retry after
       // a flood wait is idempotent on the homeserver.
       final txnId = _newTxnId();
@@ -599,16 +615,23 @@ Duration? _matrixFloodWait(Object e) => e is MatrixApiError && (e.errcode == 'M_
     ? (e.retryAfter ?? const Duration(seconds: 1))
     : null;
 
+/// The file name a Matrix upload goes with: "Artist - Title.mp3" for a
+/// sound file with track details.
+String _fileName(MediaAttachment m) => m.audioTaggedFileName ?? chatFileName(m);
+
 /// The `m.image` / `m.video` / `m.audio` event content for an uploaded file.
-Map<String, Object?> matrixMediaContent(MediaAttachment m, String mxc) {
-  final name = chatFileName(m);
+/// A `body` other than the `filename` is the file's caption (Matrix 1.10):
+/// "Artist – Title" for a sound file with track details, and for its cover.
+Map<String, Object?> matrixMediaContent(MediaAttachment m, String mxc, {String? caption}) {
+  final name = _fileName(m);
+  final body = caption ?? (m.isAudio ? m.audioCaption : null);
   return {
     'msgtype': switch (m.kind) {
       MediaKind.video => 'm.video',
       MediaKind.audio => 'm.audio',
       MediaKind.image || MediaKind.gif => 'm.image',
     },
-    'body': name,
+    'body': body != null && body.isNotEmpty ? body : name,
     'filename': name,
     'url': mxc,
     'info': {
