@@ -53,6 +53,8 @@ Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks h
 
 **Caption on photo** (Instagram and TikTok, off by default): the caption is written on the first photo in the network's own font (TikTok Sans, bundled; Instagram Sans when installed), on a dark label placed clear of the app's buttons. The caption editor (tap the pill under the preview, or Settings → Text cards for the default) changes the words on the photo, puts them at the top, middle or bottom, or in a **block above the photo** (the network's whole frame with the photo scaled to fit below), and sets the size, colours, background, alignment and font, with a live preview. A video gets the caption in a block above it: NEFORUM makes a copy of the video in the network's 9:16 frame on your device (Windows, macOS, Android, iPhone and iPad), keeping its sound; the original goes out unchanged where that is not possible.
 
+**Sound files** (MP3, M4A, WAV, FLAC, AIFF, Ogg, Opus): a voice note or a track goes as playable sound to Telegram, Discord, Matrix, Mastodon, Misskey, WordPress, Ghost and Odysee, as a still-picture video (your first photo or a title card) to X, Bluesky, Instagram, TikTok, YouTube and the other video-only networks, and as a link on your media host to Reddit, Lemmy, Nostr and the blogs. **Standard** sends one MP3 (M4A on phones and Macs); **Lossless** sends your original WAV, FLAC, AIFF or Apple Lossless file untouched where the network keeps it. See [docs/audio.md](docs/audio.md).
+
 <p align="center">
   <img src="docs/screenshots/differentiation-dark.png" alt="DIFFERENTIATION: one version per network, side by side" width="900">
 </p>
