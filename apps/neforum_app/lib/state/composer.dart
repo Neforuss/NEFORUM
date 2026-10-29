@@ -57,6 +57,7 @@ class ComposerState {
     this.textCardEveryNetwork,
     this.textCardWithText = const {},
     this.mediaParts = const {},
+    this.audioDetails,
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -156,6 +157,17 @@ class ComposerState {
   /// gaps.
   final Map<String, int> mediaParts;
 
+  /// What the user set for the sound file's track details, over the tags the
+  /// file carries ([Post.audioDetails]); null when the file's own stand.
+  final AudioTags? audioDetails;
+
+  /// The track details the sound file goes out with: its own tags under
+  /// [audioDetails]; null without a sound file.
+  AudioTags? get effectiveAudioTags {
+    final sound = audio;
+    return sound == null ? null : (sound.audioTags ?? AudioTags.none).overriddenBy(audioDetails);
+  }
+
   /// The part [mediaId] goes with.
   int partOfMedia(String mediaId) => mediaParts[mediaId] ?? 0;
 
@@ -204,6 +216,8 @@ class ComposerState {
     bool? textCardEveryNetwork,
     Map<String, bool>? textCardWithText,
     Map<String, int>? mediaParts,
+    AudioTags? audioDetails,
+    bool clearAudioDetails = false,
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -244,6 +258,7 @@ class ComposerState {
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork,
         textCardWithText: textCardWithText ?? this.textCardWithText,
         mediaParts: mediaParts ?? this.mediaParts,
+        audioDetails: clearAudioDetails ? null : (audioDetails ?? this.audioDetails),
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -295,6 +310,7 @@ class ComposerState {
       artwork: artwork,
       audioQuality: audioQuality,
       mediaParts: postMediaParts,
+      audioDetails: audio == null ? null : audioDetails,
       scheduledAt: scheduledAt,
       status: status,
       createdAt: createdAt ?? now,
@@ -556,8 +572,28 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   void addMedia(Iterable<MediaAttachment> items) => state = state.copyWith(media: [...state.media, ...items]);
 
+  /// The user's track details over the sound file's own tags; null or empty
+  /// goes back to the file's tags.
+  void setAudioDetails(AudioTags? details) =>
+      state = details == null || details.isEmpty ? state.copyWith(clearAudioDetails: true) : state.copyWith(audioDetails: details);
+
+  /// Writes the post text from the track's details with [template]
+  /// ([renderAudioText]), when the text is still empty. False when there is
+  /// nothing to write (text already there, no sound file, no details).
+  bool useTrackDetailsAsText(String template) {
+    final tags = state.effectiveAudioTags;
+    if (tags == null || state.text.trim().isNotEmpty) return false;
+    final text = renderAudioText(template, tags);
+    if (text.isEmpty) return false;
+    prefill(text);
+    return true;
+  }
+
   void removeMedia(String mediaId) {
+    // The track details go with the sound file they describe.
+    final sound = state.audio?.id == mediaId;
     state = state.copyWith(
+      clearAudioDetails: sound,
       media: state.media.where((m) => m.id != mediaId).toList(),
       mediaParts: {...state.mediaParts}..remove(mediaId),
       overrides: {
@@ -643,6 +679,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardEveryNetwork: textCardEveryNetworkOfPost(post),
         textCardWithText: textCardWithTextOfPost(post, platformOf),
         mediaParts: p.mediaParts,
+        audioDetails: p.audioDetails,
       );
   }
 
@@ -696,6 +733,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardEveryNetwork: state.textCardEveryNetwork,
       textCardWithText: state.textCardWithText,
       mediaParts: state.mediaParts,
+      audioDetails: state.audioDetails,
     );
   }
 }

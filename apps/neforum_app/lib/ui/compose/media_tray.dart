@@ -15,6 +15,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
+import 'track_details_sheet.dart';
 
 /// Opens the platform picker and attaches the chosen photos, videos or sound
 /// files. Phones ask first: their photo picker shows no sound files.
@@ -214,7 +215,16 @@ class _MediaItemState extends ConsumerState<_MediaItem> {
               onSelected: (part) => ref.read(composerProvider.notifier).setMediaPart(m.id, part),
             ),
           ),
-        // A sound file has no picture to describe.
+        // A sound file has no picture to describe: it has track details.
+        if (m.isAudio && !m.generated)
+          Positioned(
+            left: 5,
+            bottom: 5,
+            child: _TagChip(
+              hasTags: m.audioTags != null || ref.watch(composerProvider.select((c) => c.audioDetails != null)),
+              onTap: () => showTrackDetailsEditor(context),
+            ),
+          ),
         if (!m.isAudio)
           Positioned(
             left: 5,
@@ -318,6 +328,34 @@ class _AltButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// "TAGS" on a sound file: opens its track details.
+class _TagChip extends StatelessWidget {
+  const _TagChip({required this.hasTags, required this.onTap});
+  final bool hasTags;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+        message: hasTags ? 'Edit the track details' : 'Add track details: title, artist, album, cover',
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            key: const ValueKey('track-tags-chip'),
+            onTap: onTap,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+              decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.62), borderRadius: Radii.rXs),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(hasTags ? Icons.check_rounded : Icons.add_rounded, size: 11, color: Colors.white),
+                const SizedBox(width: 2),
+                const Text('TAGS', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 0.5, color: Colors.white)),
+              ]),
+            ),
+          ),
+        ),
+      );
 }
 
 class _AddTile extends StatelessWidget {

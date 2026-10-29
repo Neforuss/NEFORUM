@@ -166,6 +166,7 @@ class AppSettings {
     this.updateLatestRelease = const {},
     this.updateDismissedVersion,
     this.textCardEveryNetwork = false, // 1.3: cards
+    this.audioTextTemplate = kDefaultAudioTextTemplate, // 1.3.1: audio tags
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -236,6 +237,7 @@ class AppSettings {
         updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
+        audioTextTemplate: j['audioTextTemplate'] as String? ?? kDefaultAudioTextTemplate, // 1.3.1: audio tags
       );
 
   final ThemeMode themeMode;
@@ -440,6 +442,11 @@ class AppSettings {
   /// can change it.
   final bool textCardEveryNetwork;
 
+  /// 1.3.1: audio tags. The post text "Use track details as the text" writes
+  /// from a track's details ([renderAudioText]): `{artist} – {title}` and
+  /// the other tokens of [audioTextTokens].
+  final String audioTextTemplate;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -520,6 +527,7 @@ class AppSettings {
     Map<String, dynamic>? updateLatestRelease,
     String? updateDismissedVersion,
     bool? textCardEveryNetwork, // 1.3: cards
+    String? audioTextTemplate, // 1.3.1: audio tags
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -587,6 +595,7 @@ class AppSettings {
         updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
+        audioTextTemplate: audioTextTemplate ?? this.audioTextTemplate, // 1.3.1: audio tags
       );
 
   Map<String, dynamic> toJson() => {
@@ -655,5 +664,6 @@ class AppSettings {
         if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
+        'audioTextTemplate': audioTextTemplate, // 1.3.1: audio tags
       };
 }
