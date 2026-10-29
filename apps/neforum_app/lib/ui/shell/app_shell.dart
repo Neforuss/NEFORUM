@@ -10,11 +10,14 @@ import '../../platform/desktop.dart';
 import '../../platform/env.dart';
 import '../../platform/files_app_folder.dart';
 import '../../platform/notifications.dart';
+import '../../platform/secure_secret_store.dart';
 import '../../platform/ui_bridge.dart';
+import '../../platform/update_check.dart';
 import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
 import '../../state/providers.dart';
 import '../../state/scheduler.dart';
+import '../../state/update_checks.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/buttons.dart';
@@ -23,6 +26,7 @@ import '../root.dart';
 import '../router.dart';
 import '../settings/sync_section.dart';
 import 'app_backdrop.dart';
+import '../settings/updates_section.dart';
 import 'paste_code_dialog.dart';
 
 /// Adaptive frame around the five sections: sidebar on wide windows, an
@@ -51,6 +55,15 @@ class _AppShellState extends ConsumerState<AppShell> {
         _onIntent(launch);
       }
       DesktopIntegration.instance.initTray(_onTray);
+      // Linux: a desktop without a keyring is named at start, not at the
+      // first post (see _KeyringBanner).
+      if (Env.isLinux && !ref.read(isDemoProvider)) unawaited(SecureSecretStore.verifyAvailable());
+      // Update checks: asked once, then at most daily (never in the demo).
+      final updates = ref.read(updateCheckProvider.notifier);
+      if (updates.applies && ref.read(settingsProvider).updateCheck == UpdateCheckMode.ask) {
+        unawaited(askAboutUpdateChecks(context, ref));
+      }
+      updates.start();
       if (Env.isIOS) {
         FilesAppFolder.listenForOpened(_takeOpenedSyncFile);
         unawaited(_takeOpenedSyncFile());
@@ -150,6 +163,8 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     final body = Column(children: [
       if (demo) const _DemoBanner(),
+      const _KeyringBanner(),
+      const UpdateBanner(),
       Expanded(child: widget.shell),
     ]);
 
@@ -490,7 +505,7 @@ class _DemoBanner extends StatelessWidget {
         Expanded(
           child: Text(
             Env.isWeb
-                ? 'Web preview: a demo workspace. Nothing is posted for real. Install the app for Android, iOS, macOS or Windows to post.'
+                ? 'Web preview: a demo workspace. Nothing is posted for real. Install the app for Android, iOS, macOS, Windows or Linux to post.'
                 : 'Demo workspace: sample accounts, nothing is posted for real.',
             style: context.text.bodySmall?.copyWith(color: nf.text),
             maxLines: 2,
@@ -505,6 +520,35 @@ class _DemoBanner extends StatelessWidget {
             child: const Text('Leave demo'),
           ),
       ]),
+    );
+  }
+}
+
+/// The system keyring cannot be used (Linux without a Secret Service, or a
+/// locked keyring): says so over every screen until it works again, since
+/// no account can connect or post meanwhile.
+class _KeyringBanner extends StatelessWidget {
+  const _KeyringBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<String?>(
+      valueListenable: SecureSecretStore.unavailableReason,
+      builder: (context, reason, _) {
+        if (reason == null) return const SizedBox.shrink();
+        final nf = context.nf;
+        return Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.sm),
+          decoration: BoxDecoration(color: nf.dangerSoft, border: Border(bottom: BorderSide(color: nf.border))),
+          child: Row(children: [
+            Icon(Icons.key_off_rounded, size: 16, color: nf.danger),
+            const SizedBox(width: Space.sm),
+            Expanded(child: Text(reason, style: context.text.bodySmall?.copyWith(color: nf.text))),
+            TextButton(onPressed: SecureSecretStore.verifyAvailable, child: const Text('Check again')),
+          ]),
+        );
+      },
     );
   }
 }

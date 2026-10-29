@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../platform/env.dart';
+import '../../platform/update_check.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
@@ -23,6 +24,7 @@ import 'scheduling_section.dart';
 import 'setting_row.dart';
 import 'sync_section.dart';
 import 'text_cards_section.dart';
+import 'updates_section.dart';
 import 'workspace_section.dart';
 
 /// One entry of the Settings page. [title] is the section's own
@@ -177,6 +179,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       (title: 'Sync', icon: Icons.sync_rounded, body: const SyncSection()),
       (title: 'Workspace', icon: Icons.science_outlined, body: const WorkspaceSettingsSection()),
       (title: 'Data & privacy', icon: Icons.shield_outlined, body: const DataSettingsSection()),
+      if (updateChecksAvailable) (title: 'Updates', icon: Icons.system_update_alt_rounded, body: const UpdateSettingsSection()),
       (title: 'About', icon: Icons.info_outline_rounded, body: const AboutSettingsSection()),
     ];
     _titles = [for (final s in sections) s.title];

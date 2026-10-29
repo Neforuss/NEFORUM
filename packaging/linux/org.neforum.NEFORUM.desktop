@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=NEFORUM
+GenericName=Cross-poster
+Comment=Write a post once and publish it on every social network
+Exec=NEFORUM
+Icon=org.neforum.NEFORUM
+Terminal=false
+Categories=Network;Utility;
+Keywords=social;post;schedule;cross-post;mastodon;bluesky;fediverse;
+StartupNotify=true
+StartupWMClass=org.neforum.NEFORUM
+SingleMainWindow=true

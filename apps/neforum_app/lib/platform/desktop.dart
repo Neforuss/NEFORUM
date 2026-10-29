@@ -26,6 +26,13 @@ abstract class DesktopIntegration {
   /// When true, closing the window hides it to the tray instead of quitting.
   Future<void> setCloseToTray(bool enabled);
 
+  /// Whether the desktop shows NEFORUM's tray icon, so a window closed to
+  /// the tray can be brought back. Always true on Windows and macOS; on
+  /// Linux only when a panel hosts tray icons (StatusNotifierItem), which
+  /// plain GNOME does not without the AppIndicator extension. Without one,
+  /// closing the window quits NEFORUM and a launch at login shows the window.
+  Future<bool> trayAvailable();
+
   Future<void> showWindow();
   Future<void> hideWindow();
   Future<void> quit();

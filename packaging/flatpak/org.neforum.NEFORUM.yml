@@ -1,0 +1,65 @@
+# Flatpak manifest for NEFORUM, prepared for a later Flathub submission (not
+# submitted). It repackages the Linux tarball that CI attaches to each GitHub
+# release (neforum-linux-x64.tar.gz / neforum-linux-arm64.tar.gz: the Flutter
+# bundle plus the .desktop file, AppStream metadata and icons from
+# packaging/linux). Building NEFORUM from source inside flatpak-builder would
+# need the Flutter SDK and every pub package as offline sources.
+#
+# For each release: set both URLs to the new tag and both sha256 values from
+# the release's SHA256SUMS, then
+#
+#   flatpak-builder --user --install --force-clean build-dir packaging/flatpak/org.neforum.NEFORUM.yml
+#   flatpak run org.neforum.NEFORUM
+#
+# Flathub brings the updates: NEFORUM sees FLATPAK_ID and turns its own
+# update check off (as a --dart-define=NEFORUM_STORE_BUILD=true build does),
+# and leaves "Start when I sign in" to the desktop's own startup settings.
+app-id: org.neforum.NEFORUM
+runtime: org.gnome.Platform
+# GNOME runtime: GTK 3, libsecret and WebKitGTK 4.1 (sign-in windows) included.
+# Move to the current version before submitting.
+runtime-version: '49'
+sdk: org.gnome.Sdk
+command: NEFORUM
+finish-args:
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  # Posting to the networks, and the browser extension's bridge on 127.0.0.1.
+  - --share=network
+  # Account keys and tokens: the Secret Service (GNOME Keyring, KWallet).
+  # Without it libsecret falls back to the secrets portal's encrypted file.
+  - --talk-name=org.freedesktop.secrets
+  # Tray icon (StatusNotifierItem) and the question whether a panel shows one.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=com.canonical.StatusNotifierWatcher
+  # Reminders and "posted" notifications.
+  - --talk-name=org.freedesktop.Notifications
+  # Hand-offs save photos to Downloads/NEFORUM for the browser's upload box.
+  - --filesystem=xdg-download/NEFORUM:create
+modules:
+  - name: neforum
+    buildsystem: simple
+    build-commands:
+      - mkdir -p /app/lib/neforum /app/bin
+      - cp -a NEFORUM lib data /app/lib/neforum/
+      # Flutter finds lib/ and data/ next to the real executable (/proc/self/exe).
+      - ln -s /app/lib/neforum/NEFORUM /app/bin/NEFORUM
+      - install -Dm644 org.neforum.NEFORUM.desktop /app/share/applications/org.neforum.NEFORUM.desktop
+      - install -Dm644 org.neforum.NEFORUM.metainfo.xml /app/share/metainfo/org.neforum.NEFORUM.metainfo.xml
+      - |
+        for size in 128 256 512; do
+          install -Dm644 "icons/hicolor/${size}x${size}/apps/org.neforum.NEFORUM.png" \
+            "/app/share/icons/hicolor/${size}x${size}/apps/org.neforum.NEFORUM.png"
+        done
+    sources:
+      - type: archive
+        only-arches: [x86_64]
+        url: https://github.com/Neforuss/NEFORUM/releases/download/v1.3.0/neforum-linux-x64.tar.gz
+        # From the release's SHA256SUMS (neforum-linux-x64.tar.gz).
+        sha256: REPLACE_WITH_SHA256_OF_neforum-linux-x64.tar.gz
+      - type: archive
+        only-arches: [aarch64]
+        url: https://github.com/Neforuss/NEFORUM/releases/download/v1.3.0/neforum-linux-arm64.tar.gz
+        sha256: REPLACE_WITH_SHA256_OF_neforum-linux-arm64.tar.gz

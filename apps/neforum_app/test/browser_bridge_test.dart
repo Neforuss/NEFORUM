@@ -579,7 +579,7 @@ void main() {
       final chrome = manifest('chrome');
       final firefox = manifest('firefox');
       expect(firefox['version'], chrome['version']);
-      expect(chrome['version'], '1.1.0');
+      expect(chrome['version'], '1.1.1');
       final matches = [for (final m in (chrome['content_scripts'] as List).single['matches'] as List) m as String];
       expect((firefox['content_scripts'] as List).single['matches'], matches);
       bool matched(String host) => matches.any((m) => m == 'https://$host/*' || (m.startsWith('https://*.') && host.endsWith(m.substring(10, m.length - 2))));

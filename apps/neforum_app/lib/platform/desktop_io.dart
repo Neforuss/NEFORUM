@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:nativeapi/nativeapi.dart' as native show LaunchAtLogin;
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
@@ -13,6 +14,9 @@ import 'env.dart';
 final DesktopIntegration desktopIntegration = _IoDesktop();
 
 class _IoDesktop with WindowListener implements DesktopIntegration {
+  /// The Linux runner's own calls (linux/runner/desktop_channel.cc).
+  static const MethodChannel _linuxChannel = MethodChannel('neforum/desktop');
+
   TrayIcon? _tray;
   bool _closeToTray = true;
   bool _windowReady = false;
@@ -22,6 +26,8 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
   Future<void> initWindow({bool startHidden = false}) async {
     if (!Env.isDesktop) return;
     await windowManager.ensureInitialized();
+    // Started at login without a tray to bring it back: show the window.
+    if (startHidden && Env.isLinux && !await trayAvailable()) startHidden = false;
     // 1320 x 860 where it fits; a little inside the screen on small laptops.
     var size = const Size(1320, 860);
     final displays = WidgetsBinding.instance.platformDispatcher.displays;
@@ -57,7 +63,13 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
     try {
       final tray = TrayIcon.create();
       if (tray == null) return;
-      tray.icon = ImageAsset.fromAsset(Platform.isWindows ? 'assets/tray/tray_icon.ico' : 'assets/tray/tray_icon.png');
+      // Linux panels are dark or light and show tray icons in colour, so the
+      // full-colour icon there; macOS tints the monochrome template.
+      tray.icon = ImageAsset.fromAsset(switch (Platform.operatingSystem) {
+        'windows' => 'assets/tray/tray_icon.ico',
+        'linux' => 'assets/brand/notify_icon.png',
+        _ => 'assets/tray/tray_icon.png',
+      });
       if (Platform.isMacOS) tray.isIconTemplate = true;
       tray.setTooltip('NEFORUM');
 
@@ -106,8 +118,22 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
   }
 
   @override
+  Future<bool> trayAvailable() async {
+    if (!Env.isDesktop) return false;
+    if (!Env.isLinux) return true;
+    try {
+      return await _linuxChannel.invokeMethod<bool>('statusNotifierHostAvailable') ?? false;
+    } on Object catch (e) {
+      debugPrint('Could not ask the desktop about tray icons: $e');
+      return false;
+    }
+  }
+
+  @override
   void onWindowClose() async {
-    if (_closeToTray && _tray != null) {
+    // Asked at every close: a panel or the GNOME AppIndicator extension can
+    // come and go while NEFORUM runs.
+    if (_closeToTray && _tray != null && await trayAvailable()) {
       await windowManager.hide();
     } else {
       await quit();
@@ -154,6 +180,10 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
 
   native.LaunchAtLogin? get _login {
     if (!Env.isDesktop) return null;
+    // A Flatpak cannot write the user's ~/.config/autostart (its sandbox has
+    // its own), and the Background portal is not wired up: the desktop's own
+    // startup settings start it instead.
+    if (Platform.isLinux && (Platform.environment['FLATPAK_ID'] ?? '').isNotEmpty) return null;
     try {
       if (!native.LaunchAtLogin.isSupported()) return null;
       return _launch ??= native.LaunchAtLogin.createWithIdAndDisplayName('org.neforum.NEFORUM', 'NEFORUM');
@@ -179,12 +209,24 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
     final l = _login;
     if (l == null) return false;
     try {
-      l.setProgram(Platform.resolvedExecutable, const ['--minimized']);
+      l.setProgram(_launchProgram, const ['--minimized']);
       return enabled ? l.enable() : l.disable();
     } on Object catch (e) {
       debugPrint('Launch at login failed: $e');
       return false;
     }
+  }
+
+  /// What the login entry starts. On Linux (nativeapi writes
+  /// ~/.config/autostart/org.neforum.NEFORUM.desktop) an AppImage runs from
+  /// a temporary mount that changes every launch, so the entry names the
+  /// .AppImage file itself (the runtime sets APPIMAGE).
+  String get _launchProgram {
+    if (Platform.isLinux) {
+      final appImage = Platform.environment['APPIMAGE'] ?? '';
+      if (appImage.isNotEmpty) return appImage;
+    }
+    return Platform.resolvedExecutable;
   }
 
   @override

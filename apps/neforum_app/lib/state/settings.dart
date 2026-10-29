@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/text_card.dart';
+import '../platform/update_check.dart';
 import '../theme/tokens.dart';
 import '../theme/zoom.dart';
 
@@ -159,6 +160,11 @@ class AppSettings {
     this.backgroundImagePath,
     this.backgroundBlur = 0,
     this.backgroundDim = kDefaultBackgroundDim,
+    // 1.3: updates
+    this.updateCheck = UpdateCheckMode.ask,
+    this.updateCheckedAt,
+    this.updateLatestRelease = const {},
+    this.updateDismissedVersion,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -223,6 +229,11 @@ class AppSettings {
         backgroundImagePath: j['backgroundImagePath'] as String?,
         backgroundBlur: validBackgroundBlur(j['backgroundBlur']),
         backgroundDim: validBackgroundDim(j['backgroundDim']),
+        // 1.3: updates
+        updateCheck: UpdateCheckMode.values.asNameMap()[j['updateCheck']] ?? UpdateCheckMode.ask,
+        updateCheckedAt: DateTime.tryParse('${j['updateCheckedAt'] ?? ''}'),
+        updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
+        updateDismissedVersion: j['updateDismissedVersion'] as String?,
       );
 
   final ThemeMode themeMode;
@@ -405,6 +416,23 @@ class AppSettings {
   /// NEFORUM covers it more when text needs it to stay readable.
   /// Device-only.
   final double backgroundDim;
+  // 1.3: updates
+
+  /// Settings > Updates: whether NEFORUM looks for new versions by itself.
+  /// Device-only.
+  final UpdateCheckMode updateCheck;
+
+  /// When neforus.com last answered an update check. Device-only.
+  final DateTime? updateCheckedAt;
+
+  /// The latest.json from that check (LatestRelease.toJson), so the banner
+  /// survives a restart without asking again. Device-only.
+  final Map<String, dynamic> updateLatestRelease;
+
+  /// The newer version whose banner the user closed: it stays closed until
+  /// a later one comes out (critical ones come back at the next start).
+  /// Device-only.
+  final String? updateDismissedVersion;
 
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
@@ -480,6 +508,11 @@ class AppSettings {
     bool clearBackgroundImage = false,
     double? backgroundBlur,
     double? backgroundDim,
+    // 1.3: updates
+    UpdateCheckMode? updateCheck,
+    DateTime? updateCheckedAt,
+    Map<String, dynamic>? updateLatestRelease,
+    String? updateDismissedVersion,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -541,6 +574,11 @@ class AppSettings {
         backgroundImagePath: clearBackgroundImage ? null : (backgroundImagePath ?? this.backgroundImagePath),
         backgroundBlur: backgroundBlur ?? this.backgroundBlur,
         backgroundDim: backgroundDim ?? this.backgroundDim,
+        // 1.3: updates
+        updateCheck: updateCheck ?? this.updateCheck,
+        updateCheckedAt: updateCheckedAt ?? this.updateCheckedAt,
+        updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
+        updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
       );
 
   Map<String, dynamic> toJson() => {
@@ -603,5 +641,10 @@ class AppSettings {
         if (backgroundImagePath != null) 'backgroundImagePath': backgroundImagePath,
         if (backgroundBlur != 0) 'backgroundBlur': backgroundBlur,
         if (backgroundDim != kDefaultBackgroundDim) 'backgroundDim': backgroundDim,
+        // 1.3: updates
+        'updateCheck': updateCheck.name,
+        if (updateCheckedAt != null) 'updateCheckedAt': updateCheckedAt!.toUtc().toIso8601String(),
+        if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
+        if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
       };
 }

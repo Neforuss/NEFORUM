@@ -12,6 +12,8 @@ class _NoDesktop implements DesktopIntegration {
   @override
   Future<void> setCloseToTray(bool enabled) async {}
   @override
+  Future<bool> trayAvailable() async => false;
+  @override
   Future<void> showWindow() async {}
   @override
   Future<void> hideWindow() async {}

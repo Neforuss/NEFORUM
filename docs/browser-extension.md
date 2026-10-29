@@ -124,7 +124,7 @@ Without the extension (on a phone, or on a computer with no paired browser), han
 
 - The extension is not in the Chrome Web Store or on Firefox Add-ons yet, so you install it from the files that come with NEFORUM.
 - Chrome keeps the extension after a restart. It may show a reminder that a developer-mode extension is installed; that's expected for extensions not from the store.
-- Firefox removes a temporary add-on when it closes. For a permanent install it needs to be signed by Mozilla, which happens when it is published on addons.mozilla.org (or, for testing, use Firefox Developer Edition with `xpinstall.signatures.required` set to false).
+- Firefox removes a temporary add-on when it closes. For a permanent install it needs to be signed by Mozilla: when a GitHub release has `neforum-extension-firefox-<version>.xpi` (signed by Mozilla for self-distribution), open that file in Firefox to install it for good. Otherwise it happens when it is published on addons.mozilla.org (or, for testing, use Firefox Developer Edition with `xpinstall.signatures.required` set to false).
 - Mastodon, Misskey and blogs run on their own addresses, which the extension does not know in advance: use **Fill in this page** there. Automatic posting cannot start there by itself.
 - The site recipes follow each site's page as it was known when this version was made, and the art sites' upload forms could not be studied signed in. When a site changes, the extension says what it could not do, does not post automatically, and you finish by hand.
 - Automatic posting needs NEFORUM running on a computer with a paired browser; phones cannot do it.
@@ -149,14 +149,14 @@ NEFORUM listens on one of ports 52772 to 52779. Those are in the range Windows h
 
 NEFORUM then moves on to ports 41772 to 41779, below that range, so it keeps working. **Settings > Browser extension** shows the port it listens on. The extension only looks on those ports from **version 1.0.1**, so update it:
 
-- **Chrome, Edge, Brave, Opera**: after updating NEFORUM, open `chrome://extensions` and click the reload arrow on NEFORUM (if you loaded the `chrome` folder from **Show extension files**; if you copied it somewhere else, load the new folder instead). The card shows the version (now 1.1.0).
+- **Chrome, Edge, Brave, Opera**: after updating NEFORUM, open `chrome://extensions` and click the reload arrow on NEFORUM (if you loaded the `chrome` folder from **Show extension files**; if you copied it somewhere else, load the new folder instead). The card shows the version (now 1.1.1).
 - **Firefox**: load `manifest.json` from the new `firefox` folder again (see the install steps).
 
 If the status says **Ports blocked**, Windows refused every one of NEFORUM's ports. Restarting the computer usually changes which ports are reserved. To see the reserved ranges, run `netsh interface ipv4 show excludedportrange protocol=tcp` in a terminal.
 
 ### Publishing it in the stores (for the maintainer)
 
-`dart run tool/build_extension.dart` (in `apps/neforum_app`) builds both versions and writes upload-ready zips to `dist/`: `neforum-extension-chrome-<version>.zip` for the Chrome Web Store (a developer account costs a one-time US$5) and `neforum-extension-firefox-<version>.zip` for addons.mozilla.org (free; the add-on id is `neforum-extension@neforus.com`). Store review checks the permissions: the extension uses `storage`, `scripting`, `activeTab`, host access to `127.0.0.1` (any port: the match pattern `http://127.0.0.1/*` covers both port ranges), and content scripts on the platforms in the table above (YouTube Studio and the art sites since 1.1.0). The Chrome Web Store's developer agreement forbids extensions that knowingly break a site's terms; automatic posting is off by default and leaves out the networks whose terms forbid it.
+`dart run tool/build_extension.dart` (in `apps/neforum_app`) builds both versions and writes upload-ready zips to `dist/`: `neforum-extension-chrome-<version>.zip` for the Chrome Web Store (a developer account costs a one-time US$5) and `neforum-extension-firefox-<version>.zip` for addons.mozilla.org (free; the add-on id is `neforum-extension@neforus.com`). Store review checks the permissions: the extension uses `storage`, `scripting`, `activeTab`, host access to `127.0.0.1` (any port: the match pattern `http://127.0.0.1/*` covers both port ranges), and content scripts on the platforms in the table above (YouTube Studio and the art sites since 1.1.0). The Chrome Web Store's developer agreement forbids extensions that knowingly break a site's terms; automatic posting is off by default and leaves out the networks whose terms forbid it. The listing text, permission justifications, privacy answers and reviewer notes are ready in [docs/chrome-web-store.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/chrome-web-store.md) and [docs/firefox-amo.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/firefox-amo.md); signing is in [docs/signing.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/signing.md).
 
 ## Sources
 
