@@ -33,27 +33,48 @@ bool isAudioRendition(MediaAttachment m) {
 /// it back, so a photo that became a video's picture comes back too.
 const String kAudioReplacedMediaIdsKey = 'audioReplacedMediaIds';
 
-/// [post] with every target's file list as it was before its renditions
-/// were put in ([kAudioReplacedMediaIdsKey]), and without the renditions
-/// unless [keepFiles] (then they stay in its media, listed by no target, for
-/// [attachAudioRenditions] to reuse or delete).
+/// `PostOverrides.extra` key of the story's file list (Post + Story) before
+/// [attachAudioRenditions] put a rendition in it, like
+/// [kAudioReplacedMediaIdsKey].
+const String kAudioReplacedStoryMediaIdsKey = 'audioReplacedStoryMediaIds';
+
+/// [post] with every target's file lists as they were before its renditions
+/// were put in ([kAudioReplacedMediaIdsKey], [kAudioReplacedStoryMediaIdsKey]),
+/// and without the renditions unless [keepFiles] (then they stay in its
+/// media, listed by no target, for [attachAudioRenditions] to reuse or
+/// delete).
 Post withoutAudioRenditions(Post post, {bool keepFiles = false}) {
   final renditions = {for (final m in post.media.where(isAudioRendition)) m.id: m.derivedFrom!};
-  final hasKey = post.targets.any((t) => t.overrides.extra.containsKey(kAudioReplacedMediaIdsKey));
+  final hasKey = post.targets.any((t) =>
+      t.overrides.extra.containsKey(kAudioReplacedMediaIdsKey) || t.overrides.extra.containsKey(kAudioReplacedStoryMediaIdsKey));
   if (renditions.isEmpty && !hasKey) return post;
+  List<String> originals(List<String> ids) => [for (final id in ids) renditions[id] ?? id];
   return post.copyWith(
     media: keepFiles ? post.media : [for (final m in post.media) if (!renditions.containsKey(m.id)) m],
     targets: [
       for (final t in post.targets)
         () {
-          final o = t.overrides;
+          var o = t.overrides;
           final saved = o.extra[kAudioReplacedMediaIdsKey];
-          final extra = {...o.extra}..remove(kAudioReplacedMediaIdsKey);
-          if (saved == true) return t.copyWith(overrides: o.copyWith(extra: extra, clearMediaIds: true));
-          if (saved is List) return t.copyWith(overrides: o.copyWith(extra: extra, mediaIds: [for (final id in saved) if (id is String) id]));
+          final savedStory = o.extra[kAudioReplacedStoryMediaIdsKey];
+          if (saved != null || savedStory != null) {
+            o = o.copyWith(extra: {...o.extra}..remove(kAudioReplacedMediaIdsKey)..remove(kAudioReplacedStoryMediaIdsKey));
+          }
           final ids = o.mediaIds;
-          if (ids == null || !ids.any(renditions.containsKey)) return t;
-          return t.copyWith(overrides: o.copyWith(mediaIds: [for (final id in ids) renditions[id] ?? id]));
+          if (saved == true) {
+            o = o.copyWith(clearMediaIds: true);
+          } else if (saved is List) {
+            o = o.copyWith(mediaIds: [for (final id in saved) if (id is String) id]);
+          } else if (ids != null && ids.any(renditions.containsKey)) {
+            o = o.copyWith(mediaIds: originals(ids));
+          }
+          final story = o.storyMediaIds;
+          if (savedStory is List) {
+            o = o.copyWith(storyMediaIds: [for (final id in savedStory) if (id is String) id]);
+          } else if (story != null && story.any(renditions.containsKey)) {
+            o = o.copyWith(storyMediaIds: originals(story));
+          }
+          return identical(o, t.overrides) ? t : t.copyWith(overrides: o);
         }(),
     ],
   );
@@ -92,6 +113,7 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
   // Without a compositor, a Standard copy made earlier is still the best file.
   final standardMime = standardAudioMimeType(format) ?? _pooledStandardMime(pool.values);
   final byId = {for (final m in p.media) m.id: m};
+  final userIds = [for (final m in p.media) if (!m.generated) m.id];
 
   for (final original in post.targets) {
     final t = p.targetFor(original.accountId)!;
@@ -100,43 +122,57 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
     if (account == null || adapter == null) continue;
     final d = adapter.descriptorForAccount(account);
     final own = t.overrides.mediaIds;
-    final ids = own ?? [for (final m in p.media) if (!m.generated) m.id];
-    if (!ids.any(sources.containsKey)) continue;
+    final ids = own ?? userIds;
+    final story = t.overrides.storyMediaIds;
+    if (!ids.any(sources.containsKey) && !(story?.any(sources.containsKey) ?? false)) continue;
 
-    final next = <String>[];
-    final consumed = <String>{};
-    var changed = false;
-    for (final id in ids) {
-      final source = sources[id];
-      if (source == null) {
-        next.add(id);
-        continue;
+    // [list] with each sound file in the form this network takes; null when
+    // nothing changes. A photo that became a video's picture leaves.
+    Future<List<String>?> rendered(List<String> list) async {
+      final next = <String>[];
+      final consumed = <String>{};
+      var changed = false;
+      for (final id in list) {
+        final source = sources[id];
+        if (source == null) {
+          next.add(id);
+          continue;
+        }
+        final route = audioRouteFor(d.media, source, post.audioQuality, standardMimeType: standardMime);
+        MediaAttachment? made;
+        if (route == AudioRoute.standardCopy) {
+          made = await _standardCopy(s, source, format, pool, used, render: canRender);
+        } else if (route == AudioRoute.video) {
+          final picture = _pictureFor(list, byId);
+          made = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender);
+          if (made != null && picture != null) consumed.add(picture.$1);
+        }
+        if (made == null) {
+          next.add(id);
+          continue;
+        }
+        next.add(made.id);
+        changed = true;
       }
-      final route = audioRouteFor(d.media, source, post.audioQuality, standardMimeType: standardMime);
-      MediaAttachment? made;
-      if (route == AudioRoute.standardCopy) {
-        made = await _standardCopy(s, source, format, pool, used, render: canRender);
-      } else if (route == AudioRoute.video) {
-        final picture = _pictureFor(ids, byId);
-        made = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender);
-        if (made != null && picture != null) consumed.add(picture.$1);
-      }
-      if (made == null) {
-        next.add(id);
-        continue;
-      }
-      next.add(made.id);
-      changed = true;
+      return changed ? [for (final id in next) if (!consumed.contains(id)) id] : null;
     }
-    if (!changed) continue;
-    final list = [for (final id in next) if (!consumed.contains(id)) id];
+
+    final list = await rendered(ids);
+    // The story of Post + Story gets the same rendition as the feed post.
+    final storyList = story == null ? null : await rendered(story);
+    if (list == null && storyList == null) continue;
+    // The user's own files, without photos fitted for this network; true
+    // when that is every file (no list of its own before fitting).
+    List<String> users(List<String> ids) => [for (final id in ids) _userId(byId[id]) ?? id];
+    final mine = own == null ? null : users(own);
     p = p.withTarget(t.copyWith(
       overrides: t.overrides.copyWith(
         mediaIds: list,
+        storyMediaIds: storyList,
         extra: {
           ...t.overrides.extra,
-          // The user's own files, without photos fitted for this network.
-          kAudioReplacedMediaIdsKey: own == null ? true : [for (final id in own) _userId(byId[id]) ?? id],
+          if (list != null) kAudioReplacedMediaIdsKey: mine == null || listEquals(mine, userIds) ? true : mine,
+          if (storyList != null && story != null) kAudioReplacedStoryMediaIdsKey: users(story),
         },
       ),
     ));
@@ -179,12 +215,19 @@ Future<MediaAttachment?> _standardCopy(AppServices s, MediaAttachment source, St
     for (final m in pool.values)
       if (renderKindOf(m) == RenderKind.audioTranscode && m.derivedFrom == source.id) m,
   ];
-  if (format == null) return pooled.firstOrNull;
+  // A copy made earlier, kept (listed in [used]) so it is neither deleted
+  // nor left out of the post's media.
+  MediaAttachment? earlier() {
+    final m = pooled.firstOrNull;
+    return m == null ? null : used[m.fitKey ?? m.id] = m;
+  }
+
+  if (format == null) return earlier();
   final params = <String, dynamic>{'kind': RenderKind.audioTranscode, 'format': format, 'bitrate': kStandardAudioBitsPerSecond};
   final key = 'audio|${source.id}|${stableHash(jsonEncode(params))}';
   final reused = used[key] ?? pool[key];
   if (reused != null) return used[key] = reused;
-  if (!render) return pooled.firstOrNull;
+  if (!render) return earlier();
   final id = const Uuid().v7();
   final out = newMediaFilePath(s.storage.dataDir, id, format);
   if (out == null) return null;

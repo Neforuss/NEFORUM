@@ -462,14 +462,22 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   /// Fills the composer with a thread made elsewhere (a document): [parts]
   /// become the thread's parts, [media] its attachments, each in the part
-  /// [mediaParts] names. Targets, schedule, artwork mode and the post being
-  /// edited stay; everything else of the post is replaced.
+  /// [mediaParts] names. Targets, schedule (the times per network included),
+  /// each network's settings ([PostOverrides.extra]: subreddit, Post +
+  /// Story...), artwork mode and the post being edited stay; everything else
+  /// of the post is replaced, per-network versions of the words and media
+  /// included.
   void fillThread(List<String> parts, List<MediaAttachment> media, Map<String, int> mediaParts) {
     state = ComposerState(
       editingPostId: state.editingPostId,
       visibility: state.visibility,
       selected: state.selected,
       scheduledAt: state.scheduledAt,
+      overrides: {
+        for (final e in state.overrides.entries)
+          if (e.value.scheduledAt != null || e.value.extra.isNotEmpty)
+            e.key: PostOverrides(scheduledAt: e.value.scheduledAt, extra: e.value.extra),
+      },
       artwork: state.artwork,
       text: parts.isEmpty ? '' : parts.first,
       additionalParts: parts.skip(1).toList(),
@@ -709,6 +717,9 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final backgroundPhotoId = background != null && c.media.any((m) => m.id == background.photo.id) ? background.photo.id : null;
   final captionStyle = captionStyleFor(c.captionStyle, settings);
   final sound = c.audio;
+  // Read once, before the loop: the AOT compiler once hoisted a null-guarded
+  // field load out of a loop and crashed release builds (1.2.1).
+  final soundId = sound?.id;
   final standardFormat = sound == null ? null : standardAudioFormat(ref.watch(audioOutputFormatsProvider).value ?? const []);
   final canRenderVideo = sound != null && (ref.watch(videoCaptionsSupportedProvider).value ?? false);
   final everyNetwork = c.cardOnEveryNetwork(settings);
@@ -742,12 +753,14 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             background: background,
             story: story,
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
-      if (feedCard && placement == PostPlacement.feed && c.textCardWithText[d.id] == false) {
-        // The card alone: resolved again with it, as publishing will.
+      if (feedCard && c.textCardWithText[d.id] == false) {
+        // The card alone: resolved again with it, as publishing will. The
+        // feed post of Post + Story too; its story keeps a story card.
         final card = placeholder();
         final alone = post.copyWith(media: [...post.media, card]).withTarget(target.copyWith(
             overrides: target.overrides.copyWith(mediaIds: [card.id], extra: {...target.overrides.extra, kTextCardOnlyKey: true})));
         variant = resolver.resolve(alone, withMentionDefault(alone.targetFor(a.id)!, a.platformId, settings), d, account: a);
+        if (storyCard) variant = variant.copyWith(storyMedia: [placeholder(story: true)]);
         issues
           ..removeWhere((i) => i.field == 'text')
           ..addAll(variant.issues.where((i) => i.field == 'text'));
@@ -788,9 +801,12 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     // A sound file: what this network gets is made when the post is saved
     // (the Standard copy, or a video for video-only networks); check a
     // stand-in for it.
-    if (sound != null && variant.media.any((m) => m.id == sound.id)) {
+    if (sound != null && variant.media.any((m) => m.id == soundId)) {
       final audio = previewAudio(variant.media, sound, d, c.audioQuality, standardFormat: standardFormat, canRenderVideo: canRenderVideo);
-      variant = variant.copyWith(media: audio.media);
+      // The picture of a still-picture video leaves; every other item keeps
+      // its thread part, and the stand-in takes the track's.
+      final kept = variant.withoutMedia((m) => m.id != soundId && !audio.media.any((x) => identical(x, m)));
+      variant = kept.copyWith(media: audio.media);
       issues.addAll(audio.notes);
     }
     final firstMedia = variant.media.firstOrNull;
@@ -961,6 +977,10 @@ class PostActions {
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
     post = await attachAudioRenditions(s, post, ref.read(settingsProvider));
+    // 1.3: video. A scheduled post gets its smaller copies of videos now,
+    // while this device has a compositor: a background run has none and only
+    // reuses them. Publishing now makes them in the run, with progress.
+    if (status == PostStatus.scheduled) post = await attachShrunkVideos(s, post, ref.read(settingsProvider));
     await s.posts.upsert(post);
     return post;
   }
@@ -1041,7 +1061,9 @@ class PostActions {
     }
     final Post p;
     try {
-      p = (await _save(PostStatus.publishing, id: id)).copyWith(clearScheduledAt: true);
+      // Every network goes now: the times per network go too, so a network
+      // that fails is retried after its backoff, not at its old time.
+      p = (await _save(PostStatus.publishing, id: id)).withoutSchedule();
       await s.posts.upsert(p);
     } on Object catch (e) {
       // Nothing is publishing: the post keeps its previous state, if any.

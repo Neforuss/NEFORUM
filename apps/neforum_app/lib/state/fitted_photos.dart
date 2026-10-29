@@ -51,8 +51,14 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
   // Handed on untouched (no target lists them here), for attachCaptionedPhotos
   // and attachShrunkVideos to reuse or remove; renditions stay listed where
   // they are.
-  final captioned = [for (final m in post.media) if (isCaptionedCopy(m) || isShrunkCopy(m) || isAudioRendition(m)) m];
   var p = withoutFittedPhotos(post);
+  // Renditions are still in p.media (withoutFittedPhotos leaves them):
+  // handing them on as well would add them a second time on every run.
+  final inMedia = {for (final m in p.media) m.id};
+  final captioned = [
+    for (final m in post.media)
+      if ((isCaptionedCopy(m) || isShrunkCopy(m) || isAudioRendition(m)) && !inMedia.contains(m.id)) m,
+  ];
   if (mode == PhotoFitMode.off) {
     for (final m in pool.values) {
       await s.media.discard(m);
@@ -157,10 +163,13 @@ Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
     if (post == null || !post.media.any((m) => !m.generated)) return;
     // Read first: fitting lists the original photos on the targets again.
     final choices = await captionChoicesOfSavedPost(s, post);
-    final fitted = await attachFittedPhotos(s, post, s.settings);
-    // Sound renditions stay as the save made them: no compositor here.
+    // As a save does: the targets list the user's files while photos are
+    // fitted, then get the renditions back.
+    final fitted = await attachFittedPhotos(s, withoutAudioRenditions(post, keepFiles: true), s.settings);
     final captioned = await attachCaptionedPhotos(s, fitted, s.settings, choices: choices, composeVideos: false);
-    await s.posts.upsert(await attachShrunkVideos(s, captioned, s.settings));
+    // Sound renditions are the ones the save made: no compositor here.
+    final rendered = await attachAudioRenditions(s, captioned, s.settings, render: false);
+    await s.posts.upsert(await attachShrunkVideos(s, rendered, s.settings));
   } on Object catch (e) {
     debugPrint('Could not fit the photos of $postId: $e');
   }
@@ -169,10 +178,22 @@ Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
 /// [post] without fitted copies (captioned copies included): each target lists
 /// the original photos again (and no list at all when that is every photo, as
 /// before fitting), in its story list as well. Sound renditions are left to
-/// [withoutAudioRenditions].
+/// [withoutAudioRenditions]. A smaller copy of a video goes back to the video
+/// it was made from ([shrunkCopySourceId]), read through a captioned copy to
+/// the user's video; one made from a sound rendition goes back to that
+/// rendition, never to the sound file.
 Post withoutFittedPhotos(Post post) {
-  final fitted = {for (final m in post.media.where((m) => m.derivedFrom != null && !isAudioRendition(m))) m.id: m.derivedFrom!};
+  final present = {for (final m in post.media) m.id};
+  final fitted = {
+    for (final m in post.media.where((m) => m.derivedFrom != null && !isAudioRendition(m)))
+      m.id: isShrunkCopy(m) && present.contains(shrunkCopySourceId(m)) ? shrunkCopySourceId(m) : m.derivedFrom!,
+  };
   if (fitted.isEmpty) return post;
+  // A shrunk copy's source may itself be a captioned copy: follow it on.
+  for (final e in fitted.entries.toList()) {
+    final through = fitted[e.value];
+    if (through != null) fitted[e.key] = through;
+  }
   final media = [for (final m in post.media) if (!fitted.containsKey(m.id)) m];
   final all = [for (final m in media) if (!m.generated) m.id];
   PostTarget original(PostTarget t) {

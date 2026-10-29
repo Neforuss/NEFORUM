@@ -100,19 +100,27 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     if (first.isVideo) {
       frame = videoFrameAspect(platform);
       if (frame == null) continue;
-      final params = <String, dynamic>{
-        'kind': RenderKind.caption,
-        'platform': platform,
-        'style': look.toJson(),
-        'textHash': stableHash(words),
-        'frameAspect': frame,
-        'video': true,
-        if (await fontMissing()) 'fontFallback': true, // 1.3: cards
-      };
-      final key = '$_captionKeyPrefix$platform|${first.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
-      final copy = used[key] ??
-          pool[key] ??
-          (composeVideos ? await _composeCaptionedVideo(s, first, words: words, style: look, platform: platform, frame: frame, key: key, params: params) : null);
+      Map<String, dynamic> paramsWith({required bool fontFallback}) => {
+            'kind': RenderKind.caption,
+            'platform': platform,
+            'style': look.toJson(),
+            'textHash': stableHash(words),
+            'frameAspect': frame,
+            'video': true,
+            if (fontFallback) 'fontFallback': true, // 1.3: cards
+          };
+      String keyOf(Map<String, dynamic> params) => '$_captionKeyPrefix$platform|${first.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
+      final fallback = await fontMissing();
+      final params = paramsWith(fontFallback: fallback);
+      final key = keyOf(params);
+      var copy = used[key] ?? pool[key];
+      if (copy == null && !composeVideos) {
+        // Publishing never makes the copy again, so the one the save made is
+        // used whether or not the caption font was here then or is here now.
+        final saved = keyOf(paramsWith(fontFallback: !fallback));
+        copy = used[saved] ?? pool[saved];
+      }
+      copy ??= composeVideos ? await _composeCaptionedVideo(s, first, words: words, style: look, platform: platform, frame: frame, key: key, params: params) : null;
       if (copy == null) continue;
       used[key] = copy;
       p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(mediaIds: [copy.id, ...ids.skip(1)])));

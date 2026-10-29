@@ -15,6 +15,7 @@ import 'package:neforum_app/media/audio_probe.dart';
 import 'package:neforum_app/platform/media_library.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/audio_renditions.dart';
+import 'package:neforum_app/state/fitted_photos.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/ui/compose/audio_quality_option.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
@@ -520,6 +521,72 @@ void main() {
       expect(post.targetFor('dc')!.overrides.mediaIds, isNull);
       expect(post.media.where(isAudioRendition).map((m) => m.id), [video.id]);
       expect(File(copy.path).existsSync(), isFalse, reason: 'an unused copy is deleted');
+    });
+
+    Future<(AppServices, MediaAttachment, MediaAttachment)> workspace(WidgetTester tester, List<ConnectedAccount> accounts) async {
+      final dir = (await tester.runAsync(() => Directory.systemTemp.createTemp('neforum-audio-saved')))!;
+      addTearDown(() => tester.runAsync(() => dir.delete(recursive: true)));
+      return (await tester.runAsync(() async {
+        final s = await AppServices.create(demo: true, storage: await openAppStorage(overrideDir: dir.path));
+        for (final a in accounts) {
+          await s.accounts.upsert(a);
+        }
+        final track = await s.media.importBytes(wav(seconds: 1), fileName: 'Master.wav');
+        // Tall: Instagram gets a fitted copy.
+        final photo = await s.media.importBytes(img.encodePng(img.Image(width: 40, height: 400)), fileName: 'cover.png');
+        return (s, track, photo);
+      }))!;
+    }
+
+    ConnectedAccount handoff(String id, String platform) =>
+        ConnectedAccount(id: id, platformId: platform, tier: PlatformTier.handoff, displayName: id, createdAt: DateTime(2026, 10, 1));
+
+    testWidgets('background runs keep the renditions, once; a network without a list of its own gets none back', (tester) async {
+      final accounts = [handoff('tg', 'telegram'), handoff('x', 'x'), handoff('ig', 'instagram')];
+      final (s, track, photo) = await workspace(tester, accounts);
+      final now = DateTime(2026, 10, 28);
+      var post = Post(id: 'p-saved', text: 'New single', media: [photo, track], targets: [for (final a in accounts) PostTarget(accountId: a.id)], createdAt: now, updatedAt: now);
+      // As a save does: photos fitted, then the renditions.
+      final saved = (await tester.runAsync(() async {
+        final p = await attachAudioRenditions(s, await attachFittedPhotos(s, post, s.settings), s.settings);
+        await s.posts.upsert(p);
+        return p;
+      }))!;
+      final made = calls.length;
+      expect(saved.targetFor('ig')!.overrides.extra[kAudioReplacedMediaIdsKey], isTrue, reason: 'it listed every file, fitted or not');
+      expect(withoutAudioRenditions(saved).targetFor('ig')!.overrides.mediaIds, isNull, reason: 'files added later still reach it');
+
+      for (var run = 1; run <= 2; run++) {
+        await tester.runAsync(() async {
+          await fitPhotosOfSavedPost(s, 'p-saved');
+          post = (await s.posts.get('p-saved'))!;
+        });
+        expect(post.media.map((m) => m.id), unorderedEquals(saved.media.map((m) => m.id)), reason: 'run $run: no copy added twice');
+        expect(post.targets.map((t) => t.overrides.mediaIds), saved.targets.map((t) => t.overrides.mediaIds), reason: 'run $run');
+      }
+      expect(calls, hasLength(made), reason: 'nothing rendered in the background');
+      final forX = post.media.singleWhere((m) => m.id == post.targetFor('x')!.overrides.mediaIds!.single);
+      expect(isAudioRendition(forX) && forX.isVideo, isTrue, reason: 'X still gets the video, not the sound file');
+    });
+
+    testWidgets('the story of Post + Story gets the video too, without the photo that became its picture', (tester) async {
+      final ig = handoff('ig', 'instagram');
+      final (s, track, photo) = await workspace(tester, [ig]);
+      final now = DateTime(2026, 10, 28);
+      final post = Post(
+        id: 'p-story',
+        text: 'New single',
+        media: [photo, track],
+        targets: [PostTarget(accountId: ig.id, overrides: const PostOverrides(extra: {kPlacementKey: 'feedAndStory'}))],
+        createdAt: now,
+        updatedAt: now,
+      );
+      final saved = (await tester.runAsync(() async => attachAudioRenditions(s, await attachFittedPhotos(s, post, s.settings), s.settings)))!;
+      final video = saved.media.singleWhere((m) => isAudioRendition(m) && m.isVideo);
+      final o = saved.targetFor(ig.id)!.overrides;
+      expect(o.mediaIds, [video.id]);
+      expect(o.storyMediaIds, [video.id], reason: 'not the raw sound file, nor the picture');
+      expect(withoutAudioRenditions(saved).targetFor(ig.id)!.overrides.storyMediaIds, [photo.id, track.id]);
     });
   });
 }

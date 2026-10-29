@@ -81,7 +81,8 @@ Future<Post> attachShrunkVideos(
   final used = <String, MediaAttachment>{};
   // Video id and limit -> the targets that need that copy, for progress.
   final needs = <String, List<String>>{};
-  final plans = <({PostTarget target, List<String> ids, Map<int, int> limits, bool make})>[];
+  // [story]: the plan is for the story list of Post + Story.
+  final plans = <({PostTarget target, List<String> ids, Map<int, int> limits, bool make, bool story})>[];
 
   for (final t in p.targets) {
     final account = await s.accounts.get(t.accountId);
@@ -90,24 +91,31 @@ Future<Post> attachShrunkVideos(
     final rules = adapter.descriptorForAccount(account).media;
     final limit = rules.videoMaxBytes;
     if (limit == null || limit <= 0) continue;
-    final ids = t.overrides.mediaIds ?? [for (final m in p.media) if (!m.generated) m.id];
-    final limits = <int, int>{};
-    for (var i = 0; i < ids.length; i++) {
-      final m = p.media.where((x) => x.id == ids[i]).firstOrNull;
-      if (m == null || !m.isVideo || m.sizeBytes <= limit) continue;
-      final maxSeconds = rules.videoMaxSeconds;
-      final durationMs = m.durationMs;
-      if (maxSeconds != null && durationMs != null && durationMs > maxSeconds * 1000) continue;
-      limits[i] = limit;
-      needs.putIfAbsent(_keyFor(m.id, limit), () => []).add(t.accountId);
-    }
     final done = t.status == TargetStatus.published || t.status == TargetStatus.handedOff || t.status == TargetStatus.skipped;
     final make = canMake && !done && (onlyAccountIds == null || onlyAccountIds.contains(t.accountId));
-    if (limits.isNotEmpty) plans.add((target: t, ids: ids, limits: limits, make: make));
+    final storyIds = t.overrides.storyMediaIds;
+    for (final (ids, story) in [
+      (t.overrides.mediaIds ?? [for (final m in p.media) if (!m.generated) m.id], false),
+      if (storyIds != null) (storyIds, true),
+    ]) {
+      final limits = <int, int>{};
+      for (var i = 0; i < ids.length; i++) {
+        final m = p.media.where((x) => x.id == ids[i]).firstOrNull;
+        if (m == null || !m.isVideo || m.sizeBytes <= limit) continue;
+        final maxSeconds = rules.videoMaxSeconds;
+        final durationMs = m.durationMs;
+        if (maxSeconds != null && durationMs != null && durationMs > maxSeconds * 1000) continue;
+        limits[i] = limit;
+        final waiting = needs.putIfAbsent(_keyFor(m.id, limit), () => []);
+        if (!waiting.contains(t.accountId)) waiting.add(t.accountId);
+      }
+      if (limits.isNotEmpty) plans.add((target: t, ids: ids, limits: limits, make: make, story: story));
+    }
   }
 
   for (final plan in plans) {
-    final t = plan.target;
+    // The target as earlier plans left it (its feed list, then its story's).
+    final t = p.targetFor(plan.target.accountId)!;
     final ids = [...plan.ids];
     var changed = false;
     for (final e in plan.limits.entries) {
@@ -143,7 +151,9 @@ Future<Post> attachShrunkVideos(
       ids[e.key] = copy.id;
       changed = true;
     }
-    if (changed) p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(mediaIds: ids)));
+    if (changed) {
+      p = p.withTarget(t.copyWith(overrides: plan.story ? t.overrides.copyWith(storyMediaIds: ids) : t.overrides.copyWith(mediaIds: ids)));
+    }
   }
 
   final keep = {for (final m in used.values) m.id};
@@ -181,11 +191,14 @@ MediaAttachment withProbedDuration(MediaAttachment m, VideoProbe? probe) {
 }
 
 /// [t] listing the source of each shrunk copy in [copies] (copy id -> source
-/// id) in place of the copy.
+/// id) in place of the copy, in its story list as well.
 PostTarget _withSources(PostTarget t, Map<String, String> copies) {
-  final ids = t.overrides.mediaIds;
-  if (ids == null || !ids.any(copies.containsKey)) return t;
-  return t.copyWith(overrides: t.overrides.copyWith(mediaIds: [for (final id in ids) copies[id] ?? id]));
+  var o = t.overrides;
+  final ids = o.mediaIds;
+  if (ids != null && ids.any(copies.containsKey)) o = o.copyWith(mediaIds: [for (final id in ids) copies[id] ?? id]);
+  final story = o.storyMediaIds;
+  if (story != null && story.any(copies.containsKey)) o = o.copyWith(storyMediaIds: [for (final id in story) copies[id] ?? id]);
+  return identical(o, t.overrides) ? t : t.copyWith(overrides: o);
 }
 
 String _keyFor(String videoId, int limitBytes) => '$_shrunkKeyPrefix$videoId|$limitBytes';

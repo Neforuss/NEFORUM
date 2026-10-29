@@ -282,7 +282,10 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
   // background; one that was replaced is deleted, unless another post (a
   // duplicate) or one of this post's photos still uses the file.
   final keptBackground = ownPhoto ? null : backgroundPhoto;
-  final dropped = [for (final m in backgrounds) if (m.id != keptBackground?.id) m];
+  // Read before the loop (the 1.2.1 AOT crash: a null-guarded field load
+  // hoisted out of a loop).
+  final keptBackgroundId = keptBackground?.id;
+  final dropped = [for (final m in backgrounds) if (m.id != keptBackgroundId) m];
   if (dropped.isNotEmpty) {
     final inUse = {
       for (final m in userPhotos.values) m.path,

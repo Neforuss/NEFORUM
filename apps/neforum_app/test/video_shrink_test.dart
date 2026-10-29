@@ -3,12 +3,14 @@
 // networks with that limit, reuse, and what the composer says. The native
 // compositor is replaced by a channel stub that writes small files.
 
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:neforum_app/media/caption_style.dart';
 import 'package:neforum_app/media/render_parameters.dart';
 import 'package:neforum_app/media/video_shrink.dart';
 import 'package:neforum_app/platform/storage.dart';
@@ -282,6 +284,90 @@ void main() {
       // its copy back before the size step.
       expect(withoutFittedPhotos(post).targetFor(instagram.id)!.overrides.mediaIds ?? [video.id], [video.id]);
     });
+
+    testWidgets('publishing reuses the captioned video the save made, whichever font it was drawn in', (tester) async {
+      final instagram = ConnectedAccount(
+          id: 'ig', platformId: 'instagram', tier: PlatformTier.handoff, displayName: 'Me', handle: '@me', createdAt: DateTime(2026, 10, 1));
+      final (s, dir, video) = await workspace(tester, [instagram]);
+      addTearDown(() => tester.runAsync(() => dir.delete(recursive: true)));
+      const look = CaptionStyle(placement: CaptionPlacement.blockAbove);
+      final plain = postFor([instagram], [video]);
+      final words = look.wordsFor(captionWords(plain, plain.targets.single));
+      // Saved while the caption font was missing: drawn in the built-in one.
+      final params = <String, dynamic>{
+        'kind': RenderKind.caption,
+        'platform': 'instagram',
+        'style': look.toJson(),
+        'textHash': stableHash(words),
+        'frameAspect': videoFrameAspect('instagram'),
+        'video': true,
+        'fontFallback': true,
+      };
+      final saved = MediaAttachment(
+        id: 'captioned',
+        path: video.path,
+        mimeType: 'video/mp4',
+        sizeBytes: 1000,
+        generated: true,
+        derivedFrom: video.id,
+        fitKey: 'caption|instagram|${video.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}',
+        renderParameters: params,
+      );
+      final post = (await tester.runAsync(() => attachCaptionedPhotos(s, postFor([instagram], [video, saved]), s.settings,
+          choices: const {'instagram': true}, style: look.toJson(), composeVideos: false)))!;
+      expect(post.targetFor(instagram.id)!.overrides.mediaIds, [saved.id], reason: 'publishing cannot make it again');
+      expect(post.media.map((m) => m.id), contains(saved.id));
+      expect(File(video.path).existsSync(), isTrue);
+    });
+
+    testWidgets('the story of Post + Story gets the smaller copy too', (tester) async {
+      final instagram = ConnectedAccount(
+          id: 'ig', platformId: 'instagram', tier: PlatformTier.handoff, displayName: 'Me', handle: '@me', createdAt: DateTime(2026, 10, 1));
+      final (s, dir, video) = await workspace(tester, [instagram]);
+      addTearDown(() => tester.runAsync(() => dir.delete(recursive: true)));
+      var post = postFor([instagram], [video]);
+      post = post.withTarget(post.targetFor(instagram.id)!.copyWith(overrides: PostOverrides(storyMediaIds: [video.id])));
+      post = (await tester.runAsync(() => attachShrunkVideos(s, post, s.settings.copyWith(shrinkOversizedVideos: true))))!;
+      final copy = post.media.singleWhere(isShrunkCopy);
+      expect(transcoded, hasLength(1), reason: 'one copy for the feed post and the story');
+      expect(post.targetFor(instagram.id)!.overrides.mediaIds, [copy.id]);
+      expect(post.targetFor(instagram.id)!.overrides.storyMediaIds, [copy.id]);
+      expect(withoutShrunkVideos(post).targetFor(instagram.id)!.overrides.storyMediaIds, [video.id]);
+    });
+  });
+
+  test('a smaller copy of a sound file\'s video goes back to that video, never to the sound file', () {
+    final now = DateTime(2026, 10, 28);
+    const track = MediaAttachment(id: 'track', path: '/media/track.wav', mimeType: 'audio/wav', sizeBytes: 1000);
+    const audioVideo = MediaAttachment(
+      id: 'av',
+      path: '/media/av.mp4',
+      mimeType: 'video/mp4',
+      sizeBytes: 400000000,
+      generated: true,
+      derivedFrom: 'track',
+      fitKey: 'audio|track|1',
+      renderParameters: {'kind': RenderKind.audioVideo},
+    );
+    const smaller = MediaAttachment(
+      id: 'small',
+      path: '/media/small.mp4',
+      mimeType: 'video/mp4',
+      sizeBytes: 4096,
+      generated: true,
+      derivedFrom: 'track',
+      fitKey: 'shrunk|av|300000000',
+      renderParameters: {'kind': RenderKind.shrunkVideo, 'source': 'av'},
+    );
+    final post = Post(
+      id: 'p',
+      text: 'New single',
+      media: const [track, audioVideo, smaller],
+      targets: const [PostTarget(accountId: 'bs', overrides: PostOverrides(mediaIds: ['small']))],
+      createdAt: now,
+      updatedAt: now,
+    );
+    expect(withoutFittedPhotos(post).targetFor('bs')!.overrides.mediaIds, ['av']);
   });
 
   group('withVideoLimitAdvice', () {
