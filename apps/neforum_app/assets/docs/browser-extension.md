@@ -149,7 +149,7 @@ NEFORUM listens on one of ports 52772 to 52779. Those are in the range Windows h
 
 NEFORUM then moves on to ports 41772 to 41779, below that range, so it keeps working. **Settings > Browser extension** shows the port it listens on. The extension only looks on those ports from **version 1.0.1**, so update it:
 
-- **Chrome, Edge, Brave, Opera**: after updating NEFORUM, open `chrome://extensions` and click the reload arrow on NEFORUM (if you loaded the `chrome` folder from **Show extension files**; if you copied it somewhere else, load the new folder instead). The card shows the version (now 1.1.0).
+- **Chrome, Edge, Brave, Opera**: after updating NEFORUM, open `chrome://extensions` and click the reload arrow on NEFORUM (if you loaded the `chrome` folder from **Show extension files**; if you copied it somewhere else, load the new folder instead). The card shows the version (now 1.1.1).
 - **Firefox**: load `manifest.json` from the new `firefox` folder again (see the install steps).
 
 If the status says **Ports blocked**, Windows refused every one of NEFORUM's ports. Restarting the computer usually changes which ports are reserved. To see the reserved ranges, run `netsh interface ipv4 show excludedportrange protocol=tcp` in a terminal.
