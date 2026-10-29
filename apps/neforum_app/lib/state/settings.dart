@@ -132,6 +132,8 @@ class AppSettings {
     this.advanceHandoffOnReturn = true,
     this.artworkMaturity = ArtworkMaturity.general,
     this.artworkDisallowAiTraining = true,
+    // 1.3: video
+    this.shrinkOversizedVideos = false,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -190,6 +192,8 @@ class AppSettings {
         advanceHandoffOnReturn: j['advanceHandoffOnReturn'] as bool? ?? true,
         artworkMaturity: ArtworkMaturity.values.asNameMap()[j['artworkMaturity']] ?? ArtworkMaturity.general,
         artworkDisallowAiTraining: j['artworkDisallowAiTraining'] as bool? ?? true,
+        // 1.3: video
+        shrinkOversizedVideos: j['shrinkOversizedVideos'] as bool? ?? false,
       );
 
   final ThemeMode themeMode;
@@ -353,6 +357,11 @@ class AppSettings {
   final ArtworkMaturity artworkMaturity;
   final bool artworkDisallowAiTraining;
 
+  // 1.3: video
+  /// Videos over a network's size limit get a smaller copy for that network
+  /// when posted, made on this device (lib/state/shrunk_videos.dart).
+  final bool shrinkOversizedVideos;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -420,6 +429,8 @@ class AppSettings {
     bool? advanceHandoffOnReturn,
     ArtworkMaturity? artworkMaturity,
     bool? artworkDisallowAiTraining,
+    // 1.3: video
+    bool? shrinkOversizedVideos,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -475,6 +486,8 @@ class AppSettings {
         advanceHandoffOnReturn: advanceHandoffOnReturn ?? this.advanceHandoffOnReturn,
         artworkMaturity: artworkMaturity ?? this.artworkMaturity,
         artworkDisallowAiTraining: artworkDisallowAiTraining ?? this.artworkDisallowAiTraining,
+        // 1.3: video
+        shrinkOversizedVideos: shrinkOversizedVideos ?? this.shrinkOversizedVideos,
       );
 
   Map<String, dynamic> toJson() => {
@@ -531,5 +544,7 @@ class AppSettings {
         'advanceHandoffOnReturn': advanceHandoffOnReturn,
         'artworkMaturity': artworkMaturity.name,
         'artworkDisallowAiTraining': artworkDisallowAiTraining,
+        // 1.3: video
+        'shrinkOversizedVideos': shrinkOversizedVideos,
       };
 }

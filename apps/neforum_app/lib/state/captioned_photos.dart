@@ -16,6 +16,7 @@ import 'fitted_photos.dart';
 import 'render_warnings.dart';
 import 'services.dart';
 import 'settings.dart';
+import 'shrunk_videos.dart';
 
 export '../media/render_parameters.dart' show stableHash;
 
@@ -190,7 +191,9 @@ Map<String, bool> captionChoicesOfPost(Post post, String? Function(String accoun
     final platform = platformOf(t.accountId);
     if (platform == null || !kCaptionPhotoPlatforms.contains(platform)) continue;
     final ids = t.overrides.mediaIds ?? [for (final m in post.media) if (!m.generated) m.id];
-    final first = ids.isEmpty ? null : byId[ids.first];
+    var first = ids.isEmpty ? null : byId[ids.first];
+    // 1.3: video. A smaller copy stands for the video it was made from.
+    if (first != null && isShrunkCopy(first)) first = byId[shrunkCopySourceId(first)] ?? first;
     if (first == null || first.isTextCard || first.mimeType == 'image/gif') continue;
     // A video without a caption block may be on a device without a video
     // compositor, so only a captioned one counts as a choice.

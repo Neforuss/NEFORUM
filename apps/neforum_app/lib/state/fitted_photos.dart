@@ -5,6 +5,7 @@ import '../media/photo_fitter.dart';
 import 'captioned_photos.dart';
 import 'services.dart';
 import 'settings.dart';
+import 'shrunk_videos.dart';
 
 /// The whole frame a network shows photos in, as width / height: TikTok
 /// 9:16, Instagram 4:5 (feed and carousels) or 9:16 (stories). Null for the
@@ -41,11 +42,13 @@ PhotoFit? effectivePhotoFit(PlatformAdapter adapter, ConnectedAccount account, P
 Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) async {
   final mode = settings.photoFit;
   // Photos with the caption written on them are managed by
-  // attachCaptionedPhotos, which runs after this.
-  final pool = {for (final m in post.media.where((m) => m.derivedFrom != null && !isCaptionedCopy(m))) '${m.derivedFrom}|${m.fitKey}': m};
+  // attachCaptionedPhotos, which runs after this, and smaller copies of videos
+  // by attachShrunkVideos (1.3: video).
+  bool fitted(MediaAttachment m) => m.derivedFrom != null && !isCaptionedCopy(m) && !isShrunkCopy(m);
+  final pool = {for (final m in post.media.where(fitted)) '${m.derivedFrom}|${m.fitKey}': m};
   // Handed on untouched (no target lists them here), for attachCaptionedPhotos
-  // to reuse or remove.
-  final captioned = [for (final m in post.media) if (isCaptionedCopy(m)) m];
+  // and attachShrunkVideos to reuse or remove.
+  final captioned = [for (final m in post.media) if (isCaptionedCopy(m) || isShrunkCopy(m)) m];
   var p = withoutFittedPhotos(post);
   if (mode == PhotoFitMode.off) {
     for (final m in pool.values) {
@@ -126,8 +129,9 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
 /// changed. The caption stays written on the photos it was written on when
 /// the post was saved, in the same style ([attachCaptionedPhotos]), and is
 /// left off where it was off; a video keeps the caption block it was saved
-/// with, and gets none it was saved without. Best effort; the post is left as
-/// it is on any problem.
+/// with, and gets none it was saved without. Videos too big for a network get
+/// their smaller copy when Settings ask for it ([attachShrunkVideos]). Best
+/// effort; the post is left as it is on any problem.
 Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
   try {
     final post = await s.posts.get(postId);
@@ -135,7 +139,8 @@ Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
     // Read first: fitting lists the original photos on the targets again.
     final choices = await captionChoicesOfSavedPost(s, post);
     final fitted = await attachFittedPhotos(s, post, s.settings);
-    await s.posts.upsert(await attachCaptionedPhotos(s, fitted, s.settings, choices: choices, composeVideos: false));
+    final captioned = await attachCaptionedPhotos(s, fitted, s.settings, choices: choices, composeVideos: false);
+    await s.posts.upsert(await attachShrunkVideos(s, captioned, s.settings));
   } on Object catch (e) {
     debugPrint('Could not fit the photos of $postId: $e');
   }

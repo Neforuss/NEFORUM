@@ -51,6 +51,8 @@ const Set<String> kExportableSettings = {
   'advanceHandoffOnReturn',
   'artworkMaturity',
   'artworkDisallowAiTraining',
+  // 1.3: video
+  'shrinkOversizedVideos',
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {

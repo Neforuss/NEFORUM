@@ -5,6 +5,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../state/providers.dart';
+import '../../state/shrunk_videos.dart';
 import '../../theme/tokens.dart';
 import 'setting_row.dart';
 
@@ -15,6 +16,7 @@ class PostingSettingsSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
+    final canShrink = ref.watch(videoShrinkingSupportedProvider).value ?? false;
     return SettingsSection(title: 'Posting', icon: Icons.send_outlined, subtitle: 'How NEFORUM adapts one post for many networks.', children: [
       SettingChoice<OverflowStrategy>(
         title: 'When a post is too long for a network',
@@ -77,6 +79,17 @@ class PostingSettingsSection extends ConsumerWidget {
                   )),
             ),
         ]),
+      ),
+      // 1.3: video
+      SettingSwitch(
+        title: 'Shrink videos that are too big for a network',
+        description: canShrink
+            ? 'When a video is over a network\'s size limit, NEFORUM makes a smaller copy for that network as it posts, just '
+                'under that network\'s own limit, on this device. Networks where the video fits get it as it is. A long video '
+                'takes a while to shrink.'
+            : 'This device cannot make video copies, so a video over a network\'s size limit has to be made smaller before you attach it.',
+        value: s.shrinkOversizedVideos,
+        onChanged: canShrink ? (v) => n.update((x) => x.copyWith(shrinkOversizedVideos: v)) : null,
       ),
       SettingSwitch(title: 'Number thread parts', description: 'Adds (1/3), (2/3)… to each part.', value: s.threadNumbering, onChanged: (v) => n.update((x) => x.copyWith(threadNumbering: v))),
       SettingSwitch(title: 'Add my hashtags to the text', description: 'Where the network has no separate tags field.', value: s.appendHashtags, onChanged: (v) => n.update((x) => x.copyWith(appendHashtags: v))),

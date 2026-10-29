@@ -80,10 +80,19 @@ class RulesValidator {
       }
       for (final x in videos) {
         if (m.videoMaxBytes != null && x.sizeBytes > m.videoMaxBytes!) {
-          issues.add(ValidationIssue.error('media.video_too_large', '${x.fileName ?? x.id} is ${_mb(x.sizeBytes)}; limit ${_mb(m.videoMaxBytes!)}', field: 'media'));
+          issues.add(ValidationIssue.error(
+            'media.video_too_large',
+            '${x.fileName ?? 'A video'} is ${_mb(x.sizeBytes)}, ${_mb(x.sizeBytes - m.videoMaxBytes!)} over the ${_mb(m.videoMaxBytes!)} limit for ${d.name}',
+            field: 'media',
+          ));
         }
         if (m.videoMaxSeconds != null && x.durationMs != null && x.durationMs! > m.videoMaxSeconds! * 1000) {
-          issues.add(ValidationIssue.error('media.video_too_long', 'Video is ${(x.durationMs! / 1000).round()}s; limit ${m.videoMaxSeconds}s', field: 'media'));
+          final seconds = (x.durationMs! / 1000).ceil();
+          issues.add(ValidationIssue.error(
+            'media.video_too_long',
+            '${x.fileName ?? 'A video'} is ${_clock(seconds)} long, ${_clock(seconds - m.videoMaxSeconds!)} over the ${_clock(m.videoMaxSeconds!)} limit for ${d.name}',
+            field: 'media',
+          ));
         }
         if (!m.videoMimeTypes.contains(x.mimeType)) {
           issues.add(ValidationIssue.error('media.video_type', '${x.mimeType} is not accepted by ${d.name}', field: 'media'));
@@ -166,4 +175,12 @@ class RulesValidator {
   }
 
   static String _mb(int bytes) => '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+
+  /// Seconds as a duration: "45 s", "2:05", "1:00:00".
+  static String _clock(int seconds) {
+    if (seconds < 60) return '$seconds s';
+    final s = (seconds % 60).toString().padLeft(2, '0');
+    if (seconds < 3600) return '${seconds ~/ 60}:$s';
+    return '${seconds ~/ 3600}:${(seconds % 3600 ~/ 60).toString().padLeft(2, '0')}:$s';
+  }
 }
