@@ -781,6 +781,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final cardFont = c.cardCustomFont(settings);
   final cardDesign = c.textDesign(settings);
   final cardFontMissing = settings.textCards && cardFont != null && ref.watch(captionFontReadyProvider(cardFont)).value == false;
+  final cardFontFamily = cardFont?.family ?? '';
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -843,8 +844,8 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
       if (cardFontMissing) {
         issues.add(ValidationIssue.info(
             'media.text_card_font_missing',
-            'The font ${cardFont.family} is not on this device, so the card uses ${(c.textCardFont ?? settings.textCardFont).label}. '
-            'Install or import ${cardFont.family} here to use it.',
+            'The font $cardFontFamily is not on this device, so the card uses ${(c.textCardFont ?? settings.textCardFont).label}. '
+            'Install or import $cardFontFamily here to use it.',
             field: 'media'));
       }
     } else if (settings.textCards && everyNetwork && !acceptsTextCardImages(d) && variant.media.isEmpty && variant.text.trim().isNotEmpty) {
