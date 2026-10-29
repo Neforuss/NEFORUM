@@ -143,8 +143,12 @@ jobs:
         shell: pwsh
         run: |
           Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
-          flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/video_tools_test.dart
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/video_tools_test.dart | Tee-Object -Variable drive
+          $code = $LASTEXITCODE
+          # Windows Server runners may lack Media Foundation: then the test only
+          # reports SKIPPED, which must show on the run, not pass unnoticed.
+          if ($drive -match 'SKIPPED') { Write-Output '::warning::Video tools test skipped: this runner has no Media Foundation encoders' }
+          if ($code -ne 0) { exit $code }
       - name: Build Windows
         working-directory: apps/neforum_app
         shell: pwsh
@@ -310,7 +314,7 @@ jobs:
             appimagetool-sha256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
             runtime-sha256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
           - arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
             appimage-arch: aarch64
             appimagetool-sha256: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
             runtime-sha256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
@@ -405,7 +409,7 @@ jobs:
           cp "$pkg/icons/hicolor/256x256/apps/org.neforum.NEFORUM.png" "$appdir/org.neforum.NEFORUM.png"
           ln -s org.neforum.NEFORUM.png "$appdir/.DirIcon"
           # --appimage-extract-and-run: CI runners have no FUSE.
-          ARCH=${{ matrix.appimage-arch }} "$tools/appimagetool" --appimage-extract-and-run \
+          ARCH=${{ matrix.appimage-arch }} "$tools/appimagetool" --appimage-extract-and-run --no-appstream \
             --runtime-file "$tools/runtime" "$appdir" "$GITHUB_WORKSPACE/NEFORUM-${{ matrix.appimage-arch }}.AppImage"
           ls -l "$GITHUB_WORKSPACE"/neforum-linux-*.tar.gz "$GITHUB_WORKSPACE"/NEFORUM-*.AppImage
       - uses: actions/upload-artifact@v4
@@ -451,7 +455,10 @@ jobs:
         # needing Firefox 140, older versions ignore the key) are listed only.
         run: npx --yes "web-ext@$WEB_EXT_VERSION" lint --source-dir apps/neforum_app/assets/browser-extension/firefox
       - name: Sign the Firefox build (AMO, unlisted)
-        if: env.AMO_CONFIGURED == 'true'
+        # Tags only: AMO signs each version once, and a push to main and its tag
+        # run at the same time. A failed signing ships the unsigned zip.
+        if: env.AMO_CONFIGURED == 'true' && startsWith(github.ref, 'refs/tags/v')
+        continue-on-error: true
         env:
           AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
           AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
@@ -499,6 +506,9 @@ jobs:
   # of the unsigned ones.
   windows-signing:
     needs: windows
+    permissions:
+      contents: read
+      actions: read
     if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
     runs-on: windows-latest
     env:
