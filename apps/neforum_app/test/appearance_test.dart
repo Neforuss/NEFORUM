@@ -215,7 +215,8 @@ void main() {
       expect(purple.onChromeMuted, Color.alphaBlend(purple.onChrome.withValues(alpha: 0.74), purple.chrome));
     });
 
-    for (final style in NavigationChromeStyle.values) {
+    // The see-through style has its own tests: test/see_through_navigation_test.dart.
+    for (final style in NavigationChromeStyle.values.where((s) => s != NavigationChromeStyle.transparent)) {
       testWidgets('${style.name}: sidebar, rail and tab bar', (tester) async {
         await _pumpApp(tester, size: const Size(1440, 900), settings: {'navigationChrome': style.name}, route: '/queue');
         final nf = _nf(tester);
@@ -223,6 +224,7 @@ void main() {
           NavigationChromeStyle.brand => Brand.night,
           NavigationChromeStyle.theme => nf.surface,
           NavigationChromeStyle.accent => AccentChoice.neforum.light,
+          NavigationChromeStyle.transparent => throw StateError('tested elsewhere'),
         };
         expect(nf.chrome, expected);
         BoxDecoration chromeBox(double width) => tester

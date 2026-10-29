@@ -267,7 +267,9 @@ class NfColors extends ThemeExtension<NfColors> {
   /// Navigation chrome (sidebar, rail, bottom bar). By default deep purple in
   /// both themes, with white content and yellow for the current section;
   /// Settings → Appearance can make it follow the theme ([withThemeChrome])
-  /// or the accent ([withAccentChrome]).
+  /// or the accent ([withAccentChrome]), or make it see-through
+  /// ([withTransparentChrome]): then it has no opacity, and text drawn in it
+  /// uses `chrome.withValues(alpha: 1)`.
   final Color chrome;
 
   /// A card or selected row on the chrome.
@@ -468,6 +470,33 @@ class NfColors extends ThemeExtension<NfColors> {
         end: Alignment.bottomCenter,
         colors: [content, Color.alphaBlend(fill.withValues(alpha: 0.1), content)],
       ),
+    );
+  }
+
+  /// The see-through chrome: what lies behind it (the background picture or
+  /// the page) shows through, so [chrome] is the [surface] with no opacity
+  /// at all; the shell covers it with as much [surface] as the user chose
+  /// and the labels need (`SeeThroughChrome`). Its content is in the
+  /// page's text colors, which that cover keeps readable, set apart by a
+  /// hairline; the current section, its row and the counts are drawn on
+  /// opaque fills as in [withThemeChrome].
+  ///
+  /// Call it after [withHighContrast], so the labels take the stronger text
+  /// colors that the cover is measured for.
+  NfColors withTransparentChrome() {
+    final themed = withThemeChrome();
+    return themed._withChrome(
+      chrome: surface.withValues(alpha: 0),
+      chromeRaised: themed.chromeRaised,
+      onChrome: themed.onChrome,
+      onChromeMuted: themed.onChromeMuted,
+      chromeBorder: themed.chromeBorder,
+      chromeAccent: themed.chromeAccent,
+      onChromeAccent: themed.onChromeAccent,
+      chromeSelected: themed.chromeSelected,
+      chromeUrgent: themed.chromeUrgent,
+      onChromeUrgent: themed.onChromeUrgent,
+      chromeActionGradient: themed.chromeActionGradient,
     );
   }
 

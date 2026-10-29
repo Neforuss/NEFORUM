@@ -33,8 +33,11 @@ ThemeData buildTheme(
     NavigationChromeStyle.brand => base,
     NavigationChromeStyle.theme => base.withThemeChrome(),
     NavigationChromeStyle.accent => base.withAccentChrome(),
+    // Made below from the final page colors: its labels are the page's text.
+    NavigationChromeStyle.transparent => base,
   };
-  final c = highContrast ? chromed.withHighContrast() : chromed;
+  final contrasted = highContrast ? chromed.withHighContrast() : chromed;
+  final c = chrome == NavigationChromeStyle.transparent ? contrasted.withTransparentChrome() : contrasted;
   final dense = density == InterfaceDensity.compact;
   final scheme = ColorScheme(
     brightness: brightness,
