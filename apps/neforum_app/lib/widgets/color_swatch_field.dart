@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../theme/app_theme.dart' show monoStyle;
 import '../theme/tokens.dart';
+import 'color_wheel.dart';
 
 /// Colours offered as swatches for colours the user picks for pictures (ARGB).
 const List<int> kPictureColorSwatches = [
@@ -84,6 +85,14 @@ class _ColorSwatchFieldState extends State<ColorSwatchField> {
             ),
           ),
         ),
+      IconButton(
+        tooltip: 'More colours',
+        icon: const Icon(Icons.palette_outlined),
+        onPressed: () async {
+          final picked = await _pickOnWheel(context, Color(current), widget.label);
+          if (picked != null) widget.onChanged(picked.toARGB32() | 0xFF000000);
+        },
+      ),
       SizedBox(
         width: 112,
         child: TextField(
@@ -111,4 +120,29 @@ class _ColorSwatchFieldState extends State<ColorSwatchField> {
       ),
     ]);
   }
+}
+
+/// Any colour, picked on the [ColorWheel]; null when the user cancels.
+Future<Color?> _pickOnWheel(BuildContext context, Color start, String label) {
+  var color = start;
+  return showDialog<Color>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(label),
+      content: StatefulBuilder(
+        builder: (context, setState) => Column(mainAxisSize: MainAxisSize.min, children: [
+          ColorWheel(color: color, onChanged: (c) => setState(() => color = c)),
+          const SizedBox(height: Space.md),
+          Container(
+            height: 28,
+            decoration: BoxDecoration(color: color, borderRadius: Radii.rSm, border: Border.all(color: context.nf.borderStrong)),
+          ),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.pop(context, color), child: const Text('Use this colour')),
+      ],
+    ),
+  );
 }
