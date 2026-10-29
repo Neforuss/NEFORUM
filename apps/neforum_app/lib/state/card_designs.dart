@@ -63,6 +63,22 @@ Map<String, dynamic>? textCardDesignChoiceOfPost(Post post) => _designOfPost(pos
 /// [textCardDesignChoiceOfPost].
 Map<String, dynamic>? audioCardDesignChoiceOfPost(Post post) => _designOfPost(post, kAudioCardDesignKey);
 
+/// The design of [post]'s sound file pictures, as the composer keeps it: the
+/// design written on its targets, else the one its sound file videos were
+/// made with (an empty map for the classic card); null when it has neither.
+/// Like the text cards' design, so a post saved under one Settings default
+/// keeps its videos when the default changes before it goes out.
+Map<String, dynamic>? audioCardDesignOfPost(Post post) {
+  final chosen = audioCardDesignChoiceOfPost(post);
+  if (chosen != null) return chosen;
+  for (final m in post.media) {
+    if (!m.generated || renderKindOf(m) != RenderKind.audioVideo) continue;
+    final design = m.renderParameters?['design'];
+    return design is Map ? Map<String, dynamic>.from(design) : const {};
+  }
+  return null;
+}
+
 /// The design a choice stands for: [choice] (empty: the classic card, so
 /// null), or the Settings default [fallback] when [choice] is null.
 CardDesign? effectiveCardDesign(Map<String, dynamic>? choice, Map<String, dynamic> fallback) =>

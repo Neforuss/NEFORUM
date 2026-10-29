@@ -210,6 +210,12 @@ class ComposerState {
   /// [audioCardDesign], or the Settings default; null for the classic card.
   CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
 
+  /// The design written on the saved post's targets for its sound file's
+  /// video ([withCardDesigns]): [audioCardDesign], else the Settings default
+  /// the video is drawn with now, so a scheduled or background run still
+  /// finds that video after the default changes. Null without a sound file.
+  Map<String, dynamic>? audioCardDesignToSave(AppSettings settings) => audioCardDesign ?? (audio == null ? null : settings.audioCardDesign);
+
   /// Every part with words in it ([text], then [additionalParts]) joined with
   /// blank lines: what networks without threads receive.
   String get joinedParts => [
@@ -742,7 +748,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         audioDetails: p.audioDetails,
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
         textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
-        audioCardDesign: audioCardDesignChoiceOfPost(post), // 1.3.1: cards
+        audioCardDesign: audioCardDesignOfPost(post), // 1.3.1: cards
       );
   }
 
@@ -1083,7 +1089,7 @@ class PostActions {
         withText: c.textCardWithText,
         platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
     // 1.3.1: cards. After the card choices, which replace the targets' extras.
-    post = withCardDesigns(post, text: c.textCardDesign, audio: c.audioCardDesign);
+    post = withCardDesigns(post, text: c.textCardDesign, audio: c.audioCardDesignToSave(ref.read(settingsProvider)));
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);

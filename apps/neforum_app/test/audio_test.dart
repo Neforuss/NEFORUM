@@ -12,9 +12,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:neforum_app/media/audio_plan.dart';
 import 'package:neforum_app/media/audio_probe.dart';
+import 'package:neforum_app/media/card_design.dart';
+import 'package:neforum_app/media/card_templates.dart';
 import 'package:neforum_app/platform/media_library.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/audio_renditions.dart';
+import 'package:neforum_app/state/card_designs.dart';
 import 'package:neforum_app/state/fitted_photos.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/ui/compose/audio_quality_option.dart';
@@ -567,6 +570,36 @@ void main() {
       expect(calls, hasLength(made), reason: 'nothing rendered in the background');
       final forX = post.media.singleWhere((m) => m.id == post.targetFor('x')!.overrides.mediaIds!.single);
       expect(isAudioRendition(forX) && forX.isVideo, isTrue, reason: 'X still gets the video, not the sound file');
+    });
+
+    testWidgets('a saved post keeps its designed video when the Settings default design changes', (tester) async {
+      final x = handoff('x', 'x');
+      final (s, track, _) = await workspace(tester, [x]);
+      final vinyl = cardTemplateById('vinyl')!.design(CardKind.audio);
+      await tester.runAsync(() => s.saveSettings(s.settings.copyWith(audioCardDesign: vinyl.toJson())));
+      final now = DateTime(2026, 10, 28);
+      // Saved without a design of its own: the Settings default draws it.
+      final post = Post(id: 'p-designed', text: 'New single', media: [track], targets: [PostTarget(accountId: x.id)], createdAt: now, updatedAt: now);
+      final saved = (await tester.runAsync(() async {
+        final p = await attachAudioRenditions(s, post, s.settings);
+        await s.posts.upsert(p);
+        return p;
+      }))!;
+      final video = saved.media.singleWhere((m) => isAudioRendition(m) && m.isVideo);
+      expect(saved.targetFor(x.id)!.overrides.mediaIds, [video.id]);
+      expect(CardDesign.tryParse(audioCardDesignOfPost(saved))?.template, 'vinyl', reason: 'read back from the video');
+
+      // The default changes before the scheduled run, which has no compositor.
+      final neon = cardTemplateById('neon')!.design(CardKind.audio);
+      await tester.runAsync(() => s.saveSettings(s.settings.copyWith(audioCardDesign: neon.toJson())));
+      final made = calls.length;
+      final run = (await tester.runAsync(() async {
+        await fitPhotosOfSavedPost(s, 'p-designed');
+        return (await s.posts.get('p-designed'))!;
+      }))!;
+      expect(run.targetFor(x.id)!.overrides.mediaIds, [video.id], reason: 'X still gets the video');
+      expect(File(video.path).existsSync(), isTrue, reason: 'the video is kept');
+      expect(calls, hasLength(made));
     });
 
     testWidgets('the story of Post + Story gets the video too, without the photo that became its picture', (tester) async {

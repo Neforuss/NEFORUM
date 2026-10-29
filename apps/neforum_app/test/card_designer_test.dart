@@ -23,6 +23,7 @@ import 'package:neforum_app/state/card_designs.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
+import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/state/text_cards.dart';
 import 'package:neforum_app/ui/compose/card_design_view.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
@@ -407,6 +408,35 @@ void main() {
       await settle(tester);
       await finish(tester);
     });
+  });
+
+  test('a post with a sound file is saved with the design its video is drawn with, the default included', () async {
+    final services = await AppServices.create(demo: true, storage: _MemoryStorage());
+    final c = ProviderContainer(overrides: [servicesProvider.overrideWithValue(services)]);
+    addTearDown(c.dispose);
+    const tone = MediaAttachment(id: 'tone', path: 'mem://tone.wav', mimeType: 'audio/wav', sizeBytes: 8044, fileName: 'tone.wav');
+    final vinyl = cardTemplateById('vinyl')!.design(CardKind.audio).toJson();
+    final settings = const AppSettings().copyWith(audioCardDesign: vinyl);
+    final n = c.read(composerProvider.notifier);
+    expect(c.read(composerProvider).audioCardDesignToSave(settings), isNull, reason: 'no sound file, nothing to keep');
+    n
+      ..addMedia([tone])
+      ..selectAccounts(['x-account']);
+    expect(c.read(composerProvider).audioCardDesign, isNull, reason: 'no design of its own');
+    final now = DateTime(2026, 10, 29);
+    // As the save writes it.
+    final post = withCardDesigns(
+        c.read(composerProvider).toPost(id: 'p-sound', status: PostStatus.draft, now: now),
+        text: c.read(composerProvider).textCardDesign,
+        audio: c.read(composerProvider).audioCardDesignToSave(settings));
+    expect(CardDesign.tryParse(audioCardDesignChoiceOfPost(post))?.template, 'vinyl');
+    // The default changes; edited again, the post keeps its own.
+    n.load(post);
+    final later = settings.copyWith(audioCardDesign: cardTemplateById('neon')!.design(CardKind.audio).toJson());
+    expect(c.read(composerProvider).audioDesign(later)?.template, 'vinyl');
+    // A design of its own is saved as it is.
+    n.setAudioCardDesign(null);
+    expect(c.read(composerProvider).audioCardDesignToSave(later), isEmpty, reason: 'the classic card');
   });
 
   testWidgets('Settings > Text cards designs the defaults of both kinds', (tester) async {

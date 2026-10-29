@@ -118,8 +118,10 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
   final byId = {for (final m in p.media) m.id: m};
   final userIds = [for (final m in p.media) if (!m.generated) m.id];
   // 1.3.1: cards. The card designer's design of the video's picture, read
-  // once, before the loop (the 1.2.1 AOT crash).
-  final design = effectiveCardDesign(audioCardDesignChoiceOfPost(post), settings.audioCardDesign);
+  // once, before the loop (the 1.2.1 AOT crash): the post's own, else the
+  // one its videos were made with, so a run after the Settings default
+  // changed still finds them; the Settings default for a post with neither.
+  final design = effectiveCardDesign(audioCardDesignOfPost(post), settings.audioCardDesign);
 
   for (final original in post.targets) {
     final t = p.targetFor(original.accountId)!;
