@@ -16,14 +16,21 @@ import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 
-/// Opens the platform picker and attaches the chosen photos/videos.
+/// Opens the platform picker and attaches the chosen photos, videos or sound
+/// files. Phones ask first: their photo picker shows no sound files.
 Future<void> pickAndAttachMedia(BuildContext context, WidgetRef ref) async {
   final library = ref.read(servicesProvider).media;
   final notifier = ref.read(composerProvider.notifier);
   final added = <MediaAttachment>[];
   final rejected = <String>[];
+  var sound = false;
+  if (Env.isMobile) {
+    final choice = await _askPhoneSource(context);
+    if (choice == null || !context.mounted) return;
+    sound = choice;
+  }
   try {
-    if (Env.isMobile) {
+    if (Env.isMobile && !sound) {
       final files = await ImagePicker().pickMultipleMedia(limit: 20);
       for (final f in files) {
         try {
@@ -34,9 +41,9 @@ Future<void> pickAndAttachMedia(BuildContext context, WidgetRef ref) async {
       }
     } else {
       final files = await FilePicker.pickFiles(
-        dialogTitle: 'Attach photos or videos',
+        dialogTitle: sound ? 'Attach a sound file' : 'Attach photos, videos or sound',
         type: FileType.custom,
-        allowedExtensions: MediaLibrary.supportedExtensions,
+        allowedExtensions: sound ? MediaLibrary.audioExtensions : MediaLibrary.supportedExtensions,
       );
       for (final f in files) {
         try {
@@ -52,9 +59,32 @@ Future<void> pickAndAttachMedia(BuildContext context, WidgetRef ref) async {
   }
   notifier.addMedia(added);
   if (rejected.isNotEmpty && context.mounted) {
-    showToast(context, '${rejected.length} file(s) skipped: only images and videos can be attached', icon: Icons.info_outline_rounded);
+    showToast(context, '${rejected.length} file(s) skipped: only images, videos and sound files can be attached', icon: Icons.info_outline_rounded);
   }
 }
+
+/// Phones: photos and videos (the photo library) or a sound file (Files).
+/// True for sound, null when dismissed.
+Future<bool?> _askPhoneSource(BuildContext context) => showModalBottomSheet<bool>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined),
+            title: const Text('Photos and videos'),
+            onTap: () => Navigator.pop(context, false),
+          ),
+          ListTile(
+            leading: const Icon(Icons.audio_file_outlined),
+            title: const Text('Sound file'),
+            subtitle: const Text('MP3, M4A, WAV, FLAC, AIFF, Ogg'),
+            onTap: () => Navigator.pop(context, true),
+          ),
+          const SizedBox(height: Space.sm),
+        ]),
+      ),
+    );
 
 /// Attaches files dropped onto the editor.
 Future<void> attachDroppedFiles(BuildContext context, WidgetRef ref, List<XFile> files) async {
@@ -72,7 +102,7 @@ Future<void> attachDroppedFiles(BuildContext context, WidgetRef ref, List<XFile>
   }
   ref.read(composerProvider.notifier).addMedia(added);
   if (rejected > 0 && context.mounted) {
-    showToast(context, '$rejected file(s) skipped: only images and videos can be attached', icon: Icons.info_outline_rounded);
+    showToast(context, '$rejected file(s) skipped: only images, videos and sound files can be attached', icon: Icons.info_outline_rounded);
   }
 }
 
@@ -173,21 +203,23 @@ class _MediaItemState extends ConsumerState<_MediaItem> {
           top: 5,
           child: _RoundIcon(icon: Icons.close_rounded, tooltip: 'Remove', onTap: widget.onRemove),
         ),
-        Positioned(
-          left: 5,
-          bottom: 5,
-          child: AnimatedOpacity(
-            duration: Motion.fast,
-            opacity: hasAlt || _hover || !Env.isDesktop ? 1 : 0.85,
-            child: _AltButton(
-              hasAlt: hasAlt,
-              onTap: () async {
-                final alt = await showAltTextDialog(context, m);
-                if (alt != null) ref.read(composerProvider.notifier).setAltText(m.id, alt);
-              },
+        // A sound file has no picture to describe.
+        if (!m.isAudio)
+          Positioned(
+            left: 5,
+            bottom: 5,
+            child: AnimatedOpacity(
+              duration: Motion.fast,
+              opacity: hasAlt || _hover || !Env.isDesktop ? 1 : 0.85,
+              child: _AltButton(
+                hasAlt: hasAlt,
+                onTap: () async {
+                  final alt = await showAltTextDialog(context, m);
+                  if (alt != null) ref.read(composerProvider.notifier).setAltText(m.id, alt);
+                },
+              ),
             ),
           ),
-        ),
       ]),
     );
   }
@@ -258,7 +290,7 @@ class _AddTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final nf = context.nf;
     return Tooltip(
-      message: 'Add photos or videos',
+      message: 'Add photos, videos or sound',
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         child: GestureDetector(
