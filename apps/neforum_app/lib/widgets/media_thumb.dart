@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../media/audio_plan.dart';
 import '../platform/media_library.dart';
 import '../state/providers.dart';
 import '../state/video_frames.dart';
@@ -10,7 +11,8 @@ import '../theme/tokens.dart';
 
 /// Square (or [aspect]) thumbnail of an attachment. Videos show a frame from
 /// somewhere in them where this device can read one, with a play glyph and
-/// their size; images with alt text get a small "ALT" tag.
+/// their size; sound files their name, length and size; images with alt text
+/// get a small "ALT" tag.
 class MediaThumb extends ConsumerWidget {
   const MediaThumb(this.media, {super.key, this.size = 96, this.aspect, this.radius, this.showAltTag = true, this.fit = BoxFit.cover});
 
@@ -32,7 +34,9 @@ class MediaThumb extends ConsumerWidget {
     final dpr = MediaQuery.devicePixelRatioOf(context);
 
     final Widget content;
-    if (media.isVideo) {
+    if (media.isAudio) {
+      content = _AudioTile(media: media, size: size);
+    } else if (media.isVideo) {
       // 1.3: video. A frame from somewhere in the video, for this session
       // only; the gradient until it arrives, or when there is none.
       final frame = ref.watch(videoPreviewFrameProvider((mediaId: media.id, path: media.path))).value;
@@ -112,6 +116,50 @@ class MediaThumb extends ConsumerWidget {
             ),
         ]),
       ),
+    );
+  }
+}
+
+/// A sound file: its icon, name, length and size, and a "Lossless" badge
+/// for a lossless file.
+class _AudioTile extends StatelessWidget {
+  const _AudioTile({required this.media, required this.size});
+  final MediaAttachment media;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    final ms = media.durationMs;
+    final facts = [if (ms != null) formatAudioDuration(ms), formatBytes(media.sizeBytes)].join(' · ');
+    final compact = size < 80;
+    return Container(
+      color: nf.accentSoft,
+      padding: EdgeInsets.all(compact ? 6 : 9),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Icon(Icons.graphic_eq_rounded, color: nf.accent, size: size * 0.24),
+          const Spacer(),
+          if (media.isLosslessAudio && !compact)
+            Tooltip(
+              message: 'Lossless: ${audioFormatLabel(media)}, sample for sample',
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                decoration: BoxDecoration(color: nf.highlight, borderRadius: Radii.rXs),
+                child: Text('LOSSLESS', style: TextStyle(color: nf.onHighlight, fontSize: 8.5, fontWeight: FontWeight.w800, letterSpacing: 0.5)),
+              ),
+            ),
+        ]),
+        const Spacer(),
+        if (!compact)
+          Text(
+            media.fileName ?? audioFormatLabel(media),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: context.text.labelSmall?.copyWith(color: nf.text, fontWeight: FontWeight.w600, height: 1.2),
+          ),
+        Text(facts, maxLines: 1, overflow: TextOverflow.ellipsis, style: monoStyle(context, size: compact ? 9 : 10, color: nf.textMuted)),
+      ]),
     );
   }
 }

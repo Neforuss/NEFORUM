@@ -5,6 +5,7 @@ import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart' show Visibility;
@@ -101,8 +102,13 @@ class MisskeyAdapter extends PlatformAdapter {
       imageMimeTypes: _imageTypes,
       videoMimeTypes: _videoTypes,
       supportsAltText: true,
-      notes: 'Up to 16 files per note, images and videos mixed. Per-file size and Drive capacity are '
+      notes: 'Up to 16 files per note, images, videos and sound files mixed. Per-file size and Drive capacity are '
           'set by your instance (default 30 MB per file, 100 MB Drive). Alt text max 512 characters.',
+      maxAudios: misskeyMaxFilesPerNote,
+      audioMaxBytes: misskeyDefaultMaxFileBytes,
+      audioMimeTypes: AudioMimeTypes.all,
+      keepsAudioBytes: true,
+      audioWithOtherMedia: true,
     ),
     defaultQuotas: [
       QuotaRule(
@@ -376,6 +382,11 @@ class MisskeyAdapter extends PlatformAdapter {
         videoMimeTypes: m.videoMimeTypes,
         supportsAltText: m.supportsAltText,
         notes: m.notes,
+        maxAudios: m.maxAudios,
+        audioMaxBytes: maxBytes ?? m.audioMaxBytes,
+        audioMimeTypes: m.audioMimeTypes,
+        keepsAudioBytes: m.keepsAudioBytes,
+        audioWithOtherMedia: m.audioWithOtherMedia,
       ),
       defaultQuotas: d.defaultQuotas,
       personalAccountOk: d.personalAccountOk,
@@ -500,8 +511,7 @@ class MisskeyAdapter extends PlatformAdapter {
   }
 
   Future<String> _upload(MisskeyApi api, MediaAttachment m, int index, int total, bool sensitive, AdapterContext ctx) async {
-    final kind = m.isVideo ? 'video' : 'image';
-    ctx.progress('Uploading $kind ${index + 1} of $total');
+    ctx.progress('Uploading ${m.noun} ${index + 1} of $total');
     final bytes = await ctx.readMedia(m);
     final alt = _clip(m.altText?.trim(), misskeyMaxAltLength);
     final res = await guardMisskey('Misskey upload ${index + 1}/$total', ctx, () => api.uploadDriveFile(
@@ -601,6 +611,8 @@ String? _clip(String? s, int max) {
 }
 
 String _ext(String mime) {
+  final audio = canonicalAudioMimeType(mime);
+  if (audio != null) return audioExtensionFor(audio);
   final sub = mime.split('/').last;
   return switch (sub) {
     'jpeg' => 'jpg',

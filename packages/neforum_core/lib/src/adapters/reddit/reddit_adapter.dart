@@ -14,6 +14,7 @@ import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../adapter_context.dart';
+import '../audio_links.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 import 'reddit_api.dart';
@@ -360,7 +361,7 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     }
     final api = RedditApi(ctx, tokens.accessToken, userAgent: _userAgentFor(account));
     try {
-      return await _publish(variant, account, api, sr, title, ctx);
+      return await _publish(await withAudioLinks(variant, ctx, platform: 'Reddit', markdown: true), account, api, sr, title, ctx);
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } on HttpFailure catch (e) {

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/photo_fitter.dart';
+import 'audio_renditions.dart';
 import 'captioned_photos.dart';
 import 'services.dart';
 import 'settings.dart';
@@ -42,13 +43,14 @@ PhotoFit? effectivePhotoFit(PlatformAdapter adapter, ConnectedAccount account, P
 Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) async {
   final mode = settings.photoFit;
   // Photos with the caption written on them are managed by
-  // attachCaptionedPhotos, which runs after this, and smaller copies of videos
-  // by attachShrunkVideos (1.3: video).
-  bool fitted(MediaAttachment m) => m.derivedFrom != null && !isCaptionedCopy(m) && !isShrunkCopy(m);
+  // attachCaptionedPhotos, smaller copies of videos by attachShrunkVideos and
+  // sound renditions by attachAudioRenditions, which run after this.
+  bool fitted(MediaAttachment m) => m.derivedFrom != null && !isCaptionedCopy(m) && !isShrunkCopy(m) && !isAudioRendition(m);
   final pool = {for (final m in post.media.where(fitted)) '${m.derivedFrom}|${m.fitKey}': m};
   // Handed on untouched (no target lists them here), for attachCaptionedPhotos
-  // and attachShrunkVideos to reuse or remove.
-  final captioned = [for (final m in post.media) if (isCaptionedCopy(m) || isShrunkCopy(m)) m];
+  // and attachShrunkVideos to reuse or remove; renditions stay listed where
+  // they are.
+  final captioned = [for (final m in post.media) if (isCaptionedCopy(m) || isShrunkCopy(m) || isAudioRendition(m)) m];
   var p = withoutFittedPhotos(post);
   if (mode == PhotoFitMode.off) {
     for (final m in pool.values) {
@@ -139,6 +141,7 @@ Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
     // Read first: fitting lists the original photos on the targets again.
     final choices = await captionChoicesOfSavedPost(s, post);
     final fitted = await attachFittedPhotos(s, post, s.settings);
+    // Sound renditions stay as the save made them: no compositor here.
     final captioned = await attachCaptionedPhotos(s, fitted, s.settings, choices: choices, composeVideos: false);
     await s.posts.upsert(await attachShrunkVideos(s, captioned, s.settings));
   } on Object catch (e) {
@@ -148,9 +151,9 @@ Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
 
 /// [post] without fitted copies (captioned copies included): each target lists
 /// the original photos again (and no list at all when that is every photo, as
-/// before fitting).
+/// before fitting). Sound renditions are left to [withoutAudioRenditions].
 Post withoutFittedPhotos(Post post) {
-  final fitted = {for (final m in post.media.where((m) => m.derivedFrom != null)) m.id: m.derivedFrom!};
+  final fitted = {for (final m in post.media.where((m) => m.derivedFrom != null && !isAudioRendition(m))) m.id: m.derivedFrom!};
   if (fitted.isEmpty) return post;
   final media = [for (final m in post.media) if (!fitted.containsKey(m.id)) m];
   final all = [for (final m in media) if (!m.generated) m.id];

@@ -111,6 +111,8 @@ class ThreadsAdapter extends PlatformAdapter {
           'One optional topic tag per post (extra "topic_tag"); at most 5 links.',
     ),
     media: MediaRules(
+      // Sound goes as a video of one still picture, made by the app.
+      audioAsVideo: true,
       maxImages: maxCarouselItems,
       maxVideos: maxCarouselItems,
       allowsMixedImageVideo: true,

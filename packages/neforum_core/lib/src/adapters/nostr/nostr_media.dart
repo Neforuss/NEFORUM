@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart';
 import 'package:meta/meta.dart';
 
 import '../../http/neforum_http.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/publish_result.dart';
 import '../adapter_context.dart';
@@ -61,7 +62,7 @@ class NostrMediaUploader {
     final out = <NostrUploadedMedia>[];
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
-      final label = m.isVideo ? 'video' : 'image';
+      final label = m.noun;
       final where = host?.name ?? Uri.parse(nip96Server).host;
       ctx.progress('Uploading $label ${i + 1} of ${media.length} to $where');
       final bytes = await ctx.readMedia(m);

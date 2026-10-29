@@ -25,6 +25,12 @@ const Map<String, String> _extensionByMime = {
   'video/mp4': '.mp4',
   'video/quicktime': '.mov',
   'video/webm': '.webm',
+  'audio/mpeg': '.mp3',
+  'audio/mp4': '.m4a',
+  'audio/wav': '.wav',
+  'audio/flac': '.flac',
+  'audio/aiff': '.aiff',
+  'audio/ogg': '.ogg',
   'text/plain': '.txt',
 };
 

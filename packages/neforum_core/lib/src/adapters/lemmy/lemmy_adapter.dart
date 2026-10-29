@@ -9,6 +9,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
+import '../audio_links.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 import 'lemmy_api.dart';
@@ -69,6 +70,8 @@ class LemmyAdapter extends PlatformAdapter {
           'up to 50000 characters. The link goes into the post\'s own URL field. No hashtags; NSFW is a flag.',
     ),
     media: MediaRules(
+      // Sound goes as a link to the file on the media host.
+      audioAsLink: true,
       maxImages: 1,
       maxVideos: 1,
       allowsMixedImageVideo: false,
@@ -443,7 +446,7 @@ class LemmyAdapter extends PlatformAdapter {
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     try {
-      return await _publish(variant, account, secrets, ctx);
+      return await _publish(await withAudioLinks(variant, ctx, platform: 'Lemmy', markdown: true), account, secrets, ctx);
     } on AdapterException catch (e) {
       ctx.log.warn('Lemmy publish failed: ${e.error.message}');
       return PublishResult.failure(e.error);

@@ -76,7 +76,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     final ids = t.overrides.mediaIds ?? [for (final m in p.media) if (!m.generated) m.id];
     if (ids.isEmpty) continue;
     final first = p.media.where((m) => m.id == ids.first).firstOrNull;
-    if (first == null || first.isTextCard || first.mimeType == 'image/gif') continue;
+    if (first == null || first.isTextCard || first.isAudio || first.mimeType == 'image/gif') continue;
     // A video gets the caption only as a block above it, made by the video
     // compositor where this device has one.
     if (first.isVideo && !block) continue;
@@ -194,7 +194,7 @@ Map<String, bool> captionChoicesOfPost(Post post, String? Function(String accoun
     var first = ids.isEmpty ? null : byId[ids.first];
     // 1.3: video. A smaller copy stands for the video it was made from.
     if (first != null && isShrunkCopy(first)) first = byId[shrunkCopySourceId(first)] ?? first;
-    if (first == null || first.isTextCard || first.mimeType == 'image/gif') continue;
+    if (first == null || first.isTextCard || first.isAudio || first.mimeType == 'image/gif') continue;
     // A video without a caption block may be on a device without a video
     // compositor, so only a captioned one counts as a choice.
     if (first.isVideo) {

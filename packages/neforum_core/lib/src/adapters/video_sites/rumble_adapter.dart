@@ -32,6 +32,8 @@ class RumbleAdapter extends HandoffOnlyAdapter {
           'when the post has no title). Rumble does not publish its exact limits.',
     ),
     media: MediaRules(
+      // Sound goes as a video of one still picture, made by the app.
+      audioAsVideo: true,
       maxVideos: 1,
       requiresMedia: true,
       videoMimeTypes: {'video/mp4', 'video/quicktime', 'video/webm', 'video/x-matroska', 'video/x-msvideo', 'video/x-ms-wmv'},

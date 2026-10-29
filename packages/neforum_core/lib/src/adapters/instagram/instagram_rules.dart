@@ -60,6 +60,8 @@ class InstagramRules {
           'clickable. Stories have no caption.',
     ),
     media: MediaRules(
+      // Sound goes as a video of one still picture, made by the app.
+      audioAsVideo: true,
       maxImages: carouselMax,
       maxVideos: carouselMax,
       requiresMedia: true,

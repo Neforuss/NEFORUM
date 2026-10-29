@@ -157,5 +157,6 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
     textCardHandle: flags(j['textCardHandle']),
     captionStyle: j['captionStyle'] is Map ? Map<String, dynamic>.from(j['captionStyle'] as Map) : null,
     textCardBackground: j['textCardBackground'] is Map ? Map<String, dynamic>.from(j['textCardBackground'] as Map) : null,
+    audioQuality: p.audioQuality,
   );
 }

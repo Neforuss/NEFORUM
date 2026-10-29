@@ -514,6 +514,8 @@ const PlatformDescriptor nostrDescriptor = PlatformDescriptor(
         '(nostr-rs-relay). Plain text only; hashtags are also added as "t" tags.',
   ),
   media: MediaRules(
+    // Sound goes like any file: uploaded, its link in the note (NIP-92 imeta).
+    audioAsLink: true,
     maxImages: 20,
     maxVideos: 20,
     allowsMixedImageVideo: true,

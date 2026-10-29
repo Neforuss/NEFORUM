@@ -19,6 +19,14 @@ abstract final class RenderKind {
   /// A video re-encoded to fit a network's size limit
   /// (lib/state/shrunk_videos.dart).
   static const String shrunkVideo = 'shrunkVideo';
+
+  /// The Standard copy of a sound file: one MP3 (or M4A) for every network
+  /// that takes sound.
+  static const String audioTranscode = 'audioTranscode';
+
+  /// A sound file as a video of one still picture, for a network that takes
+  /// only video.
+  static const String audioVideo = 'audioVideo';
 }
 
 /// The kind of generated file [m] is ([RenderKind]); null for user files and

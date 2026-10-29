@@ -88,6 +88,14 @@ class GhostApi {
           headers: _headers,
           fields: {'purpose': 'image', 'ref': fileName},
           files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)]);
+
+  /// `POST media/upload/` (multipart `file`, `ref`): audio and video,
+  /// stored as uploaded. Answers `{media: [{url, ref}]}`.
+  Future<NeforumResponse> uploadMedia(Uint8List bytes, {required String fileName, required String contentType}) =>
+      ctx.http.multipart(endpoint('media/upload/'),
+          headers: _headers,
+          fields: {'ref': fileName},
+          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)]);
 }
 
 /// `(type, message, context)` of the first entry in Ghost's `errors` array.

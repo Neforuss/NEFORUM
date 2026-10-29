@@ -19,6 +19,7 @@ import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
+import '../audio_links.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 import 'tumblr_api.dart';
@@ -91,6 +92,8 @@ class TumblrAdapter extends PlatformAdapter {
           'and no content warnings (Tumblr community labels must be set on tumblr.com).',
     ),
     media: MediaRules(
+      // Sound goes as a link to the file on the media host.
+      audioAsLink: true,
       maxImages: 30,
       maxVideos: 1,
       allowsMixedImageVideo: true,
@@ -658,7 +661,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     try {
-      return await _publish(variant, account, secrets, ctx);
+      return await _publish(await withAudioLinks(variant, ctx, platform: 'Tumblr', markdown: false), account, secrets, ctx);
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } on HttpFailure catch (e) {

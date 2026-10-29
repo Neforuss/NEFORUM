@@ -1,3 +1,4 @@
+import '../../model/audio.dart';
 import '../../model/platform_descriptor.dart';
 import '../connect_spec.dart';
 import 'mastodon_instance.dart';
@@ -31,8 +32,16 @@ const _media = MediaRules(
   supportsAltText: true,
   notes:
       'Up to 4 images (16 MB each) or 1 video (99 MB) on vanilla Mastodon; images and video cannot be mixed. '
-      'Each server reports its own limits (GoToSocial: 6 files, 40 MB). Pixelfed requires at least one image.',
+      'Each server reports its own limits (GoToSocial: 6 files, 40 MB). Pixelfed requires at least one image. '
+      'A sound file goes alone, up to the video limit; Mastodon turns it into an MP3 of its own.',
+  maxAudios: 1,
+  audioMaxBytes: 103809024,
+  audioMimeTypes: _audioTypes,
 );
+
+/// What vanilla Mastodon takes as sound (MediaAttachment::AUDIO_MIME_TYPES):
+/// no AIFF.
+const _audioTypes = {AudioMimeTypes.mp3, AudioMimeTypes.m4a, AudioMimeTypes.wav, AudioMimeTypes.flac, AudioMimeTypes.ogg};
 
 /// The static descriptor (vanilla Mastodon defaults).
 const mastodonDescriptor = PlatformDescriptor(
@@ -160,6 +169,7 @@ PlatformDescriptor mastodonDescriptorFor(MastodonInstanceProfile p) {
     linkInText: true,
     notes: _text.notes,
   );
+  final audio = p.audioMimeTypes ?? (p.isPixelfed ? const <String>{} : _media.audioMimeTypes);
   final media = MediaRules(
     maxImages: p.maxMediaAttachments ?? _media.maxImages,
     maxVideos: _media.maxVideos,
@@ -171,6 +181,11 @@ PlatformDescriptor mastodonDescriptorFor(MastodonInstanceProfile p) {
     videoMimeTypes: p.videoMimeTypes ?? (p.isPixelfed ? const <String>{} : _media.videoMimeTypes),
     supportsAltText: true,
     notes: _media.notes,
+    // A server that lists no sound types takes the track as a video.
+    maxAudios: audio.isEmpty ? 0 : _media.maxAudios,
+    audioMaxBytes: p.videoSizeLimit ?? _media.audioMaxBytes,
+    audioMimeTypes: audio,
+    audioAsVideo: audio.isEmpty && !p.isPixelfed,
   );
   return PlatformDescriptor(
     id: mastodonDescriptor.id,

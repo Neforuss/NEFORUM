@@ -36,6 +36,8 @@ const PlatformDescriptor facebookDescriptor = PlatformDescriptor(
         'counted; NEFORUM counts UTF-16 code units.',
   ),
   media: MediaRules(
+    // Sound goes as a video of one still picture, made by the app.
+    audioAsVideo: true,
     maxImages: 10,
     maxVideos: 1,
     allowsMixedImageVideo: false,

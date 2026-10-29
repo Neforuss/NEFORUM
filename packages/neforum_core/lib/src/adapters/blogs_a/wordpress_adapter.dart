@@ -2,6 +2,7 @@ import '../../auth/auth_broker.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart' show Visibility;
@@ -38,6 +39,16 @@ class WordPressAdapter extends PlatformAdapter {
   static const Set<String> _imageTypes = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'};
   static const Set<String> _videoTypes = {'video/mp4', 'video/quicktime', 'video/webm'};
 
+  /// Sound types in WordPress's default upload list (wp_get_mime_types): no
+  /// AIFF.
+  static const Set<String> _audioTypes = {
+    AudioMimeTypes.mp3,
+    AudioMimeTypes.m4a,
+    AudioMimeTypes.wav,
+    AudioMimeTypes.ogg,
+    AudioMimeTypes.flac,
+  };
+
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'wordpress',
     name: 'WordPress',
@@ -68,7 +79,12 @@ class WordPressAdapter extends PlatformAdapter {
       videoMimeTypes: _videoTypes,
       supportsAltText: true,
       notes: 'WordPress itself has no per-post limit (the counts here are NEFORUM\'s). The maximum file size is your '
-          'host\'s PHP upload_max_filesize. The first image becomes the featured image; other files are placed in the post.',
+          'host\'s PHP upload_max_filesize. The first image becomes the featured image; other files are placed in the post. '
+          'Sound files go to the media library unchanged and play in an audio block.',
+      maxAudios: 5,
+      audioMimeTypes: _audioTypes,
+      keepsAudioBytes: true,
+      audioWithOtherMedia: true,
     ),
     defaultQuotas: [],
     personalAccountOk: true,
@@ -428,7 +444,7 @@ class WordPressAdapter extends PlatformAdapter {
 
     final html = [
       bodyHtml(variant),
-      for (final u in embedded) mediaFigureHtml(u.$1, u.$3),
+      for (final u in embedded) u.$1.isAudio ? wordPressAudioBlock(u.$2, u.$3) : mediaFigureHtml(u.$1, u.$3),
     ].where((s) => s.isNotEmpty).join('\n\n');
     final status = _status(variant, account);
     final excerpt = blogStr(variant.extra['excerpt']);
@@ -508,7 +524,7 @@ class WordPressAdapter extends PlatformAdapter {
   /// Uploads one file; returns (attachment, media id, source URL).
   Future<(MediaAttachment, int, String)> _upload(
       WordPressApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
-    final label = m.isVideo ? 'video' : 'image';
+    final label = m.noun;
     ctx.progress('Uploading $label ${index + 1} of $total');
     final bytes = await readBlogMedia(ctx, m);
     final what = 'WordPress upload ${index + 1}/$total';
@@ -520,7 +536,7 @@ class WordPressAdapter extends PlatformAdapter {
     if (mediaId == null || src == null) {
       throw AdapterException(PublishError.platform('$what: WordPress did not return a media id', raw: bodySnippet(r)));
     }
-    final alt = (m.altText ?? '').trim();
+    final alt = m.isAudio ? '' : (m.altText ?? '').trim();
     if (alt.isNotEmpty) {
       ctx.progress('Adding alt text to $label ${index + 1}');
       await guardWordPress('WordPress alt text ${index + 1}/$total',
@@ -646,3 +662,9 @@ class WordPressAdapter extends PlatformAdapter {
     );
   }
 }
+
+/// The block editor's audio block for an uploaded sound file (media id
+/// [mediaId] at [url]), so the post opens in the editor as an audio block.
+String wordPressAudioBlock(int mediaId, String url) => '<!-- wp:audio {"id":$mediaId} -->\n'
+    '<figure class="wp-block-audio"><audio controls src="${escapeHtml(url)}"></audio></figure>\n'
+    '<!-- /wp:audio -->';

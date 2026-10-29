@@ -223,9 +223,44 @@ class VariantResolver {
   }
 
   List<MediaAttachment> _filterMedia(List<MediaAttachment> media, PlatformDescriptor d, List<ValidationIssue> issues) {
+    if (media.isEmpty) return media;
+    if (!media.any((x) => x.isAudio)) return _filterVisualMedia(media, d, issues);
+    final m = d.media;
+    final sound = <MediaAttachment>[];
+    var droppedSound = 0;
+    for (final x in media.where((x) => x.isAudio)) {
+      // A type the network refuses stays, like a photo: the app sends its
+      // Standard copy where it can, and otherwise the check says why.
+      // Dropping it would post without the track the user picked.
+      final keep = m.supportsAudio ? sound.length < m.maxAudios : (m.audioAsVideo || m.audioAsLink);
+      if (keep || !options.dropUnsupportedMedia) {
+        sound.add(x);
+      } else {
+        droppedSound++;
+      }
+    }
+    if (droppedSound > 0) {
+      issues.add(ValidationIssue.warning(
+          'media.audio_dropped',
+          m.supportsAudio
+              ? '$droppedSound sound file(s) left out: ${d.name} takes ${m.maxAudios} per post'
+              : '${d.name} takes no sound files; $droppedSound left out',
+          field: 'media'));
+    }
+    var visual = media.where((x) => !x.isAudio).toList();
+    if (sound.isNotEmpty && m.supportsAudio && !m.audioWithOtherMedia && visual.isNotEmpty && options.dropUnsupportedMedia) {
+      issues.add(ValidationIssue.warning('media.audio_alone',
+          '${d.name} takes a sound file on its own; ${visual.length} photo(s)/video(s) left out', field: 'media'));
+      visual = const [];
+    }
+    final kept = {...sound, ..._filterVisualMedia(visual, d, issues)};
+    return [for (final x in media) if (kept.contains(x)) x];
+  }
+
+  List<MediaAttachment> _filterVisualMedia(List<MediaAttachment> media, PlatformDescriptor d, List<ValidationIssue> issues) {
     final m = d.media;
     if (media.isEmpty) return media;
-    if (!m.supportsAnyMedia) {
+    if (m.maxImages == 0 && m.maxVideos == 0) {
       if (options.dropUnsupportedMedia) {
         issues.add(ValidationIssue.warning('media.dropped', '${d.name} takes no media; ${media.length} file(s) dropped', field: 'media'));
         return const [];

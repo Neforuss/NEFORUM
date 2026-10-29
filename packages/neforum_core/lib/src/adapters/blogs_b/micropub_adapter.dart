@@ -13,6 +13,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
+import '../audio_links.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 import 'blogs_common.dart';
@@ -84,6 +85,8 @@ class MicropubAdapter extends PlatformAdapter {
           'Most servers (Micro.blog included) render Markdown.',
     ),
     media: MediaRules(
+      // Sound goes as a link to the file on the media host.
+      audioAsLink: true,
       maxImages: micropubMaxImages,
       maxVideos: 1,
       allowsMixedImageVideo: true,
@@ -376,7 +379,7 @@ class MicropubAdapter extends PlatformAdapter {
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     try {
-      return await _publish(variant, account, secrets, ctx);
+      return await _publish(await withAudioLinks(variant, ctx, platform: 'Micropub', markdown: false), account, secrets, ctx);
     } on AdapterException catch (e) {
       ctx.log.warn('Micropub publish failed: ${e.error.message}');
       return PublishResult.failure(e.error);

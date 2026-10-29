@@ -45,6 +45,8 @@ const youtubeDescriptor = PlatformDescriptor(
         'and two quote marks for every tag that contains a space.',
   ),
   media: MediaRules(
+    // Sound goes as a video of one still picture, made by the app.
+    audioAsVideo: true,
     maxImages: 0,
     maxVideos: 1,
     requiresMedia: true,

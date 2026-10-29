@@ -7,15 +7,17 @@ import 'package:neforum_core/neforum_core.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
 
+import '../media/audio_probe.dart';
 import 'storage.dart';
 
-/// Raised when an imported file is not an image or video NEFORUM can post.
+/// Raised when an imported file is not an image, video or sound file NEFORUM
+/// can post.
 class UnsupportedMediaException implements Exception {
   const UnsupportedMediaException(this.fileName, this.mimeType);
   final String fileName;
   final String? mimeType;
   @override
-  String toString() => '$fileName is not an image or video (${mimeType ?? 'unknown type'})';
+  String toString() => '$fileName is not an image, video or sound file (${mimeType ?? 'unknown type'})';
 }
 
 /// Imports user files into NEFORUM's private media folder and builds
@@ -29,7 +31,11 @@ class MediaLibrary {
   final AppStorage _storage;
   static const _uuid = Uuid();
 
-  static const supportedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'mp4', 'mov', 'm4v', 'webm'];
+  static const supportedExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'mp4', 'mov', 'm4v', 'webm', ...audioExtensions];
+
+  /// Sound files: MP3, M4A (AAC or Apple Lossless), WAV, FLAC, AIFF, Ogg
+  /// Vorbis and Opus.
+  static const audioExtensions = ['mp3', 'm4a', 'wav', 'flac', 'aif', 'aiff', 'aifc', 'ogg', 'oga', 'opus'];
 
   Future<MediaAttachment> importXFile(XFile file) async {
     final bytes = await file.readAsBytes();
@@ -37,10 +43,14 @@ class MediaLibrary {
   }
 
   Future<MediaAttachment> importBytes(Uint8List bytes, {required String fileName, String? mimeHint}) async {
+    // Sound first: its headers say more than the name (an M4A whose brand
+    // reads as video, an MP3 without an ID3 tag).
+    final sound = _looksLikeAudio(fileName, mimeHint) ? probeAudio(bytes, fileName: fileName, mimeHint: mimeHint) : null;
     final header = bytes.length > 64 ? bytes.sublist(0, 64) : bytes;
-    var mime = lookupMimeType(fileName, headerBytes: header) ?? mimeHint;
+    var mime = sound?.mimeType ?? lookupMimeType(fileName, headerBytes: header) ?? mimeHint;
     if (mime == 'image/jpg') mime = 'image/jpeg';
-    if (mime == null || !(mime.startsWith('image/') || mime.startsWith('video/'))) {
+    if (mime != null && mime.startsWith('audio/')) mime = canonicalAudioMimeType(mime);
+    if (mime == null || !(mime.startsWith('image/') || mime.startsWith('video/') || mime.startsWith('audio/'))) {
       throw UnsupportedMediaException(fileName, mime);
     }
     final id = _uuid.v7();
@@ -60,8 +70,17 @@ class MediaLibrary {
       sizeBytes: bytes.length,
       width: width,
       height: height,
+      durationMs: sound?.durationMs,
       fileName: fileName,
+      audioCodec: sound?.codec,
     );
+  }
+
+  /// A sound file by its name or its reported type. An `.mp4` or `.webm` is
+  /// a video unless its reported type says sound.
+  static bool _looksLikeAudio(String fileName, String? mimeHint) {
+    final ext = p.extension(fileName).replaceFirst('.', '').toLowerCase();
+    return audioExtensions.contains(ext) || canonicalAudioMimeType(mimeHint) != null;
   }
 
   Future<Uint8List> read(MediaAttachment media) => _storage.readMedia(media.path);

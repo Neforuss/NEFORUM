@@ -1,4 +1,5 @@
 import '../../http/neforum_http.dart';
+import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/publish_result.dart';
 
@@ -83,6 +84,8 @@ String chatFileName(MediaAttachment m) {
 
 /// A file extension for a MIME type (`image/jpeg` -> `jpg`).
 String chatExtension(String mime) {
+  final audio = canonicalAudioMimeType(mime);
+  if (audio != null) return audioExtensionFor(audio);
   final sub = mime.split('/').last.toLowerCase();
   return switch (sub) {
     'jpeg' => 'jpg',
