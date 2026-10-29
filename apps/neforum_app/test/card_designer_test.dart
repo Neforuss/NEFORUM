@@ -3,6 +3,7 @@
 // saved card's), the designer opened from every network's card, from the
 // sound file's options and from Settings, presets, undo and redo.
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
@@ -25,6 +26,8 @@ import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/state/text_cards.dart';
+import 'package:neforum_app/theme/app_theme.dart';
+import 'package:neforum_app/theme/tokens.dart';
 import 'package:neforum_app/ui/compose/card_design_view.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/root.dart';
@@ -250,6 +253,60 @@ void main() {
       expect(decorative.measured, isFalse, reason: 'compressed: decorative');
       await finish(tester);
     });
+  });
+
+  testWidgets('a card preview draws one picture at a time, the latest edit\'s, at a reduced size', (tester) async {
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage())))!;
+    final drawn = <CardPreviewRequest>[];
+    final pending = <Completer<Uint8List>>[];
+    Future<Uint8List> draw(CardPreviewRequest r) {
+      drawn.add(r);
+      final c = Completer<Uint8List>();
+      pending.add(c);
+      return c.future;
+    }
+
+    final design = cardTemplateById('neon')!.design(CardKind.text);
+    Widget view(String words) => ProviderScope(
+          overrides: [servicesProvider.overrideWithValue(services)],
+          child: MaterialApp(
+            theme: buildTheme(Brightness.light, AccentChoice.neforum),
+            home: Center(
+              child: SizedBox(
+                width: 200,
+                child: CardDesignView(
+                  request: CardPreviewRequest.text(
+                      design: design, platformId: 'tiktok', size: const Size(1080, 1920), safe: fullScreenSafeArea('tiktok'), text: words),
+                  delay: Duration.zero,
+                  draw: draw,
+                ),
+              ),
+            ),
+          ),
+        );
+    final first = Uint8List.fromList(img.encodePng(img.Image(width: 2, height: 2)..clear(img.ColorRgb8(255, 0, 0))));
+    final latest = Uint8List.fromList(img.encodePng(img.Image(width: 2, height: 2)..clear(img.ColorRgb8(0, 0, 255))));
+
+    await tester.pumpWidget(view('one'));
+    expect(drawn.single.size, const Size(405, 720), reason: 'a smaller copy of the 1080 x 1920 card');
+    expect(drawn.single.safe, fullScreenSafeArea('tiktok'), reason: 'in units of the card, so the same');
+    // Each edit is taken once its (zero) pause is over.
+    await tester.pumpWidget(view('two'));
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pumpWidget(view('three'));
+    await tester.pump(const Duration(milliseconds: 1));
+    expect(drawn, hasLength(1), reason: 'nothing else is drawn while one picture is');
+    pending.first.complete(first);
+    await tester.pump();
+    expect(drawn.map((r) => r.text), ['one', 'three'], reason: 'the latest edit next; "two" never');
+    expect(find.byType(Image), findsNothing, reason: 'the out-of-date picture is dropped');
+    pending.last.complete(latest);
+    await tester.pump();
+    expect((tester.widget<Image>(find.byType(Image)).image as MemoryImage).bytes, latest);
+    // The full-size card is still what the request itself draws (saved and
+    // exported cards, and the parity test above).
+    expect(drawn.last.scaledToFit(kCardPreviewMaxSide), same(drawn.last));
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 
   test('a WAV on disk is measured in parts, never read whole', () async {

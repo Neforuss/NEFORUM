@@ -76,8 +76,25 @@ class CardPreviewRequest {
         sound?.path,
       ]);
 
+  /// This request at no more than [maxSide] pixels on its longest side (as it
+  /// is when already that small): the same card, since every length in it
+  /// is in units of the card's size ([safe] too).
+  CardPreviewRequest scaledToFit(int maxSide) {
+    final longest = size.longestSide;
+    if (longest <= maxSide) return this;
+    final scale = maxSide / longest;
+    final smaller = Size((size.width * scale).roundToDouble(), (size.height * scale).roundToDouble());
+    final words = texts;
+    return words == null
+        ? CardPreviewRequest.text(
+            design: design, platformId: platformId, size: smaller, safe: safe, text: text ?? '', byline: byline, signed: signed, background: background)
+        : CardPreviewRequest.audio(design: design, platformId: platformId, size: smaller, safe: safe, texts: words, coverPath: coverPath, sound: sound);
+  }
+
   /// Draws the card exactly as it is saved ([renderDesignedTextCard],
-  /// [renderDesignedAudioCard]); a JPEG.
+  /// [renderDesignedAudioCard]) at [size]; a JPEG. [CardDesignView] draws a
+  /// smaller copy ([scaledToFit]); a card that is saved or exported is drawn
+  /// at its full size.
   Future<Uint8List> render(AppStorage storage) async {
     final words = texts;
     if (words == null) {
@@ -106,35 +123,96 @@ class CardPreviewRequest {
   int get hashCode => identity.hashCode;
 }
 
-/// The picture of a [CardPreviewRequest], drawn by the saved card's renderer.
-final cardPreviewProvider = FutureProvider.autoDispose.family<Uint8List, CardPreviewRequest>((ref, request) {
-  final storage = ref.read(servicesProvider).storage;
-  return request.render(storage);
-});
+/// The longest side, in pixels, a [CardDesignView] draws its card at: sharp
+/// at the size previews are shown, and a fraction of the work of a
+/// full-size 1080 x 1920 card.
+const int kCardPreviewMaxSide = 720;
 
-/// A designed card as it will be saved, at [request]'s shape. Edits in quick
-/// succession are drawn once they pause; the last picture stays up meanwhile.
+/// A designed card as it will be saved, at [request]'s shape, drawn by the
+/// saved card's renderer at no more than [maxSide] pixels.
+///
+/// Edits in quick succession are drawn once they pause, and one picture is
+/// drawn at a time: while it is drawn, newer edits wait, and a picture that
+/// an edit made out of date by the time it is done is dropped for the latest
+/// edit's. The last picture stays up meanwhile.
 class CardDesignView extends ConsumerStatefulWidget {
-  const CardDesignView({super.key, required this.request, this.delay = const Duration(milliseconds: 180)});
+  const CardDesignView({
+    super.key,
+    required this.request,
+    this.delay = const Duration(milliseconds: 180),
+    this.maxSide = kCardPreviewMaxSide,
+    this.draw,
+  });
   final CardPreviewRequest request;
   final Duration delay;
+  final int maxSide;
+
+  /// Draws a request in place of [CardPreviewRequest.render], for tests.
+  @visibleForTesting
+  final Future<Uint8List> Function(CardPreviewRequest request)? draw;
 
   @override
   ConsumerState<CardDesignView> createState() => _CardDesignViewState();
 }
 
 class _CardDesignViewState extends ConsumerState<CardDesignView> {
-  late CardPreviewRequest _shown = widget.request;
-  Uint8List? _last;
+  /// The latest request, once edits pause.
+  late CardPreviewRequest _wanted = widget.request;
+
+  /// The request being drawn; null when none is.
+  CardPreviewRequest? _drawing;
+
+  /// The request [_picture] shows.
+  CardPreviewRequest? _drawn;
+  Uint8List? _picture;
+  bool _failed = false;
   Timer? _wait;
+
+  @override
+  void initState() {
+    super.initState();
+    _drawNext();
+  }
 
   @override
   void didUpdateWidget(CardDesignView old) {
     super.didUpdateWidget(old);
-    if (widget.request == _shown) return;
+    if (widget.request == _wanted) return;
     _wait?.cancel();
     _wait = Timer(widget.delay, () {
-      if (mounted) setState(() => _shown = widget.request);
+      if (!mounted) return;
+      setState(() => _wanted = widget.request);
+      _drawNext();
+    });
+  }
+
+  /// Draws [_wanted] unless a picture is being drawn (it is drawn when that
+  /// one is done) or it is already shown.
+  void _drawNext() {
+    if (_drawing != null || _wanted == _drawn) return;
+    final request = _wanted;
+    _drawing = request;
+    final small = request.scaledToFit(widget.maxSide);
+    final draw = widget.draw;
+    final picture = draw != null ? draw(small) : small.render(ref.read(servicesProvider).storage);
+    picture.then((bytes) => _done(request, bytes), onError: (Object e) {
+      debugPrint('Could not draw the card preview: $e');
+      _done(request, null);
+    });
+  }
+
+  void _done(CardPreviewRequest request, Uint8List? bytes) {
+    if (!mounted) return;
+    _drawing = null;
+    if (request != _wanted) {
+      // Out of date: dropped, and the latest edit drawn instead.
+      setState(_drawNext);
+      return;
+    }
+    setState(() {
+      _drawn = request;
+      if (bytes != null) _picture = bytes;
+      _failed = bytes == null;
     });
   }
 
@@ -147,9 +225,7 @@ class _CardDesignViewState extends ConsumerState<CardDesignView> {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    final picture = ref.watch(cardPreviewProvider(_shown));
-    final bytes = picture.value ?? _last;
-    if (picture.value != null) _last = picture.value;
+    final bytes = _picture;
     final size = widget.request.size;
     return AspectRatio(
       aspectRatio: size.width / size.height,
@@ -158,7 +234,7 @@ class _CardDesignViewState extends ConsumerState<CardDesignView> {
           Image.memory(bytes, fit: BoxFit.cover, gaplessPlayback: true, filterQuality: FilterQuality.medium)
         else
           ColoredBox(color: nf.surfaceSunken),
-        if (picture.isLoading)
+        if (_drawing != null)
           Align(
             alignment: Alignment.topRight,
             child: Padding(
@@ -166,7 +242,7 @@ class _CardDesignViewState extends ConsumerState<CardDesignView> {
               child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: nf.textFaint)),
             ),
           ),
-        if (picture.hasError && bytes == null)
+        if (_failed && bytes == null)
           Center(child: Icon(Icons.broken_image_outlined, color: nf.textFaint)),
       ]),
     );
