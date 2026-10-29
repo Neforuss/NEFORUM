@@ -58,6 +58,10 @@ const Set<String> kExportableSettings = {
   // 1.3.1: sidebar
   'navigationChromeOpacity',
   'navigationChromeBlur',
+  'textCardCustomFont', // 1.3.1: cards
+  'textCardDesign', // 1.3.1: cards
+  'audioCardDesign', // 1.3.1: cards
+  'cardPresets', // 1.3.1: cards
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {

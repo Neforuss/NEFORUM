@@ -7,9 +7,11 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../media/aligned_text.dart';
-import '../../media/caption_fonts.dart' show captionFontReadyProvider;
+import '../../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider, prepareCaptionFont;
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
+import '../../media/card_design.dart';
+import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../media/text_card_background.dart';
 import '../../platform/file_export.dart';
@@ -30,6 +32,9 @@ import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'caption_editor_sheet.dart';
 import 'card_background_sheet.dart';
+import 'card_design_view.dart';
+import 'card_designer_sheet.dart';
+import 'font_picker_sheet.dart';
 import 'rich_text.dart';
 
 /// How a platform presents a post; drives the preview layout.
@@ -182,6 +187,10 @@ class _Microblog extends StatelessWidget {
                   if (i == 0 && v.poll != null) ...[
                     const SizedBox(height: Space.sm + 2),
                     PollPreview(poll: v.poll!, media: v.media),
+                  ] else if (_textCardOf(v.mediaOfPart(i)) case final card?) ...[
+                    // 1.3.1: the card on every network, drawn as it is saved.
+                    const SizedBox(height: Space.sm + 2),
+                    _TextCardPreview(p: p, placeholder: card),
                   ] else if (v.mediaOfPart(i).isNotEmpty) ...[
                     const SizedBox(height: Space.sm + 2),
                     MediaGrid(media: v.mediaOfPart(i)),
@@ -208,21 +217,12 @@ class _Visual extends ConsumerWidget {
     final nf = context.nf;
     final v = p.variant;
     final id = p.descriptor.id;
-    final placeholder = v.media.isNotEmpty && isTextCardPlaceholder(v.media.first) ? v.media.first : null;
+    final placeholder = _textCardOf(v.media);
     final card = placeholder == null ? null : textCardThemeOf(placeholder);
-    final branded = card != null && textCardBrandedOf(placeholder!);
-    final font = card == null ? TextCardFont.original : textCardFontOf(placeholder!);
-    final alignment = placeholder == null ? TextCardAlignment.left : textCardAlignmentOf(placeholder);
-    final showsHandle = placeholder == null || textCardShowsHandleOf(placeholder);
-    final cardText = card == null ? '' : textCardText(_previewPost(ref), p.target);
-    final byline = p.account.handle ?? p.account.displayName;
     // A story's card is full screen (9:16): the placeholder carries its size.
     final cardSize = placeholder == null ? textCardSize(id) : textCardSizeOf(placeholder, id);
     final settings = ref.watch(settingsProvider);
     final composer = ref.watch(composerProvider);
-    final cardBackground = placeholder != null && textCardParametersOf(placeholder)?['background'] != null
-        ? TextCardBackground.tryParse(composer.textCardBackground)
-        : null;
     final first = v.media.firstOrNull;
     final isPhoto = card == null && first != null && first.kind == MediaKind.image;
     // A photo NEFORUM fits: the composer checks a stand-in with the fitted
@@ -253,28 +253,8 @@ class _Visual extends ConsumerWidget {
       final maxW = aspect < 1 ? (c.maxWidth * 0.62).clamp(160.0, 300.0) : c.maxWidth;
       final w = maxW.toDouble();
       final h = w / aspect;
-      final frame = card != null
-          ? SizedBox(
-              width: w,
-              child: ClipRRect(
-                borderRadius: Radii.rMd,
-                child: DecoratedBox(
-                  position: DecorationPosition.foreground,
-                  decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
-                  child: TextCardView(
-                    text: cardText,
-                    theme: card,
-                    font: font.resolve(id),
-                    aspect: aspect,
-                    byline: showsHandle ? byline : null,
-                    branded: branded,
-                    safe: textCardSafeOf(placeholder!) ? fullScreenSafeArea(id) : EdgeInsets.zero,
-                    alignment: alignment,
-                    backdrop: previewBackdrop(ref, cardBackground),
-                  ),
-                ),
-              ),
-            )
+      final frame = placeholder != null
+          ? _TextCardPreview(p: p, placeholder: placeholder)
           : v.media.isEmpty
           ? Container(
               width: w,
@@ -377,23 +357,6 @@ class _Visual extends ConsumerWidget {
           v.text.trim().isNotEmpty;
       return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Center(child: frame),
-        if (card != null) ...[
-          const SizedBox(height: Space.sm),
-          Center(
-            child: _CardStylePicker(
-              current: card,
-              font: font,
-              platform: p.descriptor,
-              branded: branded,
-              text: cardText,
-              byline: byline,
-              alignment: alignment,
-              showsHandle: showsHandle,
-              background: cardBackground,
-              withText: composer.textCardWithText[id] ?? true,
-            ),
-          ),
-        ],
         if (isPhoto && (kCaptionPhotoPlatforms.contains(id) || fullFrameAspect(id, v) != null || cardOnPhoto)) ...[
           const SizedBox(height: Space.sm),
           Center(
@@ -432,6 +395,107 @@ class _Visual extends ConsumerWidget {
 
 /// The composer's current post, for the words on a text card.
 Post _previewPost(WidgetRef ref) => ref.read(composerProvider).toPost(id: 'preview', status: PostStatus.draft, now: DateTime.now());
+
+/// The stand-in for a text card when it leads [media] (a card is always the
+/// only item where it goes); null otherwise.
+MediaAttachment? _textCardOf(List<MediaAttachment> media) => media.isNotEmpty && isTextCardPlaceholder(media.first) ? media.first : null;
+
+/// A network's text card in its preview: at the size the card is saved at
+/// for that network (its [placeholder] carries it), drawn by the painter that
+/// draws the saved card, with the card's style controls under it. Every
+/// preview family shows it the same way, so the card on every network
+/// (1.3) is seen and edited in each network's preview, not only in
+/// Instagram's.
+class _TextCardPreview extends ConsumerWidget {
+  const _TextCardPreview({required this.p, required this.placeholder});
+  final TargetPreview p;
+  final MediaAttachment placeholder;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final id = p.descriptor.id;
+    final composer = ref.watch(composerProvider);
+    final theme = textCardThemeOf(placeholder) ?? TextCardTheme.dark;
+    final branded = textCardBrandedOf(placeholder);
+    final font = textCardFontOf(placeholder);
+    final customFont = textCardCustomFontOf(placeholder);
+    final alignment = textCardAlignmentOf(placeholder);
+    final showsHandle = textCardShowsHandleOf(placeholder);
+    final text = textCardText(_previewPost(ref), p.target);
+    final byline = p.account.handle ?? p.account.displayName;
+    final size = textCardSizeOf(placeholder, id);
+    final aspect = size.width / size.height;
+    final background = textCardParametersOf(placeholder)?['background'] != null ? TextCardBackground.tryParse(composer.textCardBackground) : null;
+    final safe = textCardSafeOf(placeholder) ? fullScreenSafeArea(id) : EdgeInsets.zero;
+    // 1.3.1: cards. A card from the card designer is drawn by the renderer
+    // of the saved card, at this network's size.
+    final design = textCardDesignOf(placeholder);
+    return LayoutBuilder(builder: (context, c) {
+      // Portrait cards at phone width; square and wider ones fill the column
+      // up to a comfortable size.
+      final w = aspect < 1 ? (c.maxWidth * 0.62).clamp(160.0, 300.0).toDouble() : c.maxWidth.clamp(0.0, 420.0).toDouble();
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        Center(
+          child: SizedBox(
+            key: ValueKey('text-card-preview-$id'),
+            width: w,
+            child: ClipRRect(
+              borderRadius: Radii.rMd,
+              child: DecoratedBox(
+                position: DecorationPosition.foreground,
+                decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+                child: design != null
+                    ? CardDesignView(
+                        request: CardPreviewRequest.text(
+                          design: design,
+                          platformId: id,
+                          size: size,
+                          safe: safe,
+                          text: text,
+                          byline: showsHandle ? byline : null,
+                          signed: branded,
+                          background: background,
+                        ),
+                      )
+                    : TextCardView(
+                        text: text,
+                        theme: theme,
+                        font: font.resolve(id),
+                        aspect: aspect,
+                        byline: showsHandle ? byline : null,
+                        branded: branded,
+                        safe: safe,
+                        alignment: alignment,
+                        backdrop: previewBackdrop(ref, background),
+                        customFont: customFont,
+                      ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: Space.sm),
+        Center(
+          child: _CardStylePicker(
+            key: ValueKey('text-card-style-$id'),
+            current: theme,
+            font: font,
+            customFont: customFont,
+            platform: p.descriptor,
+            branded: branded,
+            text: text,
+            byline: byline,
+            alignment: alignment,
+            showsHandle: showsHandle,
+            background: background,
+            withText: composer.textCardWithText[id] ?? true,
+            design: design,
+          ),
+        ),
+      ]);
+    });
+  }
+}
 
 /// A photo in a network's frame as the network will show it: fitted (the
 /// whole photo on a blur or colour fill, or cut to the frame), letterboxed on
@@ -616,8 +680,10 @@ Widget _optionPill(BuildContext context,
 /// network, a colour or photo background, and saving the card as an image.
 class _CardStylePicker extends ConsumerStatefulWidget {
   const _CardStylePicker({
+    super.key,
     required this.current,
     required this.font,
+    this.customFont,
     required this.platform,
     required this.branded,
     required this.text,
@@ -626,9 +692,13 @@ class _CardStylePicker extends ConsumerStatefulWidget {
     required this.showsHandle,
     required this.background,
     required this.withText,
+    this.design,
   });
   final TextCardTheme current;
   final TextCardFont font;
+
+  /// 1.3.1: cards. The installed or imported font drawn instead of [font].
+  final CaptionFont? customFont;
   final PlatformDescriptor platform;
   final bool branded;
   final String text;
@@ -639,6 +709,10 @@ class _CardStylePicker extends ConsumerStatefulWidget {
 
   /// The post's text goes along with the card on this network.
   final bool withText;
+
+  /// 1.3.1: cards. The card designer's design the card is drawn from; null
+  /// for the classic card.
+  final CardDesign? design;
 
   @override
   ConsumerState<_CardStylePicker> createState() => _CardStylePickerState();
@@ -657,7 +731,21 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
       if (background != null) {
         backdrop = await decodeTextCardBackdrop(await ref.read(servicesProvider).storage.readMedia(background.photo.path), background);
       }
-      final bytes = await renderTextCardJpeg(
+      final customFont = widget.customFont;
+      if (customFont != null) await prepareCaptionFont(ref.read(servicesProvider).storage, customFont);
+      final design = widget.design;
+      final bytes = design != null
+          ? await CardPreviewRequest.text(
+              design: design,
+              platformId: widget.platform.id,
+              size: textCardSize(widget.platform.id),
+              safe: textCardSafeArea(widget.platform.id),
+              text: widget.text,
+              byline: widget.showsHandle ? widget.byline : null,
+              signed: widget.branded,
+              background: background,
+            ).render(ref.read(servicesProvider).storage)
+          : await renderTextCardJpeg(
         text: widget.text,
         theme: widget.current,
         size: textCardSize(widget.platform.id),
@@ -667,6 +755,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         safe: textCardSafeArea(widget.platform.id),
         alignment: widget.alignment,
         backdrop: backdrop,
+        customFont: widget.customFont,
       );
       final stamp = DateFormat('yyyy-MM-dd HHmm').format(DateTime.now());
       final r = await FileExport.save(
@@ -688,7 +777,8 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    Widget pill({required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) => Tooltip(
+    Widget pill({Key? key, required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) => Tooltip(
+          key: key,
           message: tooltip ?? label,
           child: InkWell(
             borderRadius: Radii.rPill,
@@ -728,7 +818,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         );
 
     Widget fontOption(TextCardFont f) => pill(
-          selected: f == widget.font,
+          selected: widget.customFont == null && f == widget.font,
           label: switch (f) { TextCardFont.original => 'Inter', TextCardFont.platform => "${widget.platform.name}'s own", _ => f.label },
           tooltip: f == TextCardFont.original ? "NEFORUM's original font (Inter)" : 'Set the words in ${f.label}',
           leading: Text('Aa',
@@ -743,16 +833,52 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           onTap: () {
             ref.read(composerProvider.notifier).setTextCardFont(f);
             final s = ref.read(settingsProvider);
-            if (s.textCardFont != f) ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: f));
+            if (s.textCardFont != f || s.textCardCustomFont.isNotEmpty) {
+              ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: f, textCardCustomFont: const {}));
+            }
           },
         );
 
     final id = widget.platform.id;
     final background = widget.background;
+    final designed = widget.design != null;
     return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
-      if (background == null) for (final t in TextCardTheme.values) themeOption(t),
-      for (final f in TextCardFont.values) fontOption(f),
-      PopupMenuButton<TextCardAlignment>(
+      // 1.3.1: cards. Every layer, font and colour of the card, in the designer.
+      pill(
+        key: const Key('text-card-design'),
+        selected: designed,
+        label: designed ? 'Design: ${cardTemplateLabel(widget.design!)}' : 'Design card…',
+        tooltip: 'Templates, backgrounds, gradients, patterns, a framed photo and every text block, with any font',
+        leading: Icon(Icons.palette_outlined, size: 14, color: designed ? nf.accent : nf.textFaint),
+        onTap: () => showCardDesignerSheet(context, kind: CardKind.text),
+      ),
+      // The classic card's own choices; a design sets all of them itself.
+      if (!designed && background == null) for (final t in TextCardTheme.values) themeOption(t),
+      if (!designed) for (final f in TextCardFont.values) fontOption(f),
+      // 1.3.1: cards. Any installed or imported font, from the caption's picker.
+      if (!designed) pill(
+        key: const Key('text-card-font-more'),
+        selected: widget.customFont != null,
+        label: widget.customFont?.family ?? 'More fonts…',
+        tooltip: 'Set the words in a font installed on this device, or in a font file you import',
+        leading: Icon(Icons.font_download_outlined, size: 14, color: widget.customFont != null ? nf.accent : nf.textFaint),
+        onTap: () async {
+          final choice = await showFontChoiceSheet(context,
+              current: FontChoice(widget.font, widget.customFont), platformId: widget.platform.id, title: 'Text card font');
+          if (choice == null) return;
+          final custom = choice.customFont;
+          final composer = ref.read(composerProvider.notifier);
+          // Remembered as the default, like the built-in fonts.
+          if (custom == null) {
+            composer.setTextCardFont(choice.font);
+            ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: choice.font, textCardCustomFont: const {}));
+          } else {
+            composer.setTextCardCustomFont(custom);
+            ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardCustomFont: custom.toJson()));
+          }
+        },
+      ),
+      if (!designed) PopupMenuButton<TextCardAlignment>(
         tooltip: 'Alignment: ${widget.alignment.label}',
         initialValue: widget.alignment,
         position: PopupMenuPosition.under,
@@ -839,6 +965,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
             branded: widget.branded,
             alignment: widget.alignment,
             byline: widget.showsHandle ? widget.byline : null,
+            customFont: widget.customFont,
           ),
         ),
       ),
@@ -951,7 +1078,10 @@ class _Forum extends StatelessWidget {
         (v.title ?? '').isEmpty ? 'Untitled post' : v.title!,
         style: context.text.titleMedium?.copyWith(fontSize: 16.5, color: (v.title ?? '').isEmpty ? nf.textFaint : nf.text),
       ),
-      if (v.media.isNotEmpty) ...[
+      if (_textCardOf(v.media) case final card?) ...[
+        const SizedBox(height: Space.sm),
+        _TextCardPreview(p: p, placeholder: card),
+      ] else if (v.media.isNotEmpty) ...[
         const SizedBox(height: Space.sm),
         MediaGrid(media: v.media),
       ] else if (v.link != null) ...[
@@ -992,7 +1122,10 @@ class _Chat extends StatelessWidget {
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             Text(p.account.displayName, style: context.text.labelMedium?.copyWith(color: brand)),
-            if (v.media.isNotEmpty) ...[
+            if (_textCardOf(v.media) case final card?) ...[
+              const SizedBox(height: Space.sm),
+              _TextCardPreview(p: p, placeholder: card),
+            ] else if (v.media.isNotEmpty) ...[
               const SizedBox(height: Space.sm),
               MediaGrid(media: v.media, maxHeight: 220),
             ],
@@ -1017,7 +1150,10 @@ class _Blog extends StatelessWidget {
     final v = p.variant;
     final title = (v.title ?? '').isNotEmpty ? v.title! : (v.text.split('\n').firstWhere((l) => l.trim().isNotEmpty, orElse: () => 'Untitled'));
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      if (v.media.isNotEmpty) ...[
+      if (_textCardOf(v.media) case final card?) ...[
+        _TextCardPreview(p: p, placeholder: card),
+        const SizedBox(height: Space.md),
+      ] else if (v.media.isNotEmpty) ...[
         LayoutBuilder(builder: (context, c) => MediaThumb(v.media.first, size: c.maxWidth / 2.2, aspect: 2.2, radius: Radii.rMd)),
         const SizedBox(height: Space.md),
       ],

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../media/caption_fonts.dart' show CaptionFont;
 import '../../media/photo_pixels.dart';
 import '../../media/text_card.dart';
 import '../../media/text_card_background.dart';
@@ -52,6 +53,7 @@ class CardLook {
     required this.branded,
     required this.alignment,
     this.byline,
+    this.customFont,
   });
   final PlatformDescriptor platform;
   final String text;
@@ -64,6 +66,9 @@ class CardLook {
 
   /// The @handle, null when it is left out.
   final String? byline;
+
+  /// 1.3.1: cards. The installed or imported font drawn instead of [font].
+  final CaptionFont? customFont;
 }
 
 /// Opens the card background editor: a plain colour, or a photo (one of the
@@ -210,6 +215,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           safe: textCardSafeArea(id),
           alignment: look.alignment,
           backdrop: previewBackdrop(ref, current),
+          customFont: look.customFont,
           ),
         ),
       ),

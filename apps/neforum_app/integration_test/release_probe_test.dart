@@ -1,7 +1,9 @@
 // Runs the 1.3 features that do real work on the device through a compiled
 // build: text cards for stories and for every network, edited card
 // backgrounds, sound files (a Standard copy and a still-picture video), PDF
-// reading through PDFium, and a background picture behind the pages. Debug
+// reading through PDFium, a background picture behind the pages, and (1.3.1)
+// an audio card drawn from a template with the sound's waveform and a text
+// card in a font installed on the computer, found through the font registry. Debug
 // tests missed a release-only crash in 1.2.1, so CI runs this in profile mode:
 //
 //   flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/release_probe_test.dart
@@ -19,11 +21,16 @@ import 'package:image/image.dart' as img;
 import 'package:integration_test/integration_test.dart';
 import 'package:neforum_app/documents/pdf_reader.dart';
 import 'package:neforum_app/documents/thread_builder.dart';
+import 'package:neforum_app/media/caption_fonts.dart';
+import 'package:neforum_app/media/card_design.dart';
+import 'package:neforum_app/media/card_templates.dart';
+import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/media/text_card_background.dart';
 import 'package:neforum_app/platform/desktop.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/platform/video_compositor.dart';
 import 'package:neforum_app/state/audio_renditions.dart';
+import 'package:neforum_app/state/card_designs.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
@@ -174,7 +181,79 @@ void main() {
     expect(thread.parts, isNotEmpty);
     debugPrint('PDF: ${document.pageCount} pages, ${document.blocks.length} blocks, ${thread.parts.length} parts');
 
-    // 4. A background picture behind the pages, blurred.
+    // 4. 1.3.1: an audio card from a template, with the waveform measured from
+    //    the WAV, drawn on the CPU compositor in this build; and a sound
+    //    video whose picture is that design, when the device can make one.
+    final vinyl = cardTemplateById('vinyl')!.design(CardKind.audio).copyWith(
+          waveform: const CardWaveformLayer(visible: true, style: CardWaveformStyle.mirrored, anchor: CardAnchor.topCenter, height: 0.12),
+        );
+    final levels = await waveformOfSound(s.storage, tone).timeout(_limit);
+    expect(levels.measured, isTrue, reason: 'a WAV is measured');
+    expect(levels.levels.reduce(math.max), closeTo(1, 1e-9));
+    final audioPng = await renderDesignedAudioCard(s.storage,
+            design: vinyl,
+            platformId: 'bluesky',
+            size: const Size(1080, 1080),
+            texts: audioCardTexts(const AudioTags(title: 'Probe tone', artist: 'NEFORUM', album: 'Release probe', year: 2026), fallbackTitle: 'tone'),
+            cover: await decodeCardPicture(s.storage, photo.path),
+            waveform: levels)
+        .timeout(_limit, onTimeout: () => fail('The designed audio card did not finish'));
+    final audioCard = img.decodePng(audioPng)!;
+    expect((audioCard.width, audioCard.height), (1080, 1080));
+    final corner = audioCard.getPixel(4, 4), middle = audioCard.getPixel(540, 400);
+    expect(corner == middle, isFalse, reason: 'the record over the background');
+    c.read(composerProvider.notifier)
+      ..reset()
+      ..setText('Release probe: a designed audio card.')
+      ..addMedia([tone])
+      ..selectAccounts([bluesky.id])
+      ..setAudioCardDesign(vinyl);
+    await pumpFor(300);
+    post = await c.read(postActionsProvider).saveDraft().timeout(_limit, onTimeout: () => fail('Save draft with a designed audio card did not finish'));
+    await pumpFor(300);
+    if (canEncode) {
+      final video = post.media.where((m) => isAudioRendition(m) && m.isVideo).firstOrNull ?? fail('no designed video for Bluesky');
+      expect(video.renderParameters?['design'], isNotNull, reason: 'the picture is the design');
+      expect(File(video.path).lengthSync(), greaterThan(1000));
+    }
+    debugPrint('audio card: ${audioPng.length} bytes, waveform measured: ${levels.measured}');
+
+    // 5. 1.3.1: a text card in a font installed on this computer, found by
+    //    family through the installed-font registry (Comic Sans MS where it is
+    //    there), loaded with FontLoader before the card is drawn.
+    final catalog = await loadInstalledFonts(s.storage).timeout(_limit);
+    final family = catalog.facesOf('Comic Sans MS').isNotEmpty
+        ? 'Comic Sans MS'
+        : catalog.families.keys.firstWhere((f) => f.isNotEmpty, orElse: () => '');
+    debugPrint('installed font families: ${catalog.families.length}, using: $family');
+    if (family.isNotEmpty) {
+      final font = CaptionFont(family: family, path: catalog.facesOf(family).first.path);
+      c.read(composerProvider.notifier)
+        ..reset()
+        ..setText('Release probe: a text card in $family.')
+        ..selectAccounts([ig.id])
+        ..setTextCardCustomFont(font);
+      await pumpFor(300);
+      post = await c.read(postActionsProvider).saveDraft().timeout(_limit, onTimeout: () => fail('Save draft with an installed font did not finish'));
+      await pumpFor(300);
+      final card = post.media.where(isRenderedTextCard).firstOrNull ?? fail('no text card in $family');
+      expect(textCardCustomFontOf(card)?.family, family);
+      expect(card.renderParameters?['customFontFallback'], isNull, reason: '$family was loaded');
+      expect(registeredCaptionFontAlias(font), font.alias);
+      // The same font in a designed card's block.
+      final designed = cardTemplateById('neon')!.design(CardKind.text).withBlock(0, (b) => b.copyWith(customFont: font));
+      c.read(composerProvider.notifier).setTextCardDesign(designed);
+      await pumpFor(300);
+      post = await c.read(postActionsProvider).saveDraft().timeout(_limit, onTimeout: () => fail('Save draft with a designed card did not finish'));
+      await pumpFor(300);
+      final designedCard = post.media.where(isRenderedTextCard).firstOrNull ?? fail('no designed text card');
+      expect(textCardDesignOf(designedCard)?.blocks.first.customFont?.family, family);
+      expect(designedCard.renderParameters?['designFontFallback'], isNull);
+      final jpeg = img.decodeJpg(File(designedCard.path).readAsBytesSync())!;
+      expect((jpeg.width, jpeg.height), (1080, 1350));
+    }
+
+    // 6. A background picture behind the pages, blurred.
     final backdrop = File('${dir.path}${Platform.pathSeparator}backdrop.png')..writeAsBytesSync(img.encodePng(source));
     c.read(settingsProvider.notifier).update((x) => x.copyWith(backgroundImagePath: backdrop.path, backgroundBlur: 20));
     await pumpFor(1500);

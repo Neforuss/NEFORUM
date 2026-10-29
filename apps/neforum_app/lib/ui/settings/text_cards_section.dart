@@ -4,24 +4,46 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../brand/platform_brand.dart';
 import '../../media/aligned_text.dart';
+import '../../media/caption_fonts.dart';
 import '../../media/caption_style.dart';
+import '../../media/card_design.dart';
+import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
 import '../compose/caption_editor_sheet.dart';
+import '../compose/card_designer_sheet.dart';
+import '../compose/font_picker_sheet.dart';
 import 'setting_row.dart';
 
 class TextCardSettingsSection extends ConsumerWidget {
   const TextCardSettingsSection({super.key});
+
+  static String _designLabel(Map<String, dynamic> json) {
+    final d = CardDesign.tryParse(json);
+    return d == null ? 'the classic card' : cardTemplateLabel(d);
+  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
-    Widget swatch({required String label, required bool selected, required VoidCallback onTap, required TextCardTheme theme, required TextCardFont font}) =>
+    // 1.3.1: cards. The default font may be one installed or imported:
+    // watching it loads it for the swatches.
+    final customFont = s.textCardCustomFontChoice;
+    ref.watch(captionFontReadyProvider(customFont));
+    Widget swatch(
+            {Key? key,
+            required String label,
+            required bool selected,
+            required VoidCallback onTap,
+            required TextCardTheme theme,
+            required TextCardFont font,
+            CaptionFont? custom}) =>
         Semantics(
+          key: key,
           button: true,
           selected: selected,
           label: label,
@@ -40,7 +62,13 @@ class TextCardSettingsSection extends ConsumerWidget {
                 child: ClipRRect(
                   borderRadius: Radii.rSm,
                   child: TextCardView(
-                      text: 'One app, one message, every platform.', theme: theme, font: font, aspect: 4 / 5, byline: '@you', alignment: s.textCardAlignment),
+                      text: 'One app, one message, every platform.',
+                      theme: theme,
+                      font: font,
+                      customFont: custom,
+                      aspect: 4 / 5,
+                      byline: '@you',
+                      alignment: s.textCardAlignment),
                 ),
               ),
               const SizedBox(height: Space.xs + 2),
@@ -53,13 +81,32 @@ class TextCardSettingsSection extends ConsumerWidget {
         selected: s.textCardTheme == t,
         onTap: () => n.update((x) => x.copyWith(textCardTheme: t)),
         theme: t,
-        font: s.textCardFont);
+        font: s.textCardFont,
+        custom: customFont);
     Widget fontOption(TextCardFont f) => swatch(
         label: f.label,
-        selected: s.textCardFont == f,
-        onTap: () => n.update((x) => x.copyWith(textCardFont: f)),
+        selected: customFont == null && s.textCardFont == f,
+        onTap: () => n.update((x) => x.copyWith(textCardFont: f, textCardCustomFont: const {})),
         theme: s.textCardTheme,
         font: f);
+    // Any installed or imported font, from the same picker as the caption's.
+    final moreFonts = swatch(
+      key: const Key('text-card-font-more-setting'),
+      label: customFont?.family ?? 'More fonts…',
+      selected: customFont != null,
+      onTap: () async {
+        final choice = await showFontChoiceSheet(context,
+            current: FontChoice(s.textCardFont, customFont), platformId: 'instagram', title: 'Text card font');
+        if (choice == null) return;
+        final custom = choice.customFont;
+        n.update((x) => custom == null
+            ? x.copyWith(textCardFont: choice.font, textCardCustomFont: const {})
+            : x.copyWith(textCardCustomFont: custom.toJson()));
+      },
+      theme: s.textCardTheme,
+      font: s.textCardFont,
+      custom: customFont,
+    );
 
     return SettingsSection(
       title: 'Text cards',
@@ -121,6 +168,30 @@ class TextCardSettingsSection extends ConsumerWidget {
               ),
           ]),
         ),
+        // 1.3.1: cards. The card designer's defaults, for text cards and for the
+        // picture of a sound file's video.
+        SettingRow(
+          title: 'Card designer',
+          description: 'Templates, gradients, patterns, grain, a framed photo or cover art, the waveform of a sound, and every text block '
+              'in any font. Text cards: ${_designLabel(s.textCardDesign)}. Sound videos: ${_designLabel(s.audioCardDesign)}. '
+              'Each post can change it under its preview.',
+          enabled: s.textCards,
+          stackOnCompact: true,
+          below: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+            OutlinedButton.icon(
+              key: const Key('text-card-design-setting'),
+              onPressed: !s.textCards ? null : () => showCardDesignerSheet(context, kind: CardKind.text, scope: CardDesignerScope.defaults),
+              icon: const Icon(Icons.palette_outlined, size: 18),
+              label: const Text('Design text cards…'),
+            ),
+            OutlinedButton.icon(
+              key: const Key('audio-card-design-setting'),
+              onPressed: () => showCardDesignerSheet(context, kind: CardKind.audio, scope: CardDesignerScope.defaults),
+              icon: const Icon(Icons.album_outlined, size: 18),
+              label: const Text('Design sound video pictures…'),
+            ),
+          ]),
+        ),
         SettingRow(
           title: 'Card style',
           description: 'You can also switch it per post under the preview, or set your words over a photo there.',
@@ -132,12 +203,12 @@ class TextCardSettingsSection extends ConsumerWidget {
         ),
         SettingRow(
           title: 'Font',
-          description: 'The typeface of your words on the card. The NEFORUM signature keeps its own. '
-              'You can also switch it per post under the preview.',
+          description: 'The typeface of your words on the card: a built-in font, one installed on this device, or a font file you import. '
+              'The NEFORUM signature keeps its own. You can also switch it per post under the preview.',
           enabled: s.textCards,
           below: Opacity(
             opacity: s.textCards ? 1 : 0.45,
-            child: Wrap(spacing: Space.lg, runSpacing: Space.md, children: [for (final f in TextCardFont.values) fontOption(f)]),
+            child: Wrap(spacing: Space.lg, runSpacing: Space.md, children: [for (final f in TextCardFont.values) fontOption(f), moreFonts]),
           ),
         ),
         SettingRow(

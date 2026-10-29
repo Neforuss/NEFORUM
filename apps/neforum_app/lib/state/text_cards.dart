@@ -4,9 +4,12 @@ import 'package:flutter/painting.dart' show EdgeInsets;
 import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../media/caption_fonts.dart';
+import '../media/card_design.dart';
 import '../media/render_parameters.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
+import 'card_designs.dart';
 import 'fitted_photos.dart';
 import 'render_warnings.dart';
 import 'services.dart';
@@ -62,10 +65,13 @@ Post withTextCardChoices(Post post,
 
 /// [o] without the card choices [withTextCardChoices] writes: what the
 /// composer shows as the target's own overrides.
-PostOverrides withoutTextCardChoices(PostOverrides o) =>
-    o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey)
-        ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey))
-        : o;
+PostOverrides withoutTextCardChoices(PostOverrides o) {
+  // 1.3.1: cards. The card designs are the composer's choices too.
+  o = withoutCardDesigns(o);
+  return o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey)
+      ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey))
+      : o;
+}
 
 /// The photo list a card took the place of on a target
 /// ([kTextCardReplacedMediaIdsKey]); null when the target had no list of its
@@ -100,20 +106,38 @@ PostOverrides _withOwnMediaIds(PostOverrides o, List<String>? own) {
 /// [background] is the composer's [TextCardBackground] JSON: an empty map for
 /// a plain colour, null to keep the post's current one. A background photo
 /// that is not one of the post's photos is kept in the post's media, marked
-/// [isTextCardBackground].
+/// [isTextCardBackground]. [customFont] (1.3.1) is an installed or imported
+/// font (CaptionFont.toJson; an empty map for the built-in [font]), loaded
+/// before the first card is drawn; where it is not on this device the cards
+/// use [font], the user is told, and the cards are made again where it is.
+/// [design] (1.3.1) is a card designer design (CardDesign.toJson; an empty
+/// map for the classic card; null for the post's own, else the Settings
+/// default): with one, it is the cards' whole look.
 Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     {TextCardTheme? theme,
     TextCardFont? font,
     Map<String, bool> branded = const {},
     TextCardAlignment? alignment,
     Map<String, bool> handle = const {},
-    Map<String, dynamic>? background}) async {
+    Map<String, dynamic>? background,
+    Map<String, dynamic>? customFont,
+    Map<String, dynamic>? design}) async {
   final cards = {for (final m in post.media.where(isRenderedTextCard)) m.id: m};
   final backgrounds = [for (final m in post.media) if (isTextCardBackground(m)) m];
   if (!settings.textCards && cards.isEmpty && backgrounds.isEmpty) return post;
   final style = theme ?? textCardThemeOfPost(post) ?? settings.textCardTheme;
   final face = font ?? textCardFontOfPost(post) ?? settings.textCardFont;
   final align = alignment ?? textCardAlignmentOfPost(post) ?? settings.textCardAlignment;
+  // 1.3.1: cards. Loaded once, when the first card needs it.
+  final fontChoice = customFont ?? textCardCustomFontOfPost(post);
+  final CaptionFont? cardFont = fontChoice != null ? CaptionFont.tryParse(fontChoice) : settings.textCardCustomFontChoice;
+  Future<bool>? fontReady;
+  Future<bool> fontMissing() async => cardFont != null && !await (fontReady ??= prepareCaptionFontForRender(s.storage, cardFont, usage: 'the text card'));
+  // 1.3.1: cards. The card designer's design, its fonts loaded once.
+  final CardDesign? cardDesign = effectiveCardDesign(design ?? textCardDesignOfPost(post), settings.textCardDesign);
+  Future<bool>? designReady;
+  Future<bool> designFontMissing() async =>
+      cardDesign != null && !await (designReady ??= prepareCardDesignFonts(s.storage, cardDesign, usage: 'the text card'));
   final backdropChoice = background == null ? _backgroundOfPost(post) : TextCardBackground.tryParse(background);
   final userPhotos = {for (final m in post.media) if (!m.generated) m.id: m};
   // The post's own photo as it is now (alt text, path), or the photo picked
@@ -191,7 +215,9 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
       final size = textCardSize(d.id, story: story);
       final safe = textCardSafeArea(d.id, story: story);
       final hasSafe = safe != EdgeInsets.zero;
-      final params = textCardRenderParameters(
+      final fallback = await fontMissing();
+      final designFallback = await designFontMissing();
+      Map<String, dynamic> paramsWith({required bool fontFallback}) => textCardRenderParameters(
         platformId: d.id,
         theme: style,
         font: face,
@@ -202,7 +228,15 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
         safe: hasSafe,
         textHash: stableHash(text),
         background: backdrop?.background,
+        customFont: cardFont,
+        customFontFallback: fontFallback,
+        design: cardDesign,
+        designFontFallback: designFallback,
       );
+      final params = paramsWith(fontFallback: fallback);
+      // Without the font here, a card drawn in it on a device that has it is
+      // better than one in the built-in font.
+      final drawnInFont = fallback ? paramsWith(fontFallback: false) : null;
       final key = '${size.width}x${size.height}|${stableHash(params.toString())}|$text';
       var card = made[key];
       // A card made before is reused only when it was rendered with exactly
@@ -212,12 +246,23 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
           .where((m) =>
               m.width == size.width.round() &&
               m.height == size.height.round() &&
-              renderParametersEqual(m.renderParameters, params) &&
+              (renderParametersEqual(m.renderParameters, params) || (drawnInFont != null && renderParametersEqual(m.renderParameters, drawnInFont))) &&
               m.altText == textCardAltText(text))
           .firstOrNull;
       if (card == null) {
         try {
-          final bytes = await renderTextCardJpeg(
+          final designed = cardDesign;
+          final bytes = await (designed != null
+                  ? renderDesignedTextCard(s.storage,
+                      design: designed,
+                      platformId: d.id,
+                      size: size,
+                      safe: safe,
+                      text: text,
+                      byline: showsHandle ? byline : null,
+                      signed: signed,
+                      backdrop: backdrop)
+                  : renderTextCardJpeg(
             text: text,
             theme: style,
             size: size,
@@ -227,7 +272,9 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
             safe: safe,
             alignment: align,
             backdrop: backdrop,
-          ).timeout(kRenderTimeLimit);
+            customFont: fallback ? null : cardFont,
+          ))
+              .timeout(kRenderTimeLimit);
           final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face, safe: hasSafe), mimeHint: 'image/jpeg');
           card = MediaAttachment(
             id: m.id,
@@ -326,6 +373,29 @@ TextCardFont? textCardFontOfPost(Post post) {
 TextCardAlignment? textCardAlignmentOfPost(Post post) {
   for (final m in post.media) {
     if (isRenderedTextCard(m)) return textCardAlignmentOf(m);
+  }
+  return null;
+}
+
+/// The installed or imported font of the cards on [post] (1.3.1), as the
+/// composer keeps it: CaptionFont.toJson, an empty map for cards in a
+/// built-in font, null when the post has no card.
+Map<String, dynamic>? textCardCustomFontOfPost(Post post) {
+  for (final m in post.media) {
+    if (isRenderedTextCard(m)) return textCardCustomFontOf(m)?.toJson() ?? const {};
+  }
+  return null;
+}
+
+/// The card designer's design of the cards on [post] (1.3.1), as the composer
+/// keeps it: the design written on the post's targets, else the one its
+/// cards were drawn from (an empty map for classic cards); null when the post
+/// has neither.
+Map<String, dynamic>? textCardDesignOfPost(Post post) {
+  final chosen = textCardDesignChoiceOfPost(post);
+  if (chosen != null) return chosen;
+  for (final m in post.media) {
+    if (isRenderedTextCard(m)) return textCardDesignOf(m)?.toJson() ?? const {};
   }
   return null;
 }

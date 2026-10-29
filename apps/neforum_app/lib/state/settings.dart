@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../media/caption_fonts.dart' show CaptionFont;
 import '../media/text_card.dart';
 import '../platform/update_check.dart';
 import '../theme/tokens.dart';
@@ -193,6 +194,10 @@ class AppSettings {
     this.navigationChromeOpacity = 0,
     this.navigationChromeBlur = 0,
     this.audioTextTemplate = kDefaultAudioTextTemplate, // 1.3.1: audio tags
+    this.textCardCustomFont = const {}, // 1.3.1: cards
+    this.textCardDesign = const {}, // 1.3.1: cards
+    this.audioCardDesign = const {}, // 1.3.1: cards
+    this.cardPresets = const [], // 1.3.1: cards
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -267,6 +272,10 @@ class AppSettings {
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
         navigationChromeBlur: validNavigationChromeBlur(j['navigationChromeBlur']),
         audioTextTemplate: j['audioTextTemplate'] as String? ?? kDefaultAudioTextTemplate, // 1.3.1: audio tags
+        textCardCustomFont: Map<String, dynamic>.from(j['textCardCustomFont'] as Map? ?? const {}), // 1.3.1: cards
+        textCardDesign: Map<String, dynamic>.from(j['textCardDesign'] as Map? ?? const {}), // 1.3.1: cards
+        audioCardDesign: Map<String, dynamic>.from(j['audioCardDesign'] as Map? ?? const {}), // 1.3.1: cards
+        cardPresets: [for (final p in j['cardPresets'] as List? ?? const []) if (p is Map) Map<String, dynamic>.from(p)], // 1.3.1: cards
       );
 
   final ThemeMode themeMode;
@@ -487,6 +496,25 @@ class AppSettings {
   /// the other tokens of [audioTextTokens].
   final String audioTextTemplate;
 
+  /// 1.3.1: cards. The installed or imported font of new text cards' words
+  /// (CaptionFont.toJson), drawn instead of [textCardFont] where it is on the
+  /// device; empty for the built-in [textCardFont].
+  final Map<String, dynamic> textCardCustomFont;
+
+  /// [textCardCustomFont] as a font; null for the built-in one.
+  CaptionFont? get textCardCustomFontChoice => CaptionFont.tryParse(textCardCustomFont);
+
+  /// 1.3.1: cards. The card designer's default design for text cards
+  /// (CardDesign.toJson); empty for the classic NEFORUM card.
+  final Map<String, dynamic> textCardDesign;
+
+  /// 1.3.1: cards. The default design of the picture in a sound file's video
+  /// (CardDesign.toJson); empty for the classic audio card.
+  final Map<String, dynamic> audioCardDesign;
+
+  /// 1.3.1: cards. Designs the user saved under a name (CardPreset.toJson).
+  final List<Map<String, dynamic>> cardPresets;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -571,6 +599,10 @@ class AppSettings {
     double? navigationChromeOpacity,
     double? navigationChromeBlur,
     String? audioTextTemplate, // 1.3.1: audio tags
+    Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
+    Map<String, dynamic>? textCardDesign, // 1.3.1: cards
+    Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
+    List<Map<String, dynamic>>? cardPresets, // 1.3.1: cards
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -642,6 +674,10 @@ class AppSettings {
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
         navigationChromeBlur: navigationChromeBlur ?? this.navigationChromeBlur,
         audioTextTemplate: audioTextTemplate ?? this.audioTextTemplate, // 1.3.1: audio tags
+        textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
+        textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
+        audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
+        cardPresets: cardPresets ?? this.cardPresets, // 1.3.1: cards
       );
 
   Map<String, dynamic> toJson() => {
@@ -714,5 +750,9 @@ class AppSettings {
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,
         if (navigationChromeBlur != 0) 'navigationChromeBlur': navigationChromeBlur,
         'audioTextTemplate': audioTextTemplate, // 1.3.1: audio tags
+        if (textCardCustomFont.isNotEmpty) 'textCardCustomFont': textCardCustomFont, // 1.3.1: cards
+        if (textCardDesign.isNotEmpty) 'textCardDesign': textCardDesign, // 1.3.1: cards
+        if (audioCardDesign.isNotEmpty) 'audioCardDesign': audioCardDesign, // 1.3.1: cards
+        if (cardPresets.isNotEmpty) 'cardPresets': cardPresets, // 1.3.1: cards
       };
 }

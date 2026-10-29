@@ -6,12 +6,15 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
 import '../media/audio_plan.dart';
+import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
+import '../media/card_design.dart';
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
+import 'card_designs.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
@@ -58,6 +61,9 @@ class ComposerState {
     this.textCardWithText = const {},
     this.mediaParts = const {},
     this.audioDetails,
+    this.textCardCustomFont, // 1.3.1: cards
+    this.textCardDesign, // 1.3.1: cards
+    this.audioCardDesign, // 1.3.1: cards
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -171,6 +177,30 @@ class ComposerState {
   /// The part [mediaId] goes with.
   int partOfMedia(String mediaId) => mediaParts[mediaId] ?? 0;
 
+  /// 1.3.1: cards. The installed or imported font of the text card's words
+  /// (CaptionFont.toJson); an empty map for the built-in [textCardFont],
+  /// null = the Settings default.
+  final Map<String, dynamic>? textCardCustomFont;
+
+  /// [textCardCustomFont], or the Settings default; null for a built-in font.
+  CaptionFont? cardCustomFont(AppSettings settings) =>
+      textCardCustomFont == null ? settings.textCardCustomFontChoice : CaptionFont.tryParse(textCardCustomFont);
+
+  /// 1.3.1: cards. The card designer's design of this post's text cards
+  /// (CardDesign.toJson); an empty map for the classic card, null = the
+  /// Settings default.
+  final Map<String, dynamic>? textCardDesign;
+
+  /// 1.3.1: cards. The design of the picture in this post's sound file video,
+  /// like [textCardDesign].
+  final Map<String, dynamic>? audioCardDesign;
+
+  /// [textCardDesign], or the Settings default; null for the classic card.
+  CardDesign? textDesign(AppSettings settings) => effectiveCardDesign(textCardDesign, settings.textCardDesign);
+
+  /// [audioCardDesign], or the Settings default; null for the classic card.
+  CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
+
   /// Every part with words in it ([text], then [additionalParts]) joined with
   /// blank lines: what networks without threads receive.
   String get joinedParts => [
@@ -218,6 +248,9 @@ class ComposerState {
     Map<String, int>? mediaParts,
     AudioTags? audioDetails,
     bool clearAudioDetails = false,
+    Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
+    Map<String, dynamic>? textCardDesign, // 1.3.1: cards
+    Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -259,6 +292,9 @@ class ComposerState {
         textCardWithText: textCardWithText ?? this.textCardWithText,
         mediaParts: mediaParts ?? this.mediaParts,
         audioDetails: clearAudioDetails ? null : (audioDetails ?? this.audioDetails),
+        textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
+        textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
+        audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -405,7 +441,18 @@ class ComposerNotifier extends Notifier<ComposerState> {
   }
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
   void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
-  void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f);
+  /// A built-in font for the card's words (no installed or imported one).
+  void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f, textCardCustomFont: const {});
+
+  /// 1.3.1: cards. An installed or imported font for the card's words; null
+  /// for the built-in [ComposerState.textCardFont].
+  void setTextCardCustomFont(CaptionFont? font) => state = state.copyWith(textCardCustomFont: font?.toJson() ?? const {});
+
+  /// 1.3.1: cards. This post's text card design; null for the classic card.
+  void setTextCardDesign(CardDesign? design) => state = state.copyWith(textCardDesign: design?.toJson() ?? const {});
+
+  /// 1.3.1: cards. This post's audio card design; null for the classic card.
+  void setAudioCardDesign(CardDesign? design) => state = state.copyWith(audioCardDesign: design?.toJson() ?? const {});
   void setTextCardBranded(String platformId, bool branded) =>
       state = state.copyWith(textCardBranded: {...state.textCardBranded, platformId: branded});
   void setCaptionOnPhoto(String platformId, bool on) => state = state.copyWith(captionOnPhoto: {...state.captionOnPhoto, platformId: on});
@@ -680,6 +727,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardWithText: textCardWithTextOfPost(post, platformOf),
         mediaParts: p.mediaParts,
         audioDetails: p.audioDetails,
+        textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
+        textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
+        audioCardDesign: audioCardDesignChoiceOfPost(post), // 1.3.1: cards
       );
   }
 
@@ -734,6 +784,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardWithText: state.textCardWithText,
       mediaParts: state.mediaParts,
       audioDetails: state.audioDetails,
+      textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
+      textCardDesign: state.textCardDesign, // 1.3.1: cards
+      audioCardDesign: state.audioCardDesign, // 1.3.1: cards
     );
   }
 }
@@ -761,6 +814,12 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final standardFormat = sound == null ? null : standardAudioFormat(ref.watch(audioOutputFormatsProvider).value ?? const []);
   final canRenderVideo = sound != null && (ref.watch(videoCaptionsSupportedProvider).value ?? false);
   final everyNetwork = c.cardOnEveryNetwork(settings);
+  // 1.3.1: cards. Watching the card's own font starts loading it; read once,
+  // before the loop (the 1.2.1 AOT crash).
+  final cardFont = c.cardCustomFont(settings);
+  final cardDesign = c.textDesign(settings);
+  final cardFontMissing = settings.textCards && cardFont != null && ref.watch(captionFontReadyProvider(cardFont)).value == false;
+  final cardFontFamily = cardFont?.family ?? '';
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -790,6 +849,8 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             showsHandle: c.textCardHandle[d.id] ?? settings.textCardShowsHandle(d.id),
             background: background,
             story: story,
+            customFont: cardFont,
+            design: cardDesign,
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
@@ -818,6 +879,13 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
       issues.add(ValidationIssue.info(
           'media.text_card', '$what ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}',
           field: 'media'));
+      if (cardFontMissing) {
+        issues.add(ValidationIssue.info(
+            'media.text_card_font_missing',
+            'The font $cardFontFamily is not on this device, so the card uses ${(c.textCardFont ?? settings.textCardFont).label}. '
+            'Install or import $cardFontFamily here to use it.',
+            field: 'media'));
+      }
     } else if (settings.textCards && everyNetwork && !acceptsTextCardImages(d) && variant.media.isEmpty && variant.text.trim().isNotEmpty) {
       issues.add(ValidationIssue.info('media.text_card_unsupported', '${d.name} takes no images, so it gets your words as plain text', field: 'media'));
     }
@@ -1001,6 +1069,8 @@ class PostActions {
         everyNetwork: c.cardOnEveryNetwork(ref.read(settingsProvider)),
         withText: c.textCardWithText,
         platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
+    // 1.3.1: cards. After the card choices, which replace the targets' extras.
+    post = withCardDesigns(post, text: c.textCardDesign, audio: c.audioCardDesign);
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
     post = post.copyWith(media: [...post.media, ...?existing?.media.where((m) => m.generated)]);
@@ -1011,7 +1081,9 @@ class PostActions {
         branded: c.textCardBranded,
         alignment: c.textCardAlignment,
         handle: c.textCardHandle,
-        background: c.textCardBackground ?? const {});
+        background: c.textCardBackground ?? const {},
+        customFont: c.textCardCustomFont,
+        design: c.textCardDesign);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
     post = await attachAudioRenditions(s, post, ref.read(settingsProvider));

@@ -127,6 +127,9 @@ Map<String, dynamic> composerDraftToJson(ComposerState c) => {
       if (c.textCardBackground != null) 'textCardBackground': c.textCardBackground,
       if (c.textCardEveryNetwork != null) 'textCardEveryNetwork': c.textCardEveryNetwork,
       if (c.textCardWithText.isNotEmpty) 'textCardWithText': c.textCardWithText,
+      if (c.textCardCustomFont != null) 'textCardCustomFont': c.textCardCustomFont, // 1.3.1: cards
+      if (c.textCardDesign != null) 'textCardDesign': c.textCardDesign, // 1.3.1: cards
+      if (c.audioCardDesign != null) 'audioCardDesign': c.audioCardDesign, // 1.3.1: cards
     };
 
 /// Null when [j] holds no post (cleared, or from a newer NEFORUM).
@@ -165,6 +168,9 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
     audioDetails: p.audioDetails,
     textCardEveryNetwork: j['textCardEveryNetwork'] as bool?,
     textCardWithText: flags(j['textCardWithText']),
+    textCardCustomFont: j['textCardCustomFont'] is Map ? Map<String, dynamic>.from(j['textCardCustomFont'] as Map) : null, // 1.3.1: cards
+    textCardDesign: j['textCardDesign'] is Map ? Map<String, dynamic>.from(j['textCardDesign'] as Map) : null, // 1.3.1: cards
+    audioCardDesign: j['audioCardDesign'] is Map ? Map<String, dynamic>.from(j['audioCardDesign'] as Map) : null, // 1.3.1: cards
     mediaParts: j['mediaParts'] is Map
         ? {
             for (final e in (j['mediaParts'] as Map).entries)
