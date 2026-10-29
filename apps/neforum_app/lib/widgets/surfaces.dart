@@ -52,7 +52,7 @@ class _NfCardState extends State<NfCard> {
     final bg = widget.color ?? (widget.selected ? nf.accentSoft : (interactive && _hover ? nf.surfaceHover : nf.surface));
 
     Widget content = AnimatedContainer(
-      duration: Motion.fast,
+      duration: context.motion(Motion.fast),
       curve: Motion.standard,
       padding: context.denseLayout ? widget.padding * 0.75 : widget.padding,
       decoration: BoxDecoration(
@@ -67,9 +67,11 @@ class _NfCardState extends State<NfCard> {
 
     if (!interactive) return content;
 
+    // The press shrink is decoration: none when the system asks for less
+    // motion.
     content = AnimatedScale(
-      scale: _down ? 0.985 : 1,
-      duration: Motion.fast,
+      scale: _down && !context.reduceMotion ? 0.985 : 1,
+      duration: context.motion(Motion.fast),
       curve: Motion.standard,
       child: content,
     );

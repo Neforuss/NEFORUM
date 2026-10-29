@@ -45,7 +45,7 @@ class SettingsSection extends StatelessWidget {
       rows.add(children[i]);
     }
     Widget header = AnimatedPadding(
-      duration: Motion.medium,
+      duration: context.motion(Motion.medium),
       curve: Motion.standard,
       padding: EdgeInsets.only(left: Space.xs, bottom: collapsed ? Space.xs : Space.md, top: scope == null ? 0 : Space.xs),
       child: Row(children: [
@@ -67,7 +67,7 @@ class SettingsSection extends StatelessWidget {
             padding: const EdgeInsets.only(left: Space.sm),
             child: AnimatedRotation(
               turns: collapsed ? -0.25 : 0,
-              duration: Motion.fast,
+              duration: context.motion(Motion.fast),
               child: Icon(Icons.expand_more_rounded, color: nf.textMuted),
             ),
           ),
@@ -98,7 +98,7 @@ class SettingsSection extends StatelessWidget {
       else
         ClipRect(
           child: AnimatedSize(
-            duration: Motion.medium,
+            duration: context.motion(Motion.medium),
             curve: Motion.standard,
             alignment: Alignment.topCenter,
             child: collapsed ? const SizedBox(width: double.infinity) : card,

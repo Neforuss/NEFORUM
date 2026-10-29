@@ -31,17 +31,25 @@ class NeforumMark extends StatefulWidget {
 class _NeforumMarkState extends State<NeforumMark> with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1600));
 
+  /// Animated unless the system asks for less motion: then the whole mark
+  /// shows, still.
+  bool get _animated => widget.animate && !context.reduceMotion;
+
+  void _follow() {
+    if (_animated && !_c.isAnimating) _c.repeat();
+    if (!_animated && _c.isAnimating) _c.stop();
+  }
+
   @override
-  void initState() {
-    super.initState();
-    if (widget.animate) _c.repeat();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _follow();
   }
 
   @override
   void didUpdateWidget(NeforumMark old) {
     super.didUpdateWidget(old);
-    if (widget.animate && !_c.isAnimating) _c.repeat();
-    if (!widget.animate && _c.isAnimating) _c.stop();
+    _follow();
   }
 
   @override
@@ -63,7 +71,7 @@ class _NeforumMarkState extends State<NeforumMark> with SingleTickerProviderStat
       child: AnimatedBuilder(
         animation: _c,
         builder: (context, _) => CustomPaint(
-          painter: _MarkPainter(progress: widget.animate ? _c.value : null),
+          painter: _MarkPainter(progress: _animated ? _c.value : null),
         ),
       ),
     );

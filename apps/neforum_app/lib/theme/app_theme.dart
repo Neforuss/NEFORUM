@@ -15,6 +15,9 @@ import 'tokens.dart';
 /// [AccentChoice.custom]; [corners] square sets every radius to 0 (it also
 /// sets [Radii.square], which widgets read directly); [chrome] colors the
 /// sidebar, rail and bottom bar; [density] compact tightens the spacing.
+///
+/// [highContrast] (the system's high contrast setting, see
+/// `MaterialApp.highContrastTheme`) uses [NfColors.withHighContrast].
 ThemeData buildTheme(
   Brightness brightness,
   AccentChoice accent, {
@@ -22,14 +25,16 @@ ThemeData buildTheme(
   CornerStyle corners = CornerStyle.rounded,
   NavigationChromeStyle chrome = NavigationChromeStyle.brand,
   InterfaceDensity density = InterfaceDensity.comfortable,
+  bool highContrast = false,
 }) {
   Radii.square = corners == CornerStyle.square;
   final base = brightness == Brightness.dark ? NfColors.dark(accent, customAccent: customAccent) : NfColors.light(accent, customAccent: customAccent);
-  final c = switch (chrome) {
+  final chromed = switch (chrome) {
     NavigationChromeStyle.brand => base,
     NavigationChromeStyle.theme => base.withThemeChrome(),
     NavigationChromeStyle.accent => base.withAccentChrome(),
   };
+  final c = highContrast ? chromed.withHighContrast() : chromed;
   final dense = density == InterfaceDensity.compact;
   final scheme = ColorScheme(
     brightness: brightness,
@@ -388,6 +393,27 @@ ThemeData buildTheme(
     }),
   );
 }
+
+/// Page transitions with no motion: the new page is simply there. For the
+/// system's reduce motion setting ([withReducedMotion]).
+class ImmediatePageTransitionsBuilder extends PageTransitionsBuilder {
+  const ImmediatePageTransitionsBuilder();
+
+  @override
+  Duration get transitionDuration => Duration.zero;
+
+  @override
+  Widget buildTransitions<T>(PageRoute<T> route, BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation, Widget child) =>
+      child;
+}
+
+/// [theme] without page transitions, for when the system asks for less
+/// motion (`MediaQuery.disableAnimations`).
+ThemeData withReducedMotion(ThemeData theme) => theme.copyWith(pageTransitionsTheme: _immediateTransitions);
+
+final PageTransitionsTheme _immediateTransitions = PageTransitionsTheme(builders: {
+  for (final platform in TargetPlatform.values) platform: const ImmediatePageTransitionsBuilder(),
+});
 
 TextTheme _textTheme(NfColors c) {
   TextStyle display(double size, FontWeight w, {double ls = -0.5, double h = 1.08}) => TextStyle(

@@ -136,7 +136,7 @@ class _AddAccountScreenState extends ConsumerState<AddAccountScreen> {
         const SizedBox(height: Space.xl),
       ],
       AnimatedSwitcher(
-        duration: Motion.medium,
+        duration: context.motion(Motion.medium),
         switchInCurve: Motion.standard,
         switchOutCurve: Motion.standard,
         transitionBuilder: (child, anim) => FadeTransition(
