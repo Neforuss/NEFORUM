@@ -211,6 +211,42 @@ void main() {
       expect(v.issues.map((i) => i.code), contains('media.audio_dropped'));
     });
 
+    test('sound checks count each post of a thread, like photos and videos', () {
+      PostVariant thread(List<MediaAttachment> media) => resolver.resolve(
+          Post(
+              id: 'p',
+              text: 'Part one',
+              additionalParts: const ['Part two'],
+              media: media,
+              mediaParts: const {'s1': 1},
+              createdAt: testNow,
+              updatedAt: testNow),
+          target,
+          mastodonDescriptor);
+      // A photo in part one and the sound file in part two: fine per post.
+      final mixed = thread([fakeImage(id: 'i1'), _sound(id: 's1')]);
+      expect(mixed.mediaPartIndexes, [0, 1]);
+      expect(RulesValidator.validate(mixed, mastodonDescriptor).errors, isEmpty);
+      // One sound file in each part.
+      final two = thread([_sound(id: 's0'), _sound(id: 's1')]);
+      expect(two.media, hasLength(2));
+      expect(RulesValidator.validate(two, mastodonDescriptor).errors, isEmpty);
+      // Two in one post is still too many.
+      final crowded = PostVariant(text: 'x', media: [_sound(id: 's0'), _sound(id: 's1')]);
+      expect(RulesValidator.validate(crowded, mastodonDescriptor).map((i) => i.code), contains('media.too_many_audios'));
+    });
+
+    test('video-only: the track counts as the video it becomes, and the first photo as its picture', () {
+      final video = MediaAttachment(id: 'v1', path: '/tmp/v1.mp4', mimeType: 'video/mp4', sizeBytes: 1024);
+      // Bluesky takes one video and does not mix it with photos.
+      final withVideo = resolve('bluesky', [_sound(), video]);
+      expect(withVideo.media.map((m) => m.id), ['snd1'], reason: 'the second video is dropped, as it is at publish');
+      expect(withVideo.issues.map((i) => i.code), contains('media.dropped'));
+      final withPicture = resolve('bluesky', [fakeImage(id: 'cover'), _sound()]);
+      expect(withPicture.media.map((m) => m.id), ['cover', 'snd1'], reason: 'the picture is part of the video, not a mix');
+      expect(withPicture.issues.map((i) => i.code), isNot(contains('media.dropped')));
+    });
+
     test('sound never asks for alt text', () {
       final issues = check('mastodon', PostVariant(text: 'x', media: [_sound()]));
       expect(issues.map((i) => i.code), isNot(contains('media.no_alt')));
@@ -361,6 +397,21 @@ void main() {
       final v = await withAudioLinks(PostVariant(text: 'one', threadParts: const ['one', 'two'], media: [_sound()]), ctx, platform: 'Nostr');
       expect(v.threadParts, ['one', 'two\n\nhttps://cdn.example.test/snd1']);
       expect(v.text, 'one');
+    });
+
+    test('the photos of a thread keep their parts when the sound file leaves', () async {
+      final ctx = testContext(handler: (_) async => _json({}), mediaHost: FakeMediaHost());
+      final v = await withAudioLinks(
+          PostVariant(
+              text: 'one',
+              threadParts: const ['one', 'two', 'three'],
+              media: [fakeImage(id: 'a'), _sound(), fakeImage(id: 'b')],
+              mediaPartIndexes: const [0, 1, 2]),
+          ctx,
+          platform: 'Nostr');
+      expect(v.media.map((m) => m.id), ['a', 'b']);
+      expect(v.mediaPartIndexes, [0, 2]);
+      expect(v.mediaOfPart(2).map((m) => m.id), ['b']);
     });
 
     test('no media host, or one with temporary links: a clear failure', () async {

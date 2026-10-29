@@ -134,11 +134,18 @@ class RulesValidator {
     final m = d.media;
     final issues = <ValidationIssue>[];
     if (m.supportsAudio) {
-      if (sound.length > m.maxAudios) {
-        issues.add(ValidationIssue.error('media.too_many_audios', '${sound.length} sound files; ${d.name} allows ${m.maxAudios}', field: 'media'));
-      }
-      if (!m.audioWithOtherMedia && v.media.any((x) => !x.isAudio)) {
-        issues.add(ValidationIssue.error('media.audio_mixed', '${d.name} takes a sound file on its own, without photos or videos', field: 'media'));
+      // Like photos and videos: per post that carries media, so a thread
+      // may have a sound file in one part and photos in another.
+      final groups = v.mediaGroups;
+      for (final group in groups) {
+        final where = groups.length > 1 ? ' in one post' : '';
+        final groupSounds = group.where((x) => x.isAudio).length;
+        if (groupSounds > m.maxAudios) {
+          issues.add(ValidationIssue.error('media.too_many_audios', '$groupSounds sound files$where; ${d.name} allows ${m.maxAudios}', field: 'media'));
+        }
+        if (!m.audioWithOtherMedia && groupSounds > 0 && group.any((x) => !x.isAudio)) {
+          issues.add(ValidationIssue.error('media.audio_mixed', '${d.name} takes a sound file on its own, without photos or videos', field: 'media'));
+        }
       }
       for (final x in sound) {
         final max = m.audioMaxBytes;

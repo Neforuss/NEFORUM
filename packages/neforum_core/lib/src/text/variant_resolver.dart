@@ -310,6 +310,18 @@ class VariantResolver {
           field: 'media'));
     }
     var visual = media.where((x) => !x.isAudio).toList();
+    if (sound.isNotEmpty && !m.supportsAudio && m.audioAsVideo) {
+      // The app turns each sound file into a video whose picture is the
+      // first photo: the sound counts as a video at its place, as that video
+      // will when it is published, and the photo as part of it.
+      final picture = visual.where((x) => x.kind == MediaKind.image && !x.isTextCard).firstOrNull;
+      final counted = [
+        for (final x in media)
+          if (sound.contains(x) || (!x.isAudio && !identical(x, picture))) x,
+      ];
+      final kept = _filterVisualMedia(counted, d, issues, part: part, asVideo: sound.toSet()).toSet();
+      return [for (final x in media) if (kept.contains(x) || identical(x, picture)) x];
+    }
     if (sound.isNotEmpty && m.supportsAudio && !m.audioWithOtherMedia && visual.isNotEmpty && options.dropUnsupportedMedia) {
       issues.add(ValidationIssue.warning('media.audio_alone',
           '${d.name} takes a sound file on its own; ${visual.length} photo(s)/video(s) left out', field: 'media'));
@@ -319,9 +331,12 @@ class VariantResolver {
     return [for (final x in media) if (kept.contains(x)) x];
   }
 
-  List<MediaAttachment> _filterVisualMedia(List<MediaAttachment> media, PlatformDescriptor d, List<ValidationIssue> issues, {int? part}) {
+  /// [asVideo]: sound files counted as the videos they become.
+  List<MediaAttachment> _filterVisualMedia(List<MediaAttachment> media, PlatformDescriptor d, List<ValidationIssue> issues,
+      {int? part, Set<MediaAttachment> asVideo = const {}}) {
     final m = d.media;
     if (media.isEmpty) return media;
+    bool video(MediaAttachment x) => x.isVideo || asVideo.contains(x);
     if (m.maxImages == 0 && m.maxVideos == 0) {
       if (options.dropUnsupportedMedia) {
         issues.add(ValidationIssue.warning('media.dropped', '${d.name} takes no media; ${media.length} file(s) dropped', field: 'media'));
@@ -332,14 +347,13 @@ class VariantResolver {
     var out = <MediaAttachment>[];
     var images = 0, videos = 0, dropped = 0;
     for (final x in media) {
-      final isVideo = x.isVideo;
+      final isVideo = video(x);
       // A still photo of a type the platform refuses (a PNG for Instagram's
       // API) stays: the app turns it into one it takes (PhotoFit), and
       // otherwise the check says why. Dropping it would leave the target
       // without the photo the user picked for it.
-      final typeOk = isVideo
-          ? m.videoMimeTypes.contains(x.mimeType)
-          : m.imageMimeTypes.contains(x.mimeType) || x.kind == MediaKind.image;
+      final typeOk = asVideo.contains(x) ||
+          (isVideo ? m.videoMimeTypes.contains(x.mimeType) : m.imageMimeTypes.contains(x.mimeType) || x.kind == MediaKind.image);
       final countOk = isVideo ? videos < m.maxVideos : images < m.maxImages;
       if (!typeOk || !countOk) {
         if (!options.dropUnsupportedMedia) {
@@ -358,8 +372,8 @@ class VariantResolver {
     }
     if (!m.allowsMixedImageVideo && images > 0 && videos > 0 && options.dropUnsupportedMedia) {
       // Keep whichever came first.
-      final firstIsVideo = out.first.isVideo;
-      final kept = out.where((x) => x.isVideo == firstIsVideo).toList();
+      final firstIsVideo = video(out.first);
+      final kept = out.where((x) => video(x) == firstIsVideo).toList();
       dropped += out.length - kept.length;
       out = kept;
     }

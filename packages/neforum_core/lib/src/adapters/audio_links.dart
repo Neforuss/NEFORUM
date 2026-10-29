@@ -42,13 +42,14 @@ Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
   }
   final addition = links.join('\n');
   String withLinks(String text) => text.trim().isEmpty ? addition : '${text.trimRight()}\n\n$addition';
-  final rest = [for (final m in variant.media) if (!m.isAudio) m];
+  // The photos and videos stay in the parts they go with.
+  final rest = variant.withoutMedia((m) => m.isAudio);
   if (variant.isThread) {
     final parts = [...variant.threadParts];
     parts[parts.length - 1] = withLinks(parts.last);
-    return variant.copyWith(text: parts.first, threadParts: parts, media: rest);
+    return rest.copyWith(text: parts.first, threadParts: parts);
   }
-  return variant.copyWith(text: withLinks(variant.text), media: rest);
+  return rest.copyWith(text: withLinks(variant.text));
 }
 
 /// The words of a link to a sound file: its name and type, "Demo (FLAC)".

@@ -161,6 +161,22 @@ class PostVariant {
             (media == null || media.length == this.media.length ? this.mediaPartIndexes : const []),
       );
 
+  /// This variant without the media items [test] matches. Every other item
+  /// keeps the thread part it goes with ([mediaPartIndexes]), which
+  /// [copyWith] cannot do for a shorter list.
+  PostVariant withoutMedia(bool Function(MediaAttachment m) test) {
+    final kept = <MediaAttachment>[];
+    final keptParts = <int>[];
+    final parts = mediaPartIndexes;
+    for (var i = 0; i < media.length; i++) {
+      if (test(media[i])) continue;
+      kept.add(media[i]);
+      if (i < parts.length) keptParts.add(parts[i]);
+    }
+    if (kept.length == media.length) return this;
+    return copyWith(media: kept, mediaPartIndexes: keptParts.length == kept.length ? keptParts : const []);
+  }
+
   PostVariant addIssues(Iterable<ValidationIssue> more) =>
       copyWith(issues: [...issues, ...more]);
 }
