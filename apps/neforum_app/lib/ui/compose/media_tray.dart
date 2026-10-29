@@ -221,8 +221,9 @@ class _MediaItemState extends ConsumerState<_MediaItem> {
             left: 5,
             bottom: 5,
             child: _TagChip(
-              hasTags: m.audioTags != null || ref.watch(composerProvider.select((c) => c.audioDetails != null)),
-              onTap: () => showTrackDetailsEditor(context),
+              hasTags: m.audioTags != null || ref.watch(composerProvider.select((c) => c.audioDetails.containsKey(m.id))),
+              // This file's own details, whichever sound file of the post it is.
+              onTap: () => showTrackDetailsEditor(context, mediaId: m.id),
             ),
           ),
         if (!m.isAudio)

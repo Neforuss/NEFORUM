@@ -12,13 +12,14 @@ import 'audio_thumbnail_stub.dart' if (dart.library.io) 'audio_thumbnail_io.dart
 extension PostAudioTags on Post {
   /// The tags [m] goes out with: those of the user's sound file it is (or
   /// that NEFORUM made it from: the Standard copy, the still-picture video),
-  /// under the user's edits ([audioDetails]). Null when [m] is not a sound
-  /// file nor made from one, or when nothing is known about the track.
+  /// under the user's edits of that file ([audioDetails]). Null when [m] is
+  /// not a sound file nor made from one, or when nothing is known about the
+  /// track.
   AudioTags? effectiveAudioTagsOf(MediaAttachment m) {
     final from = m.derivedFrom;
     final source = from == null ? m : media.where((x) => x.id == from).firstOrNull;
     if (source == null || !source.isAudio) return null;
-    final tags = (source.audioTags ?? AudioTags.none).overriddenBy(audioDetails);
+    final tags = (source.audioTags ?? AudioTags.none).overriddenBy(audioDetails[source.id]);
     return tags.isEmpty ? null : tags;
   }
 

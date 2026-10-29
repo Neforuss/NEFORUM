@@ -81,7 +81,7 @@ void main() {
         const MediaAttachment(id: 'std', path: '/media/std.m4a', mimeType: AudioMimeTypes.m4a, sizeBytes: 1, generated: true, derivedFrom: 'snd1'),
         fakeImage(),
       ],
-      audioDetails: const AudioTags(title: 'Night Drive (Edit)', genre: ''),
+      audioDetails: const {'snd1': AudioTags(title: 'Night Drive (Edit)', genre: '')},
       targets: const [
         PostTarget(accountId: 'a', overrides: PostOverrides(mediaIds: ['std'])),
         PostTarget(accountId: 'b'),
@@ -102,6 +102,45 @@ void main() {
       expect(own.first.audioTags!.title, 'Night Drive (Edit)');
       expect(own.last.audioTags, isNull, reason: 'a photo has no track details');
       expect(identical(own.last, post.media.last), isTrue);
+    });
+
+    test('each sound file, and each copy of it, goes out with its own details', () {
+      const second = MediaAttachment(
+          id: 'snd2', path: '/media/snd2.mp3', mimeType: AudioMimeTypes.mp3, sizeBytes: 74, fileName: 'track02.mp3', audioTags: AudioTags(title: 'Coastline'));
+      final two = Post(
+        id: 'p2',
+        text: 'Two tracks',
+        createdAt: testNow,
+        updatedAt: testNow,
+        media: const [
+          _mp3,
+          second,
+          MediaAttachment(id: 'std2', path: '/media/std2.mp3', mimeType: AudioMimeTypes.mp3, sizeBytes: 1, generated: true, derivedFrom: 'snd2'),
+        ],
+        audioDetails: const {'snd2': AudioTags(artist: 'Ana Lima')},
+        targets: const [PostTarget(accountId: 'a', overrides: PostOverrides(mediaIds: ['snd1', 'std2']))],
+      );
+      expect(two.effectiveAudioTagsOf(_mp3), _tags, reason: 'the first file has no edits');
+      expect(two.effectiveAudioTagsOf(second), const AudioTags(title: 'Coastline', artist: 'Ana Lima'));
+      final media = const VariantResolver().resolve(two, two.targets.single, DiscordAdapter().descriptor).media;
+      expect(media.map((m) => (m.id, m.audioTags?.title, m.audioTags?.artist)), [
+        ('snd1', 'Night Drive', 'Neon / Waves'),
+        ('std2', 'Coastline', 'Ana Lima'),
+      ]);
+      // Kept by media id through JSON.
+      expect(Post.fromJson(two.toJson()).audioDetails, two.audioDetails);
+    });
+
+    test('the foundation\'s one set of details for the whole post applies to each sound file', () {
+      final json = post.toJson()
+        ..['media'] = [_mp3.toJson(), {..._mp3.toJson(), 'id': 'snd2'}, fakeImage().toJson()]
+        ..['audioDetails'] = const AudioTags(title: 'Night Drive (Edit)', genre: '').toJson();
+      final old = Post.fromJson(json);
+      expect(old.audioDetails, {
+        'snd1': const AudioTags(title: 'Night Drive (Edit)', genre: ''),
+        'snd2': const AudioTags(title: 'Night Drive (Edit)', genre: ''),
+      });
+      expect(Post.fromJson(post.toJson()..remove('audioDetails')).audioDetails, isEmpty);
     });
 
     test('helpers: file name, caption, cover', () {

@@ -278,7 +278,7 @@ class Post {
     this.additionalParts = const [],
     this.artwork,
     this.audioQuality = AudioQuality.standard,
-    this.audioDetails,
+    this.audioDetails = const {},
     this.mediaParts = const {},
   });
 
@@ -312,7 +312,7 @@ class Post {
             ? null
             : ArtworkDetails.fromJson(Map<String, dynamic>.from(json['artwork'] as Map)),
         audioQuality: AudioQuality.values.asNameMap()[json['audioQuality']] ?? AudioQuality.standard,
-        audioDetails: json['audioDetails'] == null ? null : AudioTags.fromJson(Map<String, dynamic>.from(json['audioDetails'] as Map)),
+        audioDetails: _audioDetailsFromJson(json),
         mediaParts: {
           for (final e in (json['mediaParts'] as Map? ?? const {}).entries)
             if (e.value is int) '${e.key}': e.value as int,
@@ -358,10 +358,16 @@ class Post {
   /// original lossless file where a network takes it.
   final AudioQuality audioQuality;
 
-  /// What the user set for the post's sound file (title, artist, cover...),
-  /// over the tags the file carries ([MediaAttachment.audioTags]); null when
-  /// the file's own tags stand.
-  final AudioTags? audioDetails;
+  /// What the user set for each of the post's sound files (title, artist,
+  /// cover...), by media id, over the tags that file carries
+  /// ([MediaAttachment.audioTags]). A file without an entry goes out with
+  /// its own tags. A Standard copy or still-picture video of a file
+  /// ([MediaAttachment.derivedFrom]) goes out with that file's.
+  final Map<String, AudioTags> audioDetails;
+
+  /// The user's edits of the track details of the sound file [mediaId]
+  /// ([audioDetails]); null when its own tags stand.
+  AudioTags? audioDetailsOf(String mediaId) => audioDetails[mediaId];
 
   /// The thread part (index into [parts]) that carries each attachment, by
   /// media id. Media not listed goes with the first part, so a post without
@@ -501,8 +507,7 @@ class Post {
     List<String>? additionalParts,
     ArtworkDetails? artwork,
     AudioQuality? audioQuality,
-    AudioTags? audioDetails,
-    bool clearAudioDetails = false,
+    Map<String, AudioTags>? audioDetails,
     Map<String, int>? mediaParts,
     bool clearScheduledAt = false,
     bool clearTitle = false,
@@ -530,7 +535,7 @@ class Post {
         additionalParts: additionalParts ?? this.additionalParts,
         artwork: clearArtwork ? null : (artwork ?? this.artwork),
         audioQuality: audioQuality ?? this.audioQuality,
-        audioDetails: clearAudioDetails ? null : (audioDetails ?? this.audioDetails),
+        audioDetails: audioDetails ?? this.audioDetails,
         mediaParts: mediaParts ?? this.mediaParts,
       );
 
@@ -562,7 +567,31 @@ class Post {
         if (additionalParts.isNotEmpty) 'additionalParts': additionalParts,
         if (artwork != null) 'artwork': artwork!.toJson(),
         if (audioQuality != AudioQuality.standard) 'audioQuality': audioQuality.name,
-        if (audioDetails != null && !audioDetails!.isEmpty) 'audioDetails': audioDetails!.toJson(),
+        if (audioDetails.values.any((t) => !t.isEmpty))
+          'audioDetails': {
+            for (final e in audioDetails.entries)
+              if (!e.value.isEmpty) e.key: e.value.toJson(),
+          },
         if (mediaParts.isNotEmpty) 'mediaParts': mediaParts,
       };
+}
+
+/// [Post.audioDetails] from a post's JSON: `{mediaId: tags}`. The 1.3.1
+/// foundation kept one set of edits for the whole post (the tags' own JSON,
+/// whose values are never maps); those apply to each of the post's own
+/// sound files, as they did then.
+Map<String, AudioTags> _audioDetailsFromJson(Map<String, dynamic> json) {
+  final raw = json['audioDetails'];
+  if (raw is! Map || raw.isEmpty) return const {};
+  if (raw.values.every((v) => v is Map)) {
+    return {
+      for (final e in raw.entries) '${e.key}': AudioTags.fromJson(Map<String, dynamic>.from(e.value as Map)),
+    };
+  }
+  final shared = AudioTags.fromJson(Map<String, dynamic>.from(raw));
+  return {
+    for (final m in json['media'] as List? ?? const [])
+      if (m is Map)
+        if (MediaAttachment.fromJson(Map<String, dynamic>.from(m)) case final a when a.isAudio && !a.generated) a.id: shared,
+  };
 }

@@ -46,7 +46,7 @@ class PostVariant {
 
   /// The files this account gets. A sound file (or a copy made from one)
   /// carries in [MediaAttachment.audioTags] the tags it goes out with: the
-  /// file's own under the user's edits ([Post.audioDetails]).
+  /// file's own under the user's edits of that file ([Post.audioDetails]).
   final List<MediaAttachment> media;
   final String? contentWarning;
   final bool sensitive;

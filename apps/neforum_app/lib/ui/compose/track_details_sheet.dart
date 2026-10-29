@@ -10,12 +10,12 @@ import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
 
-/// Opens the track details editor for the post's sound file: every detail
-/// the file's tags can carry, a cover, and the post text they make. Saving
-/// puts the edits in the composer ([ComposerNotifier.setAudioDetails]) and
-/// the text template in Settings.
-Future<void> showTrackDetailsEditor(BuildContext context) {
-  const editor = TrackDetailsEditor();
+/// Opens the track details editor for the post's sound file [mediaId]: every
+/// detail the file's tags can carry, a cover, and the post text they make.
+/// Saving puts the edits of that file in the composer
+/// ([ComposerNotifier.setAudioDetails]) and the text template in Settings.
+Future<void> showTrackDetailsEditor(BuildContext context, {required String mediaId}) {
+  final editor = TrackDetailsEditor(mediaId: mediaId);
   if (context.isCompact) {
     return showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => editor);
   }
@@ -68,7 +68,7 @@ enum TrackDetail {
 /// Where the cover comes from in the editor.
 enum _CoverChoice { file, picked, removed }
 
-/// The user's edits over [file], as [Post.audioDetails] keeps them: only
+/// The user's edits over [file], as [Post.audioDetails] keeps them for it: only
 /// what differs from the file, an empty text or 0 where the user cleared
 /// what the file says, and [coverPath] (`''` to remove the file's cover).
 /// Null when nothing differs.
@@ -107,7 +107,10 @@ AudioTags? trackDetailsEdits(AudioTags file, Map<TrackDetail, String> values, {S
 
 /// The editor [showTrackDetailsEditor] opens; public for tests.
 class TrackDetailsEditor extends ConsumerStatefulWidget {
-  const TrackDetailsEditor({super.key});
+  const TrackDetailsEditor({super.key, required this.mediaId});
+
+  /// The sound file whose details are edited.
+  final String mediaId;
 
   @override
   ConsumerState<TrackDetailsEditor> createState() => _TrackDetailsEditorState();
@@ -115,6 +118,10 @@ class TrackDetailsEditor extends ConsumerStatefulWidget {
 
 class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
   late final AudioTags _file;
+
+  /// The file's name when the post has more than one sound file, so the
+  /// editor says which one it edits.
+  String? _fileName;
   late final Map<TrackDetail, TextEditingController> _fields;
   late final TextEditingController _template;
   late _CoverChoice _cover;
@@ -125,11 +132,14 @@ class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
   void initState() {
     super.initState();
     final c = ref.read(composerProvider);
-    _file = c.audio?.audioTags ?? AudioTags.none;
-    final shown = _file.overriddenBy(c.audioDetails);
+    final sound = c.media.where((m) => m.id == widget.mediaId).firstOrNull;
+    _file = sound?.audioTags ?? AudioTags.none;
+    if (c.media.where((m) => m.isAudio && !m.generated).length > 1) _fileName = sound?.fileName;
+    final edits = c.audioDetails[widget.mediaId];
+    final shown = _file.overriddenBy(edits);
     _fields = {for (final d in TrackDetail.values) d: TextEditingController(text: d.of(shown))};
     _template = TextEditingController(text: ref.read(settingsProvider).audioTextTemplate);
-    final edited = c.audioDetails?.coverPath;
+    final edited = edits?.coverPath;
     if (edited == null) {
       _cover = _CoverChoice.file;
     } else if (edited.isEmpty) {
@@ -137,7 +147,7 @@ class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
     } else {
       _cover = _CoverChoice.picked;
       _pickedPath = edited;
-      _pickedMime = c.audioDetails?.coverMimeType;
+      _pickedMime = edits?.coverMimeType;
     }
   }
 
@@ -201,13 +211,13 @@ class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
 
   void _save({bool useAsText = false}) {
     final notifier = ref.read(composerProvider.notifier);
-    notifier.setAudioDetails(_edits);
+    notifier.setAudioDetails(widget.mediaId, _edits);
     final template = _template.text.trim().isEmpty ? kDefaultAudioTextTemplate : _template.text;
     final settings = ref.read(settingsProvider);
     if (template != settings.audioTextTemplate) {
       ref.read(settingsProvider.notifier).update((x) => x.copyWith(audioTextTemplate: template));
     }
-    if (useAsText) notifier.useTrackDetailsAsText(template);
+    if (useAsText) notifier.useTrackDetailsAsText(template, mediaId: widget.mediaId);
     Navigator.pop(context);
   }
 
@@ -300,6 +310,11 @@ class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.xxl, Space.xs),
         child: Text('Track details', style: context.text.headlineSmall),
       ),
+      if (_fileName case final name?)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.xxl, 0, Space.xxl, Space.xs),
+          child: Text(name, key: const ValueKey('track-file'), maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelMedium),
+        ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: Space.xxl),
         child: Text(
@@ -394,21 +409,23 @@ class _TextPreview extends StatelessWidget {
   }
 }
 
-/// Under the media tray of a post with a sound file: the track as it goes
-/// out ("Artist – Title"), a button to the details, and "Use track details
-/// as the text" while the post has no text.
+/// Under the media tray of a post with a sound file: the (first) track as it
+/// goes out ("Artist – Title"), a button to its details, and "Use track
+/// details as the text" while the post has no text. Every sound file's own
+/// TAGS chip in the tray opens that file's details.
 class TrackDetailsRow extends ConsumerWidget {
   const TrackDetailsRow({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
+    final soundId = ref.watch(composerProvider.select((c) => c.audio?.id));
     final tags = ref.watch(composerProvider.select((c) => c.effectiveAudioTags));
-    if (tags == null) return const SizedBox.shrink();
+    if (soundId == null || tags == null) return const SizedBox.shrink();
     final textEmpty = ref.watch(composerProvider.select((c) => c.text.trim().isEmpty));
     final template = ref.watch(settingsProvider.select((s) => s.audioTextTemplate));
     final name = tags.artistAndTitle;
-    final edited = ref.watch(composerProvider.select((c) => c.audioDetails != null));
+    final edited = ref.watch(composerProvider.select((c) => c.audioDetails.containsKey(soundId)));
     return Wrap(spacing: Space.sm, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.album_outlined, size: 18, color: nf.textMuted),
@@ -429,14 +446,14 @@ class TrackDetailsRow extends ConsumerWidget {
       ]),
       TextButton.icon(
         key: const ValueKey('track-details-button'),
-        onPressed: () => showTrackDetailsEditor(context),
+        onPressed: () => showTrackDetailsEditor(context, mediaId: soundId),
         icon: const Icon(Icons.edit_note_rounded, size: 18),
         label: Text(name == null ? 'Add track details' : 'Track details'),
       ),
       if (textEmpty && renderAudioText(template, tags).isNotEmpty)
         TextButton.icon(
           key: const ValueKey('track-use-as-text'),
-          onPressed: () => ref.read(composerProvider.notifier).useTrackDetailsAsText(template),
+          onPressed: () => ref.read(composerProvider.notifier).useTrackDetailsAsText(template, mediaId: soundId),
           icon: const Icon(Icons.short_text_rounded, size: 18),
           label: const Text('Use track details as the text'),
         ),

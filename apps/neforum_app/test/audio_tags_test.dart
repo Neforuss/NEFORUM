@@ -21,6 +21,7 @@ import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/theme/app_theme.dart';
 import 'package:neforum_app/theme/tokens.dart';
+import 'package:neforum_app/ui/compose/media_tray.dart';
 import 'package:neforum_app/ui/compose/track_details_sheet.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
@@ -85,6 +86,8 @@ class _MemoryStorage implements AppStorage {
 
 const _fileTags = AudioTags(title: 'Night Drive', artist: 'Neon Waves', album: 'Coastline', year: 2024, coverPath: 'mem://cover.png', coverMimeType: 'image/png');
 const _track = MediaAttachment(id: 'snd', path: 'mem://snd.mp3', mimeType: AudioMimeTypes.mp3, sizeBytes: 9, fileName: 'track01.mp3', audioTags: _fileTags);
+const _second = MediaAttachment(
+    id: 'snd2', path: 'mem://snd2.mp3', mimeType: AudioMimeTypes.mp3, sizeBytes: 9, fileName: 'track02.mp3', audioTags: AudioTags(title: 'Coastline', artist: 'Ana Lima'));
 
 void main() {
   group('import', () {
@@ -121,7 +124,7 @@ void main() {
         id: 'p',
         text: '',
         media: const [_track],
-        audioDetails: const AudioTags(coverPath: r'C:\data\media\Picked.JPG', coverMimeType: 'image/jpeg'),
+        audioDetails: const {'snd': AudioTags(coverPath: r'C:\data\media\Picked.JPG', coverMimeType: 'image/jpeg')},
         createdAt: DateTime(2026),
         updatedAt: DateTime(2026),
       );
@@ -149,7 +152,7 @@ void main() {
         id: 'p1',
         text: 'x',
         media: [track],
-        audioDetails: AudioTags(coverPath: picked, coverMimeType: 'image/png'),
+        audioDetails: {track.id: AudioTags(coverPath: picked, coverMimeType: 'image/png')},
         createdAt: DateTime(2026),
         updatedAt: DateTime(2026),
       );
@@ -178,25 +181,44 @@ void main() {
     test('details go through the post, the draft file and loading; removing the track drops them', () {
       final n = c.read(composerProvider.notifier);
       n.addMedia([_track]);
-      n.setAudioDetails(const AudioTags(title: 'Night Drive (Edit)', artist: ''));
+      n.setAudioDetails('snd', const AudioTags(title: 'Night Drive (Edit)', artist: ''));
       final state = c.read(composerProvider);
       expect(state.effectiveAudioTags!.title, 'Night Drive (Edit)');
       expect(state.effectiveAudioTags!.artist, isNull);
 
       final post = state.toPost(id: 'p', status: PostStatus.draft, now: DateTime(2026));
-      expect(Post.fromJson(post.toJson()).audioDetails, const AudioTags(title: 'Night Drive (Edit)', artist: ''));
+      expect(Post.fromJson(post.toJson()).audioDetails, const {'snd': AudioTags(title: 'Night Drive (Edit)', artist: '')});
       expect(composerDraftFromJson(composerDraftToJson(state))!.audioDetails, state.audioDetails);
       n.reset();
-      expect(c.read(composerProvider).audioDetails, isNull);
+      expect(c.read(composerProvider).audioDetails, isEmpty);
       n.load(post);
       expect(c.read(composerProvider).audioDetails, post.audioDetails);
 
-      n.setAudioDetails(AudioTags.none);
-      expect(c.read(composerProvider).audioDetails, isNull);
-      n.setAudioDetails(const AudioTags(genre: 'Synthwave'));
+      n.setAudioDetails('snd', AudioTags.none);
+      expect(c.read(composerProvider).audioDetails, isEmpty);
+      n.setAudioDetails('snd', const AudioTags(genre: 'Synthwave'));
       n.removeMedia('snd');
-      expect(c.read(composerProvider).audioDetails, isNull);
-      expect(c.read(composerProvider).toPost(id: 'q', status: PostStatus.draft, now: DateTime(2026)).audioDetails, isNull);
+      expect(c.read(composerProvider).audioDetails, isEmpty);
+      expect(c.read(composerProvider).toPost(id: 'q', status: PostStatus.draft, now: DateTime(2026)).audioDetails, isEmpty);
+    });
+
+    test('each sound file keeps details of its own, through the post and the draft file', () {
+      final n = c.read(composerProvider.notifier);
+      n.addMedia([_track, _second]);
+      n.setAudioDetails('snd2', const AudioTags(title: 'Coastline (Edit)'));
+      var state = c.read(composerProvider);
+      expect(state.effectiveAudioTagsOf('snd'), _fileTags, reason: 'the first file is untouched');
+      expect(state.effectiveAudioTagsOf('snd2')!.title, 'Coastline (Edit)');
+      expect(state.effectiveAudioTagsOf('snd2')!.artist, 'Ana Lima');
+      n.setAudioDetails('snd', const AudioTags(artist: 'Neon Waves (Live)'));
+      state = c.read(composerProvider);
+      final post = state.toPost(id: 'p', status: PostStatus.draft, now: DateTime(2026));
+      expect(post.audioDetails.keys.toSet(), {'snd', 'snd2'});
+      expect(post.effectiveAudioTagsOf(_second)!.title, 'Coastline (Edit)');
+      expect(post.effectiveAudioTagsOf(_track)!.title, 'Night Drive');
+      expect(composerDraftFromJson(composerDraftToJson(state))!.audioDetails, state.audioDetails);
+      n.removeMedia('snd');
+      expect(c.read(composerProvider).audioDetails.keys, ['snd2']);
     });
 
     test('"Use track details as the text" fills an empty text only', () {
@@ -207,9 +229,14 @@ void main() {
       expect(c.read(composerProvider).text, 'Neon Waves – Night Drive (Coastline, 2024)');
       expect(n.useTrackDetailsAsText('{title}'), isFalse, reason: 'the text is not empty any more');
       n.setText('');
-      n.setAudioDetails(const AudioTags(album: ''));
+      n.setAudioDetails('snd', const AudioTags(album: ''));
       n.useTrackDetailsAsText('{title} by {artist} ({album})');
       expect(c.read(composerProvider).text, 'Night Drive by Neon Waves');
+      // From another sound file of the post.
+      n.addMedia([_second]);
+      n.setText('');
+      n.useTrackDetailsAsText('{title} by {artist}', mediaId: 'snd2');
+      expect(c.read(composerProvider).text, 'Coastline by Ana Lima');
     });
 
     test('edits are only what differs from the file', () {
@@ -289,7 +316,7 @@ void main() {
         id: 'p-tags',
         text: 'Out now',
         media: [track],
-        audioDetails: const AudioTags(title: 'Night Drive (Edit)'),
+        audioDetails: {track.id: const AudioTags(title: 'Night Drive (Edit)')},
         targets: [for (final a in accounts) PostTarget(accountId: a.id)],
         createdAt: now,
         updatedAt: now,
@@ -309,7 +336,8 @@ void main() {
       // New details: the copy is tagged again, not converted again.
       final before = copy;
       await tester.runAsync(() async {
-        post = await attachAudioRenditions(s, withoutAudioRenditions(post, keepFiles: true).copyWith(audioDetails: const AudioTags(title: 'Final', coverPath: '')), s.settings);
+        post = await attachAudioRenditions(
+            s, withoutAudioRenditions(post, keepFiles: true).copyWith(audioDetails: {track.id: const AudioTags(title: 'Final', coverPath: '')}), s.settings);
       });
       expect(calls.where((c) => c.$1 == 'transcodeAudio'), hasLength(1));
       final retagged = post.media.singleWhere((m) => isAudioRendition(m) && m.isAudio);
@@ -323,6 +351,36 @@ void main() {
       // Saving again with the same details changes nothing.
       await tester.runAsync(() async => post = await attachAudioRenditions(s, withoutAudioRenditions(post, keepFiles: true), s.settings));
       expect(post.media.singleWhere((m) => isAudioRendition(m) && m.isAudio).id, retagged.id);
+    });
+
+    testWidgets('each sound file\'s Standard copy carries that file\'s own details', (tester) async {
+      final dir = (await tester.runAsync(() => Directory.systemTemp.createTemp('neforum-audio-two-copies')))!;
+      addTearDown(() => tester.runAsync(() => dir.delete(recursive: true)));
+      late AppServices s;
+      late MediaAttachment first, second;
+      final telegram = ConnectedAccount(id: 'tg', platformId: 'telegram', tier: PlatformTier.handoff, displayName: 'tg', createdAt: DateTime(2026, 10, 1));
+      await tester.runAsync(() async {
+        s = await AppServices.create(demo: true, storage: await openAppStorage(overrideDir: dir.path));
+        await s.accounts.upsert(telegram);
+        first = await s.media.importBytes(_wav(_id3()), fileName: 'One.wav');
+        second = await s.media.importBytes(_wav(_id3(title: 'Coastline')), fileName: 'Two.wav');
+      });
+      final now = DateTime(2026, 10, 29);
+      var post = Post(
+        id: 'p-two',
+        text: 'Two tracks',
+        media: [first, second],
+        audioDetails: {second.id: const AudioTags(artist: 'Ana Lima')},
+        targets: [PostTarget(accountId: telegram.id)],
+        createdAt: now,
+        updatedAt: now,
+      );
+      await tester.runAsync(() async => post = await attachAudioRenditions(s, post, s.settings));
+      final copies = {for (final m in post.media.where((m) => isAudioRendition(m) && m.isAudio)) m.derivedFrom: m};
+      final one = readAudioTags(File(copies[first.id]!.path).readAsBytesSync()).tags;
+      final two = readAudioTags(File(copies[second.id]!.path).readAsBytesSync()).tags;
+      expect((one.title, one.artist), ('Night Drive', 'Neon Waves'), reason: 'the first file has no edits');
+      expect((two.title, two.artist), ('Coastline', 'Ana Lima'));
     });
 
     test('the tag-writing job works on plain data', () {
@@ -349,7 +407,8 @@ void main() {
             body: Consumer(
               builder: (context, ref, _) => Column(children: [
                 const TrackDetailsRow(),
-                TextButton(onPressed: () => showTrackDetailsEditor(context), child: const Text('open')),
+                TextButton(onPressed: () => showTrackDetailsEditor(context, mediaId: 'snd'), child: const Text('open')),
+                const MediaTray(),
               ]),
             ),
           ),
@@ -378,13 +437,29 @@ void main() {
       await tester.tap(find.text('Save and use as the text'));
       await tester.pumpAndSettle();
       final state = c.read(composerProvider);
-      expect(state.audioDetails, const AudioTags(title: 'Night Drive (Edit)', album: ''));
+      expect(state.audioDetails, const {'snd': AudioTags(title: 'Night Drive (Edit)', album: '')});
       expect(state.text, 'Neon Waves – Night Drive (Edit) (2024)');
+    });
+
+    testWidgets('the TAGS chip on a sound file edits that file, not the first', (tester) async {
+      final c = await open(tester);
+      c.read(composerProvider.notifier).addMedia([_second]);
+      await tester.pump();
+      // The second file's chip, in the tray's second tile.
+      await tester.tap(find.descendant(of: find.byKey(const ValueKey('snd2')), matching: find.byKey(const ValueKey('track-tags-chip'))));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Text>(find.byKey(const ValueKey('track-file'))).data, 'track02.mp3', reason: 'the editor names the file it edits');
+      expect(find.widgetWithText(TextField, 'Coastline'), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('track-title')), 'Coastline (Edit)');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(c.read(composerProvider).audioDetails, const {'snd2': AudioTags(title: 'Coastline (Edit)')});
+      expect(c.read(composerProvider).effectiveAudioTagsOf('snd')!.title, 'Night Drive');
     });
 
     testWidgets('reset goes back to the file\'s tags; a new template is kept in Settings', (tester) async {
       final c = await open(tester);
-      c.read(composerProvider.notifier).setAudioDetails(const AudioTags(artist: 'Someone else'));
+      c.read(composerProvider.notifier).setAudioDetails('snd', const AudioTags(artist: 'Someone else'));
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
       expect(find.text('Someone else'), findsOneWidget);
@@ -396,7 +471,7 @@ void main() {
       expect(find.text('Night Drive / Neon Waves'), findsOneWidget);
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
-      expect(c.read(composerProvider).audioDetails, isNull);
+      expect(c.read(composerProvider).audioDetails, isEmpty);
       expect(c.read(settingsProvider).audioTextTemplate, '{title} / {artist}');
     });
   });

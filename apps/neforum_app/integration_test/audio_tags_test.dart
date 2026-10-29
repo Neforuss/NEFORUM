@@ -57,7 +57,7 @@ void main() {
       id: 'probe',
       text: 'Out now',
       media: [track],
-      audioDetails: const AudioTags(title: 'Señorita Ø (Edit)', composer: 'J. Doe'),
+      audioDetails: {track.id: const AudioTags(title: 'Señorita Ø (Edit)', composer: 'J. Doe')},
       targets: [for (final a in accounts) PostTarget(accountId: a.id)],
       createdAt: now,
       updatedAt: now,
