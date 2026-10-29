@@ -51,7 +51,29 @@ class FixtureDocument {
     this.footer,
     this.logoColor,
     this.pages = 2,
+    this.rotate = 0,
+    this.cropX = 0,
+    this.cropY = 0,
   });
+
+  /// This document laid out the same, written to [file] on pages with
+  /// /Rotate [rotate] (0, 90 or 270; the content is drawn turned the other
+  /// way, so it reads upright once a viewer turns the page) and a crop box
+  /// that starts at [cropX], [cropY] inside a larger media box (a print PDF
+  /// with bleed).
+  FixtureDocument withPageBox(String file, {int rotate = 0, double cropX = 0, double cropY = 0}) => FixtureDocument(
+        file: file,
+        blocks: blocks,
+        title: title,
+        columns: columns,
+        header: header,
+        footer: footer,
+        logoColor: logoColor,
+        pages: pages,
+        rotate: rotate,
+        cropX: cropX,
+        cropY: cropY,
+      );
 
   final String file;
 
@@ -72,6 +94,10 @@ class FixtureDocument {
 
   /// Pages at least (the text flows on to more when it needs them).
   final int pages;
+
+  /// The pages' /Rotate and crop box origin ([withPageBox]).
+  final int rotate;
+  final double cropX, cropY;
 
   Iterable<FixtureImage> get images => blocks.whereType<FixtureImage>();
 
@@ -270,6 +296,15 @@ const _h14 = 'Seed swapping will happen on the last Sunday of November in the sh
 
 /// The PDF fixtures with text.
 const pdfFixtures = [singleColumnFixture, twoColumnFixture, headersFootersFixture];
+
+/// The same documents on turned pages and inside a bleed: PDFium measures
+/// the page as displayed but reports text and picture boxes in the
+/// unturned, uncropped page space, and they must read exactly the same.
+final pageBoxFixtures = [
+  twoColumnFixture.withPageBox('two_columns_rotated.pdf', rotate: 90),
+  singleColumnFixture.withPageBox('single_column_images_cropped.pdf', cropX: 36, cropY: 48),
+  singleColumnFixture.withPageBox('single_column_images_rotated.pdf', rotate: 270, cropX: 24, cropY: 30),
+];
 
 /// A one-page PDF that is only a picture of a page (a scan without text).
 const scannedFixtureFile = 'scanned.pdf';

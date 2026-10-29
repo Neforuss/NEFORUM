@@ -17,7 +17,8 @@ import 'fixture_content.dart';
 Future<IngestedDocument> _read(String file) => readPdf(File('test/fixtures/documents/$file').readAsBytesSync());
 
 void main() {
-  for (final fixture in pdfFixtures) {
+  // Turned pages and pages inside a bleed read exactly like the plain ones.
+  for (final fixture in [...pdfFixtures, ...pageBoxFixtures]) {
     group(fixture.file, () {
       late IngestedDocument document;
       late DocumentThread thread;

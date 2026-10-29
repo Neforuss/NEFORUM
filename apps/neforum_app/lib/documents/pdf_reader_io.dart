@@ -95,10 +95,12 @@ PdfPageContent _readPage(({int document, int index}) request) {
   if (page == nullptr) return PdfPageContent(index: request.index, width: 612, height: 792, chars: Float64List(0));
   final arena = Arena();
   try {
+    // The page as displayed: turned by /Rotate and cut to its crop box.
     final width = pdfium.FPDF_GetPageWidthF(page);
     final height = pdfium.FPDF_GetPageHeightF(page);
-    final chars = _characters(pdfium, page, height, arena);
-    final objects = _objects(pdfium, page, height, arena);
+    final space = _displaySpace(pdfium, page, width, height, arena);
+    final chars = _characters(pdfium, page, space, arena);
+    final objects = _objects(pdfium, page, space, arena);
     final alts = _figureAltTexts(pdfium, page, arena);
     final figures = _cutFigures(pdfium, page, width, height, objects, chars, alts);
     final pageArea = width * height;
@@ -110,9 +112,64 @@ PdfPageContent _readPage(({int document, int index}) request) {
   }
 }
 
+/// The map from PDF user space, where PDFium reports character boxes and
+/// object bounds, to the page as it is displayed and rendered (origin top
+/// left, y down): turned by the page's /Rotate and shifted by its crop box,
+/// which `FPDF_GetPageWidthF` and `FPDF_RenderPageBitmap` already apply.
+class _DisplaySpace {
+  const _DisplaySpace(this.a, this.b, this.c, this.d, this.e, this.f);
+
+  /// No rotation and a crop box at the origin: only y is flipped.
+  const _DisplaySpace.flipped(double height) : this(1, 0, 0, -1, 0, height);
+
+  /// x' = a x + c y + e, y' = b x + d y + f.
+  final double a, b, c, d, e, f;
+
+  /// The displayed box of the user-space rectangle [left], [bottom],
+  /// [right], [top] (exact for quarter turns).
+  _Rect box(double left, double bottom, double right, double top) {
+    var l = double.infinity, t = double.infinity, r = double.negativeInfinity, bt = double.negativeInfinity;
+    for (final (x, y) in [(left, bottom), (right, bottom), (left, top), (right, top)]) {
+      final dx = a * x + c * y + e;
+      final dy = b * x + d * y + f;
+      l = math.min(l, dx);
+      r = math.max(r, dx);
+      t = math.min(t, dy);
+      bt = math.max(bt, dy);
+    }
+    return _Rect(l, t, r, bt);
+  }
+}
+
+/// [_DisplaySpace] of [page] from PDFium's own page-to-device map, which
+/// FPDF_RenderPageBitmap draws with: three points mapped at 16 device units
+/// per point (the map returns whole units) give the affine map.
+_DisplaySpace _displaySpace(pdfium_bindings.PDFium pdfium, pdfium_bindings.FPDF_PAGE page, double width, double height, Arena arena) {
+  const unitsPerPoint = 16;
+  final sizeX = math.max(1, (width * unitsPerPoint).round());
+  final sizeY = math.max(1, (height * unitsPerPoint).round());
+  final dx = arena<Int>(), dy = arena<Int>();
+  (double, double)? map(double x, double y) {
+    if (pdfium.FPDF_PageToDevice(page, 0, 0, sizeX, sizeY, 0, x, y, dx, dy) == 0) return null;
+    return (dx.value * width / sizeX, dy.value * height / sizeY);
+  }
+
+  const span = 1000.0;
+  final origin = map(0, 0), alongX = map(span, 0), alongY = map(0, span);
+  if (origin == null || alongX == null || alongY == null) return _DisplaySpace.flipped(height);
+  return _DisplaySpace(
+    (alongX.$1 - origin.$1) / span,
+    (alongX.$2 - origin.$2) / span,
+    (alongY.$1 - origin.$1) / span,
+    (alongY.$2 - origin.$2) / span,
+    origin.$1,
+    origin.$2,
+  );
+}
+
 bool _isSpace(int code) => code <= 32 || code == 0xA0 || (code >= 0x2000 && code <= 0x200B) || code == 0x3000 || code == 0xFEFF || code == 0xFFFE;
 
-Float64List _characters(pdfium_bindings.PDFium pdfium, pdfium_bindings.FPDF_PAGE page, double height, Arena arena) {
+Float64List _characters(pdfium_bindings.PDFium pdfium, pdfium_bindings.FPDF_PAGE page, _DisplaySpace space, Arena arena) {
   final text = pdfium.FPDFText_LoadPage(page);
   if (text == nullptr) return Float64List(0);
   try {
@@ -146,12 +203,13 @@ Float64List _characters(pdfium_bindings.PDFium pdfium, pdfium_bindings.FPDF_PAGE
       }
       var flags = spaceBefore ? kPdfSpaceBefore : 0;
       if (pdfium.FPDFText_HasUnicodeMapError(text, i) == 1) flags |= kPdfUndecodable;
+      final box = space.box(left, bottom, right, top);
       out
         ..add(code.toDouble())
-        ..add(left)
-        ..add(height - top)
-        ..add(right)
-        ..add(height - bottom)
+        ..add(box.l)
+        ..add(box.t)
+        ..add(box.r)
+        ..add(box.b)
         ..add(pdfium.FPDFText_GetFontSize(text, i))
         ..add(pdfium.FPDFText_GetFontWeight(text, i).toDouble())
         ..add(flags.toDouble());
@@ -186,13 +244,13 @@ class _PageObject {
 
 typedef _Objects = ({List<_PageObject> images, List<_Rect> drawings});
 
-_Objects _objects(pdfium_bindings.PDFium pdfium, pdfium_bindings.FPDF_PAGE page, double height, Arena arena) {
+_Objects _objects(pdfium_bindings.PDFium pdfium, pdfium_bindings.FPDF_PAGE page, _DisplaySpace space, Arena arena) {
   final images = <_PageObject>[];
   final drawings = <_Rect>[];
   final l = arena<Float>(), b = arena<Float>(), r = arena<Float>(), t = arena<Float>();
   _Rect? bounds(pdfium_bindings.FPDF_PAGEOBJECT o) {
     if (pdfium.FPDFPageObj_GetBounds(o, l, b, r, t) == 0) return null;
-    return _Rect(l.value, height - t.value, r.value, height - b.value);
+    return space.box(l.value, b.value, r.value, t.value);
   }
 
   /// Whether a form XObject holds a picture (searched a few levels deep).

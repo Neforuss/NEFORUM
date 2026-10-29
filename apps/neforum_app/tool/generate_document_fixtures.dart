@@ -19,7 +19,7 @@ const _out = 'test/fixtures/documents';
 
 void main() {
   Directory(_out).createSync(recursive: true);
-  for (final f in pdfFixtures) {
+  for (final f in [...pdfFixtures, ...pageBoxFixtures]) {
     final bytes = _layout(f);
     File('$_out/${f.file}').writeAsBytesSync(bytes);
     stdout.writeln('${f.file}: ${bytes.length} bytes');
@@ -122,7 +122,7 @@ Uint8List _layout(FixtureDocument f) {
       p.text(_pageW / 2 - _width(footer, 9) / 2, 40, 9, footer);
     }
   }
-  return pdf.write(pages);
+  return pdf.write(pages, rotate: f.rotate, cropX: f.cropX, cropY: f.cropY);
 }
 
 /// Helvetica advance widths (1/1000 em) for ASCII 32 to 126.
@@ -238,15 +238,31 @@ class _PdfWriter {
             zlib.encode(pixels));
       });
 
-  Uint8List write(List<_Page> pages) {
+  /// [rotate] (0, 90 or 270) turns the pages: the content is drawn turned
+  /// the other way, so it reads upright once a viewer applies /Rotate. A
+  /// crop box at [cropX], [cropY] shows the page inside a media box larger
+  /// by that much on every side (bleed).
+  Uint8List write(List<_Page> pages, {int rotate = 0, double cropX = 0, double cropY = 0}) {
     final font1 = addText('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
     final font2 = addText('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
     final pagesId = _objects.length + 1 + pages.length * 2;
     final pageIds = <int>[];
+    final turned = rotate == 90 || rotate == 270;
+    // The crop box in user space: the page as laid out, turned when rotated.
+    final boxW = turned ? _pageH : _pageW, boxH = turned ? _pageW : _pageH;
+    // Laid-out point (x, y) -> user space, so the displayed page is the one
+    // laid out: /Rotate 90 shows user y across and user x down.
+    final matrix = switch (rotate) {
+      90 => '0 1 -1 0 ${_n(cropX + _pageH)} ${_n(cropY)} cm\n',
+      270 => '0 -1 1 0 ${_n(cropX)} ${_n(cropY + _pageW)} cm\n',
+      _ => cropX == 0 && cropY == 0 ? '' : '1 0 0 1 ${_n(cropX)} ${_n(cropY)} cm\n',
+    };
+    final mediaBox = '[0 0 ${_n(boxW + 2 * cropX)} ${_n(boxH + 2 * cropY)}]';
+    final cropBox = cropX == 0 && cropY == 0 ? '' : ' /CropBox [${_n(cropX)} ${_n(cropY)} ${_n(cropX + boxW)} ${_n(cropY + boxH)}]';
     for (final p in pages) {
-      final content = stream('', latin1.encode(p.content.toString()));
+      final content = stream('', latin1.encode(matrix.isEmpty ? p.content.toString() : 'q $matrix${p.content}Q\n'));
       final xobjects = p.images.entries.map((e) => '/${e.key} ${e.value} 0 R').join(' ');
-      pageIds.add(addText('<< /Type /Page /Parent $pagesId 0 R /MediaBox [0 0 ${_n(_pageW)} ${_n(_pageH)}] /Contents $content 0 R '
+      pageIds.add(addText('<< /Type /Page /Parent $pagesId 0 R /MediaBox $mediaBox$cropBox${rotate == 0 ? '' : ' /Rotate $rotate'} /Contents $content 0 R '
           '/Resources << /Font << /F1 $font1 0 R /F2 $font2 0 R >>${xobjects.isEmpty ? '' : ' /XObject << $xobjects >>'} >> >>'));
     }
     final id = addText('<< /Type /Pages /Kids [${pageIds.map((i) => '$i 0 R').join(' ')}] /Count ${pages.length} >>');
