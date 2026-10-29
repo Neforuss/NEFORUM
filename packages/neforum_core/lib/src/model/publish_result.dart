@@ -137,6 +137,7 @@ class PublishResult {
     this.handedOff = false,
     this.publishedAt,
     this.scheduledFor,
+    this.additionalRemoteIds = const [],
   });
 
   factory PublishResult.ok({
@@ -144,6 +145,7 @@ class PublishResult {
     String? remoteUrl,
     List<String> threadRemoteIds = const [],
     DateTime? publishedAt,
+    List<String> additionalRemoteIds = const [],
   }) =>
       PublishResult._(
         success: true,
@@ -151,6 +153,7 @@ class PublishResult {
         remoteUrl: remoteUrl,
         threadRemoteIds: threadRemoteIds,
         publishedAt: publishedAt,
+        additionalRemoteIds: additionalRemoteIds,
       );
 
   /// The platform accepted the post and holds it until [scheduledFor]
@@ -171,6 +174,26 @@ class PublishResult {
   factory PublishResult.failure(PublishError error) =>
       PublishResult._(success: false, error: error);
 
+  /// A target that failed after some of its copies went live (the feed post
+  /// before its story, the first frames of a story). [remoteId] and
+  /// [additionalRemoteIds] record those copies so they are never forgotten;
+  /// [error] should not be retryable, since a retry would post them again.
+  factory PublishResult.partialFailure(
+    PublishError error, {
+    String? remoteId,
+    String? remoteUrl,
+    List<String> additionalRemoteIds = const [],
+    DateTime? publishedAt,
+  }) =>
+      PublishResult._(
+        success: false,
+        error: error,
+        remoteId: remoteId,
+        remoteUrl: remoteUrl,
+        additionalRemoteIds: additionalRemoteIds,
+        publishedAt: publishedAt,
+      );
+
   /// The target was handed to the user (share sheet / web intent opened).
   factory PublishResult.handedOff({String? remoteUrl}) =>
       PublishResult._(success: true, handedOff: true, remoteUrl: remoteUrl);
@@ -190,6 +213,7 @@ class PublishResult {
         scheduledFor: json['scheduledFor'] == null
             ? null
             : DateTime.parse(json['scheduledFor'] as String),
+        additionalRemoteIds: (json['additionalRemoteIds'] as List? ?? const []).cast<String>(),
       );
 
   final bool success;
@@ -206,6 +230,20 @@ class PublishResult {
   /// time (see [PublishResult.scheduled]).
   final DateTime? scheduledFor;
 
+  /// Remote ids of the further copies published for the same target besides
+  /// [remoteId]: the frames of a story next to a feed post (Post + Story), or
+  /// the frames after the first of a story of several photos. Kept so status,
+  /// removal and quota cover every copy.
+  final List<String> additionalRemoteIds;
+
+  /// Every remote id this result stands for: [remoteId], the parts of a
+  /// thread and [additionalRemoteIds], without repeats.
+  List<String> get allRemoteIds => {
+        ?remoteId,
+        ...threadRemoteIds,
+        ...additionalRemoteIds,
+      }.toList();
+
   bool get isFailure => !success;
 
   /// The post is waiting on the platform's own scheduler.
@@ -218,6 +256,7 @@ class PublishResult {
         remoteUrl: remoteUrl,
         threadRemoteIds: threadRemoteIds,
         publishedAt: scheduledFor ?? publishedAt,
+        additionalRemoteIds: additionalRemoteIds,
       );
 
   Map<String, dynamic> toJson() => {
@@ -229,6 +268,7 @@ class PublishResult {
         'handedOff': handedOff,
         if (publishedAt != null) 'publishedAt': publishedAt!.toUtc().toIso8601String(),
         if (scheduledFor != null) 'scheduledFor': scheduledFor!.toUtc().toIso8601String(),
+        if (additionalRemoteIds.isNotEmpty) 'additionalRemoteIds': additionalRemoteIds,
       };
 
   @override

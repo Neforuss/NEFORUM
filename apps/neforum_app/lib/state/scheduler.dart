@@ -107,7 +107,9 @@ class AppScheduler {
         final Post done;
         try {
           await fitPhotosOfSavedPost(_s, p.id);
-          final published = await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal);
+          // Networks whose own time has not come yet wait for a later run.
+          final published =
+              await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal, dueTargetsOnly: true);
           // With automatic posting on, the browser extension posts the
           // hand-off targets now instead of leaving them waiting; Cancel in
           // Activity stops that too.
@@ -122,6 +124,7 @@ class AppScheduler {
         out.add(done);
         final discarded = await _s.discardIfComplete(p.id);
         await announcePublishResult(_s, done, discarded: discarded);
+        await planNextReminders(_s, done);
       }
       updateTrayStatus();
       return out;
@@ -135,59 +138,7 @@ class AppScheduler {
 
   /// Sets up OS-level reminders and background work for a scheduled post.
   Future<void> planReminders(Post p) async {
-    final when = p.scheduledAt;
-    if (when == null || p.status != PostStatus.scheduled) return;
-    final s = _s;
-    final handoffNames = <String>[];
-    final heldNames = <String>[];
-    for (final t in p.targets) {
-      final a = await s.accounts.get(t.accountId);
-      final d = a == null ? null : s.registry.descriptor(a.platformId);
-      if (a == null || d == null) continue;
-      if (t.isHeldByPlatform) heldNames.add(d.name);
-      if (a.tier == PlatformTier.handoff) handoffNames.add(d.name);
-    }
-    if (Env.isIOS) {
-      if (!p.needsDeviceAtSchedule) {
-        // Every target is held by its platform: nothing for the phone to do.
-        await NotificationService.instance.cancel('due:${p.id}');
-      } else {
-        final held = heldNames.isEmpty ? '' : '${_join(heldNames)} already ${heldNames.length == 1 ? 'has' : 'have'} it. ';
-        await NotificationService.instance.schedule(
-          key: 'due:${p.id}',
-          when: when,
-          title: handoffNames.isEmpty ? 'Your scheduled post is ready' : 'Time to post',
-          body: '${held}Publish now: ${_short(p.text)}',
-          payload: 'publish:${p.id}',
-          publishAction: true,
-        );
-      }
-    } else if (handoffNames.isNotEmpty) {
-      await NotificationService.instance.schedule(
-        key: 'due:${p.id}',
-        when: when,
-        title: 'Time to post to ${_join(handoffNames)}',
-        body: _short(p.text),
-        payload: 'post:${p.id}',
-      );
-    }
-    // One-off tasks need a per-post identifier, which iOS only allows when it
-    // is declared in Info.plist ahead of time; iOS relies on the reminder
-    // above plus the periodic refresh task instead.
-    if (Env.isAndroid) {
-      final delay = when.difference(DateTime.now());
-      try {
-        await Workmanager().registerOneOffTask(
-          'publish-${p.id}',
-          kPublishDueTask,
-          initialDelay: delay.isNegative ? Duration.zero : delay,
-          existingWorkPolicy: ExistingWorkPolicy.replace,
-          constraints: Constraints(networkType: NetworkType.connected),
-        );
-      } on Object catch (e) {
-        debugPrint('Could not register background task: $e');
-      }
-    }
+    await planPostReminders(_s, p);
     updateTrayStatus();
   }
 
@@ -232,7 +183,85 @@ class AppScheduler {
     DesktopIntegration.instance.setTrayStatus(parts.isEmpty ? 'NEFORUM' : 'NEFORUM · ${parts.join(' · ')}');
   }
 
-  static String _short(String s) => s.length > 80 ? '${s.substring(0, 80)}…' : s;
+}
+
+String _short(String s) => s.length > 80 ? '${s.substring(0, 80)}…' : s;
+
+/// Sets up the OS-level reminder and background work for the next time [p]
+/// is due: its [Post.scheduledAt], which with a different time per network is
+/// the next network's time. Called when the post is scheduled and again after
+/// every run that leaves it scheduled, from the app and from a background
+/// task (no UI needed). Each call replaces the post's earlier reminder and
+/// Android one-off task.
+Future<void> planPostReminders(AppServices s, Post p) async {
+  final when = p.scheduledAt;
+  if (when == null || p.status != PostStatus.scheduled) return;
+  final handoffNames = <String>[];
+  final heldNames = <String>[];
+  for (final t in p.targets) {
+    final a = await s.accounts.get(t.accountId);
+    final d = a == null ? null : s.registry.descriptor(a.platformId);
+    if (a == null || d == null) continue;
+    if (t.isHeldByPlatform) heldNames.add(d.name);
+    // Only the hand-offs due at this time; later ones get their own reminder.
+    final due = p.dueAtFor(t);
+    if (a.tier == PlatformTier.handoff && !t.isDone && (due == null || !due.isAfter(when))) handoffNames.add(d.name);
+  }
+  if (Env.isIOS) {
+    if (!p.needsDeviceAtSchedule) {
+      // Every target is held by its platform: nothing for the phone to do.
+      await NotificationService.instance.cancel('due:${p.id}');
+    } else {
+      final held = heldNames.isEmpty ? '' : '${_join(heldNames)} already ${heldNames.length == 1 ? 'has' : 'have'} it. ';
+      await NotificationService.instance.schedule(
+        key: 'due:${p.id}',
+        when: when,
+        title: handoffNames.isEmpty ? 'Your scheduled post is ready' : 'Time to post',
+        body: '${held}Publish now: ${_short(p.text)}',
+        payload: 'publish:${p.id}',
+        publishAction: true,
+      );
+    }
+  } else if (handoffNames.isNotEmpty) {
+    await NotificationService.instance.schedule(
+      key: 'due:${p.id}',
+      when: when,
+      title: 'Time to post to ${_join(handoffNames)}',
+      body: _short(p.text),
+      payload: 'post:${p.id}',
+    );
+  }
+  // One-off tasks need a per-post identifier, which iOS only allows when it
+  // is declared in Info.plist ahead of time; iOS relies on the reminder
+  // above plus the periodic refresh task instead.
+  if (Env.isAndroid) {
+    final delay = when.difference(DateTime.now());
+    try {
+      await Workmanager().registerOneOffTask(
+        'publish-${p.id}',
+        kPublishDueTask,
+        initialDelay: delay.isNegative ? Duration.zero : delay,
+        existingWorkPolicy: ExistingWorkPolicy.replace,
+        constraints: Constraints(networkType: NetworkType.connected),
+      );
+    } on Object catch (e) {
+      debugPrint('Could not register background task: $e');
+    }
+  }
+}
+
+/// After a scheduler run: a post with a different time per network whose
+/// later networks are still to go gets the reminder and background task for
+/// the next of those times. Retries keep waiting for the regular checks, as
+/// before. Best effort.
+Future<void> planNextReminders(AppServices s, Post done) async {
+  final next = done.scheduledAt;
+  if (done.status != PostStatus.scheduled || !done.schedulesEachTarget || next == null || !next.isAfter(DateTime.now())) return;
+  try {
+    await planPostReminders(s, done);
+  } on Object catch (e) {
+    debugPrint('Could not plan the next run of ${done.id}: $e');
+  }
 }
 
 String _join(List<String> names) {
@@ -312,13 +341,15 @@ Future<int> publishDueHeadless(AppServices s) async {
     final Post done;
     try {
       await fitPhotosOfSavedPost(s, p.id);
-      done = await s.publisher().publish(p.id, interactive: false, retryFailed: false);
+      done = await s.publisher().publish(p.id, interactive: false, retryFailed: false, dueTargetsOnly: true);
     } on Object catch (e) {
       await s.concludeStoppedRun(p.id, e);
       rethrow;
     }
     final discarded = await s.discardIfComplete(p.id);
     await announcePublishResult(s, done, discarded: discarded);
+    // The next network's time: WorkManager one-off on Android, a reminder on iOS.
+    await planNextReminders(s, done);
   }
   return due.length;
 }

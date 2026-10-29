@@ -104,8 +104,10 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     final userIds = own?.where((id) => !cards.containsKey(id)).toList();
     final onlyCards = own != null && own.isNotEmpty && userIds!.isEmpty;
     // A target that lists only a card gets back the list the card took the
-    // place of (every photo when it had none of its own).
-    final base = t.copyWith(overrides: _withOwnMediaIds(t.overrides, onlyCards ? _replacedMediaIds(t.overrides) : userIds));
+    // place of (every photo when it had none of its own). The story's own
+    // copies are made again below and by attachFittedPhotos.
+    final base = t.copyWith(
+        overrides: _withOwnMediaIds(t.overrides, onlyCards ? _replacedMediaIds(t.overrides) : userIds).copyWith(clearStoryMediaIds: true));
     p = p.withTarget(base);
     if (!settings.textCards) continue;
 
@@ -114,7 +116,12 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     if (account == null || adapter == null) continue;
     final d = adapter.descriptorForAccount(account);
     final variant = resolver.resolve(p, base, d, account: account);
-    if (!qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId)) continue;
+    // A story (Story, or the story of Post + Story) with words only gets a
+    // full-screen 9:16 card; a feed post on an image-only network its own.
+    final placement = adapter.supportsStories(account) ? variant.placement : PostPlacement.feed;
+    final storyCard = placement.includesStory && storyQualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId);
+    final feedCard = placement != PostPlacement.story && qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId);
+    if (!storyCard && !feedCard) continue;
 
     if (chosenBackground != null && backgroundPhoto != null && !backdropTried) {
       backdropTried = true;
@@ -128,80 +135,95 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     }
 
     final text = textCardText(p, base);
-    final size = textCardSize(d.id);
     final byline = account.handle ?? account.displayName;
     final signed = branded[d.id] ?? (oldCard == null ? null : textCardBrandedOf(oldCard)) ?? settings.textCardBranded(d.id);
     final showsHandle = handle[d.id] ?? (oldCard == null ? null : textCardShowsHandleOf(oldCard)) ?? settings.textCardShowsHandle(d.id);
-    final safe = textCardSafeArea(d.id);
-    final hasSafe = safe != EdgeInsets.zero;
-    final params = textCardRenderParameters(
-      platformId: d.id,
-      theme: style,
-      font: face,
-      branded: signed,
-      alignment: align,
-      showsHandle: showsHandle,
-      byline: byline,
-      safe: hasSafe,
-      textHash: stableHash(text),
-      background: backdrop?.background,
-    );
-    final key = '${size.width}x${size.height}|${stableHash(params.toString())}|$text';
-    var card = made[key];
-    // A card made before is reused only when it was rendered with exactly
-    // these choices, for this network and this @handle; cards from before
-    // 1.2.0 carry no parameters and are rendered again.
-    card ??= cards.values
-        .where((m) =>
-            m.width == size.width.round() &&
-            m.height == size.height.round() &&
-            renderParametersEqual(m.renderParameters, params) &&
-            m.altText == textCardAltText(text))
-        .firstOrNull;
-    if (card == null) {
-      try {
-        final bytes = await renderTextCardJpeg(
-          text: text,
-          theme: style,
-          size: size,
-          byline: showsHandle ? byline : null,
-          branded: signed,
-          font: face.resolve(d.id),
-          safe: safe,
-          alignment: align,
-          backdrop: backdrop,
-        ).timeout(kRenderTimeLimit);
-        final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face, safe: hasSafe), mimeHint: 'image/jpeg');
-        card = MediaAttachment(
-          id: m.id,
-          path: m.path,
-          mimeType: 'image/jpeg',
-          sizeBytes: m.sizeBytes,
-          width: size.width.round(),
-          height: size.height.round(),
-          altText: textCardAltText(text),
-          fileName: m.fileName,
-          generated: true,
-          renderParameters: params,
-        );
-      } on TimeoutException {
-        // Never let a picture hold the post up.
-        reportRenderWarning('The text card for ${d.name} took too long to make, so ${d.name} gets no card.');
-        continue;
-      } on Object catch (e) {
-        // Without the card the target fails validation with a clear
-        // "needs an image" message, which is the right outcome.
-        debugPrint('Could not render a text card for ${d.name}: $e');
-        continue;
+
+    // The card, full screen for a story; null when it could not be made.
+    Future<MediaAttachment?> cardIn(bool story) async {
+      final size = textCardSize(d.id, story: story);
+      final safe = textCardSafeArea(d.id, story: story);
+      final hasSafe = safe != EdgeInsets.zero;
+      final params = textCardRenderParameters(
+        platformId: d.id,
+        theme: style,
+        font: face,
+        branded: signed,
+        alignment: align,
+        showsHandle: showsHandle,
+        byline: byline,
+        safe: hasSafe,
+        textHash: stableHash(text),
+        background: backdrop?.background,
+      );
+      final key = '${size.width}x${size.height}|${stableHash(params.toString())}|$text';
+      var card = made[key];
+      // A card made before is reused only when it was rendered with exactly
+      // these choices, for this network and this @handle; cards from before
+      // 1.2.0 carry no parameters and are rendered again.
+      card ??= cards.values
+          .where((m) =>
+              m.width == size.width.round() &&
+              m.height == size.height.round() &&
+              renderParametersEqual(m.renderParameters, params) &&
+              m.altText == textCardAltText(text))
+          .firstOrNull;
+      if (card == null) {
+        try {
+          final bytes = await renderTextCardJpeg(
+            text: text,
+            theme: style,
+            size: size,
+            byline: showsHandle ? byline : null,
+            branded: signed,
+            font: face.resolve(d.id),
+            safe: safe,
+            alignment: align,
+            backdrop: backdrop,
+          ).timeout(kRenderTimeLimit);
+          final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face, safe: hasSafe), mimeHint: 'image/jpeg');
+          card = MediaAttachment(
+            id: m.id,
+            path: m.path,
+            mimeType: 'image/jpeg',
+            sizeBytes: m.sizeBytes,
+            width: size.width.round(),
+            height: size.height.round(),
+            altText: textCardAltText(text),
+            fileName: m.fileName,
+            generated: true,
+            renderParameters: params,
+          );
+        } on TimeoutException {
+          // Never let a picture hold the post up.
+          reportRenderWarning('The text card for ${d.name} took too long to make, so ${d.name} gets no card.');
+          return null;
+        } on Object catch (e) {
+          // Without the card the target fails validation with a clear
+          // "needs an image" message, which is the right outcome.
+          debugPrint('Could not render a text card for ${d.name}: $e');
+          return null;
+        }
       }
+      made[key] = card;
+      used.add(card.id);
+      return card;
     }
-    made[key] = card;
-    used.add(card.id);
-    // The target's own photo list (the photo under the card, or none) is kept
-    // beside the card, for the next run and for editing the post.
-    final replaced = base.overrides.mediaIds;
-    final extra = replaced == null ? null : {...base.overrides.extra, kTextCardReplacedMediaIdsKey: replaced};
-    p = p.withTarget(base.copyWith(overrides: base.overrides.copyWith(mediaIds: [card.id], extra: extra)));
+
+    // A Story's only card is the story itself; Post + Story keeps the
+    // story's card beside the feed post's media.
+    final card = placement == PostPlacement.story ? (storyCard ? await cardIn(true) : null) : (feedCard ? await cardIn(false) : null);
+    final storyOnly = placement == PostPlacement.feedAndStory && storyCard ? await cardIn(true) : null;
+    var overrides = base.overrides;
+    if (card != null) {
+      // The target's own photo list (the photo under the card, or none) is
+      // kept beside the card, for the next run and for editing the post.
+      final replaced = base.overrides.mediaIds;
+      final extra = replaced == null ? null : {...base.overrides.extra, kTextCardReplacedMediaIdsKey: replaced};
+      overrides = overrides.copyWith(mediaIds: [card.id], extra: extra);
+    }
+    if (storyOnly != null) overrides = overrides.copyWith(storyMediaIds: [storyOnly.id]);
+    p = p.withTarget(base.copyWith(overrides: overrides));
   }
   backdrop?.dispose();
 
@@ -279,9 +301,13 @@ TextCardBackground? _backgroundOfPost(Post post) {
 
 /// [post] as the composer should show it: generated cards, card backgrounds
 /// and fitted photos removed (they are rebuilt on save), the original photos
-/// listed again (a target's own list where a card took its place).
+/// listed again (a target's own list where a card took its place), and no
+/// story copies (Post + Story makes them again on save).
 Post withoutTextCards(Post post) {
   post = withoutFittedPhotos(post);
+  if (post.targets.any((t) => t.overrides.storyMediaIds != null)) {
+    post = post.copyWith(targets: [for (final t in post.targets) t.copyWith(overrides: t.overrides.copyWith(clearStoryMediaIds: true))]);
+  }
   final ids = {for (final m in post.media.where((m) => m.isTextCard)) m.id};
   if (ids.isEmpty) return post;
   return post.copyWith(

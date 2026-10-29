@@ -37,6 +37,9 @@ class DemoAdapter extends PlatformAdapter {
   PhotoFit? photoFit(ConnectedAccount account, PostVariant variant) => inner.photoFit(account, variant);
 
   @override
+  bool supportsStories(ConnectedAccount account) => inner.supportsStories(account);
+
+  @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) => inner.buildHandoff(variant, account: account);
 
   @override
@@ -69,10 +72,15 @@ class DemoAdapter extends PlatformAdapter {
     await Future<void>.delayed(Duration(milliseconds: 500 + (descriptor.id.hashCode % 7) * 120));
     final id = 'demo${DateTime.now().millisecondsSinceEpoch}';
     if (at != null) return PublishResult.scheduled(remoteId: id, scheduledFor: at, remoteUrl: descriptor.homepage);
+    // Post + Story: one id per story frame besides the feed post.
+    final placement = supportsStories(account) ? variant.placement : PostPlacement.feed;
+    final frames = placement.includesStory ? variant.storyFrames.length : 0;
+    final extra = placement == PostPlacement.story ? frames - 1 : frames;
     return PublishResult.ok(
       remoteId: id,
       remoteUrl: descriptor.homepage,
       threadRemoteIds: variant.isThread ? [for (var i = 0; i < variant.threadParts.length; i++) '$id-$i'] : const [],
+      additionalRemoteIds: [for (var i = 0; i < extra; i++) '$id-story-$i'],
       publishedAt: DateTime.now(),
     );
   }

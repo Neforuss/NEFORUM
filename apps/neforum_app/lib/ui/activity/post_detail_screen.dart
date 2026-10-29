@@ -18,6 +18,7 @@ import '../../widgets/surfaces.dart';
 import '../compose/rich_text.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
+import 'schedule_summary.dart';
 import 'time_format.dart';
 
 /// Everything about one post: text, media and every network's outcome.
@@ -54,9 +55,17 @@ class PostDetailScreen extends ConsumerWidget {
       ]);
     }
 
-    final (label, tone, icon) = postStatusStyle(post.status);
+    final (label, tone, icon) = postStatusStyleOf(post);
     final format = TimeFormatting.of(context, ref);
+    final registry = ref.watch(registryProvider);
+    String? networkOf(String accountId) {
+      final a = ref.watch(accountByIdProvider(accountId));
+      return a == null ? null : registry.descriptor(a.platformId)?.name ?? a.displayName;
+    }
+
+    final summary = scheduleSummary(post, networkOf: networkOf, format: format);
     final timeLine = switch (post.status) {
+      PostStatus.scheduled when summary != null => summary,
       PostStatus.scheduled when post.scheduledAt != null => 'Scheduled for ${format.scheduled(post.scheduledAt!)}',
       PostStatus.draft => 'Draft · edited ${format.moment(post.updatedAt)}',
       PostStatus.publishing => 'Started ${format.moment(post.updatedAt)}',
@@ -169,6 +178,13 @@ class PostDetailScreen extends ConsumerWidget {
   }
 }
 
+/// What a target's [PublishResult.additionalRemoteIds] stand for: the frames
+/// of a story ([placement] story, after the first) or the story next to the
+/// feed post (Post + Story).
+String copiesLabel(PostPlacement placement, int additional) => placement == PostPlacement.story
+    ? 'Posted as a story of ${additional + 1} frames'
+    : 'Posted with a story of $additional ${additional == 1 ? 'frame' : 'frames'}';
+
 class _TargetRow extends ConsumerStatefulWidget {
   const _TargetRow({required this.post, required this.target});
   final Post post;
@@ -207,7 +223,10 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
     final actions = ref.read(postActionsProvider);
     final format = TimeFormatting.of(context, ref);
     // This network's own time, not the post's last change.
+    final due = widget.post.dueAtFor(t);
     final (String? timeLabel, DateTime? timeAt) = switch (t.status) {
+      // Its own time when the post has a different time per network.
+      TargetStatus.pending when widget.post.status == PostStatus.scheduled && due != null && t.attempts == 0 => ('Goes out', due),
       TargetStatus.published => ('Posted', t.result?.publishedAt ?? t.lastAttemptAt),
       TargetStatus.handedOff => ('Handed off', t.lastAttemptAt),
       TargetStatus.failed || TargetStatus.cancelled => ('Last tried', t.lastAttemptAt),
@@ -263,6 +282,9 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
               ] else if (t.result?.threadRemoteIds.isNotEmpty ?? false) ...[
                 const SizedBox(height: Space.xs),
                 Text('Posted as a ${t.result!.threadRemoteIds.length}-part thread', style: context.text.bodySmall),
+              ] else if (t.result?.additionalRemoteIds.isNotEmpty ?? false) ...[
+                const SizedBox(height: Space.xs),
+                Text(copiesLabel(placementOfExtra(t.overrides.extra), t.result!.additionalRemoteIds.length), style: context.text.bodySmall),
               ],
               if (t.attempts > 1) Text('${t.attempts} attempts', style: context.text.bodySmall?.copyWith(color: nf.textFaint, fontSize: 11)),
             ]),

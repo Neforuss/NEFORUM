@@ -11,6 +11,7 @@ import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
+import 'time_format.dart';
 
 /// One network's outcome for a post; tap to act on it.
 class TargetChip extends ConsumerWidget {
@@ -29,7 +30,11 @@ class TargetChip extends ConsumerWidget {
     final tappable = (target.status == TargetStatus.published && url != null) ||
         target.status == TargetStatus.awaitingHandoff ||
         needsRetry(target);
+    final due = post.dueAtFor(target);
     final tip = switch (target.status) {
+      // Its own time when the post has a different time per network.
+      TargetStatus.pending when post.status == PostStatus.scheduled && post.schedulesEachTarget && due != null =>
+        '$name goes out ${TimeFormatting.of(context, ref).scheduled(due)}',
       TargetStatus.published when url != null => 'Open on $name',
       TargetStatus.awaitingHandoff => 'Finish on $name',
       TargetStatus.failed => target.result?.error?.message ?? 'Failed',

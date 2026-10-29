@@ -63,7 +63,7 @@ class ScheduleEngine {
       final out = <Post>[];
       for (final p in due) {
         try {
-          final done = await publisher.publish(p.id, interactive: interactive, retryFailed: false);
+          final done = await publisher.publish(p.id, interactive: interactive, retryFailed: false, dueTargetsOnly: true);
           out.add(done);
           _completed.add(done);
         } on Object catch (e) {

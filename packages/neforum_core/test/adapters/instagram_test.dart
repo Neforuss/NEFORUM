@@ -309,12 +309,13 @@ void main() {
       expect(codes(PostVariant(text: 'x' * 2201, media: [fakeImage()]), api), contains('text.too_long'));
     });
 
-    test('carousel at most 10 items; stories take one file up to 60 s', () {
+    test('carousel at most 10 items; several story files become frames; story videos up to 60 s', () {
       final eleven = [for (var i = 0; i < 6; i++) fakeImage(id: 'i$i'), for (var i = 0; i < 5; i++) fakeVideo(id: 'v$i')];
       expect(codes(PostVariant(text: 'x', media: eleven), api), contains('instagram.carousel_too_big'));
       final story = {'storyMode': true};
-      expect(codes(PostVariant(text: '', media: [fakeImage(id: 'a'), fakeImage(id: 'b')], extra: story), api),
-          contains('instagram.story_single'));
+      final frames = adapter.validate(PostVariant(text: '', media: [fakeImage(id: 'a'), fakeImage(id: 'b')], extra: story), api);
+      expect(frames.hasErrors, isFalse);
+      expect(frames.map((i) => i.code), contains('instagram.story_frames'));
       expect(codes(PostVariant(text: '', media: [fakeVideo(durationMs: 61000)], extra: story), api),
           contains('instagram.story_video_too_long'));
       expect(codes(PostVariant(text: 'x', media: [fakeVideo(durationMs: 2000)]), api), contains('instagram.video_too_short'));

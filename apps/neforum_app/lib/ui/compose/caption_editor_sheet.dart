@@ -213,7 +213,10 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
     final sample = caption.isEmpty ? 'Your caption, on your photo.' : caption;
     final photo = widget.defaults ? null : composer.media.where((m) => m.kind == MediaKind.image).firstOrNull;
     final storyMode = platform == 'instagram' &&
-        accounts.any((a) => a.platformId == 'instagram' && composer.selected.contains(a.id) && composer.overrides[a.id]?.extra['storyMode'] == true);
+        accounts.any((a) =>
+            a.platformId == 'instagram' &&
+            composer.selected.contains(a.id) &&
+            placementOfExtra(composer.overrides[a.id]?.extra ?? const {}) == PostPlacement.story);
 
     Widget label(String text) => Padding(
           padding: const EdgeInsets.only(top: Space.lg, bottom: Space.sm),

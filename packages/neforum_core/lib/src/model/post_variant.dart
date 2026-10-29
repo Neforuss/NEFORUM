@@ -4,6 +4,7 @@ import 'artwork.dart';
 import 'media.dart';
 import 'poll.dart';
 import 'post.dart';
+import 'post_placement.dart';
 import 'validation.dart';
 
 /// The master [Post] resolved for ONE account: overrides applied, text adapted
@@ -30,6 +31,7 @@ class PostVariant {
     this.sourcePostId,
     this.poll,
     this.artwork,
+    this.storyMedia = const [],
   });
 
   /// Body text. When the post was split into a thread this is the first part.
@@ -70,6 +72,11 @@ class PostVariant {
   /// artwork.
   final ArtworkDetails? artwork;
 
+  /// The story's own copies of the media when the target is placed as Post +
+  /// Story (photos fitted to 9:16, a 9:16 text card); empty: the story shows
+  /// [media]. See [PostPlacementOfVariant.storyFrames].
+  final List<MediaAttachment> storyMedia;
+
   bool get isArtwork => artwork != null;
 
   bool get isThread => threadParts.length > 1;
@@ -97,6 +104,7 @@ class PostVariant {
     List<ValidationIssue>? issues,
     PostPoll? poll,
     bool clearPoll = false,
+    List<MediaAttachment>? storyMedia,
   }) =>
       PostVariant(
         text: text ?? this.text,
@@ -115,6 +123,7 @@ class PostVariant {
         sourcePostId: sourcePostId,
         poll: clearPoll ? null : (poll ?? this.poll),
         artwork: artwork,
+        storyMedia: storyMedia ?? this.storyMedia,
       );
 
   PostVariant addIssues(Iterable<ValidationIssue> more) =>

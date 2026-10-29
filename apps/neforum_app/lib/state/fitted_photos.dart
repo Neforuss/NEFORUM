@@ -9,11 +9,12 @@ import 'settings.dart';
 import 'shrunk_videos.dart';
 
 /// The whole frame a network shows photos in, as width / height: TikTok
-/// 9:16, Instagram 4:5 (feed and carousels) or 9:16 (stories). Null for the
-/// others.
+/// 9:16, Instagram 4:5 (feed and carousels, also the feed post of Post +
+/// Story) or 9:16 (a story; `PostVariant.asStory` for the story of Post +
+/// Story). Null for the others.
 double? fullFrameAspect(String platformId, PostVariant v) => switch (platformId) {
       'tiktok' => 9 / 16,
-      'instagram' => (v.extraAs<bool>('storyMode') ?? false) ? 9 / 16 : 4 / 5,
+      'instagram' => v.placement == PostPlacement.story ? 9 / 16 : 4 / 5,
       _ => null,
     };
 
@@ -70,52 +71,68 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
     if (account == null || adapter == null) continue;
     final variant = resolver.resolve(p, t, adapter.descriptorForAccount(account), account: account);
     final fit = effectivePhotoFit(adapter, account, variant, settings);
-    if (fit == null) continue;
-
     final ids = t.overrides.mediaIds ?? [for (final m in userMedia) m.id];
-    var changed = false;
-    final next = <String>[];
-    for (final id in ids) {
-      final m = p.media.where((x) => x.id == id).firstOrNull;
-      if (m == null || m.generated || fit.problemsOf(m).isEmpty) {
-        next.add(id);
-        continue;
-      }
-      final key = '${m.id}|${fit.keyFor(mode)}';
-      var copy = used[key] ?? pool[key];
-      if (copy == null) {
-        try {
-          final out = await fitPhoto(await s.media.read(m), m.mimeType, fit, mode);
-          if (out != null) {
-            final made = await s.media.importBytes(out.bytes, fileName: _fittedName(m, out.mimeType), mimeHint: out.mimeType);
-            copy = MediaAttachment(
-              id: made.id,
-              path: made.path,
-              mimeType: out.mimeType,
-              sizeBytes: made.sizeBytes,
-              width: out.width,
-              height: out.height,
-              fileName: made.fileName,
-              generated: true,
-              derivedFrom: m.id,
-              fitKey: fit.keyFor(mode),
-            );
-          }
-        } on Object catch (e) {
-          debugPrint('Could not fit ${m.fileName ?? m.id} for ${adapter.descriptor.name}: $e');
+
+    // [list] with every photo that breaks [rules] replaced by a fitted copy.
+    Future<List<String>> fitted(List<String> list, PhotoFit rules) async {
+      final next = <String>[];
+      for (final id in list) {
+        final m = p.media.where((x) => x.id == id).firstOrNull;
+        if (m == null || m.generated || rules.problemsOf(m).isEmpty) {
+          next.add(id);
+          continue;
         }
+        final key = '${m.id}|${rules.keyFor(mode)}';
+        var copy = used[key] ?? pool[key];
+        if (copy == null) {
+          try {
+            final out = await fitPhoto(await s.media.read(m), m.mimeType, rules, mode);
+            if (out != null) {
+              final made = await s.media.importBytes(out.bytes, fileName: _fittedName(m, out.mimeType), mimeHint: out.mimeType);
+              copy = MediaAttachment(
+                id: made.id,
+                path: made.path,
+                mimeType: out.mimeType,
+                sizeBytes: made.sizeBytes,
+                width: out.width,
+                height: out.height,
+                fileName: made.fileName,
+                generated: true,
+                derivedFrom: m.id,
+                fitKey: rules.keyFor(mode),
+              );
+            }
+          } on Object catch (e) {
+            debugPrint('Could not fit ${m.fileName ?? m.id} for ${adapter.descriptor.name}: $e');
+          }
+        }
+        if (copy == null) {
+          next.add(id);
+          continue;
+        }
+        // The original's alt text, as it is now.
+        copy = copy.copyWith(altText: m.altText, clearAltText: m.altText == null);
+        used[key] = copy;
+        next.add(copy.id);
       }
-      if (copy == null) {
-        next.add(id);
-        continue;
-      }
-      // The original's alt text, as it is now.
-      copy = copy.copyWith(altText: m.altText, clearAltText: m.altText == null);
-      used[key] = copy;
-      next.add(copy.id);
-      changed = true;
+      return next;
     }
-    if (changed) p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(mediaIds: next)));
+
+    var overrides = t.overrides;
+    final next = fit == null ? ids : await fitted(ids, fit);
+    if (!listEquals(next, ids)) overrides = overrides.copyWith(mediaIds: next);
+    // Post + Story: the story gets copies fitted to its own frame (9:16 on
+    // Instagram), listed apart, so the feed post keeps its 4:5 copies and the
+    // story never shows a caption written on the feed photo. A Story alone
+    // is fitted above, as the target's media.
+    final storyBase = overrides.storyMediaIds ?? ids;
+    if (adapter.supportsStories(account) && variant.placement == PostPlacement.feedAndStory && storyBase.isNotEmpty) {
+      final storyFit = effectivePhotoFit(adapter, account, variant.asStory(), settings);
+      overrides = overrides.copyWith(storyMediaIds: storyFit == null ? storyBase : await fitted(storyBase, storyFit));
+    } else if (overrides.storyMediaIds != null && variant.placement != PostPlacement.feedAndStory) {
+      overrides = overrides.copyWith(clearStoryMediaIds: true);
+    }
+    if (!identical(overrides, t.overrides)) p = p.withTarget(t.copyWith(overrides: overrides));
   }
 
   final keep = {for (final m in used.values) m.id};
@@ -151,25 +168,27 @@ Future<void> fitPhotosOfSavedPost(AppServices s, String postId) async {
 
 /// [post] without fitted copies (captioned copies included): each target lists
 /// the original photos again (and no list at all when that is every photo, as
-/// before fitting). Sound renditions are left to [withoutAudioRenditions].
+/// before fitting), in its story list as well. Sound renditions are left to
+/// [withoutAudioRenditions].
 Post withoutFittedPhotos(Post post) {
   final fitted = {for (final m in post.media.where((m) => m.derivedFrom != null && !isAudioRendition(m))) m.id: m.derivedFrom!};
   if (fitted.isEmpty) return post;
   final media = [for (final m in post.media) if (!fitted.containsKey(m.id)) m];
   final all = [for (final m in media) if (!m.generated) m.id];
-  return post.copyWith(
-    media: media,
-    targets: [
-      for (final t in post.targets)
-        if (t.overrides.mediaIds == null || !t.overrides.mediaIds!.any(fitted.containsKey))
-          t
-        else
-          () {
-            final ids = [for (final id in t.overrides.mediaIds!) fitted[id] ?? id];
-            return t.copyWith(overrides: listEquals(ids, all) ? t.overrides.copyWith(clearMediaIds: true) : t.overrides.copyWith(mediaIds: ids));
-          }(),
-    ],
-  );
+  PostTarget original(PostTarget t) {
+    var o = t.overrides;
+    final own = o.mediaIds;
+    if (own != null && own.any(fitted.containsKey)) {
+      final ids = [for (final id in own) fitted[id] ?? id];
+      o = listEquals(ids, all) ? o.copyWith(clearMediaIds: true) : o.copyWith(mediaIds: ids);
+    }
+    // The story's own list (Post + Story) goes back to the original photos too.
+    final story = o.storyMediaIds;
+    if (story != null && story.any(fitted.containsKey)) o = o.copyWith(storyMediaIds: [for (final id in story) fitted[id] ?? id]);
+    return identical(o, t.overrides) ? t : t.copyWith(overrides: o);
+  }
+
+  return post.copyWith(media: media, targets: [for (final t in post.targets) original(t)]);
 }
 
 /// "cat.jpg" -> "cat (fitted).jpg"; a JPEG made from a PNG gets ".jpg".

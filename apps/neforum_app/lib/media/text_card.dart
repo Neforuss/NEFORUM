@@ -111,19 +111,43 @@ EdgeInsets fullScreenSafeArea(String platformId) => switch (platformId) {
       _ => EdgeInsets.zero,
     };
 
-/// Pixel size of the card: each platform's preferred portrait frame.
-Size textCardSize(String platformId) => switch (platformId) {
-      'instagram' => const Size(1080, 1350),
-      'pinterest' => const Size(1000, 1500),
-      'tiktok' || 'snapchat' => const Size(1080, 1920),
-      _ => const Size(1080, 1080),
-    };
+/// Pixel size of the card: each platform's preferred portrait frame, or the
+/// full-screen 9:16 frame for a [story].
+Size textCardSize(String platformId, {bool story = false}) => story
+    ? const Size(1080, 1920)
+    : switch (platformId) {
+        'instagram' => const Size(1080, 1350),
+        'pinterest' => const Size(1000, 1500),
+        'tiktok' || 'snapchat' => const Size(1080, 1920),
+        _ => const Size(1080, 1080),
+      };
 
 /// The safe area of [platformId]'s card: only full-screen (9:16) cards
-/// (TikTok, Snapchat) have the network's buttons over them.
-EdgeInsets textCardSafeArea(String platformId) {
-  final s = textCardSize(platformId);
+/// (TikTok, Snapchat, stories) have the network's buttons over them.
+EdgeInsets textCardSafeArea(String platformId, {bool story = false}) {
+  final s = textCardSize(platformId, story: story);
   return s.width / s.height < 0.62 ? fullScreenSafeArea(platformId) : EdgeInsets.zero;
+}
+
+/// The size a card or placeholder [m] was made at; [textCardSize] for cards
+/// that do not record it.
+Size textCardSizeOf(MediaAttachment m, String platformId) {
+  final w = m.width;
+  final h = m.height;
+  return w != null && h != null && w > 0 && h > 0 ? Size(w.toDouble(), h.toDouble()) : textCardSize(platformId);
+}
+
+/// True when the story [v] places on [d] (a Story, or the story of Post +
+/// Story) has words and no photo or video of its own: it then gets a 9:16
+/// card. A story whose only file is the card's background
+/// ([backgroundMediaId]) qualifies too. Call only for accounts that take
+/// stories (`PlatformAdapter.supportsStories`).
+bool storyQualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgroundMediaId}) {
+  if (d.isArtPlatform || !v.placement.includesStory) return false;
+  if (d.media.maxImages == 0 || !d.media.imageMimeTypes.contains('image/jpeg')) return false;
+  final frames = v.storyFrames;
+  final noMedia = frames.isEmpty || (backgroundMediaId != null && frames.length == 1 && frames.single.id == backgroundMediaId);
+  return noMedia && v.text.trim().isNotEmpty;
 }
 
 /// True when [d] cannot take a text-only post but accepts a JPEG, and the
@@ -226,10 +250,11 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     TextCardFont font = TextCardFont.original,
     TextCardAlignment alignment = TextCardAlignment.left,
     bool showsHandle = true,
-    TextCardBackground? background}) {
-  final s = textCardSize(platformId);
+    TextCardBackground? background,
+    bool story = false}) {
+  final s = textCardSize(platformId, story: story);
   return MediaAttachment(
-    id: 'textcard-$platformId',
+    id: story ? 'textcard-$platformId-story' : 'textcard-$platformId',
     path: '$kTextCardPlaceholder${theme.name}${branded ? '' : ':plain'}${font.marker.isEmpty ? '' : ':${font.marker}'}',
     mimeType: 'image/jpeg',
     sizeBytes: 0,
@@ -244,7 +269,7 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
       branded: branded,
       alignment: alignment,
       showsHandle: showsHandle,
-      safe: textCardSafeArea(platformId) != EdgeInsets.zero,
+      safe: textCardSafeArea(platformId, story: story) != EdgeInsets.zero,
       background: background,
     ),
   );
