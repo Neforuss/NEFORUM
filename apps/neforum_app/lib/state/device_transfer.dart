@@ -55,6 +55,7 @@ const Set<String> kExportableSettings = {
   // 1.3: video
   'shrinkOversizedVideos',
   'textCardEveryNetwork', // 1.3: cards
+  'textCardCustomFont', // 1.3.1: cards
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {

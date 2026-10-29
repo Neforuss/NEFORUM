@@ -6,6 +6,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
 import '../media/audio_plan.dart';
+import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -57,6 +58,7 @@ class ComposerState {
     this.textCardEveryNetwork,
     this.textCardWithText = const {},
     this.mediaParts = const {},
+    this.textCardCustomFont, // 1.3.1: cards
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -159,6 +161,15 @@ class ComposerState {
   /// The part [mediaId] goes with.
   int partOfMedia(String mediaId) => mediaParts[mediaId] ?? 0;
 
+  /// 1.3.1: cards. The installed or imported font of the text card's words
+  /// (CaptionFont.toJson); an empty map for the built-in [textCardFont],
+  /// null = the Settings default.
+  final Map<String, dynamic>? textCardCustomFont;
+
+  /// [textCardCustomFont], or the Settings default; null for a built-in font.
+  CaptionFont? cardCustomFont(AppSettings settings) =>
+      textCardCustomFont == null ? settings.textCardCustomFontChoice : CaptionFont.tryParse(textCardCustomFont);
+
   /// Every part with words in it ([text], then [additionalParts]) joined with
   /// blank lines: what networks without threads receive.
   String get joinedParts => [
@@ -204,6 +215,7 @@ class ComposerState {
     bool? textCardEveryNetwork,
     Map<String, bool>? textCardWithText,
     Map<String, int>? mediaParts,
+    Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -244,6 +256,7 @@ class ComposerState {
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork,
         textCardWithText: textCardWithText ?? this.textCardWithText,
         mediaParts: mediaParts ?? this.mediaParts,
+        textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -389,7 +402,12 @@ class ComposerNotifier extends Notifier<ComposerState> {
   }
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
   void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
-  void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f);
+  /// A built-in font for the card's words (no installed or imported one).
+  void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f, textCardCustomFont: const {});
+
+  /// 1.3.1: cards. An installed or imported font for the card's words; null
+  /// for the built-in [ComposerState.textCardFont].
+  void setTextCardCustomFont(CaptionFont? font) => state = state.copyWith(textCardCustomFont: font?.toJson() ?? const {});
   void setTextCardBranded(String platformId, bool branded) =>
       state = state.copyWith(textCardBranded: {...state.textCardBranded, platformId: branded});
   void setCaptionOnPhoto(String platformId, bool on) => state = state.copyWith(captionOnPhoto: {...state.captionOnPhoto, platformId: on});
@@ -643,6 +661,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardEveryNetwork: textCardEveryNetworkOfPost(post),
         textCardWithText: textCardWithTextOfPost(post, platformOf),
         mediaParts: p.mediaParts,
+        textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
       );
   }
 
@@ -696,6 +715,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardEveryNetwork: state.textCardEveryNetwork,
       textCardWithText: state.textCardWithText,
       mediaParts: state.mediaParts,
+      textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
     );
   }
 }
@@ -723,6 +743,10 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final standardFormat = sound == null ? null : standardAudioFormat(ref.watch(audioOutputFormatsProvider).value ?? const []);
   final canRenderVideo = sound != null && (ref.watch(videoCaptionsSupportedProvider).value ?? false);
   final everyNetwork = c.cardOnEveryNetwork(settings);
+  // 1.3.1: cards. Watching the card's own font starts loading it; read once,
+  // before the loop (the 1.2.1 AOT crash).
+  final cardFont = c.cardCustomFont(settings);
+  final cardFontMissing = settings.textCards && cardFont != null && ref.watch(captionFontReadyProvider(cardFont)).value == false;
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -752,6 +776,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             showsHandle: c.textCardHandle[d.id] ?? settings.textCardShowsHandle(d.id),
             background: background,
             story: story,
+            customFont: cardFont,
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
@@ -780,6 +805,13 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
       issues.add(ValidationIssue.info(
           'media.text_card', '$what ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}',
           field: 'media'));
+      if (cardFontMissing) {
+        issues.add(ValidationIssue.info(
+            'media.text_card_font_missing',
+            'The font ${cardFont.family} is not on this device, so the card uses ${(c.textCardFont ?? settings.textCardFont).label}. '
+            'Install or import ${cardFont.family} here to use it.',
+            field: 'media'));
+      }
     } else if (settings.textCards && everyNetwork && !acceptsTextCardImages(d) && variant.media.isEmpty && variant.text.trim().isNotEmpty) {
       issues.add(ValidationIssue.info('media.text_card_unsupported', '${d.name} takes no images, so it gets your words as plain text', field: 'media'));
     }
@@ -973,7 +1005,8 @@ class PostActions {
         branded: c.textCardBranded,
         alignment: c.textCardAlignment,
         handle: c.textCardHandle,
-        background: c.textCardBackground ?? const {});
+        background: c.textCardBackground ?? const {},
+        customFont: c.textCardCustomFont);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
     post = await attachAudioRenditions(s, post, ref.read(settingsProvider));

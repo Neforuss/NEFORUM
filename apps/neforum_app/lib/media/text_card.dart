@@ -10,6 +10,7 @@ import '../brand/neforum_logo.dart';
 import '../state/settings.dart' show TextCardAlignment;
 import '../theme/tokens.dart';
 import 'aligned_text.dart';
+import 'caption_fonts.dart';
 import 'photo_composite.dart';
 import 'render_parameters.dart';
 import 'text_card_background.dart';
@@ -20,8 +21,9 @@ import 'text_card_background.dart';
 ///
 /// By default every card has the same signature so people recognise it
 /// anywhere: a purple rule along the top with a yellow tab, the words set
-/// large (in Inter, or Times New Roman or Arial, see [TextCardFont]) on plain
-/// black or white, and a footer with the NEFORUM
+/// large (in Inter, or Times New Roman or Arial, see [TextCardFont], or since
+/// 1.3.1 any installed or imported font, see [CaptionFont]) on plain black or
+/// white, and a footer with the NEFORUM
 /// mark, the wordmark and the author. The signature is optional per network
 /// (Settings > Text cards, or per post under the preview): a plain card keeps
 /// only the words and the author, and the author's @handle is optional too.
@@ -216,6 +218,8 @@ Map<String, dynamic> textCardRenderParameters({
   bool safe = false,
   String? textHash,
   TextCardBackground? background,
+  CaptionFont? customFont, // 1.3.1: cards
+  bool customFontFallback = false,
 }) =>
     {
       'kind': RenderKind.textCard,
@@ -229,7 +233,17 @@ Map<String, dynamic> textCardRenderParameters({
       'safe': safe,
       'textHash': ?textHash,
       if (background != null) 'background': background.toRenderParameters(),
+      // 1.3.1: cards. Only when set, so cards in a built-in font keep the
+      // parameters they were made with. A card drawn in [font] because the
+      // chosen font is not on the device says so, and is made again where
+      // the font is.
+      if (customFont != null) 'customFont': customFont.toJson(),
+      if (customFont != null && customFontFallback) 'customFontFallback': true,
     };
+
+/// The installed or imported font a card (or placeholder) was made with
+/// (1.3.1); null for a built-in font ([textCardFontOf]).
+CaptionFont? textCardCustomFontOf(MediaAttachment m) => CaptionFont.tryParse(textCardParametersOf(m)?['customFont']);
 
 /// The render parameters of a card (or placeholder) made since 1.2.0; null
 /// for older cards, whose choices are read from the file name.
@@ -258,7 +272,8 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     TextCardAlignment alignment = TextCardAlignment.left,
     bool showsHandle = true,
     TextCardBackground? background,
-    bool story = false}) {
+    bool story = false,
+    CaptionFont? customFont}) {
   final s = textCardSize(platformId, story: story);
   return MediaAttachment(
     id: story ? 'textcard-$platformId-story' : 'textcard-$platformId',
@@ -278,6 +293,7 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
       showsHandle: showsHandle,
       safe: textCardSafeArea(platformId, story: story) != EdgeInsets.zero,
       background: background,
+      customFont: customFont,
     ),
   );
 }
@@ -326,7 +342,9 @@ String? textCardPlatformOf(MediaAttachment m) => textCardParametersOf(m)?['platf
 /// Paints a card at any size; all measurements scale with the width, so
 /// the composer preview and the 1080-pixel export look the same.
 class TextCardPainter extends CustomPainter {
-  const TextCardPainter(
+  /// Repaints when an installed or imported font finishes loading
+  /// ([captionFontsRevision]).
+  TextCardPainter(
       {required this.text,
       required this.theme,
       this.byline,
@@ -334,13 +352,35 @@ class TextCardPainter extends CustomPainter {
       this.font = TextCardFont.original,
       this.safe = EdgeInsets.zero,
       this.alignment = TextCardAlignment.left,
-      this.backdrop});
+      this.backdrop,
+      this.customFont})
+      : super(repaint: captionFontsRevision);
 
   final String text;
   final TextCardTheme theme;
 
   /// Typeface of the words.
   final TextCardFont font;
+
+  /// 1.3.1: cards. A font installed on the device or imported, drawn instead
+  /// of [font] once it is loaded ([registeredCaptionFontAlias]); where it is
+  /// missing, [font] is drawn.
+  final CaptionFont? customFont;
+
+  /// The words' style at [fontSize]: [font], or the loaded [customFont] with
+  /// [font] and the [kCaptionFontFallbacks] for what it lacks.
+  TextStyle _wordsStyle(double fontSize, Color color) {
+    final alias = registeredCaptionFontAlias(customFont);
+    if (alias == null) return font.style(fontSize: fontSize, height: _lineHeight, color: color);
+    return TextStyle(
+      fontFamily: alias,
+      fontFamilyFallback: [font.family, ...font.fallback, ...kCaptionFontFallbacks],
+      fontWeight: FontWeight.w400,
+      fontSize: fontSize,
+      height: _lineHeight,
+      color: color,
+    );
+  }
 
   /// Draw the NEFORUM signature (top rule, mark and wordmark).
   final bool branded;
@@ -439,7 +479,7 @@ class TextCardPainter extends CustomPainter {
     final rtl = Bidi.detectRtlDirectionality(text);
     AlignedText layout(double fs, {int? maxLines}) => AlignedText(
           text,
-          style: font.style(fontSize: fs, height: _lineHeight, color: fg),
+          style: _wordsStyle(fs, fg),
           alignment: alignment,
           direction: rtl ? TextDirection.rtl : TextDirection.ltr,
           maxLines: maxLines,
@@ -485,7 +525,8 @@ class TextCardPainter extends CustomPainter {
       old.font != font ||
       old.safe != safe ||
       old.alignment != alignment ||
-      old.backdrop != backdrop;
+      old.backdrop != backdrop ||
+      old.customFont != customFont;
 }
 
 /// Live card for previews.
@@ -500,11 +541,13 @@ class TextCardView extends StatelessWidget {
       this.font = TextCardFont.original,
       this.safe = EdgeInsets.zero,
       this.alignment = TextCardAlignment.left,
-      this.backdrop});
+      this.backdrop,
+      this.customFont});
 
   final String text;
   final TextCardTheme theme;
   final TextCardFont font;
+  final CaptionFont? customFont;
   final EdgeInsets safe;
 
   /// Width / height.
@@ -519,7 +562,15 @@ class TextCardView extends StatelessWidget {
         aspectRatio: aspect,
         child: CustomPaint(
           painter: TextCardPainter(
-              text: text, theme: theme, byline: byline, branded: branded, font: font, safe: safe, alignment: alignment, backdrop: backdrop),
+              text: text,
+              theme: theme,
+              byline: byline,
+              branded: branded,
+              font: font,
+              safe: safe,
+              alignment: alignment,
+              backdrop: backdrop,
+              customFont: customFont),
         ),
       );
 }
@@ -537,7 +588,8 @@ Future<Uint8List> renderTextCardJpeg(
     TextCardFont font = TextCardFont.original,
     EdgeInsets safe = EdgeInsets.zero,
     TextCardAlignment alignment = TextCardAlignment.left,
-    TextCardBackdrop? backdrop}) async {
+    TextCardBackdrop? backdrop,
+    CaptionFont? customFont}) async {
   final width = size.width.round();
   final height = size.height.round();
   // A preview's engine image is never drawn here: only the photo's pixels.
@@ -552,6 +604,7 @@ Future<Uint8List> renderTextCardJpeg(
       safe: safe,
       alignment: alignment,
       backdrop: photo == null ? null : TextCardBackdrop(pixels: photo, luminance: backdrop!.luminance, background: backdrop.background),
+      customFont: customFont,
     ).paint(canvas, size);
   });
   if (photo == null) return compute(encodeRgbaJpeg, (words, width, height));

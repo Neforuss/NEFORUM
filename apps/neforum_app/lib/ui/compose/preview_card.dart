@@ -7,7 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../media/aligned_text.dart';
-import '../../media/caption_fonts.dart' show captionFontReadyProvider;
+import '../../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider, prepareCaptionFont;
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/text_card.dart';
@@ -30,6 +30,7 @@ import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'caption_editor_sheet.dart';
 import 'card_background_sheet.dart';
+import 'font_picker_sheet.dart';
 import 'rich_text.dart';
 
 /// How a platform presents a post; drives the preview layout.
@@ -414,6 +415,7 @@ class _TextCardPreview extends ConsumerWidget {
     final theme = textCardThemeOf(placeholder) ?? TextCardTheme.dark;
     final branded = textCardBrandedOf(placeholder);
     final font = textCardFontOf(placeholder);
+    final customFont = textCardCustomFontOf(placeholder);
     final alignment = textCardAlignmentOf(placeholder);
     final showsHandle = textCardShowsHandleOf(placeholder);
     final text = textCardText(_previewPost(ref), p.target);
@@ -445,6 +447,7 @@ class _TextCardPreview extends ConsumerWidget {
                   safe: textCardSafeOf(placeholder) ? fullScreenSafeArea(id) : EdgeInsets.zero,
                   alignment: alignment,
                   backdrop: previewBackdrop(ref, background),
+                  customFont: customFont,
                 ),
               ),
             ),
@@ -456,6 +459,7 @@ class _TextCardPreview extends ConsumerWidget {
             key: ValueKey('text-card-style-$id'),
             current: theme,
             font: font,
+            customFont: customFont,
             platform: p.descriptor,
             branded: branded,
             text: text,
@@ -657,6 +661,7 @@ class _CardStylePicker extends ConsumerStatefulWidget {
     super.key,
     required this.current,
     required this.font,
+    this.customFont,
     required this.platform,
     required this.branded,
     required this.text,
@@ -668,6 +673,9 @@ class _CardStylePicker extends ConsumerStatefulWidget {
   });
   final TextCardTheme current;
   final TextCardFont font;
+
+  /// 1.3.1: cards. The installed or imported font drawn instead of [font].
+  final CaptionFont? customFont;
   final PlatformDescriptor platform;
   final bool branded;
   final String text;
@@ -696,6 +704,8 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
       if (background != null) {
         backdrop = await decodeTextCardBackdrop(await ref.read(servicesProvider).storage.readMedia(background.photo.path), background);
       }
+      final customFont = widget.customFont;
+      if (customFont != null) await prepareCaptionFont(ref.read(servicesProvider).storage, customFont);
       final bytes = await renderTextCardJpeg(
         text: widget.text,
         theme: widget.current,
@@ -706,6 +716,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         safe: textCardSafeArea(widget.platform.id),
         alignment: widget.alignment,
         backdrop: backdrop,
+        customFont: widget.customFont,
       );
       final stamp = DateFormat('yyyy-MM-dd HHmm').format(DateTime.now());
       final r = await FileExport.save(
@@ -727,7 +738,8 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    Widget pill({required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) => Tooltip(
+    Widget pill({Key? key, required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) => Tooltip(
+          key: key,
           message: tooltip ?? label,
           child: InkWell(
             borderRadius: Radii.rPill,
@@ -767,7 +779,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         );
 
     Widget fontOption(TextCardFont f) => pill(
-          selected: f == widget.font,
+          selected: widget.customFont == null && f == widget.font,
           label: switch (f) { TextCardFont.original => 'Inter', TextCardFont.platform => "${widget.platform.name}'s own", _ => f.label },
           tooltip: f == TextCardFont.original ? "NEFORUM's original font (Inter)" : 'Set the words in ${f.label}',
           leading: Text('Aa',
@@ -782,7 +794,9 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           onTap: () {
             ref.read(composerProvider.notifier).setTextCardFont(f);
             final s = ref.read(settingsProvider);
-            if (s.textCardFont != f) ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: f));
+            if (s.textCardFont != f || s.textCardCustomFont.isNotEmpty) {
+              ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: f, textCardCustomFont: const {}));
+            }
           },
         );
 
@@ -791,6 +805,29 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
     return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
       if (background == null) for (final t in TextCardTheme.values) themeOption(t),
       for (final f in TextCardFont.values) fontOption(f),
+      // 1.3.1: cards. Any installed or imported font, from the caption's picker.
+      pill(
+        key: const Key('text-card-font-more'),
+        selected: widget.customFont != null,
+        label: widget.customFont?.family ?? 'More fonts…',
+        tooltip: 'Set the words in a font installed on this device, or in a font file you import',
+        leading: Icon(Icons.font_download_outlined, size: 14, color: widget.customFont != null ? nf.accent : nf.textFaint),
+        onTap: () async {
+          final choice = await showFontChoiceSheet(context,
+              current: FontChoice(widget.font, widget.customFont), platformId: widget.platform.id, title: 'Text card font');
+          if (choice == null) return;
+          final custom = choice.customFont;
+          final composer = ref.read(composerProvider.notifier);
+          // Remembered as the default, like the built-in fonts.
+          if (custom == null) {
+            composer.setTextCardFont(choice.font);
+            ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: choice.font, textCardCustomFont: const {}));
+          } else {
+            composer.setTextCardCustomFont(custom);
+            ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardCustomFont: custom.toJson()));
+          }
+        },
+      ),
       PopupMenuButton<TextCardAlignment>(
         tooltip: 'Alignment: ${widget.alignment.label}',
         initialValue: widget.alignment,
@@ -878,6 +915,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
             branded: widget.branded,
             alignment: widget.alignment,
             byline: widget.showsHandle ? widget.byline : null,
+            customFont: widget.customFont,
           ),
         ),
       ),

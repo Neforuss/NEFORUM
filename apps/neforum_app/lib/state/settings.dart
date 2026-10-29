@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../media/caption_fonts.dart' show CaptionFont;
 import '../media/text_card.dart';
 import '../platform/update_check.dart';
 import '../theme/tokens.dart';
@@ -166,6 +167,7 @@ class AppSettings {
     this.updateLatestRelease = const {},
     this.updateDismissedVersion,
     this.textCardEveryNetwork = false, // 1.3: cards
+    this.textCardCustomFont = const {}, // 1.3.1: cards
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -236,6 +238,7 @@ class AppSettings {
         updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
+        textCardCustomFont: Map<String, dynamic>.from(j['textCardCustomFont'] as Map? ?? const {}), // 1.3.1: cards
       );
 
   final ThemeMode themeMode;
@@ -440,6 +443,14 @@ class AppSettings {
   /// can change it.
   final bool textCardEveryNetwork;
 
+  /// 1.3.1: cards. The installed or imported font of new text cards' words
+  /// (CaptionFont.toJson), drawn instead of [textCardFont] where it is on the
+  /// device; empty for the built-in [textCardFont].
+  final Map<String, dynamic> textCardCustomFont;
+
+  /// [textCardCustomFont] as a font; null for the built-in one.
+  CaptionFont? get textCardCustomFontChoice => CaptionFont.tryParse(textCardCustomFont);
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -520,6 +531,7 @@ class AppSettings {
     Map<String, dynamic>? updateLatestRelease,
     String? updateDismissedVersion,
     bool? textCardEveryNetwork, // 1.3: cards
+    Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -587,6 +599,7 @@ class AppSettings {
         updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
+        textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
       );
 
   Map<String, dynamic> toJson() => {
@@ -655,5 +668,6 @@ class AppSettings {
         if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
+        if (textCardCustomFont.isNotEmpty) 'textCardCustomFont': textCardCustomFont, // 1.3.1: cards
       };
 }

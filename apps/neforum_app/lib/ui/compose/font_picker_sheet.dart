@@ -10,23 +10,48 @@ import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart' show showToast;
 
-/// Opens the font picker for the caption written on photos: the built-in
-/// fonts, the fonts the user imported and the fonts installed on this
-/// computer, each name drawn in its own font, with a search field and
-/// "Import a font file…". Returns [style] with the chosen font, or null when
-/// nothing was chosen. [platformId] is the network whose own font
+/// A font chosen in the picker: a built-in [font], or an installed or
+/// imported [customFont] (drawn instead of [font] where it is on the device).
+@immutable
+class FontChoice {
+  const FontChoice(this.font, [this.customFont]);
+  final TextCardFont font;
+  final CaptionFont? customFont;
+
+  @override
+  bool operator ==(Object other) => other is FontChoice && other.font == font && other.customFont == customFont;
+
+  @override
+  int get hashCode => Object.hash(font, customFont);
+}
+
+/// Opens the font picker for the caption written on photos ([showFontChoiceSheet]).
+/// Returns [style] with the chosen font, or null when nothing was chosen.
+Future<CaptionStyle?> showFontPickerSheet(BuildContext context, {required CaptionStyle style, required String platformId}) async {
+  final choice = await showFontChoiceSheet(context, current: FontChoice(style.font, style.customFont), platformId: platformId);
+  if (choice == null) return null;
+  final custom = choice.customFont;
+  return custom == null ? style.copyWith(font: choice.font, clearCustomFont: true) : style.copyWith(customFont: custom);
+}
+
+/// Opens the font picker: the built-in fonts, the fonts the user imported and
+/// the fonts installed on this computer, each name drawn in its own font,
+/// with a search field and "Import a font file…". Used for the caption on
+/// photos and (1.3.1) for text cards and their blocks. Returns the choice, or
+/// null when nothing was chosen. [platformId] is the network whose own font
 /// [TextCardFont.platform] stands for.
-Future<CaptionStyle?> showFontPickerSheet(BuildContext context, {required CaptionStyle style, required String platformId}) {
-  final sheet = FontPickerSheet(style: style, platformId: platformId);
+Future<FontChoice?> showFontChoiceSheet(BuildContext context,
+    {required FontChoice current, required String platformId, String title = 'Caption font'}) {
+  final sheet = FontPickerSheet(current: current, platformId: platformId, title: title);
   if (context.isCompact) {
-    return showModalBottomSheet<CaptionStyle>(
+    return showModalBottomSheet<FontChoice>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) => FractionallySizedBox(heightFactor: 0.88, child: sheet),
     );
   }
-  return showDialog<CaptionStyle>(
+  return showDialog<FontChoice>(
     context: context,
     builder: (_) => Dialog(
       clipBehavior: Clip.antiAlias,
@@ -57,9 +82,10 @@ class _Custom extends _Entry {
 }
 
 class FontPickerSheet extends ConsumerStatefulWidget {
-  const FontPickerSheet({super.key, required this.style, required this.platformId});
-  final CaptionStyle style;
+  const FontPickerSheet({super.key, required this.current, required this.platformId, this.title = 'Caption font'});
+  final FontChoice current;
   final String platformId;
+  final String title;
 
   @override
   ConsumerState<FontPickerSheet> createState() => _FontPickerSheetState();
@@ -95,7 +121,7 @@ class _FontPickerSheetState extends ConsumerState<FontPickerSheet> {
       if (f == null) return;
       final font = await importCaptionFont(storage, f.name, await f.readAsBytes());
       ref.invalidate(importedFontsProvider);
-      if (mounted) Navigator.pop(context, widget.style.copyWith(customFont: font));
+      if (mounted) Navigator.pop(context, FontChoice(widget.current.font, font));
     } on FontImportException catch (e) {
       if (mounted) showToast(context, e.message, icon: Icons.info_outline_rounded);
     } on Object catch (e) {
@@ -130,9 +156,9 @@ class _FontPickerSheetState extends ConsumerState<FontPickerSheet> {
       if (onDevice.isNotEmpty) ...[const _Header('On this device'), ...onDevice],
     ];
 
-    final current = widget.style.customFont;
+    final current = widget.current.customFont;
     bool selected(_Entry e) => switch (e) {
-          _BuiltIn(:final font) => current == null && widget.style.font == font,
+          _BuiltIn(:final font) => current == null && widget.current.font == font,
           _Custom(:final font) => current != null && current.family.toLowerCase() == font.family.toLowerCase(),
           _Header() => false,
         };
@@ -141,7 +167,7 @@ class _FontPickerSheetState extends ConsumerState<FontPickerSheet> {
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.lg, Space.sm),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Caption font', style: context.text.headlineSmall),
+          Text(widget.title, style: context.text.headlineSmall),
           const SizedBox(height: 2),
           Text(
             Env.isDesktop
@@ -197,13 +223,13 @@ class _FontPickerSheetState extends ConsumerState<FontPickerSheet> {
                       style: _builtInStyle(e.font.resolve(widget.platformId)),
                       detail: e.font == TextCardFont.platform ? 'TikTok Sans on TikTok, Instagram Sans on Instagram' : null,
                       selected: selected(e),
-                      onTap: () => Navigator.pop(context, widget.style.copyWith(font: e.font, clearCustomFont: true)),
+                      onTap: () => Navigator.pop(context, FontChoice(e.font)),
                     ),
                   final _Custom e => _CustomFontRow(
                       font: e.font,
                       detail: e.detail,
                       selected: selected(e),
-                      onTap: () => Navigator.pop(context, widget.style.copyWith(customFont: e.font)),
+                      onTap: () => Navigator.pop(context, FontChoice(widget.current.font, e.font)),
                     ),
                 },
               ),

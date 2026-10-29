@@ -13,9 +13,9 @@ import '../theme/tokens.dart';
 import 'font_files.dart';
 import 'font_storage_web.dart' if (dart.library.io) 'font_storage_io.dart' as files;
 
-// Fonts for the caption written on photos beyond the built-in ones
-// (TextCardFont): any font installed on the computer, or a font file the user
-// imported (phones have no list of installed fonts). The chosen font is loaded
+// Fonts for the caption written on photos and for text cards (1.3.1) beyond
+// the built-in ones (TextCardFont): any font installed on the computer, or a
+// font file the user imported (phones have no list of installed fonts). The chosen font is loaded
 // into the engine under a stable name ([CaptionFont.alias]) with FontLoader,
 // so the saved picture is drawn in exactly that font. A font that is not on
 // this device (a style made on another computer) leaves the caption in the
@@ -330,16 +330,17 @@ final Set<String> _reportedMissing = {};
 
 /// [prepareCaptionFont] for a picture that is being saved: within the render
 /// time limit, and when the font is not on this device the user is told once
-/// per family (each run) that the caption uses the built-in font.
-Future<bool> prepareCaptionFontForRender(AppStorage storage, CaptionFont font) async {
+/// per family and [usage] (each run) that [usage] ("the caption on the
+/// photo", "the text card") uses the built-in font.
+Future<bool> prepareCaptionFontForRender(AppStorage storage, CaptionFont font, {String usage = 'the caption on the photo'}) async {
   bool ready;
   try {
     ready = await prepareCaptionFont(storage, font).timeout(kRenderTimeLimit);
   } on TimeoutException {
     ready = false;
   }
-  if (!ready && _reportedMissing.add(font.family.toLowerCase())) {
-    reportRenderWarning('The font ${font.family} is not on this device, so the caption on the photo uses the default font. '
+  if (!ready && _reportedMissing.add('${font.family.toLowerCase()}|$usage')) {
+    reportRenderWarning('The font ${font.family} is not on this device, so $usage uses the default font. '
         'Install or import ${font.family} here to use it.');
   }
   return ready;
