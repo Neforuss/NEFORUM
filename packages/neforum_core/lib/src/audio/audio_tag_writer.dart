@@ -3,21 +3,27 @@ import 'dart:typed_data';
 
 import '../model/audio.dart' show AudioMimeTypes;
 import '../model/audio_tags.dart';
+import 'audio_publishing.dart' show audioCoverForUploadSync, audioCoverMimeTypeOf;
 
 /// [bytes] (a sound file of [mimeType]) carrying [tags] and the [cover]
 /// picture instead of any tags it had: an ID3v2.4 tag in front of an MP3, an
 /// iTunes-style `moov/udta/meta` in an M4A. The audio itself is unchanged.
+///
+/// The cover goes in as [audioCoverForUploadSync] makes it: a PNG or JPEG of
+/// a sane size as it is, any other picture (BMP, GIF, WebP, a huge scan) as
+/// a JPEG, labelled by what its bytes are, so [coverMimeType] (what the tags
+/// said) is not relied on. A picture that cannot be read is left out.
 ///
 /// Null when NEFORUM does not write tags into this type, or when the file
 /// cannot be changed safely (an M4A without a `moov` box, a fragmented MP4,
 /// chunk offsets that would no longer fit in 32 bits).
 Uint8List? embedAudioTags(Uint8List bytes, String mimeType, AudioTags tags, {Uint8List? cover, String? coverMimeType}) {
   try {
-    return switch (mimeType) {
-      AudioMimeTypes.mp3 => embedId3v24Tag(bytes, tags, cover: cover, coverMimeType: coverMimeType),
-      AudioMimeTypes.m4a => embedMp4Metadata(bytes, tags, cover: cover, coverMimeType: coverMimeType),
-      _ => null,
-    };
+    if (mimeType != AudioMimeTypes.mp3 && mimeType != AudioMimeTypes.m4a) return null;
+    final picture = cover == null || cover.isEmpty ? null : audioCoverForUploadSync(cover);
+    return mimeType == AudioMimeTypes.mp3
+        ? embedId3v24Tag(bytes, tags, cover: picture?.$1, coverMimeType: picture?.$2)
+        : embedMp4Metadata(bytes, tags, cover: picture?.$1, coverMimeType: picture?.$2);
   } on Object {
     return null;
   }
@@ -98,7 +104,8 @@ Uint8List buildId3v24Tag(AudioTags tags, {Uint8List? cover, String? coverMimeTyp
   described('COMM', tags.comment);
   described('USLT', tags.lyrics);
   if (cover != null && cover.isNotEmpty) {
-    final mime = coverMimeType ?? 'image/jpeg';
+    // What the picture's own bytes say it is comes first.
+    final mime = audioCoverMimeTypeOf(cover) ?? coverMimeType ?? 'image/jpeg';
     // Encoding, MIME type, NUL, picture type 3 (front cover), empty description.
     frames.add(_id3Frame('APIC', _joined([[0, ...latin1.encode(mime), 0, 3, 0], cover])));
   }
@@ -181,9 +188,11 @@ Uint8List _mp4Meta(AudioTags tags, {Uint8List? cover, String? coverMimeType}) {
   text('©cmt', tags.comment);
   text('©lyr', tags.lyrics);
   if (cover != null && cover.isNotEmpty) {
-    // Well-known types: 13 JPEG, 14 PNG, 27 BMP.
-    final type = switch (coverMimeType) { 'image/png' => 14, 'image/bmp' => 27, _ => 13 };
-    items.add(_item('covr', type, cover));
+    // Well-known types: 13 JPEG, 14 PNG, 27 BMP, from what the picture's own
+    // bytes say it is first. A picture of another type gets no label it
+    // does not have: it is left out (embedAudioTags converts it to JPEG).
+    final type = switch (audioCoverMimeTypeOf(cover) ?? coverMimeType) { 'image/png' => 14, 'image/jpeg' => 13, 'image/bmp' => 27, _ => null };
+    if (type != null) items.add(_item('covr', type, cover));
   }
   // hdlr: version and flags, pre_defined, handler type 'mdir', the 'appl'
   // reserved field iTunes writes, two zero words, and an empty name.

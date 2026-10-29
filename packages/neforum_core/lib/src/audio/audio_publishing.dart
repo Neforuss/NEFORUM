@@ -82,6 +82,68 @@ String safeAudioFileStem(String s) {
 Future<Uint8List?> audioThumbnailJpeg(Uint8List cover, {int maxSide = 320, int maxBytes = 200 * 1024}) =>
     off_thread.runAudioThumbnail(cover, maxSide, maxBytes);
 
+/// The longest side of a cover sent along with a sound file (a Mastodon or
+/// Ghost thumbnail, the picture in a Standard copy's tags): plenty for any
+/// player, a fraction of what a scan of the sleeve can be.
+const int kAudioCoverMaxSide = 1400;
+
+/// The most bytes of a cover sent along with a sound file.
+const int kAudioCoverMaxBytes = 1024 * 1024;
+
+/// [cover] ready to go out with a sound file, as (bytes, MIME type): a PNG
+/// or JPEG within [maxSide] and [maxBytes] as it is; any other picture (BMP,
+/// GIF, WebP, a larger PNG or JPEG) as a JPEG made to fit
+/// ([audioThumbnailJpeg], in another isolate where there is one). Null when
+/// the picture cannot be read.
+Future<(Uint8List, String)?> audioCoverForUpload(Uint8List cover, {int maxSide = kAudioCoverMaxSide, int maxBytes = kAudioCoverMaxBytes}) async {
+  final kept = _keptCoverMimeType(cover, maxSide, maxBytes);
+  if (kept != null) return (cover, kept);
+  final jpeg = await audioThumbnailJpeg(cover, maxSide: maxSide, maxBytes: maxBytes);
+  return jpeg == null ? null : (jpeg, 'image/jpeg');
+}
+
+/// [audioCoverForUpload]'s work, synchronously (for code already off the UI
+/// isolate, such as the tag writer).
+(Uint8List, String)? audioCoverForUploadSync(Uint8List cover, {int maxSide = kAudioCoverMaxSide, int maxBytes = kAudioCoverMaxBytes}) {
+  final kept = _keptCoverMimeType(cover, maxSide, maxBytes);
+  if (kept != null) return (cover, kept);
+  final jpeg = audioThumbnailJpegSync(cover, maxSide, maxBytes);
+  return jpeg == null ? null : (jpeg, 'image/jpeg');
+}
+
+/// `image/png` or `image/jpeg` when [bytes] start like one (their own
+/// signature, whatever a tag or file name says); null for anything else.
+String? audioCoverMimeTypeOf(List<int> bytes) {
+  const png = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+  bool startsWith(List<int> signature) {
+    if (bytes.length < signature.length) return false;
+    for (var i = 0; i < signature.length; i++) {
+      if (bytes[i] != signature[i]) return false;
+    }
+    return true;
+  }
+
+  if (startsWith(png)) return 'image/png';
+  if (startsWith(const [0xFF, 0xD8, 0xFF])) return 'image/jpeg';
+  return null;
+}
+
+/// The MIME type of [cover] when it can go as it is: a PNG or JPEG whose
+/// header says it is within [maxSide], in at most [maxBytes]; else null.
+String? _keptCoverMimeType(Uint8List cover, int maxSide, int maxBytes) {
+  if (cover.length > maxBytes) return null;
+  final mime = audioCoverMimeTypeOf(cover);
+  if (mime == null) return null;
+  try {
+    // The header only: the picture is not decoded.
+    final info = (mime == 'image/png' ? img.PngDecoder() : img.JpegDecoder()).startDecode(cover);
+    if (info == null || info.width <= 0 || info.height <= 0) return null;
+    return info.width <= maxSide && info.height <= maxSide ? mime : null;
+  } on Object {
+    return null;
+  }
+}
+
 /// [audioThumbnailJpeg]'s work, synchronously.
 Uint8List? audioThumbnailJpegSync(Uint8List cover, int maxSide, int maxBytes) {
   try {

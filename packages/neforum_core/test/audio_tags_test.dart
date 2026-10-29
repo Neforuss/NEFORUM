@@ -4,6 +4,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart' show ZLibEncoder;
+import 'package:image/image.dart' as img;
 import 'package:neforum_core/neforum_core.dart';
 import 'package:test/test.dart';
 
@@ -509,6 +510,32 @@ void main() {
         expect(_firstSample(written), [0x21, 0x10, 0x04, 0x60, 0x8C, 0x1C]);
       });
     }
+
+    test('a cover that is not PNG or JPEG goes in as a JPEG, labelled as one; a PNG keeps its label', () {
+      final gif = Uint8List.fromList(img.encodeGif(img.Image(width: 48, height: 48)..clear(img.ColorRgb8(30, 160, 90))));
+      // The data type of the covr item: after its size and name, the data
+      // box's size, name and version.
+      int covrType(Uint8List file) {
+        final at = latin1.decode(file, allowInvalid: true).indexOf('covr');
+        return file[at + 13] << 16 | file[at + 14] << 8 | file[at + 15];
+      }
+
+      final m4a = embedAudioTags(_b(m4aFile()), AudioMimeTypes.m4a, tags, cover: gif, coverMimeType: 'image/gif')!;
+      var r = readAudioTags(m4a);
+      expect(r.coverMimeType, 'image/jpeg');
+      expect(r.cover!.sublist(0, 3), [0xFF, 0xD8, 0xFF]);
+      expect(covrType(m4a), 13);
+      final mp3 = embedAudioTags(_b(mp3Frames(2)), AudioMimeTypes.mp3, tags, cover: gif, coverMimeType: 'image/gif')!;
+      r = readAudioTags(mp3);
+      expect(r.coverMimeType, 'image/jpeg');
+      expect(r.cover!.sublist(0, 3), [0xFF, 0xD8, 0xFF]);
+      // A PNG said to be a JPEG is labelled by what it is.
+      final labelled = embedAudioTags(_b(m4aFile()), AudioMimeTypes.m4a, tags, cover: png, coverMimeType: 'image/jpeg')!;
+      expect(covrType(labelled), 14);
+      expect(readAudioTags(labelled).cover, png);
+      // A cover that is no picture at all is left out.
+      expect(readAudioTags(embedAudioTags(_b(m4aFile()), AudioMimeTypes.m4a, tags, cover: _b([1, 2, 3]))!).cover, isNull);
+    });
 
     test('M4A without udta gets one; other udta boxes stay', () {
       final plain = _b(m4aFile());

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import '../audio/audio_publishing.dart';
 import '../audio/audio_text_template.dart';
+import '../http/neforum_http.dart' show HttpFilePart;
 import '../media_hosts/media_host.dart';
 import '../model/audio.dart';
 import '../model/audio_tags.dart';
@@ -81,6 +82,35 @@ String? _albumLine(AudioTags? t) {
   final line = renderAudioText('{album} · {year}', t);
   return line.isEmpty ? null : line;
 }
+
+/// The cover of the sound file [m] as the multipart part [field] of its
+/// upload (a Mastodon or Ghost thumbnail), as [audioCoverForUpload] makes
+/// it: a PNG or JPEG of a sane size as it is, any other picture (BMP, GIF,
+/// WebP, a huge scan) as a JPEG. Null without a cover, or when it cannot be
+/// read (then logged: the file goes without one).
+Future<HttpFilePart?> audioCoverUploadPart(MediaAttachment m, AdapterContext ctx, {String field = 'thumbnail'}) async {
+  final cover = m.audioCover;
+  if (cover == null) return null;
+  try {
+    final picture = await audioCoverForUpload(await ctx.readMedia(cover));
+    if (picture == null) {
+      ctx.log.warn('The cover of ${m.fileName ?? m.id} is not a picture NEFORUM can read; the file goes without it');
+      return null;
+    }
+    final (bytes, mime) = picture;
+    return HttpFilePart(field: field, bytes: bytes, fileName: mime == 'image/png' ? 'cover.png' : 'cover.jpg', contentType: mime);
+  } on Exception catch (e) {
+    ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
+    return null;
+  }
+}
+
+/// Whether an upload refused with [statusCode] may have been refused for
+/// the thumbnail that went with it, so it is tried once more without: a
+/// client error other than a sign-in, permission, missing endpoint or rate
+/// limit answer (400, 413, 415, 422...).
+bool mayRetryWithoutThumbnail(int statusCode) =>
+    statusCode >= 400 && statusCode < 500 && statusCode != 401 && statusCode != 403 && statusCode != 404 && statusCode != 429;
 
 /// The words of a link to a sound file: "Artist – Title" from its track
 /// details, else its name, with its type: "Demo (FLAC)".

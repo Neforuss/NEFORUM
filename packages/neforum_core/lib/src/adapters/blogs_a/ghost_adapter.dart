@@ -12,6 +12,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
+import '../audio_links.dart' show audioCoverUploadPart, mayRetryWithoutThumbnail;
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 import 'blog_common.dart';
@@ -446,18 +447,19 @@ class GhostAdapter extends PlatformAdapter {
   Future<(String, String?)> _uploadAudio(GhostApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
     ctx.progress('Uploading sound file ${index + 1} of $total');
     final bytes = await readBlogMedia(ctx, m);
-    final cover = m.audioCover;
-    HttpFilePart? thumbnail;
-    if (cover != null) {
-      try {
-        thumbnail = HttpFilePart(field: 'thumbnail', bytes: await ctx.readMedia(cover), fileName: cover.fileName!, contentType: cover.mimeType);
-      } on Exception catch (e) {
-        ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
-      }
-    }
+    final thumbnail = await audioCoverUploadPart(m, ctx);
     final what = 'Ghost sound file upload ${index + 1}/$total';
     final fileName = m.audioTaggedFileName ?? safeFileName(m);
-    final r = await guardGhost(what, () => api.uploadMedia(bytes, fileName: fileName, contentType: m.mimeType, thumbnail: thumbnail));
+    final r = await guardGhost(what, () async {
+      try {
+        return await api.uploadMedia(bytes, fileName: fileName, contentType: m.mimeType, thumbnail: thumbnail);
+      } on HttpFailure catch (f) {
+        // A site that refuses the cover still gets the sound file.
+        if (thumbnail == null || !mayRetryWithoutThumbnail(f.statusCode)) rethrow;
+        ctx.log.warn('Ghost refused the upload of ${m.fileName ?? m.id} with its cover (HTTP ${f.statusCode}); trying without the cover');
+        return api.uploadMedia(bytes, fileName: fileName, contentType: m.mimeType);
+      }
+    });
     final uploaded = blogMap(blogList(r.jsonMap['media']).firstOrNull);
     final url = blogStr(uploaded?['url']);
     if (url == null) {

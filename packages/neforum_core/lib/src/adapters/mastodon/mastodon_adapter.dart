@@ -23,6 +23,7 @@ import '../../text/rules_validator.dart';
 import '../../text/text_counter.dart';
 import '../../util/logger.dart' show Clock, systemClock;
 import '../adapter_context.dart';
+import '../audio_links.dart' show audioCoverUploadPart, mayRetryWithoutThumbnail;
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 import 'mastodon_api.dart';
@@ -598,16 +599,15 @@ class MastodonAdapter extends PlatformAdapter {
       // A sound file: "Artist – Title" when it has no alt text of its own,
       // and its cover as the picture the player shows.
       final caption = m.isAudio && (m.altText ?? '').trim().isEmpty ? m.audioCaption : null;
-      final cover = m.isAudio ? m.audioCover : null;
-      HttpFilePart? thumbnail;
-      if (cover != null) {
-        try {
-          thumbnail = HttpFilePart(field: 'thumbnail', bytes: await ctx.readMedia(cover), fileName: cover.fileName!, contentType: cover.mimeType);
-        } on Exception catch (e) {
-          ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
-        }
+      final thumbnail = m.isAudio ? await audioCoverUploadPart(m, ctx) : null;
+      try {
+        ids.add(await api.uploadMedia(m, bytes, descriptionLimit: p.descriptionLimit, description: caption, thumbnail: thumbnail));
+      } on HttpFailure catch (f) {
+        // A server that refuses the cover still gets the sound file.
+        if (thumbnail == null || !mayRetryWithoutThumbnail(f.statusCode)) rethrow;
+        ctx.log.warn('${p.domain} refused the upload of ${m.fileName ?? m.id} with its cover (HTTP ${f.statusCode}); trying without the cover');
+        ids.add(await api.uploadMedia(m, bytes, descriptionLimit: p.descriptionLimit, description: caption));
       }
-      ids.add(await api.uploadMedia(m, bytes, descriptionLimit: p.descriptionLimit, description: caption, thumbnail: thumbnail));
     }
     return ids;
   }

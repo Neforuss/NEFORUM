@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
@@ -179,6 +180,119 @@ void main() {
     expect(multipartFieldsOf(upload)['description'], 'Neon / Waves – Night Drive');
     expect(_fileNames(upload)['thumbnail'], 'cover.jpg');
     expect(_filePart(upload, 'thumbnail'), _cover);
+  });
+
+  group('covers that need converting', () {
+    final bmp = img.encodeBmp(img.Image(width: 40, height: 30)..clear(img.ColorRgb8(10, 120, 240)));
+    final hugePng = img.encodePng(img.Image(width: 2800, height: 2100)..clear(img.ColorRgb8(240, 200, 10)));
+    MediaAttachment withCover(String path, String mime) => MediaAttachment(
+          id: 'snd2',
+          path: '/media/snd2.mp3',
+          mimeType: AudioMimeTypes.mp3,
+          sizeBytes: 74,
+          fileName: 'track02.mp3',
+          audioTags: AudioTags(title: 'Night Drive', artist: 'Neon Waves', coverPath: path, coverMimeType: mime),
+        );
+    AdapterContext ctx(Map<String, Uint8List> covers, Future<http.Response> Function(http.Request r) handler) => AdapterContext(
+          http: NeforumHttp(client: MockClient(handler), maxRetries: 0),
+          clock: () => testNow,
+          readMedia: (m) async => covers[m.path] ?? _sound,
+        );
+    final mastodon = fakeAccount('mastodon', config: {
+      'instance': 'https://mastodon.example',
+      'domain': 'mastodon.example',
+      'software': 'mastodon',
+      'maxCharacters': 500,
+      'maxMediaAttachments': 4,
+      'descriptionLimit': 1500,
+    });
+    String? contentTypeOf(http.Request r, String field) {
+      final boundary = RegExp(r'boundary=(.+)$').firstMatch(r.headers['content-type']!)!.group(1)!;
+      final part = latin1.decode(r.bodyBytes).split('--$boundary').where((p) => p.contains('name="$field"')).firstOrNull;
+      final head = part?.substring(0, part.indexOf('\r\n\r\n'));
+      return head == null ? null : RegExp(r'content-type: ([^\r\n]+)', caseSensitive: false).firstMatch(head)?.group(1);
+    }
+
+    test('Mastodon: a BMP cover goes as a JPEG, a huge PNG as a JPEG of at most 1400 px', () async {
+      for (final (path, mime, picture) in [('/media/cover.bmp', 'image/bmp', bmp), ('/media/huge.png', 'image/png', hugePng)]) {
+        final calls = <http.Request>[];
+        final c = ctx({path: picture}, (r) async {
+          calls.add(r);
+          if (r.url.path == '/api/v2/media') return _json({'id': 'm1', 'url': 'https://mastodon.example/m1.mp3'});
+          return _json({'id': 's1', 'url': 'https://mastodon.example/@me/s1'});
+        });
+        final adapter = MastodonAdapter(mediaPollInterval: Duration.zero, maxMediaPolls: 1, clock: () => testNow);
+        final res = await adapter.publish(PostVariant(text: 'Out now', media: [withCover(path, mime)]), mastodon, {'access_token': 'tok'}, c);
+        expect(res.success, isTrue, reason: '${res.error}');
+        final upload = calls.firstWhere((r) => r.url.path == '/api/v2/media');
+        expect(_fileNames(upload)['thumbnail'], 'cover.jpg', reason: mime);
+        expect(contentTypeOf(upload, 'thumbnail'), 'image/jpeg', reason: mime);
+        final jpeg = img.decodeJpg(_filePart(upload, 'thumbnail'))!;
+        expect(math.max(jpeg.width, jpeg.height), lessThanOrEqualTo(kAudioCoverMaxSide), reason: mime);
+      }
+    });
+
+    test('Mastodon: a cover the server refuses is dropped and the sound file uploaded again without it', () async {
+      final calls = <http.Request>[];
+      final c = ctx({'/media/cover.bmp': bmp}, (r) async {
+        calls.add(r);
+        if (r.url.path == '/api/v2/media') {
+          return multipartFieldsOf(r).containsKey('thumbnail')
+              ? _json({'error': 'Validation failed: Thumbnail content type is invalid'}, 422)
+              : _json({'id': 'm1', 'url': 'https://mastodon.example/m1.mp3'});
+        }
+        return _json({'id': 's1', 'url': 'https://mastodon.example/@me/s1'});
+      });
+      final adapter = MastodonAdapter(mediaPollInterval: Duration.zero, maxMediaPolls: 1, clock: () => testNow);
+      final res = await adapter.publish(PostVariant(text: 'Out now', media: [withCover('/media/cover.bmp', 'image/bmp')]), mastodon, {'access_token': 'tok'}, c);
+      expect(res.success, isTrue, reason: '${res.error}');
+      final uploads = calls.where((r) => r.url.path == '/api/v2/media').toList();
+      expect(uploads.map((r) => _fileNames(r).keys.toSet()), [
+        {'file', 'thumbnail'},
+        {'file'},
+      ]);
+      // A refusal for another reason is not retried.
+      calls.clear();
+      final denied = ctx({'/media/cover.bmp': bmp}, (r) async {
+        calls.add(r);
+        return _json({'error': 'The access token is invalid'}, 401);
+      });
+      final failed = await adapter.publish(PostVariant(text: 'Out now', media: [withCover('/media/cover.bmp', 'image/bmp')]), mastodon, {'access_token': 'tok'}, denied);
+      expect(failed.success, isFalse);
+      expect(calls.where((r) => r.url.path == '/api/v2/media'), hasLength(1));
+    });
+
+    test('Ghost: a BMP cover goes as a JPEG; refused, the sound file goes again without it', () async {
+      const key = '6489d8a1b2c3d4e5f6a7b8c9:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+      final account = fakeAccount('ghost', config: {'apiUrl': 'https://blog.example.com', 'site': 'https://blog.example.com/'});
+      for (final refuse in [false, true]) {
+        final calls = <http.Request>[];
+        final c = ctx({'/media/cover.bmp': bmp}, (r) async {
+          calls.add(r);
+          if (r.url.path == '/ghost/api/admin/media/upload/') {
+            if (refuse && _fileNames(r).containsKey('thumbnail')) {
+              return _json({'errors': [{'type': 'ValidationError', 'message': 'Please select a valid image file.'}]}, 422);
+            }
+            return _json({'media': [{'url': 'https://blog.example.com/c/a.mp3'}]}, 201);
+          }
+          return _json({'posts': [{'id': 'abc123', 'status': 'published', 'url': 'https://blog.example.com/new/'}]}, 201);
+        });
+        final res = await GhostAdapter().publish(PostVariant(title: 'New', text: 'Out now', media: [withCover('/media/cover.bmp', 'image/bmp')]), account, {'admin_api_key': key}, c);
+        expect(res.success, isTrue, reason: '${res.error}');
+        final uploads = calls.where((r) => r.url.path == '/ghost/api/admin/media/upload/').toList();
+        expect(_fileNames(uploads.first)['thumbnail'], 'cover.jpg');
+        expect(contentTypeOf(uploads.first, 'thumbnail'), 'image/jpeg');
+        expect(img.decodeJpg(_filePart(uploads.first, 'thumbnail')), isNotNull);
+        expect(uploads.map((r) => _fileNames(r).containsKey('thumbnail')), refuse ? [true, false] : [true]);
+      }
+    });
+
+    test('a PNG or JPEG of a sane size goes as it is', () async {
+      expect((await audioCoverForUpload(_cover))!, (_cover, 'image/jpeg'));
+      final small = img.encodePng(img.Image(width: 300, height: 300));
+      expect((await audioCoverForUpload(small))!.$2, 'image/png');
+      expect(await audioCoverForUpload(Uint8List.fromList([1, 2, 3])), isNull);
+    });
   });
 
   test('Matrix: the cover as an m.image first, then m.audio with its caption and info', () async {
