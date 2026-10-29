@@ -15,6 +15,7 @@ import 'package:neforum_app/platform/storage_maintenance.dart';
 import 'package:neforum_app/state/audio_renditions.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/composer_draft.dart';
+import 'package:neforum_app/state/device_transfer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
@@ -230,6 +231,12 @@ void main() {
       final s = const AppSettings().copyWith(audioTextTemplate: '{title}');
       expect(AppSettings.fromJson(s.toJson()).audioTextTemplate, '{title}');
       expect(AppSettings.fromJson(const {}).audioTextTemplate, kDefaultAudioTextTemplate);
+    });
+
+    test('the template moves and syncs with the other settings', () {
+      final s = const AppSettings().copyWith(audioTextTemplate: '{artist}: {title}');
+      expect(exportableSettings(s)['audioTextTemplate'], '{artist}: {title}');
+      expect(withImportedSettings(const AppSettings(), {'audioTextTemplate': '{title}'}).audioTextTemplate, '{title}');
     });
   });
 

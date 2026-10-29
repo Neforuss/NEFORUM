@@ -62,6 +62,7 @@ const Set<String> kExportableSettings = {
   'textCardDesign', // 1.3.1: cards
   'audioCardDesign', // 1.3.1: cards
   'cardPresets', // 1.3.1: cards
+  'audioTextTemplate', // 1.3.1: audio tags
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {
