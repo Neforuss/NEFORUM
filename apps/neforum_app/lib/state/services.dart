@@ -279,6 +279,15 @@ class AppServices {
           debugPrint('Could not delete ${m.path}: $e');
         }
       }
+      // Track covers: the file's own and the one the user picked.
+      for (final path in audioCoverPaths(post)) {
+        if (!seen.add(path) || referenced.contains(mediaFileName(path))) continue;
+        try {
+          await storage.deleteMedia(path);
+        } on Object catch (e) {
+          debugPrint('Could not delete $path: $e');
+        }
+      }
     }
   }
 
@@ -611,6 +620,16 @@ Set<String> referencedFileNames(Iterable<Object?> documents) {
   documents.forEach(visit);
   return out;
 }
+
+/// The cover pictures of [post]'s sound files: those the files carry
+/// ([MediaAttachment.audioTags]) and the one the user chose
+/// ([Post.audioDetails]). They are media files of their own, not in
+/// [Post.media].
+List<String> audioCoverPaths(Post post) => [
+      for (final m in post.media)
+        if (m.audioTags?.coverPath case final path? when path.isNotEmpty) path,
+      if (post.audioDetails?.coverPath case final path? when path.isNotEmpty) path,
+    ];
 
 /// Paths of the files in [files] that no name in [referenced] matches and
 /// that did not change within [grace] before [now].

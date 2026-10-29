@@ -141,7 +141,7 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
         final route = audioRouteFor(d.media, source, post.audioQuality, standardMimeType: standardMime);
         MediaAttachment? made;
         if (route == AudioRoute.standardCopy) {
-          made = await _standardCopy(s, source, format, pool, used, render: canRender);
+          made = await _standardCopy(s, post, source, format, pool, used, render: canRender);
         } else if (route == AudioRoute.video) {
           final picture = _pictureFor(list, byId);
           made = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender);
@@ -209,24 +209,25 @@ String? _pooledStandardMime(Iterable<MediaAttachment> pool) {
   return null;
 }
 
-Future<MediaAttachment?> _standardCopy(AppServices s, MediaAttachment source, String? format, Map<String, MediaAttachment> pool,
+Future<MediaAttachment?> _standardCopy(AppServices s, Post post, MediaAttachment source, String? format, Map<String, MediaAttachment> pool,
     Map<String, MediaAttachment> used, {required bool render}) async {
   final pooled = [
     for (final m in pool.values)
       if (renderKindOf(m) == RenderKind.audioTranscode && m.derivedFrom == source.id) m,
   ];
   // A copy made earlier, kept (listed in [used]) so it is neither deleted
-  // nor left out of the post's media.
-  MediaAttachment? earlier() {
+  // nor left out of the post's media, carrying the tags the track has now.
+  Future<MediaAttachment?> keep(String key, MediaAttachment m) async => used[key] = await _withTags(s, post, source, m, replaceFile: false);
+  Future<MediaAttachment?> earlier() async {
     final m = pooled.firstOrNull;
-    return m == null ? null : used[m.fitKey ?? m.id] = m;
+    return m == null ? null : keep(m.fitKey ?? m.id, m);
   }
 
   if (format == null) return earlier();
   final params = <String, dynamic>{'kind': RenderKind.audioTranscode, 'format': format, 'bitrate': kStandardAudioBitsPerSecond};
   final key = 'audio|${source.id}|${stableHash(jsonEncode(params))}';
   final reused = used[key] ?? pool[key];
-  if (reused != null) return used[key] = reused;
+  if (reused != null) return keep(key, reused);
   if (!render) return earlier();
   final id = const Uuid().v7();
   final out = newMediaFilePath(s.storage.dataDir, id, format);
@@ -235,7 +236,7 @@ Future<MediaAttachment?> _standardCopy(AppServices s, MediaAttachment source, St
   final made = MediaAttachment(id: id, path: out, mimeType: mime, sizeBytes: 0);
   try {
     await VideoCompositor.instance.transcodeAudio(inputPath: source.path, outputPath: out, format: format, bitsPerSecond: kStandardAudioBitsPerSecond);
-    return used[key] = MediaAttachment(
+    final copy = MediaAttachment(
       id: id,
       path: out,
       mimeType: mime,
@@ -248,6 +249,8 @@ Future<MediaAttachment?> _standardCopy(AppServices s, MediaAttachment source, St
       renderParameters: params,
       audioCodec: format == 'mp3' ? AudioCodecs.mp3 : AudioCodecs.aac,
     );
+    // The system's encoder writes no tags: NEFORUM adds the track's own.
+    return used[key] = await _withTags(s, post, source, copy, replaceFile: true);
   } on Object catch (e) {
     debugPrint('Could not convert ${source.fileName ?? source.id} to $format: $e');
     await s.media.discard(made);
@@ -255,12 +258,78 @@ Future<MediaAttachment?> _standardCopy(AppServices s, MediaAttachment source, St
   }
 }
 
+/// `renderParameters` key of the tags written into a Standard copy: a hash
+/// of the tags and the cover's file name.
+const String kAudioTagsStampKey = 'tags';
+
+/// [copy] (a Standard copy of [source]) carrying the tags the track goes out
+/// with ([PostAudioTags.effectiveAudioTagsOf]) and their cover. A copy that
+/// already has them is returned as it is. A new copy ([replaceFile]) is
+/// rewritten in place; one kept from an earlier save is written to a new
+/// file, so the old one is never half rewritten (the caller deletes the
+/// copies it no longer uses). When the tags cannot be written, [copy] is
+/// returned without them.
+Future<MediaAttachment> _withTags(AppServices s, Post post, MediaAttachment source, MediaAttachment copy, {required bool replaceFile}) async {
+  final tags = post.effectiveAudioTagsOf(source) ?? AudioTags.none;
+  final coverPath = tags.coverPath;
+  final stamp = audioTagsStamp(tags);
+  final had = copy.renderParameters?[kAudioTagsStampKey];
+  // Never tagged and nothing to say: the copy is right as it is.
+  if (had == stamp || (had == null && tags.isEmpty)) return copy;
+  try {
+    Uint8List? cover;
+    if (coverPath != null && coverPath.isNotEmpty) {
+      try {
+        cover = await s.storage.readMedia(coverPath);
+      } on Object catch (e) {
+        debugPrint('Could not read the cover $coverPath: $e');
+      }
+    }
+    final bytes = await s.media.read(copy);
+    final tagged = await compute(embedAudioTagsJob, (bytes, copy.mimeType, tags.toJson(), cover, cover == null ? null : tags.coverMimeType));
+    if (tagged == null) return copy;
+    final id = replaceFile ? copy.id : const Uuid().v7();
+    final ext = copy.path.contains('.') ? copy.path.substring(copy.path.lastIndexOf('.') + 1) : 'bin';
+    final path = await s.storage.saveMedia(id, ext, tagged);
+    return MediaAttachment(
+      id: id,
+      path: path,
+      mimeType: copy.mimeType,
+      sizeBytes: tagged.length,
+      durationMs: copy.durationMs,
+      fileName: copy.fileName,
+      generated: true,
+      derivedFrom: copy.derivedFrom,
+      fitKey: copy.fitKey,
+      renderParameters: {...?copy.renderParameters, kAudioTagsStampKey: stamp},
+      audioCodec: copy.audioCodec,
+    );
+  } on Object catch (e) {
+    debugPrint('Could not write the tags into ${copy.path}: $e');
+    return copy;
+  }
+}
+
+/// A short hash of [tags] and their cover file, to tell whether a copy
+/// carries them.
+String audioTagsStamp(AudioTags tags) => stableHash(jsonEncode(tags.toJson()));
+
+/// [embedAudioTags] on plain data, for [compute]: the file's bytes, its MIME
+/// type, the tags as JSON, the cover's bytes and type.
+Uint8List? embedAudioTagsJob((Uint8List, String, Map<String, dynamic>, Uint8List?, String?) job) {
+  final (bytes, mimeType, tags, cover, coverMimeType) = job;
+  return embedAudioTags(bytes, mimeType, AudioTags.fromJson(tags), cover: cover, coverMimeType: coverMimeType);
+}
+
 Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, MediaAttachment source, (String, MediaAttachment)? picture,
     String platformId, Map<String, MediaAttachment> pool, Map<String, MediaAttachment> used,
     {required bool render}) async {
   final (width, height) = audioVideoFrame(platformId);
   final photo = picture?.$2;
-  final title = audioTrackTitle(source, postTitle: post.title);
+  // The track's details as it goes out, with their cover, for the picture.
+  final tags = post.effectiveAudioTagsOf(source);
+  final coverPath = tags?.coverPath;
+  final title = audioTrackTitle(source, postTitle: post.title, tags: tags);
   final words = _firstWords(textCardText(post, target), title);
   final ms = source.durationMs;
   final details = [audioFormatLabel(source), if (ms != null) formatAudioDuration(ms)].join(' · ');
@@ -268,7 +337,7 @@ Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, Med
     'kind': RenderKind.audioVideo,
     'width': width,
     'height': height,
-    if (photo != null) 'picture': photo.id else 'card': stableHash('$title|$words|$details'),
+    if (photo != null) 'picture': photo.id else 'card': stableHash('$title|$words|$details|${tags == null ? '' : audioTagsStamp(tags)}'),
   };
   final key = 'audio|${source.id}|${stableHash(jsonEncode(params))}';
   final reused = used[key] ?? pool[key];
@@ -279,8 +348,16 @@ Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, Med
   if (out == null) return null;
   final made = MediaAttachment(id: id, path: out, mimeType: 'video/mp4', sizeBytes: 0);
   try {
+    Uint8List? cover;
+    if (photo == null && coverPath != null && coverPath.isNotEmpty) {
+      try {
+        cover = await s.storage.readMedia(coverPath);
+      } on Object catch (e) {
+        debugPrint('Could not read the cover $coverPath: $e');
+      }
+    }
     final png = (photo == null ? null : await coverPhotoPng(await s.media.read(photo), width: width, height: height)) ??
-        await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details);
+        await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details, tags: tags, cover: cover);
     await VideoCompositor.instance.renderAudioVideo(audioPath: source.path, outputPath: out, imagePng: png, frameWidth: width, frameHeight: height);
     return used[key] = MediaAttachment(
       id: id,

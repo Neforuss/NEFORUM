@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
+import 'package:neforum_core/neforum_core.dart' show AudioTags;
 
 import '../brand/neforum_logo.dart';
 import '../theme/tokens.dart';
@@ -78,7 +79,17 @@ class AudioCardPainter extends CustomPainter {
 }
 
 /// The card ([AudioCardPainter]) as a [width] x [height] PNG.
-Future<Uint8List> renderAudioCardPng({required int width, required int height, required String title, String? subtitle, String? details}) async {
+///
+/// [tags] are the track's details as it goes out (the file's own under the
+/// user's edits) and [cover] the bytes of their cover picture
+/// ([AudioTags.coverPath]), read by the caller. A track with a cover gets
+/// the cover as its picture, cover-fitted to the frame.
+Future<Uint8List> renderAudioCardPng(
+    {required int width, required int height, required String title, String? subtitle, String? details, AudioTags? tags, Uint8List? cover}) async {
+  if (cover != null) {
+    final fitted = await coverPhotoPng(cover, width: width, height: height);
+    if (fitted != null) return fitted;
+  }
   final rgba = await rasterizeWordsLayer(width, height, (canvas) {
     AudioCardPainter(title: title, subtitle: subtitle, details: details).paint(canvas, Size(width.toDouble(), height.toDouble()));
   });

@@ -173,11 +173,13 @@ String formatAudioDuration(int ms) {
   return h > 0 ? '$h:${two(m)}:${two(s)}' : '$m:${two(s)}';
 }
 
-/// The track's title: the post's title, else the file name without its
-/// extension.
-String audioTrackTitle(MediaAttachment source, {String? postTitle}) {
+/// The track's title: the post's title, else "Artist – Title" from its
+/// track details ([tags]), else the file name without its extension.
+String audioTrackTitle(MediaAttachment source, {String? postTitle, AudioTags? tags}) {
   final t = postTitle?.trim() ?? '';
   if (t.isNotEmpty) return t;
+  final tagged = tags?.artistAndTitle;
+  if (tagged != null) return tagged;
   final name = (source.fileName ?? '').trim();
   final dot = name.lastIndexOf('.');
   final base = dot > 0 ? name.substring(0, dot) : name;
