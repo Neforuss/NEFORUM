@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'audio.dart' show AudioCodecs;
+import 'audio_tags.dart';
 import 'photo_fit.dart' show PhotoFit;
 
 enum MediaKind { image, gif, video, audio }
@@ -24,6 +25,7 @@ class MediaAttachment {
     this.fitKey,
     this.renderParameters,
     this.audioCodec,
+    this.audioTags,
   });
 
   factory MediaAttachment.fromJson(Map<String, dynamic> json) => MediaAttachment(
@@ -43,6 +45,7 @@ class MediaAttachment {
             ? null
             : Map<String, dynamic>.from(json['renderParameters'] as Map),
         audioCodec: json['audioCodec'] as String?,
+        audioTags: json['audioTags'] == null ? null : AudioTags.fromJson(Map<String, dynamic>.from(json['audioTags'] as Map)),
       );
 
   final String id;
@@ -78,6 +81,10 @@ class MediaAttachment {
   /// file.
   final String? audioCodec;
 
+  /// For a sound file: the tags it carries (title, artist, album, year,
+  /// cover...), read when it was imported; null when it has none.
+  final AudioTags? audioTags;
+
   /// A NEFORUM text card (generated, not made from a photo).
   bool get isTextCard => generated && derivedFrom == null;
 
@@ -110,6 +117,7 @@ class MediaAttachment {
         fitKey: fitKey,
         renderParameters: renderParameters,
         audioCodec: audioCodec,
+        audioTags: audioTags,
       );
 
   Map<String, dynamic> toJson() => {
@@ -127,5 +135,6 @@ class MediaAttachment {
         if (fitKey != null) 'fitKey': fitKey,
         if (renderParameters != null) 'renderParameters': renderParameters,
         if (audioCodec != null) 'audioCodec': audioCodec,
+        if (audioTags != null) 'audioTags': audioTags!.toJson(),
       };
 }

@@ -2,6 +2,7 @@ import 'package:meta/meta.dart';
 
 import 'artwork.dart';
 import 'audio.dart';
+import 'audio_tags.dart';
 import 'media.dart';
 import 'poll.dart';
 import 'publish_result.dart';
@@ -277,6 +278,7 @@ class Post {
     this.additionalParts = const [],
     this.artwork,
     this.audioQuality = AudioQuality.standard,
+    this.audioDetails,
     this.mediaParts = const {},
   });
 
@@ -310,6 +312,7 @@ class Post {
             ? null
             : ArtworkDetails.fromJson(Map<String, dynamic>.from(json['artwork'] as Map)),
         audioQuality: AudioQuality.values.asNameMap()[json['audioQuality']] ?? AudioQuality.standard,
+        audioDetails: json['audioDetails'] == null ? null : AudioTags.fromJson(Map<String, dynamic>.from(json['audioDetails'] as Map)),
         mediaParts: {
           for (final e in (json['mediaParts'] as Map? ?? const {}).entries)
             if (e.value is int) '${e.key}': e.value as int,
@@ -354,6 +357,12 @@ class Post {
   /// How the post's sound file goes out: one MP3 for everyone, or the
   /// original lossless file where a network takes it.
   final AudioQuality audioQuality;
+
+  /// What the user set for the post's sound file (title, artist, cover...),
+  /// over the tags the file carries ([MediaAttachment.audioTags]); null when
+  /// the file's own tags stand.
+  final AudioTags? audioDetails;
+
   /// The thread part (index into [parts]) that carries each attachment, by
   /// media id. Media not listed goes with the first part, so a post without
   /// the map (every post before 1.3) keeps all its media on the first part.
@@ -492,6 +501,8 @@ class Post {
     List<String>? additionalParts,
     ArtworkDetails? artwork,
     AudioQuality? audioQuality,
+    AudioTags? audioDetails,
+    bool clearAudioDetails = false,
     Map<String, int>? mediaParts,
     bool clearScheduledAt = false,
     bool clearTitle = false,
@@ -519,6 +530,7 @@ class Post {
         additionalParts: additionalParts ?? this.additionalParts,
         artwork: clearArtwork ? null : (artwork ?? this.artwork),
         audioQuality: audioQuality ?? this.audioQuality,
+        audioDetails: clearAudioDetails ? null : (audioDetails ?? this.audioDetails),
         mediaParts: mediaParts ?? this.mediaParts,
       );
 
@@ -550,6 +562,7 @@ class Post {
         if (additionalParts.isNotEmpty) 'additionalParts': additionalParts,
         if (artwork != null) 'artwork': artwork!.toJson(),
         if (audioQuality != AudioQuality.standard) 'audioQuality': audioQuality.name,
+        if (audioDetails != null && !audioDetails!.isEmpty) 'audioDetails': audioDetails!.toJson(),
         if (mediaParts.isNotEmpty) 'mediaParts': mediaParts,
       };
 }
