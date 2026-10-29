@@ -189,10 +189,10 @@ test('tags: the job\'s list, else the Tags snippet', () => {
   assert.deepEqual([...tagsOf({ snippets: [] })], []);
 });
 
-test('manifests: version 1.1.1 in both, the same pages, art sites and YouTube Studio included', () => {
+test('manifests: version 1.1.2 in both, the same pages, art sites and YouTube Studio included', () => {
   const chrome = manifest('chrome');
   const firefox = manifest('firefox');
-  assert.equal(chrome.version, '1.1.1');
+  assert.equal(chrome.version, '1.1.2');
   assert.equal(firefox.version, chrome.version);
   assert.deepEqual(firefox.content_scripts, chrome.content_scripts);
   assert.ok(chrome.description.length <= 132, 'the Chrome Web Store limit');

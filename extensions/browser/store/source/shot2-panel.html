@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+  .page { position: absolute; top: 46px; left: 0; right: 0; bottom: 0; padding: 34px 40px; }
+  .composer { width: 420px; border-radius: 16px; background: #fff; border: 1px solid #e1dceb; padding: 18px; display: grid; gap: 12px; }
+  .who { display: flex; gap: 10px; align-items: center; font-weight: 600; font-size: 15px; }
+  .avatar { width: 36px; height: 36px; border-radius: 50%; background: linear-gradient(135deg,#ffb36b,#ff5fa0); }
+  .text { font-size: 16px; line-height: 1.45; min-height: 96px; }
+  .thumbs { display: flex; gap: 8px; }
+  .thumbs span { width: 120px; height: 90px; border-radius: 10px; background: linear-gradient(135deg,#7bd3ff,#7D00FF); }
+  .thumbs span + span { background: linear-gradient(135deg,#ffe36b,#ff7a59); }
+  .actions { display: flex; justify-content: flex-end; }
+  .actions b { padding: 8px 18px; border-radius: 999px; background: #3a2c63; color: #fff; font-size: 14px; }
+  .reply { margin-top: 12px; width: 420px; border-radius: 12px; border: 1px dashed #cfc7e2; padding: 10px 14px; color: #8a819f; font-size: 14px; }
+  /* The real panel mounts at the page's bottom right; keep it inside the window. */
+  body { padding: 70px 0 0 70px; }
+  .window { border-radius: 18px 0 0 0; }
+</style></head>
+<body>
+  <div class="copy">
+    <div class="brand"><img src="icon.png" alt=""><b>NEFORUM</b></div>
+    <h1>Check it, then <em>press Post</em>.</h1>
+    <ul>
+      <li>Text, thread parts, photos, videos and poll answers go in for you</li>
+      <li>The panel says what was filled in and what is left to you</li>
+      <li>Ctrl+Enter or "Post now" posts: the extension never posts on its own unless you turn that on</li>
+    </ul>
+  </div>
+  <div class="stage">
+    <div class="window" id="win">
+      <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><div class="url">mastodon.example/publish</div><div class="ext"><img src="ext/icons/icon32.png" alt=""></div></div>
+      <div class="page">
+        <div class="composer">
+          <div class="who"><span class="avatar"></span>Robin Okafor</div>
+          <div class="text">Shipped v2 of my split keyboard firmware! Per-key RGB is finally smooth at 1 kHz, and the whole thing is open source. (1/3)</div>
+          <div class="thumbs"><span></span><span></span></div>
+          <div class="actions"><b>Publish</b></div>
+        </div>
+        <div class="reply">Parts 2 and 3 are in the panel, ready to add as replies</div>
+      </div>
+    </div>
+  </div>
+  <script src="ext/content/panel.js"></script>
+  <script>
+    const NF = globalThis.NEFORUM_EXT;
+    NF.postKeys = 'Ctrl+Enter';
+    const p = NF.panel.mount({
+      platformName: 'Mastodon',
+      text: 'Shipped v2 of my split keyboard firmware!',
+      parts: ['Part one', 'Build guide and parts list: https://example.org/kb (2/3)', 'Thanks to everyone who tested the betas! (3/3)'],
+      media: [{}, {}],
+    }, { fill() {}, post() {}, stop() {}, insertText() {}, attach() {} });
+    p.done({ headline: 'Filled in: text and 2 photos', lines: ['Text in the composer', '2 photos attached', 'Parts 2 and 3 below, to add as replies'] });
+    p.setPost('ready');
+  </script>
+</body></html>

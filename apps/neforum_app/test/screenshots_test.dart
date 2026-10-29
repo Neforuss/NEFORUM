@@ -9,6 +9,7 @@ library;
 
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -104,9 +105,10 @@ void main() {
     required Brightness brightness,
     required String route,
     Future<void> Function(WidgetTester t, ProviderContainer c)? before,
+    double pixelRatio = 2,
   }) async {
-    tester.view.physicalSize = size * 2;
-    tester.view.devicePixelRatio = 2;
+    tester.view.physicalSize = size * pixelRatio;
+    tester.view.devicePixelRatio = pixelRatio;
     addTearDown(tester.view.reset);
     tester.platformDispatcher.platformBrightnessTestValue = brightness;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
@@ -161,6 +163,31 @@ void main() {
         await tester.pump(const Duration(milliseconds: 200));
         await tester.tap(find.textContaining('Preview ('));
       }));
+  // Browser extension store listings: exactly 1280 x 800 pixels.
+  const store = Size(1280, 800);
+  // As on Windows: the browser extension exists only on computers.
+  Future<void> onWindows(Future<void> Function() shot) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    try {
+      await shot();
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  }
+
+  testWidgets('store: browser extension settings', (t) => onWindows(() => shoot(t, name: 'store-extension-settings', size: store, pixelRatio: 1, brightness: Brightness.dark, route: '/settings', before: (tester, c) async {
+        final section = find.text('Browser extension').first;
+        await tester.ensureVisible(section);
+        await tester.pump(const Duration(milliseconds: 200));
+        // The section's heading near the top, its switches and pairing below.
+        await tester.dragFrom(const Offset(880, 600), const Offset(0, -330));
+      })));
+  testWidgets('store: hand-off', (t) => onWindows(() => shoot(t, name: 'store-handoff', size: store, pixelRatio: 1, brightness: Brightness.dark, route: '/activity/post/demo-post-2', before: (tester, c) async {
+        final b = find.text('Hand off now').first;
+        await tester.ensureVisible(b);
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.tap(b);
+      })));
   testWidgets('phone handoff', (t) => shoot(t, name: 'phone-handoff-dark', size: phone, brightness: Brightness.dark, route: '/activity/post/demo-post-2', before: (tester, c) async {
         final b = find.text('Hand off now').first;
         await tester.ensureVisible(b);

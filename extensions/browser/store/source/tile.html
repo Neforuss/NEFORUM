@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<style>
+  @font-face { font-family: Display; src: url(fonts/BricolageGrotesque-ExtraBold.ttf); }
+  @font-face { font-family: Body; src: url(fonts/Inter-SemiBold.ttf); }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; overflow: hidden; }
+  body { width: var(--w); height: var(--h); color: #f4efff; font-family: Body, sans-serif;
+    background: radial-gradient(calc(var(--w) * 1.1) calc(var(--h) * 1.3) at 80% 0%, #8a1cff 0%, #5a12c4 35%, #2a0866 70%, #16062F 100%);
+    display: flex; align-items: center; justify-content: center; gap: min(calc(var(--h) * .09), calc(var(--w) * .045)); padding: 0 calc(var(--w) * .06); }
+  img { flex: none; width: min(calc(var(--h) * .42), calc(var(--w) * .25)); height: min(calc(var(--h) * .42), calc(var(--w) * .25)); border-radius: min(calc(var(--h) * .1), calc(var(--w) * .06)); box-shadow: 0 calc(var(--h) * .04) calc(var(--h) * .12) rgba(0,0,0,.35); }
+  .t { display: flex; flex-direction: column; gap: calc(var(--h) * .03); }
+  b { font-family: Display; font-weight: 400; font-size: min(calc(var(--h) * .2), calc(var(--w) * .095)); letter-spacing: .05em; line-height: 1; }
+  span { font-size: min(calc(var(--h) * .072), calc(var(--w) * .037)); color: #FFFF00; line-height: 1.25; }
+</style></head>
+<body>
+  <img src="icon.png" alt="">
+  <div class="t"><b>NEFORUM</b><span>Fills in your posts on<br>every network's own page</span></div>
+  <script>
+    const q = new URLSearchParams(location.search);
+    document.documentElement.style.setProperty('--w', q.get('w') + 'px');
+    document.documentElement.style.setProperty('--h', q.get('h') + 'px');
+  </script>
+</body></html>

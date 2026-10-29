@@ -47,9 +47,12 @@ Guide: https://github.com/Neforuss/NEFORUM/blob/main/docs/browser-extension.md
 
 **Graphics**:
 
-- Store icon: 128 x 128, `extensions/browser/src/icons/icon128.png`.
-- Small promo tile: 440 x 280 (required): the NEFORUM tile and wordmark on the brand purple, from `tool/generate_icons.dart --pack`.
-- Screenshots: 1280 x 800, up to 5 (see the list below).
+All in [extensions/browser/store/images](../extensions/browser/store/images):
+
+- Store icon: 128 x 128, `icon-128.png` (the same as the package's).
+- Small promo tile: 440 x 280 (required), `promo-tile-440x280.png`.
+- Marquee promo tile: 1400 x 560 (optional), `marquee-1400x560.png`.
+- Screenshots: 1280 x 800, the four `screenshot-*.png` (see the list below).
 
 ## Privacy practices tab
 
@@ -83,11 +86,12 @@ If a reviewer asks for a declaration anyway, the conservative answer is **Websit
 
 ## Screenshots (1280 x 800)
 
-1. A Bluesky thread filled in by the extension: every part in its own box, the NEFORUM panel saying "Filled in: text, 2 photos, 3 parts" and "Press Ctrl+Enter".
-2. The popup: paired with NEFORUM, "Fill in this page".
-3. Automatic posting: the panel's 3-second countdown with **Stop** on TikTok Studio.
-4. An art site's upload form (Itaku or ArtStation) with title, tags and rating filled in.
-5. NEFORUM's **Settings > Browser extension**: paired browsers, **Post with Ctrl+Enter**, **Post automatically** with X, LinkedIn and Snapchat left out.
+1. `screenshot-1-popup.png`: the popup, paired with NEFORUM, with "Fill in this page".
+2. `screenshot-2-panel.png`: the extension's panel on a composer it filled in: what went in, **Post now** (Ctrl+Enter), and the thread's other parts to add.
+3. `screenshot-3-handoff.png`: a NEFORUM hand-off, whose **Open** button the extension takes over.
+4. `screenshot-4-settings.png`: NEFORUM's **Settings > Browser extension**: install, pair, **Post with Ctrl+Enter**.
+
+The pictures of the popup and the panel are the extension's own files (popup.html, panel.js) on a neutral demo page, made as described in [extensions/browser/store](../extensions/browser/store).
 
 ## Distribution tab
 

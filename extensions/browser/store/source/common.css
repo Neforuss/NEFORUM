@@ -1,0 +1,26 @@
+@font-face { font-family: Display; src: url(fonts/BricolageGrotesque-ExtraBold.ttf); }
+@font-face { font-family: Body; src: url(fonts/Inter-Regular.ttf); font-weight: 400; }
+@font-face { font-family: Body; src: url(fonts/Inter-SemiBold.ttf); font-weight: 600; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 1280px; height: 800px; overflow: hidden; }
+body {
+  font-family: Body, "Segoe UI", sans-serif; color: #f4efff;
+  background: radial-gradient(1200px 700px at 85% 10%, #5a12c4 0%, #2a0866 45%, #16062F 100%);
+  display: grid; grid-template-columns: 470px 1fr; gap: 40px; padding: 70px 70px 60px;
+}
+.copy { display: flex; flex-direction: column; gap: 22px; padding-top: 30px; }
+.brand { display: flex; align-items: center; gap: 14px; }
+.brand img { width: 56px; height: 56px; border-radius: 14px; }
+.brand b { font-family: Display; font-size: 30px; letter-spacing: .06em; }
+h1 { margin: 0; font-family: Display; font-size: 44px; line-height: 1.08; letter-spacing: -.01em; }
+h1 em { font-style: normal; color: #FFFF00; }
+ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; font-size: 19px; line-height: 1.4; color: #e2d6ff; }
+li::before { content: ""; display: inline-block; width: 9px; height: 9px; margin-right: 12px; border-radius: 2px; background: #FFFF00; transform: translateY(-2px); }
+.stage { position: relative; }
+.window { position: absolute; inset: 0; border-radius: 18px; overflow: hidden; background: #f7f6fb; box-shadow: 0 40px 90px rgba(0,0,0,.45); color: #1c1530; }
+.bar { height: 46px; background: #e9e6f2; display: flex; align-items: center; gap: 10px; padding: 0 16px; }
+.dot { width: 12px; height: 12px; border-radius: 50%; background: #c9c3d9; }
+.url { flex: 1; height: 28px; border-radius: 14px; background: #fff; display: flex; align-items: center; padding: 0 14px; font-size: 14px; color: #6b6380; }
+.ext { width: 28px; height: 28px; border-radius: 7px; background: #fff; display: grid; place-items: center; outline: 2px solid #7D00FF; }
+.ext img { width: 18px; height: 18px; }
+.note { position: absolute; left: 0; right: 0; bottom: -40px; text-align: center; font-size: 13px; color: #b9a8e8; }

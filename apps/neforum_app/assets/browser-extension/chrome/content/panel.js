@@ -27,7 +27,7 @@
     .h span { color: #c9b8ff; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .x { all: unset; cursor: pointer; color: #c9b8ff; font-size: 18px; line-height: 1; padding: 2px 6px; border-radius: 6px; }
     .x:hover, .x:focus-visible { background: #3b1d6e; color: #fff; }
-    .b { padding: 10px 12px 12px; display: grid; gap: 8px; }
+    .b { padding: 10px 12px 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
     .s { color: #e8dcff; }
     .s.ok { color: #b6f5c8; } .s.warn { color: #ffe08a; } .s.err { color: #ffb3b3; }
     ul { margin: 0; padding-left: 18px; color: #d9ccff; } li { margin: 2px 0; }

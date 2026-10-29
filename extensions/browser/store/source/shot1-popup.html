@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="common.css">
+<style>
+  .page { position: absolute; top: 46px; left: 0; right: 0; bottom: 0; padding: 40px; display: grid; gap: 14px; align-content: start; }
+  .line { height: 14px; border-radius: 7px; background: #e4e0ee; }
+  .popup { position: absolute; top: 54px; right: 14px; width: 320px; height: 300px; border: 0; border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.35); transform: scale(1.35); transform-origin: top right; background: #16062F; }
+</style></head>
+<body>
+  <div class="copy">
+    <div class="brand"><img src="icon.png" alt=""><b>NEFORUM</b></div>
+    <h1>Your posts, filled in on <em>every network's own page</em>.</h1>
+    <ul>
+      <li>Pairs with the NEFORUM app on your computer with a 6-digit code</li>
+      <li>Talks only to 127.0.0.1: no servers, no analytics</li>
+      <li>"Fill in this page" works on any site, like your Mastodon server</li>
+    </ul>
+  </div>
+  <div class="stage">
+    <div class="window">
+      <div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><div class="url">mastodon.example/publish</div><div class="ext"><img src="ext/icons/icon32.png" alt=""></div></div>
+      <div class="page"><div class="line" style="width:60%"></div><div class="line" style="width:85%"></div><div class="line" style="width:72%"></div><div class="line" style="width:40%"></div></div>
+      <iframe class="popup" src="ext/popup/popup-shot.html"></iframe>
+    </div>
+  </div>
+</body></html>

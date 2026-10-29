@@ -10,7 +10,7 @@ Submit at <https://addons.mozilla.org/developers/addon/submit/distribution>, cho
 - `strict_min_version` is 121.0 (Manifest V3 with an event-page background).
 - `data_collection_permissions` is `{"required": ["none"]}`: the extension collects and transmits no data. AMO's form shows this as "This add-on does not collect data".
 - CI runs `web-ext lint` (the same linter AMO runs on upload) on every build. A warning that `data_collection_permissions` needs Firefox 140 is expected: older Firefox versions ignore the key, and nothing is collected on any version.
-- Every version number goes to AMO once (listed and unlisted share the numbering). The next change to the extension needs 1.1.2.
+- Every version number goes to AMO once (listed and unlisted share the numbering). The first submission is 1.1.2; the next change to the extension needs 1.1.3.
 
 ## Describe add-on
 
@@ -80,11 +80,12 @@ The manifest asks for these; the reviewer notes below explain them.
 
 ## Screenshots (1280 x 800)
 
-1. A Bluesky thread filled in by the extension: every part in its own box, the NEFORUM panel saying what was filled in and "Press Ctrl+Enter".
-2. The toolbar popup: paired with NEFORUM, "Fill in this page".
-3. Automatic posting: the panel's 3-second countdown with **Stop** on TikTok Studio.
-4. An art site's upload form (Itaku or ArtStation) with title, tags and rating filled in.
-5. NEFORUM's **Settings > Browser extension**: paired browsers, **Post with Ctrl+Enter**, **Post automatically** with X, LinkedIn and Snapchat left out.
+The four `screenshot-*.png` in [extensions/browser/store/images](../extensions/browser/store/images), with these captions:
+
+1. The toolbar popup, paired with NEFORUM.
+2. The panel on a post the extension filled in: you check it, then press Post.
+3. A NEFORUM hand-off: **Open** lets the extension fill in the site.
+4. NEFORUM's **Settings > Browser extension**.
 
 ## Notes to reviewer
 
