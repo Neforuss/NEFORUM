@@ -625,6 +625,8 @@ class _Toolbar extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final c = ref.watch(composerProvider);
     final notifier = ref.read(composerProvider.notifier);
+    final settings = ref.watch(settingsProvider);
+    final everyNetwork = c.cardOnEveryNetwork(settings);
     final s = context.isCompact ? 34.0 : 38.0;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2, vertical: Space.xs + 2),
@@ -646,6 +648,17 @@ class _Toolbar extends ConsumerWidget {
               if (onCw != null) ToolButton(icon: Icons.warning_amber_rounded, tooltip: 'Content warning', onPressed: onCw, active: cwActive, size: s),
               if (onTitle != null) ToolButton(icon: Icons.title_rounded, tooltip: 'Title', onPressed: onTitle, active: titleActive, size: s),
               if (onPoll != null) ToolButton(icon: Icons.poll_outlined, tooltip: pollTooltip, onPressed: onPoll, active: pollActive, size: s),
+              if (settings.textCards && c.media.isEmpty && !c.isArtwork)
+                ToolButton(
+                  key: const Key('text-card-every-network'),
+                  icon: Icons.style_outlined,
+                  tooltip: everyNetwork
+                      ? 'The text card goes to every network that takes images: tap to use it only where an image is needed'
+                      : 'Use the text card on every network',
+                  onPressed: () => notifier.setTextCardEveryNetwork(!everyNetwork),
+                  active: everyNetwork,
+                  size: s,
+                ),
               _VisibilityButton(value: c.visibility, onChanged: notifier.setVisibility),
             ]),
           ),

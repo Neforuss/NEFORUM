@@ -132,6 +132,7 @@ class AppSettings {
     this.advanceHandoffOnReturn = true,
     this.artworkMaturity = ArtworkMaturity.general,
     this.artworkDisallowAiTraining = true,
+    this.textCardEveryNetwork = false, // 1.3: cards
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -190,6 +191,7 @@ class AppSettings {
         advanceHandoffOnReturn: j['advanceHandoffOnReturn'] as bool? ?? true,
         artworkMaturity: ArtworkMaturity.values.asNameMap()[j['artworkMaturity']] ?? ArtworkMaturity.general,
         artworkDisallowAiTraining: j['artworkDisallowAiTraining'] as bool? ?? true,
+        textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
       );
 
   final ThemeMode themeMode;
@@ -353,6 +355,11 @@ class AppSettings {
   final ArtworkMaturity artworkMaturity;
   final bool artworkDisallowAiTraining;
 
+  /// 1.3: cards. New text-only posts start with the same text card on every
+  /// network that takes images, not only on those that need one. Each post
+  /// can change it.
+  final bool textCardEveryNetwork;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -420,6 +427,7 @@ class AppSettings {
     bool? advanceHandoffOnReturn,
     ArtworkMaturity? artworkMaturity,
     bool? artworkDisallowAiTraining,
+    bool? textCardEveryNetwork, // 1.3: cards
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -475,6 +483,7 @@ class AppSettings {
         advanceHandoffOnReturn: advanceHandoffOnReturn ?? this.advanceHandoffOnReturn,
         artworkMaturity: artworkMaturity ?? this.artworkMaturity,
         artworkDisallowAiTraining: artworkDisallowAiTraining ?? this.artworkDisallowAiTraining,
+        textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
       );
 
   Map<String, dynamic> toJson() => {
@@ -531,5 +540,6 @@ class AppSettings {
         'advanceHandoffOnReturn': advanceHandoffOnReturn,
         'artworkMaturity': artworkMaturity.name,
         'artworkDisallowAiTraining': artworkDisallowAiTraining,
+        'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
       };
 }

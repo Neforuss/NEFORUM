@@ -126,21 +126,28 @@ EdgeInsets textCardSafeArea(String platformId) {
   return s.width / s.height < 0.62 ? fullScreenSafeArea(platformId) : EdgeInsets.zero;
 }
 
-/// True when [d] cannot take a text-only post but accepts a JPEG, and the
-/// variant has words and no media: exactly when a card helps. A variant whose
-/// only photo is the card's background ([backgroundMediaId], one of the post's
-/// own photos) qualifies too: the card takes the photo's place.
-bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgroundMediaId}) {
-  // Art sites receive the artist's own images only, never a card of words.
-  if (d.isArtPlatform) return false;
-  final m = d.media;
+/// True when the variant has words and no media and [d] gets a card for it:
+/// [d] cannot take a text-only post but accepts a JPEG, or, with
+/// [everyNetwork] (the same card on every network, 1.3), [d] takes JPEG
+/// images at all. A variant whose only photo is the card's background
+/// ([backgroundMediaId], one of the post's own photos) qualifies too: the
+/// card takes the photo's place.
+bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgroundMediaId, bool everyNetwork = false}) {
   final noMedia = v.media.isEmpty || (backgroundMediaId != null && v.media.length == 1 && v.media.single.id == backgroundMediaId);
-  return m.requiresMedia && m.maxImages > 0 && m.imageMimeTypes.contains('image/jpeg') && noMedia && v.text.trim().isNotEmpty;
+  return takesTextCards(d, everyNetwork: everyNetwork) && noMedia && v.text.trim().isNotEmpty;
 }
 
-/// Whether [d] is a network that gets text cards at all (it needs an image
-/// and takes a JPEG), whatever the post holds.
-bool takesTextCards(PlatformDescriptor d) => d.media.requiresMedia && d.media.maxImages > 0 && d.media.imageMimeTypes.contains('image/jpeg');
+/// Whether [d] is a network that gets text cards at all, whatever the post
+/// holds: it needs an image and takes a JPEG, or, with [everyNetwork], it
+/// takes JPEG images ([acceptsTextCardImages]).
+bool takesTextCards(PlatformDescriptor d, {bool everyNetwork = false}) =>
+    acceptsTextCardImages(d) && (everyNetwork || d.media.requiresMedia);
+
+/// Whether a card can go to [d] at all: it takes JPEG images
+/// ([MediaRules.maxImages] > 0) and is not an art site, which receives the
+/// artist's own images only, never a card of words.
+bool acceptsTextCardImages(PlatformDescriptor d) =>
+    !d.isArtPlatform && d.media.maxImages > 0 && d.media.imageMimeTypes.contains('image/jpeg');
 
 /// The words on the card: the post as written (every part with words in it,
 /// joined with blank lines, as networks without threads receive it) or the

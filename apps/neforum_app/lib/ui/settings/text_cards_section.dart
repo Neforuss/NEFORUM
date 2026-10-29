@@ -72,6 +72,15 @@ class TextCardSettingsSection extends ConsumerWidget {
           value: s.textCards,
           onChanged: (v) => n.update((x) => x.copyWith(textCards: v)),
         ),
+        SettingSwitch(
+          key: const Key('text-card-every-network-setting'),
+          title: 'Use the text card on every network',
+          description: 'Text-only posts get the same card on every network that takes images, at each network\'s usual size, '
+              'with your words as its description. Networks without images get plain text. Each post can change it with the card button '
+              'in the toolbar, and under each card you choose whether your text goes along.',
+          value: s.textCardEveryNetwork,
+          onChanged: !s.textCards ? null : (v) => n.update((x) => x.copyWith(textCardEveryNetwork: v)),
+        ),
         SettingRow(
           title: 'NEFORUM signature',
           description: 'The purple rule, mark and name on the card. Turn it off for a plain card with just your words and handle. '

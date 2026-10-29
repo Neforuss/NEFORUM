@@ -388,6 +388,7 @@ class _Visual extends ConsumerWidget {
               alignment: alignment,
               showsHandle: showsHandle,
               background: cardBackground,
+              withText: composer.textCardWithText[id] ?? true,
             ),
           ),
         ],
@@ -622,6 +623,7 @@ class _CardStylePicker extends ConsumerStatefulWidget {
     required this.alignment,
     required this.showsHandle,
     required this.background,
+    required this.withText,
   });
   final TextCardTheme current;
   final TextCardFont font;
@@ -632,6 +634,9 @@ class _CardStylePicker extends ConsumerStatefulWidget {
   final TextCardAlignment alignment;
   final bool showsHandle;
   final TextCardBackground? background;
+
+  /// The post's text goes along with the card on this network.
+  final bool withText;
 
   @override
   ConsumerState<_CardStylePicker> createState() => _CardStylePickerState();
@@ -807,6 +812,15 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
                     on ? x.textCardHandleHiddenPlatforms.where((p) => p != id).toList() : {...x.textCardHandleHiddenPlatforms, id}.toList(),
               ));
         },
+      ),
+      pill(
+        selected: widget.withText,
+        label: 'Post text too',
+        tooltip: widget.withText
+            ? 'Your text goes out with the card on ${widget.platform.name}: tap to post the card alone (its description keeps your words)'
+            : 'Only the card goes to ${widget.platform.name}: tap to post your text with it',
+        leading: Icon(widget.withText ? Icons.notes_rounded : Icons.image_outlined, size: 14, color: widget.withText ? nf.accent : nf.textFaint),
+        onTap: () => ref.read(composerProvider.notifier).setTextCardWithText(id, !widget.withText),
       ),
       pill(
         selected: background != null,

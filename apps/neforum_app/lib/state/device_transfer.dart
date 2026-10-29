@@ -51,6 +51,7 @@ const Set<String> kExportableSettings = {
   'advanceHandoffOnReturn',
   'artworkMaturity',
   'artworkDisallowAiTraining',
+  'textCardEveryNetwork', // 1.3: cards
 };
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {
