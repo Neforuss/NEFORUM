@@ -15,3 +15,11 @@ Future<int> mediaFileLength(String path) async {
     return 0;
   }
 }
+
+Future<void> deleteMediaFile(String path) async {
+  try {
+    await File(path).delete();
+  } on FileSystemException {
+    // Already gone.
+  }
+}

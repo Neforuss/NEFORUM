@@ -16,6 +16,7 @@ import 'fitted_photos.dart';
 import 'providers.dart';
 import 'scheduler.dart';
 import 'settings.dart';
+import 'shrunk_videos.dart';
 import 'text_cards.dart';
 
 const _uuid = Uuid();
@@ -592,8 +593,19 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
       issues.add(ValidationIssue.info('media.caption_video',
           'Your caption is set in a block above the video for ${d.name}; NEFORUM makes that copy when you save or publish', field: 'media'));
     }
+    // 1.3: video. Attached files carry no duration: the compositor reads it,
+    // so a video over a network's length limit is caught before posting.
+    final hasVideo = variant.media.any((m) => m.isVideo);
+    if (hasVideo && variant.media.any((m) => m.isVideo && m.durationMs == null)) {
+      variant = variant.copyWith(media: [
+        for (final m in variant.media)
+          if (m.isVideo && m.durationMs == null) withProbedDuration(m, ref.watch(videoProbeProvider(m.path)).value) else m,
+      ]);
+    }
+    final canShrink = hasVideo && (ref.watch(videoShrinkingSupportedProvider).value ?? false);
     try {
-      issues.addAll(adapter.validate(variant, a));
+      issues.addAll(withVideoLimitAdvice(adapter.validate(variant, a), variant, d,
+          shrink: canShrink && settings.shrinkOversizedVideos, canShrink: canShrink));
     } on Object catch (e) {
       issues.add(ValidationIssue.warning('validate.crash', 'Could not validate: $e'));
     }
@@ -825,6 +837,11 @@ class PostActions {
     await s.posts.upsert(post);
     final run = ref.read(publishRunProvider.notifier);
     run.start(postId, accountIds ?? post.targets.map((t) => t.accountId));
+    // 1.3: video. Videos too big for a network get their smaller copy now,
+    // with its progress on that network's row.
+    post = await attachShrunkVideos(s, post, ref.read(settingsProvider),
+        onProgress: run.progress, cancellation: signal, onlyAccountIds: accountIds);
+    await s.posts.upsert(post);
     final done = await s.publisher().publish(
           postId,
           interactive: true,

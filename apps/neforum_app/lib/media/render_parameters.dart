@@ -14,6 +14,11 @@ abstract final class RenderKind {
   /// A photo picked only for the background of the text cards; never posted
   /// by itself.
   static const String textCardBackground = 'textCardBackground';
+
+  // 1.3: video
+  /// A video re-encoded to fit a network's size limit
+  /// (lib/state/shrunk_videos.dart).
+  static const String shrunkVideo = 'shrunkVideo';
 }
 
 /// The kind of generated file [m] is ([RenderKind]); null for user files and
