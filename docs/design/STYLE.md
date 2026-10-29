@@ -66,7 +66,19 @@ Rules:
 - Hover states on every clickable thing on desktop (`NfCard(onTap:)`,
   `ToolButton`, themed buttons already do this). Cursor `click`.
 - Animate state changes with `AnimatedSwitcher`/`AnimatedContainer` using
-  `Motion` durations. No animation longer than `Motion.slow`.
+  `Motion` durations. No animation longer than `Motion.slow`. Pass them
+  through `context.motion(Motion.fast)`: with the system's reduce motion
+  setting (`context.reduceMotion`) they become instant, and decorative
+  motion (press shrink, looping marks) does not run at all.
+- Colors: pick an existing token; `ColorWheel(color:, onChanged:)`
+  (`lib/widgets/color_wheel.dart`) when the user picks a color themselves.
+- Background picture (Settings > Appearance > Background): pages leave
+  their background transparent when `BackdropScope.activeOf(context)`;
+  cards keep their surface. The scrim keeps `text` and `textMuted`
+  readable, so other text colors right on the page (an accent eyebrow) go
+  through `legibleOverBackdrop`.
+- High contrast (the system setting) swaps in `NfColors.withHighContrast()`
+  by itself; use the tokens and it follows.
 
 ## Layout
 

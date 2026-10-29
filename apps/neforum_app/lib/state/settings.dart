@@ -27,6 +27,27 @@ double validTextScale(Object? scale) {
   return scale.toDouble().clamp(0.85, 1.5);
 }
 
+/// The strongest blur of the background picture (Gaussian sigma in logical
+/// pixels).
+const double kMaxBackgroundBlur = 40;
+
+/// The background picture's dim when none is stored.
+const double kDefaultBackgroundDim = 0.4;
+
+/// A stored background blur that can be used: 0 to [kMaxBackgroundBlur], 0
+/// otherwise.
+double validBackgroundBlur(Object? blur) {
+  if (blur is! num || !blur.isFinite) return 0;
+  return blur.toDouble().clamp(0, kMaxBackgroundBlur);
+}
+
+/// A stored background dim that can be used: 0 to 1, [kDefaultBackgroundDim]
+/// otherwise.
+double validBackgroundDim(Object? dim) {
+  if (dim is! num || !dim.isFinite) return kDefaultBackgroundDim;
+  return dim.toDouble().clamp(0, 1);
+}
+
 /// What happens to a post once every network has it (published, handed off
 /// or skipped).
 enum PublishedPostRetention {
@@ -132,6 +153,10 @@ class AppSettings {
     this.advanceHandoffOnReturn = true,
     this.artworkMaturity = ArtworkMaturity.general,
     this.artworkDisallowAiTraining = true,
+    // 1.3: appearance
+    this.backgroundImagePath,
+    this.backgroundBlur = 0,
+    this.backgroundDim = kDefaultBackgroundDim,
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -190,6 +215,10 @@ class AppSettings {
         advanceHandoffOnReturn: j['advanceHandoffOnReturn'] as bool? ?? true,
         artworkMaturity: ArtworkMaturity.values.asNameMap()[j['artworkMaturity']] ?? ArtworkMaturity.general,
         artworkDisallowAiTraining: j['artworkDisallowAiTraining'] as bool? ?? true,
+        // 1.3: appearance
+        backgroundImagePath: j['backgroundImagePath'] as String?,
+        backgroundBlur: validBackgroundBlur(j['backgroundBlur']),
+        backgroundDim: validBackgroundDim(j['backgroundDim']),
       );
 
   final ThemeMode themeMode;
@@ -353,6 +382,22 @@ class AppSettings {
   final ArtworkMaturity artworkMaturity;
   final bool artworkDisallowAiTraining;
 
+  // 1.3: appearance
+
+  /// The picture behind the pages (Settings > Appearance > Background), a
+  /// copy in NEFORUM's data folder, or `null` for none. Device-only, like
+  /// [uiZoom]: the file is on this device.
+  final String? backgroundImagePath;
+
+  /// How much the background picture is blurred: 0 (sharp) to
+  /// [kMaxBackgroundBlur]. Device-only.
+  final double backgroundBlur;
+
+  /// How strongly the theme's background color covers the picture, 0 to 1.
+  /// NEFORUM covers it more when text needs it to stay readable.
+  /// Device-only.
+  final double backgroundDim;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -420,6 +465,11 @@ class AppSettings {
     bool? advanceHandoffOnReturn,
     ArtworkMaturity? artworkMaturity,
     bool? artworkDisallowAiTraining,
+    // 1.3: appearance
+    String? backgroundImagePath,
+    bool clearBackgroundImage = false,
+    double? backgroundBlur,
+    double? backgroundDim,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -475,6 +525,10 @@ class AppSettings {
         advanceHandoffOnReturn: advanceHandoffOnReturn ?? this.advanceHandoffOnReturn,
         artworkMaturity: artworkMaturity ?? this.artworkMaturity,
         artworkDisallowAiTraining: artworkDisallowAiTraining ?? this.artworkDisallowAiTraining,
+        // 1.3: appearance
+        backgroundImagePath: clearBackgroundImage ? null : (backgroundImagePath ?? this.backgroundImagePath),
+        backgroundBlur: backgroundBlur ?? this.backgroundBlur,
+        backgroundDim: backgroundDim ?? this.backgroundDim,
       );
 
   Map<String, dynamic> toJson() => {
@@ -531,5 +585,9 @@ class AppSettings {
         'advanceHandoffOnReturn': advanceHandoffOnReturn,
         'artworkMaturity': artworkMaturity.name,
         'artworkDisallowAiTraining': artworkDisallowAiTraining,
+        // 1.3: appearance
+        if (backgroundImagePath != null) 'backgroundImagePath': backgroundImagePath,
+        if (backgroundBlur != 0) 'backgroundBlur': backgroundBlur,
+        if (backgroundDim != kDefaultBackgroundDim) 'backgroundDim': backgroundDim,
       };
 }

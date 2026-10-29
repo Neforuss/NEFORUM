@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../brand/neforum_logo.dart';
+import '../theme/backdrop.dart';
 import '../theme/tokens.dart';
 
 /// Big editorial page title with optional subtitle and actions on the right.
@@ -18,12 +19,14 @@ class PageHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final nf = context.nf;
     final compact = context.isCompact;
+    // Over a background picture, a shade of the accent that stays readable.
+    final eyebrowColor = BackdropScope.activeOf(context) ? legibleOverBackdrop(nf.accent, nf) : nf.accent;
     final titleBlock = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
         if (eyebrow != null) ...[
-          Text(eyebrow!.toUpperCase(), style: context.text.labelSmall?.copyWith(color: nf.accent, letterSpacing: 1.6)),
+          Text(eyebrow!.toUpperCase(), style: context.text.labelSmall?.copyWith(color: eyebrowColor, letterSpacing: 1.6)),
           const SizedBox(height: Space.xs + 2),
         ],
         Text(title, style: compact ? context.text.headlineLarge : context.text.displaySmall),

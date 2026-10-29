@@ -22,6 +22,7 @@ import '../handoff/handoff_sheet.dart';
 import '../root.dart';
 import '../router.dart';
 import '../settings/sync_section.dart';
+import 'app_backdrop.dart';
 import 'paste_code_dialog.dart';
 
 /// Adaptive frame around the five sections: sidebar on wide windows, an
@@ -140,6 +141,11 @@ class _AppShellState extends ConsumerState<AppShell> {
     final attention = ref.watch(needsAttentionProvider).length;
     final badges = <AppSection, int>{AppSection.queue: scheduled, AppSection.activity: attention};
     final current = AppSection.values[widget.shell.currentIndex];
+    // Settings > Appearance > Background: the picture shows through the
+    // page background; the navigation and the cards keep their colors.
+    final background = ref.watch(settingsProvider.select((s) => (path: s.backgroundImagePath, blur: s.backgroundBlur, dim: s.backgroundDim)));
+    final page = background.path == null ? nf.bg : Colors.transparent;
+    Widget framed(Widget scaffold) => AppBackdrop(imagePath: background.path, blur: background.blur, dim: background.dim, child: scaffold);
 
     final body = Column(children: [
       if (demo) const _DemoBanner(),
@@ -147,8 +153,8 @@ class _AppShellState extends ConsumerState<AppShell> {
     ]);
 
     if (w < Breakpoints.compact) {
-      return Scaffold(
-        backgroundColor: nf.bg,
+      return framed(Scaffold(
+        backgroundColor: page,
         body: SafeArea(bottom: false, child: body),
         bottomNavigationBar: Container(
           decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf, top: true)),
@@ -166,12 +172,12 @@ class _AppShellState extends ConsumerState<AppShell> {
             ],
           ),
         ),
-      );
+      ));
     }
 
     final expanded = w >= Breakpoints.expanded;
-    return Scaffold(
-      backgroundColor: nf.bg,
+    return framed(Scaffold(
+      backgroundColor: page,
       body: SafeArea(
         child: Row(children: [
           expanded
@@ -180,7 +186,7 @@ class _AppShellState extends ConsumerState<AppShell> {
           Expanded(child: body),
         ]),
       ),
-    );
+    ));
   }
 
   Widget _badged(Widget icon, int count, bool urgent) => _ChromeBadge(count: count, urgent: urgent, child: icon);
@@ -302,7 +308,7 @@ class _NavItemState extends State<_NavItem> {
           selected: sel,
           label: widget.section.label,
           child: AnimatedContainer(
-            duration: Motion.fast,
+            duration: context.motion(Motion.fast),
             height: context.denseLayout ? 38 : 44,
             padding: const EdgeInsets.symmetric(horizontal: Space.md),
             decoration: BoxDecoration(
@@ -311,7 +317,7 @@ class _NavItemState extends State<_NavItem> {
             ),
             child: Row(children: [
               AnimatedContainer(
-                duration: Motion.fast,
+                duration: context.motion(Motion.fast),
                 width: 3,
                 height: sel ? 18 : 0,
                 margin: const EdgeInsets.only(right: Space.sm),
@@ -448,7 +454,7 @@ class _RailItem extends StatelessWidget {
           width: 72,
           child: Column(children: [
             AnimatedContainer(
-              duration: Motion.fast,
+              duration: context.motion(Motion.fast),
               width: 52,
               height: 32,
               decoration: BoxDecoration(color: selected ? nf.chromeAccent : Colors.transparent, borderRadius: Radii.rPill),
@@ -493,6 +499,8 @@ class _DemoBanner extends StatelessWidget {
         if (!Env.isWeb)
           TextButton(
             onPressed: () => NeforumRoot.of(context).setDemo(false),
+            // The accent lacks contrast on the dark theme's amber tint.
+            style: TextButton.styleFrom(foregroundColor: nf.text),
             child: const Text('Leave demo'),
           ),
       ]),
