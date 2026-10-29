@@ -37,7 +37,24 @@ Uint8List embedId3v24Tag(Uint8List mp3, AudioTags tags, {Uint8List? cover, Strin
     start = next;
   }
   final tag = buildId3v24Tag(tags, cover: cover, coverMimeType: coverMimeType);
-  return Uint8List.fromList([...tag, ...Uint8List.sublistView(mp3, start)]);
+  return _joined([tag, Uint8List.sublistView(mp3, start)]);
+}
+
+/// [parts] one after another in a new list of exactly their length, each
+/// copied once. A sound file is never spread into a growable `List<int>`,
+/// which takes eight bytes for each of its bytes.
+Uint8List _joined(List<List<int>> parts) {
+  var total = 0;
+  for (final p in parts) {
+    total += p.length;
+  }
+  final out = Uint8List(total);
+  var at = 0;
+  for (final p in parts) {
+    out.setRange(at, at + p.length, p);
+    at += p.length;
+  }
+  return out;
 }
 
 /// An ID3v2.4.0 tag (id3.org "ID3 tag version 2.4.0 - Main Structure" and
@@ -83,10 +100,10 @@ Uint8List buildId3v24Tag(AudioTags tags, {Uint8List? cover, String? coverMimeTyp
   if (cover != null && cover.isNotEmpty) {
     final mime = coverMimeType ?? 'image/jpeg';
     // Encoding, MIME type, NUL, picture type 3 (front cover), empty description.
-    frames.add(_id3Frame('APIC', [0, ...latin1.encode(mime), 0, 3, 0, ...cover]));
+    frames.add(_id3Frame('APIC', _joined([[0, ...latin1.encode(mime), 0, 3, 0], cover])));
   }
   final body = frames.takeBytes();
-  return Uint8List.fromList([0x49, 0x44, 0x33, 4, 0, 0, ..._syncsafeBytes(body.length), ...body]);
+  return _joined([[0x49, 0x44, 0x33, 4, 0, 0, ..._syncsafeBytes(body.length)], body]);
 }
 
 /// [s] as ID3 text: (encoding byte, bytes, terminator). ISO-8859-1 (0) when
@@ -96,7 +113,7 @@ Uint8List buildId3v24Tag(AudioTags tags, {Uint8List? cover, String? coverMimeTyp
   return (1, [0xFF, 0xFE, for (final u in s.codeUnits) ...[u & 0xFF, u >> 8]], const [0, 0]);
 }
 
-List<int> _id3Frame(String id, List<int> content) => [...latin1.encode(id), ..._syncsafeBytes(content.length), 0, 0, ...content];
+Uint8List _id3Frame(String id, List<int> content) => _joined([[...latin1.encode(id), ..._syncsafeBytes(content.length), 0, 0], content]);
 
 List<int> _syncsafeBytes(int n) => [(n >> 21) & 0x7F, (n >> 14) & 0x7F, (n >> 7) & 0x7F, n & 0x7F];
 
@@ -136,11 +153,7 @@ Uint8List embedMp4Metadata(Uint8List m4a, AudioTags tags, {Uint8List? cover, Str
   final delta = newMoov.length - (moov.end - moov.start);
   // Chunk offsets are absolute: those pointing past the old moov move.
   if (delta != 0) _shiftChunkOffsets(newMoov, moov.start, delta);
-  return Uint8List.fromList([
-    ...Uint8List.sublistView(m4a, 0, moov.start),
-    ...newMoov,
-    ...Uint8List.sublistView(m4a, moov.end),
-  ]);
+  return _joined([Uint8List.sublistView(m4a, 0, moov.start), newMoov, Uint8List.sublistView(m4a, moov.end)]);
 }
 
 Uint8List _mp4Meta(AudioTags tags, {Uint8List? cover, String? coverMimeType}) {
@@ -176,17 +189,17 @@ Uint8List _mp4Meta(AudioTags tags, {Uint8List? cover, String? coverMimeType}) {
   // reserved field iTunes writes, two zero words, and an empty name.
   final hdlr = _box('hdlr', [0, 0, 0, 0, 0, 0, 0, 0, ...latin1.encode('mdir'), ...latin1.encode('appl'), 0, 0, 0, 0, 0, 0, 0, 0, 0]);
   final ilst = _box('ilst', items.takeBytes());
-  return _box('meta', [0, 0, 0, 0, ...hdlr, ...ilst]);
+  return _box('meta', _joined([const [0, 0, 0, 0], hdlr, ilst]));
 }
 
 /// An `ilst` item: a box named [type] around a `data` box (type indicator,
 /// locale 0, value).
 Uint8List _item(String type, int dataType, List<int> value) =>
-    _box(type, _box('data', [0, dataType >> 16 & 0xFF, dataType >> 8 & 0xFF, dataType & 0xFF, 0, 0, 0, 0, ...value]));
+    _box(type, _box('data', _joined([[0, dataType >> 16 & 0xFF, dataType >> 8 & 0xFF, dataType & 0xFF, 0, 0, 0, 0], value])));
 
 Uint8List _box(String type, List<int> body) {
   final size = body.length + 8;
-  return Uint8List.fromList([size >> 24 & 0xFF, size >> 16 & 0xFF, size >> 8 & 0xFF, size & 0xFF, ...latin1.encode(type), ...body]);
+  return _joined([[size >> 24 & 0xFF, size >> 16 & 0xFF, size >> 8 & 0xFF, size & 0xFF, ...latin1.encode(type)], body]);
 }
 
 class _Mp4Box {
