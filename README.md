@@ -5,7 +5,7 @@
 <h1 align="center">NEFORUM</h1>
 
 <p align="center"><strong>One app, one message, every platform.</strong><br>
-A free and open-source cross-poster for Android, iPhone and iPad, macOS and Windows.</p>
+A free and open-source cross-poster for Android, iPhone and iPad, macOS, Windows and Linux.</p>
 
 <p align="center">
   <img src="docs/screenshots/compose-dark.png" alt="The NEFORUM composer: one post, live previews for every network" width="900">
@@ -54,6 +54,20 @@ Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks h
 **Caption on photo** (Instagram and TikTok, off by default): the caption is written on the first photo in the network's own font (TikTok Sans, bundled; Instagram Sans when installed), on a dark label placed clear of the app's buttons. The caption editor (tap the pill under the preview, or Settings → Text cards for the default) changes the words on the photo, puts them at the top, middle or bottom, or in a **block above the photo** (the network's whole frame with the photo scaled to fit below), and sets the size, colours, background, alignment and font, with a live preview. A video gets the caption in a block above it: NEFORUM makes a copy of the video in the network's 9:16 frame on your device (Windows, macOS, Android, iPhone and iPad), keeping its sound; the original goes out unchanged where that is not possible.
 
 **Sound files** (MP3, M4A, WAV, FLAC, AIFF, Ogg, Opus): a voice note or a track goes as playable sound to Telegram, Discord, Matrix, Mastodon, Misskey, WordPress, Ghost and Odysee, as a still-picture video (your first photo or a title card) to X, Bluesky, Instagram, TikTok, YouTube and the other video-only networks, and as a link on your media host to Reddit, Lemmy, Nostr and the blogs. **Standard** sends one MP3 (M4A on phones and Macs); **Lossless** sends your original WAV, FLAC, AIFF or Apple Lossless file untouched where the network keeps it. See [docs/audio.md](docs/audio.md).
+
+**Documents into threads** (PDF, Word .docx, EPUB, Markdown, text, HTML): drop a document on the composer and NEFORUM reads it on your device, in reading order (columns, running headers and page numbers handled), and turns it into a draft thread, each picture in the part next to the text it sits beside, with its caption as alt text. You check and edit it; nothing is posted until you say so.
+
+**Stories and posts:** on Instagram and Facebook Pages, choose **Post**, **Story** or **Post + Story** per network. A story gets its own 9:16 copies (and a full-screen text card for words only), and both are tracked together.
+
+**A time per network:** schedule X for 9:00 and Instagram for 18:00 from the same post (**Different time per network** in the schedule sheet). The queue shows a post as partly published until every network has it.
+
+**Videos that are too big** for a network are flagged in the composer with the network and the size over. Turn on **Shrink videos that are too big for a network** (Settings → Posting, off by default) and NEFORUM makes one smaller copy per size limit on your device, just under each network's own limit, while networks where the video fits get the original. Video thumbnails show a frame from the video.
+
+**Fonts and cards:** captions on Instagram and TikTok can use any font installed on your device, or a font file you import. A card's background photo can be moved and zoomed, turned, adjusted (brightness, contrast, saturation, black and white), tinted, given a gradient or vignette, with the words at the top, middle or bottom. **Use the text card on every network** sends the same card to every network that takes images, with or without the text alongside.
+
+**Make it yours:** pick any accent colour on the colour wheel, put a picture of your own behind the pages (sharp or blurred, dimmed as much as text needs to stay readable), and NEFORUM follows your system's high-contrast and reduce-motion settings.
+
+**Updates, privately:** NEFORUM asks once whether to look for new versions. If you say yes, it downloads one public file from neforus.com at most once a day and compares versions on your device; it sends no version, device or ID. It never installs anything by itself.
 
 <p align="center">
   <img src="docs/screenshots/differentiation-dark.png" alt="DIFFERENTIATION: one version per network, side by side" width="900">
@@ -137,17 +151,18 @@ Download from **[neforus.com/neforum](https://neforus.com/neforum/)** or from th
 
 | Platform | Download | How it installs |
 |---|---|---|
-| Windows | `NEFORUM-Setup-1.2.3.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
-| macOS | `NEFORUM-macOS.dmg` | Open it and drag NEFORUM onto Applications; it then shows up in Launchpad and Spotlight. Not signed by Apple yet, so the first time: right-click NEFORUM in Applications, then Open. macOS 10.15 or newer. (`neforum-macos.zip` has the same app. `NEFORUM-macOS-apple-silicon.dmg` and `NEFORUM-macOS-intel.dmg` are smaller downloads for one kind of Mac.) |
+| Windows | `NEFORUM-Setup-1.3.0.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
+| macOS | `NEFORUM-macOS.dmg` | Open it and drag NEFORUM onto Applications; it then shows up in Launchpad and Spotlight. Not signed by Apple, so the first time macOS says it can't check it: open System Settings → Privacy & Security, scroll down and click **Open Anyway** (on macOS 14 and older, right-click NEFORUM in Applications, then Open). macOS 10.15 or newer. (`neforum-macos.zip` has the same app. `NEFORUM-macOS-apple-silicon.dmg` and `NEFORUM-macOS-intel.dmg` are smaller downloads for one kind of Mac.) |
 | Android | `neforum-android.apk` | Allow installing from your browser or file manager; NEFORUM then sits in the app drawer like any app. Android 7 or newer. Smaller downloads for one kind of phone: `neforum-android-arm64.apk` (nearly every phone), `neforum-android-armv7.apk` (older 32-bit phones), `neforum-android-x86_64.apk` (Chromebooks and emulators). |
 | iPhone and iPad | `neforum-ios-unsigned.ipa` | Sign it with your own Apple ID (Xcode, AltStore or Sideloadly), or build from source in Xcode. |
+| Linux | `NEFORUM-x86_64.AppImage` | Make it executable (`chmod +x`) and run it, on most distributions from Ubuntu 22.04 on. Or `neforum-linux-x64.tar.gz`: unpack and run `NEFORUM`. ARM64 builds are in the release too. Needs GTK 3 and WebKitGTK 4.1, and a keyring (GNOME Keyring, KWallet or KeePassXC) for your keys. |
 
 The browser extension for Chrome and Firefox comes with the app (Settings → Browser extension → Show extension files) and is also in each release (`neforum-extension-chrome-*.zip`, `neforum-extension-firefox-*.zip`).
 
-Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.2.3`) publishes them as a release.
+Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.3.0`) publishes them as a release, with a build attestation for every file (`gh attestation verify <file> --repo Neforuss/NEFORUM`) and `SHA256SUMS`. Code signing is set up through free routes only; see [docs/signing.md](docs/signing.md).
 ## Build from source
 
-You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, or Visual Studio 2022 with "Desktop development with C++" for Windows.
+You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, Visual Studio 2022 with "Desktop development with C++" for Windows, or for Linux clang, CMake, Ninja, pkg-config and the GTK 3, libsecret and WebKitGTK 4.1 development packages.
 
 ```bash
 git clone https://github.com/Neforuss/NEFORUM.git
@@ -181,6 +196,10 @@ flutter build macos --release
 
 ```bash
 flutter build ios --release --dart-define=NEFORUM_MOBILE=true
+```
+
+```bash
+flutter build linux --release
 ```
 
 ## Project layout
