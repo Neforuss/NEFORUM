@@ -15,7 +15,8 @@ import 'settings.dart';
 
 /// Settings that travel. An explicit allowlist: device-only ones (start at
 /// sign-in, tray, browser extension, media hosts which travel separately,
-/// first-run state, a pending Move) stay where they are.
+/// first-run state, a pending Move, zoom and text size, the background
+/// picture with its blur and dim) stay where they are.
 const Set<String> kExportableSettings = {
   'themeMode',
   'accent',

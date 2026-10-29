@@ -471,6 +471,53 @@ class NfColors extends ThemeExtension<NfColors> {
     );
   }
 
+  /// Stronger text and borders, for the system's high contrast setting:
+  /// muted text reaches WCAG AAA (7:1) on the page and on cards, faint text
+  /// AA (4.5:1), and borders 3:1, so every edge of a control shows. Status
+  /// colors reach AA on their own tints (the pills).
+  NfColors withHighContrast() => NfColors(
+        bg: bg,
+        surface: surface,
+        surfaceRaised: surfaceRaised,
+        surfaceSunken: surfaceSunken,
+        surfaceHover: surfaceHover,
+        border: isDark ? const Color(0xFF7A7094) : const Color(0xFF857D99),
+        borderStrong: isDark ? const Color(0xFFA49BBD) : const Color(0xFF5B5270),
+        text: isDark ? const Color(0xFFFFFFFF) : const Color(0xFF0B0418),
+        textMuted: isDark ? const Color(0xFFDCD6E8) : const Color(0xFF3A3150),
+        textFaint: isDark ? const Color(0xFFB4ACC8) : const Color(0xFF574E6B),
+        accent: accent,
+        accentFill: accentFill,
+        accentSoft: accentSoft,
+        onAccent: onAccent,
+        highlight: highlight,
+        onHighlight: onHighlight,
+        chrome: chrome,
+        chromeRaised: chromeRaised,
+        onChrome: onChrome,
+        onChromeMuted: Color.lerp(onChromeMuted, onChrome, 0.5)!,
+        chromeBorder: chromeBorder.a == 0 ? chromeBorder : (isDark ? const Color(0xFF7A7094) : const Color(0xFF857D99)),
+        chromeAccent: chromeAccent,
+        onChromeAccent: onChromeAccent,
+        chromeSelected: chromeSelected,
+        chromeUrgent: chromeUrgent,
+        onChromeUrgent: onChromeUrgent,
+        chromeActionGradient: chromeActionGradient,
+        // The dark theme's status colors already pass on their tints.
+        success: isDark ? success : const Color(0xFF0A7A4B),
+        successSoft: successSoft,
+        warning: isDark ? warning : const Color(0xFF8F5A00),
+        warningSoft: warningSoft,
+        danger: isDark ? danger : const Color(0xFFB3261E),
+        dangerSoft: dangerSoft,
+        info: isDark ? info : const Color(0xFF1E5BB8),
+        infoSoft: infoSoft,
+        shadow: shadow,
+        scrim: scrim,
+        brandGradient: brandGradient,
+        isDark: isDark,
+      );
+
   NfColors _withChrome({
     required Color chrome,
     required Color chromeRaised,
@@ -615,6 +662,14 @@ extension NfThemeX on BuildContext {
 
   /// The compact density (Settings → Appearance → Density): tighter spacing.
   bool get denseLayout => Theme.of(this).visualDensity == VisualDensity.compact;
+
+  /// The system asks for less motion (Android "Remove animations", iOS and
+  /// macOS "Reduce motion", Windows "Animation effects" off): no page
+  /// transitions and no decorative animation.
+  bool get reduceMotion => MediaQuery.maybeDisableAnimationsOf(this) ?? false;
+
+  /// [duration], or none when the system asks for less motion.
+  Duration motion(Duration duration) => reduceMotion ? Duration.zero : duration;
 }
 
 /// Linear interpolation helper for animated values.

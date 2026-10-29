@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../theme/backdrop.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
 import '../activity/time_format.dart';
@@ -301,7 +302,11 @@ class _WriteColumn extends ConsumerWidget {
             child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('COMPOSE', style: context.text.labelSmall?.copyWith(color: nf.accent, letterSpacing: 1.6)),
+                  Text('COMPOSE', style: context.text.labelSmall?.copyWith(
+                    // Over a background picture, a shade of the accent that stays readable.
+                    color: BackdropScope.activeOf(context) ? legibleOverBackdrop(nf.accent, nf) : nf.accent,
+                    letterSpacing: 1.6,
+                  )),
                   const SizedBox(height: Space.xs + 2),
                   Text(title, style: compact ? context.text.headlineLarge : context.text.displaySmall),
                 ]),

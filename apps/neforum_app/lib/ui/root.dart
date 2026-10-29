@@ -70,34 +70,49 @@ class NeforumApp extends ConsumerWidget {
     final settings = ref.watch(settingsProvider);
     final router = ref.watch(routerProvider);
     ref.listen(settingsProvider.select((s) => s.minimizeToTray), (_, next) => DesktopIntegration.instance.setCloseToTray(next));
-    ThemeData theme(Brightness brightness) => buildTheme(
+    ThemeData theme(Brightness brightness, {bool highContrast = false}) => buildTheme(
           brightness,
           settings.accent,
           customAccent: settings.customAccentColor,
           corners: settings.cornerStyle,
           chrome: settings.navigationChrome,
           density: settings.interfaceDensity,
+          highContrast: highContrast,
         );
+    // Above MaterialApp there is no MediaQuery yet: the platform's own flag.
+    final reduceMotion = WidgetsBinding.instance.platformDispatcher.accessibilityFeatures.disableAnimations;
     return MaterialApp.router(
       title: 'NEFORUM',
       debugShowCheckedModeBanner: false,
       theme: theme(Brightness.light),
       darkTheme: theme(Brightness.dark),
+      // The system's high contrast setting (MediaQuery.highContrast).
+      highContrastTheme: theme(Brightness.light, highContrast: true),
+      highContrastDarkTheme: theme(Brightness.dark, highContrast: true),
       themeMode: settings.themeMode,
-      themeAnimationDuration: Motion.medium,
+      themeAnimationDuration: reduceMotion ? Duration.zero : Motion.medium,
       routerConfig: router,
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
       supportedLocales: const [Locale('en')],
-      builder: (context, child) => UiZoom(
-        enabled: Env.isDesktop,
-        zoom: settings.uiZoom,
-        onChanged: (z) => ref.read(settingsProvider.notifier).update((x) => x.copyWith(uiZoom: z)),
-        // Phones and tablets: the text size from Settings > Appearance.
-        child: TextScale(
-          scale: Env.isMobile ? settings.mobileTextScale : 1,
-          child: _RenderWarningBanner(child: child ?? const SizedBox.shrink()),
-        ),
-      ),
+      builder: (context, child) {
+        final current = Theme.of(context);
+        return Theme(
+          // The system asks for less motion: pages appear without a
+          // transition. Always a Theme here, so turning it on or off keeps
+          // the pages' state.
+          data: context.reduceMotion ? withReducedMotion(current) : current,
+          child: UiZoom(
+            enabled: Env.isDesktop,
+            zoom: settings.uiZoom,
+            onChanged: (z) => ref.read(settingsProvider.notifier).update((x) => x.copyWith(uiZoom: z)),
+            // Phones and tablets: the text size from Settings > Appearance.
+            child: TextScale(
+              scale: Env.isMobile ? settings.mobileTextScale : 1,
+              child: _RenderWarningBanner(child: child ?? const SizedBox.shrink()),
+            ),
+          ),
+        );
+      },
     );
   }
 }

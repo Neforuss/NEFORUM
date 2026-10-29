@@ -1,12 +1,18 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
+import '../../platform/background_images.dart';
 import '../../platform/env.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart';
 import '../../theme/tokens.dart';
 import '../../theme/zoom.dart';
+import '../../widgets/color_wheel.dart';
+import '../../widgets/layout.dart' show showToast;
+import '../shell/app_backdrop.dart' show isDecodablePicture;
 import 'setting_row.dart';
 
 class AppearanceSettingsSection extends ConsumerWidget {
@@ -96,6 +102,7 @@ class AppearanceSettingsSection extends ConsumerWidget {
           showSelectedIcon: false,
         ),
       ),
+      const _Background(),
       if (Env.isMobile) const _TextSize(),
       SettingSwitch(
         title: 'Compact previews',
@@ -196,10 +203,12 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
     super.dispose();
   }
 
+  /// A swatch or the color wheel: the hex field follows.
   void _pick(int color) => setState(() {
         _color = color;
         _error = null;
-        _hex.text = hexColor(color);
+        final hex = hexColor(color);
+        _hex.value = TextEditingValue(text: hex, selection: TextSelection.collapsed(offset: hex.length));
       });
 
   void _typed(String text) => setState(() {
@@ -213,37 +222,62 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
     final nf = context.nf;
     final color = _color;
     final shades = color == null ? null : accentShadesOf(Color(color));
+    // The readability adjustment changed what the preview shows.
+    final adjusted = color != null &&
+        shades != null &&
+        (shades.light.toARGB32() != (color | 0xFF000000) || (nf.isDark && shades.dark.toARGB32() != (color | 0xFF000000)));
+    final wheel = ColorWheel(
+      color: Color(color ?? CustomAccentDialog.presets.first),
+      diameter: context.isCompact ? 180 : 164,
+      onChanged: (c) => _pick(c.toARGB32()),
+    );
+    final details = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      TextField(
+        controller: _hex,
+        decoration: InputDecoration(labelText: 'Hex color', hintText: '#7D00FF', errorText: _error),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp('[#0-9a-fA-F]')), LengthLimitingTextInputFormatter(7)],
+        onChanged: _typed,
+      ),
+      if (shades != null) ...[
+        const SizedBox(height: Space.lg),
+        Wrap(spacing: Space.lg, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+            decoration: BoxDecoration(color: shades.light, borderRadius: Radii.rSm),
+            child: Text('Button', style: context.text.labelLarge?.copyWith(color: Colors.white)),
+          ),
+          Text('Link text', style: context.text.labelLarge?.copyWith(color: nf.isDark ? shades.dark : shades.light)),
+        ]),
+        if (adjusted) ...[
+          const SizedBox(height: Space.sm),
+          Text('Adjusted a little so text on it and beside it stays readable.', style: context.text.bodySmall),
+        ],
+      ],
+    ]);
     return AlertDialog(
       title: const Text('Your accent color'),
       content: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
+        constraints: const BoxConstraints(maxWidth: 440),
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Pick a color or type its hex code. NEFORUM adjusts it where needed so text stays readable.', style: context.text.bodySmall),
+            Text('Pick a color on the wheel or below it, or type its hex code. NEFORUM adjusts it where needed so text stays readable.',
+                style: context.text.bodySmall),
             const SizedBox(height: Space.lg),
             Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
               for (final p in CustomAccentDialog.presets)
                 _Swatch(tooltip: hexColor(p), color: Color(p), selected: color == p, onTap: () => _pick(p)),
             ]),
             const SizedBox(height: Space.lg),
-            TextField(
-              controller: _hex,
-              decoration: InputDecoration(labelText: 'Hex color', hintText: '#7D00FF', errorText: _error),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp('[#0-9a-fA-F]')), LengthLimitingTextInputFormatter(7)],
-              onChanged: _typed,
-            ),
-            if (shades != null) ...[
-              const SizedBox(height: Space.lg),
-              Row(children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
-                  decoration: BoxDecoration(color: shades.light, borderRadius: Radii.rSm),
-                  child: Text('Button', style: context.text.labelLarge?.copyWith(color: Colors.white)),
-                ),
+            if (context.isCompact) ...[
+              Center(child: wheel),
+              const SizedBox(height: Space.md),
+              details,
+            ] else
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                wheel,
                 const SizedBox(width: Space.lg),
-                Text('Link text', style: context.text.labelLarge?.copyWith(color: nf.isDark ? shades.dark : shades.light)),
+                Expanded(child: Padding(padding: const EdgeInsets.only(top: ColorWheel.margin), child: details)),
               ]),
-            ],
           ]),
         ),
       ),
@@ -251,6 +285,162 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
         TextButton(onPressed: () => Navigator.pop(context), style: TextButton.styleFrom(foregroundColor: nf.textMuted), child: const Text('Cancel')),
         FilledButton(onPressed: color == null ? null : () => Navigator.pop(context, color), child: const Text('Use this color')),
       ],
+    );
+  }
+}
+
+/// Picture files the background picker offers.
+const _kPictureExtensions = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+
+/// Settings > Appearance > Background: none, or a picture of the user's own
+/// behind the pages, copied into NEFORUM's data folder, with its blur and
+/// dim. On this device only.
+class _Background extends ConsumerStatefulWidget {
+  const _Background();
+
+  @override
+  ConsumerState<_Background> createState() => _BackgroundState();
+}
+
+class _BackgroundState extends ConsumerState<_Background> {
+  bool _busy = false;
+
+  /// The blur while its slider is dragged: the picture is blurred again
+  /// once the slider is let go.
+  double? _blur;
+
+  Future<void> _choose() async {
+    final dataDir = ref.read(servicesProvider).storage.dataDir;
+    setState(() => _busy = true);
+    try {
+      Uint8List? bytes;
+      var name = '';
+      if (Env.isMobile) {
+        final f = await ImagePicker().pickImage(source: ImageSource.gallery);
+        if (f != null) {
+          bytes = await f.readAsBytes();
+          name = f.name;
+        }
+      } else {
+        final files = await FilePicker.pickFiles(
+          dialogTitle: 'Choose a background picture',
+          type: FileType.custom,
+          allowedExtensions: _kPictureExtensions,
+        );
+        final f = files.firstOrNull;
+        if (f != null) {
+          bytes = await f.readAsBytes();
+          name = f.name;
+        }
+      }
+      if (bytes == null) return;
+      if (!await isDecodablePicture(bytes)) {
+        if (mounted) showToast(context, 'Choose a picture (JPEG, PNG, WebP, GIF or BMP)', icon: Icons.info_outline_rounded);
+        return;
+      }
+      // The copy keeps the file's own extension (a HEIC from a phone too).
+      final dot = name.lastIndexOf('.');
+      final extension = dot < 0 ? '' : name.substring(dot + 1);
+      final path = await saveBackgroundImage(dataDir, bytes, RegExp(r'^[A-Za-z0-9]{1,5}$').hasMatch(extension) ? extension : 'img');
+      if (path == null) return;
+      final previous = ref.read(settingsProvider).backgroundImagePath;
+      await ref.read(settingsProvider.notifier).update((x) => x.copyWith(backgroundImagePath: path));
+      if (previous != null) await deleteBackgroundImage(dataDir, previous);
+    } on Object catch (e) {
+      if (mounted) showToast(context, 'Could not use that picture: $e', icon: Icons.error_outline_rounded);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _remove() async {
+    final dataDir = ref.read(servicesProvider).storage.dataDir;
+    final previous = ref.read(settingsProvider).backgroundImagePath;
+    await ref.read(settingsProvider.notifier).update((x) => x.copyWith(clearBackgroundImage: true));
+    if (previous != null) await deleteBackgroundImage(dataDir, previous);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    final s = ref.watch(settingsProvider.select((s) => (path: s.backgroundImagePath, blur: s.backgroundBlur, dim: s.backgroundDim)));
+    final storage = ref.watch(servicesProvider).storage;
+    final supported = backgroundImagesSupported(storage.dataDir);
+    final path = s.path;
+    final blur = _blur ?? s.blur;
+    final n = ref.read(settingsProvider.notifier);
+
+    Widget slider(String label, String value, Slider slider) => MergeSemantics(
+          child: Row(children: [
+            SizedBox(width: 52, child: Text(label, style: context.text.labelLarge?.copyWith(color: nf.textMuted))),
+            Expanded(child: slider),
+            SizedBox(width: 44, child: Text(value, textAlign: TextAlign.end, style: context.text.titleSmall)),
+          ]),
+        );
+
+    return SettingRow(
+      title: 'Background',
+      description: supported
+          ? 'A picture of your own behind the pages, on this device only. NEFORUM dims it as much as text needs to stay readable.'
+          : 'A picture behind the pages needs the installed app.',
+      stackOnCompact: true,
+      enabled: supported,
+      trailing: SegmentedButton<bool>(
+        segments: const [
+          ButtonSegment(value: false, label: Text('None')),
+          ButtonSegment(value: true, label: Text('Image')),
+        ],
+        selected: {path != null},
+        onSelectionChanged: !supported || _busy ? null : (v) => v.first ? _choose() : _remove(),
+        showSelectedIcon: false,
+      ),
+      below: path == null
+          ? null
+          : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Wrap(spacing: Space.sm, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                ClipRRect(
+                  borderRadius: Radii.rSm,
+                  child: Semantics(
+                    image: true,
+                    label: 'The background picture',
+                    child: SizedBox(width: 72, height: 48, child: storage.image(path, width: 72, height: 48, cacheWidth: 144)),
+                  ),
+                ),
+                const SizedBox(width: Space.xs),
+                OutlinedButton.icon(
+                  onPressed: _busy ? null : _choose,
+                  icon: const Icon(Icons.image_outlined, size: 18),
+                  label: const Text('Choose another'),
+                ),
+                TextButton(onPressed: _busy ? null : _remove, child: const Text('Remove')),
+              ]),
+              const SizedBox(height: Space.md),
+              slider(
+                'Blur',
+                blur == 0 ? 'Off' : '${blur.round()}',
+                Slider(
+                  value: blur,
+                  max: kMaxBackgroundBlur,
+                  divisions: kMaxBackgroundBlur.round(),
+                  semanticFormatterCallback: (v) => v == 0 ? 'Off' : '${v.round()}',
+                  onChanged: (v) => setState(() => _blur = v),
+                  onChangeEnd: (v) async {
+                    await n.update((x) => x.copyWith(backgroundBlur: validBackgroundBlur(v.roundToDouble())));
+                    if (mounted) setState(() => _blur = null);
+                  },
+                ),
+              ),
+              slider(
+                'Dim',
+                '${(s.dim * 100).round()}%',
+                Slider(
+                  value: s.dim,
+                  divisions: 20,
+                  semanticFormatterCallback: (v) => '${(v * 100).round()}%',
+                  onChanged: (v) => n.update((x) => x.copyWith(backgroundDim: validBackgroundDim((v * 20).round() / 20))),
+                ),
+              ),
+            ]),
     );
   }
 }

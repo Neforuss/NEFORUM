@@ -19,6 +19,7 @@ import '../compose/rich_text.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
 import 'schedule_summary.dart';
+import '../shell/app_backdrop.dart';
 import 'time_format.dart';
 
 /// Everything about one post: text, media and every network's outcome.
@@ -77,7 +78,8 @@ class PostDetailScreen extends ConsumerWidget {
     final style = context.text.bodyLarge!.copyWith(height: 1.55);
 
     return Scaffold(
-      backgroundColor: nf.bg,
+      // Over a background picture the page lets it show, as the others do.
+      backgroundColor: AppBackdrop.activeOf(context) ? Colors.transparent : nf.bg,
       body: PageBody(maxWidth: 860, children: [
         backButton,
         const SizedBox(height: Space.md),
