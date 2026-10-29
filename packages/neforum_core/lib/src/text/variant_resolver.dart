@@ -51,6 +51,12 @@ class ResolverOptions {
   final bool dropUnsupportedMedia;
 }
 
+/// [PostOverrides.extra] key: `true` when a target whose only media are
+/// NEFORUM text cards ([MediaAttachment.isTextCard]) gets the card without the
+/// post's text (the card carries the words, and its alt text has them). With
+/// any other media the key has no effect.
+const String kTextCardOnlyKey = 'textCardOnly';
+
 /// Turns the master [Post] into the [PostVariant] for one target.
 class VariantResolver {
   const VariantResolver([this.options = const ResolverOptions()]);
@@ -71,6 +77,8 @@ class VariantResolver {
         ? post.media.where((m) => !m.generated).toList()
         : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)];
     media = _filterMedia(media, d, issues);
+    // The text card alone: no text, so no thread and no length to check.
+    final cardOnly = o.extra[kTextCardOnlyKey] == true && media.isNotEmpty && media.every((m) => m.isTextCard);
 
     // ---- text ----------------------------------------------------------
     // The parts the user wrote ([Post.parts]). A per-network version is one
@@ -105,7 +113,10 @@ class VariantResolver {
 
     // ---- overflow ------------------------------------------------------
     var threadParts = const <String>[];
-    if (written.length > 1 && canThread) {
+    if (cardOnly) {
+      text = '';
+      issues.add(ValidationIssue.info('text.card_only', '${d.name} gets only the text card; your words are in the picture and its description', field: 'text'));
+    } else if (written.length > 1 && canThread) {
       // A thread the user wrote: one post per part.
       threadParts = _writtenThread([...written.take(written.length - 1), withAdditions(written.last)], d, issues);
       text = threadParts.first;
@@ -116,7 +127,7 @@ class VariantResolver {
         issues.add(ValidationIssue.info('text.parts_joined', '${d.name} gets the ${written.length} parts as one post', field: 'text'));
       }
     }
-    if (threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
+    if (!cardOnly && threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
       final n = TextCounter.count(text, t);
       switch (options.overflow) {
         case OverflowStrategy.threadOrError:
