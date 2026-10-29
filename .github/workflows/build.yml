@@ -56,6 +56,33 @@ jobs:
           cache: true
       - name: Linux packages for the tray plugin's build hook
         run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
+      # Release signing key (docs/signing.md). Without these secrets the APKs
+      # are signed with the debug key, as before; switching keys later makes
+      # Android refuse the update until the old app is uninstalled once.
+      - name: Release signing key
+        working-directory: apps/neforum_app
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "::notice::No Android signing secrets: the APKs are signed with the debug key."
+            exit 0
+          fi
+          # android/app/build.gradle.kts reads android/key.properties; storeFile
+          # is relative to android/app. Both names are in android/.gitignore.
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/neforum-release.jks
+          umask 077
+          {
+            echo "storeFile=neforum-release.jks"
+            echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
+            echo "keyAlias=$ANDROID_KEY_ALIAS"
+            echo "keyPassword=$ANDROID_KEY_PASSWORD"
+          } > android/key.properties
+          keytool -list -keystore android/app/neforum-release.jks -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" > /dev/null
+          echo "Signing the APKs with the release key (alias $ANDROID_KEY_ALIAS)."
       - name: Build APK
         working-directory: apps/neforum_app
         run: |
@@ -258,19 +285,363 @@ jobs:
           name: neforum-web-preview
           path: apps/neforum_app/build/web
 
+  # Linux desktop: a tarball and an AppImage per processor. Built on the
+  # oldest supported Ubuntu, so the binaries run on distributions with an
+  # older glibc too. The arm64 build is extra: if it fails, the release still
+  # goes out with x64 only.
+  linux:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-22.04
+            appimage-arch: x86_64
+            # https://github.com/AppImage/appimagetool/releases/tag/1.9.1 and
+            # https://github.com/AppImage/type2-runtime/releases/tag/20251108
+            appimagetool-sha256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+            runtime-sha256: 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            appimage-arch: aarch64
+            appimagetool-sha256: f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+            runtime-sha256: 00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    env:
+      APPIMAGETOOL_VERSION: '1.9.1'
+      APPIMAGE_RUNTIME_VERSION: '20251108'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        if: matrix.arch == 'x64'
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      # Flutter publishes no SDK archive for Linux on arm64; the Git checkout of
+      # the same release fetches the arm64 Dart SDK and engine itself.
+      - name: Flutter SDK (arm64, from the release tag)
+        if: matrix.arch == 'arm64'
+        run: |
+          git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+      - name: Linux build packages
+        run: |
+          sudo apt-get update
+          # Toolchain and GTK (Flutter), libsecret (keyring), WebKitGTK and
+          # libsoup (sign-in windows), X11/Xi (the tray plugin's build hook),
+          # libayatana-appindicator (tray hosts), Xvfb, D-Bus and GNOME Keyring
+          # (integration tests without a desktop).
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libayatana-appindicator3-dev libsecret-1-dev libx11-dev libxi-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
+            xvfb xauth dbus-x11 gnome-keyring libgl1-mesa-dri file
+      - name: Build Linux
+        working-directory: apps/neforum_app
+        run: |
+          flutter --version
+          flutter pub get
+          dart run tool/sync_docs.dart
+          flutter build linux --release
+          ls -l "build/linux/${{ matrix.arch }}/release/bundle"
+          file "build/linux/${{ matrix.arch }}/release/bundle/NEFORUM"
+      # The real Linux build under an X server, with a Secret Service (GNOME
+      # Keyring) on a private session bus: first run, every section, the
+      # keyring, the demo workspace, a text card, the clipboard. Then the
+      # caption and text card renders on a profile (AOT) build, as shipped.
+      - name: Integration tests (real Linux build, X server, keyring)
+        if: matrix.arch == 'x64'
+        working-directory: apps/neforum_app
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "neforum-ci" | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            xvfb-run -a -s "-screen 0 1920x1080x24" flutter test integration_test/desktop_app_test.dart -d linux
+            xvfb-run -a -s "-screen 0 1920x1080x24" flutter drive --profile -d linux \
+              --driver=test_driver/integration_test.dart --target=integration_test/captions_test.dart
+          '
+      - name: Package (tarball and AppImage)
+        working-directory: apps/neforum_app
+        run: |
+          set -euo pipefail
+          bundle="$PWD/build/linux/${{ matrix.arch }}/release/bundle"
+          pkg="$GITHUB_WORKSPACE/packaging/linux"
+
+          # Tarball: the bundle in a NEFORUM folder, with the .desktop file,
+          # AppStream metadata and icons (the Flatpak manifest builds from it).
+          stage="$RUNNER_TEMP/tarball/NEFORUM"
+          rm -rf "$RUNNER_TEMP/tarball" && mkdir -p "$stage"
+          cp -a "$bundle"/. "$stage"/
+          cp "$pkg/org.neforum.NEFORUM.desktop" "$pkg/org.neforum.NEFORUM.metainfo.xml" "$stage"/
+          cp -a "$pkg/icons" "$stage"/
+          tar -C "$RUNNER_TEMP/tarball" --owner=0 --group=0 -czf "$GITHUB_WORKSPACE/neforum-linux-${{ matrix.arch }}.tar.gz" NEFORUM
+
+          # AppImage, with appimagetool and its runtime from pinned releases.
+          tools="$RUNNER_TEMP/appimage-tools"
+          mkdir -p "$tools"
+          curl -fsSL -o "$tools/appimagetool" \
+            "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-${{ matrix.appimage-arch }}.AppImage"
+          curl -fsSL -o "$tools/runtime" \
+            "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_VERSION/runtime-${{ matrix.appimage-arch }}"
+          echo "${{ matrix.appimagetool-sha256 }}  $tools/appimagetool" | sha256sum -c -
+          echo "${{ matrix.runtime-sha256 }}  $tools/runtime" | sha256sum -c -
+          chmod +x "$tools/appimagetool"
+
+          appdir="$RUNNER_TEMP/NEFORUM.AppDir"
+          rm -rf "$appdir" && mkdir -p "$appdir/usr/share/applications" "$appdir/usr/share/metainfo"
+          cp -a "$bundle"/. "$appdir"/
+          ln -s NEFORUM "$appdir/AppRun"
+          cp "$pkg/org.neforum.NEFORUM.desktop" "$appdir"/
+          cp "$pkg/org.neforum.NEFORUM.desktop" "$appdir/usr/share/applications"/
+          cp "$pkg/org.neforum.NEFORUM.metainfo.xml" "$appdir/usr/share/metainfo/org.neforum.NEFORUM.appdata.xml"
+          cp -a "$pkg/icons" "$appdir/usr/share"/
+          cp "$pkg/icons/hicolor/256x256/apps/org.neforum.NEFORUM.png" "$appdir/org.neforum.NEFORUM.png"
+          ln -s org.neforum.NEFORUM.png "$appdir/.DirIcon"
+          # --appimage-extract-and-run: CI runners have no FUSE.
+          ARCH=${{ matrix.appimage-arch }} "$tools/appimagetool" --appimage-extract-and-run \
+            --runtime-file "$tools/runtime" "$appdir" "$GITHUB_WORKSPACE/NEFORUM-${{ matrix.appimage-arch }}.AppImage"
+          ls -l "$GITHUB_WORKSPACE"/neforum-linux-*.tar.gz "$GITHUB_WORKSPACE"/NEFORUM-*.AppImage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-linux-${{ matrix.arch }}
+          path: |
+            neforum-linux-${{ matrix.arch }}.tar.gz
+            NEFORUM-${{ matrix.appimage-arch }}.AppImage
+
+  # The browser extension: its tests, AMO's linter on the Firefox build, and
+  # (with AMO credentials, docs/signing.md) a Firefox build signed by Mozilla
+  # for self-distribution. Without them the Firefox zip ships unsigned.
+  browser-extension:
+    needs: test
+    runs-on: ubuntu-latest
+    env:
+      WEB_EXT_VERSION: '10.7.0'
+      AMO_CONFIGURED: ${{ secrets.AMO_JWT_ISSUER != '' && secrets.AMO_JWT_SECRET != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Linux packages for the tray plugin's build hook
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
+      - name: Extension tests
+        run: node --test extensions/browser/test/background.test.mjs extensions/browser/test/content.test.mjs extensions/browser/test/main.test.mjs
+      - name: Build the Chrome and Firefox extensions
+        working-directory: apps/neforum_app
+        run: |
+          flutter pub get
+          dart run tool/build_extension.dart
+          cp ../../dist/neforum-extension-*.zip "$GITHUB_WORKSPACE"/
+          # The bundled copies in assets/ must match the extension's source.
+          git diff --exit-code -- assets/browser-extension || { echo "::error::Run dart run tool/build_extension.dart and commit assets/browser-extension"; exit 1; }
+      - name: AMO lint (Firefox build)
+        # Errors fail the build; warnings (such as data_collection_permissions
+        # needing Firefox 140, older versions ignore the key) are listed only.
+        run: npx --yes "web-ext@$WEB_EXT_VERSION" lint --source-dir apps/neforum_app/assets/browser-extension/firefox
+      - name: Sign the Firefox build (AMO, unlisted)
+        if: env.AMO_CONFIGURED == 'true'
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          src="apps/neforum_app/assets/browser-extension/firefox"
+          version="$(jq -r .version "$src/manifest.json")"
+          out="$GITHUB_WORKSPACE/neforum-extension-firefox-$version.xpi"
+          # AMO signs each version once. A version an earlier release already
+          # shipped signed is taken from that release, after checking that its
+          # files are exactly this build's (a changed extension needs a new
+          # version number).
+          for tag in $(gh release list --limit 50 --json tagName --jq '.[].tagName'); do
+            if gh release download "$tag" --pattern "neforum-extension-firefox-$version.xpi" --output "$out" 2> /dev/null; then
+              echo "Signed $version found in release $tag."
+              break
+            fi
+          done
+          if [ -f "$out" ]; then
+            check="$RUNNER_TEMP/signed-check"
+            rm -rf "$check" && mkdir -p "$check" && unzip -q "$out" -d "$check" && rm -rf "$check/META-INF"
+            diff -r "$check" "$src" || { echo "::error::The extension changed but is still version $version: raise its version"; exit 1; }
+          else
+            npx --yes "web-ext@$WEB_EXT_VERSION" sign --channel unlisted --source-dir "$src" \
+              --artifacts-dir "$RUNNER_TEMP/web-ext-signed" --api-key "$AMO_JWT_ISSUER" --api-secret "$AMO_JWT_SECRET"
+            cp "$RUNNER_TEMP"/web-ext-signed/*.xpi "$out"
+          fi
+          # One Firefox download per release: the signed one.
+          rm -f "$GITHUB_WORKSPACE/neforum-extension-firefox-$version.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-browser-extension
+          path: |
+            neforum-extension-*.zip
+            neforum-extension-*.xpi
+          if-no-files-found: error
+
+  # Windows code signing through SignPath Foundation (free for open source;
+  # docs/signing.md). Runs for release tags once the repository variable
+  # SIGNPATH_ORGANIZATION_ID and the secret SIGNPATH_API_TOKEN exist: signs
+  # NEFORUM.exe, builds the installer again around the signed app, signs the
+  # installer, and zips the signed app. The release then ships these instead
+  # of the unsigned ones.
+  windows-signing:
+    needs: windows
+    if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
+    runs-on: windows-latest
+    env:
+      # Secrets cannot appear in `if:`; this flag can.
+      SIGNPATH_CONFIGURED: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+    steps:
+      - name: Signing configuration
+        shell: pwsh
+        run: |
+          if ($env:SIGNPATH_CONFIGURED -ne 'true') { Write-Output "::error::SIGNPATH_ORGANIZATION_ID is set but the secret SIGNPATH_API_TOKEN is missing"; exit 1 }
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: neforum-windows
+          path: unsigned
+      - name: Unpack the app
+        shell: pwsh
+        run: Expand-Archive unsigned/neforum-windows.zip -DestinationPath app-unsigned
+      - id: app-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: neforum-windows-app-unsigned
+          path: app-unsigned/
+          retention-days: 1
+      - name: Sign NEFORUM.exe (SignPath)
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_APP_ARTIFACT_CONFIGURATION || 'app' }}
+          github-artifact-id: ${{ steps.app-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          # A release signing policy waits for an approver.
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: app-signed
+      - name: Installer and zip from the signed app
+        shell: pwsh
+        run: |
+          $exe = Get-AuthenticodeSignature app-signed/NEFORUM.exe
+          if ($exe.Status -ne 'Valid') { Write-Output "::error::NEFORUM.exe is not validly signed: $($exe.Status)"; exit 1 }
+          Write-Output "NEFORUM.exe signed by $($exe.SignerCertificate.Subject)"
+          $release = 'apps/neforum_app/build/windows/x64/runner/Release'
+          New-Item -ItemType Directory -Force $release | Out-Null
+          Copy-Item -Recurse app-signed/* $release
+          Compress-Archive -Path "$release/*" -DestinationPath neforum-windows.zip
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue)) { choco install innosetup -y --no-progress }
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          $version = ((Select-String -Path apps/neforum_app/pubspec.yaml -Pattern '^version:\s*([0-9.]+)').Matches[0].Groups[1].Value)
+          & $iscc "/DAppVersion=$version" apps/neforum_app/installer/neforum.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - id: installer-unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: neforum-windows-installer-unsigned
+          path: apps/neforum_app/build/installer/NEFORUM-Setup-*.exe
+          retention-days: 1
+      - name: Sign the installer (SignPath)
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION || 'installer' }}
+          github-artifact-id: ${{ steps.installer-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: installer-signed
+      - name: Check the signed installer
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem installer-signed -Filter 'NEFORUM-Setup-*.exe' | Select-Object -First 1
+          $sig = Get-AuthenticodeSignature $setup.FullName
+          if ($sig.Status -ne 'Valid') { Write-Output "::error::$($setup.Name) is not validly signed: $($sig.Status)"; exit 1 }
+          Copy-Item $setup.FullName .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: neforum-windows-signed
+          path: |
+            neforum-windows.zip
+            NEFORUM-Setup-*.exe
+          if-no-files-found: error
+
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [android, windows, macos, ios]
+    # windows-signing is skipped until SignPath is set up; a skipped job must
+    # not stop the release, a failed one does.
+    if: ${{ !cancelled() && !failure() && startsWith(github.ref, 'refs/tags/v') }}
+    needs: [android, windows, macos, ios, linux, browser-extension, windows-signing]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Build provenance attestations (actions/attest-build-provenance).
+      id-token: write
+      attestations: write
     steps:
+      - uses: actions/checkout@v4
       # Only the downloads: the web preview's files are not release assets.
       - uses: actions/download-artifact@v4
         with:
           path: dist
-          pattern: neforum-{android,windows,macos,ios-unsigned}
+          pattern: neforum-{android,windows,macos,ios-unsigned,linux-x64,linux-arm64}
           merge-multiple: true
+      # The extension comes from its own job (tested, linted, signed for
+      # Firefox when AMO credentials exist), not from the Windows job's copy.
+      - name: Drop the Windows job's extension zips
+        run: rm -f dist/neforum-extension-*
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          name: neforum-browser-extension
+      # Signed Windows files replace the unsigned ones (same names).
+      - uses: actions/download-artifact@v4
+        if: needs.windows-signing.result == 'success'
+        with:
+          path: dist
+          name: neforum-windows-signed
+      - uses: dart-lang/setup-dart@v1
+      # Release notes (the published release's, or GitHub's generated ones),
+      # SHA256SUMS of every download, and latest.json for the update check
+      # (published here as an asset; neforus.com serves a copy).
+      - name: Release notes, SHA256SUMS and latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          if gh api "repos/$GH_REPO/releases/tags/$tag" > /dev/null 2>&1; then
+            gh api "repos/$GH_REPO/releases/tags/$tag" --jq .body > "$RUNNER_TEMP/notes.md"
+          else
+            gh api "repos/$GH_REPO/releases/generate-notes" -f tag_name="$tag" --jq .body > "$RUNNER_TEMP/notes.md"
+          fi
+          (cd dist && sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS")
+          mv "$RUNNER_TEMP/SHA256SUMS" dist/SHA256SUMS
+          # Run from outside the app package: `dart` would otherwise resolve the
+          # package's Flutter dependencies first (the script needs none).
+          cp apps/neforum_app/tool/make_latest_json.dart "$RUNNER_TEMP/"
+          dart "$RUNNER_TEMP/make_latest_json.dart" --version "${tag#v}" --sums dist/SHA256SUMS \
+            --notes "$RUNNER_TEMP/notes.md" --base-url "https://github.com/$GH_REPO/releases/download/$tag" \
+            --output dist/latest.json
+          cat dist/SHA256SUMS
+      # A signed statement, verifiable with `gh attestation verify <file>
+      # --repo Neforuss/NEFORUM`, that each file was built by this workflow
+      # from this commit.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/*'
       # A published release of this tag gets its files replaced; otherwise a new
       # one is made (drafts are never reused, so a half-uploaded one can't leak).
       - name: Publish the release
@@ -284,5 +655,5 @@ jobs:
             gh release upload "$tag" dist/* --clobber
             gh release edit "$tag" --title "NEFORUM ${tag#v}" --draft=false --latest
           else
-            gh release create "$tag" dist/* --title "NEFORUM ${tag#v}" --generate-notes --latest
+            gh release create "$tag" dist/* --title "NEFORUM ${tag#v}" --notes-file "$RUNNER_TEMP/notes.md" --latest
           fi
