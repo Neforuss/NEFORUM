@@ -140,6 +140,7 @@ class MediaRules {
     this.audioWithOtherMedia = false,
     this.audioAsVideo = false,
     this.audioAsLink = false,
+    this.audioAsVideoWhenPossible = false,
   });
 
   final int maxImages;
@@ -191,6 +192,11 @@ class MediaRules {
   /// a link to the file on the user's media host (Nostr, Lemmy, Reddit,
   /// blogs).
   final bool audioAsLink;
+
+  /// For an [audioAsLink] network that takes uploaded videos (Tumblr): the track goes as a still-picture video whenever the device can
+  /// make one, so it plays in the post and needs no media host with lasting
+  /// links; the link is what is left when it cannot.
+  final bool audioAsVideoWhenPossible;
 
   bool get supportsAnyMedia => maxImages > 0 || maxVideos > 0 || maxAudios > 0;
 

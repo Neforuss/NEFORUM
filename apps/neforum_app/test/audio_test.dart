@@ -404,6 +404,18 @@ void main() {
       expect(audioRouteFor(rules('snapchat'), _flac, AudioQuality.standard), AudioRoute.none);
     });
 
+    test('Tumblr gets a still-picture video whenever one can be had, a link only when not', () {
+      // A media host with temporary links failed the Tumblr link post; the
+      // video plays in the post and needs no media host at all.
+      expect(audioRouteFor(rules('tumblr'), _mp3, AudioQuality.standard, canMakeVideo: true), AudioRoute.video);
+      expect(audioRouteFor(rules('tumblr'), _mp3, AudioQuality.standard), AudioRoute.original);
+      // Reddit keeps the link: its video posts need a separate poster image.
+      expect(audioRouteFor(rules('reddit'), _mp3, AudioQuality.standard, canMakeVideo: true), AudioRoute.original);
+      final preview = previewAudio([_mp3], _mp3, registry.byId('tumblr')!.descriptor, AudioQuality.standard, canRenderVideo: true);
+      expect(preview.media.single.mimeType, 'video/mp4');
+      expect(preview.notes.single.message, contains('plays in the post'));
+    });
+
     test('without a converter the original goes where it is taken', () {
       expect(audioRouteFor(rules('telegram'), _flac, AudioQuality.standard), AudioRoute.original);
       final preview = previewAudio([_flac], _flac, registry.byId('telegram')!.descriptor, AudioQuality.standard);

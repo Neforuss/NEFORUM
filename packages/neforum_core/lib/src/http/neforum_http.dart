@@ -112,6 +112,7 @@ class NeforumHttp {
     this.userAgent = defaultUserAgent,
     this.maxRetries = 2,
     this.timeout = const Duration(seconds: 60),
+    this.uploadStallTimeout = const Duration(seconds: 90),
     Logger? log,
   })  : _client = client ?? http.Client(),
         _log = log ?? Logger('http'),
@@ -123,6 +124,7 @@ class NeforumHttp {
         userAgent = base.userAgent,
         maxRetries = base.maxRetries,
         timeout = base.timeout,
+        uploadStallTimeout = base.uploadStallTimeout,
         _log = base._log,
         _ownsClient = false;
 
@@ -130,6 +132,11 @@ class NeforumHttp {
   final String userAgent;
   final int maxRetries;
   final Duration timeout;
+
+  /// How long an upload may go without sending anything before it is given
+  /// up. Uploads have no deadline of their own: on a slow or shared uplink a
+  /// big file takes as long as it takes, as long as it keeps moving.
+  final Duration uploadStallTimeout;
   final Logger _log;
 
   /// When set, cancelling it aborts the request in flight and every later
@@ -203,12 +210,14 @@ class NeforumHttp {
     bool throwOnError = true,
     Duration? timeout,
   }) async {
-    // Uploads: give the body time to travel (assume a slow 150 KB/s uplink)
-    // and never re-send a big body automatically after a timeout or a
-    // dropped connection; the caller decides whether to retry.
+    // Uploads are watched instead of timed: they fail only when nothing has
+    // been sent for [uploadStallTimeout], or no answer comes after the last
+    // byte (a fixed budget failed 3 MB files on a busy 1 Mbit/s uplink). A
+    // big body is never re-sent automatically after a timeout or a dropped
+    // connection; the caller decides whether to retry.
     final bodySize = (bytes?.length ?? 0) + (files ?? const <HttpFilePart>[]).fold<int>(0, (s, f) => s + f.bytes.length);
     final base = timeout ?? this.timeout;
-    final effectiveTimeout = bodySize > 512 * 1024 ? _uploadTimeout(bodySize, base) : base;
+    final upload = bodySize > 512 * 1024;
     final retries = bodySize > 8 * 1024 * 1024 ? 0 : maxRetries;
     // A POST that may already have been processed (gateway error, dropped
     // connection) is never re-sent here: that could publish twice. The
@@ -222,10 +231,15 @@ class NeforumHttp {
       signal?.throwIfCancelled();
       try {
         final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
-        final req = _build(method, url, attemptHeaders, jsonBody, form, fields, files, bytes, abortTrigger: signal?.whenCancelled);
         _log.debug('$method $url (attempt $attempt)');
-        final streamed = await _unlessCancelled(_client.send(req).timeout(effectiveTimeout), signal);
-        final res = await _unlessCancelled(http.Response.fromStream(streamed).timeout(effectiveTimeout), signal);
+        final http.Response res;
+        if (upload) {
+          res = await _unlessCancelled(_sendWatched(method, url, attemptHeaders, fields, files, bytes, base, signal), signal);
+        } else {
+          final req = _build(method, url, attemptHeaders, jsonBody, form, fields, files, bytes, abortTrigger: signal?.whenCancelled);
+          final streamed = await _unlessCancelled(_client.send(req).timeout(base), signal);
+          res = await _unlessCancelled(http.Response.fromStream(streamed).timeout(base), signal);
+        }
         final out = NeforumResponse(res.statusCode, _lowercase(res.headers), res.bodyBytes, url);
         if (!out.ok && attempt <= retries && (idempotent ? _retryable(out.statusCode) : _notProcessed(out))) {
           final wait = out.retryAfter ?? _backoff(attempt);
@@ -310,13 +324,62 @@ class NeforumHttp {
     return req;
   }
 
-  /// Time budget for sending [bytes]: the base timeout plus the time a
-  /// 150 KB/s uplink needs, capped at 45 minutes.
-  static Duration _uploadTimeout(int bytes, Duration base) {
-    final transfer = Duration(seconds: (bytes / (150 * 1024)).ceil());
-    final total = base + transfer;
-    const cap = Duration(minutes: 45);
-    return total > cap ? cap : total;
+  /// Sends an upload in [_uploadChunk] pieces that the connection pulls as
+  /// fast as it can send them, and gives up only when no piece has gone out
+  /// for [uploadStallTimeout], or when the server has not answered [base]
+  /// twice over after the last one (it may still be processing a video).
+  Future<http.Response> _sendWatched(String method, Uri url, Map<String, String>? headers, Map<String, String>? fields,
+      List<HttpFilePart>? files, Uint8List? bytes, Duration base, CancellationSignal? signal) async {
+    final abort = Completer<void>();
+    final stalled = Completer<Never>();
+    Timer? watchdog;
+    void arm(Duration limit, String what) {
+      watchdog?.cancel();
+      watchdog = Timer(limit, () {
+        if (!stalled.isCompleted) stalled.completeError(TimeoutException(what, limit));
+        if (!abort.isCompleted) abort.complete();
+      });
+    }
+
+    final stallLimit = uploadStallTimeout;
+    final answerLimit = base * 2;
+    final trigger = signal == null ? abort.future : Future.any([abort.future, signal.whenCancelled]);
+    final plain = _build(method, url, headers, null, null, fields, files, bytes);
+    final body = _watchedBody(
+      plain.finalize(),
+      onProgress: () => arm(stallLimit, 'Nothing could be sent to ${url.host} for ${stallLimit.inSeconds} s'),
+      onSent: () => arm(answerLimit, '${url.host} did not answer within ${answerLimit.inSeconds} s of the upload'),
+    );
+    final req = _WatchedRequest(method, url, body, abortTrigger: trigger)
+      ..headers.addAll(plain.headers)
+      ..contentLength = plain.contentLength;
+    arm(stallLimit, 'Nothing could be sent to ${url.host} for ${stallLimit.inSeconds} s');
+    try {
+      final streamed = await Future.any([_client.send(req), stalled.future]);
+      // Reading the answer counts as progress too.
+      arm(answerLimit, '${url.host} did not finish its answer within ${answerLimit.inSeconds} s');
+      return await Future.any([http.Response.fromStream(streamed), stalled.future]);
+    } finally {
+      watchdog?.cancel();
+    }
+  }
+
+  static const int _uploadChunk = 64 * 1024;
+
+  /// [source] in pieces of at most [_uploadChunk] bytes, calling [onProgress]
+  /// each time the consumer takes one and [onSent] after the last. The
+  /// generator waits at each `yield` until the connection wants more, so the
+  /// calls follow what is really sent.
+  static Stream<List<int>> _watchedBody(Stream<List<int>> source,
+      {required void Function() onProgress, required void Function() onSent}) async* {
+    await for (final chunk in source) {
+      for (var start = 0; start < chunk.length; start += _uploadChunk) {
+        final end = start + _uploadChunk < chunk.length ? start + _uploadChunk : chunk.length;
+        yield chunk is Uint8List ? Uint8List.sublistView(chunk, start, end) : chunk.sublist(start, end);
+        onProgress();
+      }
+    }
+    onSent();
   }
 
   /// True for errors that mean "the network failed", not "the server said no".
@@ -337,6 +400,23 @@ class NeforumHttp {
 
   static Map<String, String> _lowercase(Map<String, String> h) =>
       {for (final e in h.entries) e.key.toLowerCase(): e.value};
+}
+
+/// A request whose body is a stream read only as the connection sends it
+/// (see [NeforumHttp._sendWatched]).
+class _WatchedRequest extends http.BaseRequest with http.Abortable {
+  _WatchedRequest(super.method, super.url, this._body, {this.abortTrigger});
+
+  final Stream<List<int>> _body;
+
+  @override
+  final Future<void>? abortTrigger;
+
+  @override
+  http.ByteStream finalize() {
+    super.finalize();
+    return http.ByteStream(_body);
+  }
 }
 
 Duration? _parseRetryAfter(String? v) {

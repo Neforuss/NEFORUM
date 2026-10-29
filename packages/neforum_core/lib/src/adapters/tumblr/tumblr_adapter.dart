@@ -92,8 +92,10 @@ class TumblrAdapter extends PlatformAdapter {
           'and no content warnings (Tumblr community labels must be set on tumblr.com).',
     ),
     media: MediaRules(
-      // Sound goes as a link to the file on the media host.
+      // Sound goes as a still-picture video NEFORUM uploads, else as a link
+      // to the file on the media host.
       audioAsLink: true,
+      audioAsVideoWhenPossible: true,
       maxImages: 30,
       maxVideos: 1,
       allowsMixedImageVideo: true,

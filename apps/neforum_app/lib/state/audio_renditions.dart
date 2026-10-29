@@ -147,7 +147,11 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
           next.add(id);
           continue;
         }
-        final route = audioRouteFor(d.media, source, post.audioQuality, standardMimeType: standardMime);
+        // A video made at save time is reused by background runs, which have
+        // no compositor, so the route stays the same there.
+        final hasVideo = pool.values.any((m) => m.isVideo && m.derivedFrom == source.id);
+        final route = audioRouteFor(d.media, source, post.audioQuality,
+            standardMimeType: standardMime, canMakeVideo: canRender || hasVideo);
         MediaAttachment? made;
         if (route == AudioRoute.standardCopy) {
           made = await _standardCopy(s, post, source, format, pool, used, render: canRender);

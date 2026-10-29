@@ -51,7 +51,11 @@ bool standardNeedsCopy(MediaAttachment source) => !source.isMp3;
 /// [standardMimeType] is the type of the Standard copy this device makes
 /// ([standardAudioMimeType]); null when it cannot convert, and the original
 /// then goes wherever it is taken (the checks say where it is not).
-AudioRoute audioRouteFor(MediaRules rules, MediaAttachment source, AudioQuality quality, {String? standardMimeType}) {
+/// [canMakeVideo]: a still-picture video can be had for [source] (this
+/// device makes one, or the post already has it), which a network with
+/// [MediaRules.audioAsVideoWhenPossible] takes instead of a link.
+AudioRoute audioRouteFor(MediaRules rules, MediaAttachment source, AudioQuality quality,
+    {String? standardMimeType, bool canMakeVideo = false}) {
   final lossless = effectiveAudioQuality(quality, source) == AudioQuality.lossless;
   if (rules.supportsAudio) {
     final takesOriginal = rules.audioMimeTypes.contains(source.mimeType);
@@ -60,6 +64,7 @@ AudioRoute audioRouteFor(MediaRules rules, MediaAttachment source, AudioQuality 
     return AudioRoute.original;
   }
   if (rules.audioAsVideo) return AudioRoute.video;
+  if (rules.audioAsLink && rules.audioAsVideoWhenPossible && canMakeVideo) return AudioRoute.video;
   if (rules.audioAsLink) {
     if (lossless || source.isMp3 || standardMimeType == null) return AudioRoute.original;
     return AudioRoute.standardCopy;
@@ -80,7 +85,7 @@ const String kAudioStandIn = 'audio-stand-in:';
     List<MediaAttachment> media, MediaAttachment source, PlatformDescriptor d, AudioQuality quality,
     {String? standardFormat, bool canRenderVideo = false}) {
   final standardMime = standardAudioMimeType(standardFormat);
-  final route = audioRouteFor(d.media, source, quality, standardMimeType: standardMime);
+  final route = audioRouteFor(d.media, source, quality, standardMimeType: standardMime, canMakeVideo: canRenderVideo);
   final label = audioFormatLabel(source);
   final lossless = effectiveAudioQuality(quality, source) == AudioQuality.lossless;
   List<MediaAttachment> replaced(MediaAttachment standIn, {bool dropPicture = false}) {
@@ -146,7 +151,7 @@ const String kAudioStandIn = 'audio-stand-in:';
         notes: [
           ValidationIssue.info(
               'media.audio_video',
-              '${d.name} takes sound only as a video: NEFORUM makes one with '
+              '${d.name} ${d.media.audioAsVideo ? 'takes sound only as a video' : 'gets the track as a video that plays in the post'}: NEFORUM makes one with '
                   '${hasPicture ? 'your first photo' : 'a card of the track title'} when you save',
               field: 'media'),
         ],
