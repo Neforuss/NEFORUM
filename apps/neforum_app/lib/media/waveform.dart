@@ -22,34 +22,83 @@ class WaveformLevels {
 /// bar count.
 const int kWaveformBins = 256;
 
-/// Files larger than this are not read for their levels (a decorative
-/// waveform is drawn instead): hours of uncompressed sound.
-const int kWaveformMaxBytes = 512 * 1024 * 1024;
+/// Sound files read whole for their levels (where there is no file to read
+/// in parts: the web preview, storage in memory) are at most this big; a
+/// decorative waveform is drawn for larger ones. Files on disk are read in
+/// parts ([measurePcmSource]) whatever their size.
+const int kWaveformMaxBytes = 32 * 1024 * 1024;
+
+/// Random access to the bytes of a sound file for [measurePcmSource]: a file
+/// read in parts, or bytes in memory ([PcmBytes]).
+abstract interface class PcmSource {
+  /// The file's length in bytes.
+  int get length;
+
+  /// Up to [count] bytes from [offset]; fewer at the end of the file, none
+  /// past it.
+  Uint8List read(int offset, int count);
+}
+
+/// A [PcmSource] over bytes in memory.
+class PcmBytes implements PcmSource {
+  PcmBytes(this.bytes);
+  final Uint8List bytes;
+
+  @override
+  int get length => bytes.length;
+
+  @override
+  Uint8List read(int offset, int count) {
+    if (offset < 0 || offset >= bytes.length || count <= 0) return Uint8List(0);
+    return Uint8List.sublistView(bytes, offset, math.min(bytes.length, offset + count));
+  }
+}
+
+/// How many blocks of frames [measurePcmSource] reads from each bin that is
+/// too long to read whole: 256 bins make at most 4,096 reads per file.
+const int _blocksPerBin = 16;
+
+/// The most bytes in one block (and at most 256 frames): with
+/// [_blocksPerBin], at most 8 MB of a file is read, however long it is.
+const int _blockBytes = 2048;
 
 /// The levels of the PCM sound in [bytes] (a WAV or AIFF file), as the RMS of
 /// [bins] equal stretches of it over every channel, scaled so the loudest is
 /// 1; null when [bytes] is not PCM NEFORUM can read. Top level, for
 /// `compute`.
-List<double>? measurePcmWaveform(Uint8List bytes, {int bins = kWaveformBins}) {
-  final pcm = _PcmLayout.read(bytes);
-  if (pcm == null || pcm.frames <= 0) return null;
+List<double>? measurePcmWaveform(Uint8List bytes, {int bins = kWaveformBins}) => measurePcmSource(PcmBytes(bytes), bins: bins);
+
+/// [measurePcmWaveform] on a file read in parts: its chunk headers, then a
+/// few evenly spread blocks of frames from each bin (each short bin whole),
+/// never the whole file.
+List<double>? measurePcmSource(PcmSource source, {int bins = kWaveformBins}) {
+  final pcm = _PcmLayout.read(source);
+  if (pcm == null || pcm.frames <= 0 || bins <= 0) return null;
   final sums = Float64List(bins);
   final counts = Int32List(bins);
-  // At most this many frames per bin are read: plenty for its loudness, and
-  // a long file stays quick.
-  const perBin = 4096;
+  final framesPerBlock = (_blockBytes ~/ pcm.frameBytes).clamp(1, 256);
   final framesPerBin = pcm.frames / bins;
-  final step = math.max(1, (framesPerBin / perBin).floor());
-  final data = ByteData.sublistView(bytes);
   for (var b = 0; b < bins; b++) {
     final start = (b * framesPerBin).floor();
     final end = math.min(pcm.frames, ((b + 1) * framesPerBin).floor());
-    for (var f = start; f < end; f += step) {
-      final base = pcm.offset + f * pcm.frameBytes;
-      for (var ch = 0; ch < pcm.channels; ch++) {
-        final v = pcm.sample(data, base + ch * pcm.sampleBytes);
-        sums[b] += v * v;
-        counts[b]++;
+    final length = end - start;
+    if (length <= 0) continue;
+    final whole = length <= _blocksPerBin * framesPerBlock;
+    final blocks = whole ? 1 : _blocksPerBin;
+    final blockFrames = whole ? length : framesPerBlock;
+    final gap = blocks == 1 ? 0.0 : (length - blockFrames) / (blocks - 1);
+    for (var k = 0; k < blocks; k++) {
+      final first = start + (k * gap).floor();
+      final chunk = source.read(pcm.offset + first * pcm.frameBytes, blockFrames * pcm.frameBytes);
+      final data = ByteData.sublistView(chunk);
+      final frames = chunk.length ~/ pcm.frameBytes;
+      for (var f = 0; f < frames; f++) {
+        final base = f * pcm.frameBytes;
+        for (var ch = 0; ch < pcm.channels; ch++) {
+          final v = pcm.sample(data, base + ch * pcm.sampleBytes);
+          sums[b] += v * v;
+          counts[b]++;
+        }
       }
     }
   }
@@ -150,36 +199,44 @@ class _PcmLayout {
 
   static String _tag(Uint8List b, int at) => at + 4 <= b.length ? String.fromCharCodes(b, at, at + 4) : '';
 
-  static _PcmLayout? read(Uint8List b) {
-    if (b.length < 12) return null;
-    final head = _tag(b, 0);
-    if (head == 'RIFF' && _tag(b, 8) == 'WAVE') return _wav(b);
-    if (head == 'FORM' && (_tag(b, 8) == 'AIFF' || _tag(b, 8) == 'AIFC')) return _aiff(b, compressed: _tag(b, 8) == 'AIFC');
+  /// The layout read from [s]'s chunk headers (and its `fmt ` or `COMM`
+  /// chunk), without reading the samples.
+  static _PcmLayout? read(PcmSource s) {
+    final head = s.read(0, 12);
+    if (head.length < 12) return null;
+    final kind = _tag(head, 8);
+    if (_tag(head, 0) == 'RIFF' && kind == 'WAVE') return _wav(s);
+    if (_tag(head, 0) == 'FORM' && (kind == 'AIFF' || kind == 'AIFC')) return _aiff(s, compressed: kind == 'AIFC');
     return null;
   }
 
-  static _PcmLayout? _wav(Uint8List b) {
-    final d = ByteData.sublistView(b);
+  static _PcmLayout? _wav(PcmSource s) {
     int? format, channels, bits;
     var at = 12;
-    while (at + 8 <= b.length) {
-      final id = _tag(b, at);
-      final size = d.getUint32(at + 4, Endian.little);
+    while (at + 8 <= s.length) {
+      final header = s.read(at, 8);
+      if (header.length < 8) return null;
+      final id = _tag(header, 0);
+      final size = ByteData.sublistView(header).getUint32(4, Endian.little);
       final body = at + 8;
-      if (id == 'fmt ' && body + 16 <= b.length) {
-        format = d.getUint16(body, Endian.little);
-        channels = d.getUint16(body + 2, Endian.little);
-        bits = d.getUint16(body + 14, Endian.little);
-        // WAVE_FORMAT_EXTENSIBLE: the real format is the sub-format GUID's
-        // first two bytes.
-        if (format == 0xFFFE && size >= 26 && body + 26 <= b.length) format = d.getUint16(body + 24, Endian.little);
+      if (id == 'fmt ') {
+        final b = s.read(body, math.min(size, 40));
+        final d = ByteData.sublistView(b);
+        if (b.length >= 16) {
+          format = d.getUint16(0, Endian.little);
+          channels = d.getUint16(2, Endian.little);
+          bits = d.getUint16(14, Endian.little);
+          // WAVE_FORMAT_EXTENSIBLE: the real format is the sub-format GUID's
+          // first two bytes.
+          if (format == 0xFFFE && size >= 26 && b.length >= 26) format = d.getUint16(24, Endian.little);
+        }
       } else if (id == 'data') {
         if (format == null || channels == null || bits == null || channels == 0) return null;
         final float = format == 3;
         if (format != 1 && !float) return null;
         final sampleBytes = (bits + 7) ~/ 8;
         if (sampleBytes < 1 || sampleBytes > 8 || (float && sampleBytes != 4 && sampleBytes != 8)) return null;
-        final length = math.min(size, b.length - body);
+        final length = math.min(size, s.length - body);
         return _PcmLayout(
             offset: body, frames: length ~/ (channels * sampleBytes), channels: channels, sampleBytes: sampleBytes, float: float, bigEndian: false);
       }
@@ -188,20 +245,23 @@ class _PcmLayout {
     return null;
   }
 
-  static _PcmLayout? _aiff(Uint8List b, {required bool compressed}) {
-    final d = ByteData.sublistView(b);
+  static _PcmLayout? _aiff(PcmSource s, {required bool compressed}) {
     int? channels, bits;
     var bigEndian = true, float = false;
     var at = 12;
-    while (at + 8 <= b.length) {
-      final id = _tag(b, at);
-      final size = d.getUint32(at + 4, Endian.big);
+    while (at + 8 <= s.length) {
+      final header = s.read(at, 8);
+      if (header.length < 8) return null;
+      final id = _tag(header, 0);
+      final size = ByteData.sublistView(header).getUint32(4, Endian.big);
       final body = at + 8;
-      if (id == 'COMM' && body + 18 <= b.length) {
-        channels = d.getUint16(body, Endian.big);
-        bits = d.getUint16(body + 6, Endian.big);
-        if (compressed && body + 22 <= b.length) {
-          switch (_tag(b, body + 18)) {
+      final b = id == 'COMM' || id == 'SSND' ? s.read(body, 22) : Uint8List(0);
+      final d = ByteData.sublistView(b);
+      if (id == 'COMM' && b.length >= 18) {
+        channels = d.getUint16(0, Endian.big);
+        bits = d.getUint16(6, Endian.big);
+        if (compressed && b.length >= 22) {
+          switch (_tag(b, 18)) {
             case 'NONE':
             case 'twos':
               break;
@@ -219,13 +279,13 @@ class _PcmLayout {
               return null;
           }
         }
-      } else if (id == 'SSND' && body + 8 <= b.length) {
+      } else if (id == 'SSND' && b.length >= 8) {
         if (channels == null || bits == null || channels == 0) return null;
-        final dataOffset = d.getUint32(body, Endian.big);
+        final dataOffset = d.getUint32(0, Endian.big);
         final start = body + 8 + dataOffset;
         final sampleBytes = (bits + 7) ~/ 8;
         if (sampleBytes < 1 || sampleBytes > 8) return null;
-        final length = math.max(0, math.min(size - 8 - dataOffset, b.length - start));
+        final length = math.max(0, math.min(size - 8 - dataOffset, s.length - start));
         return _PcmLayout(
             offset: start, frames: length ~/ (channels * sampleBytes), channels: channels, sampleBytes: sampleBytes, float: float, bigEndian: bigEndian);
       }

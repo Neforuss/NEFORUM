@@ -57,6 +57,34 @@ class _MemoryStorage implements AppStorage {
       SizedBox(width: width, height: height, child: const ColoredBox(color: Color(0xFF777777)));
 }
 
+/// Storage on disk that notes every file read whole.
+class _CountingStorage implements AppStorage {
+  _CountingStorage(this._inner);
+  final AppStorage _inner;
+  final List<String> readWhole = [];
+  @override
+  String? get dataDir => _inner.dataDir;
+  @override
+  Future<Map<String, dynamic>?> readJson(String name) => _inner.readJson(name);
+  @override
+  Future<void> writeJson(String name, Object data) => _inner.writeJson(name, data);
+  @override
+  Future<String> saveMedia(String id, String extension, Uint8List bytes) => _inner.saveMedia(id, extension, bytes);
+  @override
+  Future<Uint8List> readMedia(String path) {
+    readWhole.add(path);
+    return _inner.readMedia(path);
+  }
+
+  @override
+  Future<void> deleteMedia(String path) => _inner.deleteMedia(path);
+  @override
+  Future<int> mediaBytes() => _inner.mediaBytes();
+  @override
+  Widget image(String path, {BoxFit fit = BoxFit.cover, double? width, double? height, int? cacheWidth}) =>
+      _inner.image(path, fit: fit, width: width, height: height, cacheWidth: cacheWidth);
+}
+
 Future<void> _loadFonts() async {
   Future<void> family(String name, List<String> files) async {
     final loader = FontLoader(name);
@@ -221,6 +249,18 @@ void main() {
       expect(decorative.measured, isFalse, reason: 'compressed: decorative');
       await finish(tester);
     });
+  });
+
+  test('a WAV on disk is measured in parts, never read whole', () async {
+    final dir = await Directory.systemTemp.createTemp('neforum-waveform');
+    addTearDown(() => dir.delete(recursive: true));
+    final storage = _CountingStorage(await openAppStorage(overrideDir: dir.path));
+    final file = File('${dir.path}${Platform.pathSeparator}tone.wav')..writeAsBytesSync(_toneWav());
+    final tone = MediaAttachment(id: 'tone', path: file.path, mimeType: 'audio/wav', sizeBytes: file.lengthSync(), fileName: 'tone.wav');
+    final levels = await waveformOfSound(storage, tone);
+    expect(levels.measured, isTrue);
+    expect(levels.levels.first, greaterThan(levels.levels.last * 3), reason: 'loud, then quiet');
+    expect(storage.readWhole, isEmpty);
   });
 
   group('the designer in the composer', () {

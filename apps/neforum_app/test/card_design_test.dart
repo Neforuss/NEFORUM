@@ -182,6 +182,58 @@ Uint8List _aiff({required double Function(double t) envelope, bool littleEndian 
       .toBytes();
 }
 
+/// A 16-bit stereo WAV of [dataBytes] of samples that exists only as a
+/// formula: [loud] for the first half, [quiet] after. Counts what is read.
+class _VirtualWav implements PcmSource {
+  _VirtualWav({required this.dataBytes, required this.loud, required this.quiet});
+  final int dataBytes;
+  final int loud;
+  final int quiet;
+  int bytesRead = 0;
+  int reads = 0;
+
+  late final Uint8List _head = (BytesBuilder()
+        ..add('RIFF'.codeUnits)
+        ..add((ByteData(4)..setUint32(0, 36 + dataBytes, Endian.little)).buffer.asUint8List())
+        ..add('WAVEfmt '.codeUnits)
+        ..add((ByteData(20)
+              ..setUint32(0, 16, Endian.little)
+              ..setUint16(4, 1, Endian.little)
+              ..setUint16(6, 2, Endian.little)
+              ..setUint32(8, 44100, Endian.little)
+              ..setUint32(12, 44100 * 4, Endian.little)
+              ..setUint16(16, 4, Endian.little)
+              ..setUint16(18, 16, Endian.little))
+            .buffer
+            .asUint8List())
+        ..add('data'.codeUnits)
+        ..add((ByteData(4)..setUint32(0, dataBytes, Endian.little)).buffer.asUint8List()))
+      .toBytes();
+
+  @override
+  int get length => _head.length + dataBytes;
+
+  @override
+  Uint8List read(int offset, int count) {
+    final end = math.min(length, offset + count);
+    if (offset >= end) return Uint8List(0);
+    reads++;
+    bytesRead += end - offset;
+    final out = Uint8List(end - offset);
+    for (var i = offset; i < end; i++) {
+      if (i < _head.length) {
+        out[i - offset] = _head[i];
+        continue;
+      }
+      final at = i - _head.length;
+      final frame = at ~/ 4;
+      final v = (frame < dataBytes ~/ 8 ? loud : quiet) * (frame.isEven ? 1 : -1) & 0xFFFF;
+      out[i - offset] = at.isEven ? v & 0xFF : v >> 8;
+    }
+    return out;
+  }
+}
+
 Future<ui.Image> _decode(Uint8List png) async {
   final codec = await ui.instantiateImageCodec(png);
   final frame = await codec.getNextFrame();
@@ -297,6 +349,19 @@ void main() {
         expect(levels.first, closeTo(1, 0.02));
         expect(levels.last, closeTo(0.25, 0.03), reason: little ? 'sowt' : 'aiff');
       }
+    });
+
+    test('an hour-long file is measured from a few blocks per bin, never read whole', () {
+      // 1 GiB of 16-bit stereo: loud for the first half, a tenth as loud after.
+      final wav = _VirtualWav(dataBytes: 1 << 30, loud: 20000, quiet: 2000);
+      final levels = measurePcmSource(wav)!;
+      expect(levels, hasLength(kWaveformBins));
+      expect(levels.first, closeTo(1, 0.01));
+      expect(levels.last, closeTo(0.1, 0.01));
+      expect(wav.bytesRead, lessThan(9 << 20), reason: 'at most 8 MB of samples, plus the headers');
+      expect(wav.reads, lessThanOrEqualTo(kWaveformBins * 16 + 4));
+      // Bytes in memory read the same way.
+      expect(measurePcmSource(PcmBytes(_wav(envelope: (t) => t))), measurePcmWaveform(_wav(envelope: (t) => t)));
     });
 
     test('compressed or broken files are not measured; the decorative shape is the same for the same seed', () {

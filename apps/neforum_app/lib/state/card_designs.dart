@@ -11,6 +11,7 @@ import '../media/photo_pixels.dart';
 import '../media/render_parameters.dart';
 import '../media/text_card_background.dart';
 import '../media/waveform.dart';
+import '../platform/pcm_file.dart';
 import '../platform/storage.dart';
 
 // The card designer's place in posts and saved files (1.3.1): which design a
@@ -193,11 +194,22 @@ bool measuresWaveformOf(String mimeType) {
 }
 
 Future<WaveformLevels> _measure(AppStorage storage, MediaAttachment sound) async {
-  if (!measuresWaveformOf(sound.mimeType) || sound.sizeBytes > kWaveformMaxBytes) return _decorative(sound);
-  final bytes = await storage.readMedia(sound.path);
-  final levels = await compute(_measureJob, bytes);
+  if (!measuresWaveformOf(sound.mimeType)) return _decorative(sound);
+  final List<double>? levels;
+  if (storage.dataDir != null) {
+    // A file on disk: the other isolate reads its headers and a few blocks
+    // of frames itself, so the file is neither read whole nor copied.
+    levels = await compute(_measureFileJob, sound.path);
+  } else {
+    // No files (the web preview, storage in memory): read whole, when small.
+    if (sound.sizeBytes > kWaveformMaxBytes) return _decorative(sound);
+    levels = await compute(_measureJob, await storage.readMedia(sound.path));
+  }
   return levels == null ? _decorative(sound) : WaveformLevels(levels, measured: true);
 }
+
+/// [measurePcmFile] for `compute`: top level, plain data in and out.
+List<double>? _measureFileJob(String path) => measurePcmFile(path);
 
 /// [measurePcmWaveform] for `compute`: top level, plain data in and out.
 List<double>? _measureJob(Uint8List bytes) => measurePcmWaveform(bytes);
