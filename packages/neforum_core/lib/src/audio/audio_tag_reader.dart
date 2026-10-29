@@ -160,17 +160,27 @@ bool _isFrameId(String id) {
   return true;
 }
 
+/// The largest a compressed frame may inflate to. A front cover is a few
+/// megabytes at most; a frame declaring more, or inflating past it, is a
+/// damaged or hostile file and is skipped.
+const int _maxInflatedFrameBytes = 16 * 1024 * 1024;
+
 /// A frame's content with its format flags undone: grouping and data length
 /// bytes skipped, per-frame unsynchronisation removed, zlib compression
-/// inflated. Null for an encrypted frame.
+/// inflated. Null for an encrypted frame, and for a compressed one whose
+/// declared size (2.3) or data length indicator (2.4) is over
+/// [_maxInflatedFrameBytes] or that inflates past it.
 Uint8List? _frameData(Uint8List raw, int major, int formatFlags, bool tagUnsync) {
   var data = raw;
   var compressed = false;
+  int? declared;
   if (major == 3) {
     // %ijk00000: compression (4-byte decompressed size), encryption, grouping.
     var skip = 0;
     if ((formatFlags & 0x80) != 0) {
       compressed = true;
+      if (data.length < 4) return null;
+      declared = _Bytes(data).u32be(0);
       skip += 4;
     }
     if ((formatFlags & 0x40) != 0) return null;
@@ -182,14 +192,19 @@ Uint8List? _frameData(Uint8List raw, int major, int formatFlags, bool tagUnsync)
     var skip = 0;
     if ((formatFlags & 0x40) != 0) skip += 1;
     if ((formatFlags & 0x04) != 0) return null;
-    if ((formatFlags & 0x01) != 0) skip += 4;
+    if ((formatFlags & 0x01) != 0) {
+      if (data.length < skip + 4) return null;
+      declared = _syncsafe(_Bytes(data), skip);
+      skip += 4;
+    }
     compressed = (formatFlags & 0x08) != 0;
     data = _tail(data, skip);
     if ((formatFlags & 0x02) != 0 || tagUnsync) data = _deunsynchronise(data);
   }
   if (compressed) {
+    if (declared != null && declared > _maxInflatedFrameBytes) return null;
     try {
-      data = ZLibDecoder().decodeBytes(data);
+      data = const ZLibDecoder().decodeBytes(data, maxOutputSize: _maxInflatedFrameBytes);
     } on Object {
       return null;
     }

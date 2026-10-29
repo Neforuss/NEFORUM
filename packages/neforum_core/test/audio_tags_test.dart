@@ -159,6 +159,31 @@ void main() {
       expect(readAudioTags(_b([...tag, ...mp3Frames(1)])).tags.title, 'Squeezed title');
     });
 
+    test('compressed frames that would inflate past 16 MB are skipped', () {
+      List<int> tag(int major, List<int> frame) => [...ascii('ID3'), major, 0, 0, ...syncsafe(frame.length), ...frame];
+      final kept = id3TextContent(Id3Encoding.latin1, ['Kept']);
+      // The same size bytes in 2.3 and 2.4: under 128.
+      final title = [...ascii('TIT2'), ...u32be(kept.length), 0, 0, ...kept];
+      final content = id3TextContent(Id3Encoding.latin1, ['Squeezed title']);
+      final packed = ZLibEncoder().encodeBytes(content);
+      // 2.3, declaring 17 MB: not inflated at all.
+      final declared = [...ascii('TCOM'), ...u32be(packed.length + 4), 0, 0x80, ...u32be(17 << 20), ...packed];
+      var r = readAudioTags(_b([...tag(3, [...declared, ...title]), ...mp3Frames(1)]));
+      expect(r.tags.composer, isNull);
+      expect(r.tags.title, 'Kept', reason: 'the frames after it are read');
+      // 2.4, its data length indicator declaring 17 MB.
+      final indicated = [...ascii('TCOM'), ...syncsafe(packed.length + 4), 0, 0x09, ...syncsafe(17 << 20), ...packed];
+      r = readAudioTags(_b([...tag(4, [...indicated, ...title]), ...mp3Frames(1)]));
+      expect(r.tags.composer, isNull);
+      expect(r.tags.title, 'Kept');
+      // 2.3, declaring a small size but inflating to 17 MB: the inflater stops.
+      final bomb = ZLibEncoder().encodeBytes([0, ...ascii('Bomb'), ...List.filled(17 << 20, 0x41)]);
+      final lying = [...ascii('TCOM'), ...u32be(bomb.length + 4), 0, 0x80, ...u32be(64), ...bomb];
+      r = readAudioTags(_b([...tag(3, [...lying, ...title]), ...mp3Frames(1)]));
+      expect(r.tags.composer, isNull);
+      expect(r.tags.title, 'Kept');
+    });
+
     test('2.2 three-letter frames and PIC', () {
       final e = Id3Encoding.latin1;
       final file = _b([
