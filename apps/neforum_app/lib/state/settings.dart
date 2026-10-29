@@ -192,6 +192,7 @@ class AppSettings {
     // 1.3.1: sidebar
     this.navigationChromeOpacity = 0,
     this.navigationChromeBlur = 0,
+    this.audioTextTemplate = kDefaultAudioTextTemplate, // 1.3.1: audio tags
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -265,6 +266,7 @@ class AppSettings {
         // 1.3.1: sidebar
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
         navigationChromeBlur: validNavigationChromeBlur(j['navigationChromeBlur']),
+        audioTextTemplate: j['audioTextTemplate'] as String? ?? kDefaultAudioTextTemplate, // 1.3.1: audio tags
       );
 
   final ThemeMode themeMode;
@@ -480,6 +482,11 @@ class AppSettings {
   /// navigation chrome: 0 (sharp) to [kMaxNavigationChromeBlur].
   final double navigationChromeBlur;
 
+  /// 1.3.1: audio tags. The post text "Use track details as the text" writes
+  /// from a track's details ([renderAudioText]): `{artist} – {title}` and
+  /// the other tokens of [audioTextTokens].
+  final String audioTextTemplate;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -563,6 +570,7 @@ class AppSettings {
     // 1.3.1: sidebar
     double? navigationChromeOpacity,
     double? navigationChromeBlur,
+    String? audioTextTemplate, // 1.3.1: audio tags
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -633,6 +641,7 @@ class AppSettings {
         // 1.3.1: sidebar
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
         navigationChromeBlur: navigationChromeBlur ?? this.navigationChromeBlur,
+        audioTextTemplate: audioTextTemplate ?? this.audioTextTemplate, // 1.3.1: audio tags
       );
 
   Map<String, dynamic> toJson() => {
@@ -704,5 +713,6 @@ class AppSettings {
         // 1.3.1: sidebar
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,
         if (navigationChromeBlur != 0) 'navigationChromeBlur': navigationChromeBlur,
+        'audioTextTemplate': audioTextTemplate, // 1.3.1: audio tags
       };
 }

@@ -102,7 +102,7 @@ class MediaAttachment {
   double? get aspectRatio =>
       (width != null && height != null && height! > 0) ? width! / height! : null;
 
-  MediaAttachment copyWith({String? altText, bool clearAltText = false}) => MediaAttachment(
+  MediaAttachment copyWith({String? altText, bool clearAltText = false, AudioTags? audioTags, bool clearAudioTags = false}) => MediaAttachment(
         id: id,
         path: path,
         mimeType: mimeType,
@@ -117,7 +117,7 @@ class MediaAttachment {
         fitKey: fitKey,
         renderParameters: renderParameters,
         audioCodec: audioCodec,
-        audioTags: audioTags,
+        audioTags: clearAudioTags ? null : (audioTags ?? this.audioTags),
       );
 
   Map<String, dynamic> toJson() => {

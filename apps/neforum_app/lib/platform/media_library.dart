@@ -1,7 +1,7 @@
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:cross_file/cross_file.dart';
+import 'package:flutter/foundation.dart';
 import 'package:mime/mime.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:path/path.dart' as p;
@@ -56,6 +56,7 @@ class MediaLibrary {
     final id = _uuid.v7();
     final ext = _extensionFor(fileName, mime);
     final path = await _storage.saveMedia(id, ext, bytes);
+    final tags = sound == null ? null : await _audioTags(bytes);
     int? width;
     int? height;
     if (mime.startsWith('image/')) {
@@ -73,8 +74,38 @@ class MediaLibrary {
       durationMs: sound?.durationMs,
       fileName: fileName,
       audioCodec: sound?.codec,
+      audioTags: tags,
     );
   }
+
+  /// The tags a sound file carries, read in another isolate, with its cover
+  /// saved as a picture of its own in the media folder; null when it has
+  /// none.
+  Future<AudioTags?> _audioTags(Uint8List bytes) async {
+    final AudioTagExtraction read;
+    try {
+      read = await compute(readAudioTags, bytes);
+    } on Object catch (e) {
+      debugPrint('Could not read the tags of a sound file: $e');
+      return null;
+    }
+    if (read.isEmpty) return null;
+    final cover = read.cover;
+    final mime = read.coverMimeType;
+    if (cover == null || mime == null) return read.tags;
+    try {
+      final path = await saveCover(cover, mime);
+      return read.tags.withCover(path, mime);
+    } on Object catch (e) {
+      debugPrint('Could not keep the cover of a sound file: $e');
+      return read.tags;
+    }
+  }
+
+  /// Saves a track's cover picture ([mimeType] `image/jpeg`, `image/png`...)
+  /// in the media folder and returns its path.
+  Future<String> saveCover(Uint8List picture, String mimeType) =>
+      _storage.saveMedia(_uuid.v7(), extensionFromMime(mimeType) ?? 'jpg', picture);
 
   /// A sound file by its name or its reported type. An `.mp4` or `.webm` is
   /// a video unless its reported type says sound.

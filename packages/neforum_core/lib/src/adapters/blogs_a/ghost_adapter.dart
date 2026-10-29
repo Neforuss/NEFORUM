@@ -1,3 +1,5 @@
+import '../../audio/audio_publishing.dart';
+import '../../audio/audio_text_template.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
@@ -329,12 +331,13 @@ class GhostAdapter extends PlatformAdapter {
     }
 
     final images = <(MediaAttachment, String)>[];
-    final sounds = <String>[];
+    final sounds = <(MediaAttachment, String, String?)>[];
     final media = variant.media;
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
       if (m.isAudio) {
-        sounds.add(await _uploadAudio(api, m, i, media.length, ctx));
+        final (url, thumbnail) = await _uploadAudio(api, m, i, media.length, ctx);
+        sounds.add((m, url, thumbnail));
       } else {
         images.add((m, await _upload(api, m, i, media.length, ctx)));
       }
@@ -347,7 +350,11 @@ class GhostAdapter extends PlatformAdapter {
     var html = [
       bodyHtml(variant),
       for (final (m, url) in inline) mediaFigureHtml(m, url, imageClass: 'kg-card kg-image-card'),
-      for (final url in sounds) ghostAudioHtml(url, htmlCard: !wholeHtmlCard),
+      for (final (m, url, thumbnail) in sounds)
+        ghostAudioHtml(url,
+            htmlCard: !wholeHtmlCard,
+            caption: m.audioTags == null ? null : renderAudioText(kDefaultAudioTextTemplate, m.audioTags!),
+            thumbnailUrl: thumbnail),
     ].where((s) => s.isNotEmpty).join('\n\n');
     if (wholeHtmlCard && html.isNotEmpty) {
       html = '<!--kg-card-begin: html-->\n$html\n<!--kg-card-end: html-->';
@@ -434,16 +441,29 @@ class GhostAdapter extends PlatformAdapter {
     return url;
   }
 
-  Future<String> _uploadAudio(GhostApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
+  /// Uploads a sound file, with its cover as the thumbnail; returns its URL
+  /// and the thumbnail's (null when there is none or Ghost kept none).
+  Future<(String, String?)> _uploadAudio(GhostApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
     ctx.progress('Uploading sound file ${index + 1} of $total');
     final bytes = await readBlogMedia(ctx, m);
+    final cover = m.audioCover;
+    HttpFilePart? thumbnail;
+    if (cover != null) {
+      try {
+        thumbnail = HttpFilePart(field: 'thumbnail', bytes: await ctx.readMedia(cover), fileName: cover.fileName!, contentType: cover.mimeType);
+      } on Exception catch (e) {
+        ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
+      }
+    }
     final what = 'Ghost sound file upload ${index + 1}/$total';
-    final r = await guardGhost(what, () => api.uploadMedia(bytes, fileName: safeFileName(m), contentType: m.mimeType));
-    final url = blogStr(blogMap(blogList(r.jsonMap['media']).firstOrNull)?['url']);
+    final fileName = m.audioTaggedFileName ?? safeFileName(m);
+    final r = await guardGhost(what, () => api.uploadMedia(bytes, fileName: fileName, contentType: m.mimeType, thumbnail: thumbnail));
+    final uploaded = blogMap(blogList(r.jsonMap['media']).firstOrNull);
+    final url = blogStr(uploaded?['url']);
     if (url == null) {
       throw AdapterException(PublishError.platform('$what: Ghost did not return a file URL', raw: bodySnippet(r)));
     }
-    return url;
+    return (url, blogStr(uploaded?['thumbnail_url']));
   }
 
   // ---------------------------------------------------------------- hand-off
@@ -484,8 +504,14 @@ class GhostAdapter extends PlatformAdapter {
 
 /// A player for an uploaded sound file at [url]. Ghost's HTML import drops
 /// an `<audio>` element it does not recognise, so it goes in an HTML card
-/// ([htmlCard]) unless the whole post already is one.
-String ghostAudioHtml(String url, {bool htmlCard = true}) {
-  final player = '<figure class="kg-card kg-audio-card"><audio controls preload="metadata" src="${escapeHtml(url)}"></audio></figure>';
+/// ([htmlCard]) unless the whole post already is one. The track's cover
+/// ([thumbnailUrl]) goes above the player and its details ([caption])
+/// below it.
+String ghostAudioHtml(String url, {bool htmlCard = true, String? caption, String? thumbnailUrl}) {
+  final cover = thumbnailUrl == null
+      ? ''
+      : '<img class="kg-audio-thumbnail" src="${escapeHtml(thumbnailUrl)}" alt="${escapeHtml(caption ?? '')}" loading="lazy">';
+  final details = caption == null || caption.isEmpty ? '' : '<figcaption>${escapeHtml(caption)}</figcaption>';
+  final player = '<figure class="kg-card kg-audio-card">$cover<audio controls preload="metadata" src="${escapeHtml(url)}"></audio>$details</figure>';
   return htmlCard ? '<!--kg-card-begin: html-->\n$player\n<!--kg-card-end: html-->' : player;
 }

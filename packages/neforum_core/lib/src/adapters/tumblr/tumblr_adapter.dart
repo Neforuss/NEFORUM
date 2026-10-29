@@ -661,7 +661,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     try {
-      return await _publish(await withAudioLinks(variant, ctx, platform: 'Tumblr', markdown: false), account, secrets, ctx);
+      return await _publish(await withAudioLinks(variant, ctx, platform: 'Tumblr', markdown: false, linkCard: true), account, secrets, ctx);
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } on HttpFailure catch (e) {

@@ -1,5 +1,6 @@
 import 'package:uuid/uuid.dart';
 
+import '../../audio/audio_text_template.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
@@ -219,7 +220,7 @@ sending the video to Odysee in the background: leave it open until the video pla
     final daemon = _daemonUri(account.configString(cfgDaemon)) ?? Uri.parse(defaultDaemon);
     if (variant.media.isEmpty) return PublishResult.failure(const PublishError.validation('Odysee needs a video, a picture or a sound file'));
     final media = variant.media.first;
-    final title = videoTitle(variant, max: titleMax);
+    final title = odyseeTitle(variant);
     final name = '${slugFor(title)}-${const Uuid().v4().substring(0, 6)}';
     final channelId = account.configString(cfgChannelId);
     ctx.onProgress?.call('Publishing on Odysee (the LBRY app prepares the file)');
@@ -229,7 +230,7 @@ sending the video to Odysee in the background: leave it open until the video pla
         'bid': account.configString(cfgBid).isEmpty ? defaultBid : account.configString(cfgBid),
         'file_path': media.path,
         'title': title,
-        'description': videoDescription(variant),
+        'description': odyseeDescription(variant),
         if (variant.tags.isNotEmpty) 'tags': [for (final t in variant.tags.take(5)) t.replaceFirst('#', '').toLowerCase()],
         if (channelId.isNotEmpty) 'channel_id': channelId,
         'blocking': true,
@@ -267,6 +268,23 @@ sending the video to Odysee in the background: leave it open until the video pla
         androidPackage: 'com.odysee.app',
         extraStep: 'Pick the channel to publish in, then a thumbnail if Odysee asks for one.',
       );
+
+  /// The claim's title: the post's title; for a track without one, "Artist
+  /// – Title" from its details; else the first line of the text.
+  static String odyseeTitle(PostVariant v) {
+    final track = v.media.firstOrNull?.audioTags?.artistAndTitle;
+    if ((v.title ?? '').trim().isEmpty && track != null) return videoTitle(v.copyWith(title: track), max: titleMax);
+    return videoTitle(v, max: titleMax);
+  }
+
+  /// The claim's description: the post's text; for a track posted without
+  /// words, its details ("Artist – Title (Album, 2024)").
+  static String odyseeDescription(PostVariant v) {
+    final text = videoDescription(v);
+    final tags = v.media.firstOrNull?.audioTags;
+    if (text.isNotEmpty || tags == null) return text;
+    return renderAudioText(kDefaultAudioTextTemplate, tags);
+  }
 
   /// "My first video!" -> "my-first-video": a claim name (letters, digits and
   /// dashes; LBRY URLs cannot contain spaces or #:@/ characters).

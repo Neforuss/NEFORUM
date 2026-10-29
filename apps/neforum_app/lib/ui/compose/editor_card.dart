@@ -18,6 +18,7 @@ import 'document_import.dart';
 import 'media_tray.dart';
 import 'poll_sheet.dart';
 import 'rich_text.dart';
+import 'track_details_sheet.dart';
 
 /// The writing surface: optional title, content warning, the text itself,
 /// attachments and the formatting toolbar. Accepts dropped files.
@@ -218,11 +219,16 @@ class _EditorCardState extends ConsumerState<EditorCard> {
             padding: EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.lg, Space.sm),
             child: MediaTray(),
           ),
-        if (c.audio != null)
+        if (c.audio != null) ...[
+          const Padding(
+            padding: EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.sm),
+            child: TrackDetailsRow(),
+          ),
           const Padding(
             padding: EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.md),
             child: AudioQualityOption(),
           ),
+        ],
         Divider(height: 1, color: nf.border),
         _Toolbar(
           onMedia: () => pickAndAttachMedia(context, ref),

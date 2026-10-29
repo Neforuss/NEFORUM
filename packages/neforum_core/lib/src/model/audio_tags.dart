@@ -69,7 +69,17 @@ class AudioTags {
   final String? coverPath;
   final String? coverMimeType;
 
-  bool get hasCover => coverPath != null;
+  bool get hasCover => coverPath != null && coverPath!.isNotEmpty;
+
+  /// "Artist – Title", "Title" or "Artist"; null when neither is set. The
+  /// one-line name of the track (alt text, link titles).
+  String? get artistAndTitle {
+    final a = artist?.trim() ?? '', t = title?.trim() ?? '';
+    if (a.isEmpty && t.isEmpty) return null;
+    if (a.isEmpty) return t;
+    if (t.isEmpty) return a;
+    return '$a – $t';
+  }
 
   bool get isEmpty =>
       title == null &&
@@ -89,27 +99,56 @@ class AudioTags {
 
   /// These tags with every field [over] sets taking its place (the user's
   /// edits over the file's own tags).
+  ///
+  /// In [over], an empty string (or an empty [coverPath]) and the number 0
+  /// mean "removed": the user cleared what the file says. A year set without
+  /// a date drops a file date of another year.
   AudioTags overriddenBy(AudioTags? over) {
     if (over == null) return this;
+    String? text(String? edit, String? own) => edit == null ? own : (edit.isEmpty ? null : edit);
+    int? number(int? edit, int? own) => edit == null ? own : (edit <= 0 ? null : edit);
     final cover = over.coverPath;
+    final y = number(over.year, year);
+    var d = text(over.date, date);
+    if (over.date == null && over.year != null && d != null && !d.startsWith('$y')) d = null;
     return AudioTags(
-      title: over.title ?? title,
-      artist: over.artist ?? artist,
-      album: over.album ?? album,
-      albumArtist: over.albumArtist ?? albumArtist,
-      year: over.year ?? year,
-      date: over.date ?? date,
-      genre: over.genre ?? genre,
-      trackNumber: over.trackNumber ?? trackNumber,
-      trackTotal: over.trackTotal ?? trackTotal,
-      discNumber: over.discNumber ?? discNumber,
-      composer: over.composer ?? composer,
-      comment: over.comment ?? comment,
-      lyrics: over.lyrics ?? lyrics,
-      coverPath: cover ?? coverPath,
-      coverMimeType: cover != null ? over.coverMimeType : coverMimeType,
+      title: text(over.title, title),
+      artist: text(over.artist, artist),
+      album: text(over.album, album),
+      albumArtist: text(over.albumArtist, albumArtist),
+      year: y,
+      date: d,
+      genre: text(over.genre, genre),
+      trackNumber: number(over.trackNumber, trackNumber),
+      trackTotal: number(over.trackTotal, trackTotal),
+      discNumber: number(over.discNumber, discNumber),
+      composer: text(over.composer, composer),
+      comment: text(over.comment, comment),
+      lyrics: text(over.lyrics, lyrics),
+      coverPath: cover == null ? coverPath : (cover.isEmpty ? null : cover),
+      coverMimeType: cover == null ? coverMimeType : (cover.isEmpty ? null : over.coverMimeType),
     );
   }
+
+  /// These tags with [coverPath] (and its type) replaced, for the copy made
+  /// when the cover is saved to a file.
+  AudioTags withCover(String? path, String? mimeType) => AudioTags(
+        title: title,
+        artist: artist,
+        album: album,
+        albumArtist: albumArtist,
+        year: year,
+        date: date,
+        genre: genre,
+        trackNumber: trackNumber,
+        trackTotal: trackTotal,
+        discNumber: discNumber,
+        composer: composer,
+        comment: comment,
+        lyrics: lyrics,
+        coverPath: path,
+        coverMimeType: path == null ? null : mimeType,
+      );
 
   Map<String, dynamic> toJson() => {
         if (title != null) 'title': title,
