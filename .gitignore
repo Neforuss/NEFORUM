@@ -26,6 +26,8 @@ neforum-secrets*
 
 # Rendered by test/screenshots_test.dart (copied to docs/screenshots)
 apps/neforum_app/test/goldens/
+# Golden mismatch images written by failing screenshot tests
+apps/neforum_app/test/failures/
 
 
 # Release files built locally
