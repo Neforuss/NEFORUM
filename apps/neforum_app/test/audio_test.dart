@@ -602,6 +602,26 @@ void main() {
       expect(calls, hasLength(made));
     });
 
+    testWidgets('a designed card showing the cover art leaves the photo in the list; one showing the photo takes it', (tester) async {
+      final x = handoff('x', 'x');
+      final (s, plain, photo) = await workspace(tester, [x]);
+      final design = cardTemplateById('vinyl')!.design(CardKind.audio);
+      await tester.runAsync(() => s.saveSettings(s.settings.copyWith(audioCardDesign: design.toJson())));
+      final coverPath = (await tester.runAsync(() => s.media.saveCover(_png, 'image/png')))!;
+      final tagged = plain.copyWith(audioTags: AudioTags(title: 'Night Drive', coverPath: coverPath, coverMimeType: 'image/png'));
+      final now = DateTime(2026, 10, 28);
+      for (final (track, keepsPhoto) in [(tagged, true), (plain, false)]) {
+        var post = Post(id: 'p-cover', text: 'New single', media: [photo, track], targets: [PostTarget(accountId: x.id)], createdAt: now, updatedAt: now);
+        await tester.runAsync(() async => post = await attachAudioRenditions(s, post, s.settings));
+        final video = post.media.singleWhere((m) => isAudioRendition(m) && m.isVideo);
+        final expected = keepsPhoto ? [photo.id, video.id] : [video.id];
+        expect(post.targetFor(x.id)!.overrides.mediaIds, expected, reason: keepsPhoto ? 'the cover art is the picture' : 'the photo is the picture');
+        // The same when the video is reused.
+        await tester.runAsync(() async => post = await attachAudioRenditions(s, withoutAudioRenditions(post, keepFiles: true), s.settings));
+        expect(post.targetFor(x.id)!.overrides.mediaIds, expected, reason: 'reused');
+      }
+    });
+
     testWidgets('the story of Post + Story gets the video too, without the photo that became its picture', (tester) async {
       final ig = handoff('ig', 'instagram');
       final (s, track, photo) = await workspace(tester, [ig]);

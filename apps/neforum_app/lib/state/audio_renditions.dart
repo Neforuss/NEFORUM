@@ -135,7 +135,8 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
     if (!ids.any(sources.containsKey) && !(story?.any(sources.containsKey) ?? false)) continue;
 
     // [list] with each sound file in the form this network takes; null when
-    // nothing changes. A photo that became a video's picture leaves.
+    // nothing changes. A photo that became a video's picture leaves; one the
+    // picture does not show (a designed card showing the cover art) stays.
     Future<List<String>?> rendered(List<String> list) async {
       final next = <String>[];
       final consumed = <String>{};
@@ -152,8 +153,9 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
           made = await _standardCopy(s, post, source, format, pool, used, render: canRender);
         } else if (route == AudioRoute.video) {
           final picture = _pictureFor(list, byId);
-          made = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender, design: design);
-          if (made != null && picture != null) consumed.add(picture.$1);
+          final video = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender, design: design);
+          made = video?.$1;
+          if (video != null && video.$2 && picture != null) consumed.add(picture.$1);
         }
         if (made == null) {
           next.add(id);
@@ -329,7 +331,16 @@ Uint8List? embedAudioTagsJob((Uint8List, String, Map<String, dynamic>, Uint8List
   return embedAudioTags(bytes, mimeType, AudioTags.fromJson(tags), cover: cover, coverMimeType: coverMimeType);
 }
 
-Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, MediaAttachment source, (String, MediaAttachment)? picture,
+/// `renderParameters` key, set to true on a still-picture video whose
+/// picture is the user's photo (not the track's cover art or a card without
+/// it), so the photo leaves the target's list only then, also when the video
+/// is reused. Not part of the video's key: it is known once it is drawn.
+const String _photoDrawnKey = 'photoDrawn';
+
+/// The still-picture video of [source] for [platformId] and whether its
+/// picture is the user's [picture] (then that photo leaves the list); null
+/// when it cannot be made (or, without [render], was not made before).
+Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget target, MediaAttachment source, (String, MediaAttachment)? picture,
     String platformId, Map<String, MediaAttachment> pool, Map<String, MediaAttachment> used,
     {required bool render, CardDesign? design}) async {
   final (width, height) = audioVideoFrame(platformId);
@@ -359,7 +370,7 @@ Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, Med
   };
   final key = 'audio|${source.id}|${stableHash(jsonEncode(params))}';
   final reused = used[key] ?? pool[key];
-  if (reused != null) return used[key] = reused;
+  if (reused != null) return (used[key] = reused, reused.renderParameters?[_photoDrawnKey] == true);
   if (!render) return null;
   final id = const Uuid().v7();
   final out = newMediaFilePath(s.storage.dataDir, id, 'mp4');
@@ -367,16 +378,18 @@ Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, Med
   final made = MediaAttachment(id: id, path: out, mimeType: 'video/mp4', sizeBytes: 0);
   try {
     final Uint8List png;
+    var photoDrawn = false;
     if (design != null && texts != null) {
-      final cover = (coverPath == null ? null : await decodeCardPicture(s.storage, coverPath)) ??
-          (photo == null ? null : await decodeCardPicture(s.storage, photo.path));
+      final coverArt = coverPath == null ? null : await decodeCardPicture(s.storage, coverPath);
+      final ownPhoto = coverArt != null || photo == null ? null : await decodeCardPicture(s.storage, photo.path);
+      photoDrawn = ownPhoto != null;
       png = await renderDesignedAudioCard(s.storage,
           design: design,
           platformId: platformId,
           size: Size(width.toDouble(), height.toDouble()),
           safe: width / height < 0.62 ? fullScreenSafeArea(platformId) : EdgeInsets.zero,
           texts: texts,
-          cover: cover,
+          cover: coverArt ?? ownPhoto,
           waveform: design.waveform.visible ? await waveformOfSound(s.storage, source) : null);
     } else {
       Uint8List? cover;
@@ -387,11 +400,12 @@ Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, Med
           debugPrint('Could not read the cover $coverPath: $e');
         }
       }
-      png = (photo == null ? null : await coverPhotoPng(await s.media.read(photo), width: width, height: height)) ??
-          await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details, tags: tags, cover: cover);
+      final fitted = photo == null ? null : await coverPhotoPng(await s.media.read(photo), width: width, height: height);
+      photoDrawn = fitted != null;
+      png = fitted ?? await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details, tags: tags, cover: cover);
     }
     await VideoCompositor.instance.renderAudioVideo(audioPath: source.path, outputPath: out, imagePng: png, frameWidth: width, frameHeight: height);
-    return used[key] = MediaAttachment(
+    final video = used[key] = MediaAttachment(
       id: id,
       path: out,
       mimeType: 'video/mp4',
@@ -399,13 +413,14 @@ Future<MediaAttachment?> _video(AppServices s, Post post, PostTarget target, Med
       width: width,
       height: height,
       durationMs: source.durationMs,
-      altText: photo?.altText,
+      altText: photoDrawn ? photo?.altText : null,
       fileName: '$title (video).mp4',
       generated: true,
       derivedFrom: source.id,
       fitKey: key,
-      renderParameters: params,
+      renderParameters: {...params, if (photoDrawn) _photoDrawnKey: true},
     );
+    return (video, photoDrawn);
   } on Object catch (e) {
     debugPrint('Could not make a video of ${source.fileName ?? source.id} for $platformId: $e');
     await s.media.discard(made);
