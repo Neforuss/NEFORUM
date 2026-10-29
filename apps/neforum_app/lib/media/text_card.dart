@@ -11,6 +11,7 @@ import '../state/settings.dart' show TextCardAlignment;
 import '../theme/tokens.dart';
 import 'aligned_text.dart';
 import 'caption_fonts.dart';
+import 'card_design.dart';
 import 'photo_composite.dart';
 import 'render_parameters.dart';
 import 'text_card_background.dart';
@@ -220,6 +221,8 @@ Map<String, dynamic> textCardRenderParameters({
   TextCardBackground? background,
   CaptionFont? customFont, // 1.3.1: cards
   bool customFontFallback = false,
+  CardDesign? design,
+  bool designFontFallback = false,
 }) =>
     {
       'kind': RenderKind.textCard,
@@ -239,7 +242,16 @@ Map<String, dynamic> textCardRenderParameters({
       // the font is.
       if (customFont != null) 'customFont': customFont.toJson(),
       if (customFont != null && customFontFallback) 'customFontFallback': true,
+      // 1.3.1: cards. A card drawn from the card designer: the design is the
+      // whole look (the choices above stay recorded for when it is turned
+      // off). Fonts of its blocks missing here are marked like customFont.
+      if (design != null) 'design': design.toJson(),
+      if (design != null && designFontFallback) 'designFontFallback': true,
     };
+
+/// The card designer's design a card (or placeholder) was drawn from
+/// (1.3.1); null for the classic card.
+CardDesign? textCardDesignOf(MediaAttachment m) => CardDesign.tryParse(textCardParametersOf(m)?['design']);
 
 /// The installed or imported font a card (or placeholder) was made with
 /// (1.3.1); null for a built-in font ([textCardFontOf]).
@@ -273,7 +285,8 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     bool showsHandle = true,
     TextCardBackground? background,
     bool story = false,
-    CaptionFont? customFont}) {
+    CaptionFont? customFont,
+    CardDesign? design}) {
   final s = textCardSize(platformId, story: story);
   return MediaAttachment(
     id: story ? 'textcard-$platformId-story' : 'textcard-$platformId',
@@ -294,6 +307,7 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
       safe: textCardSafeArea(platformId, story: story) != EdgeInsets.zero,
       background: background,
       customFont: customFont,
+      design: design,
     ),
   );
 }

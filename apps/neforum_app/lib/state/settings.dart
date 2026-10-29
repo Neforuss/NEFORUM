@@ -168,6 +168,9 @@ class AppSettings {
     this.updateDismissedVersion,
     this.textCardEveryNetwork = false, // 1.3: cards
     this.textCardCustomFont = const {}, // 1.3.1: cards
+    this.textCardDesign = const {}, // 1.3.1: cards
+    this.audioCardDesign = const {}, // 1.3.1: cards
+    this.cardPresets = const [], // 1.3.1: cards
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -239,6 +242,9 @@ class AppSettings {
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
         textCardCustomFont: Map<String, dynamic>.from(j['textCardCustomFont'] as Map? ?? const {}), // 1.3.1: cards
+        textCardDesign: Map<String, dynamic>.from(j['textCardDesign'] as Map? ?? const {}), // 1.3.1: cards
+        audioCardDesign: Map<String, dynamic>.from(j['audioCardDesign'] as Map? ?? const {}), // 1.3.1: cards
+        cardPresets: [for (final p in j['cardPresets'] as List? ?? const []) if (p is Map) Map<String, dynamic>.from(p)], // 1.3.1: cards
       );
 
   final ThemeMode themeMode;
@@ -451,6 +457,17 @@ class AppSettings {
   /// [textCardCustomFont] as a font; null for the built-in one.
   CaptionFont? get textCardCustomFontChoice => CaptionFont.tryParse(textCardCustomFont);
 
+  /// 1.3.1: cards. The card designer's default design for text cards
+  /// (CardDesign.toJson); empty for the classic NEFORUM card.
+  final Map<String, dynamic> textCardDesign;
+
+  /// 1.3.1: cards. The default design of the picture in a sound file's video
+  /// (CardDesign.toJson); empty for the classic audio card.
+  final Map<String, dynamic> audioCardDesign;
+
+  /// 1.3.1: cards. Designs the user saved under a name (CardPreset.toJson).
+  final List<Map<String, dynamic>> cardPresets;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -532,6 +549,9 @@ class AppSettings {
     String? updateDismissedVersion,
     bool? textCardEveryNetwork, // 1.3: cards
     Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
+    Map<String, dynamic>? textCardDesign, // 1.3.1: cards
+    Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
+    List<Map<String, dynamic>>? cardPresets, // 1.3.1: cards
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -600,6 +620,9 @@ class AppSettings {
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
         textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
+        textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
+        audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
+        cardPresets: cardPresets ?? this.cardPresets, // 1.3.1: cards
       );
 
   Map<String, dynamic> toJson() => {
@@ -669,5 +692,8 @@ class AppSettings {
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
         if (textCardCustomFont.isNotEmpty) 'textCardCustomFont': textCardCustomFont, // 1.3.1: cards
+        if (textCardDesign.isNotEmpty) 'textCardDesign': textCardDesign, // 1.3.1: cards
+        if (audioCardDesign.isNotEmpty) 'audioCardDesign': audioCardDesign, // 1.3.1: cards
+        if (cardPresets.isNotEmpty) 'cardPresets': cardPresets, // 1.3.1: cards
       };
 }
