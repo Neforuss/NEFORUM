@@ -35,6 +35,103 @@ Future<Uint8List> rasterizeWordsLayer(int width, int height, void Function(Canva
   return (x: (width - w) / 2, y: (height - h) / 2, w: w, h: h);
 }
 
+/// Whether a placement is the plain centred cover of [coverSource].
+bool isDefaultPlacement({double zoom = 1, double offsetX = 0, double offsetY = 0, bool contain = false}) =>
+    !contain && zoom == 1 && offsetX == 0 && offsetY == 0;
+
+/// Where a [width] x [height] photo goes in an area of [areaWidth] x
+/// [areaHeight]: scaled to cover it (cut to fit) or, with [contain], to fit
+/// inside it whole; then enlarged by [zoom] (1 or more). The focal point
+/// ([offsetX], [offsetY], each -1 to 1) says which part stays in view when
+/// the photo is larger than the area, and where it sits when it is smaller:
+/// -1 the left (top) edge, 0 the centre, 1 the right (bottom) edge.
+///
+/// Returns the visible part of the photo (s: source pixels) and where it
+/// goes in the area (d: area pixels); the scale is `dw / sw`. With every
+/// choice at its default this is [coverSource] over the whole area.
+({double sx, double sy, double sw, double sh, double dx, double dy, double dw, double dh}) photoPlacement(
+    int width, int height, double areaWidth, double areaHeight,
+    {double zoom = 1, double offsetX = 0, double offsetY = 0, bool contain = false}) {
+  if (isDefaultPlacement(zoom: zoom, offsetX: offsetX, offsetY: offsetY, contain: contain)) {
+    final c = coverSource(width, height, areaWidth, areaHeight);
+    return (sx: c.x, sy: c.y, sw: c.w, sh: c.h, dx: 0, dy: 0, dw: areaWidth, dh: areaHeight);
+  }
+  final fit = contain ? math.min(areaWidth / width, areaHeight / height) : math.max(areaWidth / width, areaHeight / height);
+  final scale = fit * zoom;
+  (double, double, double, double) axis(int size, double area, double offset) {
+    final shown = size * scale;
+    final start = (area - shown) * (offset.clamp(-1.0, 1.0) + 1) / 2;
+    final d0 = math.max(0.0, start), d1 = math.min(area, start + shown);
+    return ((d0 - start) / scale, math.max(0.0, d1 - d0) / scale, d0, math.max(0.0, d1 - d0));
+  }
+
+  final (sx, sw, dx, dw) = axis(width, areaWidth, offsetX);
+  final (sy, sh, dy, dh) = axis(height, areaHeight, offsetY);
+  return (sx: sx, sy: sy, sw: sw, sh: sh, dx: dx, dy: dy, dw: dw, dh: dh);
+}
+
+/// [rgba] ([width] x [height], 4 channels) turned clockwise by
+/// [quarterTurns] quarter turns, then mirrored left to right when [flip].
+(Uint8List, int, int) orientRgba(Uint8List rgba, int width, int height, {int quarterTurns = 0, bool flip = false}) {
+  final turns = quarterTurns % 4;
+  if (turns == 0 && !flip) return (rgba, width, height);
+  final w = turns.isOdd ? height : width, h = turns.isOdd ? width : height;
+  final out = Uint8List(w * h * 4);
+  for (var y = 0; y < h; y++) {
+    for (var x = 0; x < w; x++) {
+      // The turned picture's pixel (tx, y), before the mirror.
+      final tx = flip ? w - 1 - x : x;
+      final (sx, sy) = switch (turns) {
+        1 => (y, height - 1 - tx),
+        2 => (width - 1 - tx, height - 1 - y),
+        3 => (width - 1 - y, tx),
+        _ => (tx, y),
+      };
+      final s = (sy * width + sx) * 4, o = (y * w + x) * 4;
+      out[o] = rgba[s];
+      out[o + 1] = rgba[s + 1];
+      out[o + 2] = rgba[s + 2];
+      out[o + 3] = rgba[s + 3];
+    }
+  }
+  return (out, w, h);
+}
+
+/// A copy of [rgba] (straight, 4 channels) with the 4 x 5 colour [matrix]
+/// applied to every pixel, row-major with offsets in 0 to 255, as
+/// `ColorFilter.matrix` takes it. Alpha is kept.
+Uint8List applyColorMatrix(Uint8List rgba, List<double> matrix) {
+  final m = Float64List.fromList(matrix);
+  final out = Uint8List.fromList(rgba);
+  for (var o = 0; o < out.length; o += 4) {
+    final r = out[o].toDouble(), g = out[o + 1].toDouble(), b = out[o + 2].toDouble(), a = out[o + 3].toDouble();
+    out[o] = (m[0] * r + m[1] * g + m[2] * b + m[3] * a + m[4]).round().clamp(0, 255);
+    out[o + 1] = (m[5] * r + m[6] * g + m[7] * b + m[8] * a + m[9]).round().clamp(0, 255);
+    out[o + 2] = (m[10] * r + m[11] * g + m[12] * b + m[13] * a + m[14]).round().clamp(0, 255);
+  }
+  return out;
+}
+
+/// Share of the half diagonal a vignette leaves untouched.
+const double kVignetteInnerRadius = 0.45;
+
+/// The axis of a gradient at [angleDegrees] over an area of [width] x
+/// [height]: its direction and half its length, so it runs corner to corner.
+(double, double, double) _gradientAxis(double width, double height, double angleDegrees) {
+  final a = angleDegrees * math.pi / 180;
+  final dx = math.sin(a), dy = math.cos(a);
+  return (dx, dy, math.max(1e-6, (dx.abs() * width + dy.abs() * height) / 2));
+}
+
+/// Where a gradient at [angleDegrees] starts and ends over [area], for a
+/// preview drawn by the engine: the same axis as
+/// [RgbFrame.blendLinearGradient].
+(Offset, Offset) linearGradientEnds(Rect area, double angleDegrees) {
+  final (dx, dy, half) = _gradientAxis(area.width, area.height, angleDegrees);
+  final along = Offset(dx * half, dy * half);
+  return (area.center - along, area.center + along);
+}
+
 /// An opaque picture being composed, as RGB bytes row by row. Starts black.
 class RgbFrame {
   RgbFrame(this.width, this.height) : rgb = Uint8List(width * height * 3);
@@ -125,6 +222,95 @@ class RgbFrame {
       flat = resample(flat, sw, sh, 3, x: 0, y: 0, w: sw.toDouble(), h: sh.toDouble(), dw: width, dh: height);
     }
     rgb.setAll(0, flat);
+  }
+
+  /// Fills the whole frame with [rgb] (0xRRGGBB).
+  void fill(int rgb) {
+    final r = rgb >> 16 & 0xFF, g = rgb >> 8 & 0xFF, b = rgb & 0xFF;
+    for (var o = 0; o < this.rgb.length; o += 3) {
+      this.rgb[o] = r;
+      this.rgb[o + 1] = g;
+      this.rgb[o + 2] = b;
+    }
+  }
+
+  /// Places the photo ([rgba], straight, [w] x [h]) in the frame as
+  /// [photoPlacement] says: cut to fill it, or whole on [fillRgb]
+  /// ([contain]), enlarged by [zoom] around the focal point ([offsetX],
+  /// [offsetY], -1 to 1), then blurred by [sigma] pixels like [coverWith].
+  /// With every choice at its default this is exactly [coverWith].
+  void placePhoto(Uint8List rgba, int w, int h,
+      {double sigma = 0, double zoom = 1, double offsetX = 0, double offsetY = 0, bool contain = false, int fillRgb = 0}) {
+    if (isDefaultPlacement(zoom: zoom, offsetX: offsetX, offsetY: offsetY, contain: contain)) {
+      coverWith(rgba, w, h, sigma: sigma);
+      return;
+    }
+    final factor = sigma < 0.5 ? 1.0 : math.max(1.0, sigma / 2.5);
+    final sw = math.max(1, (width / factor).round()), sh = math.max(1, (height / factor).round());
+    final place = photoPlacement(w, h, sw.toDouble(), sh.toDouble(), zoom: zoom, offsetX: offsetX, offsetY: offsetY, contain: contain);
+    final small = RgbFrame(sw, sh)..fill(fillRgb);
+    final x0 = place.dx.round(), y0 = place.dy.round();
+    final dw = (place.dx + place.dw).round() - x0, dh = (place.dy + place.dh).round() - y0;
+    if (dw > 0 && dh > 0 && place.sw > 0 && place.sh > 0) {
+      final placed = resample(rgba, w, h, 4, x: place.sx, y: place.sy, w: place.sw, h: place.sh, dw: dw, dh: dh);
+      small.draw(placed, dw, dh, x0, y0, premultiplied: true);
+    }
+    var flat = small.rgb;
+    if (sigma >= 0.5) flat = gaussianBlurRgb(flat, sw, sh, sigma / factor);
+    if (sw != width || sh != height) {
+      flat = resample(flat, sw, sh, 3, x: 0, y: 0, w: sw.toDouble(), h: sh.toDouble(), dw: width, dh: height);
+    }
+    rgb.setAll(0, flat);
+  }
+
+  /// Lays a straight-line gradient from [startArgb] to [endArgb] over the
+  /// whole frame, each as see-through as its alpha. [angleDegrees] turns it
+  /// clockwise: 0 runs from the top down, 90 from left to right
+  /// ([linearGradientEnds]).
+  void blendLinearGradient(int startArgb, int endArgb, double angleDegrees) {
+    final (dx, dy, half) = _gradientAxis(width.toDouble(), height.toDouble(), angleDegrees);
+    final sa = startArgb >>> 24 & 0xFF, sr = startArgb >> 16 & 0xFF, sg = startArgb >> 8 & 0xFF, sb = startArgb & 0xFF;
+    final ea = endArgb >>> 24 & 0xFF, er = endArgb >> 16 & 0xFF, eg = endArgb >> 8 & 0xFF, eb = endArgb & 0xFF;
+    if (sa == 0 && ea == 0) return;
+    final cx = width / 2, cy = height / 2;
+    for (var y = 0; y < height; y++) {
+      var o = y * width * 3;
+      final py = (y + 0.5 - cy) * dy;
+      for (var x = 0; x < width; x++, o += 3) {
+        final t = ((((x + 0.5 - cx) * dx + py) / half + 1) / 2).clamp(0.0, 1.0);
+        final a = (sa + (ea - sa) * t).round();
+        if (a == 0) continue;
+        final inv = 255 - a;
+        final r = (sr + (er - sr) * t).round(), g = (sg + (eg - sg) * t).round(), b = (sb + (eb - sb) * t).round();
+        rgb[o] = (r * a + rgb[o] * inv + 127) ~/ 255;
+        rgb[o + 1] = (g * a + rgb[o + 1] * inv + 127) ~/ 255;
+        rgb[o + 2] = (b * a + rgb[o + 2] * inv + 127) ~/ 255;
+      }
+    }
+  }
+
+  /// Darkens the frame towards its corners: nothing inside
+  /// [kVignetteInnerRadius] of the half diagonal, then more and more black,
+  /// up to [strength] (0 to 1) in the corners.
+  void vignette(double strength) {
+    if (strength <= 0) return;
+    final cx = width / 2, cy = height / 2;
+    final half = math.sqrt(cx * cx + cy * cy);
+    for (var y = 0; y < height; y++) {
+      var o = y * width * 3;
+      final ry = y + 0.5 - cy;
+      for (var x = 0; x < width; x++, o += 3) {
+        final rx = x + 0.5 - cx;
+        final d = math.sqrt(rx * rx + ry * ry) / half;
+        final t = ((d - kVignetteInnerRadius) / (1 - kVignetteInnerRadius)).clamp(0.0, 1.0);
+        final a = (strength * t * 255).round();
+        if (a == 0) continue;
+        final inv = 255 - a;
+        rgb[o] = (rgb[o] * inv + 127) ~/ 255;
+        rgb[o + 1] = (rgb[o + 1] * inv + 127) ~/ 255;
+        rgb[o + 2] = (rgb[o + 2] * inv + 127) ~/ 255;
+      }
+    }
   }
 
   /// The frame as a JPEG (quality 92). Three channels: the picture is opaque.

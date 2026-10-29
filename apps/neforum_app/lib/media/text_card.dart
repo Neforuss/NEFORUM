@@ -338,7 +338,7 @@ class TextCardPainter extends CustomPainter {
     final safeTop = safe.top * u, safeRight = safe.right * u, safeBottom = safe.bottom * u;
 
     if (backdrop != null) {
-      backdrop!.paint(canvas, Offset.zero & size, u);
+      backdrop!.paint(canvas, Offset.zero & size, u, cardColor: theme.background);
     } else {
       canvas.drawRect(Offset.zero & size, Paint()..color = theme.background);
     }
@@ -426,7 +426,13 @@ class TextCardPainter extends CustomPainter {
       words.dispose();
       words = layout(fs, maxLines: lines);
     }
-    final origin = Offset(pad, top + (areaH - words.height) / 2);
+    final position = backdrop?.background.textPosition ?? TextCardTextPosition.center;
+    // The middle is worked out as before 1.3, so those cards stay the same.
+    final origin = Offset(
+        pad,
+        position == TextCardTextPosition.center
+            ? top + (areaH - words.height) / 2
+            : top + math.max(0.0, areaH - words.height) * position.anchor);
     if (backdrop?.background.textBox ?? false) {
       // A soft box behind the words, so they read over a busy photo.
       final box = words.lineBounds.shift(origin).inflate(30 * u);
@@ -519,7 +525,7 @@ Future<Uint8List> renderTextCardJpeg(
   if (photo == null) return compute(encodeRgbaJpeg, (words, width, height));
   return compute(
     composeTextCard,
-    TextCardComposeJob(photo: photo, words: words, width: width, height: height, blur: backdrop!.background.blur, dimming: backdrop.background.dimming),
+    TextCardComposeJob.forBackground(photo: photo, words: words, width: width, height: height, background: backdrop!.background, cardColor: theme.background),
   );
 }
 
