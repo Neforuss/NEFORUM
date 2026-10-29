@@ -4,11 +4,13 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../platform/media_library.dart';
 import '../state/providers.dart';
+import '../state/video_frames.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 
-/// Square (or [aspect]) thumbnail of an attachment. Videos show a play glyph
-/// and their size; images with alt text get a small "ALT" tag.
+/// Square (or [aspect]) thumbnail of an attachment. Videos show a frame from
+/// somewhere in them where this device can read one, with a play glyph and
+/// their size; images with alt text get a small "ALT" tag.
 class MediaThumb extends ConsumerWidget {
   const MediaThumb(this.media, {super.key, this.size = 96, this.aspect, this.radius, this.showAltTag = true, this.fit = BoxFit.cover});
 
@@ -31,18 +33,36 @@ class MediaThumb extends ConsumerWidget {
 
     final Widget content;
     if (media.isVideo) {
+      // 1.3: video. A frame from somewhere in the video, for this session
+      // only; the gradient until it arrives, or when there is none.
+      final frame = ref.watch(videoPreviewFrameProvider((mediaId: media.id, path: media.path))).value;
       content = Container(
         color: const Color(0xFF15161B),
         child: Stack(fit: StackFit.expand, children: [
-          const DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF2B2F3A), Color(0xFF111217)],
+          if (frame == null)
+            const DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF2B2F3A), Color(0xFF111217)],
+                ),
+              ),
+            )
+          else ...[
+            // At most kPreviewFrameMaxSide pixels: decoded as it is.
+            Image.memory(frame.png, fit: fit, gaplessPlayback: true),
+            // Keeps the glyph and the size readable on a bright frame.
+            DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.black.withValues(alpha: 0.08), Colors.black.withValues(alpha: 0.42)],
+                ),
               ),
             ),
-          ),
+          ],
           Center(
             child: Container(
               width: size * 0.36,
