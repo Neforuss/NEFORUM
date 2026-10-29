@@ -294,6 +294,8 @@ class PublishService {
         if (target.isDone) continue;
         if (dueTargetsOnly && target.status == TargetStatus.pending && !post.isTargetDue(target, _now())) continue;
         if (_isFailedOrCancelled(target) && !retryFailed) continue;
+        // Its live copies would go out a second time.
+        if (_isFailedOrCancelled(target) && target.isPartlyLive) continue;
         if (target.status == TargetStatus.awaitingHandoff && !interactive) continue;
         if (cancellation != null && cancellation.isCancelled) {
           // Waiting retries included: the scheduler must not pick them up later.
@@ -845,10 +847,7 @@ class PublishService {
     return t.copyWith(status: TargetStatus.cancelled, result: PublishResult.failure(error));
   }
 
-  /// The wording of [PublishError.asPartialThread].
-  static final _partialThread = RegExp(r'^Part \d+ of \d+ failed: ');
-
-  static bool _isPartialThread(PublishError e) => !e.retryable && _partialThread.hasMatch(e.message);
+  static bool _isPartialThread(PublishError e) => e.isPartialThread;
 
   /// How many posts [variant] makes on its network, for the quota: one per
   /// part of a thread, else one feed post plus one per story frame where the

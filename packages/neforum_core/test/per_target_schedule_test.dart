@@ -119,6 +119,30 @@ void main() {
       expect(done.withScheduleFromTargets().scheduledAt, six, reason: 'nothing waits: the schedule stays as it was');
     });
 
+    test('a target without a time of its own keeps the post time when the post moves to an earlier target', () {
+      final p = perTarget().copyWith(scheduledAt: six, targets: [
+        const PostTarget(accountId: 'masto'),
+        PostTarget(accountId: 'gram', overrides: PostOverrides(scheduledAt: ten)),
+      ]).withScheduleFromTargets();
+      expect(p.scheduledAt, ten);
+      expect(p.dueAtFor(p.targetFor('masto')!), six, reason: 'not pulled to the earliest other time');
+      expect(p.withScheduleFromTargets().dueAtFor(p.targetFor('masto')!), six);
+    });
+
+    test('a retry is due by its backoff, not by its own later time', () {
+      final p = perTarget().withTarget(PostTarget(
+          accountId: 'gram', overrides: PostOverrides(scheduledAt: six), attempts: 1, lastAttemptAt: testNow));
+      expect(p.isTargetDue(p.targetFor('gram')!, testNow), isTrue);
+      expect(p.nextDueAt, testNow);
+    });
+
+    test('Publish now drops every time', () {
+      final p = perTarget().withoutSchedule();
+      expect(p.scheduledAt, isNull);
+      expect(p.schedulesEachTarget, isFalse);
+      expect(p.targets.every((t) => t.overrides.scheduledAt == null), isTrue);
+    });
+
     test('a post with one time for all is left alone', () {
       final p = perTarget().copyWith(targets: const [PostTarget(accountId: 'masto'), PostTarget(accountId: 'gram')]);
       expect(p.schedulesEachTarget, isFalse);
@@ -188,6 +212,45 @@ void main() {
       expect(mastodon.published.single.scheduledAt, six);
       expect(q.scheduledAt, ten);
     });
+
+    test('once only held targets remain, the post is not due again until the held copy goes live', () async {
+      mastodon = _Platform('masto', scheduling: true);
+      await posts.upsert(perTarget().copyWith(targets: [
+        PostTarget(accountId: 'masto', overrides: PostOverrides(scheduledAt: six)),
+        PostTarget(accountId: 'gram', overrides: PostOverrides(scheduledAt: ten)),
+      ]));
+      await service().delegateSchedules('p1');
+      final engine = ScheduleEngine(posts: posts, publisher: service(), clock: () => now);
+      now = ten;
+      final first = (await engine.runDue()).single;
+      expect(first.status, PostStatus.scheduled);
+      expect(first.scheduledAt, six, reason: 'the held copy goes live at 6');
+      var runs = 0;
+      for (var i = 1; i < 10; i++) {
+        now = ten.add(Duration(minutes: 30 * i));
+        runs += (await engine.runDue()).length;
+      }
+      expect(runs, 0);
+      now = six;
+      final last = (await engine.runDue()).single;
+      expect(last.status, PostStatus.published);
+      expect(mastodon.published, hasLength(1), reason: 'held copies are never posted again');
+    });
+
+    test('after Publish now, a retryable failure is retried after its backoff, not at the target time', () async {
+      var calls = 0;
+      gram.onPublish = (_) => ++calls == 1 ? PublishResult.failure(const PublishError.network('down')) : PublishResult.ok(remoteId: 'gram-ok');
+      await posts.upsert(perTarget().copyWith(status: PostStatus.publishing, clearScheduledAt: true));
+      final p = await service().publish('p1');
+      expect(p.targetFor('gram')!.status, TargetStatus.pending);
+      expect(p.status, PostStatus.scheduled);
+      expect(p.scheduledAt!.isAfter(testNow), isFalse, reason: 'not the target time of 6');
+      final engine = ScheduleEngine(posts: posts, publisher: service(), clock: () => now);
+      now = testNow.add(const Duration(minutes: 10));
+      await engine.runDue();
+      expect(calls, 2);
+      expect((await posts.get('p1'))!.status, PostStatus.published);
+    });
   });
 
   group('copies of one target', () {
@@ -202,6 +265,22 @@ void main() {
       expect(t.result!.allRemoteIds, ['feed-1', 'story-1']);
       expect(t.result!.error!.retryable, isFalse);
       expect(p.status, PostStatus.partial);
+      expect(t.isPartlyLive, isTrue);
+
+      // Retry from Activity: the live feed post is never posted again.
+      final retried = await service().publish('p1', onlyAccountIds: {'gram'});
+      expect(gram.published, hasLength(1));
+      expect(retried.targetFor('gram')!.result!.allRemoteIds, ['feed-1', 'story-1']);
+    });
+
+    test('a thread cut off halfway is not posted again by a retry', () async {
+      await posts.upsert(perTarget());
+      mastodon.onPublish = (_) => PublishResult.failure(const PublishError.network('down').asPartialThread(postedIds: ['a'], total: 3));
+      now = six;
+      final p = await service().publish('p1');
+      expect(p.targetFor('masto')!.isPartlyLive, isTrue);
+      await service().publish('p1', onlyAccountIds: {'masto'});
+      expect(mastodon.published, hasLength(1));
     });
 
     test('quota needs one post for the feed and one per story frame', () async {

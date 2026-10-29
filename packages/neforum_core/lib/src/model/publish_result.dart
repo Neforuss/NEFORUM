@@ -112,6 +112,12 @@ class PublishError {
     );
   }
 
+  /// The wording of [asPartialThread].
+  static final _partialThread = RegExp(r'^Part \d+ of \d+ failed: ');
+
+  /// Made by [asPartialThread]: the first parts of the thread are live.
+  bool get isPartialThread => !retryable && _partialThread.hasMatch(message);
+
   Map<String, dynamic> toJson() => {
         'kind': kind.name,
         'message': message,

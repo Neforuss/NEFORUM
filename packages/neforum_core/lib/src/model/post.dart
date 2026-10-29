@@ -211,6 +211,17 @@ class PostTarget {
 
   bool get isHeldByPlatform => status == TargetStatus.heldByPlatform;
 
+  /// The target stopped after some of its copies went live: the feed post of
+  /// a Post + Story whose story failed, or the first parts of a thread.
+  /// Publishing it again would post those copies twice, so it is never
+  /// retried; the rest is posted by hand.
+  bool get isPartlyLive {
+    final r = result;
+    if (r == null || r.success) return false;
+    final error = r.error;
+    return r.allRemoteIds.isNotEmpty || (error != null && error.isPartialThread);
+  }
+
   PostTarget copyWith({
     PostOverrides? overrides,
     TargetStatus? status,
@@ -368,8 +379,11 @@ class Post {
   bool get schedulesEachTarget => targets.any((t) => t.overrides.scheduledAt != null);
 
   /// Whether [target]'s time has come at [now]. A target without a time is
-  /// due right away.
+  /// due right away. So is a retry ([PostTarget.attempts] above 0): it waits
+  /// for its retry backoff (PublishService), not for its own time, which is
+  /// still ahead when it was first tried by "Publish now".
   bool isTargetDue(PostTarget target, DateTime now) {
+    if (target.attempts > 0) return true;
     final at = dueAtFor(target);
     return at == null || !at.isAfter(now);
   }
@@ -379,23 +393,62 @@ class Post {
   Iterable<PostTarget> get upcomingTargets => targets.where((t) => t.status == TargetStatus.pending);
 
   /// The earliest time among [upcomingTargets]; null when none waits or none
-  /// has a time.
+  /// has a time. A retry counts from its last attempt ([isTargetDue]).
   DateTime? get nextDueAt {
     DateTime? next;
     for (final t in upcomingTargets) {
-      final at = dueAtFor(t);
+      final at = t.attempts > 0 ? (t.lastAttemptAt ?? dueAtFor(t)) : dueAtFor(t);
+      if (at != null && (next == null || at.isBefore(next))) next = at;
+    }
+    return next;
+  }
+
+  /// The earliest time a platform publishes a held target
+  /// ([PublishResult.scheduledFor]); null when none is held.
+  DateTime? get nextHeldAt {
+    DateTime? next;
+    for (final t in targets) {
+      if (!t.isHeldByPlatform) continue;
+      final at = t.result?.scheduledFor;
       if (at != null && (next == null || at.isBefore(next))) next = at;
     }
     return next;
   }
 
   /// This post with [scheduledAt] set to [nextDueAt] when it has a different
-  /// time per network (and a target still waits); otherwise unchanged.
+  /// time per network; otherwise unchanged. When no target waits for this
+  /// device but platforms still hold some, it is [nextHeldAt] instead, the
+  /// moment the next held copy is to be recorded as published, so the post is
+  /// not due again in the meantime.
+  ///
+  /// A target without a time of its own is given the post's current time
+  /// first, so it keeps going out when it was meant to rather than moving
+  /// along with the post's time.
   Post withScheduleFromTargets() {
     if (!schedulesEachTarget) return this;
-    final next = nextDueAt;
-    return next == null || next == scheduledAt ? this : copyWith(scheduledAt: next);
+    final next = nextDueAt ?? nextHeldAt;
+    if (next == null || next == scheduledAt) return this;
+    final base = scheduledAt;
+    return copyWith(
+      scheduledAt: next,
+      targets: base == null || targets.every((t) => t.overrides.scheduledAt != null)
+          ? null
+          : [
+              for (final t in targets)
+                if (t.overrides.scheduledAt == null) t.copyWith(overrides: t.overrides.copyWith(scheduledAt: base)) else t,
+            ],
+    );
   }
+
+  /// This post without a schedule: no [scheduledAt], and no target keeps a
+  /// time of its own. For "Publish now".
+  Post withoutSchedule() => copyWith(
+        clearScheduledAt: true,
+        targets: [
+          for (final t in targets)
+            if (t.overrides.scheduledAt != null) t.copyWith(overrides: t.overrides.copyWith(clearScheduledAt: true)) else t,
+        ],
+      );
 
   /// Some target still needs this device at the scheduled time. False when
   /// every remaining target is held by its platform's own scheduler.
