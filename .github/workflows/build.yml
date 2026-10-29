@@ -111,6 +111,13 @@ jobs:
           Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
           flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/captions_test.dart
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Video tools test (profile build, Media Foundation)
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
+          Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+          flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/video_tools_test.dart
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows
         working-directory: apps/neforum_app
         shell: pwsh
