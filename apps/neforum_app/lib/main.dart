@@ -56,9 +56,10 @@ Future<void> _publishInBackground(String postId) async {
     final post = await services.posts.get(postId);
     if (post != null && post.status == PostStatus.scheduled && await services.cloudSync.mayPublish(post)) {
       await fitPhotosOfSavedPost(services, postId);
-      final done = await services.publisher().publish(postId, interactive: false, retryFailed: false);
+      final done = await services.publisher().publish(postId, interactive: false, retryFailed: false, dueTargetsOnly: true);
       final discarded = await services.discardIfComplete(postId);
       await announcePublishResult(services, done, discarded: discarded);
+      await planNextReminders(services, done);
       await services.cloudSync.syncNow();
     }
     services.dispose();

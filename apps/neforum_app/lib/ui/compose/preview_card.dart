@@ -71,7 +71,8 @@ class PreviewCard extends ConsumerWidget {
     final p = preview;
     final d = p.descriptor;
     final v = p.variant;
-    final customized = !p.target.overrides.isEmpty;
+    // A network's own time is set in the schedule, not by customizing.
+    final customized = !p.target.overrides.copyWith(clearScheduledAt: true).isEmpty;
     final hasErrors = p.issues.hasErrors;
     final family = previewFamilyFor(d.id, artPlatform: d.isArtPlatform);
     final rules = d.text;

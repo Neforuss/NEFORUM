@@ -123,6 +123,10 @@ class ComposerState {
 
   bool get isArtwork => artwork != null;
 
+  /// "Different time per network": a selected target has a time of its own
+  /// (`PostOverrides.scheduledAt`). Off, every network goes at [scheduledAt].
+  bool get schedulesEachTarget => selected.any((id) => overrides[id]?.scheduledAt != null);
+
   /// Every part with words in it ([text], then [additionalParts]) joined with
   /// blank lines: what networks without threads receive.
   String get joinedParts => [
@@ -202,31 +206,43 @@ class ComposerState {
         textCardBackground: clearTextCardBackground ? null : (textCardBackground ?? this.textCardBackground),
       );
 
-  /// Builds the master [Post] for this composer state.
-  Post toPost({required String id, required PostStatus status, required DateTime now, DateTime? createdAt}) => Post(
-        id: id,
-        text: text,
-        title: (title ?? '').trim().isEmpty ? null : title!.trim(),
-        link: (link ?? '').trim().isEmpty ? null : link!.trim(),
-        media: media,
-        contentWarning: (contentWarning ?? '').trim().isEmpty ? null : contentWarning,
-        sensitive: sensitive,
-        visibility: visibility,
-        tags: tags,
-        poll: poll,
-        additionalParts: [
-          for (final p in additionalParts)
-            if (p.trim().isNotEmpty) p,
-        ],
-        artwork: artwork,
-        scheduledAt: scheduledAt,
-        status: status,
-        createdAt: createdAt ?? now,
-        updatedAt: now,
-        targets: [
-          for (final id in selected) PostTarget(accountId: id, overrides: overrides[id] ?? const PostOverrides()),
-        ],
-      );
+  /// Builds the master [Post] for this composer state. With a different time
+  /// per network every target carries its time (a target added since gets
+  /// [scheduledAt]), and the post's own time is the earliest of them.
+  Post toPost({required String id, required PostStatus status, required DateTime now, DateTime? createdAt}) {
+    final each = schedulesEachTarget;
+    final base = scheduledAt;
+    PostOverrides overridesOf(String accountId) {
+      final o = overrides[accountId] ?? const PostOverrides();
+      if (!each) return o.scheduledAt == null ? o : o.copyWith(clearScheduledAt: true);
+      return o.scheduledAt == null && base != null ? o.copyWith(scheduledAt: base) : o;
+    }
+
+    return Post(
+      id: id,
+      text: text,
+      title: (title ?? '').trim().isEmpty ? null : title!.trim(),
+      link: (link ?? '').trim().isEmpty ? null : link!.trim(),
+      media: media,
+      contentWarning: (contentWarning ?? '').trim().isEmpty ? null : contentWarning,
+      sensitive: sensitive,
+      visibility: visibility,
+      tags: tags,
+      poll: poll,
+      additionalParts: [
+        for (final p in additionalParts)
+          if (p.trim().isNotEmpty) p,
+      ],
+      artwork: artwork,
+      scheduledAt: scheduledAt,
+      status: status,
+      createdAt: createdAt ?? now,
+      updatedAt: now,
+      targets: [
+        for (final id in selected) PostTarget(accountId: id, overrides: overridesOf(id)),
+      ],
+    ).withScheduleFromTargets();
+  }
 }
 
 /// `PostOverrides.extra` key of a Discord target's "Mention @everyone"
@@ -280,7 +296,36 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setSensitive(bool v) => state = state.copyWith(sensitive: v);
   void setVisibility(PostVisibility v) => state = state.copyWith(visibility: v);
   void setTags(List<String> v) => state = state.copyWith(tags: v);
-  void setSchedule(DateTime? when) => state = when == null ? state.copyWith(clearSchedule: true) : state.copyWith(scheduledAt: when);
+  /// Sets the time every network goes at ("Same time for all"). Null removes
+  /// the schedule, the times per network included.
+  void setSchedule(DateTime? when) {
+    if (when != null) {
+      state = state.copyWith(scheduledAt: when);
+      return;
+    }
+    state = state.copyWith(clearSchedule: true, overrides: _withTargetTimes(const {}));
+  }
+
+  /// "Different time per network": [times] by account id, or null for the
+  /// same time for all. The post's time becomes the earliest of them.
+  void setTargetSchedules(Map<String, DateTime>? times) {
+    final each = times != null && times.isNotEmpty;
+    final earliest = each ? times.values.reduce((a, b) => a.isBefore(b) ? a : b) : null;
+    state = state.copyWith(overrides: _withTargetTimes(times ?? const {}), scheduledAt: earliest);
+  }
+
+  /// The overrides with [times] as each target's own time; the others lose
+  /// theirs.
+  Map<String, PostOverrides> _withTargetTimes(Map<String, DateTime> times) {
+    final out = <String, PostOverrides>{};
+    for (final id in {...state.overrides.keys, ...times.keys}) {
+      final current = state.overrides[id] ?? const PostOverrides();
+      final at = times[id];
+      final next = at == null ? current.copyWith(clearScheduledAt: true) : current.copyWith(scheduledAt: at);
+      if (!next.isEmpty) out[id] = next;
+    }
+    return out;
+  }
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
   void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
   void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f);
@@ -349,6 +394,11 @@ class ComposerNotifier extends Notifier<ComposerState> {
       visibility: ref.read(settingsProvider).defaultVisibility,
       selected: state.selected,
       scheduledAt: state.scheduledAt,
+      // The times per network are part of the schedule.
+      overrides: {
+        for (final e in state.overrides.entries)
+          if (e.value.scheduledAt != null) e.key: PostOverrides(scheduledAt: e.value.scheduledAt),
+      },
       artwork: state.artwork,
       revision: state.revision + 1,
     );
@@ -497,7 +547,11 @@ class ComposerNotifier extends Notifier<ComposerState> {
       visibility: state.visibility,
       tags: state.tags,
       selected: state.selected,
-      overrides: state.overrides,
+      // A fresh draft has no schedule, nor times per network.
+      overrides: {
+        for (final e in state.overrides.entries)
+          if (!e.value.copyWith(clearScheduledAt: true).isEmpty) e.key: e.value.copyWith(clearScheduledAt: true),
+      },
       revision: state.revision + 1,
       textCardTheme: state.textCardTheme,
       textCardFont: state.textCardFont,
@@ -654,6 +708,21 @@ final composerReadinessProvider = Provider<ComposerReadiness>((ref) {
 // Actions
 // ---------------------------------------------------------------------------
 
+/// [post] scheduled for [when]. With a different time per network every
+/// network still to go moves by the same amount, so the next one goes at
+/// [when] and the gaps between them stay.
+Post rescheduledPost(Post post, DateTime when, DateTime now) {
+  final from = post.scheduledAt;
+  var next = post.copyWith(status: PostStatus.scheduled, scheduledAt: when, updatedAt: now);
+  if (!post.schedulesEachTarget || from == null) return next;
+  final shift = when.difference(from);
+  next = next.copyWith(targets: [
+    for (final t in post.targets)
+      if (t.overrides.scheduledAt case final at? when !t.isDone) t.copyWith(overrides: t.overrides.copyWith(scheduledAt: at.add(shift))) else t,
+  ]);
+  return next.withScheduleFromTargets();
+}
+
 /// A platform still holds a copy of a scheduled post that NEFORUM could not
 /// take back (offline, expired sign-in). The copy will still go out there.
 class HeldCopiesException implements Exception {
@@ -689,6 +758,18 @@ class PostActions {
     final existing = c.editingPostId == null ? null : await s.posts.get(c.editingPostId!);
     if (existing != null) await _releaseHeld(existing.id);
     var post = c.toPost(id: id ?? c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
+    // Networks that already have an edited post (the earlier times of a post
+    // with a time per network) keep their outcome, so they never get it twice.
+    final current = existing == null ? null : await s.posts.get(existing.id);
+    if (current != null) {
+      post = post.copyWith(targets: [
+        for (final t in post.targets)
+          if (current.targetFor(t.accountId) case final done? when done.isDone)
+            done.copyWith(overrides: t.overrides)
+          else
+            t,
+      ]).withScheduleFromTargets();
+    }
     post = withMentionDefaults(post, ref.read(accountListProvider), ref.read(settingsProvider));
     // Hand the old cards and fitted photos over so unchanged ones are reused,
     // stale ones deleted.
@@ -800,13 +881,16 @@ class PostActions {
   /// be cancelled from its progress sheet or from Activity; whatever stops
   /// it is shown in the sheet, and a post it leaves publishing is settled
   /// at once: the networks it did not reach get Retry.
-  Future<Post> publishExisting(String postId, {Set<String>? accountIds, bool retryFailed = true}) async {
+  ///
+  /// With [dueTargetsOnly] (a due-post reminder) networks whose own time has
+  /// not come yet are left for their own time, which gets the next reminder.
+  Future<Post> publishExisting(String postId, {Set<String>? accountIds, bool retryFailed = true, bool dueTargetsOnly = false}) async {
     final run = ref.read(publishRunProvider.notifier);
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
     try {
-      return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed);
+      return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
       await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
@@ -816,7 +900,8 @@ class PostActions {
     }
   }
 
-  Future<Post> _publishExisting(String postId, CancellationSignal signal, {Set<String>? accountIds, required bool retryFailed}) async {
+  Future<Post> _publishExisting(String postId, CancellationSignal signal,
+      {Set<String>? accountIds, required bool retryFailed, bool dueTargetsOnly = false}) async {
     final s = ref.read(servicesProvider);
     // A background isolate may have posted some of it meanwhile: the run
     // starts from what posts.json says is still to do.
@@ -833,7 +918,9 @@ class PostActions {
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: choices, composeVideos: false);
     await s.posts.upsert(post);
     final run = ref.read(publishRunProvider.notifier);
-    run.start(postId, accountIds ?? post.targets.map((t) => t.accountId));
+    final due = post;
+    final now = DateTime.now();
+    run.start(postId, accountIds ?? [for (final t in due.targets) if (!dueTargetsOnly || due.isTargetDue(t, now)) t.accountId]);
     final done = await s.publisher().publish(
           postId,
           interactive: true,
@@ -841,11 +928,18 @@ class PostActions {
           retryFailed: retryFailed,
           onProgress: run.progress,
           cancellation: signal,
+          dueTargetsOnly: dueTargetsOnly,
         );
     final finalPost = await s.applySkips(postId) ?? done;
     run.finish(finalPost);
     try {
-      await ref.read(schedulerProvider).cancelReminders(finalPost);
+      // Networks still waiting for their own time keep their reminder.
+      final next = finalPost.scheduledAt;
+      if (finalPost.status == PostStatus.scheduled && finalPost.schedulesEachTarget && next != null && next.isAfter(DateTime.now())) {
+        await ref.read(schedulerProvider).planReminders(finalPost);
+      } else {
+        await ref.read(schedulerProvider).cancelReminders(finalPost);
+      }
       await _notifyResult(finalPost);
       await _discardIfComplete(postId);
     } on Object catch (e) {
@@ -971,7 +1065,7 @@ class PostActions {
     final s = ref.read(servicesProvider);
     await _releaseHeld(p.id);
     final current = await s.posts.get(p.id) ?? p;
-    final next = current.copyWith(status: PostStatus.scheduled, scheduledAt: when, updatedAt: DateTime.now());
+    final next = rescheduledPost(current, when, DateTime.now());
     await s.posts.upsert(next);
     await ref.read(schedulerProvider).planReminders(next);
     _delegate(next);

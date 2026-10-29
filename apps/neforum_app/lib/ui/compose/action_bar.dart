@@ -38,6 +38,7 @@ class ComposerActionBar extends ConsumerWidget {
     final when = c.scheduledAt;
 
     String labelFor({required bool short}) {
+      if (when != null && c.schedulesEachTarget) return 'Schedule';
       if (when != null) return short ? 'Schedule' : 'Schedule for ${DateFormat.E().add_jm().format(when)}';
       if (targets == 0) return 'Post';
       return 'Post to $targets';
@@ -77,7 +78,10 @@ class ComposerActionBar extends ConsumerWidget {
             : PillButton(label: 'Schedule', icon: Icons.schedule_rounded, onPressed: busy ? null : onSchedule))
         : InputChip(
             avatar: Icon(Icons.schedule_rounded, size: 16, color: nf.accent),
-            label: Text((short ? DateFormat.MMMd() : DateFormat.MMMEd()).add_jm().format(when), maxLines: 1, overflow: TextOverflow.ellipsis),
+            // With a time per network, [when] is the first of them.
+            label: Text('${c.schedulesEachTarget ? 'From ' : ''}${(short ? DateFormat.MMMd() : DateFormat.MMMEd()).add_jm().format(when)}',
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            tooltip: c.schedulesEachTarget ? 'Each network goes out at its own time' : null,
             onPressed: onSchedule,
             onDeleted: () => ref.read(composerProvider.notifier).setSchedule(null),
             side: BorderSide(color: nf.accent.withValues(alpha: 0.5)),

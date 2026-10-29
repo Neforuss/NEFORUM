@@ -5,6 +5,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../state/providers.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
+import '../ui/activity/schedule_summary.dart';
 import '../ui/activity/time_format.dart';
 import 'account_avatar.dart';
 import 'badges.dart';
@@ -36,20 +37,26 @@ class PostCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final p = post;
-    final (label, tone, icon) = postStatusStyle(p.status);
+    final (label, tone, icon) = postStatusStyleOf(p);
     final platforms = <String>[];
     final statuses = <TargetStatus>[];
+    final names = <String, String>{};
+    final registry = ref.watch(registryProvider);
     for (final t in p.targets) {
       final a = ref.watch(accountByIdProvider(t.accountId));
       if (a == null) continue;
       platforms.add(a.platformId);
       statuses.add(t.status);
+      names[t.accountId] = registry.descriptor(a.platformId)?.name ?? a.displayName;
     }
     final format = TimeFormatting.of(context, ref);
+    // A time per network, or networks already done: "1 published ·
+    // Instagram at 18:00", on a line of its own, whatever the setting.
+    final summary = scheduleSummary(p, networkOf: (id) => names[id], format: format);
     final time = p.status == PostStatus.scheduled && p.scheduledAt != null ? format.scheduled(p.scheduledAt!) : format.moment(p.updatedAt);
     // The full weekday, date and time gets a line of its own.
-    final timeInRow = showTime && !format.exact;
-    final timeBelow = showTime && format.exact;
+    final timeInRow = showTime && !format.exact && summary == null;
+    final timeBelow = showTime && format.exact && summary == null;
 
     return NfCard(
       onTap: onTap,
@@ -108,6 +115,17 @@ class PostCard extends ConsumerWidget {
             Padding(
               padding: const EdgeInsets.only(right: Space.md),
               child: Text(time, style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
+            ),
+          ],
+          if (summary != null) ...[
+            const SizedBox(height: Space.xs),
+            Padding(
+              padding: const EdgeInsets.only(right: Space.md),
+              child: Row(children: [
+                Icon(Icons.schedule_rounded, size: 14, color: nf.accent),
+                const SizedBox(width: Space.xs),
+                Expanded(child: Text(summary, style: context.text.bodySmall?.copyWith(color: nf.textMuted))),
+              ]),
             ),
           ],
           const SizedBox(height: Space.sm),

@@ -105,7 +105,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         await ref.read(postActionsProvider).runHandoff(postId, accountId);
       case PublishDueIntent(:final postId):
         context.go('${AppSection.activity.path}/post/$postId');
-        await ref.read(postActionsProvider).publishExisting(postId, retryFailed: false);
+        // Only the networks this reminder is for; later ones get their own.
+        await ref.read(postActionsProvider).publishExisting(postId, retryFailed: false, dueTargetsOnly: true);
     }
   }
 

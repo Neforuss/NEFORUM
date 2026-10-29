@@ -317,10 +317,17 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.md, Space.xxl, Space.lg),
         child: Row(children: [
-          if (!o.isEmpty)
+          if (!o.copyWith(clearScheduledAt: true).isEmpty)
             TextButton.icon(
               onPressed: () {
-                ref.read(composerProvider.notifier).clearOverride(p.account.id);
+                // The network's own time is part of the schedule: it stays.
+                final at = o.scheduledAt;
+                final notifier = ref.read(composerProvider.notifier);
+                if (at == null) {
+                  notifier.clearOverride(p.account.id);
+                } else {
+                  notifier.setOverride(p.account.id, PostOverrides(scheduledAt: at));
+                }
                 Navigator.pop(context);
               },
               icon: const Icon(Icons.restart_alt_rounded, size: 18),

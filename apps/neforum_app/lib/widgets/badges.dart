@@ -110,6 +110,16 @@ IconData tierIcon(PlatformTier t) => switch (t) {
       PostStatus.cancelled => ('Cancelled', Tone.neutral, Icons.block_rounded),
     };
 
+/// A scheduled post some of whose networks already have it (the earlier
+/// times of a post with a different time per network).
+bool isPartlyPublished(Post p) =>
+    p.status == PostStatus.scheduled && p.targets.any((t) => t.status == TargetStatus.published || t.status == TargetStatus.handedOff);
+
+/// [postStatusStyle] for [p] itself: a post that [isPartlyPublished] reads
+/// "Partly published".
+(String, Tone, IconData) postStatusStyleOf(Post p) =>
+    isPartlyPublished(p) ? ('Partly published', Tone.accent, Icons.timelapse_rounded) : postStatusStyle(p.status);
+
 (String, Tone, IconData) targetStatusStyle(TargetStatus s) => switch (s) {
       TargetStatus.pending => ('Queued', Tone.neutral, Icons.more_horiz_rounded),
       TargetStatus.publishing => ('Posting', Tone.info, Icons.sync_rounded),
