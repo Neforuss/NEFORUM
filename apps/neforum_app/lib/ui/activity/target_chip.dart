@@ -38,6 +38,8 @@ class TargetChip extends ConsumerWidget {
       TargetStatus.published when url != null => 'Open on $name',
       TargetStatus.awaitingHandoff => 'Finish on $name',
       TargetStatus.failed => target.result?.error?.message ?? 'Failed',
+      // Copies already live: the error says what to post by hand.
+      TargetStatus.cancelled when target.isPartlyLive => target.result?.error?.message ?? 'Partly posted to $name',
       TargetStatus.cancelled => 'You cancelled this before it reached $name',
       TargetStatus.heldByPlatform => '$name publishes this itself at the scheduled time',
       _ => '$name: $label',

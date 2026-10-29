@@ -207,4 +207,49 @@ void main() {
     expect(errors.single.message, startsWith('Story: '));
     await done(tester);
   });
+
+  testWidgets('Post + Story with the card alone: the preview shows the feed card without the words, as publishing sends it', (tester) async {
+    final (services, c) = await boot(tester);
+    await tester.runAsync(() => services.accounts.upsert(igApi));
+    await tester.pump(const Duration(milliseconds: 300));
+    c.read(composerProvider.notifier)
+      ..selectAccounts([igApi.id])
+      ..setText('Open bench tonight')
+      ..setOverride(igApi.id, const PostOverrides(extra: _feedAndStory))
+      ..setTextCardWithText('instagram', false);
+    await tester.pump(const Duration(milliseconds: 300));
+    final ig = c.read(composerPreviewsProvider).single;
+    expect(ig.variant.text, isEmpty, reason: 'kTextCardOnlyKey drops the words at publish');
+    expect((ig.variant.media.single.width, ig.variant.media.single.height), (1080, 1350));
+    expect((ig.variant.storyMedia.single.width, ig.variant.storyMedia.single.height), (1080, 1920), reason: 'the story keeps its own card');
+    await done(tester);
+  });
+
+  test('a Post + Story whose story failed after the feed post went live offers no Retry', () {
+    final partly = PostTarget(
+        accountId: igApi.id,
+        status: TargetStatus.failed,
+        result: PublishResult.partialFailure(const PublishError.network('story timed out'), remoteId: 'feed-1'));
+    expect(needsRetry(partly), isFalse, reason: 'a retry would post the feed post twice');
+    final failed = PostTarget(accountId: igApi.id, status: TargetStatus.failed, result: PublishResult.failure(const PublishError.network('down')));
+    expect(needsRetry(failed), isTrue);
+  });
+
+  testWidgets('a document thread keeps each network\'s time and settings', (tester) async {
+    final (services, c) = await boot(tester);
+    await tester.runAsync(() => services.accounts.upsert(igApi));
+    await tester.pump(const Duration(milliseconds: 300));
+    final at = DateTime.now().add(const Duration(days: 1));
+    c.read(composerProvider.notifier)
+      ..selectAccounts([igApi.id])
+      ..setText('Old words')
+      ..setOverride(igApi.id, PostOverrides(text: 'Old version', mediaIds: const ['gone'], scheduledAt: at, extra: _feedAndStory))
+      ..fillThread(const ['One', 'Two'], const [], const {});
+    final o = c.read(composerProvider).overrides[igApi.id]!;
+    expect(o.scheduledAt, at);
+    expect(o.extra, _feedAndStory);
+    expect((o.text, o.mediaIds), (null, null), reason: 'the old version of the words and its media go');
+    expect(c.read(composerProvider).text, 'One');
+    await done(tester);
+  });
 }

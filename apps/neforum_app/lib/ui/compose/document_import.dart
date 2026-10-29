@@ -87,6 +87,14 @@ Future<void> importDocumentAsThread(BuildContext context, WidgetRef ref, {requir
       }
     }
   }
+  // The composer closed while the pictures were imported: ref may no longer
+  // be used, and the pictures belong to no post.
+  if (!context.mounted) {
+    for (final m in media) {
+      await library.discard(m);
+    }
+    return;
+  }
   ref.read(composerProvider.notifier).fillThread([for (final part in thread.parts) part.text], media, mediaParts);
   if (context.mounted) {
     showToast(

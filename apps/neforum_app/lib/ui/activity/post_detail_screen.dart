@@ -275,6 +275,10 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
               if (err != null) ...[
                 const SizedBox(height: Space.xs + 2),
                 Text(err.message, style: context.text.bodySmall?.copyWith(color: nf.danger)),
+                // No Retry: it would post the live copies a second time.
+                if (t.isPartlyLive)
+                  Text('Part of this is already live on ${d?.name ?? 'the network'}, so NEFORUM does not post it again. '
+                      'Post what is missing again as a new post.', style: context.text.bodySmall),
               ] else if (t.isHeldByPlatform && t.result?.scheduledFor != null) ...[
                 const SizedBox(height: Space.xs),
                 Text(

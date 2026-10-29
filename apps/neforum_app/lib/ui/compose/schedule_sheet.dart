@@ -182,7 +182,12 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text('Different time per network', style: context.text.titleSmall),
-                subtitle: Text(each ? 'Each network goes out at its own time.' : 'Same time for all networks.', style: context.text.bodySmall),
+                // NEFORUM 1.2 knows only the post's time, which is the earliest.
+                subtitle: Text(
+                    each
+                        ? 'Each network goes out at its own time. A synced device with NEFORUM 1.2 would post to every network at the earliest time.'
+                        : 'Same time for all networks.',
+                    style: context.text.bodySmall),
                 value: each,
                 onChanged: (on) => _setEachTarget(on, accounts),
               ),

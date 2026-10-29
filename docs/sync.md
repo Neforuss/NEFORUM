@@ -138,6 +138,8 @@ If a phone's background task cannot reach the sync location, it goes by what the
 
 Platforms that hold scheduled posts themselves (see **Settings > Scheduling**) publish on time either way.
 
+**Known limitation: a different time per network and NEFORUM 1.2.** NEFORUM 1.2 does not know times per network. If a device with 1.2 publishes such a post (it picked up an overdue post, or the post was scheduled there), it sends it to every network at the earliest of the times. Update every synced device to 1.3 or later before you use **Different time per network**.
+
 ## Safety
 
 - The file uses the same encryption as **Move to another device**. The passphrase is stretched with Argon2id (19 MiB, 2 passes) and everything is encrypted with AES-256-GCM. Any change to the file makes it unreadable instead of wrong.
