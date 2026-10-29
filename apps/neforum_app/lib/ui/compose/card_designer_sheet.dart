@@ -199,7 +199,9 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
       );
     }
     final sound = _post ? c.audio : null;
-    final tags = sound == null ? _sampleTags : (sound.audioTags ?? AudioTags.none);
+    // The details the track goes out with (the user's edits over the file's
+    // tags), as the saved video's picture is drawn from them.
+    final tags = sound == null ? _sampleTags : (c.effectiveAudioTagsOf(sound.id) ?? AudioTags.none);
     final photo = c.media.where((m) => m.kind == MediaKind.image && !m.generated).firstOrNull;
     return CardPreviewRequest.audio(
       design: design,

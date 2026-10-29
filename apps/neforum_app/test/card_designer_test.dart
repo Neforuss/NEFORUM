@@ -394,6 +394,12 @@ void main() {
       await tester.tap(find.byKey(const Key('card-template-vinyl')));
       await settle(tester);
       expect(CardDesign.tryParse(c.read(composerProvider).audioCardDesign)?.kind, CardKind.audio);
+      // The preview shows the track details the file goes out with: the
+      // user's edits over its tags.
+      c.read(composerProvider.notifier).setAudioDetails(tone.id, const AudioTags(title: 'Night Drive (Edit)', artist: 'Ana Lima'));
+      await settle(tester);
+      final texts = tester.widget<CardDesignView>(find.byKey(const Key('card-designer-preview'))).request.texts!;
+      expect((texts[CardBlockRole.title], texts[CardBlockRole.artist]), ('Night Drive (Edit)', 'Ana Lima'));
       await tester.tap(find.byKey(const Key('card-designer-group-waveform')));
       await settle(tester);
       expect(find.textContaining('Measured from tone.wav'), findsOneWidget);
