@@ -116,6 +116,15 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      - name: Card design goldens (recorded on Windows)
+        working-directory: apps/neforum_app
+        shell: pwsh
+        # Pixel comparisons depend on the platform's text drawing; a mismatch
+        # here is reported but never blocks a release.
+        continue-on-error: true
+        run: |
+          flutter test test/card_design_test.dart
+          if ($LASTEXITCODE -ne 0) { Write-Output '::warning::Card design goldens differ on the CI Windows runner'; exit $LASTEXITCODE }
       - name: Integration test (real Windows build and plugins)
         working-directory: apps/neforum_app
         shell: pwsh

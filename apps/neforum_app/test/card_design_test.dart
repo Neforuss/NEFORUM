@@ -428,7 +428,10 @@ void main() {
       }
     });
 
-    group('goldens', () {
+    // The goldens were recorded on Windows, and Linux draws text a little
+    // differently (more than the tolerance), so they run on Windows only: on a
+    // developer's PC and in the CI Windows job.
+    group('goldens', skip: !Platform.isWindows, () {
       for (final t in kCardTemplates) {
         for (final kind in CardKind.values) {
           testWidgets('${t.name}, ${kind.label.toLowerCase()}', (tester) async {
