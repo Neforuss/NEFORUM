@@ -110,6 +110,13 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
     ref.read(composerProvider.notifier).setTextCardBackground(background?.toJson());
   }
 
+  /// Changes the background as it is now in the composer, not as the last
+  /// frame showed it, so quick edits in a row all count.
+  void _edit(TextCardBackground Function(TextCardBackground b) change) {
+    final now = TextCardBackground.tryParse(ref.read(composerProvider).textCardBackground);
+    if (now != null) _set(change(now));
+  }
+
   /// Picks a photo for the card only; it is not attached to the post.
   Future<void> _pick(TextCardBackground? current) async {
     final library = ref.read(servicesProvider).media;
@@ -191,7 +198,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
                   // About one preview width (200 px) across the whole range.
                   final step = 2 / (200 * current.zoom);
                   double moved(double v, double by) => ((v - by * step).clamp(-1.0, 1.0) * 100).round() / 100;
-                  _set(current.copyWith(offsetX: moved(current.offsetX, d.delta.dx), offsetY: moved(current.offsetY, d.delta.dy)));
+                  _edit((b) => b.copyWith(offsetX: moved(b.offsetX, d.delta.dx), offsetY: moved(b.offsetY, d.delta.dy)));
                 },
           child: TextCardView(
           text: look.text.isEmpty ? 'Your words, over your photo.' : look.text,
@@ -253,7 +260,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
             padding: const EdgeInsets.only(top: Space.md),
             child: TextButton.icon(
               key: const Key('card-background-reset'),
-              onPressed: () => _set(current.withDefaultEffects()),
+              onPressed: () => _edit((b) => b.withDefaultEffects()),
               icon: const Icon(Icons.restart_alt_rounded, size: 18),
               label: const Text('Reset placement, adjustments and overlays'),
               style: TextButton.styleFrom(foregroundColor: nf.textMuted),
@@ -324,21 +331,21 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
             key: Key('card-background-fit-${f.name}'),
             label: Text(f.label),
             selected: current.fit == f,
-            onSelected: (_) => _set(current.copyWith(fit: f)),
+            onSelected: (_) => _edit((b) => b.copyWith(fit: f)),
           ),
       ]),
       _slider(context, 'Zoom', current.zoom, 1, TextCardBackground.maxZoom, '${current.zoom.toStringAsFixed(1)}×',
-          (v) => _set(current.copyWith(zoom: (v * 10).round() / 10)),
+          (v) => _edit((b) => b.copyWith(zoom: (v * 10).round() / 10)),
           key: const Key('card-background-zoom')),
-      _slider(context, 'Across', current.offsetX, -1, 1, percent(current.offsetX), (v) => _set(current.copyWith(offsetX: (v * 100).round() / 100)),
+      _slider(context, 'Across', current.offsetX, -1, 1, percent(current.offsetX), (v) => _edit((b) => b.copyWith(offsetX: (v * 100).round() / 100)),
           key: const Key('card-background-offset-x')),
-      _slider(context, 'Down', current.offsetY, -1, 1, percent(current.offsetY), (v) => _set(current.copyWith(offsetY: (v * 100).round() / 100)),
+      _slider(context, 'Down', current.offsetY, -1, 1, percent(current.offsetY), (v) => _edit((b) => b.copyWith(offsetY: (v * 100).round() / 100)),
           key: const Key('card-background-offset-y')),
       const SizedBox(height: Space.sm),
       Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
         OutlinedButton.icon(
           key: const Key('card-background-rotate'),
-          onPressed: () => _set(current.copyWith(quarterTurns: current.quarterTurns + 1)),
+          onPressed: () => _edit((b) => b.copyWith(quarterTurns: b.quarterTurns + 1)),
           icon: const Icon(Icons.rotate_90_degrees_cw_outlined, size: 18),
           label: Text(current.quarterTurns == 0 ? 'Turn' : 'Turned ${current.quarterTurns * 90}°'),
         ),
@@ -347,11 +354,11 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           avatar: const Icon(Icons.flip_rounded, size: 16),
           label: const Text('Mirror'),
           selected: current.flipHorizontal,
-          onSelected: (v) => _set(current.copyWith(flipHorizontal: v)),
+          onSelected: (v) => _edit((b) => b.copyWith(flipHorizontal: v)),
         ),
         if (current.offsetX != 0 || current.offsetY != 0 || current.zoom != 1)
           TextButton(
-            onPressed: () => _set(current.copyWith(offsetX: 0, offsetY: 0, zoom: 1)),
+            onPressed: () => _edit((b) => b.copyWith(offsetX: 0, offsetY: 0, zoom: 1)),
             child: const Text('Centre'),
           ),
       ]),
@@ -365,24 +372,24 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
     return [
       _label(context, 'Adjust'),
       _slider(context, 'Blur', current.blur, 0, TextCardBackground.maxBlur, current.blur.round().toString(),
-          (v) => _set(current.copyWith(blur: v.roundToDouble())),
+          (v) => _edit((b) => b.copyWith(blur: v.roundToDouble())),
           key: const Key('card-background-blur')),
       _slider(context, 'Dimming', current.dimming, 0, TextCardBackground.maxDimming, '${(current.dimming * 100).round()}%',
-          (v) => _set(current.copyWith(dimming: hundredths(v))),
+          (v) => _edit((b) => b.copyWith(dimming: hundredths(v))),
           key: const Key('card-background-dimming')),
-      _slider(context, 'Brightness', current.brightness, -1, 1, signed(current.brightness), (v) => _set(current.copyWith(brightness: hundredths(v))),
+      _slider(context, 'Brightness', current.brightness, -1, 1, signed(current.brightness), (v) => _edit((b) => b.copyWith(brightness: hundredths(v))),
           key: const Key('card-background-brightness')),
-      _slider(context, 'Contrast', current.contrast, -1, 1, signed(current.contrast), (v) => _set(current.copyWith(contrast: hundredths(v))),
+      _slider(context, 'Contrast', current.contrast, -1, 1, signed(current.contrast), (v) => _edit((b) => b.copyWith(contrast: hundredths(v))),
           key: const Key('card-background-contrast')),
       if (!current.blackAndWhite)
-        _slider(context, 'Saturation', current.saturation, -1, 1, signed(current.saturation), (v) => _set(current.copyWith(saturation: hundredths(v))),
+        _slider(context, 'Saturation', current.saturation, -1, 1, signed(current.saturation), (v) => _edit((b) => b.copyWith(saturation: hundredths(v))),
             key: const Key('card-background-saturation')),
       SwitchListTile(
         key: const Key('card-background-black-and-white'),
         contentPadding: EdgeInsets.zero,
         title: Text('Black and white', style: context.text.bodyMedium),
         value: current.blackAndWhite,
-        onChanged: (v) => _set(current.copyWith(blackAndWhite: v)),
+        onChanged: (v) => _edit((b) => b.copyWith(blackAndWhite: v)),
       ),
     ];
   }
@@ -393,23 +400,23 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
     double hundredths(double v) => (v * 100).round() / 100;
     return [
       _label(context, 'Tint'),
-      _colorChoice(current.tintColor, (c) => _set(current.copyWith(tintColor: c, tintStrength: current.tintStrength > 0 ? null : 0.4)), label: 'Tint'),
-      _slider(context, 'Strength', current.tintStrength, 0, 1, percent(current.tintStrength), (v) => _set(current.copyWith(tintStrength: hundredths(v))),
+      _colorChoice(current.tintColor, (c) => _edit((b) => b.copyWith(tintColor: c, tintStrength: b.tintStrength > 0 ? null : 0.4)), label: 'Tint'),
+      _slider(context, 'Strength', current.tintStrength, 0, 1, percent(current.tintStrength), (v) => _edit((b) => b.copyWith(tintStrength: hundredths(v))),
           key: const Key('card-background-tint')),
       _label(context, 'Gradient'),
-      _colorChoice(current.gradientStart, (c) => _set(current.copyWith(gradientStart: c, gradientStrength: current.gradientStrength > 0 ? null : 0.6)),
+      _colorChoice(current.gradientStart, (c) => _edit((b) => b.copyWith(gradientStart: c, gradientStrength: b.gradientStrength > 0 ? null : 0.6)),
           label: 'Gradient start'),
       const SizedBox(height: Space.sm),
-      _colorChoice(current.gradientEnd, (c) => _set(current.copyWith(gradientEnd: c, gradientStrength: current.gradientStrength > 0 ? null : 0.6)),
+      _colorChoice(current.gradientEnd, (c) => _edit((b) => b.copyWith(gradientEnd: c, gradientStrength: b.gradientStrength > 0 ? null : 0.6)),
           label: 'Gradient end'),
       _slider(context, 'Angle', current.gradientAngle, 0, 360, '${current.gradientAngle.round()}°',
-          (v) => _set(current.copyWith(gradientAngle: (v / 15).round() * 15.0)),
+          (v) => _edit((b) => b.copyWith(gradientAngle: (v / 15).round() * 15.0)),
           key: const Key('card-background-gradient-angle')),
       _slider(context, 'Strength', current.gradientStrength, 0, 1, percent(current.gradientStrength),
-          (v) => _set(current.copyWith(gradientStrength: hundredths(v))),
+          (v) => _edit((b) => b.copyWith(gradientStrength: hundredths(v))),
           key: const Key('card-background-gradient')),
       _label(context, 'Vignette'),
-      _slider(context, 'Strength', current.vignette, 0, 1, percent(current.vignette), (v) => _set(current.copyWith(vignette: hundredths(v))),
+      _slider(context, 'Strength', current.vignette, 0, 1, percent(current.vignette), (v) => _edit((b) => b.copyWith(vignette: hundredths(v))),
           key: const Key('card-background-vignette')),
     ];
   }
@@ -423,7 +430,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
               key: Key('card-background-position-${p.name}'),
               label: Text(p.label),
               selected: current.textPosition == p,
-              onSelected: (_) => _set(current.copyWith(textPosition: p)),
+              onSelected: (_) => _edit((b) => b.copyWith(textPosition: p)),
             ),
         ]),
         _label(context, 'Text colour'),
@@ -432,7 +439,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
             ChoiceChip(
               label: Text(c.label),
               selected: current.textColor == c,
-              onSelected: (_) => _set(current.copyWith(textColor: c)),
+              onSelected: (_) => _edit((b) => b.copyWith(textColor: c)),
             ),
         ]),
         SwitchListTile(
@@ -440,7 +447,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           title: Text('Box behind the words', style: context.text.bodyMedium),
           subtitle: Text('Helps the words stand out on a busy photo.', style: context.text.bodySmall),
           value: current.textBox,
-          onChanged: (v) => _set(current.copyWith(textBox: v)),
+          onChanged: (v) => _edit((b) => b.copyWith(textBox: v)),
         ),
       ];
 
