@@ -71,9 +71,11 @@ class AppearanceSettingsSection extends ConsumerWidget {
           (NavigationChromeStyle.brand, 'NEFORUM purple', 'Deep purple in both themes.'),
           (NavigationChromeStyle.theme, 'Match the theme', 'Light in the light theme, dark in the dark theme.'),
           (NavigationChromeStyle.accent, 'Your accent color', 'The accent color chosen above.'),
+          (NavigationChromeStyle.transparent, 'See-through', 'Your background picture, or the page, shows through. Labels stay readable.'),
         ],
         onChanged: (v) => n.update((x) => x.copyWith(navigationChrome: v)),
       ),
+      if (s.navigationChrome == NavigationChromeStyle.transparent) const _SeeThroughNavigation(),
       SettingRow(
         title: 'Corners',
         description: 'Square makes every corner sharp: cards, buttons, menus and pictures.',
@@ -285,6 +287,60 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
         TextButton(onPressed: () => Navigator.pop(context), style: TextButton.styleFrom(foregroundColor: nf.textMuted), child: const Text('Cancel')),
         FilledButton(onPressed: color == null ? null : () => Navigator.pop(context, color), child: const Text('Use this color')),
       ],
+    );
+  }
+}
+
+/// Settings > Appearance > Navigation bar > See-through: how much of the
+/// theme's surface color covers it, and the frosted-glass blur of the
+/// background picture under it (only with a picture: over the plain page a
+/// blur shows nothing).
+class _SeeThroughNavigation extends ConsumerWidget {
+  const _SeeThroughNavigation();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final s = ref.watch(settingsProvider.select((s) => (opacity: s.navigationChromeOpacity, blur: s.navigationChromeBlur, picture: s.backgroundImagePath != null)));
+    final n = ref.read(settingsProvider.notifier);
+
+    Widget slider(String label, String value, Slider slider) => MergeSemantics(
+          child: Row(children: [
+            SizedBox(width: 64, child: Text(label, style: context.text.labelLarge?.copyWith(color: nf.textMuted))),
+            Expanded(child: slider),
+            SizedBox(width: 44, child: Text(value, textAlign: TextAlign.end, style: context.text.titleSmall)),
+          ]),
+        );
+
+    return SettingRow(
+      title: 'See-through navigation',
+      description: s.picture
+          ? 'Opacity 0% shows all of your background picture. NEFORUM covers it more where the labels need it.'
+          : 'Opacity 0% shows the page color. Blur frosts a background picture, when you set one below.',
+      below: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        slider(
+          'Opacity',
+          '${(s.opacity * 100).round()}%',
+          Slider(
+            value: s.opacity,
+            divisions: 20,
+            semanticFormatterCallback: (v) => '${(v * 100).round()}%',
+            onChanged: (v) => n.update((x) => x.copyWith(navigationChromeOpacity: validNavigationChromeOpacity((v * 20).round() / 20))),
+          ),
+        ),
+        if (s.picture)
+          slider(
+            'Blur',
+            s.blur == 0 ? 'Off' : '${s.blur.round()}',
+            Slider(
+              value: s.blur,
+              max: kMaxNavigationChromeBlur,
+              divisions: kMaxNavigationChromeBlur.round(),
+              semanticFormatterCallback: (v) => v == 0 ? 'Off' : '${v.round()}',
+              onChanged: (v) => n.update((x) => x.copyWith(navigationChromeBlur: validNavigationChromeBlur(v.roundToDouble()))),
+            ),
+          ),
+      ]),
     );
   }
 }

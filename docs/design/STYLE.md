@@ -31,6 +31,13 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
   (sidebar icon and bar), never with `highlight` directly.
   `PrimaryAction(onChrome: true)` and `NeforumWordmark(onChrome: true)` are the
   variants for it.
+  The see-through style shows the background picture (or the page) through
+  the chrome: `chrome` has no opacity there (text drawn in it uses
+  `chrome.withValues(alpha: 1)`), its content takes the page's text colors,
+  and `SeeThroughChrome` lays the surface color over what shows through, as
+  much as the user's opacity and as the labels need over the picture under
+  them. Keep anything drawn on it on opaque fills (`chromeRaised`,
+  `chromeAccent`, `chromeUrgent`) or in `onChrome`/`onChromeMuted`.
 - Neutrals carry a faint purple cast in both themes; semantic colors
   (success, warning, danger, info) stay as they are.
 

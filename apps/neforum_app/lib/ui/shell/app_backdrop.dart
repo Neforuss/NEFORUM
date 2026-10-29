@@ -12,7 +12,7 @@ import '../../theme/tokens.dart';
 /// A background picture ready to paint: decoded for the window, blurred
 /// once, with colors picked from it for the legibility check.
 class PreparedBackdrop {
-  PreparedBackdrop._(this.image, this.samples);
+  PreparedBackdrop._(this.image, this.samples, this.samplesWidth);
 
   /// What is painted, already blurred.
   final ui.Image image;
@@ -21,6 +21,9 @@ class PreparedBackdrop {
   /// point of a small grid, not an average, so the light and dark extremes
   /// text has to read on are kept.
   final Uint8List samples;
+
+  /// Columns of the grid of [samples], row by row.
+  final int samplesWidth;
 
   void dispose() => image.dispose();
 }
@@ -74,7 +77,7 @@ Future<PreparedBackdrop> prepareBackdrop(Uint8List bytes, {required Size target,
   }
 
   try {
-    return PreparedBackdrop._(shown, await _sample(shown));
+    return PreparedBackdrop._(shown, await _sample(shown), _samplesWidth(shown));
   } on Object {
     shown.dispose();
     rethrow;
@@ -98,9 +101,12 @@ Future<bool> isDecodablePicture(Uint8List bytes) async {
   }
 }
 
+/// Columns of the grid [_sample] picks from [image].
+int _samplesWidth(ui.Image image) => math.min(160, image.width);
+
 /// Nearest-pixel samples of [image] on a grid up to 160 wide.
 Future<Uint8List> _sample(ui.Image image) async {
-  final width = math.min(160, image.width);
+  final width = _samplesWidth(image);
   final height = math.max(1, (image.height * width / image.width).round());
   final recorder = ui.PictureRecorder();
   Canvas(recorder).drawImageRect(
@@ -171,6 +177,71 @@ double legibleScrimOpacity(Uint8List samples, Color scrim, List<Color> foregroun
   return high;
 }
 
+/// The background picture as it is shown, for a surface over part of it
+/// that keeps its own text readable (the see-through navigation chrome):
+/// the picture's [samples] and the page scrim laid over them.
+@immutable
+class BackdropSampling {
+  const BackdropSampling({required this.samples, required this.samplesWidth, required this.scrim, required this.scrimOpacity});
+
+  /// RGBA bytes of a grid [samplesWidth] wide (see [PreparedBackdrop.samples]).
+  final Uint8List samples;
+  final int samplesWidth;
+
+  /// The color over the picture, and its opacity, 0 to 1.
+  final Color scrim;
+  final double scrimOpacity;
+
+  /// The samples under [region] of a window of [window] size, as they are
+  /// seen: the picture covers the window, centered (`BoxFit.cover`), under
+  /// the page scrim. Empty when [region] misses the picture.
+  Uint8List under(Rect region, Size window) {
+    final width = samplesWidth;
+    final height = width == 0 ? 0 : samples.length ~/ 4 ~/ width;
+    if (height == 0 || window.isEmpty) return Uint8List(0);
+    // Window pixels per sample, and where the grid starts in the window.
+    final scale = math.max(window.width / width, window.height / height);
+    final dx = (window.width - width * scale) / 2;
+    final dy = (window.height - height * scale) / 2;
+    final left = ((region.left - dx) / scale).floor().clamp(0, width);
+    final right = ((region.right - dx) / scale).ceil().clamp(left, width);
+    final top = ((region.top - dy) / scale).floor().clamp(0, height);
+    final bottom = ((region.bottom - dy) / scale).ceil().clamp(top, height);
+    final out = Uint8List((right - left) * (bottom - top) * 4);
+    final o = scrimOpacity;
+    final over = [scrim.r * 255 * o, scrim.g * 255 * o, scrim.b * 255 * o];
+    var j = 0;
+    for (var y = top; y < bottom; y++) {
+      for (var x = left; x < right; x++) {
+        final i = (y * width + x) * 4;
+        for (var channel = 0; channel < 3; channel++) {
+          out[j + channel] = (over[channel] + samples[i + channel] * (1 - o)).round();
+        }
+        out[j + 3] = 255;
+        j += 4;
+      }
+    }
+    return out;
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is BackdropSampling && identical(other.samples, samples) && other.samplesWidth == samplesWidth && other.scrim == scrim && other.scrimOpacity == scrimOpacity;
+
+  @override
+  int get hashCode => Object.hash(identityHashCode(samples), samplesWidth, scrim, scrimOpacity);
+}
+
+/// Provides the shown picture's [BackdropSampling] below [AppBackdrop].
+class _BackdropSamplingScope extends InheritedWidget {
+  const _BackdropSamplingScope({required this.sampling, required super.child});
+
+  final BackdropSampling? sampling;
+
+  @override
+  bool updateShouldNotify(_BackdropSamplingScope old) => old.sampling != sampling;
+}
+
 /// The physical window size rounded up to a step of 256, so resizing a
 /// window a little does not decode the picture again.
 Size _bucket(Size physical) => Size((physical.width / 256).ceil() * 256.0, (physical.height / 256).ceil() * 256.0);
@@ -228,6 +299,10 @@ class AppBackdrop extends StatefulWidget {
   /// Whether a background picture is behind [context] ([BackdropScope]).
   static bool activeOf(BuildContext context) => BackdropScope.activeOf(context);
 
+  /// The picture shown behind [context], or null while there is none (no
+  /// picture set, or not decoded yet: then the page color is shown).
+  static BackdropSampling? samplingOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<_BackdropSamplingScope>()?.sampling;
+
   /// Prepares the picture at [path] for a window of [physicalSize] and keeps
   /// it for the [AppBackdrop] that shows it next. Tests call it outside the
   /// fake clock, where decoding can finish.
@@ -248,6 +323,8 @@ class _AppBackdropState extends State<AppBackdrop> {
   /// This widget's own clone of the shown picture.
   ui.Image? _image;
   Uint8List? _samples;
+  int _samplesWidth = 0;
+  BackdropSampling? _sampling;
   _BackdropKey? _shownKey;
   Size? _shownBucket;
 
@@ -318,6 +395,7 @@ class _AppBackdropState extends State<AppBackdrop> {
     _image?.dispose();
     _image = backdrop?.image.clone();
     _samples = backdrop?.samples;
+    _samplesWidth = backdrop?.samplesWidth ?? 0;
     _shownKey = key;
     _shownBucket = bucket;
   }
@@ -365,9 +443,16 @@ class _AppBackdropState extends State<AppBackdrop> {
     final image = _image;
     final samples = _samples;
     Widget? layer;
+    BackdropSampling? sampling;
     if (active) {
       final ratio = MediaQuery.highContrastOf(context) ? 7.0 : 4.5;
       final scrim = samples == null ? 1.0 : math.max(widget.dim, _legibleOpacity(samples, nf, ratio));
+      if (image != null && samples != null) {
+        final next = BackdropSampling(samples: samples, samplesWidth: _samplesWidth, scrim: nf.bg, scrimOpacity: scrim);
+        // The same object while nothing changed, so surfaces over it keep
+        // their measurements.
+        sampling = _sampling = next == _sampling ? _sampling : next;
+      }
       layer = RepaintBoundary(
         child: ColoredBox(
           color: nf.bg,
@@ -389,10 +474,13 @@ class _AppBackdropState extends State<AppBackdrop> {
     // it keep their state when it is turned on or off.
     return BackdropScope(
       active: active,
-      child: Stack(fit: StackFit.expand, children: [
-        Positioned.fill(child: layer ?? const SizedBox.shrink()),
-        widget.child,
-      ]),
+      child: _BackdropSamplingScope(
+        sampling: sampling,
+        child: Stack(fit: StackFit.expand, children: [
+          Positioned.fill(child: layer ?? const SizedBox.shrink()),
+          widget.child,
+        ]),
+      ),
     );
   }
 }

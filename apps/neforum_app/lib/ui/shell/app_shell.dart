@@ -17,6 +17,7 @@ import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
 import '../../state/providers.dart';
 import '../../state/scheduler.dart';
+import '../../state/settings.dart' show NavigationChromeStyle;
 import '../../state/update_checks.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
@@ -28,6 +29,7 @@ import '../settings/sync_section.dart';
 import 'app_backdrop.dart';
 import '../settings/updates_section.dart';
 import 'paste_code_dialog.dart';
+import 'see_through_chrome.dart';
 
 /// Adaptive frame around the five sections: sidebar on wide windows, an
 /// icon rail on medium ones, a bottom bar on phones.
@@ -156,10 +158,19 @@ class _AppShellState extends ConsumerState<AppShell> {
     final badges = <AppSection, int>{AppSection.queue: scheduled, AppSection.activity: attention};
     final current = AppSection.values[widget.shell.currentIndex];
     // Settings > Appearance > Background: the picture shows through the
-    // page background; the navigation and the cards keep their colors.
+    // page background; the cards keep their colors, and so does the
+    // navigation unless it is see-through.
     final background = ref.watch(settingsProvider.select((s) => (path: s.backgroundImagePath, blur: s.backgroundBlur, dim: s.backgroundDim)));
     final page = background.path == null ? nf.bg : Colors.transparent;
     Widget framed(Widget scaffold) => AppBackdrop(imagePath: background.path, blur: background.blur, dim: background.dim, child: scaffold);
+    // Settings > Appearance > Navigation bar > See-through: the picture (or
+    // the page) shows through the sidebar, rail and tab bar.
+    final seeThrough = ref.watch(settingsProvider.select((s) => s.navigationChrome == NavigationChromeStyle.transparent
+        ? (opacity: s.navigationChromeOpacity, blur: s.navigationChromeBlur)
+        : null));
+    Widget chrome(ChromePlacement placement, double extent, Widget child) => seeThrough == null
+        ? child
+        : SeeThroughChrome(placement: placement, extent: extent, opacity: seeThrough.opacity, blur: seeThrough.blur, child: child);
 
     final body = Column(children: [
       if (demo) const _DemoBanner(),
@@ -172,20 +183,24 @@ class _AppShellState extends ConsumerState<AppShell> {
       return framed(Scaffold(
         backgroundColor: page,
         body: SafeArea(bottom: false, child: body),
-        bottomNavigationBar: Container(
-          decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf, top: true)),
-          child: NavigationBar(
-            selectedIndex: widget.shell.currentIndex,
-            onDestinationSelected: (i) => _go(AppSection.values[i]),
-            labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-            destinations: [
-              for (final s in AppSection.values)
-                NavigationDestination(
-                  icon: _badged(Icon(s.icon), badges[s] ?? 0, s == AppSection.activity),
-                  selectedIcon: _badged(Icon(s.selectedIcon), badges[s] ?? 0, s == AppSection.activity),
-                  label: s.label,
-                ),
-            ],
+        bottomNavigationBar: chrome(
+          ChromePlacement.bottom,
+          (NavigationBarTheme.of(context).height ?? 80) + MediaQuery.paddingOf(context).bottom,
+          Container(
+            decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf, top: true)),
+            child: NavigationBar(
+              selectedIndex: widget.shell.currentIndex,
+              onDestinationSelected: (i) => _go(AppSection.values[i]),
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              destinations: [
+                for (final s in AppSection.values)
+                  NavigationDestination(
+                    icon: _badged(Icon(s.icon), badges[s] ?? 0, s == AppSection.activity),
+                    selectedIcon: _badged(Icon(s.selectedIcon), badges[s] ?? 0, s == AppSection.activity),
+                    label: s.label,
+                  ),
+              ],
+            ),
           ),
         ),
       ));
@@ -197,8 +212,8 @@ class _AppShellState extends ConsumerState<AppShell> {
       body: SafeArea(
         child: Row(children: [
           expanded
-              ? _Sidebar(current: current, badges: badges, onSelect: _go, onNewPost: _newPost)
-              : _Rail(current: current, badges: badges, onSelect: _go, onNewPost: _newPost),
+              ? chrome(ChromePlacement.side, _Sidebar.width, _Sidebar(current: current, badges: badges, onSelect: _go, onNewPost: _newPost))
+              : chrome(ChromePlacement.side, _Rail.width, _Rail(current: current, badges: badges, onSelect: _go, onNewPost: _newPost)),
           Expanded(child: body),
         ]),
       ),
@@ -225,7 +240,8 @@ class _ChromeBadge extends StatelessWidget {
     return Badge(
       label: Text('$count'),
       backgroundColor: urgent ? nf.chromeUrgent : nf.onChrome,
-      textColor: urgent ? nf.onChromeUrgent : nf.chrome,
+      // Opaque also on the see-through chrome.
+      textColor: urgent ? nf.onChromeUrgent : nf.chrome.withValues(alpha: 1),
       child: child,
     );
   }
@@ -253,13 +269,15 @@ class _Sidebar extends ConsumerWidget {
   final ValueChanged<AppSection> onSelect;
   final VoidCallback onNewPost;
 
+  static const double width = 264;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
     final dense = context.denseLayout;
     final accounts = ref.watch(accountListProvider);
     return Container(
-      width: 264,
+      width: width,
       decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf)),
       padding: EdgeInsets.fromLTRB(Space.lg, dense ? Space.lg : Space.xxl, Space.lg, Space.lg),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -319,10 +337,14 @@ class _NavItemState extends State<_NavItem> {
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         onTap: widget.onTap,
+        // One label for screen readers (and the contrast check), with the
+        // count as its value.
         child: Semantics(
           button: true,
           selected: sel,
           label: widget.section.label,
+          value: widget.badge > 0 ? '${widget.badge}' : null,
+          excludeSemantics: true,
           child: AnimatedContainer(
             duration: context.motion(Motion.fast),
             height: context.denseLayout ? 38 : 44,
@@ -355,7 +377,11 @@ class _NavItemState extends State<_NavItem> {
                   constraints: const BoxConstraints(minWidth: 22),
                   padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                   decoration: BoxDecoration(
-                    color: widget.urgent ? nf.chromeUrgent : nf.onChrome.withValues(alpha: sel ? 0.16 : 0.10),
+                    // Opaque, so the count reads the same on the see-through
+                    // chrome as on the others.
+                    color: widget.urgent
+                        ? nf.chromeUrgent
+                        : Color.alphaBlend(nf.onChrome.withValues(alpha: sel ? 0.16 : 0.10), sel ? nf.chromeRaised : nf.chrome.withValues(alpha: 1)),
                     borderRadius: Radii.rPill,
                   ),
                   child: Text(
@@ -414,12 +440,14 @@ class _Rail extends StatelessWidget {
   final ValueChanged<AppSection> onSelect;
   final VoidCallback onNewPost;
 
+  static const double width = 88;
+
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
     final dense = context.denseLayout;
     return Container(
-      width: 88,
+      width: width,
       decoration: BoxDecoration(color: nf.chrome, border: _chromeEdge(nf)),
       padding: EdgeInsets.symmetric(vertical: dense ? Space.md : Space.xl),
       child: Column(children: [
@@ -463,26 +491,36 @@ class _RailItem extends StatelessWidget {
     final icon = Icon(selected ? section.selectedIcon : section.icon, size: 22, color: selected ? nf.onChromeAccent : nf.onChromeMuted);
     return Padding(
       padding: EdgeInsets.symmetric(vertical: context.denseLayout ? Space.xxs : Space.xs),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: Radii.rMd,
-        child: SizedBox(
-          width: 72,
-          child: Column(children: [
-            AnimatedContainer(
-              duration: context.motion(Motion.fast),
-              width: 52,
-              height: 32,
-              decoration: BoxDecoration(color: selected ? nf.chromeAccent : Colors.transparent, borderRadius: Radii.rPill),
-              child: Center(child: _ChromeBadge(count: badge, urgent: urgent, child: icon)),
+      // One label for screen readers (and the contrast check), with the count
+      // as its value, as in the sidebar.
+      child: Semantics(
+        button: true,
+        selected: selected,
+        label: section.label,
+        value: badge > 0 ? '$badge' : null,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: Radii.rMd,
+          child: ExcludeSemantics(
+            child: SizedBox(
+              width: 72,
+              child: Column(children: [
+                AnimatedContainer(
+                  duration: context.motion(Motion.fast),
+                  width: 52,
+                  height: 32,
+                  decoration: BoxDecoration(color: selected ? nf.chromeAccent : Colors.transparent, borderRadius: Radii.rPill),
+                  child: Center(child: _ChromeBadge(count: badge, urgent: urgent, child: icon)),
+                ),
+                const SizedBox(height: Space.xs),
+                Text(
+                  section.label,
+                  style: context.text.labelSmall?.copyWith(color: selected ? nf.onChrome : nf.onChromeMuted, fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
+                ),
+                const SizedBox(height: Space.xs),
+              ]),
             ),
-            const SizedBox(height: Space.xs),
-            Text(
-              section.label,
-              style: context.text.labelSmall?.copyWith(color: selected ? nf.onChrome : nf.onChromeMuted, fontWeight: selected ? FontWeight.w700 : FontWeight.w500),
-            ),
-            const SizedBox(height: Space.xs),
-          ]),
+          ),
         ),
       ),
     );
