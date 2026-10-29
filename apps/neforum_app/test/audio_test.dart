@@ -602,6 +602,21 @@ void main() {
       expect(calls, hasLength(made));
     });
 
+    testWidgets('networks with the same frame but their own safe area and fonts get designed videos of their own', (tester) async {
+      final accounts = [handoff('tt', 'tiktok'), handoff('ig', 'instagram'), handoff('x', 'x'), handoff('bs', 'bluesky')];
+      final (s, track, _) = await workspace(tester, accounts);
+      final design = cardTemplateById('neon')!.design(CardKind.audio);
+      await tester.runAsync(() => s.saveSettings(s.settings.copyWith(audioCardDesign: design.toJson())));
+      final now = DateTime(2026, 10, 28);
+      final post = Post(id: 'p-frames', text: 'New single', media: [track], targets: [for (final a in accounts) PostTarget(accountId: a.id)], createdAt: now, updatedAt: now);
+      final saved = (await tester.runAsync(() => attachAudioRenditions(s, post, s.settings)))!;
+      String videoOf(String accountId) => saved.targetFor(accountId)!.overrides.mediaIds!.single;
+      expect(audioVideoFrame('tiktok'), audioVideoFrame('instagram'));
+      expect(videoOf('tt'), isNot(videoOf('ig')), reason: 'TikTok\'s safe area and font are not Instagram\'s');
+      expect(videoOf('x'), videoOf('bs'), reason: 'the same square card is made once');
+      expect(calls.where((c) => c.$1 == 'audioVideo'), hasLength(3));
+    });
+
     testWidgets('a designed card showing the cover art leaves the photo in the list; one showing the photo takes it', (tester) async {
       final x = handoff('x', 'x');
       final (s, plain, photo) = await workspace(tester, [x]);

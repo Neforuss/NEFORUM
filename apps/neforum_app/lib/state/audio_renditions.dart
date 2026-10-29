@@ -355,6 +355,11 @@ Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget tar
   // 1.3.1: cards. A designed card is drawn from the same tags and shows their
   // cover art, else the photo.
   final texts = design == null ? null : audioCardTexts(tags ?? AudioTags.none, fallbackTitle: title);
+  // A full-screen frame keeps the network's own buttons clear.
+  final safe = width / height < 0.62 ? fullScreenSafeArea(platformId) : EdgeInsets.zero;
+  // The fonts the card's blocks are drawn in on this network (the
+  // "network's own" font differs per network), worked out before the map.
+  final fonts = design == null ? null : [for (final b in design.blocks) b.font.resolve(platformId).name];
   final params = <String, dynamic>{
     'kind': RenderKind.audioVideo,
     'width': width,
@@ -363,6 +368,11 @@ Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget tar
       'design': design.toJson(),
       'card': stableHash(jsonEncode({for (final e in texts.entries) e.key.name: e.value})),
       'cover': ?(coverPath ?? photo?.id),
+      // What else of the network the picture is drawn with: two networks
+      // with the same frame (TikTok, Instagram) share a video only when
+      // their safe areas and fonts are the same too.
+      if (safe != EdgeInsets.zero) 'safe': [safe.left, safe.top, safe.right, safe.bottom],
+      'fonts': ?fonts,
     } else if (photo != null)
       'picture': photo.id
     else
@@ -387,7 +397,7 @@ Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget tar
           design: design,
           platformId: platformId,
           size: Size(width.toDouble(), height.toDouble()),
-          safe: width / height < 0.62 ? fullScreenSafeArea(platformId) : EdgeInsets.zero,
+          safe: safe,
           texts: texts,
           cover: coverArt ?? ownPhoto,
           waveform: design.waveform.visible ? await waveformOfSound(s.storage, source) : null);
