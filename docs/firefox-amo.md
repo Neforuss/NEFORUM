@@ -7,10 +7,10 @@ Submit at <https://addons.mozilla.org/developers/addon/submit/distribution>, cho
 ## Before uploading
 
 - Add-on id: `neforum-extension@neforus.com` (in `extensions/browser/manifest.firefox.json`). The first submission, listed or unlisted, ties it to the submitting account.
-- `strict_min_version` is 121.0 (Manifest V3 with an event-page background).
+- `strict_min_version` is 140.0 on desktop and 142.0 on Android (`gecko_android`): the first versions that read `data_collection_permissions`, which AMO requires. Firefox 140 is also the current ESR.
 - `data_collection_permissions` is `{"required": ["none"]}`: the extension collects and transmits no data. AMO's form shows this as "This add-on does not collect data".
-- CI runs `web-ext lint` (the same linter AMO runs on upload) on every build. A warning that `data_collection_permissions` needs Firefox 140 is expected: older Firefox versions ignore the key, and nothing is collected on any version.
-- Every version number goes to AMO once (listed and unlisted share the numbering). The first submission is 1.1.2; the next change to the extension needs 1.1.3.
+- CI runs `web-ext lint` (the same linter AMO runs on upload) on every build; it reports no errors and no warnings.
+- Every version number goes to AMO once (listed and unlisted share the numbering). The first submission is 1.1.3; the next change to the extension needs 1.1.4.
 
 ## Describe add-on
 

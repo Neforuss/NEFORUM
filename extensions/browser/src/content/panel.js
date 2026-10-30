@@ -6,15 +6,42 @@
   const NF = (globalThis.NEFORUM_EXT ??= {});
   if (NF.panel) return;
 
-  // The NEFORUM mark (tools/generate_icons.dart makes the same shape).
-  const LOGO =
-    '<svg viewBox="0 0 1024 1024" width="22" height="22" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">' +
-    '<stop offset="0" stop-color="#9426FF"/><stop offset=".5" stop-color="#7D00FF"/><stop offset="1" stop-color="#5C00C4"/></linearGradient>' +
-    '<mask id="w"><rect width="1024" height="1024" fill="#fff"/><circle cx="512" cy="512" r="116.7" fill="#000"/></mask></defs>' +
-    '<rect width="1024" height="1024" rx="307" fill="url(#g)"/><g fill="#FF0"><path d="M122.8 512L512 122.8L901.1 512L729.9 512A217.9 217.9 0 0 0 294 512Z"/>' +
-    '<path d="M329.1 512A182.8 182.8 0 0 1 694.8 512L628.7 512A116.7 116.7 0 0 0 395.2 512Z"/>' +
-    '<path mask="url(#w)" d="M155.3 544.4L868.6 544.4L836.2 576.8L187.7 576.8ZM220.1 609.2L803.8 609.2L771.4 641.7L252.5 641.7ZM285 674.1L738.9 674.1L706.5 706.5L317.4 706.5ZM349.8 738.9L674.1 738.9L641.7 771.4L382.2 771.4ZM414.7 803.8L609.2 803.8L576.8 836.2L447.1 836.2ZM479.5 868.6L544.4 868.6L512 901.1Z"/>' +
-    '<circle cx="512" cy="512" r="50.5"/></g></svg>';
+  // The NEFORUM mark (tools/generate_icons.dart makes the same shape), as
+  // [tag, attributes, children] built with DOM calls: no HTML is parsed.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const LOGO = ['svg', { viewBox: '0 0 1024 1024', width: '22', height: '22', 'aria-hidden': 'true' }, [
+    ['defs', {}, [
+      ['linearGradient', { id: 'g', x1: '0', y1: '0', x2: '1', y2: '1' }, [
+        ['stop', { offset: '0', 'stop-color': '#9426FF' }],
+        ['stop', { offset: '.5', 'stop-color': '#7D00FF' }],
+        ['stop', { offset: '1', 'stop-color': '#5C00C4' }],
+      ]],
+      ['mask', { id: 'w' }, [
+        ['rect', { width: '1024', height: '1024', fill: '#fff' }],
+        ['circle', { cx: '512', cy: '512', r: '116.7', fill: '#000' }],
+      ]],
+    ]],
+    ['rect', { width: '1024', height: '1024', rx: '307', fill: 'url(#g)' }],
+    ['g', { fill: '#FF0' }, [
+      ['path', { d: 'M122.8 512L512 122.8L901.1 512L729.9 512A217.9 217.9 0 0 0 294 512Z' }],
+      ['path', { d: 'M329.1 512A182.8 182.8 0 0 1 694.8 512L628.7 512A116.7 116.7 0 0 0 395.2 512Z' }],
+      ['path', {
+        mask: 'url(#w)',
+        d: 'M155.3 544.4L868.6 544.4L836.2 576.8L187.7 576.8ZM220.1 609.2L803.8 609.2L771.4 641.7L252.5 641.7Z' +
+          'M285 674.1L738.9 674.1L706.5 706.5L317.4 706.5ZM349.8 738.9L674.1 738.9L641.7 771.4L382.2 771.4Z' +
+          'M414.7 803.8L609.2 803.8L576.8 836.2L447.1 836.2ZM479.5 868.6L544.4 868.6L512 901.1Z',
+      }],
+      ['circle', { cx: '512', cy: '512', r: '50.5' }],
+    ]],
+  ]];
+
+  /** An SVG element tree from a [tag, attributes, children] description. */
+  function svg([tag, attrs, children = []]) {
+    const e = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attrs)) e.setAttribute(name, value);
+    for (const child of children) e.append(svg(child));
+    return e;
+  }
 
   const CSS = `
     :host { all: initial; }
@@ -69,7 +96,7 @@
     const status = el('div', { class: 's', role: 'status', 'aria-live': 'polite' }, 'Getting your post from NEFORUM…');
     const list = el('ul');
     const logo = el('span');
-    logo.innerHTML = LOGO;
+    logo.append(svg(LOGO));
     const close = () => host.remove();
 
     // The other parts of a thread can be inserted by hand too (where the
