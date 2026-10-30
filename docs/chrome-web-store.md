@@ -16,21 +16,22 @@ Account: a Chrome Web Store developer account (one-time US$5 registration fee), 
 
 **Language**: English
 
-**Description**:
+**Description** (names no sites: the store rejected the first submission for "keyword spam" (violation Yellow Argon) because this description listed the supported sites. The guide's table holds that list instead.):
 
 ```text
 The companion extension of NEFORUM, the free and open-source cross-poster (https://neforus.com/neforum/). It needs the NEFORUM desktop app on the same computer (Windows, macOS or Linux).
 
 NEFORUM writes one post for every network. Where a network has no open API, NEFORUM hands the finished post to you: a "hand-off". With this extension, a hand-off opens the network's own page and fills the post in for you:
 
-- the text, and every part of a thread on X, Bluesky and Threads
+- the text, and every part of a thread
 - photos and videos, uploaded into the composer
-- poll and quiz answers on YouTube Posts
-- title, description, tags, age rating and AI options on art sites (Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol, 500px, Dribbble, Flickr)
-- TikTok Studio, Instagram, Facebook, LinkedIn, Pinterest, Reddit, Tumblr, Substack Notes, WhatsApp Web, Google Business Profile, Snapchat
-- any other site (a blog, your Mastodon server): click the icon, then "Fill in this page"
+- poll and quiz answers
+- title, description, tags, age rating and AI options on art and portfolio sites
+- on a site the extension does not know (a blog, your own server): click the icon, then "Fill in this page"
 
-You check the post and press Ctrl+Enter (Cmd+Enter on a Mac) or "Post now" in the extension's panel. If you turn on "Post automatically" in NEFORUM, the extension presses the site's Post button itself after a 3-second countdown you can stop, also for scheduled posts while NEFORUM runs. It stays off for X, LinkedIn and Snapchat unless you include them, because their terms forbid scripted posting.
+The guide lists the sites it fills in and what it fills in on each: https://github.com/Neforuss/NEFORUM/blob/main/docs/browser-extension.md#what-it-fills-in
+
+You check the post and press Ctrl+Enter (Cmd+Enter on a Mac) or "Post now" in the extension's panel. If you turn on "Post automatically" in NEFORUM, the extension presses the site's Post button itself after a 3-second countdown you can stop, also for scheduled posts while NEFORUM runs. Networks whose terms forbid scripted posting stay manual unless you include them.
 
 Private by design:
 - The extension talks only to the NEFORUM app on your own computer (127.0.0.1). It sends nothing to NEFORUM's developers or anyone else, and has no analytics.
@@ -38,8 +39,9 @@ Private by design:
 - NEFORUM gives it one post at a time, only when you open a hand-off, and forgets it after 10 minutes.
 
 Free and open source (GPL-3.0): https://github.com/Neforuss/NEFORUM
-Guide: https://github.com/Neforuss/NEFORUM/blob/main/docs/browser-extension.md
 ```
+
+If the store rejects a listing, fix it on the **Store listing** tab and choose **Submit for review** again; a change that is only in the listing needs no new package or version number.
 
 **Homepage URL**: https://neforus.com/neforum/
 
