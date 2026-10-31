@@ -3,11 +3,12 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
-import 'package:neforum_core/neforum_core.dart' show AudioTags;
+import 'package:neforum_core/neforum_core.dart' show AudioTags, PhotoFitMode;
 
 import '../brand/neforum_logo.dart';
 import '../theme/tokens.dart';
 import 'photo_composite.dart';
+import 'photo_fitter.dart';
 
 /// The still picture of a track that goes to a video-only network as a
 /// video ([VideoCompositor.renderAudioVideo]) when the post has no photo: the
@@ -83,36 +84,25 @@ class AudioCardPainter extends CustomPainter {
 /// [tags] are the track's details as it goes out (the file's own under the
 /// user's edits) and [cover] the bytes of their cover picture
 /// ([AudioTags.coverPath]), read by the caller. A track with a cover gets
-/// the cover as its picture, cover-fitted to the frame.
+/// the whole cover as its picture, fitted to the frame the way Settings fit
+/// photos ([fit], see [framePhotoPng]).
 Future<Uint8List> renderAudioCardPng(
-    {required int width, required int height, required String title, String? subtitle, String? details, AudioTags? tags, Uint8List? cover}) async {
+    {required int width,
+    required int height,
+    required String title,
+    String? subtitle,
+    String? details,
+    AudioTags? tags,
+    Uint8List? cover,
+    PhotoFitMode fit = PhotoFitMode.pad}) async {
   if (cover != null) {
-    final fitted = await coverPhotoPng(cover, width: width, height: height);
+    final fitted = await framePhotoPng(cover, width: width, height: height, mode: fit);
     if (fitted != null) return fitted;
   }
   final rgba = await rasterizeWordsLayer(width, height, (canvas) {
     AudioCardPainter(title: title, subtitle: subtitle, details: details).paint(canvas, Size(width.toDouble(), height.toDouble()));
   });
   return compute(encodeRgbaPng, (rgba, width, height));
-}
-
-/// [photo] (any type the image package reads) scaled to cover a [width] x
-/// [height] frame and cut to it, centred, as a PNG; null when the photo
-/// cannot be read. Decoded on the CPU, in an isolate, never as an engine
-/// image (see photo_composite.dart).
-Future<Uint8List?> coverPhotoPng(Uint8List photo, {required int width, required int height}) =>
-    compute(coverPhotoPngJob, (photo, width, height));
-
-/// [coverPhotoPng]'s work; top level, for [compute].
-Uint8List? coverPhotoPngJob((Uint8List, int, int) job) {
-  final (bytes, width, height) = job;
-  final decoded = img.decodeImage(bytes);
-  if (decoded == null || decoded.width == 0 || decoded.height == 0) return null;
-  final upright = img.bakeOrientation(decoded);
-  final src = coverSource(upright.width, upright.height, width.toDouble(), height.toDouble());
-  final cropped = img.copyCrop(upright, x: src.x.round(), y: src.y.round(), width: math.max(1, src.w.round()), height: math.max(1, src.h.round()));
-  final scaled = img.copyResize(cropped, width: width, height: height, interpolation: img.Interpolation.average);
-  return img.encodePng(scaled.convert(numChannels: 3));
 }
 
 /// PNG from straight RGBA pixels; top level, for [compute].

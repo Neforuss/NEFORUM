@@ -22,7 +22,7 @@ The Standard copy is an MP3 where the device has an MP3 encoder (Windows). Phone
 
 X, Bluesky, Instagram, Threads, Facebook, TikTok, YouTube, LinkedIn, Pinterest, Rumble and BitChute take no sound files. NEFORUM makes a video for each of them when you save: one still picture for the whole track, with the sound at 256 kbit/s AAC.
 
-- **Picture:** the post's first photo, cut to fill the frame. Without a photo, a card with the track's title (the post title, else the file name), the post's first words, and the file type and length, on the NEFORUM purple.
+- **Picture:** the post's first photo, else the track's cover art, shown whole: fitted to the frame the way *Settings > Posting > When a photo does not fit a network* says (on a blur of its own colours, or filled with its colours). A square cover in Instagram's 9:16 frame keeps its sides, also in the profile grid, which shows the middle of a Reel. Only **Crop it to fit** cuts the picture to fill the frame. Without a photo or cover, a card with the track's title (the post title, else the file name), the post's first words, and the file type and length, on the NEFORUM purple.
 - **Frame:** 1080 x 1920 on TikTok and Instagram (Reels), 1920 x 1080 on YouTube (an upright or square video would become a Short), 1080 x 1080 elsewhere.
 - The network's video limits apply: X, for example, takes videos up to 20 minutes.
 - On a device that cannot make videos (Linux, the web preview) these networks show "takes sound only as a video; this device can't make one".

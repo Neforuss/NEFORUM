@@ -497,6 +497,246 @@ class _TextCardPreview extends ConsumerWidget {
   }
 }
 
+/// 1.3.3: the text card's master editor, above the previews when two or more
+/// networks get a text card: one card and one set of controls for all of
+/// them, so the card is the same everywhere without editing each network's
+/// (or saving one network's card as an image to post elsewhere). It says
+/// what still differs between the networks (the signature, the @handle, the
+/// text going along, the font "each network's own" becomes) and makes them
+/// match in one tap. Each network's own controls under its preview stay for
+/// exceptions, and each card keeps its network's shape. Open on a computer;
+/// on a phone it starts folded to its title and what differs, so the
+/// networks' previews stay in view.
+class TextCardMasterPanel extends ConsumerStatefulWidget {
+  const TextCardMasterPanel({super.key, required this.previews});
+
+  /// The previews that show a text card ([withCards]).
+  final List<TargetPreview> previews;
+
+  /// The previews of [all] whose (first part's) picture is a text card.
+  static List<TargetPreview> withCards(List<TargetPreview> all) => [
+        for (final p in all)
+          if (_textCardOf(p.variant.mediaOfPart(0)) != null) p,
+      ];
+
+  /// The networks the panel sets, one per platform: two accounts on one
+  /// network share that network's card settings.
+  static List<(TargetPreview, MediaAttachment)> _cardsByNetwork(List<TargetPreview> previews) {
+    final byNetwork = <String, (TargetPreview, MediaAttachment)>{};
+    for (final p in previews) {
+      final card = _textCardOf(p.variant.mediaOfPart(0));
+      if (card != null) byNetwork.putIfAbsent(p.descriptor.id, () => (p, card));
+    }
+    return byNetwork.values.toList();
+  }
+
+  @override
+  ConsumerState<TextCardMasterPanel> createState() => _TextCardMasterPanelState();
+
+  /// Every network's card the same: the signature, the @handle and the text
+  /// going along as most networks have them, and one font (the face most
+  /// networks are drawn in) for "each network's own". Remembered in Settings
+  /// like the per-network controls.
+  static void _match(WidgetRef ref, List<(TargetPreview, MediaAttachment)> cards, {required bool fontsDiffer}) {
+    final composer = ref.read(composerProvider.notifier);
+    final withText = ref.read(composerProvider).textCardWithText;
+    final ids = [for (final (p, _) in cards) p.descriptor.id];
+    final signed = _most(cards.map((c) => textCardBrandedOf(c.$2)));
+    final handle = _most(cards.map((c) => textCardShowsHandleOf(c.$2)));
+    final alongside = _most(cards.map((c) => withText[c.$1.descriptor.id] ?? true));
+    for (final id in ids) {
+      composer
+        ..setTextCardBranded(id, signed)
+        ..setTextCardHandle(id, handle)
+        ..setTextCardWithText(id, alongside);
+    }
+    TextCardFont? one;
+    if (fontsDiffer) {
+      final counts = <TextCardFont, int>{};
+      for (final (p, m) in cards) {
+        counts.update(textCardFontOf(m).resolve(p.descriptor.id), (n) => n + 1, ifAbsent: () => 1);
+      }
+      one = counts.entries.reduce((a, b) => b.value > a.value ? b : a).key;
+      composer.setTextCardFont(one);
+    }
+    ref.read(settingsProvider.notifier).update((x) => x.copyWith(
+          textCardPlainPlatforms: signed ? x.textCardPlainPlatforms.where((p) => !ids.contains(p)).toList() : {...x.textCardPlainPlatforms, ...ids}.toList(),
+          textCardHandleHiddenPlatforms:
+              handle ? x.textCardHandleHiddenPlatforms.where((p) => !ids.contains(p)).toList() : {...x.textCardHandleHiddenPlatforms, ...ids}.toList(),
+          textCardFont: one,
+          textCardCustomFont: one == null ? null : const {},
+        ));
+  }
+
+  /// Whether at least half of [values] are true.
+  static bool _most(Iterable<bool> values) => values.where((v) => v).length * 2 >= values.length;
+}
+
+class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
+  /// Unfolded; null until the screen's width is known.
+  bool? _open;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _open ??= MediaQuery.sizeOf(context).width >= 700;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    final composer = ref.watch(composerProvider);
+    final cards = TextCardMasterPanel._cardsByNetwork(widget.previews);
+    final open = _open ?? true;
+    if (cards.length < 2) return const SizedBox.shrink();
+    final (first, firstCard) = cards.first;
+    final ids = [for (final (p, _) in cards) p.descriptor.id];
+    bool withTextOf(TargetPreview p) => composer.textCardWithText[p.descriptor.id] ?? true;
+    // True or false when every network agrees; null when they differ.
+    bool? together(bool Function((TargetPreview, MediaAttachment)) value) {
+      final values = {for (final c in cards) value(c)};
+      return values.length == 1 ? values.single : null;
+    }
+
+    final branded = together((c) => textCardBrandedOf(c.$2));
+    final showsHandle = together((c) => textCardShowsHandleOf(c.$2));
+    final withText = together((c) => withTextOf(c.$1));
+    // The theme, font, alignment, background and design are the post's, on
+    // every card alike: the first card carries them.
+    final theme = textCardThemeOf(firstCard) ?? TextCardTheme.dark;
+    final font = textCardFontOf(firstCard);
+    final customFont = textCardCustomFontOf(firstCard);
+    final alignment = textCardAlignmentOf(firstCard);
+    final design = textCardDesignOf(firstCard);
+    final background = textCardParametersOf(firstCard)?['background'] != null ? TextCardBackground.tryParse(composer.textCardBackground) : null;
+    // "Each network's own" font is a different face per network; a design
+    // picks its fonts itself.
+    final fontsDiffer = design == null && customFont == null && {for (final (p, _) in cards) font.resolve(p.descriptor.id)}.length > 1;
+    String names(Iterable<(TargetPreview, MediaAttachment)> of) => [for (final (p, _) in of) p.descriptor.name].join(', ');
+    final differences = [
+      if (branded == null) 'no signature on ${names(cards.where((c) => !textCardBrandedOf(c.$2)))}',
+      if (showsHandle == null) 'no @handle on ${names(cards.where((c) => !textCardShowsHandleOf(c.$2)))}',
+      if (withText == null) 'the card goes alone to ${names(cards.where((c) => !withTextOf(c.$1)))}',
+      if (fontsDiffer) "each network's own font",
+    ];
+
+    final text = textCardText(_previewPost(ref), first.target);
+    final byline = first.account.handle ?? first.account.displayName;
+    // The master card: square, with what most networks show.
+    const size = Size(1080, 1080);
+    final signed = branded ?? TextCardMasterPanel._most(cards.map((c) => textCardBrandedOf(c.$2)));
+    final handle = showsHandle ?? TextCardMasterPanel._most(cards.map((c) => textCardShowsHandleOf(c.$2)));
+    final picture = design != null
+        ? CardDesignView(
+            request: CardPreviewRequest.text(
+              design: design,
+              platformId: first.descriptor.id,
+              size: size,
+              text: text,
+              byline: handle ? byline : null,
+              signed: signed,
+              background: background,
+            ),
+          )
+        : TextCardView(
+            text: text,
+            theme: theme,
+            font: font.resolve(null),
+            aspect: 1,
+            byline: handle ? byline : null,
+            branded: signed,
+            alignment: alignment,
+            backdrop: previewBackdrop(ref, background),
+            customFont: customFont,
+          );
+
+    return NfCard(
+      key: const Key('text-card-master'),
+      padding: const EdgeInsets.all(Space.md + 2),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          Icon(Icons.layers_outlined, size: 20, color: nf.accent),
+          const SizedBox(width: Space.sm + 2),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              Text('Text card for every network', style: context.text.titleSmall),
+              Text(
+                differences.isEmpty
+                    ? 'The same card on all ${cards.length} networks, each at its own shape'
+                    : 'Changes here go to all ${cards.length} networks; each network\'s own are under its preview',
+                style: context.text.bodySmall?.copyWith(color: nf.textFaint, fontSize: 11.5),
+              ),
+            ]),
+          ),
+          ToolButton(
+            key: const Key('text-card-master-toggle'),
+            icon: open ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+            tooltip: open ? 'Fold the editor' : 'Edit the card of every network',
+            onPressed: () => setState(() => _open = !open),
+            size: 34,
+          ),
+        ]),
+        if (open) ...[
+          const SizedBox(height: Space.md),
+          Center(
+            child: SizedBox(
+              key: const Key('text-card-master-preview'),
+              width: 220,
+              child: ClipRRect(
+                borderRadius: Radii.rMd,
+                child: DecoratedBox(
+                  position: DecorationPosition.foreground,
+                  decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+                  child: picture,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: Space.sm),
+          Center(
+            child: _CardStylePicker(
+              key: const ValueKey('text-card-style-master'),
+              current: theme,
+              font: font,
+              customFont: customFont,
+              platform: first.descriptor,
+              branded: branded,
+              text: text,
+              byline: byline,
+              alignment: alignment,
+              showsHandle: showsHandle,
+              background: background,
+              withText: withText,
+              design: design,
+              networks: ids,
+            ),
+          ),
+        ],
+        if (differences.isNotEmpty) ...[
+          const SizedBox(height: Space.md),
+          Container(
+            padding: const EdgeInsets.fromLTRB(Space.md, Space.sm, Space.sm, Space.sm),
+            decoration: BoxDecoration(color: nf.surfaceSunken, borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+            child: Row(children: [
+              Icon(Icons.compare_arrows_rounded, size: 18, color: nf.textMuted),
+              const SizedBox(width: Space.sm),
+              Expanded(
+                child: Text('Not the same everywhere: ${differences.join('; ')}.', style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+              ),
+              const SizedBox(width: Space.sm),
+              TextButton(
+                key: const Key('text-card-match'),
+                onPressed: () => TextCardMasterPanel._match(ref, cards, fontsDiffer: fontsDiffer),
+                child: const Text('Make them match'),
+              ),
+            ]),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
 /// A photo in a network's frame as the network will show it: fitted (the
 /// whole photo on a blur or colour fill, or cut to the frame), letterboxed on
 /// black (TikTok, for a photo NEFORUM leaves as it is), or filling the frame.
@@ -678,6 +918,9 @@ Widget _optionPill(BuildContext context,
 /// Under a text card: black-on-white or white-on-black, the font, the
 /// alignment, the NEFORUM signature and the @handle on or off for this
 /// network, a colour or photo background, and saving the card as an image.
+/// With [networks] (the master editor, [TextCardMasterPanel]) the signature,
+/// the @handle and "Post text too" are set for every one of those networks
+/// at once, and a null one is on for some of them only.
 class _CardStylePicker extends ConsumerStatefulWidget {
   const _CardStylePicker({
     super.key,
@@ -693,26 +936,34 @@ class _CardStylePicker extends ConsumerStatefulWidget {
     required this.background,
     required this.withText,
     this.design,
+    this.networks,
   });
   final TextCardTheme current;
   final TextCardFont font;
 
   /// 1.3.1: cards. The installed or imported font drawn instead of [font].
   final CaptionFont? customFont;
+
+  /// The network whose card this is; for the master editor, the first
+  /// network, whose card the background sheet shows.
   final PlatformDescriptor platform;
-  final bool branded;
+  final bool? branded;
   final String text;
   final String byline;
   final TextCardAlignment alignment;
-  final bool showsHandle;
+  final bool? showsHandle;
   final TextCardBackground? background;
 
   /// The post's text goes along with the card on this network.
-  final bool withText;
+  final bool? withText;
 
   /// 1.3.1: cards. The card designer's design the card is drawn from; null
   /// for the classic card.
   final CardDesign? design;
+
+  /// 1.3.3: the master editor's networks (platform ids); null for one
+  /// network's own controls.
+  final List<String>? networks;
 
   @override
   ConsumerState<_CardStylePicker> createState() => _CardStylePickerState();
@@ -741,16 +992,16 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
               size: textCardSize(widget.platform.id),
               safe: textCardSafeArea(widget.platform.id),
               text: widget.text,
-              byline: widget.showsHandle ? widget.byline : null,
-              signed: widget.branded,
+              byline: widget.showsHandle == true ? widget.byline : null,
+              signed: widget.branded ?? true,
               background: background,
             ).render(ref.read(servicesProvider).storage)
           : await renderTextCardJpeg(
         text: widget.text,
         theme: widget.current,
         size: textCardSize(widget.platform.id),
-        byline: widget.showsHandle ? widget.byline : null,
-        branded: widget.branded,
+        byline: widget.showsHandle == true ? widget.byline : null,
+        branded: widget.branded ?? true,
         font: widget.font.resolve(widget.platform.id),
         safe: textCardSafeArea(widget.platform.id),
         alignment: widget.alignment,
@@ -817,16 +1068,25 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           },
         );
 
+    // The master editor names no network: "Each network's own" there.
+    final master = widget.networks != null;
+    final ids = widget.networks ?? [widget.platform.id];
+    final where = master ? 'every network' : widget.platform.name;
+    final keyPrefix = master ? 'text-card-master' : 'text-card';
     Widget fontOption(TextCardFont f) => pill(
           selected: widget.customFont == null && f == widget.font,
-          label: switch (f) { TextCardFont.original => 'Inter', TextCardFont.platform => "${widget.platform.name}'s own", _ => f.label },
+          label: switch (f) {
+            TextCardFont.original => 'Inter',
+            TextCardFont.platform => master ? "Each network's own" : "${widget.platform.name}'s own",
+            _ => f.label,
+          },
           tooltip: f == TextCardFont.original ? "NEFORUM's original font (Inter)" : 'Set the words in ${f.label}',
           leading: Text('Aa',
               style: TextStyle(
-                  fontFamily: f.resolve(widget.platform.id).family,
-                  fontFamilyFallback: f.resolve(widget.platform.id).fallback,
-                  fontWeight: f.resolve(widget.platform.id).weight,
-                  fontVariations: f.resolve(widget.platform.id).variations,
+                  fontFamily: f.resolve(master ? null : widget.platform.id).family,
+                  fontFamilyFallback: f.resolve(master ? null : widget.platform.id).fallback,
+                  fontWeight: f.resolve(master ? null : widget.platform.id).weight,
+                  fontVariations: f.resolve(master ? null : widget.platform.id).variations,
                   fontSize: 12,
                   height: 1,
                   color: nf.text)),
@@ -839,13 +1099,15 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           },
         );
 
-    final id = widget.platform.id;
     final background = widget.background;
     final designed = widget.design != null;
+    final branded = widget.branded, showsHandle = widget.showsHandle, withText = widget.withText;
+    // An on/off for [ids]: on for all, off for all, or (null) mixed.
+    IconData mixedIcon(bool? on, IconData onIcon, IconData offIcon) => on == null ? Icons.indeterminate_check_box_outlined : (on ? onIcon : offIcon);
     return Wrap(spacing: Space.xs, runSpacing: Space.xs, alignment: WrapAlignment.center, children: [
       // 1.3.1: cards. Every layer, font and colour of the card, in the designer.
       pill(
-        key: const Key('text-card-design'),
+        key: Key('$keyPrefix-design'),
         selected: designed,
         label: designed ? 'Design: ${cardTemplateLabel(widget.design!)}' : 'Design card…',
         tooltip: 'Templates, backgrounds, gradients, patterns, a framed photo and every text block, with any font',
@@ -857,7 +1119,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
       if (!designed) for (final f in TextCardFont.values) fontOption(f),
       // 1.3.1: cards. Any installed or imported font, from the caption's picker.
       if (!designed) pill(
-        key: const Key('text-card-font-more'),
+        key: Key('$keyPrefix-font-more'),
         selected: widget.customFont != null,
         label: widget.customFont?.family ?? 'More fonts…',
         tooltip: 'Set the words in a font installed on this device, or in a font file you import',
@@ -911,44 +1173,71 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         ),
       ),
       pill(
-        selected: widget.branded,
+        key: Key('$keyPrefix-signature'),
+        selected: branded == true,
         label: 'NEFORUM signature',
-        tooltip: widget.branded ? 'Signature on: tap for a plain card on ${widget.platform.name}' : 'Plain card: tap to add the NEFORUM signature',
-        leading: Icon(widget.branded ? Icons.verified_rounded : Icons.do_not_disturb_on_outlined, size: 14, color: widget.branded ? nf.accent : nf.textFaint),
+        tooltip: switch (branded) {
+          true => 'Signature on: tap for a plain card on $where',
+          false => master ? 'Plain cards: tap to add the NEFORUM signature on every network' : 'Plain card: tap to add the NEFORUM signature',
+          null => 'On some networks only: tap to put the NEFORUM signature on every network',
+        },
+        leading: Icon(mixedIcon(branded, Icons.verified_rounded, Icons.do_not_disturb_on_outlined),
+            size: 14, color: branded == true ? nf.accent : nf.textFaint),
         onTap: () {
-          final on = !widget.branded;
-          ref.read(composerProvider.notifier).setTextCardBranded(id, on);
-          // Remember it for this network from now on.
+          final on = branded != true;
+          final composer = ref.read(composerProvider.notifier);
+          for (final n in ids) {
+            composer.setTextCardBranded(n, on);
+          }
+          // Remember it for these networks from now on.
           ref.read(settingsProvider.notifier).update((x) => x.copyWith(
-                textCardPlainPlatforms: on ? (x.textCardPlainPlatforms.where((p) => p != id).toList()) : {...x.textCardPlainPlatforms, id}.toList(),
+                textCardPlainPlatforms: on ? x.textCardPlainPlatforms.where((p) => !ids.contains(p)).toList() : {...x.textCardPlainPlatforms, ...ids}.toList(),
               ));
         },
       ),
       pill(
-        selected: widget.showsHandle,
+        key: Key('$keyPrefix-handle'),
+        selected: showsHandle == true,
         label: 'Show @handle',
-        tooltip: widget.showsHandle
-            ? 'Your handle (${widget.byline}) is on the card: tap to leave it off on ${widget.platform.name}'
-            : 'Tap to put your handle (${widget.byline}) on the card',
-        leading: Icon(Icons.alternate_email_rounded, size: 14, color: widget.showsHandle ? nf.accent : nf.textFaint),
+        tooltip: switch (showsHandle) {
+          true => master
+              ? 'Your handle is on every card: tap to leave it off everywhere'
+              : 'Your handle (${widget.byline}) is on the card: tap to leave it off on ${widget.platform.name}',
+          false => master ? 'Tap to put your handle on every card' : 'Tap to put your handle (${widget.byline}) on the card',
+          null => 'On some networks only: tap to put your handle on every card',
+        },
+        leading: Icon(mixedIcon(showsHandle, Icons.alternate_email_rounded, Icons.alternate_email_rounded),
+            size: 14, color: showsHandle == true ? nf.accent : nf.textFaint),
         onTap: () {
-          final on = !widget.showsHandle;
-          ref.read(composerProvider.notifier).setTextCardHandle(id, on);
-          // Remember it for this network from now on.
+          final on = showsHandle != true;
+          final composer = ref.read(composerProvider.notifier);
+          for (final n in ids) {
+            composer.setTextCardHandle(n, on);
+          }
+          // Remember it for these networks from now on.
           ref.read(settingsProvider.notifier).update((x) => x.copyWith(
                 textCardHandleHiddenPlatforms:
-                    on ? x.textCardHandleHiddenPlatforms.where((p) => p != id).toList() : {...x.textCardHandleHiddenPlatforms, id}.toList(),
+                    on ? x.textCardHandleHiddenPlatforms.where((p) => !ids.contains(p)).toList() : {...x.textCardHandleHiddenPlatforms, ...ids}.toList(),
               ));
         },
       ),
       pill(
-        selected: widget.withText,
+        key: Key('$keyPrefix-with-text'),
+        selected: withText == true,
         label: 'Post text too',
-        tooltip: widget.withText
-            ? 'Your text goes out with the card on ${widget.platform.name}: tap to post the card alone (its description keeps your words)'
-            : 'Only the card goes to ${widget.platform.name}: tap to post your text with it',
-        leading: Icon(widget.withText ? Icons.notes_rounded : Icons.image_outlined, size: 14, color: widget.withText ? nf.accent : nf.textFaint),
-        onTap: () => ref.read(composerProvider.notifier).setTextCardWithText(id, !widget.withText),
+        tooltip: switch (withText) {
+          true => 'Your text goes out with the card on $where: tap to post the card alone (its description keeps your words)',
+          false => 'Only the card goes to $where: tap to post your text with it',
+          null => 'Some networks get the card alone: tap to post your text with the card everywhere',
+        },
+        leading: Icon(mixedIcon(withText, Icons.notes_rounded, Icons.image_outlined), size: 14, color: withText == true ? nf.accent : nf.textFaint),
+        onTap: () {
+          final on = withText != true;
+          final composer = ref.read(composerProvider.notifier);
+          for (final n in ids) {
+            composer.setTextCardWithText(n, on);
+          }
+        },
       ),
       pill(
         selected: background != null,
@@ -962,14 +1251,15 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
             text: widget.text,
             theme: widget.current,
             font: widget.font,
-            branded: widget.branded,
+            branded: branded ?? true,
             alignment: widget.alignment,
-            byline: widget.showsHandle ? widget.byline : null,
+            byline: showsHandle == true ? widget.byline : null,
             customFont: widget.customFont,
           ),
         ),
       ),
-      Builder(
+      // Each network saves its own card, at its own shape.
+      if (!master) Builder(
         builder: (bc) => pill(
           selected: false,
           label: _saving ? 'Saving…' : 'Save image',

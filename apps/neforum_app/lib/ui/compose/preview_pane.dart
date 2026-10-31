@@ -47,15 +47,26 @@ class PreviewPane extends ConsumerWidget {
         final be = b.issues.hasErrors ? 0 : 1;
         return ae.compareTo(be);
       });
+    // 1.3.3: one editor for the text card of every network that gets one.
+    final cards = TextCardMasterPanel.withCards(previews);
+    final master = {for (final p in cards) p.descriptor.id}.length > 1;
 
     return Scrollbar(
       controller: controller,
       child: ListView.separated(
         controller: controller,
         padding: padding,
-        itemCount: sorted.length + (showHeader ? 1 : 0),
+        itemCount: sorted.length + (showHeader ? 1 : 0) + (master ? 1 : 0),
         separatorBuilder: (_, _) => const SizedBox(height: Space.md),
-        itemBuilder: (context, i) {
+        itemBuilder: (context, index) {
+          var i = index;
+          if (master) {
+            if (i == (showHeader ? 1 : 0)) {
+              final panel = TextCardMasterPanel(previews: cards);
+              return compact ? ScaledDown(key: const ValueKey('compact-text-card-master'), scale: kCompactPreviewScale, child: panel) : panel;
+            }
+            if (i > (showHeader ? 1 : 0)) i--;
+          }
           if (showHeader && i == 0) {
             return Padding(
               padding: const EdgeInsets.only(bottom: Space.xs),

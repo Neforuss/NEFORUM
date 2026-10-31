@@ -113,6 +113,40 @@ FittedPhoto? _fitPhoto(_FitJob j) {
   return null;
 }
 
+/// [bytes] (a photo, or a track's cover art) as the still picture of a
+/// [width] x [height] video frame, as a PNG: the whole picture scaled into
+/// the frame, the room it leaves filled the way Settings fit photos ([mode]:
+/// the picture's own colours for a colour fill, a soft blur of it
+/// otherwise), or cut to fill the frame for crop. A square cover in a 9:16
+/// frame keeps its sides, where networks show a full-screen video's middle
+/// (Instagram's profile grid). Null when the picture cannot be read. Runs
+/// off the UI thread.
+Future<Uint8List?> framePhotoPng(Uint8List bytes, {required int width, required int height, required PhotoFitMode mode}) =>
+    compute(framePhotoPngJob, (bytes, width, height, mode));
+
+/// [framePhotoPng]'s work; top level, for [compute].
+Uint8List? framePhotoPngJob((Uint8List, int, int, PhotoFitMode) job) {
+  final (bytes, width, height, mode) = job;
+  img.Image? decoded;
+  try {
+    decoded = img.decodeImage(bytes);
+  } on Object {
+    decoded = null;
+  }
+  if (decoded == null || decoded.width == 0 || decoded.height == 0) return null;
+  var image = img.bakeOrientation(decoded);
+  final target = width / height;
+  if ((image.width / image.height - target).abs() > PhotoFit.aspectTolerance) {
+    image = switch (mode) {
+      PhotoFitMode.crop => _crop(image, target),
+      PhotoFitMode.color => _colorFill(image, target),
+      _ => _pad(image, target),
+    };
+  }
+  final framed = img.copyResize(image, width: width, height: height, interpolation: img.Interpolation.average);
+  return img.encodePng(framed.convert(numChannels: 3));
+}
+
 img.Image _scaled(img.Image image, double scale) => img.copyResize(
       image,
       width: math.max(1, (image.width * scale).floor()),

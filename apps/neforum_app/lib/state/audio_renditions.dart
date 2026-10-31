@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../media/audio_card.dart';
 import '../media/audio_plan.dart';
 import '../media/card_design.dart';
+import '../media/photo_fitter.dart' show framePhotoPng;
 import '../media/render_parameters.dart';
 import '../media/text_card.dart' show fullScreenSafeArea, textCardText;
 import '../platform/media_files.dart';
@@ -157,7 +158,7 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
           made = await _standardCopy(s, post, source, format, pool, used, render: canRender);
         } else if (route == AudioRoute.video) {
           final picture = _pictureFor(list, byId);
-          final video = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender, design: design);
+          final video = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender, design: design, fit: settings.photoFit);
           made = video?.$1;
           if (video != null && video.$2 && picture != null) consumed.add(picture.$1);
         }
@@ -343,10 +344,12 @@ const String _photoDrawnKey = 'photoDrawn';
 
 /// The still-picture video of [source] for [platformId] and whether its
 /// picture is the user's [picture] (then that photo leaves the list); null
-/// when it cannot be made (or, without [render], was not made before).
+/// when it cannot be made (or, without [render], was not made before). A
+/// photo or cover art is shown whole, fitted to the frame the way Settings
+/// fit photos ([fit]).
 Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget target, MediaAttachment source, (String, MediaAttachment)? picture,
     String platformId, Map<String, MediaAttachment> pool, Map<String, MediaAttachment> used,
-    {required bool render, CardDesign? design}) async {
+    {required bool render, CardDesign? design, required PhotoFitMode fit}) async {
   final (width, height) = audioVideoFrame(platformId);
   final photo = picture?.$2;
   // The track's details as it goes out, with their cover, for the picture.
@@ -381,6 +384,10 @@ Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget tar
       'picture': photo.id
     else
       'card': stableHash('$title|$words|$details|${tags == null ? '' : audioTagsStamp(tags)}'),
+    // 1.3.3: how a photo or cover art fills the frame. Videos made before cut
+    // the picture to the frame (Instagram's grid lost its sides): they have
+    // no "fit" and are made again.
+    if (design == null && (photo != null || coverPath != null)) 'fit': fit.name,
   };
   final key = 'audio|${source.id}|${stableHash(jsonEncode(params))}';
   final reused = used[key] ?? pool[key];
@@ -414,9 +421,10 @@ Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget tar
           debugPrint('Could not read the cover $coverPath: $e');
         }
       }
-      final fitted = photo == null ? null : await coverPhotoPng(await s.media.read(photo), width: width, height: height);
+      final fitted = photo == null ? null : await framePhotoPng(await s.media.read(photo), width: width, height: height, mode: fit);
       photoDrawn = fitted != null;
-      png = fitted ?? await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details, tags: tags, cover: cover);
+      png = fitted ??
+          await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details, tags: tags, cover: cover, fit: fit);
     }
     await VideoCompositor.instance.renderAudioVideo(audioPath: source.path, outputPath: out, imagePng: png, frameWidth: width, frameHeight: height);
     final video = used[key] = MediaAttachment(

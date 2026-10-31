@@ -614,6 +614,31 @@ void main() {
       expect(calls, hasLength(made));
     });
 
+    testWidgets('1.3.3: a square photo goes into Instagram\'s 9:16 video whole, its sides kept, unless photos are cut to fit', (tester) async {
+      final ig = handoff('ig', 'instagram');
+      final (s, track, _) = await workspace(tester, [ig]);
+      // Red down the left edge, blue down the right, green between: the
+      // picture cut to 9:16 (before 1.3.3) kept only the green.
+      final square = img.Image(width: 300, height: 300);
+      img.fill(square, color: img.ColorRgb8(0, 255, 0));
+      img.fillRect(square, x1: 0, y1: 0, x2: 29, y2: 299, color: img.ColorRgb8(255, 0, 0));
+      img.fillRect(square, x1: 270, y1: 0, x2: 299, y2: 299, color: img.ColorRgb8(0, 0, 255));
+      final photo = (await tester.runAsync(() => s.media.importBytes(img.encodePng(square), fileName: 'square.png')))!;
+      final now = DateTime(2026, 10, 30);
+      for (final (mode, sidesKept) in [(PhotoFitMode.color, true), (PhotoFitMode.pad, true), (PhotoFitMode.crop, false)]) {
+        calls.clear();
+        final post = Post(id: 'p-square-${mode.name}', text: 'New single', media: [photo, track], targets: [PostTarget(accountId: ig.id)], createdAt: now, updatedAt: now);
+        await tester.runAsync(() => attachAudioRenditions(s, post, s.settings.copyWith(photoFit: mode)));
+        final call = calls.singleWhere((c) => c.$1 == 'audioVideo').$2;
+        expect((call['frameWidth'], call['frameHeight']), (1080, 1920));
+        final frame = img.decodePng(call['imagePng']! as Uint8List)!;
+        expect((frame.width, frame.height), (1080, 1920));
+        final left = frame.getPixel(6, 960), right = frame.getPixel(1073, 960);
+        expect(left.r > 200 && left.g < 60, sidesKept, reason: '${mode.name}: the left edge');
+        expect(right.b > 200 && right.g < 60, sidesKept, reason: '${mode.name}: the right edge');
+      }
+    });
+
     testWidgets('networks with the same frame but their own safe area and fonts get designed videos of their own', (tester) async {
       final accounts = [handoff('tt', 'tiktok'), handoff('ig', 'instagram'), handoff('x', 'x'), handoff('bs', 'bluesky')];
       final (s, track, _) = await workspace(tester, accounts);
