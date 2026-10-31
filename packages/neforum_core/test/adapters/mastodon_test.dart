@@ -609,8 +609,28 @@ void main() {
       expect(r.success, isFalse);
       expect(r.error!.kind, PublishErrorKind.validation);
       expect(r.error!.retryable, isFalse);
-      expect(r.error!.message, contains('Part 2 of 2 failed'));
-      expect(r.error!.message, contains('s1'));
+      expect(r.error!.message, allOf(contains('Part 2 of 2 failed'), contains('Retry posts the rest')));
+      // 1.3.4: the live part is recorded, so the next attempt posts only the rest.
+      expect(r.threadRemoteIds, ['s1']);
+      expect(r.remoteId, 's1');
+    });
+
+    test('a thread that broke off goes on after its live parts, replying to the last (1.3.4)', () async {
+      final forms = <String>[];
+      final server = FakeServer({
+        'POST /api/v1/statuses': (req) {
+          forms.add(req.body);
+          return one({'id': 's${forms.length + 2}', 'url': 'https://example.social/@me/s${forms.length + 2}'});
+        },
+      });
+      final v = PostVariant(text: 'one', threadParts: const ['one', 'two', 'three'], postedThreadIds: const ['s1', 's2']);
+      final r = await adapter.publish(v, account(), tokenSecrets, testContext(handler: server.handle));
+      expect(r.success, isTrue);
+      expect(forms, hasLength(1), reason: 'only part 3 is posted');
+      expect(Uri.splitQueryString(forms.single)['status'], 'three');
+      expect(Uri.splitQueryString(forms.single)['in_reply_to_id'], 's2');
+      expect(r.threadRemoteIds, ['s1', 's2', 's3']);
+      expect(r.remoteId, 's1');
     });
 
     test('a dropped connection on part 2 is a partial thread, never retried', () async {
@@ -627,8 +647,9 @@ void main() {
         ),
       );
       expect(r.error!.kind, PublishErrorKind.network);
-      expect(r.error!.retryable, isFalse, reason: 'a retry would post part 1 again');
-      expect(r.error!.message, allOf(contains('Part 2 of 3 failed'), contains('s1')));
+      expect(r.error!.retryable, isFalse, reason: 'a plain retry would post part 1 again');
+      expect(r.error!.message, contains('Part 2 of 3 failed'));
+      expect(r.threadRemoteIds, ['s1']);
     });
 
     test('a 429 on part 2 keeps its kind but is not retryable', () async {

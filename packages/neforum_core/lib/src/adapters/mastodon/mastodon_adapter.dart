@@ -523,7 +523,11 @@ class MastodonAdapter extends PlatformAdapter {
     // Media first, also for a scheduled post: the server stores the ids.
     // Every part's media is uploaded before the first post goes up.
     final parts = v.isThread ? v.threadParts : [v.text];
-    final mediaIds = [for (var i = 0; i < parts.length; i++) await _uploadAll(api, v.mediaOfPart(i), p, ctx)];
+    // A thread that broke off earlier goes on after its live parts.
+    final start = v.postedThreadIds.length;
+    final mediaIds = [
+      for (var i = 0; i < parts.length; i++) i < start ? const <String>[] : await _uploadAll(api, v.mediaOfPart(i), p, ctx),
+    ];
     if (schedule != null && schedule.isBefore(ctx.now().add(_sendLead))) {
       throw AdapterException(
         PublishError.validation(
@@ -533,9 +537,9 @@ class MastodonAdapter extends PlatformAdapter {
       );
     }
 
-    final ids = <String>[];
+    final ids = [...v.postedThreadIds];
     String? firstUrl;
-    for (var i = 0; i < parts.length; i++) {
+    for (var i = start; i < parts.length; i++) {
       if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length}');
       final form = _statusForm(
         v,
@@ -564,8 +568,14 @@ class MastodonAdapter extends PlatformAdapter {
         firstUrl ??= _string(res['url']) ?? _string(res['uri']);
       } on Exception catch (e) {
         if (ids.isEmpty) rethrow;
-        // Earlier parts are live: a retry would post them a second time.
-        throw AdapterException(_toError(e, ctx).asPartialThread(postedIds: ids, total: parts.length));
+        // Earlier parts are live: they are recorded, and the next attempt
+        // posts only the rest.
+        return PublishResult.partialFailure(
+          _toError(e, ctx).asResumableThread(postedIds: ids, total: parts.length),
+          remoteId: ids.first,
+          remoteUrl: firstUrl,
+          threadRemoteIds: ids,
+        );
       }
     }
     return PublishResult.ok(
@@ -575,6 +585,9 @@ class MastodonAdapter extends PlatformAdapter {
       publishedAt: ctx.now(),
     );
   }
+
+  @override
+  bool get resumesThreads => true;
 
   /// A ScheduledStatus (`id`, `scheduled_at`, `params`) rather than a Status.
   static bool _isScheduledStatus(Map<String, dynamic> res) => res['scheduled_at'] is String && res['params'] is Map;

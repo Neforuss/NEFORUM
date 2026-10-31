@@ -187,6 +187,18 @@ String copiesLabel(PostPlacement placement, int additional) => placement == Post
     ? 'Posted as a story of ${additional + 1} frames'
     : 'Posted with a story of $additional ${additional == 1 ? 'frame' : 'frames'}';
 
+/// What of a target that broke off is live: "2 of the thread's parts are",
+/// "The first 3 posts are".
+String _liveCount(PostTarget t) {
+  final r = t.result!;
+  if (r.seriesRemoteIds.isNotEmpty || (r.remoteId != null && r.threadRemoteIds.isEmpty)) {
+    final n = 1 + r.seriesRemoteIds.length;
+    return n == 1 ? 'The first post is' : 'The first $n posts are';
+  }
+  final n = r.threadRemoteIds.length;
+  return n == 1 ? 'The first part of the thread is' : 'The first $n parts of the thread are';
+}
+
 class _TargetRow extends ConsumerStatefulWidget {
   const _TargetRow({required this.post, required this.target});
   final Post post;
@@ -275,8 +287,11 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
               if (err != null) ...[
                 const SizedBox(height: Space.xs + 2),
                 Text(err.message, style: context.text.bodySmall?.copyWith(color: nf.danger)),
-                // No Retry: it would post the live copies a second time.
-                if (t.isPartlyLive)
+                // Retry posts only the rest when NEFORUM knows what is live;
+                // otherwise no Retry: it would post the live copies again.
+                if (t.canResume)
+                  Text('${_liveCount(t)} already live on ${d?.name ?? 'the network'}. Retry posts only the rest.', style: context.text.bodySmall)
+                else if (t.isPartlyLive)
                   Text('Part of this is already live on ${d?.name ?? 'the network'}, so NEFORUM does not post it again. '
                       'Post what is missing again as a new post.', style: context.text.bodySmall),
               ] else if (t.isHeldByPlatform && t.result?.scheduledFor != null) ...[
@@ -285,6 +300,9 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
                   '${d?.name ?? 'The platform'} holds this post and publishes it itself on ${format.exactTime(t.result!.scheduledFor!)}, even if this device is off. Editing or deleting the post here takes it back.',
                   style: context.text.bodySmall,
                 ),
+              ] else if (t.result?.seriesRemoteIds.isNotEmpty ?? false) ...[
+                const SizedBox(height: Space.xs),
+                Text('Posted as ${t.result!.seriesRemoteIds.length + 1} posts, one after the other', style: context.text.bodySmall),
               ] else if (t.result?.threadRemoteIds.isNotEmpty ?? false) ...[
                 const SizedBox(height: Space.xs),
                 Text('Posted as a ${t.result!.threadRemoteIds.length}-part thread', style: context.text.bodySmall),

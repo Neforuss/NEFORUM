@@ -271,6 +271,20 @@ class BlueskyApi {
     return StrongRef(uri, cid);
   }
 
+  /// The strong reference (uri and cid) of the post at [uri]
+  /// (`com.atproto.repo.getRecord`), to reply to a post made earlier.
+  Future<StrongRef> getPostRef(String uri) async {
+    final path = uri.replaceFirst('at://', '').split('/');
+    if (path.length != 3) throw AdapterException(PublishError.platform('Not a Bluesky post address: $uri'));
+    final r = await ctx.http.get(
+        xrpc(pds, 'com.atproto.repo.getRecord', {'repo': path[0], 'collection': path[1], 'rkey': path[2]}),
+        headers: _auth);
+    final j = r.jsonMap;
+    final cid = j['cid'];
+    if (cid is! String) throw AdapterException(PublishError.platform('Bluesky returned no cid for $uri'));
+    return StrongRef(j['uri'] is String ? j['uri'] as String : uri, cid);
+  }
+
   Future<void> deleteSession(Uri service, String refreshJwt) async {
     await ctx.http.send('POST', xrpc(service, 'com.atproto.server.deleteSession'),
         headers: {'Authorization': 'Bearer $refreshJwt'}, throwOnError: false);

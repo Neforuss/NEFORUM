@@ -543,16 +543,20 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
           : 'No X sign-in stored for this account; reconnect it'));
     }
     final parts = variant.isThread ? variant.threadParts : [variant.text];
-    final ids = <String>[];
+    // A thread that broke off earlier goes on after its live parts.
+    final ids = [...variant.postedThreadIds];
+    final start = ids.length;
+    final handle = (account.handle ?? '').replaceFirst(RegExp('^@'), '');
+    String urlOf(String id) => handle.isEmpty ? 'https://x.com/i/web/status/$id' : 'https://x.com/$handle/status/$id';
     try {
       // Every part's media is uploaded before the first post goes up, so a
       // refused file stops the thread before anything is public.
       final mediaIds = [
         for (var i = 0; i < parts.length; i++)
-          if (variant.mediaOfPart(i) case final m when m.isNotEmpty) await api.uploadAll(m) else const <String>[],
+          if (i >= start && variant.mediaOfPart(i).isNotEmpty) await api.uploadAll(variant.mediaOfPart(i)) else const <String>[],
       ];
       final replySettings = variant.extraAs<String>('replySettings');
-      for (var i = 0; i < parts.length; i++) {
+      for (var i = start; i < parts.length; i++) {
         if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length}');
         final id = await api.createPost(
           text: parts[i],
@@ -563,34 +567,35 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
         ids.add(id);
       }
     } on AdapterException catch (e) {
-      return PublishResult.failure(_partial(e.error, ids, parts.length));
+      return _partial(e.error, ids, parts.length, urlOf);
     } on HttpFailure catch (e) {
-      return PublishResult.failure(_partial(XApi.mapError(e, now: ctx.now()), ids, parts.length));
+      return _partial(XApi.mapError(e, now: ctx.now()), ids, parts.length, urlOf);
     } on TimeoutException catch (e) {
-      return PublishResult.failure(_partial(PublishError.network('X did not answer in time: $e'), ids, parts.length));
+      return _partial(PublishError.network('X did not answer in time: $e'), ids, parts.length, urlOf);
     } on ClientException catch (e) {
-      return PublishResult.failure(_partial(PublishError.network('Could not reach X: ${e.message}'), ids, parts.length));
+      return _partial(PublishError.network('Could not reach X: ${e.message}'), ids, parts.length, urlOf);
     }
-    final handle = (account.handle ?? '').replaceFirst(RegExp('^@'), '');
     return PublishResult.ok(
       remoteId: ids.first,
-      remoteUrl: handle.isEmpty ? 'https://x.com/i/web/status/${ids.first}' : 'https://x.com/$handle/status/${ids.first}',
+      remoteUrl: urlOf(ids.first),
       threadRemoteIds: parts.length > 1 ? ids : const [],
       publishedAt: ctx.now(),
     );
   }
 
-  /// A thread that broke half-way must not be retried blindly: the parts
-  /// already on X would be refused as duplicates.
-  static PublishError _partial(PublishError e, List<String> posted, int total) {
-    if (posted.isEmpty) return e;
-    return PublishError(
-      kind: e.kind,
-      message: 'Part ${posted.length + 1} of $total failed after ${posted.length} part(s) were posted '
-          '(ids ${posted.join(', ')}): ${e.message}',
-      statusCode: e.statusCode,
-      raw: e.raw,
-      retryAfter: e.retryAfter,
+  @override
+  bool get resumesThreads => true;
+
+  /// A thread that broke half-way must not be posted again from the start:
+  /// the parts already on X would be refused as duplicates. Its live parts
+  /// are recorded, so the next attempt posts only the rest.
+  static PublishResult _partial(PublishError e, List<String> posted, int total, String Function(String id) urlOf) {
+    if (posted.isEmpty) return PublishResult.failure(e);
+    return PublishResult.partialFailure(
+      e.asResumableThread(postedIds: posted, total: total),
+      remoteId: posted.first,
+      remoteUrl: urlOf(posted.first),
+      threadRemoteIds: posted,
     );
   }
 

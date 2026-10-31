@@ -4,8 +4,8 @@
 // reading through PDFium, a background picture behind the pages, and (1.3.1)
 // an audio card drawn from a template with the sound's waveform and a text
 // card in a font installed on the computer, found through the font registry,
-// and (1.3.3) a sound video's photo fitted whole to 9:16 and the text card's
-// master editor. Debug
+// (1.3.3) a sound video's photo fitted whole to 9:16 and the text card's
+// master editor, and (1.3.4) twenty photos split into posts per network. Debug
 // tests missed a release-only crash in 1.2.1, so CI runs this in profile mode:
 //
 //   flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/release_probe_test.dart
@@ -38,6 +38,7 @@ import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/text_cards.dart';
+import 'package:neforum_app/ui/compose/preview_pane.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
@@ -307,6 +308,43 @@ void main() {
     await tester.tap(find.byKey(const Key('text-card-match')));
     await pumpFor(800);
     expect(c.read(composerProvider).textCardBranded['bluesky'], isTrue, reason: 'Make them match');
+    expect(tester.takeException(), isNull);
+
+    // 8. 1.3.4: a photo dump. Twenty photos split by each network's own
+    //    limits: a thread of five on X, Bluesky and Mastodon, two posts on
+    //    Telegram; the series shows in the preview; the draft saves with
+    //    every photo fitted where a network needs it.
+    final photos = [
+      for (var i = 0; i < 20; i++)
+        await s.media.importBytes(img.encodeJpg(img.copyResize(source, width: 400), quality: 80), fileName: 'holiday $i.jpg', mimeHint: 'image/jpeg'),
+    ];
+    final dump = [ig, bluesky, account('x'), account('mastodon'), account('telegram')];
+    c.read(composerProvider.notifier)
+      ..reset()
+      ..setText('Release probe: twenty holiday photos.')
+      ..addMedia(photos)
+      ..selectAccounts([for (final a in dump) a.id]);
+    await pumpFor(1500);
+    final dumpPreviews = {for (final p in c.read(composerPreviewsProvider)) p.descriptor.id: p.variant};
+    for (final id in ['x', 'bluesky', 'mastodon']) {
+      expect(dumpPreviews[id]!.threadParts, hasLength(5), reason: '$id: a thread of five');
+      expect(dumpPreviews[id]!.media, hasLength(20), reason: '$id: every photo');
+    }
+    expect(dumpPreviews['telegram']!.seriesPosts, hasLength(1), reason: 'Telegram: two albums of ten');
+    // The previews are long with twenty photos each: scroll to Telegram's.
+    if (find.byType(PreviewPane).evaluate().isEmpty && find.textContaining('Preview (').evaluate().isNotEmpty) {
+      await tester.tap(find.textContaining('Preview (').first);
+      await pumpFor(800);
+    }
+    final seriesView = find.byKey(const ValueKey('series-preview-telegram'));
+    await tester.scrollUntilVisible(seriesView, 400,
+        scrollable: find.descendant(of: find.byType(PreviewPane), matching: find.byType(Scrollable)).first, maxScrolls: 300);
+    await pumpFor(500);
+    expect(seriesView, findsOneWidget);
+    post = await c.read(postActionsProvider).saveDraft().timeout(_limit, onTimeout: () => fail('Save draft with twenty photos did not finish'));
+    await pumpFor(300);
+    expect(post.media.where((m) => !m.generated), hasLength(20));
+    debugPrint('photo dump: ${[for (final e in dumpPreviews.entries) '${e.key} ${e.value.isThread ? e.value.threadParts.length : 1 + e.value.seriesPosts.length}']}');
     expect(tester.takeException(), isNull);
     await windowManager.setSize(windowSize);
     await pumpFor(500);

@@ -238,10 +238,14 @@ void main() {
 
     test('video-only: the track counts as the video it becomes, and the first photo as its picture', () {
       final video = MediaAttachment(id: 'v1', path: '/tmp/v1.mp4', mimeType: 'video/mp4', sizeBytes: 1024);
-      // Bluesky takes one video and does not mix it with photos.
+      // Bluesky takes one video per post and does not mix it with photos:
+      // the second video goes on in the next post of the thread (1.3.4).
       final withVideo = resolve('bluesky', [_sound(), video]);
-      expect(withVideo.media.map((m) => m.id), ['snd1'], reason: 'the second video is dropped, as it is at publish');
-      expect(withVideo.issues.map((i) => i.code), contains('media.dropped'));
+      expect(withVideo.media.map((m) => m.id), ['snd1', 'v1']);
+      expect(withVideo.mediaOfPart(0).map((m) => m.id), ['snd1']);
+      expect(withVideo.mediaOfPart(1).map((m) => m.id), ['v1']);
+      expect(withVideo.threadParts, hasLength(2));
+      expect(withVideo.issues.map((i) => i.code), isNot(contains('media.dropped')));
       final withPicture = resolve('bluesky', [fakeImage(id: 'cover'), _sound()]);
       expect(withPicture.media.map((m) => m.id), ['cover', 'snd1'], reason: 'the picture is part of the video, not a mix');
       expect(withPicture.issues.map((i) => i.code), isNot(contains('media.dropped')));

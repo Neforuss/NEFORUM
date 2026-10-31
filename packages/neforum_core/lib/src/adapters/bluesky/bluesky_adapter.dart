@@ -403,15 +403,21 @@ class BlueskyAdapter extends PlatformAdapter {
 
     final api = BlueskyApi(ctx, pds: pds, accessJwt: access);
     final parts = variant.isThread ? variant.threadParts : [variant.text];
+    // A thread that broke off earlier goes on after its live posts, replying
+    // to the last of them.
+    final posted = variant.postedThreadIds;
+    final start = posted.length;
 
     // Embeds, made before anything is posted: each post's media, and a link
     // card on the first post when it has no media.
     final embeds = <Map<String, dynamic>?>[];
     for (var i = 0; i < parts.length; i++) {
       final media = variant.mediaOfPart(i);
-      embeds.add(media.isNotEmpty
-          ? await _mediaEmbed(media, api, did, ctx)
-          : (i == 0 ? await _linkCardEmbed(variant, api, ctx) : null));
+      embeds.add(i < start
+          ? null
+          : media.isNotEmpty
+              ? await _mediaEmbed(media, api, did, ctx)
+              : (i == 0 ? await _linkCardEmbed(variant, api, ctx) : null));
     }
 
     // Resolve every @handle once.
@@ -428,8 +434,10 @@ class BlueskyAdapter extends PlatformAdapter {
 
     final langs = _langs(variant.language);
     final labels = _selfLabel(variant);
-    final refs = <StrongRef>[];
-    for (var i = 0; i < parts.length; i++) {
+    final uris = [...posted];
+    StrongRef? root = start > 0 ? await api.getPostRef(posted.first) : null;
+    StrongRef? parent = start > 1 ? await api.getPostRef(posted.last) : root;
+    for (var i = start; i < parts.length; i++) {
       if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length} to Bluesky');
       final facets = BlueskyRichText.facets(parts[i], didsByHandle: dids);
       final record = <String, dynamic>{
@@ -440,31 +448,35 @@ class BlueskyAdapter extends PlatformAdapter {
         if (facets.isNotEmpty) 'facets': facets,
         if (embeds[i] case final embed?) 'embed': embed,
         if (labels != null && (i == 0 || variant.mediaOfPart(i).isNotEmpty)) 'labels': labels,
-        if (i > 0) 'reply': {'root': refs.first.toJson(), 'parent': refs.last.toJson()},
+        if (i > 0 && root != null && parent != null) 'reply': {'root': root.toJson(), 'parent': parent.toJson()},
       };
       try {
-        refs.add(await api.createPost(did, record));
+        final ref = await api.createPost(did, record);
+        root ??= ref;
+        parent = ref;
+        uris.add(ref.uri);
       } on HttpFailure catch (e) {
-        if (refs.isEmpty) rethrow;
-        final err = mapBlueskyFailure(e, now: ctx.now());
-        throw AdapterException(PublishError(
-          kind: err.kind,
-          message: 'Part ${i + 1} of ${parts.length} failed after ${refs.length} were posted '
-              '(${_webUrl(account, refs.first)}): ${err.message}',
-          retryable: false,
-          statusCode: err.statusCode,
-          raw: err.raw,
-          retryAfter: err.retryAfter,
-        ));
+        if (uris.isEmpty) rethrow;
+        // Earlier posts are live: they are recorded, and the next attempt
+        // posts only the rest.
+        return PublishResult.partialFailure(
+          mapBlueskyFailure(e, now: ctx.now()).asResumableThread(postedIds: uris, total: parts.length),
+          remoteId: uris.first,
+          remoteUrl: _webUrlOf(account, uris.first),
+          threadRemoteIds: uris,
+        );
       }
     }
     return PublishResult.ok(
-      remoteId: refs.first.uri,
-      remoteUrl: _webUrl(account, refs.first),
-      threadRemoteIds: parts.length > 1 ? [for (final r in refs) r.uri] : const [],
+      remoteId: uris.first,
+      remoteUrl: _webUrlOf(account, uris.first),
+      threadRemoteIds: parts.length > 1 ? uris : const [],
       publishedAt: ctx.now(),
     );
   }
+
+  @override
+  bool get resumesThreads => true;
 
   Future<Map<String, dynamic>> _mediaEmbed(
       List<MediaAttachment> media, BlueskyApi api, String did, AdapterContext ctx) async {
@@ -646,9 +658,10 @@ class BlueskyAdapter extends PlatformAdapter {
     return (p != null && p.host.isNotEmpty) ? p : blueskyDefaultService;
   }
 
-  static String _webUrl(ConnectedAccount a, StrongRef ref) {
+  /// The bsky.app address of the post at [uri] (`at://did/collection/rkey`).
+  static String _webUrlOf(ConnectedAccount a, String uri) {
     final who = a.configString(cfgHandle, a.configString(cfgDid));
-    return 'https://bsky.app/profile/$who/post/${ref.rkey}';
+    return 'https://bsky.app/profile/$who/post/${uri.split('/').last}';
   }
 
   static List<String> _langs(String? language) {

@@ -475,8 +475,31 @@ void main() {
       final v = const PostVariant(text: 'a', threadParts: ['a', 'b']);
       final r = await adapter.publish(v, _apiAccount(), _secrets(), ctx);
       expect(r.error!.kind, PublishErrorKind.validation);
-      expect(r.error!.message, contains('ids 10'));
+      expect(r.error!.message, allOf(contains('Part 2 of 2 failed'), contains('Retry posts the rest')));
       expect(r.error!.retryable, isFalse);
+      // 1.3.4: the live part is recorded, so the next attempt posts only the rest.
+      expect(r.threadRemoteIds, ['10']);
+      expect(r.remoteId, '10');
+    });
+
+    test('a thread that broke off goes on after its live parts, replying to the last (1.3.4)', () async {
+      final bodies = <Map<String, dynamic>>[];
+      final ctx = testContext(handler: (req) async {
+        if (req.url.path.endsWith('/2/tweets')) {
+          bodies.add(jsonDecode(req.body) as Map<String, dynamic>);
+          return _json({
+            'data': {'id': '${12 + bodies.length}'},
+          }, 201);
+        }
+        return _json({}, 404);
+      });
+      final v = const PostVariant(text: 'a', threadParts: ['a', 'b', 'c'], postedThreadIds: ['11', '12']);
+      final r = await adapter.publish(v, _apiAccount(), _secrets(), ctx);
+      expect(r.success, isTrue);
+      expect(bodies, hasLength(1), reason: 'only part 3 is posted');
+      expect(bodies.single['text'], 'c');
+      expect((bodies.single['reply'] as Map)['in_reply_to_tweet_id'], '12');
+      expect(r.threadRemoteIds, ['11', '12', '13']);
     });
 
     test('reply settings from extra are passed through when valid', () async {

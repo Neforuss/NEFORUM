@@ -6,6 +6,8 @@ NEFORUM reaches every platform in one of three ways. Each account you connect us
 - **Your keys** (official API with your own developer app): posts automatically within the platform's quota. You create a free (or, for X, pay-per-use) developer app once.
 - **Hand-off**: NEFORUM prepares the post, copies the text and opens the platform's app or website; you tap Post. Works with any personal account, even where the API is closed to normal users.
 
+The **Media** column is what one post holds. More than that is never dropped (1.3.4): through Auto and Your keys, the rest goes in further posts of a thread on X, Bluesky, Mastodon and Misskey, and in a numbered series of separate posts, one after the other, everywhere else. A hand-off is one post, and what does not fit is listed in its preview.
+
 Generated from the code on 2026-10-25.
 
 | Platform | Ways to post | Personal account OK | Text limit | Media | Quotas tracked | Server-side scheduling | Setup guide |

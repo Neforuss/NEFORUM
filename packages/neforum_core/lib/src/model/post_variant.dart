@@ -33,6 +33,8 @@ class PostVariant {
     this.artwork,
     this.storyMedia = const [],
     this.mediaPartIndexes = const [],
+    this.seriesPosts = const [],
+    this.postedThreadIds = const [],
   });
 
   /// Body text. When the post was split into a thread this is the first part.
@@ -87,7 +89,26 @@ class PostVariant {
   /// post places media in later parts ([Post.mediaParts]).
   final List<int> mediaPartIndexes;
 
+  /// The further posts of a series, published one after the other after this
+  /// one, each on its own (not as replies): the photos and videos that do not
+  /// fit in one post on a network without threads (or where a thread carries
+  /// media only on its first post). Each is a complete variant with its own
+  /// [media] (and its number in [text] and [title] when thread numbering is
+  /// on), checked and published like a post of its own. Empty: one post.
+  final List<PostVariant> seriesPosts;
+
+  /// Remote ids of the first posts of this thread, live from an earlier
+  /// attempt that broke off ([PublishResult.threadRemoteIds] of that
+  /// attempt). An adapter that resumes threads
+  /// ([PlatformAdapter.resumesThreads]) posts only the parts after them,
+  /// replying to the last one, and reports every id. Empty: a new thread.
+  final List<String> postedThreadIds;
+
   bool get isArtwork => artwork != null;
+
+  /// The posts this variant makes on its network as a series: this one,
+  /// then [seriesPosts].
+  bool get isSeries => seriesPosts.isNotEmpty;
 
   /// True when media goes with more than the first post of the thread.
   bool get hasMediaInLaterParts => mediaPartIndexes.any((i) => i > 0);
@@ -140,12 +161,15 @@ class PostVariant {
     bool clearPoll = false,
     List<MediaAttachment>? storyMedia,
     List<int>? mediaPartIndexes,
+    List<PostVariant>? seriesPosts,
+    List<String>? postedThreadIds,
+    bool clearLink = false,
   }) =>
       PostVariant(
         text: text ?? this.text,
         threadParts: threadParts ?? this.threadParts,
         title: title ?? this.title,
-        link: link ?? this.link,
+        link: clearLink ? null : (link ?? this.link),
         media: media ?? this.media,
         contentWarning: contentWarning ?? this.contentWarning,
         sensitive: sensitive ?? this.sensitive,
@@ -163,6 +187,8 @@ class PostVariant {
         // each item in its part; a different list goes with the first post.
         mediaPartIndexes: mediaPartIndexes ??
             (media == null || media.length == this.media.length ? this.mediaPartIndexes : const []),
+        seriesPosts: seriesPosts ?? this.seriesPosts,
+        postedThreadIds: postedThreadIds ?? this.postedThreadIds,
       );
 
   /// This variant without the media items [test] matches. Every other item

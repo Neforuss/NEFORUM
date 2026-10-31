@@ -223,6 +223,11 @@ class PostTarget {
     return r.allRemoteIds.isNotEmpty || (error != null && error.isPartialThread);
   }
 
+  /// [isPartlyLive], with its live copies recorded well enough
+  /// ([PublishResult.resumable]) that publishing it again posts only the
+  /// rest: the remaining parts of a thread, the remaining posts of a series.
+  bool get canResume => isPartlyLive && (result?.resumable ?? false);
+
   PostTarget copyWith({
     PostOverrides? overrides,
     TargetStatus? status,

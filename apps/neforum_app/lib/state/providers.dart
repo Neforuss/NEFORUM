@@ -81,8 +81,11 @@ final needsAttentionProvider = Provider<List<Post>>((ref) => ref
 /// it failed, or the user cancelled the run. Not one with copies already
 /// live ([PostTarget.isPartlyLive]: the feed post of a Post + Story whose
 /// story failed, the first parts of a thread), which a retry would post
-/// twice; its error says what to post by hand.
-bool needsRetry(PostTarget t) => (t.status == TargetStatus.failed || t.status == TargetStatus.cancelled) && !t.isPartlyLive;
+/// twice and whose error says what to post by hand; unless what is live is
+/// recorded well enough that the retry posts only the rest
+/// ([PostTarget.canResume]: the rest of a thread, of a series).
+bool needsRetry(PostTarget t) =>
+    (t.status == TargetStatus.failed || t.status == TargetStatus.cancelled) && (!t.isPartlyLive || t.canResume);
 
 final scheduledPostsProvider = Provider<List<Post>>((ref) {
   final list = ref.watch(postListProvider).where((p) => p.status == PostStatus.scheduled && p.scheduledAt != null).toList()

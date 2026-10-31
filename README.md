@@ -59,6 +59,8 @@ Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks h
 
 **Documents into threads** (PDF, Word .docx, EPUB, Markdown, text, HTML): drop a document on the composer and NEFORUM reads it on your device, in reading order (columns, running headers and page numbers handled), and turns it into a draft thread, each picture in the part next to the text it sits beside, with its caption as alt text. You check and edit it; nothing is posted until you say so.
 
+**Photo dumps into threads:** drop more photos and videos than a network takes in one post (20 holiday photos, say) and nothing is left out. Each network gets them split by its own limits, in your order: on X, Bluesky, Mastodon and Misskey further posts of the thread (20 photos on X are 5 posts of 4), one carousel where they fit (Threads takes 20), and a numbered series of separate posts one after the other everywhere else (Instagram: 2 posts of 10). The preview shows every post, alt text stays with its photo, and the numbering setting counts the extra posts too. If a thread or series breaks off partway, the posts already live are recorded and **Retry** posts only the rest. Hand-offs are one post: what does not fit is listed, never dropped silently.
+
 **Stories and posts:** on Instagram and Facebook Pages, choose **Post**, **Story** or **Post + Story** per network. A story gets its own 9:16 copies (and a full-screen text card for words only), and both are tracked together.
 
 **A time per network:** schedule X for 9:00 and Instagram for 18:00 from the same post (**Different time per network** in the schedule sheet). The queue shows a post as partly published until every network has it.

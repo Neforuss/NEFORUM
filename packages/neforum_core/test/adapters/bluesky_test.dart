@@ -386,6 +386,50 @@ void main() {
       expect(res.remoteId, res.threadRemoteIds.first);
     });
 
+    test('a thread that broke off goes on after its live posts, with their strong refs read back (1.3.4)', () async {
+      final router = Router()
+        ..on('GET', '/com.atproto.repo.getRecord', (r) {
+          final rkey = r.url.queryParameters['rkey'];
+          return jsonRes({'uri': 'at://$did/app.bsky.feed.post/$rkey', 'cid': 'cid-$rkey'});
+        })
+        ..on('POST', '/com.atproto.repo.createRecord', (_) => jsonRes({'uri': 'at://$did/app.bsky.feed.post/new', 'cid': 'cid-new'}));
+      final res = await adapter.publish(
+        PostVariant(
+          text: 'one',
+          threadParts: const ['one', 'two', 'three'],
+          postedThreadIds: ['at://$did/app.bsky.feed.post/old1', 'at://$did/app.bsky.feed.post/old2'],
+        ),
+        blueskyAccount(),
+        goodSecrets,
+        testContext(handler: router.call),
+      );
+      expect(res.success, isTrue, reason: '${res.error}');
+      final records = router.where('createRecord').map(router.recordOf).toList();
+      expect(records.map((r) => r['text']), ['three'], reason: 'only part 3 is posted');
+      expect(records.single['reply'], {
+        'root': {'uri': 'at://$did/app.bsky.feed.post/old1', 'cid': 'cid-old1'},
+        'parent': {'uri': 'at://$did/app.bsky.feed.post/old2', 'cid': 'cid-old2'},
+      });
+      expect(res.threadRemoteIds, ['at://$did/app.bsky.feed.post/old1', 'at://$did/app.bsky.feed.post/old2', 'at://$did/app.bsky.feed.post/new']);
+    });
+
+    test('a thread failing on part 2 records part 1 and can be finished (1.3.4)', () async {
+      var n = 0;
+      final router = Router()
+        ..on('POST', '/com.atproto.repo.createRecord', (_) {
+          n++;
+          return n == 1
+              ? jsonRes({'uri': 'at://$did/app.bsky.feed.post/p1', 'cid': 'cid1'})
+              : jsonRes({'error': 'InternalServerError', 'message': 'boom'}, 500);
+        });
+      final res = await adapter.publish(
+          PostVariant(text: 'one', threadParts: const ['one', 'two']), blueskyAccount(), goodSecrets, testContext(handler: router.call));
+      expect(res.success, isFalse);
+      expect(res.error!.retryable, isFalse);
+      expect(res.error!.message, contains('Part 2 of 2 failed'));
+      expect(res.threadRemoteIds, ['at://$did/app.bsky.feed.post/p1']);
+    });
+
     test('link card: fetch page, upload thumbnail, embed external', () async {
       const html = '<html><head><title>Fallback</title>'
           '<meta property="og:title" content="Rock &amp; Roll">'

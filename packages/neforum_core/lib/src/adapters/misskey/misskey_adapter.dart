@@ -464,6 +464,9 @@ class MisskeyAdapter extends PlatformAdapter {
     }
   }
 
+  @override
+  bool get resumesThreads => true;
+
   Future<PublishResult> _publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     if (account.tier == PlatformTier.handoff) {
@@ -480,19 +483,22 @@ class MisskeyAdapter extends PlatformAdapter {
     }
     final api = MisskeyApi(instance, ctx, token: token);
 
-    // Every part's files are uploaded before the first note goes up.
+    // Every part's files are uploaded before the first note goes up. A
+    // thread that broke off earlier goes on after its live notes.
     final parts = variant.isThread ? variant.threadParts : [variant.text];
+    final start = variant.postedThreadIds.length;
     final fileIds = [for (var i = 0; i < parts.length; i++) <String>[]];
+    final toUpload = [for (var i = start; i < parts.length; i++) ...variant.mediaOfPart(i)].length;
     var uploaded = 0;
-    for (var i = 0; i < parts.length; i++) {
+    for (var i = start; i < parts.length; i++) {
       for (final m in variant.mediaOfPart(i)) {
-        fileIds[i].add(await _upload(api, m, uploaded++, variant.media.length, variant.sensitive, ctx));
+        fileIds[i].add(await _upload(api, m, uploaded++, toUpload, variant.sensitive, ctx));
       }
     }
 
-    final ids = <String>[];
-    String? replyId = _str(variant.extra['replyId']);
-    for (var i = 0; i < parts.length; i++) {
+    final ids = [...variant.postedThreadIds];
+    String? replyId = ids.isNotEmpty ? ids.last : _str(variant.extra['replyId']);
+    for (var i = start; i < parts.length; i++) {
       ctx.progress(parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting note');
       final body = _noteBody(variant, account, parts[i], fileIds[i], replyId);
       try {
@@ -507,7 +513,15 @@ class MisskeyAdapter extends PlatformAdapter {
         ids.add(noteId);
         replyId = noteId;
       } on AdapterException catch (e) {
-        throw AdapterException(e.error.asPartialThread(postedIds: ids, total: parts.length));
+        if (ids.isEmpty) rethrow;
+        // Earlier notes are live: they are recorded, and the next attempt
+        // posts only the rest.
+        return PublishResult.partialFailure(
+          e.error.asResumableThread(postedIds: ids, total: parts.length),
+          remoteId: ids.first,
+          remoteUrl: '$instance/notes/${ids.first}',
+          threadRemoteIds: ids,
+        );
       }
     }
     ctx.log.info('Posted ${ids.length} note(s) to ${instance.host}');

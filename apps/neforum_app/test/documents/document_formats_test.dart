@@ -281,7 +281,7 @@ void main() {
       expect(t.parts[1].images, [red]);
     });
 
-    test('more than four pictures in a part move on to the next part', () {
+    test('every picture stays with the part beside it; each network splits them by its own limit (1.3.4)', () {
       final pictures = [for (var i = 0; i < 6; i++) image(0x101010 * (i + 1), 'Picture ${i + 1}')];
       final doc = IngestedDocument(format: DocumentFormat.text, blocks: [
         const DocumentParagraph('First'),
@@ -289,12 +289,26 @@ void main() {
         const DocumentParagraph('Second, long enough to need a part of its own here'),
       ]);
       final t = buildDocumentThread(doc, partLength: 20);
+      expect(t.parts[0].images, pictures);
+      expect(t.parts[1].images, isEmpty);
+      expect(t.imageCount, 6);
+    });
+
+    test('with a cap, more pictures than it move on to the next part', () {
+      final pictures = [for (var i = 0; i < 6; i++) image(0x101010 * (i + 1), 'Picture ${i + 1}')];
+      final doc = IngestedDocument(format: DocumentFormat.text, blocks: [
+        const DocumentParagraph('First'),
+        ...pictures.take(6),
+        const DocumentParagraph('Second, long enough to need a part of its own here'),
+      ]);
+      final t = buildDocumentThread(doc, partLength: 20, maxImagesPerPart: 4);
       expect(t.parts[0].images, pictures.take(4));
       expect(t.parts[1].images, pictures.skip(4));
       expect(t.imageCount, 6);
 
       // With no part after them, they get a part of their own.
-      final tail = buildDocumentThread(IngestedDocument(format: DocumentFormat.text, blocks: [const DocumentParagraph('Only'), ...pictures]));
+      final tail = buildDocumentThread(
+          IngestedDocument(format: DocumentFormat.text, blocks: [const DocumentParagraph('Only'), ...pictures]), maxImagesPerPart: 4);
       expect(tail.parts, hasLength(2));
       expect(tail.parts[1].images, pictures.skip(4));
       expect(tail.parts[1].text, 'Picture 5\nPicture 6');

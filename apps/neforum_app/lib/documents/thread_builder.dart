@@ -2,10 +2,6 @@ import 'package:flutter/foundation.dart';
 
 import 'document_model.dart';
 
-/// Pictures a part of a document thread holds at most (the limit on X,
-/// Bluesky and Mastodon); more pictures move on to the next part.
-const int kDocumentImagesPerPart = 4;
-
 /// One part of a thread made from a document.
 @immutable
 class DocumentThreadPart {
@@ -34,11 +30,15 @@ class DocumentThread {
 ///   characters; a paragraph that alone is longer gets a part of its own
 ///   (each network splits it further by its own limit when posting).
 /// - Each picture goes in the part that holds the block it sits beside (the
-///   block before it in [IngestedDocument.blocks]). A part holds at most
-///   [maxImagesPerPart] pictures; the rest move on to the next part. When no
-///   part follows, they get a part of their own whose text is their
-///   descriptions.
-DocumentThread buildDocumentThread(IngestedDocument document, {int partLength = 500, int maxImagesPerPart = kDocumentImagesPerPart}) {
+///   block before it in [IngestedDocument.blocks]), however many there are:
+///   each network splits a part's pictures by its own limits when the post
+///   goes out (1.3.4), into further posts right after that part on X,
+///   Bluesky and Mastodon, one carousel where they fit. With
+///   [maxImagesPerPart] a part holds at most that many and the rest move on
+///   to the next part; when no part follows, they get a part of their own
+///   whose text is their descriptions.
+DocumentThread buildDocumentThread(IngestedDocument document, {int partLength = 500, int? maxImagesPerPart}) {
+  final cap = maxImagesPerPart ?? 1 << 30;
   final parts = <DocumentThreadPart>[];
   final units = <String>[];
   final images = <DocumentImage>[];
@@ -48,7 +48,7 @@ DocumentThread buildDocumentThread(IngestedDocument document, {int partLength = 
   var lastWasListItem = false;
 
   void takeCarried() {
-    while (carried.isNotEmpty && images.length < maxImagesPerPart) {
+    while (carried.isNotEmpty && images.length < cap) {
       images.add(carried.removeAt(0));
     }
   }
@@ -85,7 +85,7 @@ DocumentThread buildDocumentThread(IngestedDocument document, {int partLength = 
         add(text, listItem: listItem);
         headingOnly = false;
       case DocumentImage():
-        if (images.length < maxImagesPerPart && carried.isEmpty) {
+        if (images.length < cap && carried.isEmpty) {
           images.add(block);
         } else {
           carried.add(block);

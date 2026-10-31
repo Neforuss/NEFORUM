@@ -28,6 +28,12 @@ abstract class PlatformAdapter {
   /// cheap and pure.
   PlatformDescriptor descriptorForAccount(ConnectedAccount account) => descriptor;
 
+  /// The adapter finishes a thread that broke off: given
+  /// [PostVariant.postedThreadIds] it posts only the parts after them,
+  /// replying to the last, and a failure after some parts are live comes back
+  /// as [PublishResult.partialFailure] with their [PublishResult.threadRemoteIds].
+  bool get resumesThreads => false;
+
   /// One spec per supported tier. The UI shows the tiers as a choice.
   List<ConnectSpec> get connectSpecs;
 

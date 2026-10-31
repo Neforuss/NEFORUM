@@ -103,12 +103,16 @@ void main() {
       expect(RulesValidator.validate(v, perPart).where((i) => i.code == 'media.too_many_images'), isEmpty);
     });
 
-    test('too many in one part are dropped from that part only, and the warning names it', () {
+    test('too many for one part go on in a post of media only right after it (1.3.4)', () {
       final media = [for (var i = 0; i < 6; i++) _image('m$i')];
-      final post = _post(['One', 'Two'], media, {for (var i = 0; i < 6; i++) 'm$i': 1});
+      final post = _post(['One', 'Two', 'Three'], media, {for (var i = 0; i < 6; i++) 'm$i': 1});
       final v = _resolve(post, perPart);
-      expect(v.mediaOfPart(1), hasLength(4));
-      expect(v.issues.firstWhere((i) => i.code == 'media.dropped').message, contains('from part 2'));
+      expect(v.threadParts, ['One', 'Two', '', 'Three']);
+      expect(v.mediaOfPart(1).map((m) => m.id), ['m0', 'm1', 'm2', 'm3']);
+      expect(v.mediaOfPart(2).map((m) => m.id), ['m4', 'm5']);
+      expect(v.mediaOfPart(3), isEmpty);
+      expect(v.issues.where((i) => i.code == 'media.dropped'), isEmpty);
+      expect(v.issues.map((i) => i.code), contains('media.threaded'));
     });
 
     test('networks without media in every post keep it all on the first post, as before', () {

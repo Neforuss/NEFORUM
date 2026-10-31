@@ -294,8 +294,9 @@ class PublishService {
         if (target.isDone) continue;
         if (dueTargetsOnly && target.status == TargetStatus.pending && !post.isTargetDue(target, _now())) continue;
         if (_isFailedOrCancelled(target) && !retryFailed) continue;
-        // Its live copies would go out a second time.
-        if (_isFailedOrCancelled(target) && target.isPartlyLive) continue;
+        // Its live copies would go out a second time, unless what is live is
+        // recorded well enough to post only the rest.
+        if (_isFailedOrCancelled(target) && target.isPartlyLive && !target.canResume) continue;
         if (target.status == TargetStatus.awaitingHandoff && !interactive) continue;
         if (cancellation != null && cancellation.isCancelled) {
           // Waiting retries included: the scheduler must not pick them up later.
@@ -629,6 +630,36 @@ class PublishService {
     bool forceHandoff = false,
     CancellationSignal? cancellation,
   }) async {
+    final updated = await _publishTargetOnce(post, target,
+        interactive: interactive, onProgress: onProgress, forceHandoff: forceHandoff, cancellation: cancellation);
+    final earlier = target.canResume ? target.result : null;
+    final r = updated.result;
+    if (earlier == null || r == null || r.success || r.allRemoteIds.isNotEmpty) return updated;
+    // An attempt to finish it that failed before anything more went live
+    // (a sign-in to renew, a quota): what is live stays recorded, so it is
+    // never posted a second time and can still be finished.
+    return updated.copyWith(
+      result: PublishResult.partialFailure(
+        r.error ?? _cancelledError,
+        remoteId: earlier.remoteId,
+        remoteUrl: earlier.remoteUrl,
+        threadRemoteIds: earlier.threadRemoteIds,
+        additionalRemoteIds: earlier.additionalRemoteIds,
+        seriesRemoteIds: earlier.seriesRemoteIds,
+        publishedAt: earlier.publishedAt,
+        resumable: true,
+      ),
+    );
+  }
+
+  Future<PostTarget> _publishTargetOnce(
+    Post post,
+    PostTarget target, {
+    required bool interactive,
+    required void Function(String message)? onProgress,
+    bool forceHandoff = false,
+    CancellationSignal? cancellation,
+  }) async {
     bool cancelled() => cancellation != null && cancellation.isCancelled;
     final account = await accounts.get(target.accountId);
     if (account == null) {
@@ -648,7 +679,12 @@ class PublishService {
     final List<ValidationIssue> issues;
     try {
       variant = resolver.resolve(post, target, adapter.descriptorForAccount(account), account: account);
-      issues = [...variant.issues, ...adapter.validate(variant, account)];
+      // Every post of a series is checked as the post it is.
+      issues = [
+        ...variant.issues,
+        ...adapter.validate(variant, account),
+        for (final s in variant.seriesPosts) ...adapter.validate(s, account),
+      ];
     } on Object catch (e) {
       return _fail(target, PublishError.validation('Could not check the post for ${adapter.descriptor.name}: $e'));
     }
@@ -679,7 +715,23 @@ class PublishService {
     if (freshSecrets == null) return _fail(attempt, secretError!, account: account);
     final secretMap = freshSecrets;
 
-    final needed = _postsNeeded(variant, adapter.supportsStories(account));
+    // An attempt that broke off after some posts went live, recorded well
+    // enough to finish: only what is missing goes out now.
+    final earlier = target.canResume ? target.result : null;
+    final postedParts = earlier?.threadRemoteIds ?? const <String>[];
+    final firstDone = earlier != null &&
+        earlier.remoteId != null &&
+        (!variant.isThread || postedParts.length >= variant.threadParts.length || earlier.seriesRemoteIds.isNotEmpty);
+    final firstVariant = earlier != null && !firstDone && postedParts.isNotEmpty && adapter.resumesThreads
+        ? variant.copyWith(postedThreadIds: postedParts)
+        : variant;
+    final needed = earlier == null
+        ? _postsNeeded(variant, adapter.supportsStories(account))
+        : math.max(
+            1,
+            (firstDone ? 0 : (variant.isThread ? variant.threadParts.length - firstVariant.postedThreadIds.length : 1)) +
+                variant.seriesPosts.length -
+                earlier.seriesRemoteIds.length);
     final QuotaStatus? exceeded;
     try {
       exceeded = await quota.firstExceeded(account, adapter.descriptor, needed: needed);
@@ -698,24 +750,31 @@ class PublishService {
       return _fail(attempt, err);
     }
 
-    PublishResult result;
-    try {
-      result = await adapter.publish(variant, account, secretMap, ctx);
-    } on AdapterException catch (e) {
-      result = PublishResult.failure(e.error);
-    } on HttpFailure catch (e) {
-      result = PublishResult.failure(e.toPublishError(context: adapter.descriptor.name));
-    } on AuthCancelled {
-      result = PublishResult.failure(const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'));
-    } on OperationCancelledException {
-      result = PublishResult.failure(_cancelledError);
-    } on Object catch (e, st) {
-      result = PublishResult.failure(_classifyUnexpected(e, adapter.descriptor.name));
-      if (result.error!.kind == PublishErrorKind.platform) {
-        log.error('Unexpected error publishing to ${account.displayName}', e);
-        log.debug('$st');
-      }
+    var result = firstDone
+        ? PublishResult.ok(
+            remoteId: earlier.remoteId,
+            remoteUrl: earlier.remoteUrl,
+            threadRemoteIds: earlier.threadRemoteIds,
+            additionalRemoteIds: earlier.additionalRemoteIds,
+            publishedAt: earlier.publishedAt,
+          )
+        : await _attempt(adapter, firstVariant, account, secretMap, ctx, log);
+    if (result.success && result.remoteUrl == null && earlier?.remoteUrl != null) {
+      // A finished thread keeps the address of its first post, made earlier.
+      result = PublishResult.ok(
+        remoteId: result.remoteId,
+        remoteUrl: earlier!.remoteUrl,
+        threadRemoteIds: result.threadRemoteIds,
+        additionalRemoteIds: result.additionalRemoteIds,
+        publishedAt: result.publishedAt,
+      );
     }
+    if (result.success && !result.isHeldByPlatform && variant.isSeries) {
+      result = await _publishSeries(adapter, variant, account, secretMap, ctx, log,
+          first: result, done: earlier?.seriesRemoteIds ?? const [], cancelled: cancelled);
+    }
+    // What this attempt put live; an earlier one already counted its own.
+    final alreadyCounted = earlier?.allRemoteIds.length ?? 0;
 
     // From here on the network has the post: bookkeeping that fails must
     // never turn it back into one that was not posted.
@@ -726,8 +785,9 @@ class PublishService {
     }
     if (result.success) {
       // Posted, even if the user pressed Cancel a moment too late.
+      final posted = math.max(1, result.threadRemoteIds.length) + result.additionalRemoteIds.length + result.seriesRemoteIds.length;
       await _bestEffort(log, 'count the post against the quota',
-          () => quota.record(account, adapter.descriptor, count: math.max(1, result.threadRemoteIds.length) + result.additionalRemoteIds.length));
+          () => quota.record(account, adapter.descriptor, count: math.max(1, posted - alreadyCounted)));
       if (account.lastError != null) {
         await _bestEffort(log, 'clear the account warning', () => accounts.upsert(account.copyWith(clearLastError: true)));
       }
@@ -737,10 +797,15 @@ class PublishService {
     final live = result.allRemoteIds;
     if (live.isNotEmpty) {
       // Some copies went live before the rest failed (a feed post before its
-      // story): the target keeps their ids, and is never retried by itself.
-      await _bestEffort(log, 'count the post against the quota', () => quota.record(account, adapter.descriptor, count: live.length));
+      // story, the first parts of a thread, the first posts of a series): the
+      // target keeps their ids. It is never published again as a whole; one
+      // whose copies are recorded well enough is finished by the next attempt.
+      await _bestEffort(log, 'count the post against the quota',
+          () => quota.record(account, adapter.descriptor, count: math.max(0, live.length - alreadyCounted)));
       final cause = result.error!;
       final stopped = cancelled();
+      final resumable = result.resumable ||
+          (adapter.resumesThreads && result.threadRemoteIds.isNotEmpty && result.additionalRemoteIds.isEmpty && result.seriesRemoteIds.isEmpty);
       log.warn('${account.displayName}: ${cause.message}');
       return attempt.copyWith(
         status: stopped ? TargetStatus.cancelled : TargetStatus.failed,
@@ -753,8 +818,11 @@ class PublishService {
           ),
           remoteId: result.remoteId,
           remoteUrl: result.remoteUrl,
+          threadRemoteIds: result.threadRemoteIds,
           additionalRemoteIds: result.additionalRemoteIds,
+          seriesRemoteIds: result.seriesRemoteIds,
           publishedAt: result.publishedAt,
+          resumable: resumable,
         ),
       );
     }
@@ -768,6 +836,88 @@ class PublishService {
       return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message, cancellation: cancellation);
     }
     return _fail(attempt, err, account: account);
+  }
+
+  /// One [PlatformAdapter.publish] call, with everything it can throw turned
+  /// into a failed result.
+  Future<PublishResult> _attempt(
+      PlatformAdapter adapter, PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx, Logger log) async {
+    try {
+      return await adapter.publish(variant, account, secrets, ctx);
+    } on AdapterException catch (e) {
+      return PublishResult.failure(e.error);
+    } on HttpFailure catch (e) {
+      return PublishResult.failure(e.toPublishError(context: adapter.descriptor.name));
+    } on AuthCancelled {
+      return PublishResult.failure(const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'));
+    } on OperationCancelledException {
+      return PublishResult.failure(_cancelledError);
+    } on Object catch (e, st) {
+      final result = PublishResult.failure(_classifyUnexpected(e, adapter.descriptor.name));
+      if (result.error!.kind == PublishErrorKind.platform) {
+        log.error('Unexpected error publishing to ${account.displayName}', e);
+        log.debug('$st');
+      }
+      return result;
+    }
+  }
+
+  /// The further posts of [variant]'s series ([PostVariant.seriesPosts])
+  /// after its live first post ([first]), starting after the [done] ones of
+  /// an earlier attempt. Every post is checked and published as the post it
+  /// is. A failure (or Cancel) partway is a resumable partial failure that
+  /// records every live post, so the next attempt posts only the rest.
+  Future<PublishResult> _publishSeries(
+    PlatformAdapter adapter,
+    PostVariant variant,
+    ConnectedAccount account,
+    Map<String, String> secrets,
+    AdapterContext ctx,
+    Logger log, {
+    required PublishResult first,
+    required List<String> done,
+    required bool Function() cancelled,
+  }) async {
+    final ids = [...done];
+    final extra = [...first.additionalRemoteIds];
+    final total = variant.seriesPosts.length + 1;
+    PublishResult stopped(PublishError e) => PublishResult.partialFailure(
+          PublishError(
+            kind: e.kind,
+            message: 'Post ${ids.length + 2} of $total failed: ${e.message}. '
+                'The first ${ids.length + 1} post(s) are live; Retry posts the rest.',
+            statusCode: e.statusCode,
+            raw: e.raw,
+          ),
+          remoteId: first.remoteId,
+          remoteUrl: first.remoteUrl,
+          threadRemoteIds: first.threadRemoteIds,
+          additionalRemoteIds: extra,
+          seriesRemoteIds: ids,
+          publishedAt: first.publishedAt,
+          resumable: true,
+        );
+    for (var i = done.length; i < variant.seriesPosts.length; i++) {
+      if (cancelled()) return stopped(const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'));
+      ctx.progress('Posting ${i + 2} of $total');
+      final r = await _attempt(adapter, variant.seriesPosts[i], account, secrets, ctx, log);
+      if (r.isHeldByPlatform) return stopped(const PublishError.platform('The network held this post instead of publishing it'));
+      if (!r.success) {
+        // Whatever of this post went live stays recorded.
+        extra.addAll(r.allRemoteIds);
+        return stopped(r.error!);
+      }
+      ids.add(r.remoteId ?? r.remoteUrl ?? 'post ${i + 2}');
+      extra.addAll(r.allRemoteIds.where((id) => id != r.remoteId));
+    }
+    return PublishResult.ok(
+      remoteId: first.remoteId,
+      remoteUrl: first.remoteUrl,
+      threadRemoteIds: first.threadRemoteIds,
+      additionalRemoteIds: extra,
+      seriesRemoteIds: ids,
+      publishedAt: first.publishedAt,
+    );
   }
 
   Future<PostTarget> _handoff(
@@ -851,16 +1001,19 @@ class PublishService {
 
   /// How many posts [variant] makes on its network, for the quota: one per
   /// part of a thread, else one feed post plus one per story frame where the
-  /// account takes stories ([PostPlacement]).
+  /// account takes stories ([PostPlacement]); and one per further post of a
+  /// series.
   static int _postsNeeded(PostVariant variant, bool stories) {
-    if (variant.isThread) return variant.threadParts.length;
-    if (!stories) return 1;
+    final series = variant.seriesPosts.length;
+    if (variant.isThread) return variant.threadParts.length + series;
+    if (!stories) return 1 + series;
     final frames = math.max(1, variant.storyFrames.length);
-    return switch (variant.placement) {
-      PostPlacement.feed => 1,
-      PostPlacement.story => frames,
-      PostPlacement.feedAndStory => 1 + frames,
-    };
+    return series +
+        switch (variant.placement) {
+          PostPlacement.feed => 1,
+          PostPlacement.story => frames,
+          PostPlacement.feedAndStory => 1 + frames,
+        };
   }
 
   /// Failed and cancelled targets are only tried again when the run asks.

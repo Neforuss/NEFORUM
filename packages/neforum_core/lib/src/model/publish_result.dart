@@ -112,7 +112,21 @@ class PublishError {
     );
   }
 
-  /// The wording of [asPartialThread].
+  /// Like [asPartialThread], for a thread the next attempt can finish: it
+  /// posts only the parts after [postedIds] ([PostVariant.postedThreadIds]).
+  PublishError asResumableThread({required List<String> postedIds, required int total}) {
+    if (postedIds.isEmpty) return this;
+    return PublishError(
+      kind: kind,
+      message: 'Part ${postedIds.length + 1} of $total failed: $message. '
+          'The first ${postedIds.length} part(s) are live; Retry posts the rest of the thread.',
+      retryable: false,
+      statusCode: statusCode,
+      raw: raw,
+    );
+  }
+
+  /// The wording of [asPartialThread] and [asResumableThread].
   static final _partialThread = RegExp(r'^Part \d+ of \d+ failed: ');
 
   /// Made by [asPartialThread]: the first parts of the thread are live.
@@ -144,6 +158,8 @@ class PublishResult {
     this.publishedAt,
     this.scheduledFor,
     this.additionalRemoteIds = const [],
+    this.seriesRemoteIds = const [],
+    this.resumable = false,
   });
 
   factory PublishResult.ok({
@@ -152,6 +168,7 @@ class PublishResult {
     List<String> threadRemoteIds = const [],
     DateTime? publishedAt,
     List<String> additionalRemoteIds = const [],
+    List<String> seriesRemoteIds = const [],
   }) =>
       PublishResult._(
         success: true,
@@ -160,6 +177,7 @@ class PublishResult {
         threadRemoteIds: threadRemoteIds,
         publishedAt: publishedAt,
         additionalRemoteIds: additionalRemoteIds,
+        seriesRemoteIds: seriesRemoteIds,
       );
 
   /// The platform accepted the post and holds it until [scheduledFor]
@@ -181,23 +199,32 @@ class PublishResult {
       PublishResult._(success: false, error: error);
 
   /// A target that failed after some of its copies went live (the feed post
-  /// before its story, the first frames of a story). [remoteId] and
-  /// [additionalRemoteIds] record those copies so they are never forgotten;
-  /// [error] should not be retryable, since a retry would post them again.
+  /// before its story, the first frames of a story, the first parts of a
+  /// thread, the first posts of a series). [remoteId], [threadRemoteIds],
+  /// [additionalRemoteIds] and [seriesRemoteIds] record those copies so they
+  /// are never forgotten; [error] should not be retryable, since a plain
+  /// retry would post them again. [resumable]: the next attempt posts only
+  /// what is still missing ([PostTarget.canResume]).
   factory PublishResult.partialFailure(
     PublishError error, {
     String? remoteId,
     String? remoteUrl,
+    List<String> threadRemoteIds = const [],
     List<String> additionalRemoteIds = const [],
+    List<String> seriesRemoteIds = const [],
     DateTime? publishedAt,
+    bool resumable = false,
   }) =>
       PublishResult._(
         success: false,
         error: error,
         remoteId: remoteId,
         remoteUrl: remoteUrl,
+        threadRemoteIds: threadRemoteIds,
         additionalRemoteIds: additionalRemoteIds,
+        seriesRemoteIds: seriesRemoteIds,
         publishedAt: publishedAt,
+        resumable: resumable,
       );
 
   /// The target was handed to the user (share sheet / web intent opened).
@@ -220,6 +247,8 @@ class PublishResult {
             ? null
             : DateTime.parse(json['scheduledFor'] as String),
         additionalRemoteIds: (json['additionalRemoteIds'] as List? ?? const []).cast<String>(),
+        seriesRemoteIds: (json['seriesRemoteIds'] as List? ?? const []).cast<String>(),
+        resumable: json['resumable'] as bool? ?? false,
       );
 
   final bool success;
@@ -242,12 +271,24 @@ class PublishResult {
   /// removal and quota cover every copy.
   final List<String> additionalRemoteIds;
 
+  /// The remote id of each further post of a series
+  /// ([PostVariant.seriesPosts]) that is live, in order; [remoteId] is the
+  /// first post's.
+  final List<String> seriesRemoteIds;
+
+  /// A failed target whose live copies are recorded well enough that the
+  /// next attempt posts only what is missing (the rest of a thread, the
+  /// remaining posts of a series) instead of everything again.
+  final bool resumable;
+
   /// Every remote id this result stands for: [remoteId], the parts of a
-  /// thread and [additionalRemoteIds], without repeats.
+  /// thread, [additionalRemoteIds] and the posts of a series, without
+  /// repeats.
   List<String> get allRemoteIds => {
         ?remoteId,
         ...threadRemoteIds,
         ...additionalRemoteIds,
+        ...seriesRemoteIds,
       }.toList();
 
   bool get isFailure => !success;
@@ -263,6 +304,7 @@ class PublishResult {
         threadRemoteIds: threadRemoteIds,
         publishedAt: scheduledFor ?? publishedAt,
         additionalRemoteIds: additionalRemoteIds,
+        seriesRemoteIds: seriesRemoteIds,
       );
 
   Map<String, dynamic> toJson() => {
@@ -275,6 +317,8 @@ class PublishResult {
         if (publishedAt != null) 'publishedAt': publishedAt!.toUtc().toIso8601String(),
         if (scheduledFor != null) 'scheduledFor': scheduledFor!.toUtc().toIso8601String(),
         if (additionalRemoteIds.isNotEmpty) 'additionalRemoteIds': additionalRemoteIds,
+        if (seriesRemoteIds.isNotEmpty) 'seriesRemoteIds': seriesRemoteIds,
+        if (resumable) 'resumable': true,
       };
 
   @override

@@ -35,9 +35,22 @@ class TextSplitter {
   /// [splitParts], also telling where each written part begins: `starts[i]`
   /// is the index in `parts` of the first post made from `parts[i]` (what
   /// carries the media placed in that part).
-  static ({List<String> parts, List<int> starts}) splitPartsWithStarts(List<String> parts, TextRules rules, {bool numbering = true}) {
-    if (parts.length == 1) return (parts: split(parts.single, rules, numbering: numbering), starts: const [0]);
+  ///
+  /// Without [numbering], [room] keeps that many characters of every post
+  /// free, for numbers added later (a thread that gets posts of media only).
+  static ({List<String> parts, List<int> starts}) splitPartsWithStarts(List<String> parts, TextRules rules,
+      {bool numbering = true, int room = 0}) {
     final max = rules.maxLength;
+    if (!numbering && room > 0 && max != null) {
+      final out = <String>[];
+      final starts = <int>[];
+      for (final p in parts) {
+        starts.add(out.length);
+        out.addAll(TextCounter.count(p, rules) <= max - room ? [p] : _splitTo(p, rules, max - room));
+      }
+      return (parts: out, starts: starts);
+    }
+    if (parts.length == 1) return (parts: split(parts.single, rules, numbering: numbering), starts: const [0]);
     ({List<String> parts, List<int> starts}) pieces(int reserve) {
       final out = <String>[];
       final starts = <int>[];

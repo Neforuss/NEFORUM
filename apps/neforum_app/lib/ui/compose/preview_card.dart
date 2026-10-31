@@ -40,6 +40,47 @@ import 'rich_text.dart';
 /// How a platform presents a post; drives the preview layout.
 enum PreviewFamily { microblog, visual, forum, chat, blog }
 
+/// "10 photos", "1 video", "3 photos and 1 video".
+String mediaCountLabel(List<MediaAttachment> media) {
+  final videos = media.where((m) => m.isVideo).length;
+  final photos = media.where((m) => m.kind == MediaKind.image).length;
+  String n(int count, String one) => '$count ${count == 1 ? one : '${one}s'}';
+  return [if (photos > 0) n(photos, 'photo'), if (videos > 0) n(videos, 'video')].join(' and ');
+}
+
+/// The further posts of a series ([PostVariant.seriesPosts]) under a
+/// network's preview: each with its number and its photos and videos, so
+/// the split is seen before anything goes out.
+class _SeriesPreview extends StatelessWidget {
+  const _SeriesPreview({super.key, required this.variant, required this.platform});
+  final PostVariant variant;
+  final PlatformDescriptor platform;
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    final more = variant.seriesPosts.length;
+    final total = more + 1;
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(Icons.collections_outlined, size: 16, color: nf.textMuted),
+        const SizedBox(width: Space.xs + 2),
+        Expanded(
+          child: Text('Then $more more ${more == 1 ? 'post' : 'posts'} on ${platform.name}, one after the other',
+              style: context.text.labelMedium),
+        ),
+      ]),
+      for (var i = 0; i < more; i++) ...[
+        const SizedBox(height: Space.sm + 2),
+        Text('Post ${i + 2} of $total · ${mediaCountLabel(variant.seriesPosts[i].media)}',
+            style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
+        const SizedBox(height: Space.xs),
+        MediaGrid(media: variant.seriesPosts[i].media),
+      ],
+    ]);
+  }
+}
+
 PreviewFamily previewFamilyFor(String platformId, {bool artPlatform = false}) => switch (platformId) {
       _ when artPlatform => PreviewFamily.visual,
       'instagram' || 'tiktok' || 'pinterest' || 'youtube' || 'snapchat' || 'rumble' || 'odysee' || 'bitchute' => PreviewFamily.visual,
@@ -122,6 +163,11 @@ class PreviewCard extends ConsumerWidget {
         ),
         Divider(height: 1, color: nf.border),
         Padding(padding: const EdgeInsets.all(Space.md + 2), child: body),
+        // 1.3.4: what does not fit in one post goes on in further posts.
+        if (v.seriesPosts.isNotEmpty) ...[
+          Divider(height: 1, color: nf.border),
+          Padding(padding: const EdgeInsets.all(Space.md + 2), child: _SeriesPreview(key: ValueKey('series-preview-${d.id}'), variant: v, platform: d)),
+        ],
         if (p.issues.isNotEmpty) ...[
           Divider(height: 1, color: nf.border),
           _Issues(issues: p.issues),
