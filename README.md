@@ -153,7 +153,7 @@ Download from **[neforus.com/neforum](https://neforus.com/neforum/)** or from th
 
 | Platform | Download | How it installs |
 |---|---|---|
-| Windows | `NEFORUM-Setup-1.3.2.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
+| Windows | `NEFORUM-Setup-1.3.3.exe` | A normal installer: NEFORUM appears in the Start menu, in Windows search (also Win+R → `neforum`) and in Settings → Apps, and uninstalls cleanly from there. No administrator rights needed; "install for all users" is offered too. Windows 10 or 11, 64-bit. Or `neforum-windows.zip`: unzip and run `NEFORUM.exe`. |
 | macOS | `NEFORUM-macOS.dmg` | Open it and drag NEFORUM onto Applications; it then shows up in Launchpad and Spotlight. Not signed by Apple, so the first time macOS says it can't check it: open System Settings → Privacy & Security, scroll down and click **Open Anyway** (on macOS 14 and older, right-click NEFORUM in Applications, then Open). macOS 10.15 or newer. (`neforum-macos.zip` has the same app. `NEFORUM-macOS-apple-silicon.dmg` and `NEFORUM-macOS-intel.dmg` are smaller downloads for one kind of Mac.) |
 | Android | `neforum-android.apk` | Allow installing from your browser or file manager; NEFORUM then sits in the app drawer like any app. Android 7 or newer. Smaller downloads for one kind of phone: `neforum-android-arm64.apk` (nearly every phone), `neforum-android-armv7.apk` (older 32-bit phones), `neforum-android-x86_64.apk` (Chromebooks and emulators). |
 | iPhone and iPad | `neforum-ios-unsigned.ipa` | Sign it with your own Apple ID (Xcode, AltStore or Sideloadly), or build from source in Xcode. |
@@ -161,7 +161,7 @@ Download from **[neforus.com/neforum](https://neforus.com/neforum/)** or from th
 
 The browser extension for Chrome and Firefox comes with the app (Settings → Browser extension → Show extension files) and is also in each release (`neforum-extension-chrome-*.zip`, `neforum-extension-firefox-*.zip`).
 
-Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.3.2`) publishes them as a release, with a build attestation for every file (`gh attestation verify <file> --repo Neforuss/NEFORUM`) and `SHA256SUMS`. Code signing is set up through free routes only; see [docs/signing.md](docs/signing.md).
+Every push builds all platforms with [GitHub Actions](.github/workflows/build.yml); a version tag (`v1.3.3`) builds them into a release (a draft until the version is on neforus.com, then published), with a build attestation for every file (`gh attestation verify <file> --repo Neforuss/NEFORUM`) and `SHA256SUMS`. Code signing is set up through free routes only; see [docs/signing.md](docs/signing.md).
 ## Build from source
 
 You need [Flutter 3.47](https://docs.flutter.dev/get-started/install) (Dart 3.13), plus the usual toolchain for your target: Android SDK, Xcode on a Mac for iOS and macOS, Visual Studio 2022 with "Desktop development with C++" for Windows, or for Linux clang, CMake, Ninja, pkg-config and the GTK 3, libsecret and WebKitGTK 4.1 development packages.

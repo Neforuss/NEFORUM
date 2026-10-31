@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.3.3" date="2026-10-30">
+      <description>
+        <p>One editor for the text card of every network: set the design, font, signature and @handle once for all of them, see what still differs, and make them match in one tap. Sound videos show the whole photo or cover art, fitted to the frame, instead of cutting its sides off. Browser extension 1.1.3.</p>
+      </description>
+    </release>
     <release version="1.3.2" date="2026-10-29">
       <description>
         <p>Sound files bring their own details: title, artist, album, year and cover from the file's tags go to every network that shows them, and every detail can be edited. A card designer for text cards and sound-video pictures, with templates, any installed font, cover art and waveforms. Every network shows its text card preview. A see-through sidebar.</p>

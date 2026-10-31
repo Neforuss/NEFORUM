@@ -3,7 +3,9 @@
 // backgrounds, sound files (a Standard copy and a still-picture video), PDF
 // reading through PDFium, a background picture behind the pages, and (1.3.1)
 // an audio card drawn from a template with the sound's waveform and a text
-// card in a font installed on the computer, found through the font registry. Debug
+// card in a font installed on the computer, found through the font registry,
+// and (1.3.3) a sound video's photo fitted whole to 9:16 and the text card's
+// master editor. Debug
 // tests missed a release-only crash in 1.2.1, so CI runs this in profile mode:
 //
 //   flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/release_probe_test.dart
@@ -24,6 +26,7 @@ import 'package:neforum_app/documents/thread_builder.dart';
 import 'package:neforum_app/media/caption_fonts.dart';
 import 'package:neforum_app/media/card_design.dart';
 import 'package:neforum_app/media/card_templates.dart';
+import 'package:neforum_app/media/photo_fitter.dart';
 import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/media/text_card_background.dart';
 import 'package:neforum_app/platform/desktop.dart';
@@ -36,6 +39,7 @@ import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/text_cards.dart';
 import 'package:neforum_app/ui/root.dart';
+import 'package:neforum_app/ui/router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 /// Far longer than any step takes; a step that hangs fails the test.
@@ -252,6 +256,46 @@ void main() {
       final jpeg = img.decodeJpg(File(designedCard.path).readAsBytesSync())!;
       expect((jpeg.width, jpeg.height), (1080, 1350));
     }
+
+    // 7. 1.3.3: a sound video's picture shown whole in a 9:16 frame (the
+    //    photo's sides kept, the room filled with its colours), and the text
+    //    card's master editor in the composer, setting every network at once.
+    final framed = img.decodePng((await framePhotoPng(img.encodeJpg(source, quality: 90), width: 1080, height: 1920, mode: PhotoFitMode.color)
+        .timeout(_limit, onTimeout: () => fail('Fitting a photo to a 9:16 frame did not finish')))!)!;
+    expect((framed.width, framed.height), (1080, 1920));
+    final leftEdge = framed.getPixel(2, 960), rightEdge = framed.getPixel(1077, 960);
+    // Red runs from 40 at the photo's left edge to 220 at its right: cut to
+    // 9:16, the frame's edges would be about 92 and 168.
+    expect(leftEdge.r, lessThan(70), reason: 'the photo\'s left edge is in the frame');
+    expect(rightEdge.r, greaterThan(190), reason: 'the photo\'s right edge is in the frame');
+    c.read(composerProvider.notifier)
+      ..reset()
+      ..setText('Release probe: a sound file for Instagram.')
+      ..addMedia([photo, tone])
+      ..selectAccounts([ig.id])
+      ..setAudioQuality(AudioQuality.standard);
+    await pumpFor(300);
+    post = await c.read(postActionsProvider).saveDraft().timeout(_limit, onTimeout: () => fail('Save draft with a sound file for Instagram did not finish'));
+    await pumpFor(300);
+    if (canEncode) {
+      final video = post.media.where((m) => isAudioRendition(m) && m.isVideo).firstOrNull ?? fail('no still-picture video for Instagram');
+      expect((video.width, video.height), (1080, 1920));
+      expect(video.renderParameters?['fit'], s.settings.photoFit.name, reason: 'the photo is fitted, not cut');
+    }
+    c.read(routerProvider).go('/compose');
+    c.read(composerProvider.notifier)
+      ..reset()
+      ..setText('Release probe: one card editor for every network.')
+      ..selectAccounts([ig.id, bluesky.id])
+      ..setTextCardEveryNetwork(true)
+      ..setTextCardBranded('bluesky', false);
+    await pumpFor(1500);
+    expect(find.byKey(const Key('text-card-master')), findsOneWidget, reason: 'two networks get a card');
+    await tester.ensureVisible(find.byKey(const Key('text-card-match')));
+    await tester.tap(find.byKey(const Key('text-card-match')));
+    await pumpFor(800);
+    expect(c.read(composerProvider).textCardBranded['bluesky'], isTrue, reason: 'Make them match');
+    expect(tester.takeException(), isNull);
 
     // 6. A background picture behind the pages, blurred.
     final backdrop = File('${dir.path}${Platform.pathSeparator}backdrop.png')..writeAsBytesSync(img.encodePng(source));

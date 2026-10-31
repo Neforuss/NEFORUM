@@ -682,9 +682,12 @@ jobs:
       - uses: actions/attest-build-provenance@v2
         with:
           subject-path: 'dist/*'
-      # A published release of this tag gets its files replaced; otherwise a new
-      # one is made (drafts are never reused, so a half-uploaded one can't leak).
-      - name: Publish the release
+      # A published release of this tag gets its files replaced. Otherwise a new
+      # one is made as a draft: the maintainer installs the version, mirrors these
+      # files to neforus.com, then publishes it (`gh release edit <tag>
+      # --draft=false --latest`), so GitHub is last. Drafts are never reused, so a
+      # half-uploaded one can't leak.
+      - name: Upload the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -693,7 +696,7 @@ jobs:
           tag="$GITHUB_REF_NAME"
           if gh api "repos/$GH_REPO/releases/tags/$tag" > /dev/null 2>&1; then
             gh release upload "$tag" dist/* --clobber
-            gh release edit "$tag" --title "NEFORUM ${tag#v}" --draft=false --latest
+            gh release edit "$tag" --title "NEFORUM ${tag#v}"
           else
-            gh release create "$tag" dist/* --title "NEFORUM ${tag#v}" --notes-file "$RUNNER_TEMP/notes.md" --latest
+            gh release create "$tag" dist/* --title "NEFORUM ${tag#v}" --notes-file "$RUNNER_TEMP/notes.md" --draft
           fi
