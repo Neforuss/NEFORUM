@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.3.4" date="2026-10-31">
+      <description>
+        <p>Photo dumps go out whole: more photos and videos than a network takes in one post are split by its own limits, in your order, into further posts of a thread on X, Bluesky, Mastodon and Misskey, and into a numbered series of posts elsewhere, instead of being dropped. The preview shows every post, and a thread or series that breaks off is finished by Retry without posting anything twice.</p>
+      </description>
+    </release>
     <release version="1.3.3" date="2026-10-30">
       <description>
         <p>One editor for the text card of every network: set the design, font, signature and @handle once for all of them, see what still differs, and make them match in one tap. Sound videos show the whole photo or cover art, fitted to the frame, instead of cutting its sides off. Browser extension 1.1.3.</p>
