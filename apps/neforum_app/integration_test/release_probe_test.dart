@@ -41,6 +41,7 @@ import 'package:neforum_app/state/text_cards.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
+import 'package:window_manager/window_manager.dart';
 
 /// Far longer than any step takes; a step that hangs fails the test.
 const Duration _limit = Duration(seconds: 120);
@@ -282,6 +283,11 @@ void main() {
       expect((video.width, video.height), (1080, 1920));
       expect(video.renderParameters?['fit'], s.settings.photoFit.name, reason: 'the photo is fitted, not cut');
     }
+    // At CI's window size (narrower than the two-column composer) on every
+    // machine, so the probe sees the same layout here as there.
+    final windowSize = await windowManager.getSize();
+    await windowManager.setSize(const Size(940, 760));
+    await pumpFor(500);
     c.read(routerProvider).go('/compose');
     c.read(composerProvider.notifier)
       ..reset()
@@ -290,12 +296,20 @@ void main() {
       ..setTextCardEveryNetwork(true)
       ..setTextCardBranded('bluesky', false);
     await pumpFor(1500);
+    // The previews are behind a Write / Preview switch at this width.
+    final previewSwitch = find.textContaining('Preview (');
+    if (previewSwitch.evaluate().isNotEmpty) {
+      await tester.tap(previewSwitch.first);
+      await pumpFor(800);
+    }
     expect(find.byKey(const Key('text-card-master')), findsOneWidget, reason: 'two networks get a card');
     await tester.ensureVisible(find.byKey(const Key('text-card-match')));
     await tester.tap(find.byKey(const Key('text-card-match')));
     await pumpFor(800);
     expect(c.read(composerProvider).textCardBranded['bluesky'], isTrue, reason: 'Make them match');
     expect(tester.takeException(), isNull);
+    await windowManager.setSize(windowSize);
+    await pumpFor(500);
 
     // 6. A background picture behind the pages, blurred.
     final backdrop = File('${dir.path}${Platform.pathSeparator}backdrop.png')..writeAsBytesSync(img.encodePng(source));
