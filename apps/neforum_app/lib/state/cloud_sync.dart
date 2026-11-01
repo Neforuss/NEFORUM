@@ -263,8 +263,16 @@ class CloudSync implements SecretsCoordinator {
       return;
     }
     final id = await deviceId();
+    _engine = _engineFor(backend, passphrase, id, _StateFile(storage));
+    status.value = CloudSyncStatus(CloudSyncPhase.ok, deviceId: id);
+  }
+
+  /// The engine for [backend] with every source this device syncs: one
+  /// recipe for syncing and for the dry run, so the dry run sees exactly
+  /// what the sync will.
+  SyncEngine _engineFor(SyncBackend backend, String passphrase, String id, SyncStateStore state) {
     final host = deviceHostName();
-    _engine = SyncEngine(
+    return SyncEngine(
       backend: backend,
       cipher: BackupCipher(passphrase, derive: _deriveOffThread),
       deviceId: id,
@@ -281,10 +289,18 @@ class CloudSync implements SecretsCoordinator {
         _settingsSource(),
         _mediaHostsSource(),
       ],
-      state: _StateFile(storage),
+      state: state,
       secrets: secrets,
     );
-    status.value = CloudSyncStatus(CloudSyncPhase.ok, deviceId: id);
+  }
+
+  /// 1.3.5: the dry run before this device's first sync with the file in
+  /// [backend]: what joining would bring here and send there, without doing
+  /// any of it. The returned planner stretches the passphrase once and can
+  /// be asked again with the other side's setup winning.
+  Future<SyncJoinPlanner> joinPlanner(SyncBackend backend, String passphrase) async {
+    final st = MemorySyncStateStore();
+    return SyncJoinPlanner._(_engineFor(backend, passphrase, await deviceId(), st), st);
   }
 
   /// This device's id in the sync file, made once.
@@ -299,17 +315,33 @@ class CloudSync implements SecretsCoordinator {
     return _deviceId = id;
   }
 
-  /// Settings that travel (the same allowlist as "Move to another device").
+  /// Settings that travel (the same allowlist as "Move to another device"),
+  /// one record each. 1.3.5: every shared setting is always there with its
+  /// value, defaults included ([syncedSettings]), so a setting put back to
+  /// its default travels, and the setup that wins a first sync wins whole.
+  /// Settings this version does not share (a newer NEFORUM's) are left in
+  /// the file, and a deletion (an older NEFORUM leaves defaults out) changes
+  /// nothing here.
   SyncSource _settingsSource() => CallbackSyncSource(
         prefix: 'setting',
-        snapshot: () async => {for (final e in exportableSettings(_currentSettings()).entries) e.key: SyncItem(e.value)},
+        snapshot: () async => {for (final e in syncedSettings(_currentSettings()).entries) e.key: SyncItem(e.value)},
         apply: (key, value) async {
-          if (value == null || !kExportableSettings.contains(key)) return;
+          if (!kExportableSettings.contains(key)) return;
           await _storeSettings(withImportedSettings(_currentSettings(), {key: value}));
+        },
+        handles: kExportableSettings.contains,
+        appliesDeletions: false,
+        remapAccountIds: (key, value, ids) {
+          if (key != 'defaultTargetIds' || value is! List || !value.any(ids.containsKey)) return value;
+          return [...{for (final id in value) ids[id] ?? id}];
         },
       );
 
-  /// Both media hosts with their keys, as one record.
+  /// Both media hosts with their keys, as one record (so a host never
+  /// arrives without its keys). On a first sync where both sides have
+  /// hosts, each slot the winning side left empty keeps the other side's
+  /// host ([mergeMediaHostsOnJoin]): a device without a media host never
+  /// takes another device's away.
   SyncSource _mediaHostsSource() => CallbackSyncSource(
         prefix: 'mediaHosts',
         snapshot: () async {
@@ -324,6 +356,8 @@ class CloudSync implements SecretsCoordinator {
           if (value is Map) s = await withImportedMediaHosts(s, secrets, Map<String, dynamic>.from(value));
           await _storeSettings(s);
         },
+        handles: (id) => id == 'all',
+        joinMerge: (_, here, file, {required hereWins}) => mergeMediaHostsOnJoin(here, file, hereWins: hereWins),
       );
 
   /// Syncs now; errors land in [status].
@@ -366,6 +400,95 @@ class CloudSync implements SecretsCoordinator {
     _engine?.dispose();
     status.dispose();
   }
+}
+
+/// 1.3.5: the dry run of this device's first sync with one sync file
+/// ([CloudSync.joinPlanner]). Reads only: nothing is stored or written.
+class SyncJoinPlanner {
+  SyncJoinPlanner._(this._engine, this._state);
+  final SyncEngine _engine;
+  final MemorySyncStateStore _state;
+
+  /// What joining would do with [seed]'s setup winning where both sides
+  /// differ, or with the seed rule's choice when `null`.
+  Future<SyncPreview> preview({SyncSeed? seed}) {
+    _state.data = SyncEngine.joinState(seed);
+    return _engine.preview();
+  }
+
+  void dispose() => _engine.dispose();
+}
+
+/// 1.3.5: a dry run in words, for the dialog before a first sync.
+@immutable
+class SyncJoinSummary {
+  const SyncJoinSummary({required this.headline, required this.details, required this.swapLabel});
+
+  /// "This device gets 16 accounts, 2 media hosts and 41 settings from
+  /// DESKTOP-X (Windows)." or "This device's setup will be used (...)."
+  final String headline;
+  final List<String> details;
+
+  /// The button that makes the other side's setup win instead.
+  final String swapLabel;
+}
+
+String _count(int n, String one, [String? many]) => '$n ${n == 1 ? one : (many ?? '${one}s')}';
+
+/// "a", "a and b", "a, b and c".
+String _listed(List<String> parts) => switch (parts.length) {
+      0 => '',
+      1 => parts.single,
+      _ => '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}',
+    };
+
+int _hostsIn(Object? hosts) => hosts is Map ? MediaHostSlot.values.where((s) => hosts[s.name] is Map).length : 0;
+
+/// 1.3.5: [p] in words. [chosen]: the user picked whose setup wins instead
+/// of the seed rule.
+SyncJoinSummary describeJoinPreview(SyncPreview p, {bool chosen = false}) {
+  final from = p.fromDevices;
+  final source = from.isEmpty ? null : (from.length == 1 ? from.single : '${from.first} and ${_count(from.length - 1, 'other device')}');
+  final arriving = _listed([
+    if (p.receivedOf('account') > 0) _count(p.receivedOf('account'), 'account'),
+    if (_hostsIn(p.received['mediaHosts:all']) > 0) _count(_hostsIn(p.received['mediaHosts:all']), 'media host'),
+    if (p.receivedOf('setting') > 0) _count(p.receivedOf('setting'), 'setting'),
+    if (p.receivedOf('post') > 0) _count(p.receivedOf('post'), 'post'),
+  ]);
+  final sending = _listed([
+    if (p.sentOf('account') > 0) _count(p.sentOf('account'), 'account'),
+    if (p.sent.contains('mediaHosts:all')) "this device's media hosts",
+    if (p.sentOf('setting') > 0) _count(p.sentOf('setting'), 'setting'),
+    if (p.sentOf('post') > 0) _count(p.sentOf('post'), 'post'),
+  ]);
+  final mine = p.seed == SyncSeed.thisDevice;
+  final h = p.here.accounts, f = p.file.accounts;
+  final String why;
+  if (chosen) {
+    why = 'as you chose';
+  } else if (h != f) {
+    why = mine ? 'it has more accounts: $h against $f in the sync file' : 'it has more accounts: $f against $h on this device';
+  } else if (p.here.oldestConnection != p.file.oldestConnection && (p.here.oldestConnection != null || p.file.oldestConnection != null)) {
+    why = 'both have ${_count(h, 'account')}, and its oldest connection is older';
+  } else {
+    why = 'both have ${_count(h, 'account')}, so the sync file stays as it is';
+  }
+  final fromPart = source == null ? '' : ' from $source';
+  final headline = mine
+      ? "This device's setup will be used ($why)."
+      : (arriving.isEmpty ? 'This device already has everything the sync file has.' : 'This device gets $arriving$fromPart.');
+  return SyncJoinSummary(
+    headline: headline,
+    details: [
+      if (!mine) "Where the two differ, the sync file's setup wins ($why).",
+      if (mine && arriving.isNotEmpty) 'This device also gets $arriving$fromPart.',
+      if (sending.isNotEmpty) 'The sync file gets $sending from this device.',
+      if (p.mergedAccounts.isNotEmpty)
+        '${_count(p.mergedAccounts.length, 'account')} connected on both ${p.mergedAccounts.length == 1 ? 'becomes' : 'become'} one, with the newer sign-in.',
+      'Nothing is deleted: what only one side has is kept.',
+    ],
+    swapLabel: mine ? "Use the sync file's setup instead" : "Use this device's setup instead",
+  );
 }
 
 /// [e] as a sentence for the sync settings.

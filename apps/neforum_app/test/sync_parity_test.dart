@@ -9,22 +9,19 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/state/device_transfer.dart';
 import 'package:neforum_app/state/media_host_config.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import 'sync_fixtures.dart';
 
-/// The reviewed device-only settings (see kDeviceOnlySettings for why).
-const _deviceOnlySettings = {
-  'startAtLogin', 'minimizeToTray', 'onboarded', 'browserExtension', 'movedAccountIds', 'movedAt', //
-  'syncProviderId', 'syncConfig', 'uiZoom', 'mobileTextScale', 'collapsedSettingsSections', //
-  'automaticHandoffPosting', 'automaticHandoffExcludedPlatforms', 'backgroundImagePath', 'backgroundBlur', 'backgroundDim', //
-  'updateCheck', 'updateCheckedAt', 'updateLatestRelease', 'updateDismissedVersion',
-  // Not device-only: they travel with their keys in the media hosts record.
-  'mediaHostId', 'mediaHostConfig', 'fallbackMediaHostId', 'fallbackMediaHostConfig',
-};
-const _deviceOnlyAccountFields = {'lastError'};
+/// The reviewed device-only lists, each entry with its reason
+/// (device_transfer.dart, sync_sources.dart). The media host settings are on
+/// it because they are not settings records; the media hosts are compared
+/// on their own, with their keys.
+final _deviceOnlySettings = kDeviceOnlySettings.keys.toSet();
+final _deviceOnlyAccountFields = kDeviceOnlyAccountFields.keys.toSet();
 
 const _timeout = Timeout(Duration(minutes: 3));
 

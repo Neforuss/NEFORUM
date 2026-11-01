@@ -11,7 +11,7 @@ const _pass = 'shared sync passphrase';
 
 /// One device on the shared file: its own data, keychain and sync state.
 class _Device {
-  _Device(this.id, this.backend, this.clock)
+  _Device(this.id, this.backend, this.clock, {List<SyncSource> extra = const [], LogSink? log})
       : accounts = InMemoryAccountRepository(),
         posts = InMemoryPostRepository(),
         secrets = InMemorySecretStore(),
@@ -24,11 +24,12 @@ class _Device {
       }),
       deviceId: id,
       device: SyncDeviceInfo(label: id, platform: 'test', appVersion: '1.0.8', seenAt: DateTime.utc(2000)),
-      sources: [AccountsSyncSource(accounts), SecretsSyncSource(accounts, secrets), PostsSyncSource(posts)],
+      sources: [AccountsSyncSource(accounts), SecretsSyncSource(accounts, secrets), PostsSyncSource(posts), ...extra],
       state: stateStore,
       secrets: secrets,
       clock: () => clock.now,
       sleep: (d) async => clock.now = clock.now.add(d),
+      log: log == null ? null : Logger('sync', sink: log),
     );
   }
 
@@ -47,8 +48,16 @@ class _Clock {
   DateTime now = DateTime.utc(2026, 10, 20, 12);
 }
 
-ConnectedAccount _account(String id, String platform, {PlatformTier tier = PlatformTier.byokApi, String? name}) =>
-    ConnectedAccount(id: id, platformId: platform, tier: tier, displayName: name ?? id, createdAt: DateTime.utc(2026, 10, 1));
+ConnectedAccount _account(String id, String platform,
+        {PlatformTier tier = PlatformTier.byokApi, String? name, String? handle, DateTime? createdAt, Map<String, dynamic> config = const {}}) =>
+    ConnectedAccount(
+        id: id, platformId: platform, tier: tier, displayName: name ?? id, handle: handle, createdAt: createdAt ?? DateTime.utc(2026, 10, 1), config: config);
+
+/// Device-made ids, as Mastodon and hand-off accounts get them.
+const _uuid1 = '6f1c2d3e-0000-4abc-9def-000000000001';
+const _uuid2 = '6f1c2d3e-0000-4abc-9def-000000000002';
+const _uuid3 = '6f1c2d3e-0000-4abc-9def-000000000003';
+const _mastodonConfig = {'instance': 'https://mastodon.example', 'domain': 'mastodon.example', 'remoteAccountId': '42'};
 
 Post _post(String id, {PostStatus status = PostStatus.draft, DateTime? updatedAt, DateTime? scheduledAt, String text = 'hello', List<PostTarget> targets = const []}) => Post(
       id: id,
@@ -162,8 +171,10 @@ void main() {
       expect((await a.secrets.read('x1'))?['access_token'], 'a-new');
     });
 
-    test('a device joining takes what the file has, and adds what only it has', () async {
+    test('a device joining with fewer accounts takes what the file has, and adds what only it has', () async {
       await a.accounts.upsert(_account('m1', 'mastodon', name: 'From A'));
+      await a.accounts.upsert(_account('a2', 'x'));
+      await a.accounts.upsert(_account('a3', 'tumblr'));
       await a.engine.sync();
       await b.accounts.upsert(_account('m1', 'mastodon', name: 'Old name on B'));
       await b.accounts.upsert(_account('bsky', 'bluesky'));
@@ -591,6 +602,432 @@ void main() {
       expect(await s3.write(Uint8List.fromList([1]), ifMatch: '"v2"'), '"v2"');
       expect(s3.atomicWrites, isFalse);
     });
+  });
+
+  Future<SyncDocument> file() async => SyncDocument.parse(await BackupCipher(_pass, params: _fast, minimum: _fast).open(backend.bytes!));
+
+  /// Another device writes [record] into the file (a real write: a new
+  /// version, so no engine reads a cached copy instead).
+  Future<void> putInFile(String key, SyncRecord record) async {
+    final cipher = BackupCipher(_pass, params: _fast, minimum: _fast);
+    final doc = await file();
+    doc.records[key] = record;
+    await backend.write(await cipher.seal(doc.toJson(writtenBy: 'other', writtenAt: clock.now)), ifMatch: (await backend.read())!.version);
+  }
+
+  group('the seed rule (1.3.5)', () {
+    SyncSideSummary side(int n, [DateTime? oldest]) => SyncSideSummary(accounts: n, oldestConnection: oldest);
+    final older = DateTime.utc(2025, 1, 1), newer = DateTime.utc(2026, 1, 1);
+
+    test('the side with more accounts wins, on either side', () {
+      expect(chooseSyncSeed(here: side(16, newer), file: side(3, older)), SyncSeed.thisDevice);
+      expect(chooseSyncSeed(here: side(3, older), file: side(16, newer)), SyncSeed.file);
+      expect(chooseSyncSeed(here: side(1), file: side(0)), SyncSeed.thisDevice);
+    });
+
+    test('on a tie, the side whose oldest account connection is older wins', () {
+      expect(chooseSyncSeed(here: side(4, older), file: side(4, newer)), SyncSeed.thisDevice);
+      expect(chooseSyncSeed(here: side(4, newer), file: side(4, older)), SyncSeed.file);
+      expect(chooseSyncSeed(here: side(4, older), file: side(4)), SyncSeed.thisDevice, reason: 'a date beats no date');
+      expect(chooseSyncSeed(here: side(4), file: side(4, older)), SyncSeed.file);
+    });
+
+    test('a full tie keeps the file', () {
+      expect(chooseSyncSeed(here: side(4, older), file: side(4, older)), SyncSeed.file);
+      expect(chooseSyncSeed(here: side(0), file: side(0)), SyncSeed.file);
+      expect(chooseSyncSeed(here: side(2), file: side(2)), SyncSeed.file);
+    });
+
+    test('a summary counts accounts and finds the oldest connection', () {
+      final s = SyncSideSummary.ofAccounts([
+        {'createdAt': '2026-03-01T00:00:00.000Z'},
+        {'createdAt': '2025-07-04T00:00:00.000Z'},
+        {'createdAt': 'not a date'},
+        'not an account',
+      ]);
+      expect(s, SyncSideSummary(accounts: 3, oldestConnection: DateTime.utc(2025, 7, 4)));
+      expect(SyncSideSummary.ofAccounts(const []), const SyncSideSummary(accounts: 0));
+    });
+  });
+
+  group('first sync (1.3.5)', () {
+    test('the device with more accounts keeps its version even when it joins second', () async {
+      await a.accounts.upsert(_account('m1', 'mastodon', name: 'Phone default'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account('m1', 'mastodon', name: 'Computer original'));
+      await b.accounts.upsert(_account('bsky', 'bluesky'));
+      await b.engine.sync();
+      await a.engine.sync();
+      for (final d in [a, b]) {
+        expect((await d.accounts.get('m1'))?.displayName, 'Computer original');
+        expect(await d.accounts.get('bsky'), isNotNull);
+      }
+    });
+
+    test('on a tie, the device whose oldest account connection is older wins', () async {
+      await a.accounts.upsert(_account('m1', 'mastodon', name: 'From A', createdAt: DateTime.utc(2026, 5, 1)));
+      await a.accounts.upsert(_account('a2', 'x', createdAt: DateTime.utc(2026, 5, 1)));
+      await a.engine.sync();
+      await b.accounts.upsert(_account('m1', 'mastodon', name: 'From B', createdAt: DateTime.utc(2026, 5, 1)));
+      await b.accounts.upsert(_account('b2', 'tumblr', createdAt: DateTime.utc(2024, 3, 1)));
+      await b.engine.sync();
+      await a.engine.sync();
+      expect((await a.accounts.get('m1'))?.displayName, 'From B', reason: 'B has been in use since 2024');
+    });
+
+    test('the choice confirmed in the dry run beats the seed rule', () async {
+      await a.accounts.upsert(_account('m1', 'mastodon', name: 'In the file'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account('m1', 'mastodon', name: 'On B'));
+      await b.accounts.upsert(_account('b2', 'x'));
+      await b.stateStore.write(SyncEngine.joinState(SyncSeed.file));
+      expect((await b.engine.preview()).seed, SyncSeed.file);
+      await b.engine.sync();
+      expect((await b.accounts.get('m1'))?.displayName, 'In the file');
+      expect(SyncEngine.joinState(null), isEmpty);
+      expect(SyncEngine.joinState(SyncSeed.thisDevice), SyncEngine.keepThisDeviceOnJoin);
+    });
+
+    test('nothing is ever deleted on a first sync, whichever side wins', () async {
+      for (final seed in [null, SyncSeed.thisDevice, SyncSeed.file]) {
+        for (final bHasMore in [false, true]) {
+          final store = MemorySyncBackend();
+          final x = _Device('X', store, clock), y = _Device('Y', store, clock);
+          await x.accounts.upsert(_account('shared', 'mastodon', name: 'X version'));
+          await x.accounts.upsert(_account('only-x', 'x'));
+          await x.secrets.write('only-x', {'access_token': 'fake-x'});
+          await x.posts.upsert(_post('post-x'));
+          await x.posts.upsert(_post('gone-later'));
+          await x.engine.sync();
+          // X deletes a post Y also has: a tombstone in the file.
+          await x.posts.delete('gone-later');
+          await x.engine.sync();
+          await y.accounts.upsert(_account('shared', 'mastodon', name: 'Y version'));
+          await y.accounts.upsert(_account('only-y', 'bluesky'));
+          if (bHasMore) {
+            await y.accounts.upsert(_account('only-y2', 'tumblr'));
+            await y.accounts.upsert(_account('only-y3', 'reddit'));
+          }
+          await y.secrets.write('only-y', {'app_password': 'fake-y'});
+          await y.posts.upsert(_post('post-y'));
+          await y.posts.upsert(_post('gone-later', text: 'still wanted on Y'));
+          if (seed != null) await y.stateStore.write(SyncEngine.joinState(seed));
+          await y.engine.sync();
+          final why = 'seed $seed, Y has more: $bHasMore';
+          expect((await y.accounts.all()).map((e) => e.id).toSet(), containsAll(['shared', 'only-x', 'only-y']), reason: why);
+          expect(await y.secrets.read('only-x'), isNotNull, reason: why);
+          expect(await y.secrets.read('only-y'), isNotNull, reason: why);
+          expect((await y.posts.all()).map((p) => p.id).toSet(), {'post-x', 'post-y', 'gone-later'}, reason: '$why: a deletion never reaches a first sync');
+          final doc = SyncDocument.parse(await BackupCipher(_pass, params: _fast, minimum: _fast).open(store.bytes!));
+          for (final k in ['account:only-y', 'secrets:only-y', 'post:post-y', 'account:shared', 'account:only-x', 'post:post-x']) {
+            expect(doc.records[k]?.deleted, isFalse, reason: '$why: $k');
+          }
+        }
+      }
+    });
+  });
+
+  group('merged accounts (1.3.5)', () {
+    test("one Mastodon account connected on both devices becomes one, under the file's id, with the newer sign-in", () async {
+      for (final hereNewer in [true, false]) {
+        final store = MemorySyncBackend();
+        final x = _Device('X', store, clock), y = _Device('Y', store, clock);
+        await x.accounts.upsert(_account(_uuid1, 'mastodon',
+            tier: PlatformTier.openApi, handle: '@Alice@Mastodon.Example', createdAt: DateTime.utc(2026, hereNewer ? 8 : 10, 1), config: _mastodonConfig));
+        await x.secrets.write(_uuid1, {'access_token': 'fake-token-x'});
+        await x.engine.sync();
+        await y.accounts.upsert(_account(_uuid2, 'mastodon',
+            tier: PlatformTier.openApi, handle: 'alice@mastodon.example', createdAt: DateTime.utc(2026, hereNewer ? 10 : 8, 1), config: _mastodonConfig));
+        await y.secrets.write(_uuid2, {'access_token': 'fake-token-y'});
+        await y.posts.upsert(_post('py', targets: const [PostTarget(accountId: _uuid2)]));
+        final r = await y.engine.sync();
+        await x.engine.sync();
+        expect(r.mergedAccounts, 1);
+        final newer = hereNewer ? 'fake-token-y' : 'fake-token-x';
+        for (final d in [x, y]) {
+          expect((await d.accounts.all()).map((e) => e.id), [_uuid1], reason: "the file's id is kept (Y newer: $hereNewer)");
+          expect((await d.secrets.read(_uuid1))?['access_token'], newer, reason: 'the newer sign-in (Y newer: $hereNewer)');
+          expect((await d.posts.get('py'))!.targets.single.accountId, _uuid1);
+        }
+        expect(await y.secrets.read(_uuid2), isNull);
+      }
+    });
+
+    test('the same Bluesky account has the same id on both devices: nothing to merge', () async {
+      await a.accounts.upsert(_account('bluesky:did:plc:fake', 'bluesky', handle: 'me.bsky.social'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account('bluesky:did:plc:fake', 'bluesky', handle: 'me.bsky.social'));
+      final r = await b.engine.sync();
+      expect(r.mergedAccounts, 0);
+      expect((await b.accounts.all()).map((e) => e.id), ['bluesky:did:plc:fake']);
+    });
+
+    test('two different X accounts are never merged, even under one name', () async {
+      await a.accounts.upsert(_account('x-1', 'x', name: 'Me', handle: '@me_one'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account('x-2', 'x', name: 'Me', handle: '@me_two'));
+      final r = await b.engine.sync();
+      await a.engine.sync();
+      expect(r.mergedAccounts, 0);
+      for (final d in [a, b]) {
+        expect((await d.accounts.all()).map((e) => e.id).toSet(), {'x-1', 'x-2'});
+      }
+    });
+
+    test('Mastodon accounts with one handle but different server ids, or of different tiers, stay apart', () async {
+      await a.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, handle: '@alice@mastodon.example', config: _mastodonConfig));
+      await a.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.handoff, handle: 'alice@mastodon.example', name: 'alice (hand-off)'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account(_uuid2, 'mastodon',
+          tier: PlatformTier.openApi, handle: '@alice@mastodon.example', config: {..._mastodonConfig, 'remoteAccountId': '99'}));
+      final r = await b.engine.sync();
+      expect(r.mergedAccounts, 0);
+      expect((await b.accounts.all()).length, 3);
+    });
+
+    test('who is the same account', () {
+      Map<String, Object?> acc(String id, String platform, {String tier = 'openApi', String? handle, String name = 'n', Map<String, Object?>? config}) =>
+          {'id': id, 'platformId': platform, 'tier': tier, 'handle': handle, 'displayName': name, 'config': config ?? const {}};
+      expect(isSameConnectedAccount(acc(_uuid1, 'mastodon', handle: '@Alice@M.Example'), acc(_uuid2, 'mastodon', handle: 'alice@m.example')), isTrue);
+      expect(isSameConnectedAccount(acc(_uuid1, 'mastodon', config: _mastodonConfig), acc(_uuid2, 'mastodon', config: _mastodonConfig)), isTrue,
+          reason: 'the same account id on the same server, without handles');
+      expect(isSameConnectedAccount(acc(_uuid1, 'mastodon', handle: '@a@m'), acc(_uuid2, 'pixelfed', handle: '@a@m')), isFalse, reason: 'another network');
+      expect(isSameConnectedAccount(acc(_uuid1, 'mastodon', handle: '@a@m'), acc(_uuid2, 'mastodon', handle: '@b@m')), isFalse);
+      expect(isSameConnectedAccount(acc(_uuid1, 'mastodon'), acc(_uuid2, 'mastodon')), isFalse, reason: 'nothing to tell them apart is not a match');
+      expect(isSameConnectedAccount(acc('x-1', 'x', handle: '@me'), acc('x-2', 'x', handle: '@me')), isFalse, reason: 'two natural ids are two accounts');
+      expect(isSameConnectedAccount(acc(_uuid1, 'x', handle: '@me'), acc('x-2', 'x', handle: '@me')), isTrue, reason: 'one made-up id may match');
+      expect(isSameConnectedAccount(acc('h-a', 'instagram', tier: 'handoff', name: 'IG'), acc('h-b', 'instagram', tier: 'handoff', name: 'IG')), isTrue);
+      expect(isSameConnectedAccount(acc('h-a', 'instagram', tier: 'handoff', name: 'IG'), acc('h-b', 'instagram', tier: 'handoff', name: 'IG 2')), isFalse);
+      expect(isSameConnectedAccount(acc(_uuid1, 'mastodon', handle: 'a@m'), acc(_uuid2, 'mastodon', tier: 'handoff', handle: 'a@m')), isFalse);
+      expect(normalizedAccountHandle('  @@Alice@Mastodon.Social '), 'alice@mastodon.social');
+      expect(normalizedAccountHandle('@'), isNull);
+      expect(normalizedAccountHandle(null), isNull);
+      expect(isDeviceMadeAccountId('instagram-handoff-$_uuid1'), isTrue);
+      expect(isDeviceMadeAccountId('bluesky:did:plc:abc'), isFalse);
+    });
+
+    test('the newer sign-in: later expiry first, then the later connection; a tie is not newer', () {
+      final early = {'createdAt': '2026-01-01T00:00:00.000Z'}, late = {'createdAt': '2026-06-01T00:00:00.000Z'};
+      Map<String, String> keys(String expires) => {'expires_at': expires};
+      expect(holdsNewerSignIn(first: late, second: early), isTrue);
+      expect(holdsNewerSignIn(first: early, second: late), isFalse);
+      expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-12-01T00:00:00Z'), second: late, secondKeys: keys('2026-11-01T00:00:00Z')), isTrue,
+          reason: 'renewed more recently beats connected more recently');
+      expect(holdsNewerSignIn(first: early, second: early), isFalse);
+    });
+  });
+
+  group('records a version does not manage (1.3.5)', () {
+    /// Settings-like records: [values] always present, deletions not taken.
+    CallbackSyncSource settingsLike(Map<String, Object?> values, {Set<String>? known}) => CallbackSyncSource(
+          prefix: 'setting',
+          snapshot: () async => {for (final e in values.entries) e.key: SyncItem(e.value)},
+          apply: (id, v) async => values[id] = v,
+          handles: known?.contains,
+          appliesDeletions: false,
+        );
+
+    test('a record its source does not manage stays in the file untouched', () async {
+      final newer = <String, Object?>{'theme': 'dark', 'future': 'on'};
+      final older = <String, Object?>{'theme': 'light'};
+      final store = MemorySyncBackend();
+      final n = _Device('N', store, clock, extra: [settingsLike(newer)]);
+      final o = _Device('O', store, clock, extra: [settingsLike(older, known: {'theme'})]);
+      await n.engine.sync();
+      for (var i = 0; i < 3; i++) {
+        await o.engine.sync();
+        await n.engine.sync();
+      }
+      final doc = SyncDocument.parse(await BackupCipher(_pass, params: _fast, minimum: _fast).open(store.bytes!));
+      expect(doc.records['setting:future']?.value, 'on');
+      expect(older.containsKey('future'), isFalse);
+      expect(newer['future'], 'on');
+    });
+
+    test('a deletion settings do not take is kept here and not sent back, and a later change still travels', () async {
+      final values = <String, Object?>{'k': 'v'};
+      final n = _Device('N', backend, clock, extra: [settingsLike(values)]);
+      await n.engine.sync();
+      // An older device that leaves defaults out wrote a deletion.
+      await putInFile('setting:k', SyncRecord.tombstone(at: clock.now, by: 'old'));
+      final writes = backend.writes;
+      for (var i = 0; i < 3; i++) {
+        await n.engine.sync();
+      }
+      expect(values['k'], 'v');
+      expect(backend.writes, writes, reason: 'no back and forth with the older device');
+      values['k'] = 'w';
+      await n.engine.sync();
+      expect((await file()).records['setting:k']?.value, 'w');
+    });
+
+    test('a value this device cannot keep is asked for again, never deleted from the file', () async {
+      final kept = <String, Object?>{};
+      CallbackSyncSource hosts(Map<String, Object?> store, {bool knowsFuture = true}) => CallbackSyncSource(
+            prefix: 'mediaHosts',
+            snapshot: () async => {for (final e in store.entries) e.key: SyncItem(e.value)},
+            apply: (id, v) async {
+              if (v is Map && v['id'] == 'future-host' && !knowsFuture) return; // cannot store it: silently nothing
+              if (v == null) {
+                store.remove(id);
+              } else {
+                store[id] = v;
+              }
+            },
+          );
+      final x = _Device('X', backend, clock, extra: [hosts({'all': {'id': 'future-host'}})]);
+      final y = _Device('Y', backend, clock, extra: [hosts(kept, knowsFuture: false)]);
+      await x.engine.sync();
+      for (var i = 0; i < 3; i++) {
+        await y.engine.sync();
+      }
+      expect((await file()).records['mediaHosts:all']?.deleted, isFalse, reason: 'Y has none, and does not take X\'s away');
+      expect(kept, isEmpty);
+    });
+
+    test('a first sync can combine both versions of a record', () async {
+      final xHosts = <String, Object?>{'all': {'main': 'x-main', 'fallback': null}};
+      final yHosts = <String, Object?>{'all': {'main': 'y-main', 'fallback': 'y-fallback'}};
+      CallbackSyncSource hosts(Map<String, Object?> s) => CallbackSyncSource(
+            prefix: 'mediaHosts',
+            snapshot: () async => {for (final e in s.entries) e.key: SyncItem(e.value)},
+            apply: (id, v) async => s[id] = v,
+            joinMerge: (id, here, there, {required hereWins}) {
+              final w = (hereWins ? here : there)! as Map, l = (hereWins ? there : here)! as Map;
+              return {'main': w['main'] ?? l['main'], 'fallback': w['fallback'] ?? l['fallback']};
+            },
+          );
+      final x = _Device('X', backend, clock, extra: [hosts(xHosts)]);
+      await x.accounts.upsert(_account('one', 'x'));
+      final y = _Device('Y', backend, clock, extra: [hosts(yHosts)]);
+      await x.engine.sync();
+      final preview = await y.engine.preview();
+      expect(preview.seed, SyncSeed.file);
+      expect(preview.received['mediaHosts:all'], {'main': 'x-main', 'fallback': 'y-fallback'});
+      expect(preview.sent, contains('mediaHosts:all'));
+      await y.engine.sync();
+      await x.engine.sync();
+      expect(xHosts['all'], {'main': 'x-main', 'fallback': 'y-fallback'});
+      expect(yHosts['all'], {'main': 'x-main', 'fallback': 'y-fallback'});
+    });
+  });
+
+  group('dry run (1.3.5)', () {
+    Future<Map<String, String>> localRecords(_Device d) async => {
+          for (final s in [AccountsSyncSource(d.accounts), SecretsSyncSource(d.accounts, d.secrets), PostsSyncSource(d.posts)])
+            for (final e in (await s.snapshot()).entries) '${s.prefix}:${e.key}': syncHash(e.value.value),
+        };
+    Map<String, String> changed(Map<String, String> before, Map<String, String> after) => {
+          for (final k in {...before.keys, ...after.keys})
+            if (before[k] != after[k]) k: after[k] ?? 'removed',
+        };
+
+    test('the dry run says exactly what the first sync then does, and does none of it', () async {
+      await a.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+      await a.secrets.write(_uuid1, {'access_token': 'fake-a'});
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.accounts.upsert(_account('t-1', 'tumblr'));
+      await a.posts.upsert(_post('pa'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account(_uuid2, 'mastodon',
+          tier: PlatformTier.openApi, handle: 'me@mastodon.example', createdAt: DateTime.utc(2026, 10, 10), config: _mastodonConfig));
+      await b.secrets.write(_uuid2, {'access_token': 'fake-b'});
+      await b.accounts.upsert(_account('bsky', 'bluesky'));
+      await b.posts.upsert(_post('pb', targets: const [PostTarget(accountId: _uuid2)]));
+
+      final localBefore = await localRecords(b);
+      final fileBefore = {for (final e in (await file()).records.entries) e.key: e.value.toJson().toString()};
+      final writes = backend.writes;
+      final preview = await b.engine.preview();
+      expect(backend.writes, writes, reason: 'the dry run writes nothing');
+      expect(b.stateStore.data, isNull, reason: 'nor the sync state');
+      expect(await localRecords(b), localBefore, reason: 'nor anything here');
+
+      expect(preview.firstJoin, isTrue);
+      expect(preview.seed, SyncSeed.file);
+      expect(preview.here, SyncSideSummary(accounts: 2, oldestConnection: DateTime.utc(2026, 10, 1)));
+      expect(preview.file.accounts, 3);
+      expect(preview.mergedAccounts, {_uuid2: _uuid1});
+      expect(preview.fromDevices, ['A']);
+      expect(preview.removed, isEmpty);
+
+      final report = await b.engine.sync();
+      final localChanges = changed(localBefore, await localRecords(b));
+      final fileAfter = {for (final e in (await file()).records.entries) e.key: e.value.toJson().toString()};
+      final fileChanges = {for (final k in {...fileBefore.keys, ...fileAfter.keys}) if (fileBefore[k] != fileAfter[k]) k};
+      expect(localChanges.keys.toSet(), {...preview.received.keys, ...preview.mergeEdits.keys}, reason: 'what arrived here is what the dry run said');
+      expect(fileChanges, preview.sent, reason: 'what went into the file is what the dry run said');
+      expect(report.mergedAccounts, preview.mergedAccounts.length);
+      expect(report.received, preview.received.length + preview.removed.length);
+      expect(report.sent, preview.sent.length);
+    });
+
+    test('after joining, the dry run lists the next ordinary sync', () async {
+      await a.posts.upsert(_post('p1'));
+      await a.engine.sync();
+      await b.engine.sync();
+      await a.posts.upsert(_post('p1', text: 'edited', updatedAt: DateTime.utc(2026, 10, 20, 12, 30)));
+      await a.engine.sync();
+      final preview = await b.engine.preview();
+      expect(preview.firstJoin, isFalse);
+      expect(preview.seed, isNull);
+      expect(preview.received.keys, ['post:p1']);
+    });
+  });
+
+  test('every account field is classified once, and only device-only ones stay behind', () async {
+    final full = ConnectedAccount(
+      id: 'acct',
+      platformId: 'mastodon',
+      tier: PlatformTier.openApi,
+      displayName: 'Full',
+      createdAt: DateTime.utc(2026),
+      handle: '@full@m.example',
+      avatarUrl: 'https://m.example/a.png',
+      profileUrl: 'https://m.example/@full',
+      config: const {'k': 'v'},
+      quotaOverrides: const {'q': 1},
+      enabled: false,
+      lastError: 'it failed here',
+    );
+    final keys = full.toJson().keys.toSet();
+    expect(kSyncedAccountFields.intersection(kDeviceOnlyAccountFields.keys.toSet()), isEmpty, reason: 'in both lists');
+    expect({...kSyncedAccountFields, ...kDeviceOnlyAccountFields.keys}, keys, reason: 'every field in one list, and no list entry that is not a field');
+    expect(kDeviceOnlyAccountFields.values.every((why) => why.isNotEmpty), isTrue);
+    await a.accounts.upsert(full);
+    final shared = (await AccountsSyncSource(a.accounts).snapshot())['acct']!.value! as Map;
+    expect(shared.keys.toSet(), kSyncedAccountFields);
+    // The receiving device keeps its own last error.
+    await b.accounts.upsert(_account('acct', 'mastodon').copyWith(lastError: 'its own problem'));
+    await AccountsSyncSource(b.accounts).apply('acct', shared);
+    expect((await b.accounts.get('acct'))!.lastError, 'its own problem');
+  });
+
+  test('no key ever reaches a log line', () async {
+    final lines = <String>[];
+    void sink(LogLevel level, String area, String message, [Object? error]) => lines.add('$area $message ${error ?? ''}');
+    final store = MemorySyncBackend();
+    final x = _Device('X', store, clock, log: sink), y = _Device('Y', store, clock, log: sink);
+    await x.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, handle: '@me@m.example', config: _mastodonConfig));
+    await x.secrets.write(_uuid1, {'access_token': 'fake-secret-one', 'refresh_token': 'fake-secret-two'});
+    await x.engine.sync();
+    await y.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: 'me@m.example', createdAt: DateTime.utc(2026, 10, 9), config: _mastodonConfig));
+    await y.secrets.write(_uuid2, {'access_token': 'fake-secret-three'});
+    await y.engine.preview();
+    await y.engine.sync();
+    await x.engine.sync();
+    expect(lines, isNotEmpty, reason: 'the merge is logged');
+    for (final l in lines) {
+      expect(l, isNot(contains('fake-secret')), reason: l);
+    }
+  });
+
+  test('a post keeps its other targets when a merged account is renamed in it', () {
+    final p = PostsSyncSource(InMemoryPostRepository());
+    final value = _post('p', targets: const [PostTarget(accountId: 'old'), PostTarget(accountId: 'other')]).toJson();
+    final moved = p.remapAccountIds('p', value, {'old': 'new'})! as Map;
+    expect([for (final t in moved['targets'] as List) (t as Map)['accountId']], ['new', 'other']);
+    expect(identical(p.remapAccountIds('p', value, {'nobody': 'x'}), value), isTrue, reason: 'unchanged posts stay the same object');
   });
 
   test('every provider has a name, a kind and a hint; ids are unique', () {

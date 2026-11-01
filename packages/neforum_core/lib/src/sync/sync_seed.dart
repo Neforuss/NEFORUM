@@ -1,0 +1,194 @@
+import 'package:meta/meta.dart';
+
+import '../auth/oauth2_pkce.dart';
+
+/// 1.3.5: whose setup a device's first sync keeps where this device and the
+/// sync file hold different versions of the same record. Everything only one
+/// side has is kept either way: a first sync never deletes anything.
+enum SyncSeed {
+  /// This device's version is kept and goes into the file.
+  thisDevice,
+
+  /// The file's version (the devices already syncing) is kept here.
+  file,
+}
+
+/// One side of a first sync as the seed rule sees it: how many accounts it
+/// has and when its oldest one was connected.
+@immutable
+class SyncSideSummary {
+  const SyncSideSummary({required this.accounts, this.oldestConnection});
+
+  /// The summary of accounts as they travel (ConnectedAccount JSON); entries
+  /// that are not accounts are skipped.
+  factory SyncSideSummary.ofAccounts(Iterable<Object?> accounts) {
+    var count = 0;
+    DateTime? oldest;
+    for (final a in accounts) {
+      if (a is! Map) continue;
+      count++;
+      final at = DateTime.tryParse('${a['createdAt'] ?? ''}');
+      if (at != null && (oldest == null || at.isBefore(oldest))) oldest = at;
+    }
+    return SyncSideSummary(accounts: count, oldestConnection: oldest);
+  }
+
+  final int accounts;
+
+  /// When the oldest account on this side was connected, or `null` when it
+  /// has none (or none with a readable date).
+  final DateTime? oldestConnection;
+
+  @override
+  bool operator ==(Object other) => other is SyncSideSummary && other.accounts == accounts && other.oldestConnection == oldestConnection;
+
+  @override
+  int get hashCode => Object.hash(accounts, oldestConnection);
+
+  @override
+  String toString() => 'SyncSideSummary($accounts accounts, oldest ${oldestConnection?.toIso8601String()})';
+}
+
+/// 1.3.5: the seed rule. The side with more accounts gives its setup; on a
+/// tie, the side whose oldest account connection is older (it has been in use
+/// longest); on a full tie the file, because other devices already agree on
+/// it and a joining device changes none of them.
+SyncSeed chooseSyncSeed({required SyncSideSummary here, required SyncSideSummary file}) {
+  if (here.accounts != file.accounts) return here.accounts > file.accounts ? SyncSeed.thisDevice : SyncSeed.file;
+  final h = here.oldestConnection, f = file.oldestConnection;
+  if (h != null && (f == null || h.isBefore(f))) return SyncSeed.thisDevice;
+  return SyncSeed.file;
+}
+
+final RegExp _uuid = RegExp(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}');
+
+/// 1.3.5: whether [id] was made up on the device that connected the account
+/// (a random UUID: Mastodon, TikTok, hand-off accounts) rather than taken from
+/// the account itself (`x-<user id>`, `bluesky:<did>`). Only accounts with a
+/// made-up id can be the same account under two ids: two different natural
+/// ids are two different accounts.
+bool isDeviceMadeAccountId(String id) => _uuid.hasMatch(id);
+
+/// 1.3.5: an account handle as compared across devices: case-insensitive,
+/// without the leading `@`, `null` when empty. `@Alice@Mastodon.Social` and
+/// `alice@mastodon.social` are the same handle.
+String? normalizedAccountHandle(Object? handle) {
+  if (handle is! String) return null;
+  final h = handle.trim().replaceFirst(RegExp('^@+'), '').toLowerCase();
+  return h.isEmpty ? null : h;
+}
+
+/// The account's own id on its server with the server's name, when the
+/// adapter recorded them (`remoteAccountId` and `domain` or `instance`).
+String? _naturalKey(Map<Object?, Object?> account) {
+  final config = account['config'];
+  if (config is! Map) return null;
+  final remote = config['remoteAccountId'];
+  if (remote == null || '$remote'.isEmpty) return null;
+  final server = config['domain'] ?? Uri.tryParse('${config['instance'] ?? ''}')?.host ?? '';
+  return '$remote@${'$server'.toLowerCase()}';
+}
+
+/// 1.3.5: whether the accounts [a] and [b] (ConnectedAccount JSON, different
+/// ids) are one account connected on two devices. Same network and same tier
+/// family (hand-off or not), and:
+///
+/// * hand-off accounts: the same name or the same handle (they only open the
+///   network's app, so two same-named ones are the same thing);
+/// * other accounts: at least one id made up on its device
+///   ([isDeviceMadeAccountId]), and the same account id on the same server
+///   when both recorded it, otherwise the same handle
+///   ([normalizedAccountHandle]).
+///
+/// Different accounts on one network are never the same: their natural ids,
+/// server ids or handles differ.
+bool isSameConnectedAccount(Map<Object?, Object?> a, Map<Object?, Object?> b) {
+  final platform = a['platformId'];
+  if (platform is! String || platform != b['platformId']) return false;
+  final handoffA = a['tier'] == 'handoff', handoffB = b['tier'] == 'handoff';
+  if (handoffA != handoffB) return false;
+  final ha = normalizedAccountHandle(a['handle']), hb = normalizedAccountHandle(b['handle']);
+  if (handoffA) {
+    return (a['displayName'] is String && a['displayName'] == b['displayName']) || (ha != null && ha == hb);
+  }
+  if (!isDeviceMadeAccountId('${a['id']}') && !isDeviceMadeAccountId('${b['id']}')) return false;
+  final na = _naturalKey(a), nb = _naturalKey(b);
+  if (na != null && nb != null) return na == nb;
+  return ha != null && ha == hb;
+}
+
+/// 1.3.5: of two copies of one account, whether [first] holds the newer
+/// sign-in: the keys that expire later (renewed more recently) when both
+/// expire, otherwise the account connected later. A tie is not newer.
+bool holdsNewerSignIn({required Map<Object?, Object?> first, Map<Object?, Object?>? firstKeys, required Map<Object?, Object?> second, Map<Object?, Object?>? secondKeys}) {
+  DateTime? at(Object? v) => DateTime.tryParse('${v ?? ''}');
+  final e1 = at(firstKeys?[OAuthTokens.keyExpiresAt]), e2 = at(secondKeys?[OAuthTokens.keyExpiresAt]);
+  if (e1 != null && e2 != null && e1 != e2) return e1.isAfter(e2);
+  final c1 = at(first['createdAt']), c2 = at(second['createdAt']);
+  return c1 != null && c2 != null && c1.isAfter(c2);
+}
+
+/// 1.3.5: what a sync would do, worked out without doing it
+/// ([SyncEngine.preview]): the "dry run" a device shows before its first
+/// sync. It comes from the same planning code as the sync itself, so what it
+/// says is what the sync then does (unless the file or this device changes
+/// in between).
+@immutable
+class SyncPreview {
+  const SyncPreview({
+    required this.fileExists,
+    required this.firstJoin,
+    required this.here,
+    required this.file,
+    required this.received,
+    required this.sent,
+    required this.mergedAccounts,
+    required this.fromDevices,
+    this.removed = const {},
+    this.mergeEdits = const {},
+    this.seed,
+  });
+
+  /// Whether there is a sync file yet (if not, this device creates it).
+  final bool fileExists;
+
+  /// Whether this is the device's first sync with the file.
+  final bool firstJoin;
+
+  /// Whose version is kept where both sides differ, on a first sync.
+  final SyncSeed? seed;
+
+  /// This device's and the file's accounts, as the seed rule saw them.
+  final SyncSideSummary here;
+  final SyncSideSummary file;
+
+  /// Records this device takes from the file: key (`account:<id>`,
+  /// `setting:<key>`, `mediaHosts:all`...) -> the value it stores (a setting
+  /// may be `null`: its default). Holds keys: never log or show the values.
+  final Map<String, Object?> received;
+
+  /// Records the file deleted that this device removes too. Never on a
+  /// first sync.
+  final Set<String> removed;
+
+  /// Records this device writes into the file.
+  final Set<String> sent;
+
+  /// Accounts connected on both sides under two ids, merged into one: this
+  /// device's id -> the id the file has (and keeps).
+  final Map<String, String> mergedAccounts;
+
+  /// What merging those accounts stores here before anything else: the
+  /// account under the file's id, its keys, the posts and settings that
+  /// named the old id, and the old copy's removal (`null`). Holds keys too.
+  final Map<String, Object?> mergeEdits;
+
+  /// The names of the devices whose records arrive, most records first.
+  final List<String> fromDevices;
+
+  /// How many records of [prefix] arrive or change here.
+  int receivedOf(String prefix) => received.keys.where((k) => k.startsWith('$prefix:')).length;
+
+  /// How many sent records are of [prefix].
+  int sentOf(String prefix) => sent.where((k) => k.startsWith('$prefix:')).length;
+}
