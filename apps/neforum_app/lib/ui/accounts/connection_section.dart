@@ -32,25 +32,47 @@ KeysTravel currentKeysTravel(WidgetRef ref) =>
 /// The keychain is read only while the section is open, so a page of closed
 /// cards costs nothing, and each opening shows the current sign-in.
 class AccountConnectionSection extends StatefulWidget {
-  const AccountConnectionSection({super.key, required this.account});
+  const AccountConnectionSection({super.key, required this.account, required this.network});
   final ConnectedAccount account;
+
+  /// The platform's name, for the screen-reader label.
+  final String network;
+
+  /// Tests only: sections start open, so a page of cards can be checked
+  /// open in one frame instead of one tap and layout per card. Reset it in
+  /// a tearDown.
+  @visibleForTesting
+  static bool debugStartOpen = false;
 
   @override
   State<AccountConnectionSection> createState() => _AccountConnectionSectionState();
 }
 
+/// What a screen reader says for the section's header: which account's
+/// connection it opens, since every card has one.
+String connectionSemanticsLabel(ConnectedAccount account, String network) =>
+    'Connection for ${account.handle ?? account.displayName} on $network';
+
 class _AccountConnectionSectionState extends State<AccountConnectionSection> {
-  bool _open = false;
+  bool _open = AccountConnectionSection.debugStartOpen;
+
+  void _toggle() => setState(() => _open = !_open);
 
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // One node with the account in its label; the row's own "Connection"
+      // text is folded into it.
       Semantics(
+        container: true,
         button: true,
         expanded: _open,
+        label: connectionSemanticsLabel(widget.account, widget.network),
+        onTap: _toggle,
+        excludeSemantics: true,
         child: InkWell(
-          onTap: () => setState(() => _open = !_open),
+          onTap: _toggle,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(Space.lg, Space.sm + 2, Space.md, Space.sm + 2),
             child: Row(children: [
@@ -141,7 +163,10 @@ class _DetailsBody extends StatelessWidget {
             if (sign != null)
               _Row(
                 label: 'Sign-in',
-                child: Text(signInText(sign, when), style: value?.copyWith(color: sign.needsReconnecting ? nf.danger : null)),
+                child: Text(
+                  signInText(sign, when),
+                  style: value?.copyWith(color: sign.needsReconnecting ? nf.danger : (sign.endsSoon ? nf.warning : null)),
+                ),
               ),
             _Row(label: 'Keys on this device', child: _Keys(connection: c, travel: travel, style: value)),
             _Row(label: 'Connected', last: true, child: Text(when(c.connectedAt), style: value)),
@@ -212,14 +237,7 @@ class _Keys extends StatelessWidget {
     final c = connection;
     final muted = style?.copyWith(color: nf.textMuted);
     if (c.storedKeys.isEmpty) {
-      return Text(
-        c.demo
-            ? 'None: this is a demo account.'
-            : c.needsKeys
-                ? 'None stored on this device. Reconnect the account here, or bring its keys over with Sync or Move to another device.'
-                : 'None needed: hand-off opens the app or website, where you are signed in.',
-        style: c.needsKeys && !c.demo ? style?.copyWith(color: nf.warning) : style,
-      );
+      return Text(noStoredKeysText(c), style: c.keysMissing ? style?.copyWith(color: nf.warning) : style);
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       for (final k in c.storedKeys)

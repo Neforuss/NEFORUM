@@ -1,7 +1,7 @@
 // 1.3.5: Accounts > Connection. Every account card shows how the account is
-// set up (server, own app, targets, sign-in expiry, which keys are stored and
-// whether sync carries them) so two devices can be compared, and never shows
-// a key, not even part of one.
+// set up (server, own app, targets, when the sign-in ends, which keys are
+// stored and whether sync carries them) so two devices can be compared, and
+// never shows a key, not even part of one.
 
 import 'dart:io';
 import 'dart:math';
@@ -43,19 +43,53 @@ class _MemoryStorage implements AppStorage {
   Widget image(String path, {BoxFit fit = BoxFit.cover, double? width, double? height, int? cacheWidth}) => SizedBox(width: width, height: height);
 }
 
-/// Fake secret values: upper-case consonants and digits only, so no
-/// lower-case config value, label or demo text can share 6 characters with
-/// one by accident, and every one differs from the others.
+/// The characters every fake secret is made of: upper-case consonants and
+/// digits 2 to 9. Labels, addresses and the demo's own text are lower case,
+/// carry vowels, or use 0 and 1, so any 4 of these characters in a row on
+/// screen or on the clipboard can only have come from a key.
+const String _fakeAlphabet = 'BCDFGHJKLMNPQRSTVWXZ23456789';
+
 class _Fakes {
   final Random _r = Random(20261101);
-  String next() {
-    const abc = 'BCDFGHJKLMNPQRSTVWXZ23456789';
-    return 'Q${List.generate(31, (_) => abc[_r.nextInt(abc.length)]).join()}';
-  }
+  String next() => 'Q${List.generate(31, (_) => _fakeAlphabet[_r.nextInt(_fakeAlphabet.length)]).join()}';
 }
 
-final DateTime _future = DateTime.utc(2031, 1, 2, 3, 4);
 final DateTime _connected = DateTime.utc(2026, 10, 12, 9, 30);
+String _iso(DateTime t) => t.toUtc().toIso8601String();
+
+/// Fails when any of [shown] holds 4 characters in a row of a stored key's
+/// secret material (any run of [_fakeAlphabet] characters inside a fake key;
+/// the rest of a structured key, such as the "https://discord.com/api/"
+/// around a webhook token, is public and shared by every user). Expiry dates
+/// are bookkeeping, not secrets, and are only checked whole, as stored.
+void _expectNoSecretShown(Iterable<String> shown, Iterable<Map<String, String>> secretMaps) {
+  final windows = <String, String>{};
+  final dates = <String>{};
+  final material = RegExp('[$_fakeAlphabet]{4,}');
+  for (final secrets in secretMaps) {
+    for (final e in secrets.entries) {
+      if (kSecretBookkeepingKeys.contains(e.key)) {
+        if (DateTime.tryParse(e.value) != null) dates.add(e.value);
+        continue;
+      }
+      for (final m in material.allMatches(e.value)) {
+        final run = m[0]!;
+        for (var i = 0; i + 4 <= run.length; i++) {
+          windows[run.substring(i, i + 4)] = e.key;
+        }
+      }
+    }
+  }
+  for (final text in shown) {
+    for (var i = 0; i + 4 <= text.length; i++) {
+      final key = windows[text.substring(i, i + 4)];
+      if (key != null) fail('Shows part of a stored "$key": "$text"');
+    }
+    for (final d in dates) {
+      if (text.contains(d)) fail('Shows a stored expiry as stored: "$text"');
+    }
+  }
+}
 
 /// A plausible value for [f] on [a], all lower case.
 Object _fakeValue(PlatformAdapter a, ConnectField f) => switch (f.kind) {
@@ -71,132 +105,346 @@ Object _fakeValue(PlatformAdapter a, ConnectField f) => switch (f.kind) {
 String _shownValue(ConnectField f, Object v) => switch (f.kind) {
       FieldKind.boolean => 'Yes',
       FieldKind.multiline => (v as List<String>).join('\n'),
-      FieldKind.select => '${'$v'[0].toUpperCase()}${'$v'.substring(1)}',
+      FieldKind.select => connectionChoiceLabel('$v'),
       _ => '$v',
     };
 
-/// One fake account per built-in adapter and per way it connects, its
-/// config filled from that way's connect form, its secrets from the form's
-/// secret fields plus OAuth tokens.
-List<(ConnectedAccount, Map<String, String>, ConnectSpec)> _everyAdapterAccount(_Fakes fakes) => [
+/// One account per built-in adapter and per way it connects, its config
+/// filled from that way's connect form and its secrets from the form's
+/// secret fields (nothing invented): proves every form field shows under its
+/// own label. How the adapters really store an account is [_realAccounts].
+List<(ConnectedAccount, Map<String, String>, ConnectSpec)> _formAccounts(_Fakes fakes) => [
       for (final a in builtinAdapters())
         for (final spec in a.connectSpecs)
           (
             ConnectedAccount(
-              id: 'fake-${a.id}-${spec.tier.name}',
+              id: 'form-${a.id}-${spec.tier.name}',
               platformId: a.id,
               tier: spec.tier,
-              displayName: 'fake ${a.id} ${spec.tier.name.toLowerCase()}',
-              handle: '@fake-${a.id}',
+              displayName: 'form ${a.id} ${spec.tier.name.toLowerCase()}',
+              handle: '@form-${a.id}',
               createdAt: _connected,
               config: {for (final f in spec.fields) if (!f.secret) f.key: _fakeValue(a, f)},
             ),
-            {
-              for (final f in spec.fields) if (f.secret) f.key: fakes.next(),
-              if (spec.tier != PlatformTier.handoff) ...{
-                OAuthTokens.keyAccessToken: fakes.next(),
-                OAuthTokens.keyRefreshToken: fakes.next(),
-                OAuthTokens.keyExpiresAt: _future.toIso8601String(),
-                OAuthTokens.keyTokenType: 'Bearer',
-              },
-            },
+            {for (final f in spec.fields) if (f.secret) f.key: fakes.next()},
             spec,
           ),
     ];
 
-/// Accounts shaped like real ones where a config value is cut from a key,
-/// so only [SecretGuard] stands between the key and the screen.
-List<(ConnectedAccount, Map<String, String>)> _guardCases(_Fakes fakes) {
-  final consumerKey = fakes.next();
+/// An account the way its adapter's `connect()` stores it (config keys,
+/// secret keys, which expiry dates), with what the section must show.
+class _Real {
+  _Real(this.account, this.secrets, {required this.keys, this.sign, this.soon = false, this.show = const [], this.hide = const [], this.needsKeys = true});
+  final ConnectedAccount account;
+  final Map<String, String> secrets;
+  final List<String> keys;
+  final SignInState? sign;
+  final bool soon;
+  final List<String> show;
+  final List<String> hide;
+  final bool needsKeys;
+}
+
+ConnectedAccount _acct(String platformId, PlatformTier tier, Map<String, dynamic> config, {String? id, String name = 'Robin', String? handle}) =>
+    ConnectedAccount(id: id ?? 'real-$platformId-${tier.name}', platformId: platformId, tier: tier, displayName: name, handle: handle, createdAt: _connected, config: config);
+
+/// Every way of posting through an API, as the adapters' `connect()` and
+/// `refreshSecrets()` store it (read from each adapter, 1.3.5). [now] dates
+/// the tokens.
+List<_Real> _realAccounts(_Fakes f, DateTime now) {
+  const loopback = 'http://127.0.0.1:52771/callback';
+  Map<String, String> oauth({Duration? expiresIn, bool refresh = false, Duration? refreshIn, String type = 'Bearer', Map<String, String> extra = const {}}) => {
+        OAuthTokens.keyAccessToken: f.next(),
+        if (refresh) OAuthTokens.keyRefreshToken: f.next(),
+        if (expiresIn != null) OAuthTokens.keyExpiresAt: _iso(now.add(expiresIn)),
+        OAuthTokens.keyTokenType: type,
+        if (refreshIn != null) 'refresh_expires_at': _iso(now.add(refreshIn)),
+        ...extra,
+      };
+  Map<String, String> oauth1() => OAuth1Credentials(consumerKey: f.next(), consumerSecret: f.next(), token: f.next(), tokenSecret: f.next()).toSecrets();
+  const oauth1Keys = ['Consumer key (API key)', 'Consumer secret (API key secret)', 'OAuth 1.0a access token', 'OAuth 1.0a access token secret'];
+  final tumblrKey = f.next();
   return [
-    // Tumblr with OAuth 1.0a keeps its consumer key in the config (a connect
-    // field, "OAuth Consumer Key") AND with its keys.
-    (
-      ConnectedAccount(
-        id: 'guard-tumblr',
-        platformId: 'tumblr',
-        tier: PlatformTier.byokApi,
-        displayName: 'guard tumblr',
-        handle: '@guard-tumblr',
-        createdAt: _connected,
-        config: {'consumerKey': consumerKey, 'blogName': 'guardblog', 'authMode': 'oauth1'},
-      ),
-      OAuth1Credentials(consumerKey: consumerKey, consumerSecret: fakes.next(), token: fakes.next(), tokenSecret: fakes.next()).toSecrets(),
+    _Real(
+      _acct('mastodon', PlatformTier.openApi, {
+        'instance': 'https://mastodon.example', 'domain': 'mastodon.example', 'software': 'mastodon', 'softwareVersion': '4.3.0', 'title': 'Mastodon Example',
+        'maxCharacters': 500, 'supportedMimeTypes': ['image/png'], 'apiVersion': 2, 'remoteAccountId': '1093', 'scopes': 'profile write',
+        'redirectUri': loopback, 'tokenEndpoint': 'https://mastodon.example/oauth/token',
+      }, name: 'Robin (mastodon.example)', handle: '@robin@mastodon.example'),
+      oauth(extra: {'client_id': f.next(), 'client_secret': f.next(), OAuthTokens.keyScope: 'profile write'}),
+      keys: ['Access token', 'Client ID', 'Client secret'],
+      show: ['Server address: https://mastodon.example', 'Server software: Mastodon'],
+      hide: ['Redirect URI'],
     ),
-    // Telegram's bot id is the start of the bot token.
-    (
-      ConnectedAccount(
-        id: 'guard-telegram',
-        platformId: 'telegram',
-        tier: PlatformTier.openApi,
-        displayName: 'guard telegram',
-        createdAt: _connected,
-        config: {'botId': 7700112233, 'chatTitle': 'guard channel', 'botUsername': 'guard_bot', 'formatting': 'markdown'},
-      ),
-      {'bot_token': '7700112233:${fakes.next()}'},
+    _Real(
+      _acct('pixelfed', PlatformTier.openApi, {'instance': 'https://pixelfed.example', 'domain': 'pixelfed.example', 'software': 'pixelfed', 'redirectUri': loopback},
+          handle: '@robin@pixelfed.example'),
+      oauth(extra: {'client_id': f.next(), 'client_secret': f.next()}),
+      keys: ['Access token', 'Client ID', 'Client secret'],
+      show: ['Server address: https://pixelfed.example', 'Server software: Pixelfed'],
+      hide: ['Redirect URI'],
     ),
-    // Ghost's key id is the start of the Admin API key.
-    (
-      ConnectedAccount(
-        id: 'guard-ghost',
-        platformId: 'ghost',
-        tier: PlatformTier.openApi,
-        displayName: 'guard ghost',
-        createdAt: _connected,
-        config: {'apiUrl': 'https://guard-ghost.example', 'keyId': 'k3yidf9e8d7c6b5', 'defaultStatus': 'draft'},
-      ),
-      {'admin_api_key': 'k3yidf9e8d7c6b5:${fakes.next()}'},
+    _Real(
+      _acct('bluesky', PlatformTier.openApi, {'did': 'did:plc:robin4example', 'handle': 'robin.bsky.example', 'pds': 'https://pds.example.net', 'service': 'https://bsky.social'},
+          handle: '@robin.bsky.example'),
+      oauth(expiresIn: const Duration(hours: 2), refresh: true, extra: {'app_password': f.next()}),
+      keys: ['Access token', 'Refresh token', 'App password'],
+      sign: SignInState.renews,
+      show: ['Hosting provider: https://bsky.social', 'PDS (data server): https://pds.example.net', 'Account ID (DID): did:plc:robin4example'],
+      hide: ['Handle'],
+    ),
+    _Real(
+      _acct('misskey', PlatformTier.openApi, {
+        'instance': 'https://misskey.example', 'host': 'misskey.example', 'authMethod': 'miauth', 'instanceName': 'Misskey Example', 'version': '2024.11.0',
+        'maxNoteTextLength': 3000, 'canPublicNote': true, 'uploadableFileTypes': ['image/*'], 'miauth': true, 'userId': 'u1', 'username': 'robin',
+      }, handle: '@robin@misskey.example'),
+      oauth(type: 'Misskey', extra: {OAuthTokens.keyScope: 'write:notes,write:drive'}),
+      keys: ['Access token'],
+      show: ['Instance: https://misskey.example', 'Sign-in method: Browser sign-in (MiAuth)'],
+    ),
+    _Real(
+      _acct('nostr', PlatformTier.openApi, {'pubkey': 'a1b2c3d4e5', 'npub': 'npub1robinexample', 'relays': ['wss://relay.one.example', 'wss://relay.two.example']}),
+      {'privateKey': f.next()},
+      keys: ['Private key'],
+      show: ['Relays: wss://relay.one.example\nwss://relay.two.example', 'Public key (npub): npub1robinexample'],
+    ),
+    _Real(
+      _acct('lemmy', PlatformTier.openApi, {
+        'instance': 'https://lemmy.example', 'host': 'lemmy.example', 'username': 'robin', 'authMethod': 'password', 'personId': 7, 'siteName': 'Lemmy Example',
+        'version': '0.19.5', 'languages': {'en': 37}, 'community': 'technology', 'communityId': 3, 'communityTitle': 'Technology',
+      }, handle: '@robin@lemmy.example'),
+      oauth(),
+      keys: ['Access token'],
+      show: ['Instance: https://lemmy.example', 'Site name: Lemmy Example', 'Default community: technology', 'Sign-in method: Password'],
+    ),
+    _Real(
+      _acct('matrix', PlatformTier.openApi, {
+        'homeserver': 'https://matrix.example', 'userId': '@robin:matrix.example', 'deviceId': 'DEVICE', 'roomId': '!room:matrix.example',
+        'roomAlias': '#news:matrix.example', 'roomName': 'News', 'authMethod': 'password', 'maxUploadBytes': 52428800, 'formatting': 'markdown',
+      }),
+      oauth(expiresIn: const Duration(minutes: 5), refresh: true),
+      keys: ['Access token', 'Refresh token'],
+      sign: SignInState.renews,
+      show: ['Homeserver: https://matrix.example', 'Room: News', 'Room address: #news:matrix.example', 'Formatting: Markdown', 'Sign-in method: Password'],
+    ),
+    _Real(
+      _acct('x', PlatformTier.byokApi, {'authMode': 'oauth2', 'clientId': 'x-client-id', 'confidentialClient': false, 'userId': '1234'},
+          id: 'real-x-oauth2', name: 'Robin (@robinmakes)', handle: '@robinmakes'),
+      oauth(expiresIn: const Duration(hours: 2), refresh: true, extra: {OAuthTokens.keyScope: 'tweet.write offline.access'}),
+      keys: ['Access token', 'Refresh token'],
+      sign: SignInState.renews,
+      show: ['Client ID: x-client-id', 'Sign-in method: Browser sign-in (OAuth 2.0)'],
+    ),
+    _Real(
+      _acct('x', PlatformTier.byokApi, {'authMode': 'oauth1', 'userId': '1234'}, id: 'real-x-oauth1', name: 'Robin (@robinmakes)', handle: '@robinmakes'),
+      oauth1(),
+      keys: oauth1Keys,
+      show: ['Sign-in method: OAuth 1.0a keys'],
+    ),
+    _Real(
+      _acct('threads', PlatformTier.byokApi, {
+        'app_id': '1234567', 'redirect_uri': 'https://127.0.0.1:52771/callback', 'token_source': 'oauth', 'user_id': '99', 'username': 'robinmakes',
+      }, handle: '@robinmakes'),
+      oauth(expiresIn: const Duration(days: 50), extra: {'app_secret': f.next(), 'token_issued_at': _iso(now.subtract(const Duration(days: 10)))}),
+      keys: ['Access token', 'App secret'],
+      sign: SignInState.renewsWhenUsed,
+      show: ['Threads app ID: 1234567', 'Redirect URI you registered: https://127.0.0.1:52771/callback', 'Sign-in method: Browser sign-in'],
+      hide: ['Threads username'],
+    ),
+    _Real(
+      _acct('facebook', PlatformTier.byokApi, {
+        'app_id': '5551234', 'page_id': '777', 'page_name': 'Robin Studio', 'user_id': '42', 'user_name': 'Robin',
+        'available_pages': [
+          {'id': '778', 'name': 'Other Page'},
+        ],
+        'scopes': 'pages_manage_posts,pages_read_engagement',
+      }, handle: 'Robin Studio'),
+      oauth(extra: {'app_secret': f.next(), 'user_access_token': f.next(), 'user_token_expires_at': _iso(now.add(const Duration(days: 50)))}),
+      keys: ['Access token', 'App secret', 'User access token'],
+      show: ['App ID: 5551234', 'Permissions: pages_manage_posts,pages_read_engagement'],
+      hide: ['Page'],
+    ),
+    _Real(
+      _acct('linkedin', PlatformTier.byokApi, {'clientId': '86clientid', 'apiVersion': '202610', 'sub': 'abc', 'personUrn': 'urn:li:person:abc', 'redirectUri': loopback}),
+      oauth(expiresIn: const Duration(days: 40), extra: {'client_secret': f.next()}),
+      keys: ['Access token', 'Client secret'],
+      sign: SignInState.endsOn,
+      show: ['Client ID: 86clientid', 'LinkedIn API version: 202610', 'Redirect URI: $loopback'],
+    ),
+    _Real(
+      _acct('reddit', PlatformTier.byokApi, {'clientId': 'reddit-client', 'username': 'robin', 'userId': 't2_x', 'defaultSubreddit': 'pics', 'uaPlatform': 'windows'},
+          handle: 'u/robin'),
+      oauth(expiresIn: const Duration(hours: 1), refresh: true),
+      keys: ['Access token', 'Refresh token'],
+      sign: SignInState.renews,
+      show: ['Client ID: reddit-client', 'Default subreddit: pics'],
+      hide: ['Your Reddit username'],
+    ),
+    _Real(
+      _acct('tumblr', PlatformTier.byokApi, {
+        'consumerKey': 'tumblr-consumer-key', 'blogName': 'robinblog', 'blogUuid': 't:abc', 'blogUrl': 'https://robinblog.tumblr.example/', 'userName': 'robin',
+        'blogNames': ['robinblog', 'other'], 'authMode': 'oauth2', 'redirectUri': loopback,
+      }, id: 'real-tumblr-oauth2'),
+      oauth(expiresIn: const Duration(minutes: 40), refresh: true, extra: {'consumer_secret': f.next()}),
+      keys: ['Access token', 'Refresh token', 'Consumer secret'],
+      sign: SignInState.renews,
+      show: ['OAuth Consumer Key: tumblr-consumer-key', 'Redirect URI: $loopback', 'Blog: robinblog', 'Sign-in method: Browser sign-in (OAuth 2.0)'],
+    ),
+    // OAuth 1.0a keeps the consumer key in the config AND with the keys:
+    // only the guard keeps it off the card.
+    _Real(
+      _acct('tumblr', PlatformTier.byokApi, {'consumerKey': tumblrKey, 'blogName': 'guardblog', 'authMode': 'oauth1'}, id: 'real-tumblr-oauth1'),
+      OAuth1Credentials(consumerKey: tumblrKey, consumerSecret: f.next(), token: f.next(), tokenSecret: f.next()).toSecrets(),
+      keys: oauth1Keys,
+      show: ['Blog: guardblog', 'Sign-in method: OAuth 1.0a keys'],
+      hide: ['OAuth Consumer Key'],
+    ),
+    _Real(
+      _acct('instagram', PlatformTier.byokApi, {
+        'tokenSource': 'oauth', 'appId': '9876', 'redirectUri': 'https://127.0.0.1:52771/callback', 'igUserId': '1789', 'username': 'robin.makes', 'accountType': 'BUSINESS',
+      }, handle: '@robin.makes'),
+      oauth(expiresIn: const Duration(days: 55), extra: {'refreshed_at': _iso(now.subtract(const Duration(days: 5)))}),
+      keys: ['Access token'],
+      sign: SignInState.renewsWhenUsed,
+      show: ['App ID: 9876', 'Redirect URI: https://127.0.0.1:52771/callback', 'Sign-in method: Browser sign-in'],
+      hide: ['Instagram username'],
+    ),
+    _Real(
+      _acct('tiktok', PlatformTier.byokApi, {'clientKey': 'tiktok-client-key', 'openId': 'oid'}),
+      oauth(expiresIn: const Duration(hours: 20), refresh: true, refreshIn: const Duration(days: 4), extra: {'open_id': 'oid', 'client_secret': f.next()}),
+      keys: ['Access token', 'Refresh token', 'Client secret'],
+      sign: SignInState.renewsUntil,
+      soon: true,
+      show: ['Client key: tiktok-client-key'],
+    ),
+    // A Google app in "Testing": the refresh token itself ends after 7 days.
+    _Real(
+      _acct('youtube', PlatformTier.byokApi, {'clientId': 'yt.apps.example', 'channelId': 'UCrobin', 'redirectUri': loopback, 'canDeleteVideos': true}),
+      oauth(expiresIn: const Duration(minutes: 50), refresh: true, refreshIn: const Duration(days: 6), extra: {'client_secret': f.next()}),
+      keys: ['Access token', 'Refresh token', 'Client secret'],
+      sign: SignInState.renewsUntil,
+      soon: true,
+      show: ['Client ID: yt.apps.example', 'Channel ID: UCrobin'],
+      hide: ['Redirect URI'],
+    ),
+    _Real(
+      _acct('pinterest', PlatformTier.byokApi, {
+        'appId': '1500', 'boardId': '88', 'boardName': 'Ideas', 'username': 'robin', 'accountType': 'BUSINESS', 'accessLevel': 'trial',
+        'redirectUri': 'http://localhost:52771/callback',
+      }),
+      oauth(expiresIn: const Duration(days: 30), refresh: true, refreshIn: const Duration(days: 365), extra: {'app_secret': f.next()}),
+      keys: ['Access token', 'Refresh token', 'App secret'],
+      sign: SignInState.renewsUntil,
+      show: ['App ID: 1500', 'Redirect URI: http://localhost:52771/callback', 'Board: Ideas', 'Access level of your app: Trial'],
+    ),
+    // Posts through the LBRY app on this device: no keys at all.
+    _Real(
+      _acct('odysee', PlatformTier.openApi, {'daemon': 'http://localhost:5279', 'bid': '0.001', 'channelId': 'c0ffee', 'channelName': '@robin'}, handle: '@robin'),
+      const {},
+      keys: const [],
+      needsKeys: false,
+      show: ['LBRY SDK address: http://localhost:5279', 'Channel ID: c0ffee', 'Deposit per upload (LBC): 0.001'],
+    ),
+    _Real(
+      _acct('telegram', PlatformTier.openApi, {
+        'chatId': -1002233445566, 'chatType': 'channel', 'chatTitle': 'Robin News', 'chatUsername': 'robinnews', 'botId': 7700112233, 'botUsername': 'robin_bot',
+        'formatting': 'markdown',
+      }, name: 'Robin News', handle: '@robinnews'),
+      {'bot_token': '7700112233:${f.next()}'},
+      keys: ['Bot token'],
+      show: ['Channel or group: Robin News', 'Bot: robin_bot', 'Formatting: Markdown'],
+      hide: ['Channel or group username'],
+    ),
+    _Real(
+      _acct('discord', PlatformTier.openApi, {
+        'webhookId': '1180000000000000001', 'webhookName': 'neforum hook', 'channelId': '1170000000000000003', 'guildId': '1160000000000000004',
+        'threadId': '1190000000000000002', 'username': 'Robin', 'forum': false,
+      }),
+      {'webhook_url': 'https://discord.com/api/webhooks/1180000000000000001/${f.next()}?thread_id=1190000000000000002'},
+      keys: ['Webhook URL'],
+      show: ['Webhook: neforum hook', 'Post as: Robin', 'Forum or media channel: No'],
+    ),
+    _Real(
+      _acct('wordpress', PlatformTier.openApi, {
+        'site': 'https://blog.example', 'home': 'https://blog.example', 'restBase': 'https://blog.example/wp-json/', 'username': 'robin', 'siteName': 'Robin Blog',
+        'userId': 1, 'canPublish': true, 'canUpload': true, 'canManageTerms': true, 'defaultStatus': 'publish',
+      }),
+      {'app_password': f.next()},
+      keys: ['App password'],
+      show: ['Site address: https://blog.example', 'Site name: Robin Blog', 'WordPress username: robin', 'Publish as: Published'],
+    ),
+    _Real(
+      _acct('ghost', PlatformTier.openApi, {
+        'apiUrl': 'https://ghost.example', 'site': 'https://ghost.example', 'siteTitle': 'Robin Writes', 'keyId': 'k3yidf9e8d7c6b5', 'version': '5.0', 'defaultStatus': 'draft',
+      }),
+      {'admin_api_key': 'k3yidf9e8d7c6b5:${f.next()}'},
+      keys: ['Admin API key'],
+      show: ['API URL: https://ghost.example', 'Site address: https://ghost.example', 'Site name: Robin Writes', 'Publish as: Draft'],
+    ),
+    _Real(
+      _acct('writefreely', PlatformTier.openApi, {
+        'instance': 'https://write.example', 'username': 'robin', 'alias': 'robinwrites', 'collectionUrl': 'https://write.example/robinwrites/',
+        'collectionTitle': 'Robin Writes', 'snapAs': true,
+      }),
+      oauth(type: 'Token'),
+      keys: ['Access token'],
+      show: ['Server: https://write.example', 'Blog: Robin Writes', 'Blog alias: robinwrites', 'Upload images to Snap.as: Yes'],
+    ),
+    _Real(
+      _acct('micropub', PlatformTier.openApi, {
+        'me': 'https://robin.example/', 'micropubEndpoint': 'https://robin.example/micropub', 'mediaEndpoint': 'https://robin.example/media',
+        'authMethod': 'indieauth', 'clientId': 'https://neforum.example/', 'authorizationEndpoint': 'https://robin.example/auth',
+        'tokenEndpoint': 'https://robin.example/token', 'issuer': 'https://robin.example/', 'microblog': false,
+        'syndicateTargets': [
+          {'uid': 'x', 'name': 'X'},
+        ],
+        'destinations': <Object>[], 'postTypes': ['note'],
+      }),
+      oauth(expiresIn: const Duration(hours: 1), refresh: true),
+      keys: ['Access token', 'Refresh token'],
+      sign: SignInState.renews,
+      show: ['Your site URL (me): https://robin.example/', 'Micropub endpoint: https://robin.example/micropub', 'Client ID: https://neforum.example/',
+        'Sign-in method: Browser sign-in (IndieAuth)'],
+    ),
+    _Real(
+      _acct('devto', PlatformTier.openApi, {'base': 'https://dev.example', 'userId': 5, 'username': 'robin'}),
+      oauth(type: 'api-key'),
+      keys: ['Access token'],
+      show: ['Forem community: https://dev.example'],
+    ),
+    _Real(
+      _acct('hashnode', PlatformTier.byokApi, {
+        'publicationId': 'pub1', 'publicationUrl': 'https://robin.hashnode.example', 'publicationTitle': 'Robin Notes', 'username': 'robin', 'userId': 'u1',
+      }),
+      oauth(type: 'PAT'),
+      keys: ['Access token'],
+      show: ['Blog: Robin Notes', 'Blog address: https://robin.hashnode.example'],
+    ),
+    _Real(
+      _acct('deviantart', PlatformTier.byokApi, {'clientId': '12345', 'redirectUri': loopback, 'userId': 'u-1'}),
+      oauth(expiresIn: const Duration(hours: 1), refresh: true, extra: {'client_secret': f.next()}),
+      keys: ['Access token', 'Refresh token', 'Client secret'],
+      sign: SignInState.renews,
+      show: ['Client ID: 12345', 'Redirect URI: $loopback'],
+    ),
+    _Real(
+      _acct('dribbble', PlatformTier.byokApi, {'clientId': 'dribbble-client', 'redirectUri': loopback, 'canUploadShot': true}),
+      oauth(),
+      keys: ['Access token'],
+      show: ['Client ID: dribbble-client', 'Redirect URI: $loopback'],
+    ),
+    _Real(
+      _acct('flickr', PlatformTier.byokApi, {'userNsid': '123@N01', 'username': 'robin'}),
+      oauth1(),
+      keys: oauth1Keys,
+    ),
+    _Real(
+      _acct('inkbunny', PlatformTier.openApi, {'username': 'robin', 'userId': '77'}, handle: '@robin'),
+      {'sid': f.next()},
+      keys: ['Session'],
+      hide: ['Username'],
     ),
   ];
-}
-
-/// Every string the widget tree shows or would read out: text, rich text,
-/// field contents, tooltips and semantics labels.
-List<String> _shownStrings(WidgetTester tester) {
-  final out = <String>[];
-  for (final e in find.byWidgetPredicate((_) => true, skipOffstage: false).evaluate()) {
-    switch (e.widget) {
-      case RichText w:
-        out.add(w.text.toPlainText());
-      case Text w:
-        out.add(w.data ?? w.textSpan?.toPlainText() ?? '');
-      case EditableText w:
-        out.add(w.controller.text);
-      case Tooltip w:
-        out.addAll([w.message ?? '', w.richMessage?.toPlainText() ?? '']);
-      case Semantics w:
-        out.addAll([w.properties.label ?? '', w.properties.value ?? '', w.properties.hint ?? '', w.properties.tooltip ?? '']);
-    }
-  }
-  return out.where((s) => s.isNotEmpty).toList();
-}
-
-/// Fails when any of [shown] holds a stored key or any 6 characters in a row
-/// of one. Bookkeeping entries (expiry date, token type) hold no secret and
-/// are only checked whole.
-void _expectNoSecretShown(Iterable<String> shown, Iterable<Map<String, String>> secretMaps) {
-  final windows = <String, String>{};
-  final bookkeeping = <String>{};
-  for (final secrets in secretMaps) {
-    for (final e in secrets.entries) {
-      if (kSecretBookkeepingKeys.contains(e.key)) {
-        bookkeeping.add(e.value);
-        continue;
-      }
-      for (var i = 0; i + 6 <= e.value.length; i++) {
-        windows[e.value.substring(i, i + 6)] = e.key;
-      }
-    }
-  }
-  for (final text in shown) {
-    for (var i = 0; i + 6 <= text.length; i++) {
-      final key = windows[text.substring(i, i + 6)];
-      if (key != null) fail('Shows part of a stored "$key": "$text"');
-    }
-    for (final b in bookkeeping) {
-      if (b.length >= 6 && text.contains(b)) fail('Shows a stored bookkeeping value: "$text"');
-    }
-  }
 }
 
 Future<(ProviderContainer, AppServices)> _pumpAccounts(
@@ -244,16 +492,27 @@ Future<void> _tap(WidgetTester tester, Finder target) async {
   await tester.pump(const Duration(milliseconds: 250));
 }
 
-Future<void> _open(WidgetTester tester, Finder header) => _tap(tester, header);
+Future<void> _open(WidgetTester tester, String accountId) => _tap(tester, find.descendant(of: _card(accountId), matching: find.text('Connection')));
 
-/// Opens the Connection section of every card on the page.
-Future<int> _openAll(WidgetTester tester) async {
-  final headers = find.text('Connection');
-  final n = headers.evaluate().length;
-  for (var i = 0; i < n; i++) {
-    await _tap(tester, headers.at(i));
+/// Every string the widget tree shows or would read out: text, rich text,
+/// field contents, tooltips and semantics labels.
+List<String> _shownStrings(WidgetTester tester) {
+  final out = <String>[];
+  for (final e in find.byWidgetPredicate((_) => true, skipOffstage: false).evaluate()) {
+    switch (e.widget) {
+      case RichText w:
+        out.add(w.text.toPlainText());
+      case Text w:
+        out.add(w.data ?? w.textSpan?.toPlainText() ?? '');
+      case EditableText w:
+        out.add(w.controller.text);
+      case Tooltip w:
+        out.addAll([w.message ?? '', w.richMessage?.toPlainText() ?? '']);
+      case Semantics w:
+        out.addAll([w.properties.label ?? '', w.properties.value ?? '', w.properties.hint ?? '', w.properties.tooltip ?? '']);
+    }
   }
-  return n;
+  return out.where((s) => s.isNotEmpty).toList();
 }
 
 /// Captures what the app puts on the clipboard.
@@ -279,6 +538,9 @@ ConnectedAccount _account(String platformId, PlatformTier tier, Map<String, dyna
 PlatformAdapter _adapter(String id) => builtinRegistry().require(id);
 
 void main() {
+  final now = DateTime.utc(2026, 11, 1, 12);
+  String when(DateTime t) => '${t.day}/${t.month}/${t.year}';
+
   group('labels', () {
     test('a config key that is a connect field is shown under the field label, without the form hint', () {
       final details = connectionDetails(
@@ -293,37 +555,7 @@ void main() {
       expect(cleanFieldLabel('Media server (NIP-96)'), 'Media server (NIP-96)');
     });
 
-    test('the account\'s own way of connecting names a key both ways share', () {
-      // Lemmy's "Default community" field exists on both forms; Bluesky's
-      // handle only on the hand-off form, which still names it for Auto.
-      final bluesky = connectionDetails(
-        _account('bluesky', PlatformTier.openApi, {'service': 'https://bsky.example', 'pds': 'https://pds.example', 'handle': 'someone.bsky.example', 'did': 'did:plc:abc'}),
-        _adapter('bluesky'),
-      );
-      expect(bluesky.map((d) => '$d'), [
-        'Hosting provider: https://bsky.example',
-        'Handle: someone.bsky.example',
-        'PDS (data server): https://pds.example',
-        'Account ID (DID): did:plc:abc',
-      ]);
-    });
-
     test('keys the form does not ask for come from the reviewed list; caches, ids and limits are left out', () {
-      final facebook = connectionDetails(
-        _account('facebook', PlatformTier.byokApi, {
-          'app_id': '1234',
-          'page_id': '99',
-          'page_name': 'Some Page',
-          'user_id': '42',
-          'available_pages': [
-            {'id': '1', 'name': 'Other'},
-          ],
-          'scopes': 'pages_manage_posts,pages_show_list',
-        }),
-        _adapter('facebook'),
-      );
-      expect(facebook.map((d) => '$d'), ['App ID: 1234', 'Permissions: pages_manage_posts,pages_show_list', 'Page: Some Page']);
-
       final misskey = connectionDetails(
         _account('misskey', PlatformTier.openApi, {
           'instance': 'https://misskey.example',
@@ -338,39 +570,54 @@ void main() {
         _adapter('misskey'),
       );
       expect(misskey.map((d) => '$d'), ['Instance: https://misskey.example', 'Sign-in method: Browser sign-in (MiAuth)']);
+      final matrix = connectionDetails(_account('matrix', PlatformTier.openApi, {'homeserver': 'https://m.example', 'authMethod': 'something-new'}), _adapter('matrix'));
+      expect(matrix.map((d) => '$d'), ['Homeserver: https://m.example'], reason: 'an unknown sign-in code is left out');
     });
 
-    test('values read as words: choices capitalised, booleans Yes or No, lists one per line, unknown sign-in codes left out', () {
-      final discord = connectionDetails(_account('discord', PlatformTier.openApi, {'username': 'Poster', 'forum': true, 'webhookName': 'hook'}), _adapter('discord'));
-      expect(discord.map((d) => '$d'), ['Post as: Poster', 'Forum or media channel: Yes', 'Webhook: hook']);
+    test('finding 4: a choice reads as words, never capitalised letter by letter', () {
+      expect(connectionChoiceLabel('html'), 'HTML');
+      expect(connectionChoiceLabel('markdown'), 'Markdown');
+      expect(connectionChoiceLabel('plain'), 'Plain text');
+      expect(connectionChoiceLabel('publish'), 'Published');
+      expect(connectionChoiceLabel('pending'), 'Pending review');
+      expect(connectionChoiceLabel('127.0.0.1'), '127.0.0.1', reason: 'an unlisted choice stays as stored');
+      final telegram = connectionDetails(_account('telegram', PlatformTier.openApi, {'chatTitle': 'News', 'formatting': 'html'}), _adapter('telegram'));
+      expect(telegram.map((d) => '$d'), ['Channel or group: News', 'Formatting: HTML']);
+      final wordpress = connectionDetails(_account('wordpress', PlatformTier.openApi, {'defaultStatus': 'publish'}), _adapter('wordpress'));
+      expect(wordpress.map((d) => '$d'), ['Publish as: Published']);
+    });
 
-      final nostr = connectionDetails(
-          _account('nostr', PlatformTier.openApi, {'relays': ['wss://a.example', 'wss://b.example'], 'npub': 'npub1xyz', 'pubkey': 'abcd'}), _adapter('nostr'));
-      expect(nostr.map((d) => '$d'), ['Relays: wss://a.example\nwss://b.example', 'Public key (npub): npub1xyz']);
-
-      final matrix = connectionDetails(_account('matrix', PlatformTier.openApi, {'homeserver': 'https://m.example', 'formatting': 'plain', 'authMethod': 'something-new'}), _adapter('matrix'));
-      expect(matrix.map((d) => '$d'), ['Homeserver: https://m.example', 'Formatting: Plain']);
+    test('finding 6: no self-registered redirect, proper server software names, no repeat of the handle, targets before options', () {
+      final mastodon = connectionDetails(
+          _account('mastodon', PlatformTier.openApi, {'instance': 'https://m.example', 'software': 'gotosocial', 'redirectUri': 'http://127.0.0.1:52771/callback'}),
+          _adapter('mastodon'));
+      expect(mastodon.map((d) => '$d'), ['Server address: https://m.example', 'Server software: GoToSocial']);
+      final linkedin = connectionDetails(_account('linkedin', PlatformTier.byokApi, {'redirectUri': 'http://127.0.0.1:52771/callback'}), _adapter('linkedin'));
+      expect(linkedin.map((d) => '$d'), ['Redirect URI: http://127.0.0.1:52771/callback'], reason: 'LinkedIn makes the user register it');
+      final bluesky = connectionDetails(_account('bluesky', PlatformTier.openApi, {'service': 'https://bsky.example', 'handle': 'someone'}), _adapter('bluesky'));
+      expect(bluesky.map((d) => d.label), ['Hosting provider'], reason: 'the handle is already on the card');
+      // Form fields used to come first, so Formatting led the Channel.
+      final telegram = connectionDetails(_account('telegram', PlatformTier.openApi, {'formatting': 'markdown', 'botUsername': 'bot', 'chatTitle': 'News'}), _adapter('telegram'));
+      expect(telegram.map((d) => d.label), ['Channel or group', 'Bot', 'Formatting']);
     });
 
     test('a platform-limited label is not used on other platforms', () {
       final discord = connectionDetails(_account('discord', PlatformTier.openApi, {'channelId': '111', 'guildId': '222'}), _adapter('discord'));
       expect(discord, isEmpty, reason: 'Discord ids are not shown');
-      final youtube = connectionDetails(_account('youtube', PlatformTier.byokApi, {'clientId': 'cid.apps.example', 'channelId': 'UCabc'}), _adapter('youtube'));
-      expect(youtube.map((d) => '$d'), ['Client ID: cid.apps.example', 'Channel ID: UCabc']);
     });
   });
 
   group('keys', () {
     test('stored keys get friendly labels in a stable order; bookkeeping and empty entries are not keys', () {
       final labels = storedKeyLabels({
-        OAuthTokens.keyExpiresAt: _future.toIso8601String(),
+        OAuthTokens.keyExpiresAt: _iso(now),
         OAuthTokens.keyTokenType: 'Bearer',
         OAuthTokens.keyScope: 'write',
         'client_secret': 'x' * 10,
         OAuthTokens.keyRefreshToken: 'y' * 10,
         OAuthTokens.keyAccessToken: 'z' * 10,
         'app_password': '',
-        'token_issued_at': _future.toIso8601String(),
+        'token_issued_at': _iso(now),
         'some_new_key': 'w' * 10,
       }, _adapter('x'));
       expect(labels, ['Access token', 'Refresh token', 'Client secret', 'Some new key']);
@@ -382,77 +629,91 @@ void main() {
       expect(humanizeKey('apiKey'), 'Api key');
     });
 
-    test('the guard withholds any value sharing 6 characters with a key, and keys shorter than that whole', () {
-      final guard = SecretGuard({'webhook_url': 'https://chat.example/api/webhooks/123456/TOKENVALUE?thread_id=987654', 'pin': '4821', 'expires_at': '2031-01-02'});
-      expect(guard.reveals('987654'), isTrue, reason: 'a thread id cut from the webhook address');
-      expect(guard.reveals('xxTOKENVxx'), isTrue);
-      expect(guard.reveals('code 4821'), isTrue);
-      expect(guard.reveals('hook name'), isFalse);
+    test('finding 3: the guard withholds any 4 characters in a row of a key, a last-4 included', () {
+      final guard = SecretGuard({OAuthTokens.keyAccessToken: 'QWXZ7788KLMN4321', 'expires_at': '2031-01-02'});
+      expect(guard.reveals('****4321'), isTrue, reason: 'a last-4');
+      expect(guard.reveals('ends in 4321'), isTrue);
+      expect(guard.reveals('QWXZ'), isTrue, reason: 'a first-4');
+      expect(guard.reveals('432'), isFalse, reason: '3 characters identify nothing');
       expect(guard.reveals('2031-01-02'), isFalse, reason: 'bookkeeping is not a secret');
     });
 
-    test('a config value cut from a key is never shown, even when it is a connect field', () {
-      final fakes = _Fakes();
-      for (final (account, secrets) in _guardCases(fakes)) {
-        final c = describeAccountConnection(account, adapter: _adapter(account.platformId), secrets: secrets, now: DateTime.utc(2026, 11, 1));
-        _expectNoSecretShown([for (final d in c.details) d.value, connectionSetupText(account, c, travel: KeysTravel.synced, when: (t) => '$t')], [secrets]);
-      }
-      final (tumblr, tumblrSecrets) = _guardCases(_Fakes()).first;
-      final c = describeAccountConnection(tumblr, adapter: _adapter('tumblr'), secrets: tumblrSecrets, now: DateTime.utc(2026, 11, 1));
-      expect(c.details.map((d) => d.label), isNot(contains('OAuth Consumer Key')));
-      expect(c.details.map((d) => '$d'), containsAll(['Blog: guardblog', 'Sign-in method: OAuth 1.0a keys']));
-      expect(c.storedKeys, contains('Consumer key (API key)'));
+    test('finding 3: a web address key counts by its ids and token, not by the address every user shares', () {
+      final guard = SecretGuard({'webhook_url': 'https://discord.com/api/webhooks/987654/TOKENVALUE9?thread_id=1190002'});
+      expect(guard.reveals('https://discord.com/channels'), isFalse);
+      expect(guard.reveals('webhooks'), isFalse);
+      expect(guard.reveals('thread 1190002'), isTrue, reason: 'a thread id cut from the webhook address');
+      expect(guard.reveals('…UE9'), isFalse);
+      expect(guard.reveals('…LUE9'), isTrue);
+      expect(SecretGuard.secretParts('https://discord.com/api/webhooks/987654/TOKENVALUE9?thread_id=1190002'), ['987654', 'TOKENVALUE9', '1190002']);
+      expect(SecretGuard.secretParts('plain-secret'), ['plain-secret']);
+    });
+
+    test('finding 3: the leak check catches a last-4 put into the copied setup', () {
+      final real = _realAccounts(_Fakes(), now).firstWhere((r) => r.account.platformId == 'mastodon');
+      final c = describeAccountConnection(real.account, adapter: _adapter('mastodon'), secrets: real.secrets, now: now);
+      final copied = connectionSetupText(real.account, c, travel: KeysTravel.synced, when: when);
+      _expectNoSecretShown([copied], [real.secrets]);
+      final token = real.secrets[OAuthTokens.keyAccessToken]!;
+      final leaked = '$copied\nToken: ****${token.substring(token.length - 4)}';
+      expect(() => _expectNoSecretShown([leaked], [real.secrets]), throwsA(isA<TestFailure>()));
     });
   });
 
-  group('sign-in expiry', () {
-    final now = DateTime.utc(2026, 11, 1, 12);
-    final soon = now.add(const Duration(days: 30)).toIso8601String();
-    final past = now.subtract(const Duration(days: 3)).toIso8601String();
+  group('sign-in', () {
+    final soon = _iso(now.add(const Duration(days: 30)));
+    final past = _iso(now.subtract(const Duration(days: 3)));
 
-    test('no expiry stored: nothing to show', () {
+    test('nothing stored about an expiry or a renewal: nothing to show', () {
       expect(signInExpiry({OAuthTokens.keyAccessToken: 'a'}, now: now), isNull);
       expect(signInExpiry({OAuthTokens.keyAccessToken: 'a', OAuthTokens.keyExpiresAt: 'not a date'}, now: now), isNull);
     });
 
-    test('a refresh token renews it, before and after it runs out', () {
-      final ahead = signInExpiry({OAuthTokens.keyExpiresAt: soon, OAuthTokens.keyRefreshToken: 'r'}, now: now)!;
-      expect((ahead.expired, ahead.renewsAutomatically, ahead.needsReconnecting), (false, true, false));
-      final behind = signInExpiry({OAuthTokens.keyExpiresAt: past, OAuthTokens.keyRefreshToken: 'r'}, now: now)!;
-      expect((behind.expired, behind.renewsAutomatically, behind.needsReconnecting), (true, true, false));
+    test('finding 2: a refresh token without an end of its own reads "Renews automatically", with no access-token time', () {
+      for (final access in [_iso(now.add(const Duration(minutes: 90))), past]) {
+        final e = signInExpiry({OAuthTokens.keyExpiresAt: access, OAuthTokens.keyRefreshToken: 'r'}, now: now)!;
+        expect((e.state, e.endsAt, e.needsReconnecting), (SignInState.renews, null, false));
+        expect(signInText(e, when), 'Renews automatically.', reason: 'no changing time, no "Ran out"');
+      }
+      expect(signInExpiry({OAuthTokens.keyAccessToken: 'a', 'app_password': 'p', OAuthTokens.keyExpiresAt: past}, now: now)!.state, SignInState.renews,
+          reason: 'Bluesky signs in again with its app password');
     });
 
-    test('a refresh token that ran out itself cannot renew anything', () {
-      final e = signInExpiry({OAuthTokens.keyExpiresAt: past, OAuthTokens.keyRefreshToken: 'r', 'refresh_expires_at': past}, now: now)!;
-      expect(e.needsReconnecting, isTrue);
+    test('finding 2: a refresh token that ends itself shows the date the sign-in really ends, as a warning when close', () {
+      final youtube = signInExpiry({
+        OAuthTokens.keyExpiresAt: _iso(now.add(const Duration(minutes: 50))),
+        OAuthTokens.keyRefreshToken: 'r',
+        'refresh_expires_at': _iso(now.add(const Duration(days: 6))),
+      }, now: now)!;
+      expect((youtube.state, youtube.endsAt, youtube.endsSoon), (SignInState.renewsUntil, now.add(const Duration(days: 6)), true));
+      expect(signInText(youtube, when), 'Renews automatically until 7/11/2026, then needs reconnecting.');
+      final pinterest = signInExpiry({OAuthTokens.keyRefreshToken: 'r', 'refresh_expires_at': _iso(now.add(const Duration(days: 365)))}, now: now)!;
+      expect((pinterest.state, pinterest.endsSoon), (SignInState.renewsUntil, false));
     });
 
-    test('without a refresh token: valid until the date, then needs reconnecting', () {
+    test('a refresh token that ran out itself leaves only the access token', () {
+      final ended = signInExpiry({OAuthTokens.keyExpiresAt: past, OAuthTokens.keyRefreshToken: 'r', 'refresh_expires_at': past}, now: now)!;
+      expect((ended.state, ended.needsReconnecting), (SignInState.ended, true));
+      expect(signInText(ended, when), 'Ended on 29/10/2026. Needs reconnecting.');
+      final left = signInExpiry({OAuthTokens.keyExpiresAt: soon, OAuthTokens.keyRefreshToken: 'r', 'refresh_expires_at': past}, now: now)!;
+      expect(left.state, SignInState.endsOn);
+    });
+
+    test('without a refresh token: ends on the date, then needs reconnecting', () {
       final ahead = signInExpiry({OAuthTokens.keyExpiresAt: soon, OAuthTokens.keyAccessToken: 'a'}, now: now)!;
-      expect((ahead.renewsAutomatically, ahead.needsReconnecting), (false, false));
+      expect((ahead.state, ahead.endsSoon), (SignInState.endsOn, false));
+      expect(signInText(ahead, when), 'Ends on 1/12/2026, then needs reconnecting.');
+      final close = signInExpiry({OAuthTokens.keyExpiresAt: _iso(now.add(const Duration(days: 9))), OAuthTokens.keyAccessToken: 'a'}, now: now)!;
+      expect(close.endsSoon, isTrue);
       final behind = signInExpiry({OAuthTokens.keyExpiresAt: past, OAuthTokens.keyAccessToken: 'a'}, now: now)!;
       expect(behind.needsReconnecting, isTrue);
     });
 
-    test('a token that renews itself (Threads, Instagram) renews only while it is valid', () {
+    test('a token that renews itself (Threads, Instagram) renews when used, and ends if it is not', () {
       final ahead = signInExpiry({OAuthTokens.keyExpiresAt: soon, 'token_issued_at': past}, now: now)!;
-      expect(ahead.renewsAutomatically, isTrue);
-      final behind = signInExpiry({OAuthTokens.keyExpiresAt: past, 'refreshed_at': past}, now: now)!;
-      expect(behind.needsReconnecting, isTrue);
-    });
-
-    test('Bluesky signs in again with its app password', () {
-      final e = signInExpiry({OAuthTokens.keyExpiresAt: past, OAuthTokens.keyAccessToken: 'a', 'app_password': 'p'}, now: now)!;
-      expect(e.needsReconnecting, isFalse);
-    });
-
-    test('the wording says the date and what happens next', () {
-      String when(DateTime t) => 'WHEN';
-      SignInExpiry e({required bool expired, required bool renews}) => SignInExpiry(expiresAt: now, expired: expired, renewsAutomatically: renews);
-      expect(signInText(e(expired: false, renews: true), when), 'Valid until WHEN. Renews automatically.');
-      expect(signInText(e(expired: false, renews: false), when), 'Valid until WHEN. Then needs reconnecting.');
-      expect(signInText(e(expired: true, renews: true), when), 'Ran out on WHEN. Renews automatically before the next post.');
-      expect(signInText(e(expired: true, renews: false), when), 'Ran out on WHEN. Needs reconnecting.');
+      expect(ahead.state, SignInState.renewsWhenUsed);
+      expect(signInText(ahead, when), 'Renews when NEFORUM posts with it. Unused, it ends on 1/12/2026.');
+      expect(signInExpiry({OAuthTokens.keyExpiresAt: past, 'refreshed_at': past}, now: now)!.needsReconnecting, isTrue);
     });
   });
 
@@ -466,9 +727,68 @@ void main() {
     expect(keysTravelLabel(KeysTravel.thisDeviceOnly), 'Only on this device');
   });
 
+  test('finding 5: the copied name never repeats the handle', () {
+    ConnectedAccount named(String name, String? handle) =>
+        ConnectedAccount(id: 'n', platformId: 'x', tier: PlatformTier.byokApi, displayName: name, handle: handle, createdAt: _connected);
+    expect(connectionAccountName(named('Robin (@robinmakes)', '@robinmakes')), 'Robin (@robinmakes)');
+    expect(connectionAccountName(named('Robin (mastodon.example)', '@robin@mastodon.example')), 'Robin (@robin@mastodon.example)');
+    expect(connectionAccountName(named('@robin.rivera', '@robin.rivera')), '@robin.rivera');
+    expect(connectionAccountName(named('Someone', '@someone')), 'Someone (@someone)');
+    expect(connectionAccountName(named('Robin Studio (Brand)', '@studio')), 'Robin Studio (Brand) (@studio)', reason: 'a parenthesis that is not the handle stays');
+    expect(connectionAccountName(named('Instagram (hand-off)', null)), 'Instagram (hand-off)');
+  });
+
+  test('finding 1: whether a way of connecting stores keys comes from its connect form, not its tier', () {
+    final odysee = _acct('odysee', PlatformTier.openApi, {'daemon': 'http://localhost:5279'});
+    expect(connectionStoresKeys(odysee, _adapter('odysee')), isFalse);
+    expect(connectionStoresKeys(_acct('reddit', PlatformTier.byokApi, {}), _adapter('reddit')), isTrue, reason: 'browser sign-in, no secret field');
+    expect(connectionStoresKeys(_acct('telegram', PlatformTier.openApi, {}), _adapter('telegram')), isTrue);
+    expect(connectionStoresKeys(_acct('instagram', PlatformTier.handoff, {}), _adapter('instagram')), isFalse);
+    final c = describeAccountConnection(odysee, adapter: _adapter('odysee'), now: now);
+    expect((c.needsKeys, c.keysMissing), (false, false));
+    expect(noStoredKeysText(c), 'None needed: it posts through the LBRY app on this device.');
+    expect(storedKeysLine(c, KeysTravel.thisDeviceOnly), 'None needed');
+  });
+
+  test('the realistic accounts cover every way of posting through an API, and agree with the adapters on keys', () {
+    final real = _realAccounts(_Fakes(), now);
+    final covered = {for (final r in real) '${r.account.platformId}/${r.account.tier.name}'};
+    for (final a in builtinAdapters()) {
+      for (final spec in a.connectSpecs.where((s) => s.tier != PlatformTier.handoff)) {
+        expect(covered, contains('${a.id}/${spec.tier.name}'), reason: 'add a realistic account for ${a.id} (${spec.tier.name})');
+      }
+    }
+    for (final r in real) {
+      expect(connectionStoresKeys(r.account, _adapter(r.account.platformId)), r.secrets.isNotEmpty, reason: r.account.id);
+    }
+  });
+
+  test('every way of posting through an API, stored as its adapter stores it, reads right and shows no key', () {
+    for (final r in _realAccounts(_Fakes(), now)) {
+      final id = r.account.id;
+      final c = describeAccountConnection(r.account, adapter: _adapter(r.account.platformId), secrets: r.secrets, now: now);
+      final lines = c.details.map((d) => '$d').toList();
+      expect(c.storedKeys, r.keys, reason: id);
+      expect(c.needsKeys, r.needsKeys, reason: id);
+      expect(c.keysMissing, isFalse, reason: id);
+      expect(c.signIn?.state, r.sign, reason: id);
+      expect(c.signIn?.endsSoon ?? false, r.soon, reason: id);
+      expect(lines, containsAll(r.show), reason: id);
+      for (final label in r.hide) {
+        expect(c.details.map((d) => d.label), isNot(contains(label)), reason: '$id: $label');
+      }
+      final handle = r.account.handle;
+      if (handle != null) {
+        expect(c.details.map((d) => d.value.toLowerCase()), isNot(contains(handle.replaceFirst(RegExp('^(@|u/)'), '').toLowerCase())), reason: '$id repeats its handle');
+      }
+      final text = connectionSetupText(r.account, c, travel: KeysTravel.thisDeviceOnly, when: when);
+      expect(text, isNot(contains('None stored')), reason: id);
+      _expectNoSecretShown([...lines, ...c.storedKeys, text], [r.secrets]);
+    }
+  });
+
   test('every built-in adapter, every way it connects: each form field shows under its own label, no key shows', () {
-    final now = DateTime.utc(2026, 11, 1);
-    final cases = _everyAdapterAccount(_Fakes());
+    final cases = _formAccounts(_Fakes());
     expect(cases.length, greaterThan(builtinAdapters().length));
     for (final (account, secrets, spec) in cases) {
       final adapter = _adapter(account.platformId);
@@ -481,43 +801,48 @@ void main() {
       for (final f in spec.fields.where((f) => f.secret)) {
         expect(c.storedKeys, contains(kSecretKeyLabels[f.key] ?? cleanFieldLabel(f.label)), reason: '${account.id}: ${f.key}');
       }
-      if (spec.tier != PlatformTier.handoff) {
-        expect(c.storedKeys, containsAll(['Access token', 'Refresh token']), reason: account.id);
-        expect(c.signIn?.renewsAutomatically, isTrue, reason: account.id);
-      } else {
-        expect(c.storedKeys, isEmpty, reason: account.id);
-      }
       expect(c.method, connectionMethodText(spec.tier, adapter.descriptor.name));
-      final text = connectionSetupText(account, c, travel: KeysTravel.thisDeviceOnly, when: (t) => '${t.day}/${t.month}/${t.year}');
-      _expectNoSecretShown([...shown.values, ...c.storedKeys, text], [secrets]);
+      _expectNoSecretShown([...shown.values, ...c.storedKeys, connectionSetupText(account, c, travel: KeysTravel.thisDeviceOnly, when: when)], [secrets]);
     }
   });
 
   test('the copied setup lists what the section shows and no key', () {
     final fakes = _Fakes();
-    final secrets = {OAuthTokens.keyAccessToken: fakes.next(), OAuthTokens.keyRefreshToken: fakes.next(), OAuthTokens.keyExpiresAt: _future.toIso8601String()};
+    final secrets = {OAuthTokens.keyAccessToken: fakes.next(), OAuthTokens.keyRefreshToken: fakes.next(), OAuthTokens.keyExpiresAt: _iso(now.add(const Duration(hours: 1)))};
     final account = _account('mastodon', PlatformTier.openApi, {'instance': 'https://mastodon.example', 'software': 'mastodon'});
-    final c = describeAccountConnection(account, adapter: _adapter('mastodon'), secrets: secrets, now: DateTime.utc(2026, 11, 1));
-    final text = connectionSetupText(account, c, travel: KeysTravel.synced, when: (t) => t.toUtc().toIso8601String().substring(0, 10));
+    final c = describeAccountConnection(account, adapter: _adapter('mastodon'), secrets: secrets, now: now);
+    final text = connectionSetupText(account, c, travel: KeysTravel.synced, when: when);
     expect(text, '''
 Mastodon: Someone (@someone)
 How it posts: Automatically, through the open Mastodon API
 Server address: https://mastodon.example
-Server software: mastodon
-Sign-in: Valid until 2031-01-02. Renews automatically.
+Server software: Mastodon
+Sign-in: Renews automatically.
 Keys on this device: Access token, Refresh token (Synced)
-Connected: 2026-10-12''');
+Connected: 12/10/2026''');
     _expectNoSecretShown([text], [secrets]);
   });
 
+  test('the in-app guides for a second device say where to see an account\'s setup', () {
+    for (final guide in ['assets/docs/sync.md', 'assets/docs/backup.md']) {
+      final text = File(guide).readAsStringSync();
+      expect(text, contains('go to **Accounts** and open **Connection**'), reason: guide);
+      expect(text, contains('**Copy all setups**'), reason: guide);
+      expect(File('../../docs/${guide.split('/').last}').readAsStringSync(), text, reason: 'run dart run tool/sync_docs.dart');
+    }
+  });
+
   group('on the Accounts page', () {
-    testWidgets('closed by default; one tap opens the setup; Copy setup copies it without keys', (tester) async {
+    tearDown(() => AccountConnectionSection.debugStartOpen = false);
+
+    testWidgets('closed by default; one tap opens the setup; Copy setup copies it without keys; the header names the account', (tester) async {
+      final semantics = tester.ensureSemantics();
       final copied = _captureClipboard(tester);
       final fakes = _Fakes();
       final secrets = {
         OAuthTokens.keyAccessToken: fakes.next(),
         OAuthTokens.keyRefreshToken: fakes.next(),
-        OAuthTokens.keyExpiresAt: _future.toIso8601String(),
+        OAuthTokens.keyExpiresAt: _iso(DateTime.now().add(const Duration(hours: 2))),
         'client_id': fakes.next(),
         'client_secret': fakes.next(),
       };
@@ -525,10 +850,11 @@ Connected: 2026-10-12''');
       await _pumpAccounts(tester, accounts: [(account, secrets)], keepDemoAccounts: false);
 
       final card = _card('m1');
-      expect(find.descendant(of: card, matching: find.text('Connection')), findsOneWidget);
+      // Finding 9: a screen reader hears whose connection it is.
+      expect(find.bySemanticsLabel('Connection for @someone on Mastodon'), findsOneWidget);
       expect(find.descendant(of: card, matching: find.text('Server address')), findsNothing, reason: 'closed by default');
 
-      await _open(tester, find.descendant(of: card, matching: find.text('Connection')));
+      await _open(tester, 'm1');
       for (final t in [
         'Network',
         'Mastodon',
@@ -539,6 +865,7 @@ Connected: 2026-10-12''');
         'Client ID',
         'own-client-id',
         'Sign-in',
+        'Renews automatically.',
         'Keys on this device',
         'Access token: stored',
         'Refresh token: stored',
@@ -550,37 +877,54 @@ Connected: 2026-10-12''');
       ]) {
         expect(find.descendant(of: card, matching: find.text(t)), findsWidgets, reason: t);
       }
-      expect(find.descendant(of: card, matching: find.textContaining('Renews automatically')), findsOneWidget);
       expect(find.descendant(of: card, matching: find.byType(SelectionArea)), findsOneWidget, reason: 'the setup can be selected and copied');
 
       await _tap(tester, find.descendant(of: card, matching: find.text('Copy setup')));
       expect(copied, hasLength(1));
       expect(copied.single, startsWith('Mastodon: Someone (@someone)\nHow it posts: '));
-      expect(copied.single, contains('Server address: https://mastodon.example'));
       expect(copied.single, contains('Keys on this device: Access token, Refresh token, Client ID, Client secret (Only on this device)'));
       expect(find.text('Setup copied, without keys or passwords'), findsOneWidget);
       _expectNoSecretShown([..._shownStrings(tester), ...copied], [secrets]);
 
-      // A second tap closes it again.
-      await _open(tester, find.descendant(of: card, matching: find.text('Connection')));
-      expect(find.descendant(of: card, matching: find.text('Server address')), findsNothing);
+      await _open(tester, 'm1');
+      expect(find.descendant(of: card, matching: find.text('Server address')), findsNothing, reason: 'a second tap closes it');
+      semantics.dispose();
+      await _unmount(tester);
+    });
+
+    testWidgets('finding 1: an Odysee card says it needs no keys instead of asking to reconnect', (tester) async {
+      final odysee = _realAccounts(_Fakes(), DateTime.now()).firstWhere((r) => r.account.platformId == 'odysee');
+      await _pumpAccounts(tester, accounts: [(odysee.account, odysee.secrets)], keepDemoAccounts: false);
+      await _open(tester, odysee.account.id);
+      final card = _card(odysee.account.id);
+      expect(find.descendant(of: card, matching: find.text('None needed: it posts through the LBRY app on this device.')), findsOneWidget);
+      expect(find.descendant(of: card, matching: find.textContaining('None stored')), findsNothing);
+      await _unmount(tester);
+    });
+
+    testWidgets('finding 2: a sign-in that ends soon says when, and a short token does not show its time', (tester) async {
+      final real = _realAccounts(_Fakes(), DateTime.now());
+      final youtube = real.firstWhere((r) => r.account.platformId == 'youtube');
+      final x = real.firstWhere((r) => r.account.id == 'real-x-oauth2');
+      await _pumpAccounts(tester, accounts: [(youtube.account, youtube.secrets), (x.account, x.secrets)], keepDemoAccounts: false);
+      await _open(tester, youtube.account.id);
+      await _open(tester, x.account.id);
+      expect(find.descendant(of: _card(youtube.account.id), matching: find.textContaining(RegExp(r'^Renews automatically until .+, then needs reconnecting\.$'))),
+          findsOneWidget);
+      expect(find.descendant(of: _card(x.account.id), matching: find.text('Renews automatically.')), findsOneWidget);
       await _unmount(tester);
     });
 
     testWidgets('Synced when sync is on, a warning when it failed; the X caveat only without sync', (tester) async {
-      final fakes = _Fakes();
-      final x = _account('x', PlatformTier.byokApi, {'clientId': 'x-client', 'authMode': 'oauth2'}, id: 'x1');
-      final xSecrets = {OAuthTokens.keyAccessToken: fakes.next(), OAuthTokens.keyRefreshToken: fakes.next()};
+      final x = _realAccounts(_Fakes(), DateTime.now()).firstWhere((r) => r.account.id == 'real-x-oauth2');
       final (_, services) = await _pumpAccounts(tester,
           settings: {'syncProviderId': 'webdav', 'syncConfig': <String, String>{'url': 'https://dav.example/neforum', 'username': 'someone'}},
-          accounts: [(x, xSecrets)],
+          accounts: [(x.account, x.secrets)],
           keepDemoAccounts: false);
-      final card = _card('x1');
-      await _open(tester, find.descendant(of: card, matching: find.text('Connection')));
+      final card = _card(x.account.id);
+      await _open(tester, x.account.id);
       expect(find.descendant(of: card, matching: find.text('Synced')), findsOneWidget);
       expect(find.descendant(of: card, matching: find.textContaining('can stay connected on only one device')), findsNothing);
-      expect(find.descendant(of: card, matching: find.text('Sign-in method')), findsOneWidget);
-      expect(find.descendant(of: card, matching: find.text('Browser sign-in (OAuth 2.0)')), findsOneWidget);
 
       services.cloudSync.status.value = const CloudSyncStatus(CloudSyncPhase.error, message: 'Down');
       await tester.pump();
@@ -589,24 +933,15 @@ Connected: 2026-10-12''');
       await _unmount(tester);
     });
 
-    testWidgets('hand-off, demo and key-less accounts say why there are no keys', (tester) async {
-      final handoff = _account('instagram', PlatformTier.handoff, {'username': 'someone'}, id: 'h1');
+    testWidgets('hand-off and key-less accounts say why there are no keys', (tester) async {
+      final handoff = _account('instagram', PlatformTier.handoff, {'username': 'someone-else'}, id: 'h1');
       final missing = _account('bluesky', PlatformTier.openApi, {'service': 'https://bsky.example'}, id: 'b1');
       await _pumpAccounts(tester, accounts: [(handoff, const {}), (missing, const {})], keepDemoAccounts: false);
-      await _openAll(tester);
-      expect(find.descendant(of: _card('h1'), matching: find.textContaining('None needed')), findsOneWidget);
+      await _open(tester, 'h1');
+      await _open(tester, 'b1');
+      expect(find.descendant(of: _card('h1'), matching: find.textContaining('None needed: hand-off opens')), findsOneWidget);
       expect(find.descendant(of: _card('h1'), matching: find.text('Instagram username')), findsOneWidget);
       expect(find.descendant(of: _card('b1'), matching: find.textContaining('None stored on this device')), findsOneWidget);
-      await _unmount(tester);
-    });
-
-    testWidgets('a sign-in that ran out and cannot renew says it needs reconnecting', (tester) async {
-      final linkedin = _account('linkedin', PlatformTier.byokApi, {'clientId': 'li-client', 'apiVersion': '202610'}, id: 'l1');
-      final secrets = {OAuthTokens.keyAccessToken: _Fakes().next(), OAuthTokens.keyExpiresAt: DateTime.utc(2026, 1, 1).toIso8601String()};
-      await _pumpAccounts(tester, accounts: [(linkedin, secrets)], keepDemoAccounts: false);
-      await _open(tester, find.descendant(of: _card('l1'), matching: find.text('Connection')));
-      expect(find.descendant(of: _card('l1'), matching: find.textContaining('Needs reconnecting.')), findsOneWidget);
-      expect(find.descendant(of: _card('l1'), matching: find.text('LinkedIn API version')), findsOneWidget);
       await _unmount(tester);
     });
 
@@ -614,7 +949,7 @@ Connected: 2026-10-12''');
       final account = _account('mastodon', PlatformTier.openApi, {'instance': 'https://mastodon.example'}, id: 'm2').copyWith(lastError: 'Token revoked');
       final (c, _) = await _pumpAccounts(tester, accounts: [(account, {OAuthTokens.keyAccessToken: _Fakes().next()})], keepDemoAccounts: false);
       final card = _card('m2');
-      await _open(tester, find.descendant(of: card, matching: find.text('Connection')));
+      await _open(tester, 'm2');
       expect(find.descendant(of: card, matching: find.textContaining('Needs reconnecting: Token revoked')), findsOneWidget);
       expect(find.descendant(of: card, matching: find.text('Reconnect')), findsOneWidget);
       expect(find.descendant(of: card, matching: find.byTooltip('More')), findsOneWidget);
@@ -627,39 +962,34 @@ Connected: 2026-10-12''');
       await _unmount(tester);
     });
 
+    // Every account of every adapter, open at once (debugStartOpen: one
+    // layout instead of one tap and layout per card; the tap itself is
+    // covered above), on a phone and on a wide window.
     for (final size in const [Size(360, 800), Size(1440, 900)]) {
-      testWidgets('every account of every adapter opens at ${size.width.toInt()} px with no overflow and no key on screen or clipboard', (tester) async {
+      testWidgets('every account of every adapter, open at ${size.width.toInt()} px: no overflow, no key on screen or clipboard', (tester) async {
+        AccountConnectionSection.debugStartOpen = true;
         final copied = _captureClipboard(tester);
         final fakes = _Fakes();
-        final accounts = [for (final (a, s, _) in _everyAdapterAccount(fakes)) (a, s), ..._guardCases(fakes)];
+        final real = _realAccounts(fakes, DateTime.now());
+        final accounts = [for (final (a, s, _) in _formAccounts(fakes)) (a, s), for (final r in real) (r.account, r.secrets)];
         final (c, _) = await _pumpAccounts(tester, size: size, accounts: accounts);
+        await tester.pump(const Duration(milliseconds: 300));
         final cards = find.byType(AccountCard).evaluate().length;
         expect(cards, c.read(accountListProvider).length);
-
-        final opened = await _openAll(tester);
-        expect(opened, cards);
-        expect(find.text('Copy setup'), findsNWidgets(cards), reason: 'every section opened and loaded');
+        expect(find.text('Copy setup'), findsNWidgets(cards), reason: 'every section open and loaded');
         expect(tester.takeException(), isNull);
-
-        await _tap(tester, find.text('Copy all setups'));
-        await tester.pump();
-        expect(copied, hasLength(1));
-        for (final a in c.read(accountListProvider)) {
-          expect(copied.single, contains(a.displayName), reason: a.id);
+        for (final r in real) {
+          expect(find.descendant(of: _card(r.account.id), matching: find.textContaining('None stored')), findsNothing, reason: r.account.id);
         }
 
+        await _tap(tester, find.text('Copy all setups'));
+        expect(copied, hasLength(1));
+        for (final a in c.read(accountListProvider)) {
+          expect(copied.single, contains(connectionAccountName(a)), reason: a.id);
+        }
         _expectNoSecretShown([..._shownStrings(tester), ...copied], [for (final (_, s) in accounts) s]);
         await _unmount(tester);
       });
-    }
-  });
-
-  test('the in-app guides for a second device say where to see an account\'s setup', () {
-    for (final guide in ['assets/docs/sync.md', 'assets/docs/backup.md']) {
-      final text = File(guide).readAsStringSync();
-      expect(text, contains('go to **Accounts** and open **Connection**'), reason: guide);
-      expect(text, contains('**Copy all setups**'), reason: guide);
-      expect(File('../../docs/${guide.split('/').last}').readAsStringSync(), text, reason: 'run dart run tool/sync_docs.dart');
     }
   });
 

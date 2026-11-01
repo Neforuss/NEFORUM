@@ -12,9 +12,9 @@ import 'providers.dart';
 //
 // The one rule that matters: no secret value ever reaches this file's output,
 // not even partly. The secrets map goes in so the section can say WHICH keys
-// are stored and when the sign-in runs out; what comes out holds labels,
-// dates and non-secret config only, and every config value is checked
-// against the stored keys first ([SecretGuard]).
+// are stored and when the sign-in ends; what comes out holds labels, dates
+// and non-secret config only, and every config value is checked against the
+// stored keys first ([SecretGuard]).
 
 /// One labelled, non-secret line of an account's setup, such as
 /// "Server address: https://mastodon.social".
@@ -30,24 +30,49 @@ class ConnectionDetail {
   String toString() => '$label: $value';
 }
 
-/// When the stored sign-in runs out ([OAuthTokens.keyExpiresAt]) and whether
-/// NEFORUM renews it by itself.
+/// How long before a sign-in ends the section starts warning about it.
+const Duration kSignInEndWarning = Duration(days: 14);
+
+/// Where the stored sign-in stands.
+enum SignInState {
+  /// NEFORUM renews it whenever needed and no end date is stored: a refresh
+  /// token, or Bluesky's app password, which it signs in again with. The
+  /// access token's own time (often 1 or 2 hours) is not shown: it changes
+  /// all day, and says nothing about when the user must act.
+  renews,
+
+  /// Renews automatically until [SignInExpiry.endsAt], when the refresh
+  /// token itself runs out (Google apps in "Testing", TikTok, Pinterest).
+  renewsUntil,
+
+  /// The token renews itself when NEFORUM posts with it (Threads,
+  /// Instagram); left unused, it ends at [SignInExpiry.endsAt].
+  renewsWhenUsed,
+
+  /// Nothing stored can renew it: it ends at [SignInExpiry.endsAt].
+  endsOn,
+
+  /// It ended at [SignInExpiry.endsAt] and nothing stored can renew it.
+  ended,
+}
+
+/// When the stored sign-in really ends, and whether NEFORUM renews it first.
 @immutable
 class SignInExpiry {
-  const SignInExpiry({required this.expiresAt, required this.expired, required this.renewsAutomatically});
+  const SignInExpiry(this.state, {this.endsAt, this.endsSoon = false});
 
-  final DateTime expiresAt;
+  final SignInState state;
 
-  /// [expiresAt] has passed.
-  final bool expired;
+  /// The moment that ends the sign-in, when one is known: the refresh
+  /// token's end for [SignInState.renewsUntil], else the access token's.
+  /// Null for [SignInState.renews].
+  final DateTime? endsAt;
 
-  /// NEFORUM renews the sign-in on its own: before [expiresAt] (a token that
-  /// renews itself while it is still valid), or even after it (a refresh
-  /// token, or an app password it signs in again with).
-  final bool renewsAutomatically;
+  /// [endsAt] is less than [kSignInEndWarning] away and has not passed.
+  final bool endsSoon;
 
-  /// The sign-in ran out and nothing stored can renew it.
-  bool get needsReconnecting => expired && !renewsAutomatically;
+  bool get needsReconnecting => state == SignInState.ended;
+  bool get renewsAutomatically => state == SignInState.renews || state == SignInState.renewsUntil || state == SignInState.renewsWhenUsed;
 }
 
 /// Whether the account's keys reach the user's other devices.
@@ -96,6 +121,8 @@ class AccountConnection {
     required this.storedKeys,
     required this.connectedAt,
     required this.tier,
+    required this.needsKeys,
+    this.noKeysReason,
     this.signIn,
     this.keysRotate = false,
     this.demo = false,
@@ -113,9 +140,16 @@ class AccountConnection {
   final SignInExpiry? signIn;
 
   /// The keys this device holds for the account, by friendly label, in a
-  /// stable order. Empty for a hand-off account (it needs none) or when the
-  /// keys never reached this device.
+  /// stable order.
   final List<String> storedKeys;
+
+  /// This way of connecting stores keys ([connectionStoresKeys]), so having
+  /// none here means they never reached this device.
+  final bool needsKeys;
+
+  /// Why an account that [needsKeys] not has none, in a few words ("it posts
+  /// through the LBRY app on this device"). Null when it needs keys.
+  final String? noKeysReason;
 
   /// When the account was connected ([ConnectedAccount.createdAt]).
   final DateTime connectedAt;
@@ -128,8 +162,8 @@ class AccountConnection {
   /// A demo-workspace account (it has no keys at all).
   final bool demo;
 
-  /// Hand-off accounts publish without keys.
-  bool get needsKeys => tier != PlatformTier.handoff && !demo;
+  /// Keys are expected but this device has none.
+  bool get keysMissing => storedKeys.isEmpty && needsKeys && !demo;
 }
 
 /// How an account on [tier] posts to [network], in plain words.
@@ -140,29 +174,64 @@ String connectionMethodText(PlatformTier tier, String network) => switch (tier) 
       PlatformTier.webSession => 'Through the $network website you are signed into (experimental)',
     };
 
+/// Whether [account]'s way of connecting leaves keys behind, read from the
+/// adapter's own connect form: a secret field, or a browser sign-in (OAuth,
+/// MiAuth, IndieAuth), which always ends with a token. A hand-off needs no
+/// keys, and neither does Odysee's Auto, which posts through the LBRY app on
+/// this device and stores nothing (`OdyseeAdapter.connect`). An account
+/// whose platform this build does not know is assumed to need them.
+bool connectionStoresKeys(ConnectedAccount account, PlatformAdapter? adapter) {
+  if (account.tier == PlatformTier.handoff) return false;
+  if (adapter == null) return true;
+  final specs = adapter.connectSpecs.where((s) => s.tier == account.tier);
+  if (specs.isEmpty) return true;
+  return specs.any((s) => s.usesBrowser || s.fields.any((f) => f.secret));
+}
+
+/// Why a way of connecting that stores no keys needs none, by platform; the
+/// fallback covers any other.
+const Map<String, String> _noKeysReasons = {
+  'odysee': 'it posts through the LBRY app on this device',
+};
+
+String _noKeysReason(ConnectedAccount account) => account.tier == PlatformTier.handoff
+    ? 'hand-off opens the app or website, where you are signed in'
+    : _noKeysReasons[account.platformId] ?? 'this way of posting uses no keys';
+
+/// "Keys on this device" when the list is empty, as the section says it.
+String noStoredKeysText(AccountConnection c) {
+  if (c.demo) return 'None: this is a demo account.';
+  if (c.keysMissing) return 'None stored on this device. Reconnect the account here, or bring its keys over with Sync or Move to another device.';
+  return 'None needed: ${c.noKeysReason ?? 'this way of posting uses no keys'}.';
+}
+
 // ---------------------------------------------------------------------------
 // Secrets: which are keys, what they are called, and the guard.
 // ---------------------------------------------------------------------------
 
 /// Secret-store entries that are bookkeeping about a key, not a key: when it
 /// runs out, what kind it is, what it may do, when it was last renewed.
-/// They are not listed as stored keys and their values are never shown; only
-/// [OAuthTokens.keyExpiresAt] is read, and only as a date. They are left out
-/// of [SecretGuard] because they hold no secret (a date, "Bearer").
+/// They are not listed as stored keys and their values are never shown; the
+/// two expiry dates are read, and only as dates. They are left out of
+/// [SecretGuard] because they hold no secret (a date, "Bearer").
 const Set<String> kSecretBookkeepingKeys = {
   OAuthTokens.keyExpiresAt,
   OAuthTokens.keyTokenType,
   OAuthTokens.keyScope,
-  'refresh_expires_at', // Pinterest, YouTube, TikTok: when the refresh token runs out.
+  _refreshExpiresAt,
   'token_issued_at', // ThreadsAdapter.secretIssuedAt
   'refreshed_at', // InstagramAdapter.keyRefreshedAt
   'user_token_expires_at', // FacebookAdapter.secUserTokenExpiresAt
   'open_id', // TikTokSecretKeys.openId: the user's id at TikTok, kept with the tokens.
 };
 
-/// When a renewal timestamp is stored, the access token renews itself while
-/// it is still valid (Threads, Instagram): no refresh token, but not
-/// "needs reconnecting" either, until it actually runs out.
+/// When the refresh token itself runs out: PinterestAdapter.secretRefreshExpiresAt,
+/// YouTubeSecretKeys.refreshExpiresAt, TikTokSecretKeys.refreshExpiresAt.
+const String _refreshExpiresAt = 'refresh_expires_at';
+
+/// When a renewal timestamp is stored, the access token renews itself when
+/// NEFORUM posts with it (Threads, Instagram): no refresh token, but no
+/// "needs reconnecting" either until it actually runs out.
 const Set<String> _selfRenewingMarkers = {'token_issued_at', 'refreshed_at'};
 
 /// Friendly names for the secret-store keys the adapters write. Checked
@@ -191,8 +260,9 @@ const Map<String, String> kSecretKeyLabels = {
   'sid': 'Session',
 };
 
-/// Withholds any text that shares [run] or more characters in a row with a
-/// stored key, so no part of a secret can reach the screen or the clipboard.
+/// Withholds any text that shares [run] (4) or more characters in a row with
+/// a stored key, so no part of a secret, not even its last 4 characters, can
+/// reach the screen or the clipboard.
 ///
 /// Why a guard on top of choosing which config keys to show: some config
 /// values are cut from a secret by design. Telegram's bot id is the start of
@@ -202,34 +272,48 @@ const Map<String, String> kSecretKeyLabels = {
 /// keys. The guard makes all of those, and any added later, structurally
 /// unable to show.
 ///
-/// It errs on the side of hiding: an innocent value that happens to share 6
-/// characters with a key is left out. A secret shorter than [run] (4 or more
-/// characters) is matched whole.
+/// A key that is a web address (a Discord webhook) counts only by its
+/// path segments and query values that hold a digit, which is where its id
+/// and token are. Its scheme, host and word-only segments
+/// ("https://discord.com/api/webhooks/") are the same for every user and
+/// printed in the platform's documentation; matching them would hide every
+/// web address on the card while protecting nothing.
+///
+/// It errs on the side of hiding: an innocent value that shares 4
+/// characters in a row with a key is left out (for random tokens that is
+/// rare: the odds that a 30-character address shares 4 characters with a
+/// 43-character token are about 1 in 10 000). Keys shorter than [run] are
+/// not matched: 3 characters identify nothing.
 class SecretGuard {
-  SecretGuard(Map<String, String> secrets, {this.run = 6}) {
+  SecretGuard(Map<String, String> secrets, {this.run = 4}) {
     for (final e in secrets.entries) {
       if (kSecretBookkeepingKeys.contains(e.key)) continue;
-      final v = e.value;
-      if (v.length >= run) {
-        for (var i = 0; i + run <= v.length; i++) {
-          _windows.add(v.substring(i, i + run));
+      for (final part in secretParts(e.value)) {
+        for (var i = 0; i + run <= part.length; i++) {
+          _windows.add(part.substring(i, i + run));
         }
-      } else if (v.length >= 4) {
-        _short.add(v);
       }
     }
   }
 
   final int run;
   final Set<String> _windows = {};
-  final List<String> _short = [];
+
+  /// The parts of [value] that are secret: all of it, except for a web
+  /// address (see [SecretGuard]).
+  static List<String> secretParts(String value) {
+    final uri = Uri.tryParse(value);
+    if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https') || uri.host.isEmpty) return [value];
+    final digit = RegExp('[0-9]');
+    return [...uri.pathSegments, ...uri.queryParameters.values].where((s) => s.contains(digit)).toList();
+  }
 
   /// Whether [text] would show part of a stored key.
   bool reveals(String text) {
     for (var i = 0; i + run <= text.length; i++) {
       if (_windows.contains(text.substring(i, i + run))) return true;
     }
-    return _short.any(text.contains);
+    return false;
   }
 }
 
@@ -281,20 +365,51 @@ String cleanFieldLabel(String label) =>
     label.replaceFirst(RegExp(r'\s*\((?:[^()]*\b(?:optional|advanced|if|only|instead)\b[^()]*)\)\s*$', caseSensitive: false), '').trim();
 
 // ---------------------------------------------------------------------------
-// Config: which keys are shown, and under what label.
+// Config: which keys are shown, under what label, in what order.
 // ---------------------------------------------------------------------------
 
+/// The order the details are listed in: where the account lives, the user's
+/// own app, where posts go, who it posts as, then options, then how it
+/// signed in. The target comes before options such as Formatting.
+enum _Group { place, app, target, identity, option, method }
+
 /// A config key the connect form does not ask for but that describes the
-/// setup, with its label; [only] limits it to some platforms.
+/// setup: its label, its [group], [values] in words, and [only] the
+/// platforms it is shown for.
 @immutable
 class _ConfigLabel {
-  const _ConfigLabel(this.label, {this.only});
+  const _ConfigLabel(this.label, this.group, {this.only, this.values});
   final String label;
+  final _Group group;
   final Set<String>? only;
+  final Map<String, String>? values;
 }
 
+/// Server software names as their projects write them. Anything else is
+/// shown as the server reports it.
+const Map<String, String> _softwareNames = {
+  'mastodon': 'Mastodon',
+  'pleroma': 'Pleroma',
+  'akkoma': 'Akkoma',
+  'gotosocial': 'GoToSocial',
+  'friendica': 'Friendica',
+  'pixelfed': 'Pixelfed',
+  'mitra': 'Mitra',
+  'hometown': 'Hometown',
+  'glitchsoc': 'glitch-soc',
+  'iceshrimp': 'Iceshrimp',
+  'sharkey': 'Sharkey',
+  'misskey': 'Misskey',
+  'firefish': 'Firefish',
+  'takahe': 'Takahē',
+  'snac': 'snac',
+  'wildebeest': 'Wildebeest',
+  'bonfire': 'Bonfire',
+  'honk': 'honk',
+};
+
 /// Config keys shown beyond the connect form's own fields, reviewed one by
-/// one against what every built-in adapter stores (1.3.5).
+/// one against what every built-in adapter's `connect()` stores (1.3.5).
 ///
 /// Labels come from the adapter's connect form first: a config key that is
 /// also a form field (Mastodon's `instance`, Facebook's `app_id`, WordPress's
@@ -305,49 +420,72 @@ class _ConfigLabel {
 /// - parts of a secret: Ghost `keyId`, Telegram `botId`, Discord `webhookId`
 ///   and `threadId` (and [SecretGuard] catches any that slip through);
 /// - internal ids the handle already covers (`userId`, `personId`, `sub`,
-///   `remoteAccountId`, `pubkey`);
+///   `remoteAccountId`, `pubkey`, Telegram `chatUsername`);
 /// - what the server reported and NEFORUM caches: limits, capability flags,
 ///   discovered endpoints, scopes, version numbers, lists of other blogs,
 ///   Pages and languages.
+/// The redirect address is filtered apart: see [_registersRedirect].
 const Map<String, _ConfigLabel> _configLabels = {
-  // Where the account lives.
-  'pds': _ConfigLabel('PDS (data server)'),
-  'software': _ConfigLabel('Server software'),
-  'base': _ConfigLabel('Forem community', only: {'devto'}),
-  'micropubEndpoint': _ConfigLabel('Micropub endpoint'),
-  'mediaEndpoint': _ConfigLabel('Media endpoint'),
-  'siteName': _ConfigLabel('Site name'),
-  'siteTitle': _ConfigLabel('Site name'),
-  'blogUrl': _ConfigLabel('Blog address'),
-  'collectionUrl': _ConfigLabel('Blog address'),
-  'publicationUrl': _ConfigLabel('Blog address'),
-  // The user's own developer app.
-  'clientId': _ConfigLabel('Client ID'),
-  'clientKey': _ConfigLabel('Client key'),
-  'appId': _ConfigLabel('App ID'),
-  'redirectUri': _ConfigLabel('Redirect URI'),
-  // Where posts go.
-  'page_name': _ConfigLabel('Page'),
-  'boardName': _ConfigLabel('Board'),
-  'blogName': _ConfigLabel('Blog'),
-  'collectionTitle': _ConfigLabel('Blog'),
-  'publicationTitle': _ConfigLabel('Blog'),
-  'alias': _ConfigLabel('Blog alias', only: {'writefreely'}),
-  'channelName': _ConfigLabel('Channel'),
-  'channelId': _ConfigLabel('Channel ID', only: {'youtube', 'odysee'}),
-  'defaultSubreddit': _ConfigLabel('Default subreddit'),
-  'roomName': _ConfigLabel('Room'),
-  'roomAlias': _ConfigLabel('Room address'),
-  'roomId': _ConfigLabel('Room ID'),
-  'chatTitle': _ConfigLabel('Channel or group'),
-  'chatUsername': _ConfigLabel('Channel or group username'),
-  'webhookName': _ConfigLabel('Webhook'),
-  'botUsername': _ConfigLabel('Bot'),
-  'anonymous': _ConfigLabel('Posts anonymously', only: {'writefreely'}),
-  // Who the account is, where the handle does not say it.
-  'npub': _ConfigLabel('Public key (npub)'),
-  'did': _ConfigLabel('Account ID (DID)'),
+  'pds': _ConfigLabel('PDS (data server)', _Group.place),
+  'software': _ConfigLabel('Server software', _Group.place, values: _softwareNames),
+  'base': _ConfigLabel('Forem community', _Group.place, only: {'devto'}),
+  'micropubEndpoint': _ConfigLabel('Micropub endpoint', _Group.place),
+  'mediaEndpoint': _ConfigLabel('Media endpoint', _Group.place),
+  'siteName': _ConfigLabel('Site name', _Group.place),
+  'siteTitle': _ConfigLabel('Site name', _Group.place),
+  'clientId': _ConfigLabel('Client ID', _Group.app),
+  'clientKey': _ConfigLabel('Client key', _Group.app),
+  'appId': _ConfigLabel('App ID', _Group.app),
+  'redirectUri': _ConfigLabel('Redirect URI', _Group.app),
+  'page_name': _ConfigLabel('Page', _Group.target),
+  'boardName': _ConfigLabel('Board', _Group.target),
+  'blogName': _ConfigLabel('Blog', _Group.target),
+  'blogUrl': _ConfigLabel('Blog address', _Group.target),
+  'collectionTitle': _ConfigLabel('Blog', _Group.target),
+  'collectionUrl': _ConfigLabel('Blog address', _Group.target),
+  'publicationTitle': _ConfigLabel('Blog', _Group.target),
+  'publicationUrl': _ConfigLabel('Blog address', _Group.target),
+  'alias': _ConfigLabel('Blog alias', _Group.target, only: {'writefreely'}),
+  'channelName': _ConfigLabel('Channel', _Group.target),
+  'channelId': _ConfigLabel('Channel ID', _Group.target, only: {'youtube', 'odysee'}),
+  'defaultSubreddit': _ConfigLabel('Default subreddit', _Group.target),
+  'roomName': _ConfigLabel('Room', _Group.target),
+  'roomAlias': _ConfigLabel('Room address', _Group.target),
+  'roomId': _ConfigLabel('Room ID', _Group.target),
+  'chatTitle': _ConfigLabel('Channel or group', _Group.target),
+  'webhookName': _ConfigLabel('Webhook', _Group.target),
+  'botUsername': _ConfigLabel('Bot', _Group.identity),
+  'npub': _ConfigLabel('Public key (npub)', _Group.identity),
+  'did': _ConfigLabel('Account ID (DID)', _Group.identity),
+  'anonymous': _ConfigLabel('Posts anonymously', _Group.option, only: {'writefreely'}),
 };
+
+/// Config keys holding the address the platform sends the browser back to.
+const Set<String> _redirectKeys = {'redirectUri', 'redirect_uri'};
+
+/// Platforms where the user registers the redirect address in their own
+/// developer app (its connect form's redirect note says so), so both devices
+/// must use the one registered. Elsewhere it is NEFORUM's own default
+/// (Mastodon and Pixelfed register the app themselves; Google's desktop
+/// clients accept any loopback address) and only adds noise.
+const Set<String> _registersRedirect = {'x', 'tumblr', 'threads', 'instagram', 'facebook', 'linkedin', 'reddit', 'pinterest', 'tiktok', 'deviantart', 'dribbble', 'flickr'};
+
+/// Choice values in words. A choice not listed is shown as stored.
+const Map<String, String> _choiceLabels = {
+  'markdown': 'Markdown',
+  'html': 'HTML',
+  'plain': 'Plain text',
+  'publish': 'Published',
+  'published': 'Published',
+  'draft': 'Draft',
+  'pending': 'Pending review',
+  'trial': 'Trial',
+  'standard': 'Standard',
+};
+
+/// [value], a connect form choice, as the section shows it: "html" ->
+/// "HTML", "publish" -> "Published"; anything else as stored.
+String connectionChoiceLabel(String value) => _choiceLabels[value.trim().toLowerCase()] ?? value.trim();
 
 /// Config keys that record how the account signed in, and the values in
 /// words. A value not listed here is an internal code and is left out.
@@ -364,10 +502,24 @@ const Map<String, String> _signInMethods = {
   'indieauth': 'Browser sign-in (IndieAuth)',
 };
 
+/// The group a connect form field's value belongs to, from what the field
+/// asks for.
+_Group _fieldGroup(ConnectField f) {
+  final key = f.key.toLowerCase();
+  if (key.contains('redirect') || key.contains('client') || key.contains('consumer') || key.contains('app_id') || key == 'appid' ||
+      key == 'apiversion' || key == 'scopes' || key == 'apikey') {
+    return _Group.app;
+  }
+  if (f.kind == FieldKind.url || f.kind == FieldKind.multiline) return _Group.place;
+  if (f.kind == FieldKind.select || f.kind == FieldKind.boolean || f.kind == FieldKind.number || key == 'bid') return _Group.option;
+  if (const {'username', 'handle', 'identifier', 'user_id', 'label', 'displayname', 'display_name'}.contains(key)) return _Group.identity;
+  return _Group.target;
+}
+
 /// [value] as text, or null when it is not something to show (a map, a list
-/// of objects, an empty string). [field] decides booleans, lists and choices.
-String? _formatValue(Object? value, {ConnectField? field}) {
-  String? capitalise(String s) => s.isEmpty ? null : '${s[0].toUpperCase()}${s.substring(1)}';
+/// of objects, an empty string). [field] decides booleans, lists and choices;
+/// [words] names known values.
+String? _formatValue(Object? value, {ConnectField? field, Map<String, String>? words}) {
   switch (value) {
     case null:
       return null;
@@ -379,8 +531,8 @@ String? _formatValue(Object? value, {ConnectField? field}) {
       final t = s.trim();
       if (t.isEmpty) return null;
       if (field?.kind == FieldKind.boolean) return t == 'true' ? 'Yes' : (t == 'false' ? 'No' : t);
-      if (field?.kind == FieldKind.select) return capitalise(t);
-      return t;
+      if (field?.kind == FieldKind.select) return connectionChoiceLabel(t);
+      return words?[t.toLowerCase()] ?? t;
     case List<Object?> l:
       if (l.isEmpty || l.any((e) => e is! String && e is! num)) return null;
       return l.map((e) => '$e'.trim()).where((e) => e.isNotEmpty).join(field?.kind == FieldKind.multiline ? '\n' : ', ');
@@ -389,13 +541,19 @@ String? _formatValue(Object? value, {ConnectField? field}) {
   }
 }
 
-/// The non-secret setup of [account], labelled, in the connect form's order:
-/// first every config key that is a field of the form (the account's own way
-/// of connecting first, then the platform's other ways, so its wording wins),
-/// then the reviewed extras in [_configLabels], then how it signed in. A
-/// value [SecretGuard] flags is left out.
+/// [s] without a leading "@" or "u/", lower case: how a handle is compared.
+String _bareHandle(String s) => s.trim().toLowerCase().replaceFirst(RegExp(r'^(@|u/)'), '');
+
+/// The non-secret setup of [account], labelled, grouped as [_Group] orders
+/// them (within a group in the connect form's order). Every config key that
+/// is a field of the form comes under that field's label (the account's own
+/// way of connecting first, then the platform's other ways, so its wording
+/// wins); then the reviewed extras in [_configLabels]; then how it signed
+/// in. Left out: a value [SecretGuard] flags, a value that only repeats the
+/// card's handle, and a redirect address the user never registered.
 List<ConnectionDetail> connectionDetails(ConnectedAccount account, PlatformAdapter? adapter, {Map<String, String> secrets = const {}}) {
   final guard = SecretGuard(secrets);
+  final handle = account.handle == null ? null : _bareHandle(account.handle!);
   final specs = adapter?.connectSpecs ?? const <ConnectSpec>[];
   final fields = <String, ConnectField>{};
   for (final s in [...specs.where((s) => s.tier == account.tier), ...specs.where((s) => s.tier != account.tier)]) {
@@ -404,58 +562,74 @@ List<ConnectionDetail> connectionDetails(ConnectedAccount account, PlatformAdapt
     }
   }
 
-  final out = <ConnectionDetail>[];
-  void add(String label, String? value) {
+  final grouped = <(_Group, ConnectionDetail)>[];
+  void add(_Group group, String label, String? value) {
     if (value == null || guard.reveals(value)) return;
-    out.add(ConnectionDetail(label, value));
+    if (handle != null && handle.isNotEmpty && _bareHandle(value) == handle) return;
+    grouped.add((group, ConnectionDetail(label, value)));
   }
 
+  bool hidden(String key) => _redirectKeys.contains(key) && !_registersRedirect.contains(account.platformId);
+
   for (final f in fields.values) {
-    if (account.config.containsKey(f.key)) add(cleanFieldLabel(f.label), _formatValue(account.config[f.key], field: f));
+    if (!account.config.containsKey(f.key) || hidden(f.key)) continue;
+    add(_fieldGroup(f), cleanFieldLabel(f.label), _formatValue(account.config[f.key], field: f));
   }
   for (final e in _configLabels.entries) {
     final only = e.value.only;
-    if (fields.containsKey(e.key) || (only != null && !only.contains(account.platformId))) continue;
-    add(e.value.label, _formatValue(account.config[e.key]));
+    if (fields.containsKey(e.key) || hidden(e.key) || (only != null && !only.contains(account.platformId))) continue;
+    add(e.value.group, e.value.label, _formatValue(account.config[e.key], words: e.value.values));
   }
   for (final k in _signInMethodKeys) {
     if (fields.containsKey(k)) continue;
     final method = _signInMethods['${account.config[k] ?? ''}'.trim()];
     if (method != null) {
-      add('Sign-in method', method);
+      add(_Group.method, 'Sign-in method', method);
       break;
     }
   }
-  return out;
+  // A stable sort: within a group the order above stays.
+  final indexed = grouped.indexed.toList()..sort((a, b) => a.$2.$1.index != b.$2.$1.index ? a.$2.$1.index - b.$2.$1.index : a.$1 - b.$1);
+  return [for (final (_, (_, d)) in indexed) d];
 }
 
-/// When the sign-in in [secrets] runs out and whether it renews, or null
-/// when no expiry is stored (most keys and passwords never run out on a set
-/// date). Reads [OAuthTokens.keyExpiresAt] and the presence (never the value)
-/// of a refresh token, an app password or a renewal timestamp.
+/// When the sign-in in [secrets] really ends and whether NEFORUM renews it
+/// first, or null when nothing stored says (most API keys and passwords never
+/// run out on a set date). Reads [OAuthTokens.keyExpiresAt], the refresh
+/// token's end (`refresh_expires_at`) and the presence, never the value, of a
+/// refresh token, an app password or a renewal timestamp.
 SignInExpiry? signInExpiry(Map<String, String> secrets, {required DateTime now}) {
-  final expiresAt = DateTime.tryParse(secrets[OAuthTokens.keyExpiresAt] ?? '');
-  if (expiresAt == null) return null;
   bool has(String k) => (secrets[k] ?? '').isNotEmpty;
-  final refreshEnds = DateTime.tryParse(secrets['refresh_expires_at'] ?? '');
-  final refresh = has(OAuthTokens.keyRefreshToken) && (refreshEnds == null || now.isBefore(refreshEnds));
-  // Bluesky signs in again with the app password when its session ends.
-  final password = has('app_password') && has(OAuthTokens.keyAccessToken);
-  final selfRenewing = _selfRenewingMarkers.any(has);
-  final expired = !now.isBefore(expiresAt);
-  return SignInExpiry(
-    expiresAt: expiresAt,
-    expired: expired,
-    renewsAutomatically: refresh || password || (!expired && selfRenewing),
-  );
+  DateTime? at(String k) => DateTime.tryParse(secrets[k] ?? '');
+  SignInExpiry ending(SignInState state, DateTime end) => SignInExpiry(state, endsAt: end, endsSoon: end.difference(now) < kSignInEndWarning);
+
+  final access = at(OAuthTokens.keyExpiresAt);
+  final refreshEnds = at(_refreshExpiresAt);
+  final refresh = has(OAuthTokens.keyRefreshToken);
+  // Bluesky signs in again with its app password whenever its session ends.
+  if (has('app_password') && has(OAuthTokens.keyAccessToken)) return const SignInExpiry(SignInState.renews);
+  if (refresh && (refreshEnds == null || now.isBefore(refreshEnds))) {
+    return refreshEnds == null ? const SignInExpiry(SignInState.renews) : ending(SignInState.renewsUntil, refreshEnds);
+  }
+  // Nothing can renew it (no refresh token, or one that ran out itself): the
+  // sign-in ends with the last token that still works.
+  final ends = [?access, if (refresh) ?refreshEnds]..sort();
+  if (ends.isEmpty) return null;
+  final end = ends.last;
+  if (!now.isBefore(end)) return SignInExpiry(SignInState.ended, endsAt: end);
+  return ending(_selfRenewingMarkers.any(has) ? SignInState.renewsWhenUsed : SignInState.endsOn, end);
 }
 
 /// [e] in words; [when] writes a date and time.
 String signInText(SignInExpiry e, String Function(DateTime) when) {
-  final at = when(e.expiresAt);
-  if (e.needsReconnecting) return 'Ran out on $at. Needs reconnecting.';
-  if (e.expired) return 'Ran out on $at. Renews automatically before the next post.';
-  return e.renewsAutomatically ? 'Valid until $at. Renews automatically.' : 'Valid until $at. Then needs reconnecting.';
+  final at = e.endsAt == null ? '' : when(e.endsAt!);
+  return switch (e.state) {
+    SignInState.renews => 'Renews automatically.',
+    SignInState.renewsUntil => 'Renews automatically until $at, then needs reconnecting.',
+    SignInState.renewsWhenUsed => 'Renews when NEFORUM posts with it. Unused, it ends on $at.',
+    SignInState.endsOn => 'Ends on $at, then needs reconnecting.',
+    SignInState.ended => 'Ended on $at. Needs reconnecting.',
+  };
 }
 
 /// The adapter a demo account stands in for, so questions about the real
@@ -463,7 +637,7 @@ String signInText(SignInExpiry e, String Function(DateTime) when) {
 PlatformAdapter? _realAdapter(PlatformAdapter? a) => a is DemoAdapter ? a.inner : a;
 
 /// [AccountConnection] for [account] from its config and [secrets] (which
-/// are read for names, the expiry date and [SecretGuard], never copied).
+/// are read for names, the expiry dates and [SecretGuard], never copied).
 AccountConnection describeAccountConnection(
   ConnectedAccount account, {
   PlatformAdapter? adapter,
@@ -472,6 +646,7 @@ AccountConnection describeAccountConnection(
 }) {
   final network = adapter?.descriptor.name ?? account.platformId;
   final real = _realAdapter(adapter);
+  final needsKeys = connectionStoresKeys(account, real);
   return AccountConnection(
     network: network,
     tier: account.tier,
@@ -479,27 +654,40 @@ AccountConnection describeAccountConnection(
     details: connectionDetails(account, adapter, secrets: secrets),
     signIn: signInExpiry(secrets, now: now),
     storedKeys: storedKeyLabels(secrets, adapter),
+    needsKeys: needsKeys,
+    noKeysReason: needsKeys ? null : _noKeysReason(account),
     connectedAt: account.createdAt,
     keysRotate: account.tier != PlatformTier.handoff && (real?.rotatesRefreshTokensFor(account) ?? false),
     demo: account.config['demo'] == true,
   );
 }
 
+/// The account as the copied setup names it: its display name, then its
+/// handle unless the name already holds it. X stores "Robin (@robin)" and
+/// Mastodon "Alice (mastodon.social)" as display names; these read "Robin
+/// (@robin)" and "Alice (@alice@mastodon.social)", never the handle twice.
+String connectionAccountName(ConnectedAccount account) {
+  final name = account.displayName.trim();
+  final handle = account.handle?.trim() ?? '';
+  if (handle.isEmpty || name.toLowerCase().contains(handle.toLowerCase())) return name;
+  final m = RegExp(r'^(.*\S)\s*\(([^()]+)\)$').firstMatch(name);
+  if (m != null && handle.toLowerCase().contains(m[2]!.trim().toLowerCase())) return '${m[1]} ($handle)';
+  return '$name ($handle)';
+}
+
 /// "Keys on this device" in one line, for the copied text.
 String storedKeysLine(AccountConnection c, KeysTravel travel) {
   if (c.storedKeys.isNotEmpty) return '${c.storedKeys.join(', ')} (${keysTravelLabel(travel)})';
   if (c.demo) return 'None (demo account)';
-  return c.needsKeys ? 'None stored on this device' : 'None needed';
+  return c.keysMissing ? 'None stored on this device' : 'None needed';
 }
 
 /// The setup of [account] as plain text, to paste next to the same list
 /// from another device: no key, password or token, only what the
 /// Connection section shows.
 String connectionSetupText(ConnectedAccount account, AccountConnection c, {required KeysTravel travel, required String Function(DateTime) when}) {
-  final handle = account.handle;
-  final who = handle == null || handle == account.displayName ? account.displayName : '${account.displayName} ($handle)';
   return [
-    '${c.network}: $who',
+    '${c.network}: ${connectionAccountName(account)}',
     'How it posts: ${c.method}',
     for (final d in c.details) '${d.label}: ${d.value.replaceAll('\n', ', ')}',
     if (c.signIn != null) 'Sign-in: ${signInText(c.signIn!, when)}',

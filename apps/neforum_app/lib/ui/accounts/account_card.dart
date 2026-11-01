@@ -107,7 +107,7 @@ class AccountCard extends ConsumerWidget {
         Divider(height: 1, color: nf.border),
         // Keyed by account: when the grid reuses this card for another
         // account, the section starts closed instead of showing it open.
-        AccountConnectionSection(key: ValueKey('connection-${a.id}'), account: a),
+        AccountConnectionSection(key: ValueKey('connection-${a.id}'), account: a, network: d?.name ?? a.platformId),
       ]),
     );
   }
