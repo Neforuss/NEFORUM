@@ -15,6 +15,9 @@ import 'card_design.dart';
 import 'photo_composite.dart';
 import 'render_parameters.dart';
 import 'text_card_background.dart';
+import 'text_card_style.dart';
+
+export 'text_card_style.dart';
 
 /// NEFORUM text cards: a text-only post rendered as an image for platforms
 /// that refuse posts without one (Instagram, Pinterest, TikTok photo posts,
@@ -29,7 +32,10 @@ import 'text_card_background.dart';
 /// (Settings > Text cards, or per post under the preview): a plain card keeps
 /// only the words and the author, and the author's @handle is optional too.
 /// The words can be aligned five ways ([TextCardAlignment]) and set over a
-/// photo instead of a plain colour ([TextCardBackground]).
+/// photo instead of a plain colour ([TextCardBackground]). Since 1.3.5 the
+/// words' size, colour, line spacing and place, the card's colour and
+/// margins, and the @handle's words, size, place and colour can be set too
+/// ([TextCardStyle]); untouched, a card is drawn exactly as before.
 ///
 /// Every choice a card was made with is recorded in its
 /// [MediaAttachment.renderParameters] ([textCardRenderParameters]); cards made
@@ -206,8 +212,9 @@ String textCardFileName(TextCardTheme theme, {bool branded = true, TextCardFont 
 
 /// Everything a card for [platformId] is rendered with, as recorded in its
 /// [MediaAttachment.renderParameters]: two cards with equal parameters (and
-/// size) are the same picture. [byline] is the @handle drawn on it, null when
-/// it is left out; [textHash] identifies the words ([stableHash]).
+/// size) are the same picture. [byline] is the @handle drawn on it (the
+/// [style]'s own @handle when it has one), null when it is left out;
+/// [textHash] identifies the words ([stableHash]).
 Map<String, dynamic> textCardRenderParameters({
   required String platformId,
   required TextCardTheme theme,
@@ -223,6 +230,7 @@ Map<String, dynamic> textCardRenderParameters({
   bool customFontFallback = false,
   CardDesign? design,
   bool designFontFallback = false,
+  TextCardStyle style = TextCardStyle.classic, // 1.3.5: cards
 }) =>
     {
       'kind': RenderKind.textCard,
@@ -247,11 +255,23 @@ Map<String, dynamic> textCardRenderParameters({
       // off). Fonts of its blocks missing here are marked like customFont.
       if (design != null) 'design': design.toJson(),
       if (design != null && designFontFallback) 'designFontFallback': true,
+      // 1.3.5: cards. Only when restyled, so an untouched card keeps the
+      // parameters 1.3.4 gave it. Kept with a design too (its @handle is
+      // drawn there; the rest waits for the design to be turned off).
+      if (!style.isClassic) 'style': style.toJson(),
     };
 
 /// The card designer's design a card (or placeholder) was drawn from
 /// (1.3.1); null for the classic card.
 CardDesign? textCardDesignOf(MediaAttachment m) => CardDesign.tryParse(textCardParametersOf(m)?['design']);
+
+/// The style a card (or placeholder) was drawn with (1.3.5); [TextCardStyle.classic]
+/// for cards made before it or never restyled.
+TextCardStyle textCardStyleOf(MediaAttachment m) => TextCardStyle.fromJson(textCardParametersOf(m)?['style']);
+
+/// The @handle drawn on a card (or a composer stand-in that records it,
+/// 1.3.5); null when it is left out or not recorded.
+String? textCardBylineOf(MediaAttachment m) => textCardParametersOf(m)?['byline'] as String?;
 
 /// The installed or imported font a card (or placeholder) was made with
 /// (1.3.1); null for a built-in font ([textCardFontOf]).
@@ -278,6 +298,8 @@ const String kTextCardPlaceholder = 'textcard:';
 bool isTextCardPlaceholder(MediaAttachment m) => m.path.startsWith(kTextCardPlaceholder);
 
 /// What the composer's previews and checks see in place of the real card.
+/// [byline] (1.3.5) is the @handle the card will show, recorded like a saved
+/// card's when [showsHandle]; [style] is the post's [TextCardStyle].
 MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     {bool branded = true,
     TextCardFont font = TextCardFont.original,
@@ -286,7 +308,9 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     TextCardBackground? background,
     bool story = false,
     CaptionFont? customFont,
-    CardDesign? design}) {
+    CardDesign? design,
+    String? byline,
+    TextCardStyle style = TextCardStyle.classic}) {
   final s = textCardSize(platformId, story: story);
   return MediaAttachment(
     id: story ? 'textcard-$platformId-story' : 'textcard-$platformId',
@@ -304,10 +328,12 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
       branded: branded,
       alignment: alignment,
       showsHandle: showsHandle,
+      byline: byline,
       safe: textCardSafeArea(platformId, story: story) != EdgeInsets.zero,
       background: background,
       customFont: customFont,
       design: design,
+      style: style,
     ),
   );
 }
@@ -367,7 +393,8 @@ class TextCardPainter extends CustomPainter {
       this.safe = EdgeInsets.zero,
       this.alignment = TextCardAlignment.left,
       this.backdrop,
-      this.customFont})
+      this.customFont,
+      this.style = TextCardStyle.classic})
       : super(repaint: captionFontsRevision);
 
   final String text;
@@ -385,13 +412,13 @@ class TextCardPainter extends CustomPainter {
   /// [font] and the [kCaptionFontFallbacks] for what it lacks.
   TextStyle _wordsStyle(double fontSize, Color color) {
     final alias = registeredCaptionFontAlias(customFont);
-    if (alias == null) return font.style(fontSize: fontSize, height: _lineHeight, color: color);
+    if (alias == null) return font.style(fontSize: fontSize, height: style.lineSpacing, color: color);
     return TextStyle(
       fontFamily: alias,
       fontFamilyFallback: [font.family, ...font.fallback, ...kCaptionFontFallbacks],
       fontWeight: FontWeight.w400,
       fontSize: fontSize,
-      height: _lineHeight,
+      height: style.lineSpacing,
       color: color,
     );
   }
@@ -399,8 +426,14 @@ class TextCardPainter extends CustomPainter {
   /// Draw the NEFORUM signature (top rule, mark and wordmark).
   final bool branded;
 
-  /// Author in the footer, e.g. "@ana@mastodon.social"; null leaves it out.
+  /// The network's own @handle, e.g. "@ana@mastodon.social"; null leaves the
+  /// @handle out. Where it is drawn, [style]'s own @handle replaces it.
   final String? byline;
+
+  /// 1.3.5: cards. The words' size, colour, line spacing and place, the
+  /// card's colour and margins, and the @handle's words, size, place and
+  /// colour; [TextCardStyle.classic] draws the card as 1.3.4 did.
+  final TextCardStyle style;
 
   /// Room the network's own buttons take, in pixels at 1080 wide
   /// ([fullScreenSafeArea]): the words and footer stay out of it.
@@ -412,21 +445,25 @@ class TextCardPainter extends CustomPainter {
   /// A photo behind the words instead of the theme's plain colour.
   final TextCardBackdrop? backdrop;
 
-  static const double _lineHeight = 1.3;
-
+  // Every measurement below is the 1.3.4 one with the style's factor applied
+  // as a multiplication by 1 (or the same value) for [TextCardStyle.classic],
+  // so an untouched card is the same picture, byte for byte
+  // (text_card_style_test.dart).
   @override
   void paint(Canvas canvas, Size size) {
     final u = size.width / 1080;
     final w = size.width;
     final h = size.height;
-    final fg = backdrop?.foreground ?? theme.foreground;
-    final pad = 92 * u;
+    final s = style;
+    final fg = s.textColorOr(backdrop?.foreground ?? theme.foreground);
+    final cardColor = s.backgroundColorOr(theme.background);
+    final pad = s.margin * u;
     final safeTop = safe.top * u, safeRight = safe.right * u, safeBottom = safe.bottom * u;
 
     if (backdrop != null) {
-      backdrop!.paint(canvas, Offset.zero & size, u, cardColor: theme.background);
+      backdrop!.paint(canvas, Offset.zero & size, u, cardColor: cardColor);
     } else {
-      canvas.drawRect(Offset.zero & size, Paint()..color = theme.background);
+      canvas.drawRect(Offset.zero & size, Paint()..color = cardColor);
     }
 
     final rule = branded ? 14 * u : 0.0;
@@ -436,10 +473,28 @@ class TextCardPainter extends CustomPainter {
       canvas.drawRect(Rect.fromLTWH(0, 0, pad + 120 * u, rule), Paint()..color = Brand.yellow);
     }
 
-    // Footer: mark, wordmark and author; a plain card keeps only the author.
+    // The @handle: the style's own words or the network's, in the corner the
+    // style picks (by default beside the signature, or bottom left).
+    final handle = byline == null ? '' : s.bylineFor(byline!).trim();
+    final corner = s.handlePosition.resolve(branded: branded);
+    final handleOnTop = corner.isTop && handle.isNotEmpty;
+    final handleColor = s.handleColor == null ? fg.withValues(alpha: 0.62) : Color(s.handleColor!);
+    TextPainter handleLaidOut(double room) => TextPainter(
+          text: TextSpan(
+            text: handle,
+            style: TextStyle(fontFamily: Fonts.body, fontWeight: FontWeight.w500, fontSize: 26 * u * s.handleSize, color: handleColor, height: 1.1),
+          ),
+          textDirection: TextDirection.ltr,
+          maxLines: 1,
+          ellipsis: '…',
+        )..layout(maxWidth: room);
+
+    // Footer: mark, wordmark and the @handle; a plain card keeps only the
+    // @handle. Its distance from the bottom follows the margins (84 px at the
+    // card's own 92).
     final markSize = 60 * u;
-    final footerY = h - safeBottom - 84 * u - markSize;
-    final by = byline?.trim() ?? '';
+    final footerY = h - safeBottom - 84 * u * (s.margin / TextCardStyle.defaultMargin) - markSize;
+    final by = handleOnTop ? '' : handle;
     var authorLeft = pad;
     if (branded) {
       paintNeforumMark(canvas, Rect.fromLTWH(pad, footerY, markSize, markSize));
@@ -458,16 +513,9 @@ class TextCardPainter extends CustomPainter {
     if (by.isNotEmpty) {
       final room = w - pad - safeRight - authorLeft;
       if (room > 40 * u) {
-        final author = TextPainter(
-          text: TextSpan(
-            text: by,
-            style: TextStyle(fontFamily: Fonts.body, fontWeight: FontWeight.w500, fontSize: 26 * u, color: fg.withValues(alpha: 0.62), height: 1.1),
-          ),
-          textDirection: TextDirection.ltr,
-          maxLines: 1,
-          ellipsis: '…',
-        )..layout(maxWidth: room);
-        author.paint(canvas, Offset(branded ? w - pad - safeRight - author.width : pad, footerY + (markSize - author.height) / 2));
+        final author = handleLaidOut(room);
+        // On the left it follows the wordmark (a plain card's margin).
+        author.paint(canvas, Offset(corner.isRight ? w - pad - safeRight - author.width : authorLeft, footerY + (markSize - author.height) / 2));
         author.dispose();
       }
     }
@@ -487,8 +535,16 @@ class TextCardPainter extends CustomPainter {
     }
 
     // The words: as large as fits, never smaller than 30 px at 1080 wide.
-    final top = rule + pad + safeTop;
+    var top = rule + pad + safeTop;
     final areaW = w - pad * 2 - safeRight;
+    if (handleOnTop && areaW > 40 * u) {
+      // The @handle above the words, inside the margins; the words start
+      // under it.
+      final author = handleLaidOut(areaW);
+      author.paint(canvas, Offset(corner.isRight ? w - pad - safeRight - author.width : pad, top));
+      top += author.height + 40 * u;
+      author.dispose();
+    }
     final areaH = math.max(0.0, bottom - top);
     final rtl = Bidi.detectRtlDirectionality(text);
     AlignedText layout(double fs, {int? maxLines}) => AlignedText(
@@ -507,12 +563,32 @@ class TextCardPainter extends CustomPainter {
       fs = math.max(minFs, fs - 4 * u);
       words = layout(fs);
     }
+    // 1.3.5: cards. The chosen size against the fitted one: smaller always
+    // fits; larger grows only as far as the words still fit.
+    final scale = s.textSize;
+    if (scale < 1) {
+      words.dispose();
+      fs *= scale;
+      words = layout(fs);
+    } else if (scale > 1) {
+      final fitted = fs;
+      var larger = fs * scale;
+      var grown = layout(larger);
+      while (grown.height > areaH && larger > fitted) {
+        grown.dispose();
+        larger = math.max(fitted, larger - 4 * u);
+        grown = layout(larger);
+      }
+      words.dispose();
+      words = grown;
+      fs = larger;
+    }
     if (words.height > areaH) {
-      final lines = math.max(1, (areaH / (fs * _lineHeight)).floor());
+      final lines = math.max(1, (areaH / (fs * s.lineSpacing)).floor());
       words.dispose();
       words = layout(fs, maxLines: lines);
     }
-    final position = backdrop?.background.textPosition ?? TextCardTextPosition.center;
+    final position = s.textPosition ?? backdrop?.background.textPosition ?? TextCardTextPosition.center;
     // The middle is worked out as before 1.3, so those cards stay the same.
     final origin = Offset(
         pad,
@@ -540,7 +616,8 @@ class TextCardPainter extends CustomPainter {
       old.safe != safe ||
       old.alignment != alignment ||
       old.backdrop != backdrop ||
-      old.customFont != customFont;
+      old.customFont != customFont ||
+      old.style != style;
 }
 
 /// Live card for previews.
@@ -556,7 +633,8 @@ class TextCardView extends StatelessWidget {
       this.safe = EdgeInsets.zero,
       this.alignment = TextCardAlignment.left,
       this.backdrop,
-      this.customFont});
+      this.customFont,
+      this.style = TextCardStyle.classic});
 
   final String text;
   final TextCardTheme theme;
@@ -571,6 +649,9 @@ class TextCardView extends StatelessWidget {
   final TextCardAlignment alignment;
   final TextCardBackdrop? backdrop;
 
+  /// 1.3.5: cards. See [TextCardPainter.style].
+  final TextCardStyle style;
+
   @override
   Widget build(BuildContext context) => AspectRatio(
         aspectRatio: aspect,
@@ -584,7 +665,8 @@ class TextCardView extends StatelessWidget {
               safe: safe,
               alignment: alignment,
               backdrop: backdrop,
-              customFont: customFont),
+              customFont: customFont,
+              style: style),
         ),
       );
 }
@@ -592,7 +674,8 @@ class TextCardView extends StatelessWidget {
 /// Renders a card to JPEG bytes (Instagram's API only takes JPEG). The engine
 /// rasterizes only the words, rule, footer and colours; a background photo
 /// ([TextCardBackdrop.pixels]) is composited on the CPU ([composeTextCard]),
-/// never as an engine image.
+/// never as an engine image. [style] (1.3.5) as [TextCardPainter.style]; its
+/// card colour also fills the room a whole photo leaves.
 Future<Uint8List> renderTextCardJpeg(
     {required String text,
     required TextCardTheme theme,
@@ -603,7 +686,8 @@ Future<Uint8List> renderTextCardJpeg(
     EdgeInsets safe = EdgeInsets.zero,
     TextCardAlignment alignment = TextCardAlignment.left,
     TextCardBackdrop? backdrop,
-    CaptionFont? customFont}) async {
+    CaptionFont? customFont,
+    TextCardStyle style = TextCardStyle.classic}) async {
   final width = size.width.round();
   final height = size.height.round();
   // A preview's engine image is never drawn here: only the photo's pixels.
@@ -619,12 +703,14 @@ Future<Uint8List> renderTextCardJpeg(
       alignment: alignment,
       backdrop: photo == null ? null : TextCardBackdrop(pixels: photo, luminance: backdrop!.luminance, background: backdrop.background),
       customFont: customFont,
+      style: style,
     ).paint(canvas, size);
   });
   if (photo == null) return compute(encodeRgbaJpeg, (words, width, height));
   return compute(
     composeTextCard,
-    TextCardComposeJob.forBackground(photo: photo, words: words, width: width, height: height, background: backdrop!.background, cardColor: theme.background),
+    TextCardComposeJob.forBackground(
+        photo: photo, words: words, width: width, height: height, background: backdrop!.background, cardColor: style.backgroundColorOr(theme.background)),
   );
 }
 

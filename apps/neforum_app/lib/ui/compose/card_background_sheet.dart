@@ -54,6 +54,7 @@ class CardLook {
     required this.alignment,
     this.byline,
     this.customFont,
+    this.style = TextCardStyle.classic,
   });
   final PlatformDescriptor platform;
   final String text;
@@ -69,6 +70,9 @@ class CardLook {
 
   /// 1.3.1: cards. The installed or imported font drawn instead of [font].
   final CaptionFont? customFont;
+
+  /// 1.3.5: cards. The card's size, colours, spacing, margins and @handle.
+  final TextCardStyle style;
 }
 
 /// Opens the card background editor: a plain colour, or a photo (one of the
@@ -216,6 +220,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           alignment: look.alignment,
           backdrop: previewBackdrop(ref, current),
           customFont: look.customFont,
+          style: look.style,
           ),
         ),
       ),

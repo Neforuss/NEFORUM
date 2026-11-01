@@ -64,6 +64,7 @@ class ComposerState {
     this.textCardCustomFont, // 1.3.1: cards
     this.textCardDesign, // 1.3.1: cards
     this.audioCardDesign, // 1.3.1: cards
+    this.textCardStyle = TextCardStyle.classic, // 1.3.5: cards
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -207,6 +208,13 @@ class ComposerState {
   /// [textCardDesign], or the Settings default; null for the classic card.
   CardDesign? textDesign(AppSettings settings) => effectiveCardDesign(textCardDesign, settings.textCardDesign);
 
+  /// 1.3.5: cards. The classic text card's size, colours, line spacing,
+  /// margins, word position and @handle (its words, size, corner and
+  /// colour), the same on every network's card; [TextCardStyle.classic] for
+  /// the card as it always was. Set from the master editor or under any
+  /// network's card; its @handle also goes on designed cards.
+  final TextCardStyle textCardStyle;
+
   /// [audioCardDesign], or the Settings default; null for the classic card.
   CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
 
@@ -265,6 +273,7 @@ class ComposerState {
     Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
     Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
+    TextCardStyle? textCardStyle, // 1.3.5: cards
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -309,6 +318,7 @@ class ComposerState {
         textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
         textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
         audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
+        textCardStyle: textCardStyle ?? this.textCardStyle, // 1.3.5: cards
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -457,7 +467,13 @@ class ComposerNotifier extends Notifier<ComposerState> {
     return out;
   }
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
-  void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
+
+  /// "White on black" or "Black on white": the theme's colours, so colours
+  /// of the card's own ([TextCardStyle]) go.
+  void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t, textCardStyle: state.textCardStyle.withoutColours());
+
+  /// 1.3.5: cards. The text card's style for every network.
+  void setTextCardStyle(TextCardStyle style) => state = state.copyWith(textCardStyle: style);
   /// A built-in font for the card's words (no installed or imported one).
   void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f, textCardCustomFont: const {});
 
@@ -749,6 +765,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
         textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
         audioCardDesign: audioCardDesignOfPost(post), // 1.3.1: cards
+        textCardStyle: textCardStyleOfPost(post) ?? TextCardStyle.classic, // 1.3.5: cards
       );
   }
 
@@ -806,6 +823,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
       textCardDesign: state.textCardDesign, // 1.3.1: cards
       audioCardDesign: state.audioCardDesign, // 1.3.1: cards
+      textCardStyle: state.textCardStyle, // 1.3.5: cards
     );
   }
 }
@@ -870,6 +888,10 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             story: story,
             customFont: cardFont,
             design: cardDesign,
+            // 1.3.5: cards. The @handle the saved card will show, recorded
+            // like the saved card's, and the post's style.
+            byline: c.textCardStyle.bylineFor(a.handle ?? a.displayName),
+            style: c.textCardStyle,
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
@@ -1087,7 +1109,8 @@ class PostActions {
     post = withTextCardChoices(post,
         everyNetwork: c.cardOnEveryNetwork(ref.read(settingsProvider)),
         withText: c.textCardWithText,
-        platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
+        platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId,
+        style: c.textCardStyle);
     // 1.3.1: cards. After the card choices, which replace the targets' extras.
     post = withCardDesigns(post, text: c.textCardDesign, audio: c.audioCardDesignToSave(ref.read(settingsProvider)));
     // Hand the old cards and fitted photos over so unchanged ones are reused,
@@ -1102,7 +1125,8 @@ class PostActions {
         handle: c.textCardHandle,
         background: c.textCardBackground ?? const {},
         customFont: c.textCardCustomFont,
-        design: c.textCardDesign);
+        design: c.textCardDesign,
+        cardStyle: c.textCardStyle);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
     post = await attachAudioRenditions(s, post, ref.read(settingsProvider));

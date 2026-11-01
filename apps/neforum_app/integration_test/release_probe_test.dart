@@ -5,7 +5,8 @@
 // an audio card drawn from a template with the sound's waveform and a text
 // card in a font installed on the computer, found through the font registry,
 // (1.3.3) a sound video's photo fitted whole to 9:16 and the text card's
-// master editor, and (1.3.4) twenty photos split into posts per network. Debug
+// master editor (1.3.5: with its own @handle and style on every saved card),
+// and (1.3.4) twenty photos split into posts per network. Debug
 // tests missed a release-only crash in 1.2.1, so CI runs this in profile mode:
 //
 //   flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/release_probe_test.dart
@@ -309,6 +310,21 @@ void main() {
     await pumpFor(800);
     expect(c.read(composerProvider).textCardBranded['bluesky'], isTrue, reason: 'Make them match');
     expect(tester.takeException(), isNull);
+    // 1.3.5: the master editor's own @handle and style reach every saved
+    // card in a compiled build too (attachTextCards is where 1.2.1's AOT-only
+    // crash was).
+    c.read(composerProvider.notifier).setTextCardStyle(const TextCardStyle(
+        handle: '@probe', textSize: 1.2, textColor: 0xFFFFD60A, handlePosition: TextCardHandlePosition.topRight));
+    await pumpFor(500);
+    expect(tester.takeException(), isNull);
+    post = await c.read(postActionsProvider).saveDraft().timeout(_limit, onTimeout: () => fail('Save draft with a restyled text card did not finish'));
+    await pumpFor(300);
+    final styled = post.media.where(isRenderedTextCard).toList();
+    expect(styled, hasLength(2), reason: 'Instagram and Bluesky');
+    for (final card in styled) {
+      expect(textCardBylineOf(card), '@probe');
+      expect(textCardStyleOf(card).textSize, 1.2);
+    }
 
     // 8. 1.3.4: a photo dump. Twenty photos split by each network's own
     //    limits: a thread of five on X, Bluesky and Mastodon, two posts on

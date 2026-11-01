@@ -543,6 +543,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
         branded: settings.textCardBranded(platform.id),
         alignment: c.textCardAlignment ?? settings.textCardAlignment,
         customFont: c.cardCustomFont(settings),
+        style: c.textCardStyle,
       ),
     );
   }
