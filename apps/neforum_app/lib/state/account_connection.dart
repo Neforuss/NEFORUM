@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../platform/device_name.dart';
+import '../platform/env.dart';
 import 'cloud_sync.dart';
 import 'demo.dart';
 import 'providers.dart';
@@ -20,11 +22,18 @@ import 'providers.dart';
 /// "Server address: https://mastodon.social".
 @immutable
 class ConnectionDetail {
-  const ConnectionDetail(this.label, this.value);
+  const ConnectionDetail(this.label, this.value, {this.withheld = false});
+
+  /// A row whose value [SecretGuard] withheld: [value] is [kWithheldValue].
+  const ConnectionDetail.withheld(this.label)
+      : value = kWithheldValue,
+        withheld = true;
+
   final String label;
 
   /// May hold line breaks (a list such as Nostr relays, one per line).
   final String value;
+  final bool withheld;
 
   @override
   String toString() => '$label: $value';
@@ -126,6 +135,7 @@ class AccountConnection {
     this.signIn,
     this.keysRotate = false,
     this.demo = false,
+    this.keysUnreadable = false,
   });
 
   /// The platform's name ("Mastodon").
@@ -162,8 +172,12 @@ class AccountConnection {
   /// A demo-workspace account (it has no keys at all).
   final bool demo;
 
+  /// The keychain refused to answer for this account (locked, or access
+  /// denied): what it holds is unknown, so no details or keys are listed.
+  final bool keysUnreadable;
+
   /// Keys are expected but this device has none.
-  bool get keysMissing => storedKeys.isEmpty && needsKeys && !demo;
+  bool get keysMissing => storedKeys.isEmpty && needsKeys && !demo && !keysUnreadable;
 }
 
 /// How an account on [tier] posts to [network], in plain words.
@@ -200,6 +214,7 @@ String _noKeysReason(ConnectedAccount account) => account.tier == PlatformTier.h
 
 /// "Keys on this device" when the list is empty, as the section says it.
 String noStoredKeysText(AccountConnection c) {
+  if (c.keysUnreadable) return "Could not read this account's keys on this device.";
   if (c.demo) return 'None: this is a demo account.';
   if (c.keysMissing) return 'None stored on this device. Reconnect the account here, or bring its keys over with Sync or Move to another device.';
   return 'None needed: ${c.noKeysReason ?? 'this way of posting uses no keys'}.';
@@ -218,47 +233,66 @@ const Set<String> kSecretBookkeepingKeys = {
   OAuthTokens.keyExpiresAt,
   OAuthTokens.keyTokenType,
   OAuthTokens.keyScope,
-  _refreshExpiresAt,
-  'token_issued_at', // ThreadsAdapter.secretIssuedAt
-  'refreshed_at', // InstagramAdapter.keyRefreshedAt
-  'user_token_expires_at', // FacebookAdapter.secUserTokenExpiresAt
-  'open_id', // TikTokSecretKeys.openId: the user's id at TikTok, kept with the tokens.
+  StoredSecretKeys.refreshExpiresAt,
+  StoredSecretKeys.tokenIssuedAt,
+  StoredSecretKeys.refreshedAt,
+  StoredSecretKeys.userTokenExpiresAt,
+  StoredSecretKeys.openId,
 };
-
-/// When the refresh token itself runs out: PinterestAdapter.secretRefreshExpiresAt,
-/// YouTubeSecretKeys.refreshExpiresAt, TikTokSecretKeys.refreshExpiresAt.
-const String _refreshExpiresAt = 'refresh_expires_at';
 
 /// When a renewal timestamp is stored, the access token renews itself when
 /// NEFORUM posts with it (Threads, Instagram): no refresh token, but no
 /// "needs reconnecting" either until it actually runs out.
-const Set<String> _selfRenewingMarkers = {'token_issued_at', 'refreshed_at'};
+const Set<String> _selfRenewingMarkers = {StoredSecretKeys.tokenIssuedAt, StoredSecretKeys.refreshedAt};
 
 /// Friendly names for the secret-store keys the adapters write. Checked
 /// before the connect form's own label because the standard OAuth keys are
 /// written by browser sign-ins too: Threads' form calls its token field
 /// "Access token from the User Token Generator", which would be wrong for a
 /// token that came from signing in.
+///
+/// Names core exports are its own constants ([StoredSecretKeys], the OAuth
+/// helpers). The rest are written as literals inside one adapter each and
+/// only choose a label here: if one were renamed, the key would still be
+/// listed, under its connect form label or its name in words.
 const Map<String, String> kSecretKeyLabels = {
   OAuthTokens.keyAccessToken: 'Access token',
+  // Accounts connected before 1.0 kept the token as `jwt` (Lemmy) or
+  // `token` (Misskey); core still reads both.
+  'jwt': 'Access token',
+  'token': 'Access token',
   OAuthTokens.keyRefreshToken: 'Refresh token',
   OAuth1Credentials.keyConsumerKey: 'Consumer key (API key)',
   OAuth1Credentials.keyConsumerSecret: 'Consumer secret (API key secret)',
   OAuth1Credentials.keyToken: 'OAuth 1.0a access token',
   OAuth1Credentials.keyTokenSecret: 'OAuth 1.0a access token secret',
-  'client_id': 'Client ID',
-  'client_secret': 'Client secret',
-  'app_secret': 'App secret',
-  'consumer_secret': 'Consumer secret',
-  'app_password': 'App password',
-  'admin_api_key': 'Admin API key',
-  'bot_token': 'Bot token',
-  'webhook_url': 'Webhook URL',
-  'user_access_token': 'User access token',
-  'privateKey': 'Private key',
+  'client_id': 'Client ID', // Mastodon's registered app.
+  StoredSecretKeys.clientSecret: 'Client secret',
+  StoredSecretKeys.appSecret: 'App secret',
+  StoredSecretKeys.consumerSecret: 'Consumer secret',
+  StoredSecretKeys.appPassword: 'App password',
+  'admin_api_key': 'Admin API key', // Ghost.
+  'bot_token': 'Bot token', // Telegram.
+  'webhook_url': 'Webhook URL', // Discord.
+  StoredSecretKeys.userAccessToken: 'User access token',
+  StoredSecretKeys.privateKey: 'Private key',
   'password': 'Password',
-  'sid': 'Session',
+  StoredSecretKeys.sessionId: 'Session',
 };
+
+/// Hosts whose key addresses (webhooks) begin the same way for every user,
+/// and the leading path segments they share. Listed one by one: an address
+/// on any other host counts in full.
+const Map<String, Set<String>> _publicAddressPrefixes = {
+  'discord.com': {'api', 'v9', 'v10', 'webhooks'},
+  'discordapp.com': {'api', 'v9', 'v10', 'webhooks'},
+  'ptb.discord.com': {'api', 'v9', 'v10', 'webhooks'},
+  'canary.discord.com': {'api', 'v9', 'v10', 'webhooks'},
+};
+
+/// What a detail shows instead of a value [SecretGuard] withholds, so the
+/// row stays (and two devices can see it is there) without the value.
+const String kWithheldValue = 'Not shown: it shares characters with a stored key';
 
 /// Withholds any text that shares [run] (4) or more characters in a row with
 /// a stored key, so no part of a secret, not even its last 4 characters, can
@@ -272,15 +306,17 @@ const Map<String, String> kSecretKeyLabels = {
 /// keys. The guard makes all of those, and any added later, structurally
 /// unable to show.
 ///
-/// A key that is a web address (a Discord webhook) counts only by its
-/// path segments and query values that hold a digit, which is where its id
-/// and token are. Its scheme, host and word-only segments
-/// ("https://discord.com/api/webhooks/") are the same for every user and
-/// printed in the platform's documentation; matching them would hide every
+/// A key that is a web address (a Discord webhook) counts by every part
+/// that can carry a secret: its host, any user name and password before the
+/// host, every path segment, every query value and the fragment. Only its
+/// scheme and the query parameter names are left out, and, for the hosts in
+/// [_publicAddressPrefixes], the host and the leading path segments every
+/// user's address shares ("https://discord.com/api/webhooks/"), which the
+/// platform prints in its documentation: matching those would hide every
 /// web address on the card while protecting nothing.
 ///
-/// It errs on the side of hiding: an innocent value that shares 4
-/// characters in a row with a key is left out (for random tokens that is
+/// It errs on the side of hiding: a value that shares 4 characters in a row
+/// with a key is replaced by [kWithheldValue] (for random tokens that is
 /// rare: the odds that a 30-character address shares 4 characters with a
 /// 43-character token are about 1 in 10 000). Keys shorter than [run] are
 /// not matched: 3 characters identify nothing.
@@ -302,14 +338,30 @@ class SecretGuard {
   /// The parts of [value] that are secret: all of it, except for a web
   /// address (see [SecretGuard]).
   static List<String> secretParts(String value) {
-    final uri = Uri.tryParse(value);
+    final uri = Uri.tryParse(value.trim());
     if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https') || uri.host.isEmpty) return [value];
-    final digit = RegExp('[0-9]');
-    return [...uri.pathSegments, ...uri.queryParameters.values].where((s) => s.contains(digit)).toList();
+    final public = _publicAddressPrefixes[uri.host.toLowerCase()];
+    final segments = uri.pathSegments;
+    var skip = 0;
+    if (public != null) {
+      while (skip < segments.length && public.contains(segments[skip].toLowerCase())) {
+        skip++;
+      }
+    }
+    final fragment = uri.fragment;
+    return [
+      if (public == null) uri.host,
+      uri.userInfo,
+      ...segments.skip(skip),
+      for (final values in uri.queryParametersAll.values) ...values,
+      // "#access_token=…&state=…" counts by its values, like a query.
+      if (fragment.contains('=')) ...Uri.splitQueryString(fragment).values else fragment,
+    ].where((s) => s.isNotEmpty).toList();
   }
 
   /// Whether [text] would show part of a stored key.
   bool reveals(String text) {
+    if (_windows.isEmpty) return false;
     for (var i = 0; i + run <= text.length; i++) {
       if (_windows.contains(text.substring(i, i + run))) return true;
     }
@@ -424,7 +476,8 @@ const Map<String, String> _softwareNames = {
 /// - what the server reported and NEFORUM caches: limits, capability flags,
 ///   discovered endpoints, scopes, version numbers, lists of other blogs,
 ///   Pages and languages.
-/// The redirect address is filtered apart: see [_registersRedirect].
+/// The redirect address is filtered apart (see [_registersRedirect]), and
+/// Matrix's room is one row built from its three keys ([_matrixRoom]).
 const Map<String, _ConfigLabel> _configLabels = {
   'pds': _ConfigLabel('PDS (data server)', _Group.place),
   'software': _ConfigLabel('Server software', _Group.place, values: _softwareNames),
@@ -449,9 +502,6 @@ const Map<String, _ConfigLabel> _configLabels = {
   'channelName': _ConfigLabel('Channel', _Group.target),
   'channelId': _ConfigLabel('Channel ID', _Group.target, only: {'youtube', 'odysee'}),
   'defaultSubreddit': _ConfigLabel('Default subreddit', _Group.target),
-  'roomName': _ConfigLabel('Room', _Group.target),
-  'roomAlias': _ConfigLabel('Room address', _Group.target),
-  'roomId': _ConfigLabel('Room ID', _Group.target),
   'chatTitle': _ConfigLabel('Channel or group', _Group.target),
   'webhookName': _ConfigLabel('Webhook', _Group.target),
   'botUsername': _ConfigLabel('Bot', _Group.identity),
@@ -544,16 +594,47 @@ String? _formatValue(Object? value, {ConnectField? field, Map<String, String>? w
 /// [s] without a leading "@" or "u/", lower case: how a handle is compared.
 String _bareHandle(String s) => s.trim().toLowerCase().replaceFirst(RegExp(r'^(@|u/)'), '');
 
+/// The user's part of a handle on a server: "robin" for "@robin@lemmy.example"
+/// and "@robin:matrix.example"; null for a handle without a server part
+/// ("@robin", "robin.bsky.social", whose dots belong to the domain).
+String? _handleLocalPart(String bare) {
+  final i = bare.indexOf(RegExp('[@:]'));
+  return i <= 0 ? null : bare.substring(0, i);
+}
+
+/// Config values that hold a list written as one string with commas
+/// (Facebook's permissions): shown as "a, b, c".
+const Set<String> _commaListKeys = {'scopes'};
+
+/// Matrix keeps its room as a name, an address and an id. Shown as one row:
+/// "News (#news:matrix.example)", else the address, else the id.
+String? _matrixRoom(Map<String, dynamic> config) {
+  String? s(String k) {
+    final v = '${config[k] ?? ''}'.trim();
+    return v.isEmpty ? null : v;
+  }
+
+  final name = s('roomName'), alias = s('roomAlias'), id = s('roomId');
+  if (name != null) return alias == null ? name : '$name ($alias)';
+  return alias ?? id;
+}
+
 /// The non-secret setup of [account], labelled, grouped as [_Group] orders
 /// them (within a group in the connect form's order). Every config key that
 /// is a field of the form comes under that field's label (the account's own
 /// way of connecting first, then the platform's other ways, so its wording
 /// wins); then the reviewed extras in [_configLabels]; then how it signed
-/// in. Left out: a value [SecretGuard] flags, a value that only repeats the
-/// card's handle, and a redirect address the user never registered.
+/// in.
+///
+/// A value [SecretGuard] flags keeps its row with [kWithheldValue], so the
+/// row does not silently disappear. Left out: a value that only repeats what
+/// the card already shows (its handle, the user part of it for a who-it-is
+/// row, its display name), and a redirect address the user never registered.
 List<ConnectionDetail> connectionDetails(ConnectedAccount account, PlatformAdapter? adapter, {Map<String, String> secrets = const {}}) {
   final guard = SecretGuard(secrets);
   final handle = account.handle == null ? null : _bareHandle(account.handle!);
+  final localPart = handle == null ? null : _handleLocalPart(handle);
+  final displayName = account.displayName.trim().toLowerCase();
   final specs = adapter?.connectSpecs ?? const <ConnectSpec>[];
   final fields = <String, ConnectField>{};
   for (final s in [...specs.where((s) => s.tier == account.tier), ...specs.where((s) => s.tier != account.tier)]) {
@@ -564,22 +645,28 @@ List<ConnectionDetail> connectionDetails(ConnectedAccount account, PlatformAdapt
 
   final grouped = <(_Group, ConnectionDetail)>[];
   void add(_Group group, String label, String? value) {
-    if (value == null || guard.reveals(value)) return;
-    if (handle != null && handle.isNotEmpty && _bareHandle(value) == handle) return;
-    grouped.add((group, ConnectionDetail(label, value)));
+    if (value == null) return;
+    final bare = _bareHandle(value);
+    if (handle != null && handle.isNotEmpty && bare == handle) return;
+    if (group == _Group.identity && localPart != null && bare == localPart) return;
+    if (displayName.isNotEmpty && value.trim().toLowerCase() == displayName) return;
+    grouped.add((group, guard.reveals(value) ? ConnectionDetail.withheld(label) : ConnectionDetail(label, value)));
   }
 
   bool hidden(String key) => _redirectKeys.contains(key) && !_registersRedirect.contains(account.platformId);
+  String? listed(String key, String? value) =>
+      value != null && _commaListKeys.contains(key) ? value.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).join(', ') : value;
 
   for (final f in fields.values) {
     if (!account.config.containsKey(f.key) || hidden(f.key)) continue;
-    add(_fieldGroup(f), cleanFieldLabel(f.label), _formatValue(account.config[f.key], field: f));
+    add(_fieldGroup(f), cleanFieldLabel(f.label), listed(f.key, _formatValue(account.config[f.key], field: f)));
   }
   for (final e in _configLabels.entries) {
     final only = e.value.only;
     if (fields.containsKey(e.key) || hidden(e.key) || (only != null && !only.contains(account.platformId))) continue;
-    add(e.value.group, e.value.label, _formatValue(account.config[e.key], words: e.value.values));
+    add(e.value.group, e.value.label, listed(e.key, _formatValue(account.config[e.key], words: e.value.values)));
   }
+  if (account.platformId == 'matrix' && !account.config.containsKey('room')) add(_Group.target, 'Room', _matrixRoom(account.config));
   for (final k in _signInMethodKeys) {
     if (fields.containsKey(k)) continue;
     final method = _signInMethods['${account.config[k] ?? ''}'.trim()];
@@ -604,10 +691,10 @@ SignInExpiry? signInExpiry(Map<String, String> secrets, {required DateTime now})
   SignInExpiry ending(SignInState state, DateTime end) => SignInExpiry(state, endsAt: end, endsSoon: end.difference(now) < kSignInEndWarning);
 
   final access = at(OAuthTokens.keyExpiresAt);
-  final refreshEnds = at(_refreshExpiresAt);
+  final refreshEnds = at(StoredSecretKeys.refreshExpiresAt);
   final refresh = has(OAuthTokens.keyRefreshToken);
   // Bluesky signs in again with its app password whenever its session ends.
-  if (has('app_password') && has(OAuthTokens.keyAccessToken)) return const SignInExpiry(SignInState.renews);
+  if (has(StoredSecretKeys.appPassword) && has(OAuthTokens.keyAccessToken)) return const SignInExpiry(SignInState.renews);
   if (refresh && (refreshEnds == null || now.isBefore(refreshEnds))) {
     return refreshEnds == null ? const SignInExpiry(SignInState.renews) : ending(SignInState.renewsUntil, refreshEnds);
   }
@@ -638,11 +725,16 @@ PlatformAdapter? _realAdapter(PlatformAdapter? a) => a is DemoAdapter ? a.inner 
 
 /// [AccountConnection] for [account] from its config and [secrets] (which
 /// are read for names, the expiry dates and [SecretGuard], never copied).
+///
+/// [keysUnreadable]: the keychain refused to answer for this account. Its
+/// details are left out too, since [SecretGuard] cannot check them against
+/// keys it could not read (the account card says the same).
 AccountConnection describeAccountConnection(
   ConnectedAccount account, {
   PlatformAdapter? adapter,
   Map<String, String> secrets = const {},
   required DateTime now,
+  bool keysUnreadable = false,
 }) {
   final network = adapter?.descriptor.name ?? account.platformId;
   final real = _realAdapter(adapter);
@@ -651,14 +743,15 @@ AccountConnection describeAccountConnection(
     network: network,
     tier: account.tier,
     method: connectionMethodText(account.tier, network),
-    details: connectionDetails(account, adapter, secrets: secrets),
-    signIn: signInExpiry(secrets, now: now),
-    storedKeys: storedKeyLabels(secrets, adapter),
+    details: keysUnreadable ? const [] : connectionDetails(account, adapter, secrets: secrets),
+    signIn: keysUnreadable ? null : signInExpiry(secrets, now: now),
+    storedKeys: keysUnreadable ? const [] : storedKeyLabels(secrets, adapter),
     needsKeys: needsKeys,
     noKeysReason: needsKeys ? null : _noKeysReason(account),
     connectedAt: account.createdAt,
     keysRotate: account.tier != PlatformTier.handoff && (real?.rotatesRefreshTokensFor(account) ?? false),
     demo: account.config['demo'] == true,
+    keysUnreadable: keysUnreadable,
   );
 }
 
@@ -677,52 +770,112 @@ String connectionAccountName(ConnectedAccount account) {
 
 /// "Keys on this device" in one line, for the copied text.
 String storedKeysLine(AccountConnection c, KeysTravel travel) {
+  if (c.keysUnreadable) return 'Could not be read on this device';
   if (c.storedKeys.isNotEmpty) return '${c.storedKeys.join(', ')} (${keysTravelLabel(travel)})';
   if (c.demo) return 'None (demo account)';
   return c.keysMissing ? 'None stored on this device' : 'None needed';
 }
 
+String _two(int n) => n.toString().padLeft(2, '0');
+
+/// "2026-10-12": a day in the copied setup, the same on every device
+/// whatever its clock format or time zone (the day in UTC).
+String connectionCopyDate(DateTime t) {
+  final u = t.toUtc();
+  return '${u.year.toString().padLeft(4, '0')}-${_two(u.month)}-${_two(u.day)}';
+}
+
+/// "2026-11-07T12:00Z" (ISO 8601, UTC, to the minute): when a sign-in ends,
+/// in the copied setup, the same on every device.
+String connectionCopyMoment(DateTime t) {
+  final u = t.toUtc();
+  return '${connectionCopyDate(u)}T${_two(u.hour)}:${_two(u.minute)}Z';
+}
+
 /// The setup of [account] as plain text, to paste next to the same list
 /// from another device: no key, password or token, only what the
-/// Connection section shows.
-String connectionSetupText(ConnectedAccount account, AccountConnection c, {required KeysTravel travel, required String Function(DateTime) when}) {
+/// Connection section shows. Written the same on every device: dates in UTC
+/// as ISO 8601 ([connectionCopyDate], [connectionCopyMoment]), never in the
+/// device's own clock format or time zone, so two devices that match produce
+/// identical blocks. Which device it came from is [connectionCopyHeader]'s job.
+String connectionSetupText(ConnectedAccount account, AccountConnection c, {required KeysTravel travel}) {
   return [
     '${c.network}: ${connectionAccountName(account)}',
     'How it posts: ${c.method}',
     for (final d in c.details) '${d.label}: ${d.value.replaceAll('\n', ', ')}',
-    if (c.signIn != null) 'Sign-in: ${signInText(c.signIn!, when)}',
+    if (c.signIn != null) 'Sign-in: ${signInText(c.signIn!, connectionCopyMoment)}',
     'Keys on this device: ${storedKeysLine(c, travel)}',
-    'Connected: ${when(c.connectedAt)}',
+    'Connected: ${connectionCopyDate(c.connectedAt)}',
   ].join('\n');
 }
+
+/// The first line of anything copied from the section, kept apart from the
+/// account blocks by a blank line so the blocks compare cleanly:
+/// "Setup copied from DESKTOP-AB12 (Windows) on 2026-11-01".
+String connectionCopyHeader(String deviceLabel, DateTime now) => 'Setup copied from $deviceLabel on ${connectionCopyDate(now)}';
+
+/// This device as the copied setup names it, the way the sync settings list
+/// devices: "DESKTOP-AB12 (Windows)", or just the platform when the host
+/// name is unknown.
+String connectionDeviceLabel() {
+  final host = deviceHostName();
+  return host.isEmpty ? Env.platformName : '$host (${Env.platformName})';
+}
+
+/// [connectionDeviceLabel], replaceable in tests.
+final connectionDeviceLabelProvider = Provider<String>((ref) => connectionDeviceLabel());
+
+/// Where the section reads the keychain from: the app's secret store,
+/// replaceable in tests (a store that fails).
+final connectionSecretsProvider = Provider<SecretStore>((ref) => ref.watch(servicesProvider).secrets);
 
 /// [AccountConnection] for one account, read when its Connection section is
 /// open. autoDispose: every opening reads the keychain again (a renewed
 /// sign-in shows its new date), and nothing is kept once it is closed. The
 /// secrets map lives only inside this function.
-final accountConnectionProvider = FutureProvider.autoDispose.family<AccountConnection?, String>((ref, accountId) async {
-  final account = ref.watch(accountByIdProvider(accountId));
-  if (account == null) return null;
-  final s = ref.watch(servicesProvider);
-  final secrets = await s.secrets.read(accountId) ?? const <String, String>{};
-  return describeAccountConnection(account, adapter: s.registry.byId(account.platformId), secrets: secrets, now: DateTime.now());
-});
+///
+/// A failed read is not retried in the background (Riverpod retries by
+/// default): a locked keychain can answer with a system prompt, and the
+/// section already says it could not read the keys. Closing and opening the
+/// section reads again.
+final accountConnectionProvider = FutureProvider.autoDispose.family<AccountConnection?, String>(
+  (ref, accountId) async {
+    final account = ref.watch(accountByIdProvider(accountId));
+    if (account == null) return null;
+    final registry = ref.watch(registryProvider);
+    final secrets = await ref.watch(connectionSecretsProvider).read(accountId) ?? const <String, String>{};
+    return describeAccountConnection(account, adapter: registry.byId(account.platformId), secrets: secrets, now: DateTime.now());
+  },
+  retry: (_, _) => null,
+);
 
-/// Every account's [connectionSetupText], in [accounts]' order, separated by
-/// blank lines: "Copy all setups" on the Accounts page.
-Future<String> allConnectionSetupsText(
+/// "Copy all setups" on the Accounts page: [connectionCopyHeader], then
+/// every account's [connectionSetupText] in [accounts]' order, separated by
+/// blank lines. An account whose keys the keychain will not read still gets
+/// its block, saying so ([AccountConnection.keysUnreadable]), and is counted
+/// in [unreadable] so the page can tell the user.
+Future<({String text, int unreadable})> allConnectionSetupsText(
   List<ConnectedAccount> accounts, {
   required SecretStore secrets,
   required AdapterRegistry registry,
   required KeysTravel travel,
-  required String Function(DateTime) when,
+  required String deviceLabel,
   DateTime? now,
 }) async {
   final at = now ?? DateTime.now();
-  final parts = <String>[];
+  final parts = <String>[connectionCopyHeader(deviceLabel, at)];
+  var unreadable = 0;
   for (final a in accounts) {
-    final c = describeAccountConnection(a, adapter: registry.byId(a.platformId), secrets: await secrets.read(a.id) ?? const {}, now: at);
-    parts.add(connectionSetupText(a, c, travel: travel, when: when));
+    final adapter = registry.byId(a.platformId);
+    AccountConnection c;
+    try {
+      c = describeAccountConnection(a, adapter: adapter, secrets: await secrets.read(a.id) ?? const {}, now: at);
+    } on Object {
+      // Never the error itself: it could quote what the keychain returned.
+      unreadable++;
+      c = describeAccountConnection(a, adapter: adapter, now: at, keysUnreadable: true);
+    }
+    parts.add(connectionSetupText(a, c, travel: travel));
   }
-  return parts.join('\n\n');
+  return (text: parts.join('\n\n'), unreadable: unreadable);
 }

@@ -117,6 +117,7 @@ class _ConnectionDetails extends ConsumerWidget {
           connection: c,
           travel: keysTravelFor(settingsSyncOn: settings.syncOn, phase: st.phase),
           when: when,
+          deviceLabel: ref.read(connectionDeviceLabelProvider),
         ),
       );
     } else if (async.hasError) {
@@ -133,11 +134,15 @@ class _ConnectionDetails extends ConsumerWidget {
 }
 
 class _DetailsBody extends StatelessWidget {
-  const _DetailsBody({required this.account, required this.connection, required this.travel, required this.when});
+  const _DetailsBody({required this.account, required this.connection, required this.travel, required this.when, required this.deviceLabel});
   final ConnectedAccount account;
   final AccountConnection connection;
   final KeysTravel travel;
+
+  /// Writes a moment on this device's clock, for the screen only: the copied
+  /// text uses UTC dates the same on every device.
   final String Function(DateTime) when;
+  final String deviceLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -147,7 +152,8 @@ class _DetailsBody extends StatelessWidget {
     final sign = c.signIn;
 
     Future<void> copy() async {
-      await Clipboard.setData(ClipboardData(text: connectionSetupText(account, c, travel: travel, when: when)));
+      final text = '${connectionCopyHeader(deviceLabel, DateTime.now())}\n\n${connectionSetupText(account, c, travel: travel)}';
+      await Clipboard.setData(ClipboardData(text: text));
       if (context.mounted) showToast(context, 'Setup copied, without keys or passwords', icon: Icons.check_rounded);
     }
 
@@ -159,7 +165,8 @@ class _DetailsBody extends StatelessWidget {
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             _Row(label: 'Network', child: Text(c.network, style: value)),
             _Row(label: 'How it posts', child: Text(c.method, style: value)),
-            for (final d in c.details) _Row(label: d.label, child: Text(d.value, style: value)),
+            for (final d in c.details)
+              _Row(label: d.label, child: Text(d.value, style: d.withheld ? value?.copyWith(color: nf.textMuted, fontStyle: FontStyle.italic) : value)),
             if (sign != null)
               _Row(
                 label: 'Sign-in',

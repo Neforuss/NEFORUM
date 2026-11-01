@@ -158,7 +158,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
         if (refresh) OAuthTokens.keyRefreshToken: f.next(),
         if (expiresIn != null) OAuthTokens.keyExpiresAt: _iso(now.add(expiresIn)),
         OAuthTokens.keyTokenType: type,
-        if (refreshIn != null) 'refresh_expires_at': _iso(now.add(refreshIn)),
+        if (refreshIn != null) StoredSecretKeys.refreshExpiresAt: _iso(now.add(refreshIn)),
         ...extra,
       };
   Map<String, String> oauth1() => OAuth1Credentials(consumerKey: f.next(), consumerSecret: f.next(), token: f.next(), tokenSecret: f.next()).toSecrets();
@@ -171,7 +171,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
         'maxCharacters': 500, 'supportedMimeTypes': ['image/png'], 'apiVersion': 2, 'remoteAccountId': '1093', 'scopes': 'profile write',
         'redirectUri': loopback, 'tokenEndpoint': 'https://mastodon.example/oauth/token',
       }, name: 'Robin (mastodon.example)', handle: '@robin@mastodon.example'),
-      oauth(extra: {'client_id': f.next(), 'client_secret': f.next(), OAuthTokens.keyScope: 'profile write'}),
+      oauth(extra: {'client_id': f.next(), StoredSecretKeys.clientSecret: f.next(), OAuthTokens.keyScope: 'profile write'}),
       keys: ['Access token', 'Client ID', 'Client secret'],
       show: ['Server address: https://mastodon.example', 'Server software: Mastodon'],
       hide: ['Redirect URI'],
@@ -179,7 +179,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
     _Real(
       _acct('pixelfed', PlatformTier.openApi, {'instance': 'https://pixelfed.example', 'domain': 'pixelfed.example', 'software': 'pixelfed', 'redirectUri': loopback},
           handle: '@robin@pixelfed.example'),
-      oauth(extra: {'client_id': f.next(), 'client_secret': f.next()}),
+      oauth(extra: {'client_id': f.next(), StoredSecretKeys.clientSecret: f.next()}),
       keys: ['Access token', 'Client ID', 'Client secret'],
       show: ['Server address: https://pixelfed.example', 'Server software: Pixelfed'],
       hide: ['Redirect URI'],
@@ -187,7 +187,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
     _Real(
       _acct('bluesky', PlatformTier.openApi, {'did': 'did:plc:robin4example', 'handle': 'robin.bsky.example', 'pds': 'https://pds.example.net', 'service': 'https://bsky.social'},
           handle: '@robin.bsky.example'),
-      oauth(expiresIn: const Duration(hours: 2), refresh: true, extra: {'app_password': f.next()}),
+      oauth(expiresIn: const Duration(hours: 2), refresh: true, extra: {StoredSecretKeys.appPassword: f.next()}),
       keys: ['Access token', 'Refresh token', 'App password'],
       sign: SignInState.renews,
       show: ['Hosting provider: https://bsky.social', 'PDS (data server): https://pds.example.net', 'Account ID (DID): did:plc:robin4example'],
@@ -204,7 +204,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
     ),
     _Real(
       _acct('nostr', PlatformTier.openApi, {'pubkey': 'a1b2c3d4e5', 'npub': 'npub1robinexample', 'relays': ['wss://relay.one.example', 'wss://relay.two.example']}),
-      {'privateKey': f.next()},
+      {StoredSecretKeys.privateKey: f.next()},
       keys: ['Private key'],
       show: ['Relays: wss://relay.one.example\nwss://relay.two.example', 'Public key (npub): npub1robinexample'],
     ),
@@ -216,6 +216,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       oauth(),
       keys: ['Access token'],
       show: ['Instance: https://lemmy.example', 'Site name: Lemmy Example', 'Default community: technology', 'Sign-in method: Password'],
+      hide: ['Username or email'],
     ),
     _Real(
       _acct('matrix', PlatformTier.openApi, {
@@ -225,7 +226,8 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       oauth(expiresIn: const Duration(minutes: 5), refresh: true),
       keys: ['Access token', 'Refresh token'],
       sign: SignInState.renews,
-      show: ['Homeserver: https://matrix.example', 'Room: News', 'Room address: #news:matrix.example', 'Formatting: Markdown', 'Sign-in method: Password'],
+      show: ['Homeserver: https://matrix.example', 'Room: News (#news:matrix.example)', 'Formatting: Markdown', 'Sign-in method: Password'],
+      hide: ['Room address', 'Room ID'],
     ),
     _Real(
       _acct('x', PlatformTier.byokApi, {'authMode': 'oauth2', 'clientId': 'x-client-id', 'confidentialClient': false, 'userId': '1234'},
@@ -245,7 +247,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       _acct('threads', PlatformTier.byokApi, {
         'app_id': '1234567', 'redirect_uri': 'https://127.0.0.1:52771/callback', 'token_source': 'oauth', 'user_id': '99', 'username': 'robinmakes',
       }, handle: '@robinmakes'),
-      oauth(expiresIn: const Duration(days: 50), extra: {'app_secret': f.next(), 'token_issued_at': _iso(now.subtract(const Duration(days: 10)))}),
+      oauth(expiresIn: const Duration(days: 50), extra: {StoredSecretKeys.appSecret: f.next(), StoredSecretKeys.tokenIssuedAt: _iso(now.subtract(const Duration(days: 10)))}),
       keys: ['Access token', 'App secret'],
       sign: SignInState.renewsWhenUsed,
       show: ['Threads app ID: 1234567', 'Redirect URI you registered: https://127.0.0.1:52771/callback', 'Sign-in method: Browser sign-in'],
@@ -259,14 +261,14 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
         ],
         'scopes': 'pages_manage_posts,pages_read_engagement',
       }, handle: 'Robin Studio'),
-      oauth(extra: {'app_secret': f.next(), 'user_access_token': f.next(), 'user_token_expires_at': _iso(now.add(const Duration(days: 50)))}),
+      oauth(extra: {StoredSecretKeys.appSecret: f.next(), StoredSecretKeys.userAccessToken: f.next(), StoredSecretKeys.userTokenExpiresAt: _iso(now.add(const Duration(days: 50)))}),
       keys: ['Access token', 'App secret', 'User access token'],
-      show: ['App ID: 5551234', 'Permissions: pages_manage_posts,pages_read_engagement'],
+      show: ['App ID: 5551234', 'Permissions: pages_manage_posts, pages_read_engagement'],
       hide: ['Page'],
     ),
     _Real(
       _acct('linkedin', PlatformTier.byokApi, {'clientId': '86clientid', 'apiVersion': '202610', 'sub': 'abc', 'personUrn': 'urn:li:person:abc', 'redirectUri': loopback}),
-      oauth(expiresIn: const Duration(days: 40), extra: {'client_secret': f.next()}),
+      oauth(expiresIn: const Duration(days: 40), extra: {StoredSecretKeys.clientSecret: f.next()}),
       keys: ['Access token', 'Client secret'],
       sign: SignInState.endsOn,
       show: ['Client ID: 86clientid', 'LinkedIn API version: 202610', 'Redirect URI: $loopback'],
@@ -285,7 +287,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
         'consumerKey': 'tumblr-consumer-key', 'blogName': 'robinblog', 'blogUuid': 't:abc', 'blogUrl': 'https://robinblog.tumblr.example/', 'userName': 'robin',
         'blogNames': ['robinblog', 'other'], 'authMode': 'oauth2', 'redirectUri': loopback,
       }, id: 'real-tumblr-oauth2'),
-      oauth(expiresIn: const Duration(minutes: 40), refresh: true, extra: {'consumer_secret': f.next()}),
+      oauth(expiresIn: const Duration(minutes: 40), refresh: true, extra: {StoredSecretKeys.consumerSecret: f.next()}),
       keys: ['Access token', 'Refresh token', 'Consumer secret'],
       sign: SignInState.renews,
       show: ['OAuth Consumer Key: tumblr-consumer-key', 'Redirect URI: $loopback', 'Blog: robinblog', 'Sign-in method: Browser sign-in (OAuth 2.0)'],
@@ -296,14 +298,13 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       _acct('tumblr', PlatformTier.byokApi, {'consumerKey': tumblrKey, 'blogName': 'guardblog', 'authMode': 'oauth1'}, id: 'real-tumblr-oauth1'),
       OAuth1Credentials(consumerKey: tumblrKey, consumerSecret: f.next(), token: f.next(), tokenSecret: f.next()).toSecrets(),
       keys: oauth1Keys,
-      show: ['Blog: guardblog', 'Sign-in method: OAuth 1.0a keys'],
-      hide: ['OAuth Consumer Key'],
+      show: ['OAuth Consumer Key: $kWithheldValue', 'Blog: guardblog', 'Sign-in method: OAuth 1.0a keys'],
     ),
     _Real(
       _acct('instagram', PlatformTier.byokApi, {
         'tokenSource': 'oauth', 'appId': '9876', 'redirectUri': 'https://127.0.0.1:52771/callback', 'igUserId': '1789', 'username': 'robin.makes', 'accountType': 'BUSINESS',
       }, handle: '@robin.makes'),
-      oauth(expiresIn: const Duration(days: 55), extra: {'refreshed_at': _iso(now.subtract(const Duration(days: 5)))}),
+      oauth(expiresIn: const Duration(days: 55), extra: {StoredSecretKeys.refreshedAt: _iso(now.subtract(const Duration(days: 5)))}),
       keys: ['Access token'],
       sign: SignInState.renewsWhenUsed,
       show: ['App ID: 9876', 'Redirect URI: https://127.0.0.1:52771/callback', 'Sign-in method: Browser sign-in'],
@@ -311,7 +312,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
     ),
     _Real(
       _acct('tiktok', PlatformTier.byokApi, {'clientKey': 'tiktok-client-key', 'openId': 'oid'}),
-      oauth(expiresIn: const Duration(hours: 20), refresh: true, refreshIn: const Duration(days: 4), extra: {'open_id': 'oid', 'client_secret': f.next()}),
+      oauth(expiresIn: const Duration(hours: 20), refresh: true, refreshIn: const Duration(days: 4), extra: {StoredSecretKeys.openId: 'oid', StoredSecretKeys.clientSecret: f.next()}),
       keys: ['Access token', 'Refresh token', 'Client secret'],
       sign: SignInState.renewsUntil,
       soon: true,
@@ -320,7 +321,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
     // A Google app in "Testing": the refresh token itself ends after 7 days.
     _Real(
       _acct('youtube', PlatformTier.byokApi, {'clientId': 'yt.apps.example', 'channelId': 'UCrobin', 'redirectUri': loopback, 'canDeleteVideos': true}),
-      oauth(expiresIn: const Duration(minutes: 50), refresh: true, refreshIn: const Duration(days: 6), extra: {'client_secret': f.next()}),
+      oauth(expiresIn: const Duration(minutes: 50), refresh: true, refreshIn: const Duration(days: 6), extra: {StoredSecretKeys.clientSecret: f.next()}),
       keys: ['Access token', 'Refresh token', 'Client secret'],
       sign: SignInState.renewsUntil,
       soon: true,
@@ -332,7 +333,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
         'appId': '1500', 'boardId': '88', 'boardName': 'Ideas', 'username': 'robin', 'accountType': 'BUSINESS', 'accessLevel': 'trial',
         'redirectUri': 'http://localhost:52771/callback',
       }),
-      oauth(expiresIn: const Duration(days: 30), refresh: true, refreshIn: const Duration(days: 365), extra: {'app_secret': f.next()}),
+      oauth(expiresIn: const Duration(days: 30), refresh: true, refreshIn: const Duration(days: 365), extra: {StoredSecretKeys.appSecret: f.next()}),
       keys: ['Access token', 'Refresh token', 'App secret'],
       sign: SignInState.renewsUntil,
       show: ['App ID: 1500', 'Redirect URI: http://localhost:52771/callback', 'Board: Ideas', 'Access level of your app: Trial'],
@@ -352,14 +353,14 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       }, name: 'Robin News', handle: '@robinnews'),
       {'bot_token': '7700112233:${f.next()}'},
       keys: ['Bot token'],
-      show: ['Channel or group: Robin News', 'Bot: robin_bot', 'Formatting: Markdown'],
-      hide: ['Channel or group username'],
+      show: ['Bot: robin_bot', 'Formatting: Markdown'],
+      hide: ['Channel or group', 'Channel or group username'],
     ),
     _Real(
       _acct('discord', PlatformTier.openApi, {
         'webhookId': '1180000000000000001', 'webhookName': 'neforum hook', 'channelId': '1170000000000000003', 'guildId': '1160000000000000004',
         'threadId': '1190000000000000002', 'username': 'Robin', 'forum': false,
-      }),
+      }, name: 'neforum hook (Discord webhook)'),
       {'webhook_url': 'https://discord.com/api/webhooks/1180000000000000001/${f.next()}?thread_id=1190000000000000002'},
       keys: ['Webhook URL'],
       show: ['Webhook: neforum hook', 'Post as: Robin', 'Forum or media channel: No'],
@@ -368,10 +369,11 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       _acct('wordpress', PlatformTier.openApi, {
         'site': 'https://blog.example', 'home': 'https://blog.example', 'restBase': 'https://blog.example/wp-json/', 'username': 'robin', 'siteName': 'Robin Blog',
         'userId': 1, 'canPublish': true, 'canUpload': true, 'canManageTerms': true, 'defaultStatus': 'publish',
-      }),
-      {'app_password': f.next()},
+      }, name: 'Robin (Robin Blog)', handle: 'robin'),
+      {StoredSecretKeys.appPassword: f.next()},
       keys: ['App password'],
-      show: ['Site address: https://blog.example', 'Site name: Robin Blog', 'WordPress username: robin', 'Publish as: Published'],
+      show: ['Site address: https://blog.example', 'Site name: Robin Blog', 'Publish as: Published'],
+      hide: ['WordPress username'],
     ),
     _Real(
       _acct('ghost', PlatformTier.openApi, {
@@ -422,7 +424,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
     ),
     _Real(
       _acct('deviantart', PlatformTier.byokApi, {'clientId': '12345', 'redirectUri': loopback, 'userId': 'u-1'}),
-      oauth(expiresIn: const Duration(hours: 1), refresh: true, extra: {'client_secret': f.next()}),
+      oauth(expiresIn: const Duration(hours: 1), refresh: true, extra: {StoredSecretKeys.clientSecret: f.next()}),
       keys: ['Access token', 'Refresh token', 'Client secret'],
       sign: SignInState.renews,
       show: ['Client ID: 12345', 'Redirect URI: $loopback'],
@@ -440,7 +442,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
     ),
     _Real(
       _acct('inkbunny', PlatformTier.openApi, {'username': 'robin', 'userId': '77'}, handle: '@robin'),
-      {'sid': f.next()},
+      {StoredSecretKeys.sessionId: f.next()},
       keys: ['Session'],
       hide: ['Username'],
     ),
@@ -453,6 +455,7 @@ Future<(ProviderContainer, AppServices)> _pumpAccounts(
   Map<String, Object> settings = const {},
   List<(ConnectedAccount, Map<String, String>)> accounts = const [],
   bool keepDemoAccounts = true,
+  SecretStore Function(AppServices s)? secretStore,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -470,13 +473,35 @@ Future<(ProviderContainer, AppServices)> _pumpAccounts(
     }
     return s;
   }))!;
-  await tester.pumpWidget(ProviderScope(overrides: [servicesProvider.overrideWithValue(services)], child: const NeforumApp()));
+  await tester.pumpWidget(ProviderScope(
+    overrides: [
+      servicesProvider.overrideWithValue(services),
+      connectionDeviceLabelProvider.overrideWithValue('Test device'),
+      if (secretStore != null) connectionSecretsProvider.overrideWithValue(secretStore(services)),
+    ],
+    child: const NeforumApp(),
+  ));
   await tester.pump(const Duration(milliseconds: 300));
   final container = ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
   container.read(routerProvider).go('/accounts');
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 600));
   return (container, services);
+}
+
+/// A keychain that refuses to answer for some accounts, as a locked macOS
+/// keychain or a failing Windows Credential Manager does.
+class _FailingSecretStore extends SecretStore {
+  _FailingSecretStore(this.inner, this.failFor);
+  final SecretStore inner;
+  final Set<String> failFor;
+  @override
+  Future<Map<String, String>?> read(String accountId) async =>
+      failFor.contains(accountId) ? throw StateError('keychain locked: SECRETINERROR') : inner.read(accountId);
+  @override
+  Future<void> write(String accountId, Map<String, String> secrets) => inner.write(accountId, secrets);
+  @override
+  Future<void> delete(String accountId) => inner.delete(accountId);
 }
 
 Finder _card(String accountId) => find.byWidgetPredicate((w) => w is AccountCard && w.account.id == accountId);
@@ -613,11 +638,11 @@ void main() {
         OAuthTokens.keyExpiresAt: _iso(now),
         OAuthTokens.keyTokenType: 'Bearer',
         OAuthTokens.keyScope: 'write',
-        'client_secret': 'x' * 10,
+        StoredSecretKeys.clientSecret: 'x' * 10,
         OAuthTokens.keyRefreshToken: 'y' * 10,
         OAuthTokens.keyAccessToken: 'z' * 10,
-        'app_password': '',
-        'token_issued_at': _iso(now),
+        StoredSecretKeys.appPassword: '',
+        StoredSecretKeys.tokenIssuedAt: _iso(now),
         'some_new_key': 'w' * 10,
       }, _adapter('x'));
       expect(labels, ['Access token', 'Refresh token', 'Client secret', 'Some new key']);
@@ -625,7 +650,7 @@ void main() {
 
     test('a key no label covers is named by its connect field, else by its name in words', () {
       expect(storedKeyLabels({'oauthTokenSecret': 'v' * 10}, _adapter('tumblr')), ['OAuth Token Secret']);
-      expect(humanizeKey('user_access_token'), 'User access token');
+      expect(humanizeKey(StoredSecretKeys.userAccessToken), 'User access token');
       expect(humanizeKey('apiKey'), 'Api key');
     });
 
@@ -652,7 +677,7 @@ void main() {
     test('finding 3: the leak check catches a last-4 put into the copied setup', () {
       final real = _realAccounts(_Fakes(), now).firstWhere((r) => r.account.platformId == 'mastodon');
       final c = describeAccountConnection(real.account, adapter: _adapter('mastodon'), secrets: real.secrets, now: now);
-      final copied = connectionSetupText(real.account, c, travel: KeysTravel.synced, when: when);
+      final copied = connectionSetupText(real.account, c, travel: KeysTravel.synced);
       _expectNoSecretShown([copied], [real.secrets]);
       final token = real.secrets[OAuthTokens.keyAccessToken]!;
       final leaked = '$copied\nToken: ****${token.substring(token.length - 4)}';
@@ -675,7 +700,7 @@ void main() {
         expect((e.state, e.endsAt, e.needsReconnecting), (SignInState.renews, null, false));
         expect(signInText(e, when), 'Renews automatically.', reason: 'no changing time, no "Ran out"');
       }
-      expect(signInExpiry({OAuthTokens.keyAccessToken: 'a', 'app_password': 'p', OAuthTokens.keyExpiresAt: past}, now: now)!.state, SignInState.renews,
+      expect(signInExpiry({OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.appPassword: 'p', OAuthTokens.keyExpiresAt: past}, now: now)!.state, SignInState.renews,
           reason: 'Bluesky signs in again with its app password');
     });
 
@@ -683,19 +708,19 @@ void main() {
       final youtube = signInExpiry({
         OAuthTokens.keyExpiresAt: _iso(now.add(const Duration(minutes: 50))),
         OAuthTokens.keyRefreshToken: 'r',
-        'refresh_expires_at': _iso(now.add(const Duration(days: 6))),
+        StoredSecretKeys.refreshExpiresAt: _iso(now.add(const Duration(days: 6))),
       }, now: now)!;
       expect((youtube.state, youtube.endsAt, youtube.endsSoon), (SignInState.renewsUntil, now.add(const Duration(days: 6)), true));
       expect(signInText(youtube, when), 'Renews automatically until 7/11/2026, then needs reconnecting.');
-      final pinterest = signInExpiry({OAuthTokens.keyRefreshToken: 'r', 'refresh_expires_at': _iso(now.add(const Duration(days: 365)))}, now: now)!;
+      final pinterest = signInExpiry({OAuthTokens.keyRefreshToken: 'r', StoredSecretKeys.refreshExpiresAt: _iso(now.add(const Duration(days: 365)))}, now: now)!;
       expect((pinterest.state, pinterest.endsSoon), (SignInState.renewsUntil, false));
     });
 
     test('a refresh token that ran out itself leaves only the access token', () {
-      final ended = signInExpiry({OAuthTokens.keyExpiresAt: past, OAuthTokens.keyRefreshToken: 'r', 'refresh_expires_at': past}, now: now)!;
+      final ended = signInExpiry({OAuthTokens.keyExpiresAt: past, OAuthTokens.keyRefreshToken: 'r', StoredSecretKeys.refreshExpiresAt: past}, now: now)!;
       expect((ended.state, ended.needsReconnecting), (SignInState.ended, true));
       expect(signInText(ended, when), 'Ended on 29/10/2026. Needs reconnecting.');
-      final left = signInExpiry({OAuthTokens.keyExpiresAt: soon, OAuthTokens.keyRefreshToken: 'r', 'refresh_expires_at': past}, now: now)!;
+      final left = signInExpiry({OAuthTokens.keyExpiresAt: soon, OAuthTokens.keyRefreshToken: 'r', StoredSecretKeys.refreshExpiresAt: past}, now: now)!;
       expect(left.state, SignInState.endsOn);
     });
 
@@ -710,10 +735,10 @@ void main() {
     });
 
     test('a token that renews itself (Threads, Instagram) renews when used, and ends if it is not', () {
-      final ahead = signInExpiry({OAuthTokens.keyExpiresAt: soon, 'token_issued_at': past}, now: now)!;
+      final ahead = signInExpiry({OAuthTokens.keyExpiresAt: soon, StoredSecretKeys.tokenIssuedAt: past}, now: now)!;
       expect(ahead.state, SignInState.renewsWhenUsed);
       expect(signInText(ahead, when), 'Renews when NEFORUM posts with it. Unused, it ends on 1/12/2026.');
-      expect(signInExpiry({OAuthTokens.keyExpiresAt: past, 'refreshed_at': past}, now: now)!.needsReconnecting, isTrue);
+      expect(signInExpiry({OAuthTokens.keyExpiresAt: past, StoredSecretKeys.refreshedAt: past}, now: now)!.needsReconnecting, isTrue);
     });
   });
 
@@ -781,7 +806,7 @@ void main() {
       if (handle != null) {
         expect(c.details.map((d) => d.value.toLowerCase()), isNot(contains(handle.replaceFirst(RegExp('^(@|u/)'), '').toLowerCase())), reason: '$id repeats its handle');
       }
-      final text = connectionSetupText(r.account, c, travel: KeysTravel.thisDeviceOnly, when: when);
+      final text = connectionSetupText(r.account, c, travel: KeysTravel.thisDeviceOnly);
       expect(text, isNot(contains('None stored')), reason: id);
       _expectNoSecretShown([...lines, ...c.storedKeys, text], [r.secrets]);
     }
@@ -802,7 +827,7 @@ void main() {
         expect(c.storedKeys, contains(kSecretKeyLabels[f.key] ?? cleanFieldLabel(f.label)), reason: '${account.id}: ${f.key}');
       }
       expect(c.method, connectionMethodText(spec.tier, adapter.descriptor.name));
-      _expectNoSecretShown([...shown.values, ...c.storedKeys, connectionSetupText(account, c, travel: KeysTravel.thisDeviceOnly, when: when)], [secrets]);
+      _expectNoSecretShown([...shown.values, ...c.storedKeys, connectionSetupText(account, c, travel: KeysTravel.thisDeviceOnly)], [secrets]);
     }
   });
 
@@ -811,7 +836,7 @@ void main() {
     final secrets = {OAuthTokens.keyAccessToken: fakes.next(), OAuthTokens.keyRefreshToken: fakes.next(), OAuthTokens.keyExpiresAt: _iso(now.add(const Duration(hours: 1)))};
     final account = _account('mastodon', PlatformTier.openApi, {'instance': 'https://mastodon.example', 'software': 'mastodon'});
     final c = describeAccountConnection(account, adapter: _adapter('mastodon'), secrets: secrets, now: now);
-    final text = connectionSetupText(account, c, travel: KeysTravel.synced, when: when);
+    final text = connectionSetupText(account, c, travel: KeysTravel.synced);
     expect(text, '''
 Mastodon: Someone (@someone)
 How it posts: Automatically, through the open Mastodon API
@@ -819,7 +844,7 @@ Server address: https://mastodon.example
 Server software: Mastodon
 Sign-in: Renews automatically.
 Keys on this device: Access token, Refresh token (Synced)
-Connected: 12/10/2026''');
+Connected: 2026-10-12''');
     _expectNoSecretShown([text], [secrets]);
   });
 
@@ -832,8 +857,188 @@ Connected: 12/10/2026''');
     }
   });
 
+  group('round 2', () {
+    /// [a] as a device in another time zone holds it: the same instants, a
+    /// different offset.
+    ConnectedAccount inZone(ConnectedAccount a, Duration offset) => ConnectedAccount(
+          id: a.id,
+          platformId: a.platformId,
+          tier: a.tier,
+          displayName: a.displayName,
+          handle: a.handle,
+          createdAt: offset == Duration.zero ? a.createdAt.toUtc() : a.createdAt.toLocal(),
+          config: a.config,
+        );
+    Map<String, String> datesWithOffset(Map<String, String> s, Duration offset) => {
+          for (final e in s.entries)
+            e.key: switch (DateTime.tryParse(e.value)) {
+              final DateTime t when kSecretBookkeepingKeys.contains(e.key) =>
+                '${t.toUtc().add(offset).toIso8601String().replaceFirst('Z', '')}+${offset.inHours.toString().padLeft(2, '0')}:00',
+              _ => e.value,
+            },
+        };
+
+    test('finding 2: copied dates are UTC ISO 8601, whatever the offset they were stored with', () {
+      final instant = DateTime.parse('2026-10-13T01:30:00+05:00');
+      expect(connectionCopyDate(instant), '2026-10-12', reason: 'the day in UTC, not the local day');
+      expect(connectionCopyDate(instant.toLocal()), '2026-10-12');
+      expect(connectionCopyMoment(instant), '2026-10-12T20:30Z');
+      expect(connectionCopyMoment(instant.toLocal()), '2026-10-12T20:30Z');
+      expect(connectionCopyHeader('Test device', instant), 'Setup copied from Test device on 2026-10-12');
+      // Either side of midnight UTC: a day taken from the device's own clock
+      // would land on the wrong side on any device not set to UTC.
+      for (final (stored, day, moment) in [
+        ('2026-10-12T23:59:00Z', '2026-10-12', '2026-10-12T23:59Z'),
+        ('2026-10-13T00:01:00Z', '2026-10-13', '2026-10-13T00:01Z'),
+        ('2026-10-13T01:01:00+02:00', '2026-10-12', '2026-10-12T23:01Z'),
+        ('2026-10-12T20:01:00-05:00', '2026-10-13', '2026-10-13T01:01Z'),
+      ]) {
+        final t = DateTime.parse(stored);
+        for (final view in [t, t.toLocal(), t.toUtc()]) {
+          expect((connectionCopyDate(view), connectionCopyMoment(view)), (day, moment), reason: '$stored as $view');
+        }
+      }
+    });
+
+    test('finding 2: two devices in different time zones copy identical account blocks', () {
+      for (final r in _realAccounts(_Fakes(), now)) {
+        String copy(Duration offset) {
+          final a = inZone(r.account, offset);
+          final s = datesWithOffset(r.secrets, offset);
+          return connectionSetupText(a, describeAccountConnection(a, adapter: _adapter(a.platformId), secrets: s, now: now), travel: KeysTravel.synced);
+        }
+
+        final utc = copy(Duration.zero), east = copy(const Duration(hours: 5));
+        expect(east, utc, reason: r.account.id);
+        expect(utc, isNot(matches(RegExp(r'\b(AM|PM)\b'))), reason: r.account.id);
+        expect(utc, contains('Connected: 2026-10-12'), reason: r.account.id);
+      }
+    });
+
+    test('finding 3: Copy all setups survives a keychain that will not answer, and says which', () async {
+      final real = _realAccounts(_Fakes(), now);
+      final mastodon = real.firstWhere((r) => r.account.platformId == 'mastodon');
+      final telegram = real.firstWhere((r) => r.account.platformId == 'telegram');
+      final store = InMemorySecretStore();
+      await store.write(mastodon.account.id, mastodon.secrets);
+      await store.write(telegram.account.id, telegram.secrets);
+      final result = await allConnectionSetupsText(
+        [mastodon.account, telegram.account],
+        secrets: _FailingSecretStore(store, {telegram.account.id}),
+        registry: builtinRegistry(),
+        travel: KeysTravel.thisDeviceOnly,
+        deviceLabel: 'Test device',
+        now: now,
+      );
+      final blocks = result.text.split('\n\n');
+      expect(result.unreadable, 1);
+      expect(blocks, hasLength(3));
+      expect(blocks[0], 'Setup copied from Test device on 2026-11-01');
+      expect(blocks[1], contains('Keys on this device: Access token, Client ID, Client secret (Only on this device)'));
+      expect(blocks[2], startsWith('Telegram: Robin News (@robinnews)'));
+      expect(blocks[2], contains('Keys on this device: Could not be read on this device'));
+      expect(blocks[2], isNot(contains('Bot:')), reason: 'without its keys the guard cannot check the details, so they are left out');
+      expect(result.text, isNot(contains('SECRETINERROR')), reason: 'never the error text');
+      _expectNoSecretShown([result.text], [mastodon.secrets, telegram.secrets]);
+    });
+
+    test('finding 4: every part of a key address that can carry a secret counts', () {
+      expect(SecretGuard({'webhook_url': 'https://discord.com/api/webhooks/123/abcdefghijklmnopqrstuvwxyz'}).reveals('ends wxyz'), isTrue,
+          reason: 'a token segment without a digit');
+      expect(SecretGuard({'url': 'https://robin:SuperSecretPass@dav.example/x'}).reveals('…Pass'), isTrue, reason: 'a password before the host');
+      expect(SecretGuard({'url': 'https://app.example/cb#access_token=tokenvaluexyz&state=s'}).reveals('…uexy'), isTrue, reason: 'a token in the fragment');
+      expect(SecretGuard({'url': 'https://hooks.example/in?key=onlylettersinthisone'}).reveals('thisone'), isTrue, reason: 'a query value without a digit');
+      expect(SecretGuard({'url': 'https://secret-tenant.example/hook'}).reveals('secret-tenant'), isTrue, reason: 'an unknown host counts in full');
+      final discord = SecretGuard({'webhook_url': 'https://discord.com/api/webhooks/123456/TOKENVALUE'});
+      expect(discord.reveals('https://discord.com/channels/1'), isFalse, reason: 'the start every Discord webhook shares');
+      expect(discord.reveals('webhooks'), isFalse);
+      expect(SecretGuard.secretParts('https://robin:pw12@dav.example/a/bb?x=1#frag'), ['dav.example', 'robin:pw12', 'a', 'bb', '1', 'frag']);
+      expect(SecretGuard.secretParts('https://discord.com/api/v10/webhooks/9/T'), ['9', 'T']);
+    });
+
+    test('finding 5: a withheld value keeps its row and says why', () {
+      final account = _acct('facebook', PlatformTier.byokApi, {'app_id': '1234567890', 'page_name': 'Studio'});
+      final secrets = {OAuthTokens.keyAccessToken: 'QQQQQQQQ', StoredSecretKeys.appSecret: 'ab7890cd'};
+      final c = describeAccountConnection(account, adapter: _adapter('facebook'), secrets: secrets, now: now);
+      final appId = c.details.firstWhere((d) => d.label == 'App ID');
+      expect((appId.value, appId.withheld), (kWithheldValue, true));
+      expect(c.details.map((d) => '$d'), contains('Page: Studio'));
+      final text = connectionSetupText(account, c, travel: KeysTravel.synced);
+      expect(text, contains('App ID: Not shown: it shares characters with a stored key'));
+      expect(text, isNot(contains('1234567890')));
+    });
+
+    test('finding 6: the keychain names come from core\'s own constants', () {
+      expect(kSecretBookkeepingKeys,
+          containsAll([StoredSecretKeys.refreshExpiresAt, StoredSecretKeys.tokenIssuedAt, StoredSecretKeys.refreshedAt, StoredSecretKeys.userTokenExpiresAt, StoredSecretKeys.openId]));
+      final until = signInExpiry({OAuthTokens.keyRefreshToken: 'r', StoredSecretKeys.refreshExpiresAt: _iso(now.add(const Duration(days: 3)))}, now: now)!;
+      expect(until.state, SignInState.renewsUntil);
+      final used = signInExpiry({OAuthTokens.keyExpiresAt: _iso(now.add(const Duration(days: 3))), StoredSecretKeys.refreshedAt: _iso(now)}, now: now)!;
+      expect(used.state, SignInState.renewsWhenUsed);
+      expect(storedKeyLabels({StoredSecretKeys.appPassword: 'x', StoredSecretKeys.sessionId: 'y', StoredSecretKeys.privateKey: 'z', StoredSecretKeys.consumerSecret: 'w'}, null),
+          ['Consumer secret', 'App password', 'Private key', 'Session']);
+    });
+
+    test('finding 7: nothing the card shows is repeated, one Room row, spaced permissions, named legacy keys', () {
+      final lemmy = connectionDetails(
+          _acct('lemmy', PlatformTier.openApi, {'instance': 'https://lemmy.example', 'username': 'robin', 'community': 'robin'},
+              name: 'Robin Rivera', handle: '@robin@lemmy.example'),
+          _adapter('lemmy'));
+      expect(lemmy.map((d) => '$d'), ['Instance: https://lemmy.example', 'Default community: robin'], reason: 'the handle\'s user part is dropped only from who-it-is rows');
+      final telegram = connectionDetails(_acct('telegram', PlatformTier.openApi, {'chatTitle': 'Robin News', 'formatting': 'plain'}, name: 'Robin News'), _adapter('telegram'));
+      expect(telegram.map((d) => '$d'), ['Formatting: Plain text'], reason: 'the channel title is the card\'s name');
+      List<String> room(Map<String, dynamic> c) => connectionDetails(_acct('matrix', PlatformTier.openApi, c), _adapter('matrix')).map((d) => '$d').toList();
+      expect(room({'roomName': 'News', 'roomAlias': '#news:m.example', 'roomId': '!abc:m.example'}), ['Room: News (#news:m.example)']);
+      expect(room({'roomAlias': '#news:m.example', 'roomId': '!abc:m.example'}), ['Room: #news:m.example']);
+      expect(room({'roomId': '!abc:m.example'}), ['Room: !abc:m.example']);
+      final facebook = connectionDetails(_acct('facebook', PlatformTier.byokApi, {'scopes': 'pages_manage_posts,pages_show_list, business_management'}), _adapter('facebook'));
+      expect(facebook.map((d) => '$d'), ['Permissions: pages_manage_posts, pages_show_list, business_management']);
+      expect(storedKeyLabels({'jwt': 'x' * 8}, _adapter('lemmy')), ['Access token']);
+      expect(storedKeyLabels({'token': 'y' * 8}, _adapter('misskey')), ['Access token']);
+    });
+  });
+
   group('on the Accounts page', () {
     tearDown(() => AccountConnectionSection.debugStartOpen = false);
+
+    testWidgets('round 2, finding 2: 12-hour and 24-hour devices copy the same setup; each screen keeps its own clock', (tester) async {
+      final copied = _captureClipboard(tester);
+      final youtube = _realAccounts(_Fakes(), DateTime.now()).firstWhere((r) => r.account.platformId == 'youtube');
+      final id = youtube.account.id;
+      final screens = <String>[];
+      for (final clock in ['twelveHour', 'twentyFourHour']) {
+        await _pumpAccounts(tester, settings: {'clockFormat': clock}, accounts: [(youtube.account, youtube.secrets)], keepDemoAccounts: false);
+        await _open(tester, id);
+        screens.add(tester.widget<Text>(find.descendant(of: _card(id), matching: find.textContaining('Renews automatically until'))).data!);
+        await _tap(tester, find.descendant(of: _card(id), matching: find.text('Copy setup')));
+        await _unmount(tester);
+      }
+      expect(copied, hasLength(2));
+      expect(copied[0], copied[1]);
+      expect(copied[0], matches(RegExp(r'Sign-in: Renews automatically until \d{4}-\d\d-\d\dT\d\d:\d\dZ, then needs reconnecting\.')));
+      expect(copied[0], contains('\nConnected: 2026-10-12'));
+      expect(screens[0], isNot(screens[1]), reason: 'on screen, each device writes its own clock');
+    });
+
+    testWidgets('round 2, finding 3: Copy all setups says which keys could not be read, and still copies', (tester) async {
+      final copied = _captureClipboard(tester);
+      final real = _realAccounts(_Fakes(), DateTime.now());
+      final mastodon = real.firstWhere((r) => r.account.platformId == 'mastodon');
+      final telegram = real.firstWhere((r) => r.account.platformId == 'telegram');
+      await _pumpAccounts(tester,
+          accounts: [(mastodon.account, mastodon.secrets), (telegram.account, telegram.secrets)],
+          keepDemoAccounts: false,
+          secretStore: (s) => _FailingSecretStore(s.secrets, {telegram.account.id}));
+      await _tap(tester, find.text('Copy all setups'));
+      expect(find.text('Setups of 2 accounts copied, without keys or passwords. The keys of 1 account could not be read on this device.'), findsOneWidget);
+      expect(copied.single, contains('Keys on this device: Could not be read on this device'));
+      expect(copied.single, isNot(contains('SECRETINERROR')));
+      await _open(tester, telegram.account.id);
+      expect(find.descendant(of: _card(telegram.account.id), matching: find.text("Could not read this account's keys on this device.")), findsOneWidget);
+      _expectNoSecretShown([..._shownStrings(tester), ...copied], [mastodon.secrets, telegram.secrets]);
+      expect(_shownStrings(tester).where((s) => s.contains('SECRETINERROR')), isEmpty);
+      await _unmount(tester);
+    });
 
     testWidgets('closed by default; one tap opens the setup; Copy setup copies it without keys; the header names the account', (tester) async {
       final semantics = tester.ensureSemantics();
@@ -844,7 +1049,7 @@ Connected: 12/10/2026''');
         OAuthTokens.keyRefreshToken: fakes.next(),
         OAuthTokens.keyExpiresAt: _iso(DateTime.now().add(const Duration(hours: 2))),
         'client_id': fakes.next(),
-        'client_secret': fakes.next(),
+        StoredSecretKeys.clientSecret: fakes.next(),
       };
       final account = _account('mastodon', PlatformTier.openApi, {'instance': 'https://mastodon.example', 'client_id': 'own-client-id'}, id: 'm1');
       await _pumpAccounts(tester, accounts: [(account, secrets)], keepDemoAccounts: false);
@@ -881,7 +1086,8 @@ Connected: 12/10/2026''');
 
       await _tap(tester, find.descendant(of: card, matching: find.text('Copy setup')));
       expect(copied, hasLength(1));
-      expect(copied.single, startsWith('Mastodon: Someone (@someone)\nHow it posts: '));
+      expect(copied.single, startsWith('Setup copied from Test device on ${connectionCopyDate(DateTime.now())}\n\nMastodon: Someone (@someone)\nHow it posts: '));
+      expect(copied.single, contains('\nConnected: 2026-10-12'));
       expect(copied.single, contains('Keys on this device: Access token, Refresh token, Client ID, Client secret (Only on this device)'));
       expect(find.text('Setup copied, without keys or passwords'), findsOneWidget);
       _expectNoSecretShown([..._shownStrings(tester), ...copied], [secrets]);

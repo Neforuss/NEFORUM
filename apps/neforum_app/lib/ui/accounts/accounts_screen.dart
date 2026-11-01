@@ -11,7 +11,6 @@ import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
-import '../activity/time_format.dart';
 import '../root.dart';
 import '../router.dart';
 import 'account_card.dart';
@@ -34,21 +33,31 @@ class AccountsScreen extends ConsumerWidget {
 
     // 1.3.5: every account's setup as text, in the page's order, to paste
     // next to the same list from another device. No key values: see
-    // connectionSetupText.
+    // connectionSetupText. An account whose keys the keychain will not read
+    // still gets its block, and the toast says how many; any other failure
+    // says nothing was copied instead of failing silently.
     Future<void> copyAll() async {
-      final s = ref.read(servicesProvider);
-      final time = TimeFormatting.from(ref.read(settingsProvider), context);
-      final text = await allConnectionSetupsText(
-        [for (final tier in _tierOrder) ...accounts.where((a) => a.tier == tier)],
-        secrets: s.secrets,
-        registry: s.registry,
-        travel: currentKeysTravel(ref),
-        when: (t) => connectionWhen(t, time),
-      );
-      await Clipboard.setData(ClipboardData(text: text));
-      if (context.mounted) {
-        showToast(context, '${accounts.length == 1 ? 'Setup' : 'Setups of ${accounts.length} accounts'} copied, without keys or passwords',
-            icon: Icons.check_rounded);
+      final count = accounts.length;
+      try {
+        final result = await allConnectionSetupsText(
+          [for (final tier in _tierOrder) ...accounts.where((a) => a.tier == tier)],
+          secrets: ref.read(connectionSecretsProvider),
+          registry: ref.read(registryProvider),
+          travel: currentKeysTravel(ref),
+          deviceLabel: ref.read(connectionDeviceLabelProvider),
+        );
+        await Clipboard.setData(ClipboardData(text: result.text));
+        if (!context.mounted) return;
+        final copied = '${count == 1 ? 'Setup' : 'Setups of $count accounts'} copied, without keys or passwords';
+        final n = result.unreadable;
+        if (n == 0) {
+          showToast(context, copied, icon: Icons.check_rounded);
+        } else {
+          showToast(context, '$copied. The keys of $n ${n == 1 ? 'account' : 'accounts'} could not be read on this device.',
+              icon: Icons.warning_amber_rounded);
+        }
+      } on Object {
+        if (context.mounted) showToast(context, 'Could not copy the setups. Nothing was copied.', icon: Icons.error_outline_rounded);
       }
     }
 
