@@ -1,6 +1,8 @@
 import '../state/settings.dart' show TextCardAlignment;
+import 'caption_fonts.dart';
 import 'card_design.dart';
-import 'text_card.dart' show TextCardFont;
+import 'text_card.dart' show TextCardFont, TextCardTheme;
+import 'text_card_background.dart';
 
 /// A starting point in the card designer: a whole [CardDesign] for each kind
 /// of card, everything editable afterwards.
@@ -44,8 +46,142 @@ final List<CardTemplate> kCardTemplates = [
 /// The template called [id], if any.
 CardTemplate? cardTemplateById(String? id) => id == null ? null : kCardTemplates.where((t) => t.id == id).firstOrNull;
 
-/// What to call [d] in a short label: its template's name, or "Custom".
-String cardTemplateLabel(CardDesign d) => cardTemplateById(d.template)?.name ?? 'Custom';
+/// What to call [d] in a short label: its template's name, "Classic,
+/// restyled" for the master editor's designs, or "Custom".
+String cardTemplateLabel(CardDesign d) => d.template == kClassicTemplateId ? 'Classic, restyled' : cardTemplateById(d.template)?.name ?? 'Custom';
+
+// ---------------------------------------------------------------------------
+// 1.3.5: the classic card as a design
+// ---------------------------------------------------------------------------
+
+/// [CardDesign.template] of a design that started as the classic card
+/// ([classicTextCardDesign]): the master editor's. It is not one of
+/// [kCardTemplates] (the designer's Classic tile is the classic card
+/// itself), so the designer's "Back to the template" goes back to the
+/// classic card.
+const String kClassicTemplateId = 'classic';
+
+/// The classic card's measures, in pixels at 1080 wide (TextCardPainter):
+/// the words start at [kClassicWordsSize] and shrink to fit, [kClassicLineHeight]
+/// apart, [kClassicMargin] from the edges; the @handle is [kClassicHandleSize].
+const double kClassicWordsSize = 104;
+const double kClassicLineHeight = 1.3;
+const double kClassicMargin = 92;
+const double kClassicHandleSize = 26;
+
+/// The signature block's size: the designer draws the mark 1.7 times the
+/// wordmark, so 32 sets the mark as near the classic card's 60 as the
+/// wordmark near its 30.
+const double kClassicSignatureSize = 32;
+
+/// The classic card's @handle colour: its words' at 62%.
+const int kClassicHandleAlpha = 0x9E;
+
+/// The classic card as a card designer design, so the master editor's quick
+/// controls (text size, colours, position, spacing, margins, the @handle's
+/// size and place) can change what the classic card cannot, starting from
+/// the card the post has: [theme]'s colours (over [background], the post's
+/// photo, as a photo fill with its adjustments, its text colour, position
+/// and box), the words in [font] or [customFont], lined up by [alignment],
+/// set as large as fits from [kClassicWordsSize]; the signature rules and
+/// mark (on the networks that carry the signature); the @handle in the
+/// corner, at the right beside the mark, at the left on a [plain] post
+/// (most of its networks without the signature), as the classic card puts
+/// it. The words keep clear of the footer ([CardDesign.keepClear]).
+///
+/// It draws close to the classic card, not pixel for pixel: the mark is a
+/// little smaller (see [kClassicSignatureSize]), and the words over a photo
+/// with automatic text colour are white (the classic card picks white or
+/// black by the photo's brightness).
+CardDesign classicTextCardDesign({
+  TextCardTheme theme = TextCardTheme.dark,
+  TextCardFont font = TextCardFont.original,
+  CaptionFont? customFont,
+  TextCardAlignment alignment = TextCardAlignment.left,
+  TextCardBackground? background,
+  bool plain = false,
+}) {
+  final ink = switch (background?.textColor) {
+    null => theme.foreground.toARGB32(),
+    TextCardTextColor.black => 0xFF000000,
+    TextCardTextColor.white || TextCardTextColor.automatic => 0xFFFFFFFF,
+  };
+  final row = switch (background?.textPosition) {
+    TextCardTextPosition.top => CardAnchor.topCenter,
+    TextCardTextPosition.bottom => CardAnchor.bottomCenter,
+    _ => CardAnchor.center,
+  };
+  // The box behind words over a busy photo: a soft shadow instead.
+  final boxed = background?.textBox ?? false;
+  final lightWords = ink == 0xFFFFFFFF;
+  return CardDesign(
+    kind: CardKind.text,
+    template: kClassicTemplateId,
+    margin: kClassicMargin,
+    signatureRules: true,
+    keepClear: true,
+    background: CardBackground(
+      kind: background == null ? CardFillKind.solid : CardFillKind.image,
+      color: theme.background.toARGB32(),
+    ),
+    blocks: [
+      CardTextBlock(
+        role: CardBlockRole.postText,
+        anchor: row,
+        font: font,
+        customFont: customFont,
+        size: kClassicWordsSize,
+        autoFit: true,
+        weight: customFont != null ? 400 : font.weight.value,
+        letterSpacing: customFont != null ? 0 : font.tracking,
+        lineHeight: kClassicLineHeight,
+        color: ink,
+        alignment: alignment,
+        gapBefore: 0,
+        shadowBlur: boxed ? 18 : 0,
+        shadowColor: lightWords ? 0xB3000000 : 0xB3FFFFFF,
+      ),
+      classicSignatureBlock(ink: ink),
+      classicHandleBlock(ink: ink, anchor: plain ? CardAnchor.bottomLeft : CardAnchor.bottomRight),
+    ],
+  );
+}
+
+/// The classic card's NEFORUM mark and wordmark, at the bottom left, in
+/// [ink].
+CardTextBlock classicSignatureBlock({required int ink}) => CardTextBlock(
+      role: CardBlockRole.signature,
+      anchor: CardAnchor.bottomLeft,
+      size: kClassicSignatureSize,
+      weight: 800,
+      color: ink,
+      letterSpacing: 1.6 / 30,
+      gapBefore: 0,
+    );
+
+/// The classic card's @handle at [anchor] (lined up to its side), in [ink]
+/// at the classic card's 62%, on one line ending with an ellipsis; at most
+/// two thirds of the card wide, so it keeps clear of a signature beside it.
+CardTextBlock classicHandleBlock({required int ink, CardAnchor anchor = CardAnchor.bottomRight}) => CardTextBlock(
+      role: CardBlockRole.handle,
+      anchor: anchor,
+      width: 0.66,
+      size: kClassicHandleSize,
+      weight: 500,
+      lineHeight: 1.1,
+      color: (kClassicHandleAlpha << 24) | (ink & 0xFFFFFF),
+      alignment: cardAlignmentAt(anchor),
+      maxLines: 1,
+      gapBefore: 0,
+    );
+
+/// How a block's lines are lined up at [anchor]: left on the left, centred
+/// in the middle, right on the right.
+TextCardAlignment cardAlignmentAt(CardAnchor anchor) => switch (anchor.x) {
+      0.0 => TextCardAlignment.left,
+      1.0 => TextCardAlignment.right,
+      _ => TextCardAlignment.center,
+    };
 
 // Shorthands for the templates' blocks.
 

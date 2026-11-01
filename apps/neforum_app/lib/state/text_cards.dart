@@ -38,6 +38,25 @@ const String kTextCardEveryNetworkKey = 'textCardEveryNetwork';
 /// ([kTextCardEveryNetworkKey]).
 bool textCardEveryNetworkOfPost(Post post) => post.targets.any((t) => t.overrides.extra[kTextCardEveryNetworkKey] == true);
 
+/// 1.3.5: `PostOverrides.extra` key, on every target of a post whose text
+/// cards say something else than each account's @handle (the master
+/// editor's "@handle on every card"): the words, the same for every network.
+/// Absent: each account's own handle, as before 1.3.5. Kept on the post, not
+/// in its design, so it goes along with a classic card or any design, a
+/// change to it alone leaves the card's look as it is, and a scheduled run,
+/// another device after a sync, or the post edited again all read it back.
+const String kTextCardBylineKey = 'textCardByline';
+
+/// The @handle [post] puts on every network's card in place of each
+/// account's own ([kTextCardBylineKey]); null for each account's own.
+String? textCardBylineOfPost(Post post) {
+  for (final t in post.targets) {
+    final raw = t.overrides.extra[kTextCardBylineKey];
+    if (raw is String && raw.trim().isNotEmpty) return raw.trim();
+  }
+  return null;
+}
+
 /// Platform id -> whether the post's text goes along with its card there;
 /// only networks where it does not ([kTextCardOnlyKey]) are listed, for the
 /// composer when a saved post is edited again.
@@ -48,10 +67,14 @@ Map<String, bool> textCardWithTextOfPost(Post post, String? Function(String acco
 
 /// [post] with the composer's card choices written into its targets, so a
 /// scheduled or background run makes the cards the way the post was saved:
-/// [everyNetwork] on every target, and for each network whose
-/// [withText] is false, the card without the post's text.
+/// [everyNetwork] on every target, for each network whose [withText] is
+/// false the card without the post's text, and (1.3.5) the [byline] every
+/// card shows in place of the account's @handle on every target.
 Post withTextCardChoices(Post post,
-        {required bool everyNetwork, required Map<String, bool> withText, required String? Function(String accountId) platformOf}) =>
+        {required bool everyNetwork,
+        required Map<String, bool> withText,
+        required String? Function(String accountId) platformOf,
+        String? byline}) =>
     post.copyWith(targets: [
       for (final t in post.targets)
         t.copyWith(
@@ -59,6 +82,7 @@ Post withTextCardChoices(Post post,
             ...withoutTextCardChoices(t.overrides).extra,
             if (everyNetwork) kTextCardEveryNetworkKey: true,
             if (withText[platformOf(t.accountId)] == false) kTextCardOnlyKey: true,
+            if (byline != null && byline.trim().isNotEmpty) kTextCardBylineKey: byline.trim(),
           }),
         ),
     ]);
@@ -68,8 +92,8 @@ Post withTextCardChoices(Post post,
 PostOverrides withoutTextCardChoices(PostOverrides o) {
   // 1.3.1: cards. The card designs are the composer's choices too.
   o = withoutCardDesigns(o);
-  return o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey)
-      ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey))
+  return o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey) || o.extra.containsKey(kTextCardBylineKey)
+      ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey)..remove(kTextCardBylineKey))
       : o;
 }
 
@@ -112,7 +136,10 @@ PostOverrides _withOwnMediaIds(PostOverrides o, List<String>? own) {
 /// use [font], the user is told, and the cards are made again where it is.
 /// [design] (1.3.1) is a card designer design (CardDesign.toJson; an empty
 /// map for the classic card; null for the post's own, else the Settings
-/// default): with one, it is the cards' whole look.
+/// default): with one, it is the cards' whole look. The @handle on each card
+/// is the account's, or (1.3.5) the one the post puts on every card
+/// ([textCardBylineOfPost]); it is in the cards' render parameters, so a
+/// change to it makes the cards again.
 Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     {TextCardTheme? theme,
     TextCardFont? font,
@@ -159,6 +186,8 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
   final String? ownBackgroundId = backgroundPhoto != null && userPhotos.containsKey(backgroundPhoto.id) ? backgroundPhoto.id : null;
   final ownPhoto = ownBackgroundId != null;
   final everyNetwork = textCardEveryNetworkOfPost(post);
+  // 1.3.5: the @handle the post puts on every card, if any.
+  final postByline = textCardBylineOfPost(post);
   final resolver = VariantResolver(settings.resolverOptions);
   final made = <String, MediaAttachment>{};
   final used = <String>{};
@@ -206,7 +235,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     }
 
     final text = textCardText(p, base);
-    final byline = account.handle ?? account.displayName;
+    final byline = postByline ?? account.handle ?? account.displayName;
     final signed = branded[d.id] ?? (oldCard == null ? null : textCardBrandedOf(oldCard)) ?? settings.textCardBranded(d.id);
     final showsHandle = handle[d.id] ?? (oldCard == null ? null : textCardShowsHandleOf(oldCard)) ?? settings.textCardShowsHandle(d.id);
 

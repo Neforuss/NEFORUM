@@ -712,6 +712,25 @@ class CardTextBlock {
       };
 }
 
+/// 1.3.5: the height of the signature rule along a card's top edge
+/// ([CardDesign.signatureRules]), in pixels at 1080 wide: the classic card's.
+const double kSignatureRuleHeight = 14;
+
+/// 1.3.5: how far the rule's yellow tab reaches past the card's margin, in
+/// pixels at 1080 wide: the classic card's.
+const double kSignatureTabReach = 120;
+
+/// 1.3.5: room between the post's words and a row of blocks along the top or
+/// bottom edge of a design that keeps them clear ([CardDesign.keepClear]),
+/// in pixels at 1080 wide: the classic card's room above its plain footer.
+const double kKeepClearGap = 40;
+
+/// 1.3.5: where the faint line of the signature rules sits above the bottom
+/// row, and the room it adds above itself, in pixels at 1080 wide: the
+/// classic card's divider (44 above the footer, 56 below the words).
+const double kSignatureDividerAbove = 44;
+const double kSignatureDividerRoom = 60;
+
 /// A card's whole design: its background, the cover and waveform layers and
 /// its text blocks, drawn in that order.
 @immutable
@@ -724,6 +743,8 @@ class CardDesign {
     this.waveform = const CardWaveformLayer(),
     this.blocks = const [],
     this.margin = 80,
+    this.signatureRules = false,
+    this.keepClear = false,
   });
 
   /// Null when [j] is not a design (or is empty: the classic card).
@@ -741,6 +762,8 @@ class CardDesign {
       waveform: CardWaveformLayer.fromJson(_map(m['waveform'])),
       blocks: raw is List ? [for (final b in raw.take(24)) if (b is Map) CardTextBlock.fromJson(Map<String, dynamic>.from(b))] : const [],
       margin: _num(m['margin'], 80, 0, 240),
+      signatureRules: _bool(m['signatureRules'], false),
+      keepClear: _bool(m['keepClear'], false),
     );
   }
 
@@ -757,6 +780,28 @@ class CardDesign {
   /// frame, in pixels at 1080 wide.
   final double margin;
 
+  /// 1.3.5: the classic card's signature rules: a NEFORUM purple rule with a
+  /// yellow tab along the card's top edge (the frame starts below it), and a
+  /// faint line in the colour of the signature above the row of blocks along
+  /// the bottom edge. Drawn only on a card that carries the signature, so a
+  /// network whose card is plain gets neither, as on the classic card. The
+  /// master editor's designs (classicTextCardDesign in card_templates.dart)
+  /// have them, so the first touch of a control leaves the card looking as
+  /// it did.
+  final bool signatureRules;
+
+  /// 1.3.5: the post's words keep clear of the blocks along the top and
+  /// bottom edges (the @handle, the signature): those rows are laid out
+  /// first, and the words, with every block at a middle anchor, go in the
+  /// room between them (less [kKeepClearGap], and the divider's room with
+  /// [signatureRules]), at their anchor's top, middle or bottom there. Each
+  /// row's blocks are centred on the row's height, as the classic card's
+  /// handle is on its mark, and a signature a plain card leaves out keeps
+  /// its row that tall while the @handle shares it, as the classic card's
+  /// plain footer does. Off, every block is placed in the whole frame and
+  /// may overlap, as designs made before 1.3.5 are.
+  final bool keepClear;
+
   /// Every installed or imported font its blocks use, once each.
   Set<CaptionFont> get customFonts => {
         for (final b in blocks)
@@ -771,6 +816,8 @@ class CardDesign {
     CardWaveformLayer? waveform,
     List<CardTextBlock>? blocks,
     double? margin,
+    bool? signatureRules,
+    bool? keepClear,
   }) =>
       CardDesign(
         kind: kind,
@@ -780,6 +827,8 @@ class CardDesign {
         waveform: waveform ?? this.waveform,
         blocks: blocks ?? this.blocks,
         margin: margin ?? this.margin,
+        signatureRules: signatureRules ?? this.signatureRules,
+        keepClear: keepClear ?? this.keepClear,
       );
 
   /// This design with block [index] changed.
@@ -794,6 +843,10 @@ class CardDesign {
         'waveform': waveform.toJson(),
         'blocks': [for (final b in blocks) b.toJson()],
         'margin': margin,
+        // 1.3.5: only when on, so designs made before keep the JSON (and the
+        // render parameters) they were saved with, and are not drawn again.
+        if (signatureRules) 'signatureRules': true,
+        if (keepClear) 'keepClear': true,
       };
 }
 

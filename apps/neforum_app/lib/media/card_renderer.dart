@@ -39,6 +39,18 @@ Rect cardFrameOf(Size size, EdgeInsets safe, double margin) {
   return r.width > 0 && r.height > 0 ? r : Offset.zero & size;
 }
 
+/// 1.3.5: the frame of a card drawn from [design]: [cardFrameOf], starting
+/// below the signature rule when the design draws it on this card (it has
+/// [CardDesign.signatureRules] and the card is [signed]), as the classic
+/// card's words start below its rule. The painter and the compositor both
+/// place their layers in it, so the cover and the words never disagree.
+Rect cardFrameOfDesign(CardDesign design, Size size, EdgeInsets safe, {required bool signed}) {
+  final frame = cardFrameOf(size, safe, design.margin);
+  if (!design.signatureRules || !signed) return frame;
+  final top = frame.top + kSignatureRuleHeight * cardUnit(size);
+  return top < frame.bottom ? Rect.fromLTRB(frame.left, top, frame.right, frame.bottom) : frame;
+}
+
 /// A [box] placed in [frame] at [anchor] (its own same point there), moved
 /// by [offsetX] and [offsetY] (fractions of the frame).
 Rect placeInFrame(Rect frame, Size box, CardAnchor anchor, double offsetX, double offsetY) => Rect.fromLTWH(
@@ -100,7 +112,16 @@ class CardRenderInput {
 
   /// The sound's levels (0 to 1) for the waveform layer.
   final List<double>? waveform;
+
+  /// 1.3.5: the card carries the NEFORUM signature ([texts] does not leave
+  /// it out), so the design's signature rules are drawn.
+  bool get signed => cardIsSigned(texts);
 }
+
+/// 1.3.5: whether a card with the block words [texts] carries the signature:
+/// [CardBlockRole.signature] missing draws it, '' leaves it out
+/// ([CardRenderInput.texts]).
+bool cardIsSigned(Map<CardBlockRole, String> texts) => (texts[CardBlockRole.signature] ?? 'NEFORUM').trim().isNotEmpty;
 
 /// Renders [input] as a JPEG (quality 92), or a PNG with [png] (for the
 /// still-picture video of a sound file).
@@ -132,10 +153,22 @@ class CardDesignPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final u = cardUnit(size);
-    final frame = cardFrameOf(size, safe, design.margin);
+    final signed = cardIsSigned(texts);
+    final frame = cardFrameOfDesign(design, size, safe, signed: signed);
     final levels = waveform;
+    if (design.signatureRules && signed) _paintRule(canvas, size, u);
     if (design.waveform.visible && levels != null && levels.isNotEmpty) _paintWaveform(canvas, design.waveform, cardWaveformRect(design.waveform, frame), levels, u);
-    _paintBlocks(canvas, frame, u);
+    _paintBlocks(canvas, frame, u, signed: signed);
+  }
+
+  /// 1.3.5: the classic card's signature rule along the top edge: NEFORUM
+  /// purple across, a yellow tab from the left edge to past the margin. At
+  /// the very top, over a full-screen card's safe area, as the classic card
+  /// draws it.
+  void _paintRule(Canvas canvas, Size size, double u) {
+    final rule = kSignatureRuleHeight * u;
+    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, rule), Paint()..color = Brand.purple);
+    canvas.drawRect(Rect.fromLTWH(0, 0, (design.margin + kSignatureTabReach) * u, rule), Paint()..color = Brand.yellow);
   }
 
   /// The words of block [b]; empty leaves it out.
@@ -219,45 +252,119 @@ class CardDesignPainter extends CustomPainter {
     );
   }
 
-  void _paintBlocks(Canvas canvas, Rect frame, double u) {
-    // Blocks at the same anchor stack, in their order.
-    final groups = <CardAnchor, List<CardTextBlock>>{};
-    for (final b in design.blocks) {
-      if (b.visible && wordsOf(b).isNotEmpty) (groups[b.anchor] ??= []).add(b);
+  void _paintBlocks(Canvas canvas, Rect frame, double u, {required bool signed}) {
+    final shown = [
+      for (final b in design.blocks)
+        if (b.visible && wordsOf(b).isNotEmpty) b,
+    ];
+    if (!design.keepClear) {
+      for (final g in _layoutGroups(shown, frame, u)) {
+        _paintGroup(canvas, g, frame, u, frame.top + (frame.height - g.total) * g.anchor.y);
+      }
+      return;
     }
-    for (final MapEntry(key: anchor, value: blocks) in groups.entries) {
-      final laid = <_LaidBlock>[];
-      // Fixed blocks first: blocks that fit themselves get the room left.
-      var fixedHeight = 0.0;
-      for (final b in blocks.where((b) => !b.autoFit)) {
-        final l = _layout(b, frame, u, null);
-        laid.add(l);
-        fixedHeight += l.height + b.gapBefore * u;
-      }
-      for (final b in blocks.where((b) => b.autoFit)) {
-        final room = math.max(frame.height * 0.08, frame.height * b.maxHeight - fixedHeight);
-        laid.add(_layout(b, frame, u, room));
-      }
-      laid.sort((a, b) => blocks.indexOf(a.block).compareTo(blocks.indexOf(b.block)));
-      var total = 0.0;
-      for (var i = 0; i < laid.length; i++) {
-        total += laid[i].height + (i == 0 ? 0 : laid[i].block.gapBefore * u);
-      }
-      var y = frame.top + (frame.height - total) * anchor.y;
-      for (var i = 0; i < laid.length; i++) {
-        final l = laid[i];
-        if (i > 0) y += l.block.gapBefore * u;
-        final b = l.block;
-        var at = Offset(frame.left + (frame.width - l.width) * anchor.x + b.offsetX * frame.width, y + b.offsetY * frame.height);
-        // Kept inside the frame, so a network's buttons never cover it.
-        at = Offset(
-          at.dx.clamp(frame.left, math.max(frame.left, frame.right - l.width)),
-          at.dy.clamp(frame.top, math.max(frame.top, frame.bottom - l.height)),
-        );
-        l.paint(canvas, at);
-        y += l.height;
+    // 1.3.5: the rows along the top and bottom edges first, each block
+    // centred on its row's height; then the words, with every block at a
+    // middle anchor, in the room the rows leave.
+    bool edge(CardTextBlock b) => b.role != CardBlockRole.postText && b.anchor.y != 0.5;
+    final rows = _layoutGroups([for (final b in shown) if (edge(b)) b], frame, u);
+    // A signature a plain card leaves out keeps its row as tall as it would
+    // be, while something else (the @handle) is in that row: the classic
+    // card's plain footer keeps the mark's height for its handle too.
+    final kept = <double, double>{};
+    if (!signed) {
+      for (final b in design.blocks.where((b) => b.visible && b.role == CardBlockRole.signature && edge(b))) {
+        final l = _LaidSignature(b, 'NEFORUM', _style(b, b.size * u, u), u);
+        kept[b.anchor.y] = math.max(kept[b.anchor.y] ?? 0, l.height);
         l.dispose();
       }
+    }
+    double band(double y) {
+      final row = rows.where((g) => g.anchor.y == y);
+      return row.isEmpty ? 0 : row.fold(kept[y] ?? 0.0, (m, g) => math.max(m, g.total));
+    }
+    final topBand = band(0), bottomBand = band(1);
+    final divider = design.signatureRules && signed && bottomBand > 0;
+    for (final g in rows) {
+      final y = g.anchor.y == 0 ? frame.top + (topBand - g.total) / 2 : frame.bottom - bottomBand + (bottomBand - g.total) / 2;
+      _paintGroup(canvas, g, frame, u, y);
+    }
+    if (divider) {
+      // In the signature's colour, as faint as the classic card's divider.
+      final ink = Color((shown.where((b) => b.role == CardBlockRole.signature).firstOrNull ?? shown.first).color);
+      final y = frame.bottom - bottomBand - kSignatureDividerAbove * u;
+      canvas.drawLine(
+        Offset(frame.left, y),
+        Offset(frame.right, y),
+        Paint()
+          ..color = ink.withValues(alpha: ink.a * 0.16)
+          ..strokeWidth = 2 * u,
+      );
+    }
+    var body = Rect.fromLTRB(
+      frame.left,
+      frame.top + (topBand > 0 ? topBand + kKeepClearGap * u : 0),
+      frame.right,
+      frame.bottom - (bottomBand > 0 ? bottomBand + (kKeepClearGap + (divider ? kSignatureDividerRoom : 0)) * u : 0),
+    );
+    // Rows too tall to leave the words a fifth of the frame: the words get
+    // the whole frame rather than none of it.
+    if (body.height < frame.height * 0.2) body = frame;
+    for (final g in _layoutGroups([for (final b in shown) if (!edge(b)) b], body, u)) {
+      _paintGroup(canvas, g, body, u, body.top + (body.height - g.total) * g.anchor.y);
+    }
+  }
+
+  /// [blocks] grouped by anchor (blocks at the same anchor stack, in their
+  /// order) and laid out in [frame], not yet painted.
+  List<_LaidGroup> _layoutGroups(List<CardTextBlock> blocks, Rect frame, double u) {
+    final groups = <CardAnchor, List<CardTextBlock>>{};
+    for (final b in blocks) {
+      (groups[b.anchor] ??= []).add(b);
+    }
+    return [
+      for (final MapEntry(key: anchor, value: members) in groups.entries) _layoutGroup(anchor, members, frame, u),
+    ];
+  }
+
+  _LaidGroup _layoutGroup(CardAnchor anchor, List<CardTextBlock> blocks, Rect frame, double u) {
+    final laid = <_LaidBlock>[];
+    // Fixed blocks first: blocks that fit themselves get the room left.
+    var fixedHeight = 0.0;
+    for (final b in blocks.where((b) => !b.autoFit)) {
+      final l = _layout(b, frame, u, null);
+      laid.add(l);
+      fixedHeight += l.height + b.gapBefore * u;
+    }
+    for (final b in blocks.where((b) => b.autoFit)) {
+      final room = math.max(frame.height * 0.08, frame.height * b.maxHeight - fixedHeight);
+      laid.add(_layout(b, frame, u, room));
+    }
+    laid.sort((a, b) => blocks.indexOf(a.block).compareTo(blocks.indexOf(b.block)));
+    var total = 0.0;
+    for (var i = 0; i < laid.length; i++) {
+      total += laid[i].height + (i == 0 ? 0 : laid[i].block.gapBefore * u);
+    }
+    return _LaidGroup(anchor, laid, total);
+  }
+
+  /// Paints group [g] in [frame], its first block's top at [top], and
+  /// releases its layouts.
+  void _paintGroup(Canvas canvas, _LaidGroup g, Rect frame, double u, double top) {
+    var y = top;
+    for (var i = 0; i < g.laid.length; i++) {
+      final l = g.laid[i];
+      if (i > 0) y += l.block.gapBefore * u;
+      final b = l.block;
+      var at = Offset(frame.left + (frame.width - l.width) * g.anchor.x + b.offsetX * frame.width, y + b.offsetY * frame.height);
+      // Kept inside the frame, so a network's buttons never cover it.
+      at = Offset(
+        at.dx.clamp(frame.left, math.max(frame.left, frame.right - l.width)),
+        at.dy.clamp(frame.top, math.max(frame.top, frame.bottom - l.height)),
+      );
+      l.paint(canvas, at);
+      y += l.height;
+      l.dispose();
     }
   }
 
@@ -315,6 +422,15 @@ class CardDesignPainter extends CustomPainter {
   @override
   bool shouldRepaint(CardDesignPainter old) =>
       old.design != design || !mapEquals(old.texts, texts) || old.safe != safe || old.platformId != platformId || old.waveform != waveform;
+}
+
+/// The blocks at one anchor, laid out: their layouts in order and their
+/// height together, gaps included.
+class _LaidGroup {
+  _LaidGroup(this.anchor, this.laid, this.total);
+  final CardAnchor anchor;
+  final List<_LaidBlock> laid;
+  final double total;
 }
 
 abstract class _LaidBlock {
@@ -444,7 +560,7 @@ class CardComposeJob {
     final bg = d.background;
     final width = input.size.width.round(), height = input.size.height.round();
     final u = cardUnit(input.size);
-    final frame = cardFrameOf(input.size, input.safe, d.margin);
+    final frame = cardFrameOfDesign(d, input.size, input.safe, signed: input.signed);
     final photo = bg.kind == CardFillKind.image ? input.photo : null;
     final adjust = input.photoBackground;
     final gradient = adjust?.gradientColors;

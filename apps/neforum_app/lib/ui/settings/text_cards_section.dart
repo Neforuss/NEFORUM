@@ -150,7 +150,8 @@ class TextCardSettingsSection extends ConsumerWidget {
         SettingRow(
           title: 'Show @handle',
           description: 'Your account\'s handle in the corner of the card. Turn it off where you would rather not show it. '
-              'You can also switch it per post under the preview.',
+              'You can also switch it per post under the preview, and change what it says, its size and its place for every network '
+              'in "Text card for every network" above the previews.',
           enabled: s.textCards,
           below: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
             for (final id in const ['instagram', 'tiktok', 'pinterest', 'snapchat'])

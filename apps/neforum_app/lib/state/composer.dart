@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../media/audio_plan.dart';
 import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
 import '../media/card_design.dart';
+import '../media/card_templates.dart' show classicTextCardDesign, kClassicTemplateId;
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -64,6 +65,7 @@ class ComposerState {
     this.textCardCustomFont, // 1.3.1: cards
     this.textCardDesign, // 1.3.1: cards
     this.audioCardDesign, // 1.3.1: cards
+    this.textCardByline, // 1.3.5
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -207,6 +209,28 @@ class ComposerState {
   /// [textCardDesign], or the Settings default; null for the classic card.
   CardDesign? textDesign(AppSettings settings) => effectiveCardDesign(textCardDesign, settings.textCardDesign);
 
+  /// 1.3.5: what every network's text card says in place of its account's
+  /// @handle (the master editor's "@handle on every card"); null for each
+  /// account's own. Networks whose card shows no @handle stay without.
+  final String? textCardByline;
+
+  /// 1.3.5: the design the master editor's quick controls change: the post's
+  /// design ([textDesign]), else the classic card as this post has it (its
+  /// theme, font, alignment and background photo) drawn as a design
+  /// ([classicTextCardDesign]), so the first control touched changes only
+  /// what it controls. [plain]: most of the post's networks carry no
+  /// signature, so the @handle goes to the left, as on a plain classic card.
+  CardDesign quickDesignStart(AppSettings settings, {bool plain = false}) =>
+      textDesign(settings) ??
+      classicTextCardDesign(
+        theme: textCardTheme ?? settings.textCardTheme,
+        font: textCardFont ?? settings.textCardFont,
+        customFont: cardCustomFont(settings),
+        alignment: textCardAlignment ?? settings.textCardAlignment,
+        background: TextCardBackground.tryParse(textCardBackground),
+        plain: plain,
+      );
+
   /// [audioCardDesign], or the Settings default; null for the classic card.
   CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
 
@@ -265,6 +289,7 @@ class ComposerState {
     Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
     Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
+    String? textCardByline, // 1.3.5
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -273,6 +298,7 @@ class ComposerState {
     bool clearFocus = false,
     bool clearArtwork = false,
     bool clearTextCardBackground = false,
+    bool clearTextCardByline = false, // 1.3.5
   }) =>
       ComposerState(
         editingPostId: editingPostId ?? this.editingPostId,
@@ -309,6 +335,7 @@ class ComposerState {
         textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
         textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
         audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
+        textCardByline: clearTextCardByline ? null : (textCardByline ?? this.textCardByline), // 1.3.5
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -468,6 +495,19 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// 1.3.1: cards. This post's text card design; null for the classic card.
   void setTextCardDesign(CardDesign? design) => state = state.copyWith(textCardDesign: design?.toJson() ?? const {});
 
+  /// 1.3.5: one of the master editor's quick controls: [change] applied to
+  /// the design they edit ([ComposerState.quickDesignStart]), which becomes
+  /// this post's text card design on every network.
+  void editTextCardDesign(CardDesign Function(CardDesign d) change, {bool plain = false}) =>
+      setTextCardDesign(change(state.quickDesignStart(ref.read(settingsProvider), plain: plain)));
+
+  /// 1.3.5: what every network's text card says in place of its account's
+  /// @handle; null or blank for each account's own again.
+  void setTextCardByline(String? byline) {
+    final words = byline?.trim() ?? '';
+    state = words.isEmpty ? state.copyWith(clearTextCardByline: true) : state.copyWith(textCardByline: words);
+  }
+
   /// 1.3.1: cards. This post's audio card design; null for the classic card.
   void setAudioCardDesign(CardDesign? design) => state = state.copyWith(audioCardDesign: design?.toJson() ?? const {});
   void setTextCardBranded(String platformId, bool branded) =>
@@ -479,8 +519,15 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setTextCardHandle(String platformId, bool show) => state = state.copyWith(textCardHandle: {...state.textCardHandle, platformId: show});
   void setCaptionStyle(Map<String, dynamic> style) => state = state.copyWith(captionStyle: style);
   void setAudioQuality(AudioQuality quality) => state = state.copyWith(audioQuality: quality);
-  void setTextCardBackground(Map<String, dynamic>? background) =>
-      state = background == null ? state.copyWith(clearTextCardBackground: true) : state.copyWith(textCardBackground: background);
+  void setTextCardBackground(Map<String, dynamic>? background) {
+    state = background == null ? state.copyWith(clearTextCardBackground: true) : state.copyWith(textCardBackground: background);
+    // 1.3.5: a card restyled in the master editor takes the photo, or goes
+    // back to its colour, as the classic card it started from does.
+    final design = CardDesign.tryParse(state.textCardDesign);
+    if (design == null || design.template != kClassicTemplateId) return;
+    final kind = background == null ? CardFillKind.solid : CardFillKind.image;
+    if (design.background.kind != kind) setTextCardDesign(design.copyWith(background: design.background.copyWith(kind: kind)));
+  }
   void setTextCardEveryNetwork(bool on) => state = state.copyWith(textCardEveryNetwork: on);
   void setTextCardWithText(String platformId, bool on) => state = state.copyWith(textCardWithText: {...state.textCardWithText, platformId: on});
 
@@ -749,6 +796,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
         textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
         audioCardDesign: audioCardDesignOfPost(post), // 1.3.1: cards
+        textCardByline: textCardBylineOfPost(post), // 1.3.5
       );
   }
 
@@ -806,6 +854,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
       textCardDesign: state.textCardDesign, // 1.3.1: cards
       audioCardDesign: state.audioCardDesign, // 1.3.1: cards
+      textCardByline: state.textCardByline, // 1.3.5
     );
   }
 }
@@ -870,6 +919,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             story: story,
             customFont: cardFont,
             design: cardDesign,
+            byline: c.textCardByline, // 1.3.5
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
@@ -1087,7 +1137,8 @@ class PostActions {
     post = withTextCardChoices(post,
         everyNetwork: c.cardOnEveryNetwork(ref.read(settingsProvider)),
         withText: c.textCardWithText,
-        platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
+        platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId,
+        byline: c.textCardByline); // 1.3.5
     // 1.3.1: cards. After the card choices, which replace the targets' extras.
     post = withCardDesigns(post, text: c.textCardDesign, audio: c.audioCardDesignToSave(ref.read(settingsProvider)));
     // Hand the old cards and fitted photos over so unchanged ones are reused,

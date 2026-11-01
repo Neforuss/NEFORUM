@@ -11,6 +11,7 @@ import '../../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvid
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/card_design.dart';
+import '../../media/card_quick_edits.dart';
 import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../media/text_card_background.dart';
@@ -36,6 +37,7 @@ import 'card_design_view.dart';
 import 'card_designer_sheet.dart';
 import 'font_picker_sheet.dart';
 import 'rich_text.dart';
+import 'text_card_quick_controls.dart';
 
 /// How a platform presents a post; drives the preview layout.
 enum PreviewFamily { microblog, visual, forum, chat, blog }
@@ -469,7 +471,8 @@ class _TextCardPreview extends ConsumerWidget {
     final alignment = textCardAlignmentOf(placeholder);
     final showsHandle = textCardShowsHandleOf(placeholder);
     final text = textCardText(_previewPost(ref), p.target);
-    final byline = p.account.handle ?? p.account.displayName;
+    // 1.3.5: the @handle the post puts on every card, else the account's.
+    final byline = textCardBylineOf(placeholder) ?? p.account.handle ?? p.account.displayName;
     final size = textCardSizeOf(placeholder, id);
     final aspect = size.width / size.height;
     final background = textCardParametersOf(placeholder)?['background'] != null ? TextCardBackground.tryParse(composer.textCardBackground) : null;
@@ -553,6 +556,12 @@ class _TextCardPreview extends ConsumerWidget {
 /// exceptions, and each card keeps its network's shape. Open on a computer;
 /// on a phone it starts folded to its title and what differs, so the
 /// networks' previews stay in view.
+///
+/// 1.3.5: a quick designer too ([TextCardQuickControls]): the @handle every
+/// card shows, the text's size, spacing and place, the margins, the words'
+/// and background's colours, and the @handle's size and place, each for
+/// every network and its saved card; the theme, font and alignment edit a
+/// design's words as well as the classic card's.
 class TextCardMasterPanel extends ConsumerStatefulWidget {
   const TextCardMasterPanel({super.key, required this.previews});
 
@@ -667,7 +676,9 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
     ];
 
     final text = textCardText(_previewPost(ref), first.target);
-    final byline = first.account.handle ?? first.account.displayName;
+    // 1.3.5: the @handle the post puts on every card, else the first
+    // network's own.
+    final byline = composer.textCardByline ?? first.account.handle ?? first.account.displayName;
     // The master card: square, with what most networks show.
     const size = Size(1080, 1080);
     final signed = branded ?? TextCardMasterPanel._most(cards.map((c) => textCardBrandedOf(c.$2)));
@@ -724,8 +735,10 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
         ]),
         if (open) ...[
           const SizedBox(height: Space.md),
-          Center(
-            child: SizedBox(
+          // 1.3.5: the card beside its quick controls where there is room,
+          // above them on a narrow column or a phone.
+          LayoutBuilder(builder: (context, box) {
+            final preview = SizedBox(
               key: const Key('text-card-master-preview'),
               width: 220,
               child: ClipRRect(
@@ -736,9 +749,26 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
                   child: picture,
                 ),
               ),
-            ),
-          ),
-          const SizedBox(height: Space.sm),
+            );
+            final controls = TextCardQuickControls(
+              key: const Key('text-card-master-quick'),
+              handles: {for (final (p, _) in cards) p.account.handle ?? p.account.displayName}.toList(),
+              handleHiddenOn: [for (final (p, m) in cards) if (!textCardShowsHandleOf(m)) p.descriptor.name],
+              plain: !signed,
+            );
+            return box.maxWidth >= 560
+                ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    preview,
+                    const SizedBox(width: Space.lg),
+                    Expanded(child: controls),
+                  ])
+                : Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+                    Center(child: preview),
+                    const SizedBox(height: Space.sm),
+                    controls,
+                  ]);
+          }),
+          const SizedBox(height: Space.md),
           Center(
             child: _CardStylePicker(
               key: const ValueKey('text-card-style-master'),
@@ -1097,8 +1127,20 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           ),
         );
 
+    // The master editor names no network: "Each network's own" there.
+    final master = widget.networks != null;
+    // 1.3.5: in the master editor the theme, the font and the alignment also
+    // edit a design's words (its quick designer), where one network's own
+    // controls leave a design to the designer.
+    final quick = master && widget.design != null;
+    final words = widget.design?.wordsBlock;
+    void quickEdit(CardDesign Function(CardDesign d) change) {
+      if (quick) ref.read(composerProvider.notifier).editTextCardDesign(change);
+    }
+
     Widget themeOption(TextCardTheme t) => pill(
-          selected: t == widget.current,
+          key: Key('${master ? 'text-card-master' : 'text-card'}-theme-${t.name}'),
+          selected: quick ? widget.design!.hasTheme(t) : t == widget.current,
           label: t.label,
           leading: Container(
             width: 14,
@@ -1108,19 +1150,19 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
             child: Container(width: 6, height: 6, decoration: BoxDecoration(color: t.foreground, shape: BoxShape.circle)),
           ),
           onTap: () {
+            quickEdit((d) => d.withTheme(t));
             ref.read(composerProvider.notifier).setTextCardTheme(t);
             final s = ref.read(settingsProvider);
             if (s.textCardTheme != t) ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardTheme: t));
           },
         );
 
-    // The master editor names no network: "Each network's own" there.
-    final master = widget.networks != null;
     final ids = widget.networks ?? [widget.platform.id];
     final where = master ? 'every network' : widget.platform.name;
     final keyPrefix = master ? 'text-card-master' : 'text-card';
     Widget fontOption(TextCardFont f) => pill(
-          selected: widget.customFont == null && f == widget.font,
+          key: Key('$keyPrefix-font-${f.name}'),
+          selected: quick ? (words?.customFont == null && words?.font == f) : (widget.customFont == null && f == widget.font),
           label: switch (f) {
             TextCardFont.original => 'Inter',
             TextCardFont.platform => master ? "Each network's own" : "${widget.platform.name}'s own",
@@ -1137,6 +1179,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
                   height: 1,
                   color: nf.text)),
           onTap: () {
+            quickEdit((d) => d.withWordsFont(f));
             ref.read(composerProvider.notifier).setTextCardFont(f);
             final s = ref.read(settingsProvider);
             if (s.textCardFont != f || s.textCardCustomFont.isNotEmpty) {
@@ -1147,6 +1190,8 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
 
     final background = widget.background;
     final designed = widget.design != null;
+    final customFont = quick ? words?.customFont : widget.customFont;
+    final alignment = quick ? (words?.alignment ?? widget.alignment) : widget.alignment;
     final branded = widget.branded, showsHandle = widget.showsHandle, withText = widget.withText;
     // An on/off for [ids]: on for all, off for all, or (null) mixed.
     IconData mixedIcon(bool? on, IconData onIcon, IconData offIcon) => on == null ? Icons.indeterminate_check_box_outlined : (on ? onIcon : offIcon);
@@ -1160,37 +1205,42 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         leading: Icon(Icons.palette_outlined, size: 14, color: designed ? nf.accent : nf.textFaint),
         onTap: () => showCardDesignerSheet(context, kind: CardKind.text),
       ),
-      // The classic card's own choices; a design sets all of them itself.
-      if (!designed && background == null) for (final t in TextCardTheme.values) themeOption(t),
-      if (!designed) for (final f in TextCardFont.values) fontOption(f),
+      // The classic card's own choices; a design sets all of them itself,
+      // but for its words' in the master editor (1.3.5).
+      if ((!designed || quick) && background == null) for (final t in TextCardTheme.values) themeOption(t),
+      if (!designed || quick) for (final f in TextCardFont.values) fontOption(f),
       // 1.3.1: cards. Any installed or imported font, from the caption's picker.
-      if (!designed) pill(
+      if (!designed || quick) pill(
         key: Key('$keyPrefix-font-more'),
-        selected: widget.customFont != null,
-        label: widget.customFont?.family ?? 'More fonts…',
+        selected: customFont != null,
+        label: customFont?.family ?? 'More fonts…',
         tooltip: 'Set the words in a font installed on this device, or in a font file you import',
-        leading: Icon(Icons.font_download_outlined, size: 14, color: widget.customFont != null ? nf.accent : nf.textFaint),
+        leading: Icon(Icons.font_download_outlined, size: 14, color: customFont != null ? nf.accent : nf.textFaint),
         onTap: () async {
           final choice = await showFontChoiceSheet(context,
-              current: FontChoice(widget.font, widget.customFont), platformId: widget.platform.id, title: 'Text card font');
+              current: FontChoice(quick ? (words?.font ?? widget.font) : widget.font, customFont), platformId: widget.platform.id, title: 'Text card font');
           if (choice == null) return;
           final custom = choice.customFont;
           final composer = ref.read(composerProvider.notifier);
           // Remembered as the default, like the built-in fonts.
           if (custom == null) {
+            quickEdit((d) => d.withWordsFont(choice.font));
             composer.setTextCardFont(choice.font);
             ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardFont: choice.font, textCardCustomFont: const {}));
           } else {
+            quickEdit((d) => d.withWordsCustomFont(custom));
             composer.setTextCardCustomFont(custom);
             ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardCustomFont: custom.toJson()));
           }
         },
       ),
-      if (!designed) PopupMenuButton<TextCardAlignment>(
-        tooltip: 'Alignment: ${widget.alignment.label}',
-        initialValue: widget.alignment,
+      if (!designed || quick) PopupMenuButton<TextCardAlignment>(
+        key: Key('$keyPrefix-alignment'),
+        tooltip: 'Alignment: ${alignment.label}',
+        initialValue: alignment,
         position: PopupMenuPosition.under,
         onSelected: (a) {
+          quickEdit((d) => d.withWordsAlignment(a));
           ref.read(composerProvider.notifier).setTextCardAlignment(a);
           final s = ref.read(settingsProvider);
           if (s.textCardAlignment != a) ref.read(settingsProvider.notifier).update((x) => x.copyWith(textCardAlignment: a));
@@ -1213,8 +1263,8 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         ],
         child: pill(
           selected: false,
-          label: widget.alignment.label,
-          leading: Icon(widget.alignment.icon, size: 14, color: nf.textMuted),
+          label: alignment.label,
+          leading: Icon(alignment.icon, size: 14, color: nf.textMuted),
           onTap: null,
         ),
       ),

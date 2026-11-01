@@ -840,6 +840,15 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
       _label(context, 'Margin'),
       _slider(context, 'Margin', d.margin, 0, 240, _px(d.margin), (v) => _edit((x) => x.copyWith(margin: v.roundToDouble())), key: const Key('card-margin')),
       Text('Room around everything. Full-screen stories also keep clear of the network\'s buttons.', style: context.text.bodySmall),
+      // 1.3.5: the master editor's designs have both on; any text card can.
+      if (_kind == CardKind.text) ...[
+        _switch(context, 'Keep the words clear of the edges', d.keepClear, (v) => _edit((x) => x.copyWith(keepClear: v)),
+            key: const Key('card-keep-clear'),
+            subtitle: 'The post\'s words go in the room the blocks along the top and bottom leave, never over the @handle or the signature.'),
+        _switch(context, 'Signature rules', d.signatureRules, (v) => _edit((x) => x.copyWith(signatureRules: v)),
+            key: const Key('card-signature-rules'),
+            subtitle: 'The classic card\'s purple and yellow rule along the top, and a faint line above the footer, on cards with the signature.'),
+      ],
       if (element >= -2) ...[
         _label(context, 'Place'),
         _chips(elements.keys.toList(), element, (k) => elements[k]!, (k) => setState(() => _element = k), keyPrefix: 'card-layout-element'),

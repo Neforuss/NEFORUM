@@ -278,6 +278,9 @@ const String kTextCardPlaceholder = 'textcard:';
 bool isTextCardPlaceholder(MediaAttachment m) => m.path.startsWith(kTextCardPlaceholder);
 
 /// What the composer's previews and checks see in place of the real card.
+/// [byline] (1.3.5) is the @handle the post puts on every network's card in
+/// place of the account's own (the master editor's); null leaves the
+/// account's, and the parameters as they were before 1.3.5.
 MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     {bool branded = true,
     TextCardFont font = TextCardFont.original,
@@ -286,7 +289,8 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     TextCardBackground? background,
     bool story = false,
     CaptionFont? customFont,
-    CardDesign? design}) {
+    CardDesign? design,
+    String? byline}) {
   final s = textCardSize(platformId, story: story);
   return MediaAttachment(
     id: story ? 'textcard-$platformId-story' : 'textcard-$platformId',
@@ -304,12 +308,21 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
       branded: branded,
       alignment: alignment,
       showsHandle: showsHandle,
+      byline: byline,
       safe: textCardSafeArea(platformId, story: story) != EdgeInsets.zero,
       background: background,
       customFont: customFont,
       design: design,
     ),
   );
+}
+
+/// The @handle drawn on a card, as its render parameters record it: the
+/// account's on a saved card, the post's own (1.3.5) on a placeholder; null
+/// when the card shows none, or a placeholder takes the account's.
+String? textCardBylineOf(MediaAttachment m) {
+  final byline = textCardParametersOf(m)?['byline'];
+  return byline is String ? byline : null;
 }
 
 /// Whether a generated card (or placeholder) carries the NEFORUM signature.
