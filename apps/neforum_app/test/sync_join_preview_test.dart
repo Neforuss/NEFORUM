@@ -112,7 +112,7 @@ void main() {
     final summary = describeJoinPreview(auto);
     expect(summary.headline, "This device's setup will be used (it has more accounts: 3 against 1 in the sync file).");
     expect(summary.details.first, startsWith('This device also gets 1 account from '));
-    expect(summary.details, contains(startsWith('The sync file gets 3 accounts, this device\'s media hosts and ')));
+    expect(summary.details, contains(startsWith('The sync file gets 3 accounts, 2 media hosts and ')));
     expect(summary.swapLabel, "Use the sync file's setup instead");
 
     final swapped = await planner.preview(seed: SyncSeed.file);
@@ -120,6 +120,86 @@ void main() {
     expect(describeJoinPreview(swapped, chosen: true).details.first, "Where the two differ, the sync file's setup wins (as you chose).");
     expect(swapped.receivedOf('setting'), greaterThan(0), reason: "the file's settings would come here instead");
   }, timeout: _timeout);
+
+  group('media hosts in the dry run match what the first sync does', () {
+    Future<(SyncTestDevice, SyncTestDevice)> join(String folder, {required int fileAccounts, required int hereAccounts}) async {
+      final a = SyncTestDevice(folder), b = SyncTestDevice(folder);
+      for (var i = 0; i < fileAccounts; i++) {
+        await a.addAccount(fakeAccount('x-a$i', 'x', tier: PlatformTier.byokApi, handle: '@a$i'), keys: {'access_token': 'fake-a$i'});
+      }
+      for (var i = 0; i < hereAccounts; i++) {
+        await b.addAccount(fakeAccount('x-b$i', 'x', tier: PlatformTier.byokApi, handle: '@b$i'), keys: {'access_token': 'fake-b$i'});
+      }
+      return (a, b);
+    }
+
+    Future<SyncJoinSummary> dryRun(SyncTestDevice b, String folder) async {
+      final planner = await b.sync.joinPlanner(FolderSyncBackend(folder), b.passphrase);
+      final summary = describeJoinPreview(await planner.preview());
+      planner.dispose();
+      return summary;
+    }
+
+    test('only the hosts that arrive are counted (this device wins with its own main host)', () async {
+      final folder = await syncFolderForTest(addTearDown);
+      final (a, b) = await join(folder, fileAccounts: 1, hereAccounts: 2);
+      addTearDown(a.dispose);
+      addTearDown(b.dispose);
+      await a.addMediaHost(MediaHostSlot.main, 'catbox', {'userhash': 'fake-userhash'});
+      await a.addMediaHost(MediaHostSlot.fallback, 'litterbox', {'time': '72h'});
+      await a.syncOnce();
+      await b.addMediaHost(MediaHostSlot.main, 'catbox', {'userhash': 'fake-other-userhash'});
+      final s = await dryRun(b, folder);
+      expect(s.details, contains(startsWith('This device also gets 1 account and 1 media host from ')));
+      expect(s.details.join(' '), isNot(contains('2 media hosts')));
+      expect(s.details, contains("Your other devices' main media host (Catbox) is replaced by this device's Catbox and removed: both slots are taken."));
+      expect(s.details.last, 'Apart from that, nothing is deleted: what only one side has is kept.');
+      await b.syncOnce();
+      expect(b.settings.mediaHostId, 'catbox');
+      expect(await b.secrets.read(MediaHostSlot.main.secretsKey), {'userhash': 'fake-other-userhash'}, reason: "this device's main host is unchanged");
+      expect(b.settings.fallbackMediaHostId, 'litterbox', reason: 'the one host the dry run announced arrived');
+    }, timeout: _timeout);
+
+    test("the file wins: this device's main host moves to the empty fallback slot, with its keys, on both sides", () async {
+      final folder = await syncFolderForTest(addTearDown);
+      final (a, b) = await join(folder, fileAccounts: 2, hereAccounts: 1);
+      addTearDown(a.dispose);
+      addTearDown(b.dispose);
+      await a.addMediaHost(MediaHostSlot.main, 'catbox', {'userhash': 'fake-userhash'});
+      await a.syncOnce();
+      await b.addMediaHost(MediaHostSlot.main, 's3',
+          {'endpoint': 'https://s3.example.com', 'bucket': 'b', 'accessKeyId': 'FAKE', 'secretAccessKey': 'fake-secret', 'publicBaseUrl': 'https://cdn.example.com'});
+      final s = await dryRun(b, folder);
+      expect(s.headline, startsWith('This device gets 2 accounts and 1 media host from '));
+      expect(s.details, contains("This device's main media host (S3-compatible bucket) moves to the fallback slot."));
+      expect(s.details, contains('The sync file gets 1 account and 1 media host from this device.'));
+      expect(s.details.last, 'Nothing is deleted: what only one side has is kept.');
+      await b.syncOnce();
+      await a.syncOnce();
+      for (final d in [a, b]) {
+        expect(d.settings.mediaHostId, 'catbox');
+        expect(d.settings.fallbackMediaHostId, 's3');
+        expect((await d.secrets.read(MediaHostSlot.fallback.secretsKey))?['secretAccessKey'], 'fake-secret', reason: 'the keys travel with the host');
+      }
+    }, timeout: _timeout);
+
+    test('both slots taken by the winning side: the dry run names the host that is replaced, and that is what happens', () async {
+      final folder = await syncFolderForTest(addTearDown);
+      final (a, b) = await join(folder, fileAccounts: 2, hereAccounts: 1);
+      addTearDown(a.dispose);
+      addTearDown(b.dispose);
+      await a.addMediaHost(MediaHostSlot.main, 'catbox', {'userhash': 'fake-userhash'});
+      await a.addMediaHost(MediaHostSlot.fallback, 'litterbox', {'time': '72h'});
+      await a.syncOnce();
+      await b.addMediaHost(MediaHostSlot.main, 'webdav',
+          {'webdavUrl': 'https://dav.example.com/m', 'username': 'u', 'password': 'fake-pass', 'publicUrlTemplate': 'https://dav.example.com/{path}'});
+      final s = await dryRun(b, folder);
+      expect(s.details, contains("This device's main media host (Nextcloud / WebDAV) is replaced by Catbox and removed: both slots are taken."));
+      expect(s.details.join(' '), isNot(contains('Nothing is deleted')));
+      await b.syncOnce();
+      expect([b.settings.mediaHostId, b.settings.fallbackMediaHostId], ['catbox', 'litterbox']);
+    }, timeout: _timeout);
+  });
 
   group('the dry run in words', () {
     test('what arrives, from which device, and why', () {

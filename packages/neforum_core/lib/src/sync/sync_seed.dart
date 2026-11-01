@@ -61,13 +61,26 @@ SyncSeed chooseSyncSeed({required SyncSideSummary here, required SyncSideSummary
 }
 
 final RegExp _uuid = RegExp(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}');
+final RegExp _clockId = RegExp(r'^nostr-handoff-\d+$');
 
 /// 1.3.5: whether [id] was made up on the device that connected the account
-/// (a random UUID: Mastodon, TikTok, hand-off accounts) rather than taken from
-/// the account itself (`x-<user id>`, `bluesky:<did>`). Only accounts with a
-/// made-up id can be the same account under two ids: two different natural
-/// ids are two different accounts.
-bool isDeviceMadeAccountId(String id) => _uuid.hasMatch(id);
+/// rather than taken from the account itself. Only accounts with a made-up
+/// id can be the same account under two ids: two different natural ids are
+/// two different accounts.
+///
+/// From every adapter's connect(), as of 1.3.5:
+/// * made up: Mastodon and Pixelfed (a UUID on both tiers), TikTok (a UUID),
+///   YouTube hand-off (a UUID), the hand-off accounts of DeviantArt,
+///   Dribbble, Facebook, Flickr, Inkbunny, Instagram, LinkedIn, Odysee,
+///   Pinterest, Reddit, Tumblr, X, YouTube posts, Threads without a username
+///   and every hand-off-only network (`<network>:handoff:<UUID>`), and Nostr
+///   hand-off (`nostr-handoff-<microseconds>`);
+/// * natural: everything else, built from the account's own id on its
+///   network (`x-<user id>`, `bluesky:<did>`, `misskey:<user id>@<server>`,
+///   `lemmy:<name>@<server>`, `youtube:<channel id>`, `discord:<webhook id>`,
+///   ...) or from its server (`lemmy-handoff:<server>`), the same on every
+///   device for the same account.
+bool isDeviceMadeAccountId(String id) => _uuid.hasMatch(id) || _clockId.hasMatch(id);
 
 /// 1.3.5: an account handle as compared across devices: case-insensitive,
 /// without the leading `@`, `null` when empty. `@Alice@Mastodon.Social` and
@@ -78,41 +91,79 @@ String? normalizedAccountHandle(Object? handle) {
   return h.isEmpty ? null : h;
 }
 
-/// The account's own id on its server with the server's name, when the
-/// adapter recorded them (`remoteAccountId` and `domain` or `instance`).
-String? _naturalKey(Map<Object?, Object?> account) {
+String? _text(Object? v) {
+  if (v is! String && v is! num) return null;
+  final s = '$v'.trim();
+  return s.isEmpty ? null : s;
+}
+
+/// 1.3.5: the server an account lives on, when its adapter recorded one:
+/// `domain` (Mastodon, Pixelfed), or the host of `instance` (Mastodon,
+/// Lemmy, Misskey, WriteFreely), `site` (WordPress, Ghost), `base` (Dev.to)
+/// or `baseUrl`, or `host`. `null` when none can be read: a missing server
+/// never matches a present one, and never matches another missing one.
+String? accountServer(Map<Object?, Object?> account) {
   final config = account['config'];
   if (config is! Map) return null;
-  final remote = config['remoteAccountId'];
-  if (remote == null || '$remote'.isEmpty) return null;
-  final server = config['domain'] ?? Uri.tryParse('${config['instance'] ?? ''}')?.host ?? '';
-  return '$remote@${'$server'.toLowerCase()}';
+  final domain = _text(config['domain']);
+  if (domain != null) return domain.toLowerCase();
+  for (final key in const ['instance', 'site', 'base', 'baseUrl']) {
+    final host = Uri.tryParse(_text(config[key]) ?? '')?.host ?? '';
+    if (host.isNotEmpty) return host.toLowerCase();
+  }
+  return _text(config['host'])?.toLowerCase();
+}
+
+/// 1.3.5: the account's own identity on its network, for accounts whose id
+/// was made up on the device, when the adapter recorded it:
+/// * TikTok: `openId`, TikTok's id of the user for one developer app, with
+///   that app's `clientKey`;
+/// * Mastodon and Pixelfed: `remoteAccountId`, the account's id on its
+///   server, with the server ([accountServer]).
+/// `null` when a part is missing.
+String? naturalAccountKey(Map<Object?, Object?> account) {
+  final config = account['config'];
+  if (config is! Map) return null;
+  final openId = _text(config['openId']);
+  if (openId != null) {
+    final app = _text(config['clientKey']);
+    return app == null ? null : 'openId:$openId@$app';
+  }
+  final remote = _text(config['remoteAccountId']);
+  if (remote != null) {
+    final server = accountServer(account);
+    return server == null ? null : 'remote:$remote@$server';
+  }
+  return null;
 }
 
 /// 1.3.5: whether the accounts [a] and [b] (ConnectedAccount JSON, different
-/// ids) are one account connected on two devices. Same network and same tier
-/// family (hand-off or not), and:
+/// ids) are one account connected on two devices. Same network, same tier
+/// family (hand-off or not), not on two different servers when both record
+/// one ([accountServer]), and:
 ///
 /// * hand-off accounts: the same name or the same handle (they only open the
-///   network's app, so two same-named ones are the same thing);
+///   network's app, so two same-named ones on one server are the same thing);
 /// * other accounts: at least one id made up on its device
-///   ([isDeviceMadeAccountId]), and the same account id on the same server
-///   when both recorded it, otherwise the same handle
+///   ([isDeviceMadeAccountId]), and the same identity on the network
+///   ([naturalAccountKey]) when both recorded it, otherwise the same handle
 ///   ([normalizedAccountHandle]).
 ///
 /// Different accounts on one network are never the same: their natural ids,
-/// server ids or handles differ.
+/// identities, servers or handles differ.
 bool isSameConnectedAccount(Map<Object?, Object?> a, Map<Object?, Object?> b) {
   final platform = a['platformId'];
   if (platform is! String || platform != b['platformId']) return false;
   final handoffA = a['tier'] == 'handoff', handoffB = b['tier'] == 'handoff';
   if (handoffA != handoffB) return false;
+  final sa = accountServer(a), sb = accountServer(b);
+  if (sa != null && sb != null && sa != sb) return false;
   final ha = normalizedAccountHandle(a['handle']), hb = normalizedAccountHandle(b['handle']);
   if (handoffA) {
     return (a['displayName'] is String && a['displayName'] == b['displayName']) || (ha != null && ha == hb);
   }
   if (!isDeviceMadeAccountId('${a['id']}') && !isDeviceMadeAccountId('${b['id']}')) return false;
-  final na = _naturalKey(a), nb = _naturalKey(b);
+  final na = naturalAccountKey(a), nb = naturalAccountKey(b);
   if (na != null && nb != null) return na == nb;
   return ha != null && ha == hb;
 }
@@ -146,6 +197,9 @@ class SyncPreview {
     required this.fromDevices,
     this.removed = const {},
     this.mergeEdits = const {},
+    this.hereBefore = const {},
+    this.sentValues = const {},
+    this.fileBefore = const {},
     this.seed,
   });
 
@@ -171,8 +225,18 @@ class SyncPreview {
   /// first sync.
   final Set<String> removed;
 
+  /// What this device held for each [received] record before (`null`:
+  /// nothing), so a dry run can say what really changes here.
+  final Map<String, Object?> hereBefore;
+
   /// Records this device writes into the file.
   final Set<String> sent;
+
+  /// The value written for each [sent] record (`null`: a deletion).
+  final Map<String, Object?> sentValues;
+
+  /// What the file held for each [sent] record before (`null`: nothing).
+  final Map<String, Object?> fileBefore;
 
   /// Accounts connected on both sides under two ids, merged into one: this
   /// device's id -> the id the file has (and keeps).

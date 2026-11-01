@@ -78,6 +78,26 @@ void main() {
       expect(mergeMediaHostsOnJoin({'main': main, 'fallback': null}, {'main': other, 'fallback': fallback}, hereWins: false), {'main': other, 'fallback': fallback});
       expect(mergeMediaHostsOnJoin(null, {'main': other, 'fallback': null}, hereWins: true), {'main': other, 'fallback': null},
           reason: 'a device with no host takes nothing away');
+      expect(mergeMediaHostsOnJoin({'main': main, 'fallback': null}, {'main': other, 'fallback': null}, hereWins: false), {'main': other, 'fallback': main},
+          reason: "the losing side's host moves to the empty slot instead of being dropped");
+      expect(mergeMediaHostsOnJoin({'main': other, 'fallback': null}, {'main': other, 'fallback': null}, hereWins: false), {'main': other, 'fallback': null},
+          reason: 'one host is not kept twice');
+    });
+
+    test('what a first sync does to one side\'s media hosts, named exactly', () {
+      const s3 = {'id': 's3', 'config': {}, 'secrets': {'secretAccessKey': 'fake'}};
+      const catbox = {'id': 'catbox', 'config': {}, 'secrets': {}};
+      const litterbox = {'id': 'litterbox', 'config': {'time': '72h'}, 'secrets': {}};
+      final moved = mediaHostChanges({'main': s3, 'fallback': null}, {'main': catbox, 'fallback': s3});
+      expect(moved.arrived, [(slot: 'main', id: 'catbox')]);
+      expect(moved.moved, [(host: (slot: 'main', id: 's3'), to: 'fallback')]);
+      expect(moved.removed, isEmpty);
+      final replaced = mediaHostChanges({'main': s3, 'fallback': null}, {'main': catbox, 'fallback': litterbox});
+      expect(replaced.arrived.map((h) => h.id), ['catbox', 'litterbox']);
+      expect(replaced.removed, [(host: (slot: 'main', id: 's3'), replacedBy: 'catbox')]);
+      final unchanged = mediaHostChanges({'main': s3, 'fallback': null}, {'main': s3, 'fallback': litterbox});
+      expect(unchanged.arrived, [(slot: 'fallback', id: 'litterbox')], reason: 'the host this side already had does not count as arriving');
+      expect(unchanged.removed, isEmpty);
     });
   });
 

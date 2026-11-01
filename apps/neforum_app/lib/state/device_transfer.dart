@@ -149,13 +149,61 @@ Future<Map<String, dynamic>> collectMediaHosts(AppSettings s, SecretStore secret
 }
 
 /// 1.3.5: the media hosts both devices keep after a first sync where both
-/// had some ([collectMediaHosts] records): each slot is the winning side's
-/// host, or the other side's when the winning side left that slot empty. A
-/// device without a host in a slot never takes the other device's away.
+/// had some ([collectMediaHosts] records). The winning side keeps its hosts
+/// in their slots. Every host of the other side that the winning side does
+/// not have goes into a slot left empty: its own slot when that one is free,
+/// otherwise the other one. A host is only dropped when both slots are
+/// taken, and the dry run names it ([mediaHostChanges]).
 Map<String, Object?> mergeMediaHostsOnJoin(Object? here, Object? file, {required bool hereWins}) {
-  Object? slot(Object? hosts, String name) => hosts is Map && hosts[name] is Map ? hosts[name] : null;
   final first = hereWins ? here : file, second = hereWins ? file : here;
-  return {for (final s in MediaHostSlot.values) s.name: slot(first, s.name) ?? slot(second, s.name)};
+  final slots = [for (final s in MediaHostSlot.values) s.name];
+  final merged = <String, Object?>{for (final s in slots) s: _hostIn(first, s)};
+  bool kept(Map<Object?, Object?> host) => merged.values.any((h) => _sameHost(h, host));
+  for (final s in slots) {
+    final host = _hostIn(second, s);
+    if (host != null && merged[s] == null && !kept(host)) merged[s] = host;
+  }
+  for (final s in slots) {
+    final host = _hostIn(second, s);
+    if (host == null || kept(host)) continue;
+    final free = slots.where((n) => merged[n] == null).firstOrNull;
+    if (free != null) merged[free] = host;
+  }
+  return merged;
+}
+
+Map<Object?, Object?>? _hostIn(Object? hosts, String slot) => hosts is Map && hosts[slot] is Map ? hosts[slot] as Map<Object?, Object?> : null;
+
+bool _sameHost(Object? a, Object? b) => a != null && b != null && syncHash(a) == syncHash(b);
+
+/// 1.3.5: one media host as a dry run names it: its slot (`main`,
+/// `fallback`) and its kind (a [MediaHostDescriptor] id).
+typedef MediaHostPlace = ({String slot, String id});
+
+/// 1.3.5: what happens to one side's media hosts when [before] becomes
+/// [after] ([collectMediaHosts] records): the hosts that arrive, the ones
+/// that are removed (with what takes their slot, if anything), and the ones
+/// that move to the other slot. Hosts are compared whole (kind, settings,
+/// keys).
+({List<MediaHostPlace> arrived, List<({MediaHostPlace host, String? replacedBy})> removed, List<({MediaHostPlace host, String to})> moved})
+    mediaHostChanges(Object? before, Object? after) {
+  String? slotOf(Object? hosts, Object? host) => MediaHostSlot.values.map((s) => s.name).where((n) => _sameHost(_hostIn(hosts, n), host)).firstOrNull;
+  MediaHostPlace place(String slot, Map<Object?, Object?> h) => (slot: slot, id: '${h['id']}');
+  final arrived = <MediaHostPlace>[];
+  final removed = <({MediaHostPlace host, String? replacedBy})>[];
+  final moved = <({MediaHostPlace host, String to})>[];
+  for (final s in MediaHostSlot.values.map((x) => x.name)) {
+    final now = _hostIn(after, s), was = _hostIn(before, s);
+    if (now != null && slotOf(before, now) == null) arrived.add(place(s, now));
+    if (was == null) continue;
+    final to = slotOf(after, was);
+    if (to == null) {
+      removed.add((host: place(s, was), replacedBy: now == null ? null : '${now['id']}'));
+    } else if (to != s) {
+      moved.add((host: place(s, was), to: to));
+    }
+  }
+  return (arrived: arrived, removed: removed, moved: moved);
 }
 
 /// The media hosts in a backup that this NEFORUM knows.

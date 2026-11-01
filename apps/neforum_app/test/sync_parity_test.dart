@@ -227,23 +227,60 @@ void main() {
     await a.syncOnce();
     await b.syncOnce();
 
-    final backend = FolderSyncBackend(folder);
-    final cipher = BackupCipher(a.passphrase);
-    final blob = (await backend.read())!;
-    final doc = SyncDocument.parse(await cipher.open(blob.bytes));
-    doc.records['setting:aSettingFromTheFuture'] = SyncRecord.of('kept', at: DateTime.utc(2026, 11, 1), by: 'newer-device');
-    await backend.write(Uint8List.fromList(await cipher.seal(doc.toJson(writtenBy: 'newer-device', writtenAt: DateTime.utc(2026, 11, 1)))),
-        ifMatch: blob.version);
+    await _putInFile(folder, a.passphrase, {'setting:aSettingFromTheFuture': SyncRecord.of('kept', at: DateTime.utc(2026, 11, 1), by: 'newer-device')});
 
     for (var i = 0; i < 3; i++) {
       await a.syncOnce();
       await b.syncOnce();
     }
-    final after = SyncDocument.parse(await cipher.open((await backend.read())!.bytes));
+    final after = SyncDocument.parse(await BackupCipher(a.passphrase).open((await FolderSyncBackend(folder).read())!.bytes));
     final rec = after.records['setting:aSettingFromTheFuture'];
     expect(rec?.deleted, isFalse, reason: 'an older device must not delete what it does not know');
     expect(rec?.value, 'kept');
   }, timeout: _timeout);
+
+  test("an older NEFORUM removing settings from the file changes nothing here, and a joining device gets the file side's values", () async {
+    final folder = await syncFolderForTest(addTearDown);
+    final a = await _fullDevice(folder);
+    final b = SyncTestDevice(folder);
+    addTearDown(a.dispose);
+    addTearDown(b.dispose);
+    await a.syncOnce();
+    await b.syncOnce();
+    final setup = await _setup(a);
+    expect(a.settings.browserQuickPost, isFalse);
+    // A 1.3.4 device removes the setting it does not know and one it holds
+    // at its default (what its second sync writes).
+    await _putInFile(folder, a.passphrase, {
+      'setting:browserQuickPost': SyncRecord.tombstone(at: DateTime.utc(2026, 11, 1), by: 'old-1.3.4'),
+      'setting:captionStyle': SyncRecord.tombstone(at: DateTime.utc(2026, 11, 1), by: 'old-1.3.4'),
+    });
+    await a.syncOnce();
+    await b.syncOnce();
+    expect(await _setup(a), setup, reason: 'a deletion an older device wrote resets nothing: ${diffPaths(setup, await _setup(a))}');
+    expect(await _setup(b), setup, reason: 'on any 1.3.5 device: ${diffPaths(setup, await _setup(b))}');
+
+    // A new device joins (no accounts: the file's side wins).
+    final c = SyncTestDevice(folder);
+    addTearDown(c.dispose);
+    await c.syncOnce();
+    expect(a.settings.browserQuickPost, isFalse);
+    await a.syncOnce(); // A puts back, once, what the older device removed
+    await c.syncOnce();
+    expect(await _setup(a), setup, reason: 'the joining device overrode the file side: ${diffPaths(setup, await _setup(a))}');
+    final onC = await _setup(c);
+    expect(onC['settings'], setup['settings'], reason: "the seed holds: ${diffPaths(setup['settings'], onC['settings'])}");
+  }, timeout: _timeout);
+}
+
+/// Another device writes [records] into the sync file in [folder].
+Future<void> _putInFile(String folder, String passphrase, Map<String, SyncRecord> records) async {
+  final backend = FolderSyncBackend(folder);
+  final cipher = BackupCipher(passphrase);
+  final blob = (await backend.read())!;
+  final doc = SyncDocument.parse(await cipher.open(blob.bytes));
+  doc.records.addAll(records);
+  await backend.write(Uint8List.fromList(await cipher.seal(doc.toJson(writtenBy: 'other-device', writtenAt: DateTime.utc(2026, 11, 1)))), ifMatch: blob.version);
 }
 
 Future<Map<String, dynamic>> collectMediaHostsOf(SyncTestDevice d) async {

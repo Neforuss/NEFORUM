@@ -53,10 +53,10 @@ Every device must use the same storage and the same file. For example: your PC, 
 
 The first time a device syncs with a file that already exists:
 
-- **Nothing is deleted.** Everything only one side has (an account, its keys, a post, a media host) is kept, and goes to the other side.
+- **Nothing is deleted.** Everything only one side has (an account, its keys, a post) is kept, and goes to the other side. Media hosts have two slots, so see below.
 - **The setup with the most accounts wins.** Where the device and the file have different versions of the same thing (a setting, an account's details, a media host), the side with more accounts keeps its version. If both have as many accounts, the side whose oldest account was connected first wins. If that is a tie too, the file wins, because your other devices already use it. You see which side wins before you join, and you can pick the other one.
 - **One account, not two.** An account you connected on both devices before syncing (Mastodon and hand-off accounts get a different id on each device) becomes one account. NEFORUM matches it by network, by the kind of connection, and by the account's handle (ignoring capital letters and a leading @) or its id on its server. It keeps the newer sign-in, and posts and default targets follow it. Two different accounts on the same network are never merged.
-- **Media hosts, slot by slot.** Each media host slot (main and fallback) takes the winning side's host. A slot the winning side left empty keeps the other side's host, so a device without a media host never removes another device's.
+- **Media hosts, slot by slot.** The winning side keeps its hosts in their slots (main and fallback). A host of the other side goes into a slot left empty, so it is kept, and a device without a media host never removes another device's. Only when the winning side uses both slots is a host of the other side replaced, and NEFORUM names it before you join.
 
 After the first sync, each change travels on its own, including a setting put back to its default and a media host you remove.
 
@@ -128,7 +128,13 @@ Each account, post and setting merges on its own, so changes on different things
 
 Cloud apps sometimes keep two copies when two devices save at the same moment, for example "NEFORUM (conflicted copy).neforumsync". NEFORUM merges such copies into the main file and then removes them.
 
-**Known limitation: devices with NEFORUM 1.3.4 or older.** Update every synced device to 1.3.5 or later. An older device does not send a setting you put back to its default, and it does not take the settings that 1.3.5 added to sync (how the browser extension posts). It also asks "which data should win" instead of showing what joining will do. Devices with 1.3.5 keep their own values either way.
+**Known limitation: devices with NEFORUM 1.3.4 or older.** Update every synced device to 1.3.5 or later. An older device:
+
+- does not send a setting you put back to its default;
+- does not take the settings that 1.3.5 added to sync (how the browser extension posts), and removes them from the sync file;
+- asks "which data should win" instead of showing what joining will do.
+
+When an older device removes a setting from the file, the devices with 1.3.5 keep their own value. A device that joins after that keeps its own value too, unless its setup wins. On their next sync, the devices already syncing put their value back into the file once, so the new device gets it.
 
 ## X and Tumblr
 

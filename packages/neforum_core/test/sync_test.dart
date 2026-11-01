@@ -11,8 +11,8 @@ const _pass = 'shared sync passphrase';
 
 /// One device on the shared file: its own data, keychain and sync state.
 class _Device {
-  _Device(this.id, this.backend, this.clock, {List<SyncSource> extra = const [], LogSink? log})
-      : accounts = InMemoryAccountRepository(),
+  _Device(this.id, this.backend, this.clock, {List<SyncSource> extra = const [], LogSink? log, InMemoryAccountRepository? accountRepo})
+      : accounts = accountRepo ?? InMemoryAccountRepository(),
         posts = InMemoryPostRepository(),
         secrets = InMemorySecretStore(),
         stateStore = MemorySyncStateStore() {
@@ -753,6 +753,32 @@ void main() {
       }
     });
 
+    test('the same TikTok account connected on two devices (a random id each, the same openId) becomes one', () async {
+      const config = {'clientKey': 'fake-client-key', 'openId': 'fake-open-id'};
+      await a.accounts.upsert(_account(_uuid1, 'tiktok', name: 'Me', config: config));
+      await a.secrets.write(_uuid1, {'access_token': 'fake-tt-a'});
+      await a.engine.sync();
+      await b.accounts.upsert(_account(_uuid2, 'tiktok', name: 'Me', config: config));
+      await b.accounts.upsert(_account(_uuid3, 'tiktok', name: 'Me', config: {...config, 'openId': 'another-open-id'}));
+      final r = await b.engine.sync();
+      await a.engine.sync();
+      expect(r.mergedAccounts, 1);
+      for (final d in [a, b]) {
+        expect((await d.accounts.all()).map((x) => x.id).toSet(), {_uuid1, _uuid3}, reason: 'one account per TikTok user');
+      }
+    });
+
+    test('hand-off accounts of one name on two different servers stay apart', () async {
+      await a.accounts.upsert(_account(_uuid1, 'mastodon',
+          tier: PlatformTier.handoff, name: 'alice (hand-off)', handle: 'alice', config: {'instance': 'https://one.example', 'domain': 'one.example'}));
+      await a.engine.sync();
+      await b.accounts.upsert(_account(_uuid2, 'mastodon',
+          tier: PlatformTier.handoff, name: 'alice (hand-off)', handle: 'alice', config: {'instance': 'https://two.example', 'domain': 'two.example'}));
+      final r = await b.engine.sync();
+      expect(r.mergedAccounts, 0);
+      expect((await b.accounts.all()).length, 2);
+    });
+
     test('the same Bluesky account has the same id on both devices: nothing to merge', () async {
       await a.accounts.upsert(_account('bluesky:did:plc:fake', 'bluesky', handle: 'me.bsky.social'));
       await a.engine.sync();
@@ -806,6 +832,101 @@ void main() {
       expect(isDeviceMadeAccountId('bluesky:did:plc:abc'), isFalse);
     });
 
+    group('who is the same account, adapter family by adapter family', () {
+      Map<String, Object?> acc(String id, String platform, {String tier = 'openApi', String? handle, String name = 'Same name', Map<String, Object?>? config}) =>
+          {'id': id, 'platformId': platform, 'tier': tier, 'handle': handle, 'displayName': name, 'config': config ?? const {}};
+
+      test('accounts whose id comes from the account itself: two ids are two accounts, whatever the name or handle', () {
+        // From each adapter's connect(): the same account gets the same id on
+        // every device, so only different accounts have different ids.
+        const pairs = {
+          'x': ['x-111', 'x-222'],
+          'bluesky': ['bluesky:did:plc:aaa', 'bluesky:did:plc:bbb'],
+          'reddit': ['reddit-1', 'reddit-2'],
+          'tumblr': ['tumblr:blog-a', 'tumblr:blog-b'],
+          'linkedin': ['linkedin:sub-a', 'linkedin:sub-b'],
+          'youtube': ['youtube:UCaaa', 'youtube:UCbbb'],
+          'threads': ['threads:1', 'threads:2'],
+          'instagram': ['instagram-1', 'instagram-2'],
+          'facebook': ['facebook-1', 'facebook-2'],
+          'pinterest': ['pinterest:1', 'pinterest:2'],
+          'discord': ['discord:1', 'discord:2'],
+          'telegram': ['telegram:9:1', 'telegram:9:2'],
+          'matrix': ['matrix:@me:x.org:!a', 'matrix:@me:x.org:!b'],
+          'lemmy': ['lemmy:me@one.example', 'lemmy:me@two.example'],
+          'misskey': ['misskey:1@one.example', 'misskey:2@one.example'],
+          'nostr': ['nostr-aaaa', 'nostr-bbbb'],
+          'wordpress': ['wordpress:1@site.example', 'wordpress:2@site.example'],
+          'ghost': ['ghost:site.example:k1', 'ghost:site.example:k2'],
+          'writefreely': ['writefreely:me@w.example/a', 'writefreely:me@w.example/b'],
+          'devto': ['devto:1@dev.to', 'devto:2@dev.to'],
+          'hashnode': ['hashnode:p1', 'hashnode:p2'],
+          'micropub': ['micropub:https://a.example/', 'micropub:https://b.example/'],
+          'deviantart': ['deviantart:1', 'deviantart:2'],
+          'dribbble': ['dribbble:1', 'dribbble:2'],
+          'flickr': ['flickr:1', 'flickr:2'],
+          'inkbunny': ['inkbunny:1', 'inkbunny:2'],
+          'odysee': ['odysee:1', 'odysee:2'],
+        };
+        for (final e in pairs.entries) {
+          expect(isSameConnectedAccount(acc(e.value[0], e.key, handle: '@same'), acc(e.value[1], e.key, handle: '@same')), isFalse, reason: e.key);
+          expect(isDeviceMadeAccountId(e.value[0]), isFalse, reason: e.key);
+        }
+      });
+
+      test('Mastodon and Pixelfed: the account id on its server, else the handle; another server is another account', () {
+        for (final platform in ['mastodon', 'pixelfed']) {
+          Map<String, Object?> on(String id, String server, String remote, {String? handle}) =>
+              acc(id, platform, handle: handle, config: {'instance': 'https://$server', 'domain': server, 'remoteAccountId': remote});
+          expect(isSameConnectedAccount(on(_uuid1, 'one.example', '7'), on(_uuid2, 'one.example', '7')), isTrue, reason: platform);
+          expect(isSameConnectedAccount(on(_uuid1, 'one.example', '7', handle: '@old@one.example'), on(_uuid2, 'one.example', '7', handle: '@renamed@one.example')),
+              isTrue,
+              reason: '$platform: a renamed handle is the same account');
+          expect(isSameConnectedAccount(on(_uuid1, 'one.example', '7'), on(_uuid2, 'two.example', '7')), isFalse, reason: '$platform: another server');
+          expect(isSameConnectedAccount(on(_uuid1, 'one.example', '7', handle: '@a@one.example'), on(_uuid2, 'one.example', '8', handle: '@a@one.example')),
+              isFalse,
+              reason: '$platform: another account id, though the handle was reused');
+          expect(isSameConnectedAccount(acc(_uuid1, platform, handle: '@a@one.example'), acc(_uuid2, platform, handle: '@A@One.Example')), isTrue,
+              reason: '$platform: connected before the account id was recorded: the handle');
+        }
+        // A missing server never matches a present one (a bare host is no URL).
+        final bare = acc(_uuid1, 'mastodon', handle: '@bob@one.example', config: {'instance': 'one.example', 'remoteAccountId': '7'});
+        expect(accountServer(bare), isNull);
+        expect(naturalAccountKey(bare), isNull);
+        expect(isSameConnectedAccount(bare, acc(_uuid2, 'mastodon', handle: '@carol@two.example', config: {'instance': 'two.example', 'remoteAccountId': '7'})),
+            isFalse);
+      });
+
+      test('TikTok: openId for one developer app (clientKey)', () {
+        Map<String, Object?> tt(String id, String openId, String? clientKey) =>
+            acc(id, 'tiktok', tier: 'byokApi', config: {'openId': openId, if (clientKey != null) 'clientKey': clientKey});
+        expect(isSameConnectedAccount(tt(_uuid1, 'o1', 'k'), tt(_uuid2, 'o1', 'k')), isTrue);
+        expect(isSameConnectedAccount(tt(_uuid1, 'o1', 'k'), tt(_uuid2, 'o2', 'k')), isFalse, reason: 'another TikTok user');
+        expect(isSameConnectedAccount(tt(_uuid1, 'o1', 'k'), tt(_uuid2, 'o1', 'other-app')), isFalse, reason: 'openIds of two apps cannot be compared');
+        expect(isSameConnectedAccount(tt(_uuid1, 'o1', null), tt(_uuid2, 'o1', null)), isFalse, reason: 'without the app, no identity');
+      });
+
+      test('hand-off accounts: one name on one server; never across servers', () {
+        expect(isSameConnectedAccount(acc('instagram-handoff-$_uuid1', 'instagram', tier: 'handoff'), acc('instagram-handoff-$_uuid2', 'instagram', tier: 'handoff')),
+            isTrue);
+        expect(isSameConnectedAccount(acc('nostr-handoff-1761000000000000', 'nostr', tier: 'handoff'), acc('nostr-handoff-1762000000000000', 'nostr', tier: 'handoff')),
+            isTrue,
+            reason: 'Nostr hand-off ids are made from the clock');
+        expect(isDeviceMadeAccountId('nostr-handoff-1761000000000000'), isTrue);
+        Map<String, Object?> mh(String id, String server) =>
+            acc(id, 'mastodon', tier: 'handoff', handle: 'alice', name: 'alice (hand-off)', config: {'instance': 'https://$server', 'domain': server});
+        expect(isSameConnectedAccount(mh(_uuid1, 'one.example'), mh(_uuid2, 'one.example')), isTrue);
+        expect(isSameConnectedAccount(mh(_uuid1, 'one.example'), mh(_uuid2, 'two.example')), isFalse, reason: 'another server');
+        expect(
+            isSameConnectedAccount(acc('lemmy-handoff:one.example', 'lemmy', tier: 'handoff', config: {'instance': 'https://one.example/'}),
+                acc('lemmy-handoff:two.example', 'lemmy', tier: 'handoff', config: {'instance': 'https://two.example/'})),
+            isFalse);
+        expect(accountServer({'config': {'site': 'https://blog.example/'}}), 'blog.example');
+        expect(accountServer({'config': {'base': 'https://dev.to'}}), 'dev.to');
+        expect(accountServer({'config': {'host': 'Lemmy.Example'}}), 'lemmy.example');
+      });
+    });
+
     test('the newer sign-in: later expiry first, then the later connection; a tie is not newer', () {
       final early = {'createdAt': '2026-01-01T00:00:00.000Z'}, late = {'createdAt': '2026-06-01T00:00:00.000Z'};
       Map<String, String> keys(String expires) => {'expires_at': expires};
@@ -814,6 +935,76 @@ void main() {
       expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-12-01T00:00:00Z'), second: late, secondKeys: keys('2026-11-01T00:00:00Z')), isTrue,
           reason: 'renewed more recently beats connected more recently');
       expect(holdsNewerSignIn(first: early, second: early), isFalse);
+    });
+  });
+
+  group('an interrupted first sync keeps its decisions (1.3.5)', () {
+    /// X holds the file: 3 accounts (its setup wins), and an old Mastodon
+    /// sign-in. Y connected the same account later: the newer sign-in.
+    Future<void> setUpTwins(_Device x, _Device y) async {
+      await x.accounts.upsert(_account(_uuid1, 'mastodon',
+          tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 1, 1), config: _mastodonConfig));
+      await x.secrets.write(_uuid1, {'access_token': 'fake-old-revoked'});
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.accounts.upsert(_account('t-1', 'tumblr'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'mastodon',
+          tier: PlatformTier.openApi, handle: 'me@mastodon.example', createdAt: DateTime.utc(2026, 10, 15), config: _mastodonConfig));
+      await y.secrets.write(_uuid2, {'access_token': 'fake-new-working'});
+      await y.posts.upsert(_post('py', targets: const [PostTarget(accountId: _uuid2)]));
+    }
+
+    Future<void> expectMergedWithNewerSignIn(_Device x, _Device y) async {
+      for (final d in [x, y]) {
+        expect((await d.accounts.all()).where((a) => a.platformId == 'mastodon').map((a) => a.id), [_uuid1]);
+        expect((await d.secrets.read(_uuid1))?['access_token'], 'fake-new-working', reason: 'the newer sign-in survives on ${d.id}');
+      }
+      expect(await y.secrets.read(_uuid2), isNull);
+      expect((await y.posts.get('py'))!.targets.single.accountId, _uuid1);
+      expect(y.stateStore.data?['merging'], isNull, reason: 'the first sync completed');
+    }
+
+    test('another device writing during the first sync: the retried pass keeps the newer sign-in', () async {
+      final racy = _RacyBackend(backend);
+      final x = _Device('X', backend, clock), y = _Device('Y', racy, clock);
+      await setUpTwins(x, y);
+      racy.beforeWrite = () async {
+        racy.beforeWrite = null;
+        final current = (await backend.read())!;
+        await backend.write(current.bytes, ifMatch: current.version); // another device's heartbeat lands first
+      };
+      final r = await y.engine.sync();
+      await x.engine.sync();
+      expect(r.mergedAccounts, 1);
+      await expectMergedWithNewerSignIn(x, y);
+    });
+
+    test('a first sync whose file write never happens: the next sync keeps the newer sign-in', () async {
+      final flaky = _FlakyBackend(backend);
+      final x = _Device('X', backend, clock), y = _Device('Y', flaky, clock);
+      await setUpTwins(x, y);
+      await expectLater(y.engine.sync(), throwsA(isA<SyncBackendException>()));
+      expect(y.stateStore.data?['joined'], isFalse);
+      expect(y.stateStore.data?['merging'], {_uuid2: {'into': _uuid1, 'hereNewer': true}}, reason: 'the decision is kept before anything changes here');
+      expect(y.stateStore.data?['preferFile'], isTrue, reason: 'and so is the seed');
+      await y.engine.sync();
+      await x.engine.sync();
+      await expectMergedWithNewerSignIn(x, y);
+    });
+
+    test('a merge step that fails keeps the old copy and its keys, and the next sync finishes the merge', () async {
+      final refusing = _RefusingAccounts(_uuid1);
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock, accountRepo: refusing);
+      await setUpTwins(x, y);
+      await y.engine.sync();
+      expect(await y.accounts.get(_uuid2), isNotNull, reason: 'a failed step leaves a duplicate, never a lost account');
+      expect((await y.secrets.read(_uuid2))?['access_token'], 'fake-new-working');
+      expect(y.stateStore.data?['joined'], isFalse, reason: 'the merge is not finished: the first sync stays open');
+      final inFile = (await file()).records.keys.where((k) => k.startsWith('account:')).toSet();
+      expect(inFile, {'account:$_uuid1', 'account:x-1', 'account:t-1'}, reason: 'the old copy never reaches the file');
+      await y.engine.sync();
+      await x.engine.sync();
+      await expectMergedWithNewerSignIn(x, y);
     });
   });
 
@@ -859,6 +1050,51 @@ void main() {
       values['k'] = 'w';
       await n.engine.sync();
       expect((await file()).records['setting:k']?.value, 'w');
+    });
+
+    test("after an older NEFORUM removed a setting, a joining device does not override the file's side, and then gets its value", () async {
+      final aValues = <String, Object?>{'browserQuickPost': false};
+      final cValues = <String, Object?>{'browserQuickPost': true}; // the default on a new device
+      final a = _Device('A', backend, clock, extra: [settingsLike(aValues)]);
+      final c = _Device('C', backend, clock, extra: [settingsLike(cValues)]);
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.accounts.upsert(_account('t-1', 'tumblr'));
+      await a.engine.sync();
+      // A 1.3.4 device removes the setting it does not know (traced from the
+      // 1.3.4 engine: its second sync writes a deletion).
+      await putInFile('setting:browserQuickPost', SyncRecord.tombstone(at: clock.now, by: 'old-1.3.4'));
+      await a.engine.sync();
+      expect(aValues['browserQuickPost'], false, reason: 'A keeps its value');
+      final preview = await c.engine.preview();
+      expect(preview.seed, SyncSeed.file);
+      expect(preview.sent, isNot(contains('setting:browserQuickPost')), reason: 'the file has no opinion and its side wins: C sends nothing');
+      await c.engine.sync();
+      expect(cValues['browserQuickPost'], true, reason: 'C keeps its own until the file has a value');
+      await a.engine.sync(); // A sees C for the first time: puts its value back once
+      expect(aValues['browserQuickPost'], false, reason: "the file's side is never overwritten by the joining device");
+      await c.engine.sync();
+      expect(cValues['browserQuickPost'], false, reason: "then C gets the file side's value: the seed holds");
+      final writes = backend.writes;
+      for (var i = 0; i < 3; i++) {
+        await a.engine.sync();
+        await c.engine.sync();
+      }
+      expect(backend.writes, writes, reason: 'once, not back and forth');
+    });
+
+    test('when the joining device wins, its value replaces what an older NEFORUM removed', () async {
+      final aValues = <String, Object?>{'browserQuickPost': false};
+      final cValues = <String, Object?>{'browserQuickPost': true};
+      final a = _Device('A', backend, clock, extra: [settingsLike(aValues)]);
+      final c = _Device('C', backend, clock, extra: [settingsLike(cValues)]);
+      await a.engine.sync();
+      await putInFile('setting:browserQuickPost', SyncRecord.tombstone(at: clock.now, by: 'old-1.3.4'));
+      await a.engine.sync();
+      await c.accounts.upsert(_account('c-1', 'x'));
+      expect((await c.engine.preview()).sent, contains('setting:browserQuickPost'));
+      await c.engine.sync();
+      await a.engine.sync();
+      expect(aValues['browserQuickPost'], true, reason: 'C has more accounts: its setup wins');
     });
 
     test('a value this device cannot keep is asked for again, never deleted from the file', () async {
@@ -1079,6 +1315,48 @@ class _RacyBackend extends SyncBackend {
 
   @override
   Future<void> check() async {}
+}
+
+/// Refuses the next write as if offline (the app closed or the network gone
+/// between storing and writing).
+class _FlakyBackend extends SyncBackend {
+  _FlakyBackend(this.inner);
+  final MemorySyncBackend inner;
+  int failures = 1;
+
+  @override
+  String get label => 'flaky';
+  @override
+  bool get atomicWrites => true;
+  @override
+  Future<SyncBlob?> read() => inner.read();
+  @override
+  Future<String?> write(Uint8List bytes, {required String? ifMatch}) async {
+    if (failures > 0) {
+      failures--;
+      throw const SyncBackendException('offline', temporary: true);
+    }
+    return inner.write(bytes, ifMatch: ifMatch);
+  }
+
+  @override
+  Future<void> check() async {}
+}
+
+/// Accounts whose store refuses [failOn] once.
+class _RefusingAccounts extends InMemoryAccountRepository {
+  _RefusingAccounts(this.failOn);
+  final String failOn;
+  int failures = 1;
+
+  @override
+  Future<void> upsert(ConnectedAccount a) async {
+    if (a.id == failOn && failures > 0) {
+      failures--;
+      throw StateError('the disk is full');
+    }
+    return super.upsert(a);
+  }
 }
 
 class _BrokenBackend extends SyncBackend {

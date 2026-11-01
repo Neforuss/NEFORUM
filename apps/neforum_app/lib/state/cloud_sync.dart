@@ -442,25 +442,42 @@ String _listed(List<String> parts) => switch (parts.length) {
       _ => '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}',
     };
 
-int _hostsIn(Object? hosts) => hosts is Map ? MediaHostSlot.values.where((s) => hosts[s.name] is Map).length : 0;
+/// A media host kind as a dry run names it: "S3-compatible bucket", "Catbox".
+String _hostName(String id) => (mediaHostRegistry.descriptor(id)?.name ?? id).split(' (').first;
 
 /// 1.3.5: [p] in words. [chosen]: the user picked whose setup wins instead
-/// of the seed rule.
+/// of the seed rule. Media hosts are counted and named exactly: the ones
+/// that arrive, move to the other slot or are removed, on each side.
 SyncJoinSummary describeJoinPreview(SyncPreview p, {bool chosen = false}) {
   final from = p.fromDevices;
   final source = from.isEmpty ? null : (from.length == 1 ? from.single : '${from.first} and ${_count(from.length - 1, 'other device')}');
+  const hostsKey = 'mediaHosts:all';
+  final here = p.received.containsKey(hostsKey) ? mediaHostChanges(p.hereBefore[hostsKey], p.received[hostsKey]) : null;
+  final there = p.sent.contains(hostsKey) ? mediaHostChanges(p.fileBefore[hostsKey], p.sentValues[hostsKey]) : null;
+  final hostsArriving = here?.arrived.length ?? 0, hostsSent = there?.arrived.length ?? 0;
   final arriving = _listed([
     if (p.receivedOf('account') > 0) _count(p.receivedOf('account'), 'account'),
-    if (_hostsIn(p.received['mediaHosts:all']) > 0) _count(_hostsIn(p.received['mediaHosts:all']), 'media host'),
+    if (hostsArriving > 0) _count(hostsArriving, 'media host'),
     if (p.receivedOf('setting') > 0) _count(p.receivedOf('setting'), 'setting'),
     if (p.receivedOf('post') > 0) _count(p.receivedOf('post'), 'post'),
   ]);
   final sending = _listed([
     if (p.sentOf('account') > 0) _count(p.sentOf('account'), 'account'),
-    if (p.sent.contains('mediaHosts:all')) "this device's media hosts",
+    if (hostsSent > 0) _count(hostsSent, 'media host'),
     if (p.sentOf('setting') > 0) _count(p.sentOf('setting'), 'setting'),
     if (p.sentOf('post') > 0) _count(p.sentOf('post'), 'post'),
   ]);
+  final hostLines = [
+    for (final m in here?.moved ?? const <({MediaHostPlace host, String to})>[])
+      "This device's ${m.host.slot} media host (${_hostName(m.host.id)}) moves to the ${m.to} slot.",
+    for (final r in here?.removed ?? const <({MediaHostPlace host, String? replacedBy})>[])
+      "This device's ${r.host.slot} media host (${_hostName(r.host.id)}) is ${r.replacedBy == null ? 'removed' : 'replaced by ${_hostName(r.replacedBy!)} and removed'}: both slots are taken.",
+    for (final m in there?.moved ?? const <({MediaHostPlace host, String to})>[])
+      "Your other devices' ${m.host.slot} media host (${_hostName(m.host.id)}) moves to the ${m.to} slot.",
+    for (final r in there?.removed ?? const <({MediaHostPlace host, String? replacedBy})>[])
+      "Your other devices' ${r.host.slot} media host (${_hostName(r.host.id)}) is ${r.replacedBy == null ? 'removed' : "replaced by this device's ${_hostName(r.replacedBy!)} and removed"}: both slots are taken.",
+  ];
+  final hostsRemoved = (here?.removed.isNotEmpty ?? false) || (there?.removed.isNotEmpty ?? false);
   final mine = p.seed == SyncSeed.thisDevice;
   final h = p.here.accounts, f = p.file.accounts;
   final String why;
@@ -485,7 +502,8 @@ SyncJoinSummary describeJoinPreview(SyncPreview p, {bool chosen = false}) {
       if (sending.isNotEmpty) 'The sync file gets $sending from this device.',
       if (p.mergedAccounts.isNotEmpty)
         '${_count(p.mergedAccounts.length, 'account')} connected on both ${p.mergedAccounts.length == 1 ? 'becomes' : 'become'} one, with the newer sign-in.',
-      'Nothing is deleted: what only one side has is kept.',
+      ...hostLines,
+      hostsRemoved ? 'Apart from that, nothing is deleted: what only one side has is kept.' : 'Nothing is deleted: what only one side has is kept.',
     ],
     swapLabel: mine ? "Use the sync file's setup instead" : "Use this device's setup instead",
   );
