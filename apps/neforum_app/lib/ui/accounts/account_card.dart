@@ -13,9 +13,11 @@ import '../../widgets/badges.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
 import '../router.dart';
+import 'connection_section.dart';
 import 'guide_sheet.dart';
 
-/// One connected account with its status, quotas and controls.
+/// One connected account with its status, quotas and controls, and (1.3.5)
+/// its connection setup in a section that opens on a tap.
 class AccountCard extends ConsumerWidget {
   const AccountCard({super.key, required this.account});
   final ConnectedAccount account;
@@ -102,6 +104,10 @@ class AccountCard extends ConsumerWidget {
           },
         ),
         const SizedBox(height: Space.xs),
+        Divider(height: 1, color: nf.border),
+        // Keyed by account: when the grid reuses this card for another
+        // account, the section starts closed instead of showing it open.
+        AccountConnectionSection(key: ValueKey('connection-${a.id}'), account: a),
       ]),
     );
   }

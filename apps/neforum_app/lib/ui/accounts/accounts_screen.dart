@@ -1,18 +1,25 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/neforum_logo.dart';
+import '../../state/account_connection.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
+import '../activity/time_format.dart';
 import '../root.dart';
 import '../router.dart';
 import 'account_card.dart';
+import 'connection_section.dart';
 import 'tier_explainer.dart';
+
+/// The order the page groups accounts in, by how they publish.
+const List<PlatformTier> _tierOrder = [PlatformTier.openApi, PlatformTier.byokApi, PlatformTier.webSession, PlatformTier.handoff];
 
 /// Connected accounts, grouped by how they publish.
 class AccountsScreen extends ConsumerWidget {
@@ -25,12 +32,36 @@ class AccountsScreen extends ConsumerWidget {
     final auto = accounts.where((a) => a.tier != PlatformTier.handoff).length;
     void add() => context.go('${AppSection.accounts.path}/add');
 
+    // 1.3.5: every account's setup as text, in the page's order, to paste
+    // next to the same list from another device. No key values: see
+    // connectionSetupText.
+    Future<void> copyAll() async {
+      final s = ref.read(servicesProvider);
+      final time = TimeFormatting.from(ref.read(settingsProvider), context);
+      final text = await allConnectionSetupsText(
+        [for (final tier in _tierOrder) ...accounts.where((a) => a.tier == tier)],
+        secrets: s.secrets,
+        registry: s.registry,
+        travel: currentKeysTravel(ref),
+        when: (t) => connectionWhen(t, time),
+      );
+      await Clipboard.setData(ClipboardData(text: text));
+      if (context.mounted) {
+        showToast(context, '${accounts.length == 1 ? 'Setup' : 'Setups of ${accounts.length} accounts'} copied, without keys or passwords',
+            icon: Icons.check_rounded);
+      }
+    }
+
     return PageBody(children: [
       PageHeader(
         eyebrow: 'Accounts',
         title: 'Your networks',
         subtitle: accounts.isEmpty ? 'Connect the places you post to.' : '${accounts.length} connected · $auto post automatically',
-        actions: [PrimaryAction(label: 'Add account', icon: Icons.add_rounded, onPressed: add, compact: context.isCompact)],
+        actions: [
+          if (accounts.isNotEmpty)
+            OutlinedButton.icon(onPressed: copyAll, icon: const Icon(Icons.copy_all_rounded, size: 18), label: const Text('Copy all setups')),
+          PrimaryAction(label: 'Add account', icon: Icons.add_rounded, onPressed: add, compact: context.isCompact),
+        ],
       ),
       const SizedBox(height: Space.x3),
       if (loading)
@@ -38,7 +69,7 @@ class AccountsScreen extends ConsumerWidget {
       else if (accounts.isEmpty)
         const _Welcome()
       else ...[
-        for (final tier in const [PlatformTier.openApi, PlatformTier.byokApi, PlatformTier.webSession, PlatformTier.handoff])
+        for (final tier in _tierOrder)
           if (accounts.any((a) => a.tier == tier)) ...[
             SectionHeader(
               switch (tier) {
