@@ -249,8 +249,13 @@ void main() {
     await settle(tester);
     expect(c.read(composerProvider).textCardStyle.handle, isNull);
     expect(tester.widget<TextField>(key('handle')).controller!.text, isEmpty);
-    expect(textCardBylineOf(placeholderOf(c, accounts['instagram']!)), own['instagram']);
-    expect(textCardBylineOf(placeholderOf(c, accounts['bluesky']!)), own['bluesky']);
+    // Each network's own again: drawn by its preview, not recorded on the
+    // stand-in (as 1.3.4's stand-ins).
+    for (final p in ['instagram', 'bluesky']) {
+      expect(textCardBylineOf(placeholderOf(c, accounts[p]!)), isNull);
+      final drawn = tester.widget<TextCardView>(find.descendant(of: find.byKey(ValueKey('text-card-preview-$p')), matching: find.byType(TextCardView)));
+      expect(drawn.byline, own[p], reason: '$p draws its own handle');
+    }
     // Clearing the field by hand does the same.
     await tester.enterText(key('handle'), '@again');
     await settle(tester);

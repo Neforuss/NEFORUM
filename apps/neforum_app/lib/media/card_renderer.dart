@@ -309,7 +309,29 @@ class CardDesignPainter extends CustomPainter {
         maxLines: lines,
       )..layout(width, fill: true);
     }
-    return _LaidText(b, text, outline, width);
+    return _LaidText(b, text, outline, width, fs);
+  }
+
+  /// 1.3.5: cards. The size the post's words come out at on a card of
+  /// [size], in pixels at 1080 wide: a block that fits itself starts at its
+  /// size and shrinks into the room its anchor leaves it, as [paint] lays it
+  /// out. Null without a words block (or words). The text card editor says
+  /// so when a larger size changes nothing.
+  double? drawnWordsSize(Size size) {
+    final u = cardUnit(size);
+    final frame = cardFrameOf(size, safe, design.margin);
+    final words = design.blocks.where((b) => b.role == CardBlockRole.postText && b.visible && wordsOf(b).isNotEmpty).firstOrNull;
+    if (words == null) return null;
+    var fixedHeight = 0.0;
+    for (final b in design.blocks.where((b) => b.visible && !b.autoFit && b.anchor == words.anchor && wordsOf(b).isNotEmpty)) {
+      final l = _layout(b, frame, u, null);
+      fixedHeight += l.height + b.gapBefore * u;
+      l.dispose();
+    }
+    final laid = _layout(words, frame, u, words.autoFit ? math.max(frame.height * 0.08, frame.height * words.maxHeight - fixedHeight) : null);
+    final fs = laid is _LaidText ? laid.fontSize : words.size * u;
+    laid.dispose();
+    return fs / u;
   }
 
   @override
@@ -327,10 +349,13 @@ abstract class _LaidBlock {
 }
 
 class _LaidText extends _LaidBlock {
-  _LaidText(super.block, this.text, this.outline, this._width);
+  _LaidText(super.block, this.text, this.outline, this._width, this.fontSize);
   final AlignedText text;
   final AlignedText? outline;
   final double _width;
+
+  /// The size the words were laid out at, in the card's pixels.
+  final double fontSize;
 
   @override
   double get width => _width;

@@ -474,6 +474,34 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   /// 1.3.5: cards. The text card's style for every network.
   void setTextCardStyle(TextCardStyle style) => state = state.copyWith(textCardStyle: style);
+
+  /// 1.3.5: cards. Where the words sit, top to bottom: one setting for the
+  /// master editor and the background photo's "Words" controls
+  /// ([textCardWordsPosition]). A place the photo chose before 1.3.5 is
+  /// folded into it, so the two never disagree.
+  void setTextCardWordsPosition(TextCardTextPosition position) {
+    final photo = TextCardBackground.tryParse(state.textCardBackground);
+    state = state.copyWith(
+      textCardStyle: state.textCardStyle.copyWith(textPosition: position),
+      textCardBackground: photo != null && photo.textPosition != TextCardTextPosition.center
+          ? photo.copyWith(textPosition: TextCardTextPosition.center).toJson()
+          : null,
+    );
+  }
+
+  /// 1.3.5: cards. The words' own colour (opaque ARGB); null for the
+  /// theme's, or over a photo white or black, whichever reads. One setting
+  /// for the master editor and the background photo's "Words" controls
+  /// ([textCardWordsColour]): the photo's own white or black is folded into
+  /// it.
+  void setTextCardWordsColour(int? argb) {
+    final photo = TextCardBackground.tryParse(state.textCardBackground);
+    final style = state.textCardStyle;
+    state = state.copyWith(
+      textCardStyle: argb == null ? style.copyWith(clearTextColor: true) : style.copyWith(textColor: argb),
+      textCardBackground: photo != null && photo.textColor != TextCardTextColor.automatic ? photo.copyWith(textColor: TextCardTextColor.automatic).toJson() : null,
+    );
+  }
   /// A built-in font for the card's words (no installed or imported one).
   void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f, textCardCustomFont: const {});
 
@@ -888,9 +916,11 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             story: story,
             customFont: cardFont,
             design: cardDesign,
-            // 1.3.5: cards. The @handle the saved card will show, recorded
-            // like the saved card's, and the post's style.
-            byline: c.textCardStyle.bylineFor(a.handle ?? a.displayName),
+            // 1.3.5: cards. The post's style, and the @handle written in
+            // place of the network's own: recorded only then, so a stand-in
+            // for an untouched card has the parameters 1.3.4 gave it (the
+            // previews draw the network's own @handle without it).
+            byline: c.textCardStyle.handle,
             style: c.textCardStyle,
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
       if (feedCard && c.textCardWithText[d.id] == false) {

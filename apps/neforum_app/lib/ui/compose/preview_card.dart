@@ -11,6 +11,8 @@ import '../../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvid
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/card_design.dart';
+import '../../media/card_design_edits.dart';
+import '../../media/card_renderer.dart' show CardDesignPainter;
 import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../media/text_card_background.dart';
@@ -542,7 +544,10 @@ class _TextCardPreview extends ConsumerWidget {
             withText: composer.textCardWithText[id] ?? true,
             design: design,
             style: style,
-            accountId: p.account.id,
+            // 1.3.5: cards. "Text & @handle…" only where no master editor is:
+            // with two or more cards the master editor above the previews
+            // is the one place that edits every network's card.
+            accountId: TextCardMasterPanel._cardsByNetwork(TextCardMasterPanel.withCards(ref.watch(composerPreviewsProvider))).length < 2 ? p.account.id : null,
           ),
         ),
       ]);
@@ -599,9 +604,10 @@ class _TextCardStyleSheet extends ConsumerWidget {
       theme: textCardThemeOf(card) ?? TextCardTheme.dark,
       handleShownNowhere: !textCardShowsHandleOf(card),
       background: background,
-      designed: textCardDesignOf(card) != null,
+      design: textCardDesignOf(card),
       // The sheet is opened for these controls: unfolded.
       initiallyExpanded: true,
+      wordsFit: () => _wordsFitOf(_previewPost(ref), [(p, card)], composer.textCardStyle, textCardDesignOf(card)),
     );
     final wide = MediaQuery.sizeOf(context).width >= 760;
     return Material(
@@ -637,6 +643,53 @@ class _TextCardStyleSheet extends ConsumerWidget {
       ]),
     );
   }
+}
+
+/// 1.3.5: cards. How large [post]'s words come out on the networks' cards
+/// ([cards]: each preview and its card's stand-in), against what the
+/// editor's size control asks: on the classic card the size drawn against
+/// the size at 100% ([TextCardPainter.measureWords]), on [design] the pixels
+/// its words shrink to ([CardDesignPainter.drawnWordsSize]) against its
+/// words' size. The network where they fall shortest; null without words.
+TextCardWordsFit? _wordsFitOf(Post post, List<(TargetPreview, MediaAttachment)> cards, TextCardStyle style, CardDesign? design) {
+  TextCardWordsFit? shortest;
+  for (final (p, m) in cards) {
+    final id = p.descriptor.id;
+    final text = textCardText(post, p.target);
+    if (text.isEmpty) continue;
+    final size = textCardSizeOf(m, id);
+    final safe = textCardSafeOf(m) ? fullScreenSafeArea(id) : EdgeInsets.zero;
+    final byline = textCardShowsHandleOf(m) ? style.bylineFor(p.account.handle ?? p.account.displayName) : null;
+    final branded = textCardBrandedOf(m);
+    final double asked, drawn;
+    if (design != null) {
+      final px = CardDesignPainter(
+        design: design,
+        texts: {CardBlockRole.postText: text, CardBlockRole.handle: byline ?? '', if (!branded) CardBlockRole.signature: ''},
+        safe: safe,
+        platformId: id,
+      ).drawnWordsSize(size);
+      if (px == null) continue;
+      asked = design.wordsSize;
+      drawn = px;
+    } else {
+      final words = TextCardPainter(
+        text: text,
+        theme: textCardThemeOf(m) ?? TextCardTheme.dark,
+        byline: byline,
+        branded: branded,
+        font: textCardFontOf(m).resolve(id),
+        safe: safe,
+        alignment: textCardAlignmentOf(m),
+        customFont: textCardCustomFontOf(m),
+        style: style,
+      ).measureWords(size);
+      asked = style.textSize;
+      drawn = words.fitted <= 0 ? 1 : words.drawn / words.fitted;
+    }
+    if (shortest == null || drawn / asked < shortest.drawn / shortest.asked) shortest = (network: p.descriptor.name, asked: asked, drawn: drawn);
+  }
+  return shortest;
 }
 
 /// A network's text card as it will be saved, from its composer stand-in
@@ -926,7 +979,8 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
               handleHiddenOn: showsHandle == null ? [for (final (p, m) in cards) if (!textCardShowsHandleOf(m)) p.descriptor.name] : const [],
               handleShownNowhere: showsHandle == false,
               background: background,
-              designed: design != null,
+              design: design,
+              wordsFit: () => _wordsFitOf(_previewPost(ref), cards, composer.textCardStyle, design),
             );
             // With room (a tablet, or a computer window that shows the
             // previews on their own), the card and its pills stay in view
@@ -1514,7 +1568,6 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
             alignment: widget.alignment,
             byline: showsHandle == true ? widget.byline : null,
             customFont: widget.customFont,
-            style: widget.style,
           ),
         ),
       ),

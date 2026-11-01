@@ -256,9 +256,10 @@ Map<String, dynamic> textCardRenderParameters({
       if (design != null) 'design': design.toJson(),
       if (design != null && designFontFallback) 'designFontFallback': true,
       // 1.3.5: cards. Only when restyled, so an untouched card keeps the
-      // parameters 1.3.4 gave it. Kept with a design too (its @handle is
-      // drawn there; the rest waits for the design to be turned off).
-      if (!style.isClassic) 'style': style.toJson(),
+      // parameters 1.3.4 gave it. A designed card records only what it
+      // draws of the style, its @handle (the design's blocks set the rest),
+      // so a classic restyle it does not show never makes it again.
+      if (!(design == null ? style : style.handleOnly).isClassic) 'style': (design == null ? style : style.handleOnly).toJson(),
     };
 
 /// The card designer's design a card (or placeholder) was drawn from
@@ -445,35 +446,37 @@ class TextCardPainter extends CustomPainter {
   /// A photo behind the words instead of the theme's plain colour.
   final TextCardBackdrop? backdrop;
 
-  // Every measurement below is the 1.3.4 one with the style's factor applied
-  // as a multiplication by 1 (or the same value) for [TextCardStyle.classic],
-  // so an untouched card is the same picture, byte for byte
-  // (text_card_style_test.dart).
-  @override
-  void paint(Canvas canvas, Size size) {
+  /// The words' colour: the style's, else the photo's text colour, else the
+  /// theme's.
+  Color get _foreground => style.textColorOr(backdrop?.foreground ?? theme.foreground);
+
+  /// Where everything but the words goes on a card of [size], worked out the
+  /// same way for painting and for [measureWords].
+  ({
+    double u,
+    double pad,
+    double safeRight,
+    double rule,
+    double markSize,
+    double footerY,
+    String handle,
+    TextCardHandlePosition corner,
+    bool handleOnTop,
+    String by,
+    double bottom,
+    double top,
+    double areaW,
+    TextPainter Function(double room) handleLaidOut,
+  }) _geometry(Size size) {
     final u = size.width / 1080;
     final w = size.width;
     final h = size.height;
     final s = style;
-    final fg = s.textColorOr(backdrop?.foreground ?? theme.foreground);
-    final cardColor = s.backgroundColorOr(theme.background);
+    final fg = _foreground;
     final pad = s.margin * u;
     final safeTop = safe.top * u, safeRight = safe.right * u, safeBottom = safe.bottom * u;
-
-    if (backdrop != null) {
-      backdrop!.paint(canvas, Offset.zero & size, u, cardColor: cardColor);
-    } else {
-      canvas.drawRect(Offset.zero & size, Paint()..color = cardColor);
-    }
-
     final rule = branded ? 14 * u : 0.0;
-    if (branded) {
-      // Signature rule: purple along the top, a yellow tab at the start.
-      canvas.drawRect(Rect.fromLTWH(0, 0, w, rule), Paint()..color = Brand.purple);
-      canvas.drawRect(Rect.fromLTWH(0, 0, pad + 120 * u, rule), Paint()..color = Brand.yellow);
-    }
-
-    // The @handle: the style's own words or the network's, in the corner the
+    // The @handle: the style's own words or the network's, in the place the
     // style picks (by default beside the signature, or bottom left).
     final handle = byline == null ? '' : s.bylineFor(byline!).trim();
     final corner = s.handlePosition.resolve(branded: branded);
@@ -488,64 +491,42 @@ class TextCardPainter extends CustomPainter {
           maxLines: 1,
           ellipsis: '…',
         )..layout(maxWidth: room);
-
     // Footer: mark, wordmark and the @handle; a plain card keeps only the
     // @handle. Its distance from the bottom follows the margins (84 px at the
     // card's own 92).
     final markSize = 60 * u;
     final footerY = h - safeBottom - 84 * u * (s.margin / TextCardStyle.defaultMargin) - markSize;
     final by = handleOnTop ? '' : handle;
-    var authorLeft = pad;
-    if (branded) {
-      paintNeforumMark(canvas, Rect.fromLTWH(pad, footerY, markSize, markSize));
-      final word = TextPainter(
-        text: TextSpan(
-          text: 'NEFORUM',
-          style: TextStyle(fontFamily: Fonts.display, fontWeight: FontWeight.w800, fontSize: 30 * u, letterSpacing: 1.6 * u, color: fg, height: 1),
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      final wordX = pad + markSize + 20 * u;
-      word.paint(canvas, Offset(wordX, footerY + (markSize - word.height) / 2));
-      authorLeft = wordX + word.width + 32 * u;
-      word.dispose();
-    }
-    if (by.isNotEmpty) {
-      final room = w - pad - safeRight - authorLeft;
-      if (room > 40 * u) {
-        final author = handleLaidOut(room);
-        // On the left it follows the wordmark (a plain card's margin).
-        author.paint(canvas, Offset(corner.isRight ? w - pad - safeRight - author.width : authorLeft, footerY + (markSize - author.height) / 2));
-        author.dispose();
-      }
-    }
     final double bottom;
     if (branded) {
       final dividerY = footerY - 44 * u;
-      canvas.drawLine(
-        Offset(pad, dividerY),
-        Offset(w - pad - safeRight, dividerY),
-        Paint()
-          ..color = fg.withValues(alpha: 0.16)
-          ..strokeWidth = 2 * u,
-      );
       bottom = dividerY - 56 * u;
     } else {
       bottom = by.isEmpty ? h - pad - safeBottom : footerY - 40 * u;
     }
+    return (
+      u: u,
+      pad: pad,
+      safeRight: safeRight,
+      rule: rule,
+      markSize: markSize,
+      footerY: footerY,
+      handle: handle,
+      corner: corner,
+      handleOnTop: handleOnTop,
+      by: by,
+      bottom: bottom,
+      top: rule + pad + safeTop,
+      areaW: w - pad * 2 - safeRight,
+      handleLaidOut: handleLaidOut,
+    );
+  }
 
-    // The words: as large as fits, never smaller than 30 px at 1080 wide.
-    var top = rule + pad + safeTop;
-    final areaW = w - pad * 2 - safeRight;
-    if (handleOnTop && areaW > 40 * u) {
-      // The @handle above the words, inside the margins; the words start
-      // under it.
-      final author = handleLaidOut(areaW);
-      author.paint(canvas, Offset(corner.isRight ? w - pad - safeRight - author.width : pad, top));
-      top += author.height + 40 * u;
-      author.dispose();
-    }
-    final areaH = math.max(0.0, bottom - top);
+  /// The words set as large as fits in [areaW] x [areaH] (never smaller than
+  /// 30 px at 1080 wide), then at the style's size: [fitted] is the size at
+  /// 100%, [fs] the size drawn. The caller disposes of [words].
+  ({AlignedText words, double fs, double fitted}) _fitWords(double u, double areaW, double areaH, Color fg) {
+    final s = style;
     final rtl = Bidi.detectRtlDirectionality(text);
     AlignedText layout(double fs, {int? maxLines}) => AlignedText(
           text,
@@ -565,13 +546,13 @@ class TextCardPainter extends CustomPainter {
     }
     // 1.3.5: cards. The chosen size against the fitted one: smaller always
     // fits; larger grows only as far as the words still fit.
+    final fitted = fs;
     final scale = s.textSize;
     if (scale < 1) {
       words.dispose();
       fs *= scale;
       words = layout(fs);
     } else if (scale > 1) {
-      final fitted = fs;
       var larger = fs * scale;
       var grown = layout(larger);
       while (grown.height > areaH && larger > fitted) {
@@ -588,6 +569,121 @@ class TextCardPainter extends CustomPainter {
       words.dispose();
       words = layout(fs, maxLines: lines);
     }
+    return (words: words, fs: fs, fitted: fitted);
+  }
+
+  /// 1.3.5: cards. How large the words come out on a card of [size], in
+  /// pixels at 1080 wide: [fitted] at the classic 100%, [drawn] at the
+  /// style's size. Above 100% the words grow only as far as they fit, so the
+  /// editor can say when a larger size changes nothing ("already as large as
+  /// fits").
+  ({double fitted, double drawn}) measureWords(Size size) {
+    final g = _geometry(size);
+    var top = g.top;
+    if (g.handleOnTop && g.areaW > 40 * g.u) {
+      final author = g.handleLaidOut(g.areaW);
+      top += author.height + 40 * g.u;
+      author.dispose();
+    }
+    final fit = _fitWords(g.u, g.areaW, math.max(0.0, g.bottom - top), _foreground);
+    fit.words.dispose();
+    return (fitted: fit.fitted / g.u, drawn: fit.fs / g.u);
+  }
+
+  // Every measurement below is the 1.3.4 one with the style's factor applied
+  // as a multiplication by 1 (or the same value) for [TextCardStyle.classic],
+  // so an untouched card is the same picture, byte for byte
+  // (text_card_style_test.dart).
+  @override
+  void paint(Canvas canvas, Size size) {
+    final g = _geometry(size);
+    final u = g.u;
+    final w = size.width;
+    final s = style;
+    final fg = _foreground;
+    final cardColor = s.backgroundColorOr(theme.background);
+    final pad = g.pad;
+    final safeRight = g.safeRight;
+
+    if (backdrop != null) {
+      backdrop!.paint(canvas, Offset.zero & size, u, cardColor: cardColor);
+    } else {
+      canvas.drawRect(Offset.zero & size, Paint()..color = cardColor);
+    }
+
+    final rule = g.rule;
+    if (branded) {
+      // Signature rule: purple along the top, a yellow tab at the start.
+      canvas.drawRect(Rect.fromLTWH(0, 0, w, rule), Paint()..color = Brand.purple);
+      canvas.drawRect(Rect.fromLTWH(0, 0, pad + 120 * u, rule), Paint()..color = Brand.yellow);
+    }
+
+    final corner = g.corner;
+    final handleLaidOut = g.handleLaidOut;
+    final markSize = g.markSize;
+    final footerY = g.footerY;
+    final by = g.by;
+    var authorLeft = pad;
+    if (branded) {
+      paintNeforumMark(canvas, Rect.fromLTWH(pad, footerY, markSize, markSize));
+      final word = TextPainter(
+        text: TextSpan(
+          text: 'NEFORUM',
+          style: TextStyle(fontFamily: Fonts.display, fontWeight: FontWeight.w800, fontSize: 30 * u, letterSpacing: 1.6 * u, color: fg, height: 1),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      final wordX = pad + markSize + 20 * u;
+      word.paint(canvas, Offset(wordX, footerY + (markSize - word.height) / 2));
+      authorLeft = wordX + word.width + 32 * u;
+      word.dispose();
+    }
+    if (by.isNotEmpty) {
+      final room = w - pad - safeRight - authorLeft;
+      if (room > 40 * u) {
+        final author = handleLaidOut(room);
+        // On the left it follows the wordmark (a plain card's margin); in
+        // the middle it is centred on the card, clear of the wordmark.
+        final x = corner.isRight
+            ? w - pad - safeRight - author.width
+            : corner.isCentre
+                ? math.max(authorLeft, pad + (g.areaW - author.width) / 2)
+                : authorLeft;
+        author.paint(canvas, Offset(x, footerY + (markSize - author.height) / 2));
+        author.dispose();
+      }
+    }
+    if (branded) {
+      final dividerY = footerY - 44 * u;
+      canvas.drawLine(
+        Offset(pad, dividerY),
+        Offset(w - pad - safeRight, dividerY),
+        Paint()
+          ..color = fg.withValues(alpha: 0.16)
+          ..strokeWidth = 2 * u,
+      );
+    }
+    final bottom = g.bottom;
+
+    // The words: as large as fits, never smaller than 30 px at 1080 wide.
+    var top = g.top;
+    final areaW = g.areaW;
+    if (g.handleOnTop && areaW > 40 * u) {
+      // The @handle above the words, inside the margins; the words start
+      // under it.
+      final author = handleLaidOut(areaW);
+      final x = corner.isRight
+          ? w - pad - safeRight - author.width
+          : corner.isCentre
+              ? pad + (areaW - author.width) / 2
+              : pad;
+      author.paint(canvas, Offset(x, top));
+      top += author.height + 40 * u;
+      author.dispose();
+    }
+    final areaH = math.max(0.0, bottom - top);
+    final fit = _fitWords(u, areaW, areaH, fg);
+    final words = fit.words;
     final position = s.textPosition ?? backdrop?.background.textPosition ?? TextCardTextPosition.center;
     // The middle is worked out as before 1.3, so those cards stay the same.
     final origin = Offset(

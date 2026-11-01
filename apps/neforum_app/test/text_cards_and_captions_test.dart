@@ -660,7 +660,11 @@ void main() {
       await settle(tester);
       await tester.tap(find.byKey(const Key('card-background-position-bottom')));
       await settle(tester);
-      expect(current().textPosition, TextCardTextPosition.bottom);
+      // 1.3.5: the words' place is one setting with the text card editor's
+      // (the post's TextCardStyle), not a second one on the photo.
+      expect(c.read(composerProvider).textCardStyle.textPosition, TextCardTextPosition.bottom);
+      expect(textCardWordsPosition(c.read(composerProvider).textCardStyle, current()), TextCardTextPosition.bottom);
+      expect(current().textPosition, TextCardTextPosition.center);
 
       await tester.tap(find.byKey(const Key('card-background-reset')));
       await settle(tester);

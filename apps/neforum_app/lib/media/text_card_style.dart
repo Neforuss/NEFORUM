@@ -1,37 +1,63 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
 
-import 'text_card_background.dart' show TextCardTextPosition;
+import 'text_card_background.dart' show TextCardBackground, TextCardTextColor, TextCardTextPosition;
 
 // 1.3.5: the classic text card's style, the "more editing power" of the text
 // card editor: one value carried from the composer through the previews'
 // stand-ins and the saved cards' render parameters to the painter, so what the
 // master editor shows is exactly what every network receives.
 
-/// Where a classic card's @handle sits.
+/// Where a card's @handle sits: a corner, or the middle of the top or bottom
+/// edge (1.3.5, as on Instagram's text posts).
 enum TextCardHandlePosition {
   /// As cards had it before 1.3.5: at the bottom right beside the NEFORUM
   /// signature, at the bottom left on a plain card.
   automatic('Automatic'),
   bottomLeft('Bottom left'),
+  bottomCenter('Bottom centre'),
   bottomRight('Bottom right'),
   topLeft('Top left'),
+  topCenter('Top centre'),
   topRight('Top right');
 
   const TextCardHandlePosition(this.label);
   final String label;
 
-  /// The corner this choice puts the handle in on a card with ([branded]) or
+  /// The place this choice puts the handle in on a card with ([branded]) or
   /// without the signature: [automatic] becomes the corner it always was.
   TextCardHandlePosition resolve({required bool branded}) =>
       this != automatic ? this : (branded ? bottomRight : bottomLeft);
 
   /// Above the words (on a resolved position).
-  bool get isTop => this == topLeft || this == topRight;
+  bool get isTop => this == topLeft || this == topCenter || this == topRight;
 
   /// Lined up on the right edge (on a resolved position).
   bool get isRight => this == bottomRight || this == topRight;
+
+  /// In the middle of its edge (on a resolved position).
+  bool get isCentre => this == bottomCenter || this == topCenter;
 }
+
+/// Where a classic card's words sit: the style's place, else (on a post
+/// whose background photo chose one before 1.3.5) the photo's, else the
+/// middle. The master editor and the background photo's "Words" controls
+/// both show and set this one value ([TextCardStyle.textPosition]).
+TextCardTextPosition textCardWordsPosition(TextCardStyle style, TextCardBackground? background) =>
+    style.textPosition ?? background?.textPosition ?? TextCardTextPosition.center;
+
+/// The words' own colour on a classic card (opaque ARGB): the style's, else
+/// the white or black a background photo chose before 1.3.5; null for the
+/// theme's colour, or over a photo white or black, whichever reads
+/// ("Automatic"). One value for the master editor and the background photo's
+/// "Words" controls ([TextCardStyle.textColor]).
+int? textCardWordsColour(TextCardStyle style, TextCardBackground? background) =>
+    style.textColor ??
+    switch (background?.textColor) {
+      TextCardTextColor.white => 0xFFFFFFFF,
+      TextCardTextColor.black => 0xFF000000,
+      _ => null,
+    };
 
 /// How a classic text card is set, beyond its theme, font, alignment,
 /// signature and background photo: the words' size, colour, line spacing and
@@ -125,6 +151,12 @@ class TextCardStyle {
   final int? handleColor;
 
   bool get isClassic => this == classic;
+
+  /// Only the @handle's words: what applies to a card drawn from a card
+  /// designer design, whose own blocks set everything else. A designed
+  /// card's render parameters record only this, so a change it does not
+  /// show never makes it again.
+  TextCardStyle get handleOnly => handle == null ? classic : TextCardStyle(handle: handle);
 
   /// The words or the card have a colour of their own, not the theme's.
   bool get hasCardColours => textColor != null || backgroundColor != null;
