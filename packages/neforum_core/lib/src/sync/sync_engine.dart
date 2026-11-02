@@ -1195,19 +1195,41 @@ class SyncEngine implements SecretsCoordinator {
           rethrow;
         }
       }
-      final result = fresh ?? latest;
-      await store.write(account.id, result);
+      // 1.3.5: the refresh ran outside the sync lock, so a sync (the timer,
+      // a change) may have stored other keys meanwhile: a reconnect made on
+      // another device, perhaps through another app. Those stay, and this
+      // renewal of the old sign-in is dropped: under the lease nothing else
+      // changes the stored keys, and storing it over a reconnect would pair
+      // the new app with the old keys on every device. A keychain that
+      // cannot be read now never costs the renewal (the old keys are dead).
+      var result = fresh ?? latest;
+      final storedNow = await _readKeys(store, account);
+      if (storedNow != null && _differs(storedNow, latest) != null) {
+        result = storedNow;
+      } else {
+        await store.write(account.id, result);
+      }
       _renewing.remove(account.id);
       shared = await _shareRenewal(account);
-      // 1.3.5: what this device holds once the renewal is shared, which the
-      // caller stores: a reconnect made on another device while the network
-      // renewed the old sign-in wins that sync, account and keys together
-      // (see [holdsNewerSignIn]), and storing the renewal of the old sign-in
-      // over it would pair the new app with the old keys.
-      return _differs(shared ? await store.read(account.id) ?? result : result, current);
+      // What this device holds once the renewal is shared, which the caller
+      // stores: a reconnect that arrived in that sync wins it too, account and
+      // keys together (see [holdsNewerSignIn]).
+      final held = shared ? await _readKeys(store, account) : null;
+      return _differs(held == null || held.isEmpty ? result : held, current);
     } finally {
       _renewing.remove(account.id);
       if (!shared) await _shareRenewal(account);
+    }
+  }
+
+  /// The keys [store] holds for [account] now (none: an empty map), or
+  /// `null` when the keychain cannot be read at this moment.
+  Future<Map<String, String>?> _readKeys(SecretStore store, ConnectedAccount account) async {
+    try {
+      return await store.read(account.id) ?? const <String, String>{};
+    } on Object catch (e) {
+      _log.warn('Could not read the ${account.displayName} keys while renewing: $e');
+      return null;
     }
   }
 

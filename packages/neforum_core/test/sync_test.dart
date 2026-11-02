@@ -7,6 +7,8 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/tiktok/tiktok_adapter.dart';
+import 'package:neforum_core/src/adapters/tumblr/tumblr_adapter.dart';
+import 'package:neforum_core/src/adapters/x/x_adapter.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -17,10 +19,10 @@ const _pass = 'shared sync passphrase';
 
 /// One device on the shared file: its own data, keychain and sync state.
 class _Device {
-  _Device(this.id, this.backend, this.clock, {List<SyncSource> extra = const [], LogSink? log, InMemoryAccountRepository? accountRepo})
+  _Device(this.id, this.backend, this.clock, {List<SyncSource> extra = const [], LogSink? log, InMemoryAccountRepository? accountRepo, InMemorySecretStore? secretStore})
       : accounts = accountRepo ?? InMemoryAccountRepository(),
         posts = InMemoryPostRepository(),
-        secrets = InMemorySecretStore(),
+        secrets = secretStore ?? InMemorySecretStore(),
         stateStore = MemorySyncStateStore(),
         _extra = extra,
         _log = log {
@@ -2272,7 +2274,8 @@ void main() {
       clock.now = clock.now.add(const Duration(minutes: 31)); // Y's keys have expired
       await y.posts.upsert(_post('p', targets: const [PostTarget(accountId: _uuid1)]));
       var tokenCalls = 0;
-      final service = publisher(y, _TikTokPublishing(() async => PublishResult.ok(remoteId: 'v1')), (r) async {
+      final used = <Map<String, String>>[];
+      final service = publisher(y, _TikTokPublishing(() async => PublishResult.ok(remoteId: 'v1'), used: used), (r) async {
         if (r.url.path.contains('/oauth/token/')) {
           tokenCalls++;
           // While TikTok answers, X reconnects and syncs, and Y's timer sync runs.
@@ -2285,6 +2288,7 @@ void main() {
       await service.publish('p');
       expect(tokenCalls, 1, reason: 'the renewal ran, on the path TikTok takes');
       expect((await y.secrets.read(_uuid1))!['client_secret'], 'cs-ck-new-fake', reason: 'the renewal of the old sign-in was dropped');
+      expect(used.single['client_secret'], 'cs-ck-new-fake', reason: 'the upload runs with the keys that are stored, not the ones it started from');
       await _rounds([y, x, y, x], clock, 1);
       await expectOneSignIn([x, y]);
     });
@@ -2477,6 +2481,174 @@ void main() {
       await _rounds([a], clock, 1);
       await a.engine.preview();
       expect((await a.posts.get('p'))!.targets.single.accountId, _uuid2);
+    });
+  });
+
+  group('renewals and syncs that cross: the publish service with the engine as coordinator (1.3.5)', () {
+    const id = '6f1c2d3e-0000-4abc-9def-0000000000aa';
+
+    ConnectedAccount rotating(String network, String app, DateTime createdAt) => ConnectedAccount(
+          id: id,
+          platformId: network,
+          tier: PlatformTier.byokApi,
+          displayName: 'Me',
+          handle: '@me',
+          createdAt: createdAt,
+          config: network == 'x'
+              ? {XAdapter.cfgClientId: app, XAdapter.cfgUserId: '42'}
+              : {TumblrAdapter.cfgConsumerKey: app, TumblrAdapter.cfgAuthMode: TumblrAdapter.authOAuth2},
+        );
+
+    PublishService publisher(_Device d, PlatformAdapter adapter, Future<http.Response> Function(http.Request) handler, {bool coordinated = true}) =>
+        PublishService(
+          registry: AdapterRegistry([adapter]),
+          accounts: d.accounts,
+          posts: d.posts,
+          secrets: d.secrets,
+          quota: QuotaTracker(InMemoryQuotaRepository()),
+          http: NeforumHttp(client: MockClient(handler), maxRetries: 0),
+          clock: () => clock.now,
+          secretsCoordinator: coordinated ? d.engine : null,
+        );
+
+    Post draft() => _post('p', targets: const [PostTarget(accountId: id)]);
+
+    for (final network in ['x', 'tumblr']) {
+      test('$network: B renews the old sign-in while A reconnects through another app, and B\'s timer sync lands during the token call: the reconnect stays', () async {
+        final server = _RotatingTokenServer(network);
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+        await a.accounts.upsert(rotating(network, 'app-old', DateTime.utc(2026, 10, 1)));
+        await a.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(minutes: 30))));
+        await a.engine.sync();
+        await b.engine.sync();
+        clock.now = clock.now.add(const Duration(minutes: 31)); // B's keys have expired
+        await b.posts.upsert(draft());
+        server.during = () async {
+          await a.accounts.upsert(rotating(network, 'app-new', clock.now));
+          await a.secrets.write(id, server.issue('app-new', clock.now.add(const Duration(hours: 2))));
+          await a.engine.sync();
+          await b.engine.sync(); // B's timer: it takes A's reconnect while the token call runs
+        };
+        await publisher(b, _RotatingPublishing.of(network), server.handle).publish('p');
+        expect(server.calls, 1, reason: 'the renewal ran, through renew()');
+        await _rounds([b, a, b, a], clock, 1);
+        for (final d in [a, b]) {
+          expect(server.verdict((await d.accounts.get(id))!, await d.secrets.read(id)), 'account app=app-new; keys of app app-new; renewable', reason: d.id);
+        }
+      });
+
+      test('$network: the keychain cannot be re-read after the renewal: the rotating renewal is still stored (the old keys are dead)', () async {
+        final server = _RotatingTokenServer(network);
+        final store = _ThrowingSecrets();
+        final b = _Device('B', backend, clock, secretStore: store);
+        await b.accounts.upsert(rotating(network, 'app-old', DateTime.utc(2026, 10, 1)));
+        await b.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(minutes: 30))));
+        clock.now = clock.now.add(const Duration(minutes: 31));
+        await b.posts.upsert(draft());
+        store
+          ..reads = 0
+          ..failReadsAfter = 1; // the first read works, the re-read throws
+        await publisher(b, _RotatingPublishing.of(network), server.handle, coordinated: false).publish('p');
+        store.failReadsAfter = 1 << 30;
+        expect(server.verdict((await b.accounts.get(id))!, await b.secrets.read(id)), 'account app=app-old; keys of app app-old; renewable');
+        expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
+      });
+
+      test('$network: the keychain locks while renew() waits on the network: the rotating renewal is still stored', () async {
+        final server = _RotatingTokenServer(network);
+        final store = _ThrowingSecrets();
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock, secretStore: store);
+        await a.accounts.upsert(rotating(network, 'app-old', DateTime.utc(2026, 10, 1)));
+        await a.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(minutes: 30))));
+        await a.engine.sync();
+        await b.engine.sync();
+        clock.now = clock.now.add(const Duration(minutes: 31));
+        await b.posts.upsert(draft());
+        server.during = () async => store.locked = true; // locked from the token call until after the publish
+        await publisher(b, _RotatingPublishing.of(network), server.handle).publish('p');
+        store.locked = false;
+        expect(server.verdict((await b.accounts.get(id))!, await b.secrets.read(id)), 'account app=app-old; keys of app app-old; renewable');
+        await _rounds([b, a], clock, 1);
+        expect(server.verdict((await a.accounts.get(id))!, await a.secrets.read(id)), 'account app=app-old; keys of app app-old; renewable', reason: 'and it is shared');
+      });
+    }
+
+    test('an account removed by a sync during the token call gets no keys back here', () async {
+      final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+      ConnectedAccount tiktok() => ConnectedAccount(
+          id: id, platformId: 'tiktok', tier: PlatformTier.byokApi, displayName: 'Me', createdAt: DateTime.utc(2026, 10, 1), config: const {'clientKey': 'ck', 'openId': 'o'});
+      Map<String, String> keys(DateTime exp) =>
+          {'access_token': 'act-fake', 'refresh_token': 'rft-fake', 'expires_at': exp.toUtc().toIso8601String(), 'client_secret': 'cs-fake', 'token_type': 'Bearer'};
+      await a.accounts.upsert(tiktok());
+      await a.secrets.write(id, keys(clock.now.add(const Duration(minutes: 30))));
+      await a.engine.sync();
+      await b.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 31));
+      await b.posts.upsert(draft());
+      await publisher(b, _TikTokPublishing(() async => PublishResult.ok(remoteId: 'v')), (r) async {
+        if (r.url.path.contains('/oauth/token/')) {
+          await a.secrets.delete(id);
+          await a.accounts.delete(id); // removed on A
+          await a.engine.sync();
+          await b.engine.sync();
+          return http.Response(
+              jsonEncode({'access_token': 'act-fake-2', 'expires_in': 86400, 'refresh_token': 'rft-fake-2', 'refresh_expires_in': 31536000, 'open_id': 'o', 'token_type': 'Bearer'}), 200,
+              headers: jsonHeaders);
+        }
+        return http.Response('{}', 200, headers: jsonHeaders);
+      }, coordinated: false)
+          .publish('p');
+      expect(await b.accounts.get(id), isNull);
+      expect(await b.secrets.read(id), isNull, reason: 'no orphan keys for an account that is gone');
+    });
+
+    test('keys that arrived by sync during the renewal and are expired themselves are renewed once, with the account as stored now', () async {
+      final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+      ConnectedAccount tiktok(String app, DateTime at) => ConnectedAccount(
+          id: id, platformId: 'tiktok', tier: PlatformTier.byokApi, displayName: 'Me', handle: '@me', createdAt: at, config: {'clientKey': app, 'openId': 'o'});
+      Map<String, String> keys(String app, DateTime exp) => {
+            'access_token': 'act-$app-fake',
+            'refresh_token': 'rft-$app-fake',
+            'expires_at': exp.toUtc().toIso8601String(),
+            'refresh_expires_at': '2027-10-20T12:00:00.000Z',
+            'token_type': 'Bearer',
+            'client_secret': 'cs-$app-fake',
+          };
+      await a.accounts.upsert(tiktok('ck-old', DateTime.utc(2026, 10, 1)));
+      await a.secrets.write(id, keys('ck-old', clock.now.add(const Duration(minutes: 30))));
+      await a.engine.sync();
+      await b.engine.sync();
+      // A reconnects through ck-new (24-hour keys) while B is offline for a day.
+      clock.now = clock.now.add(const Duration(hours: 1));
+      await a.accounts.upsert(tiktok('ck-new', clock.now));
+      await a.secrets.write(id, keys('ck-new', clock.now.add(const Duration(hours: 24))));
+      await a.engine.sync();
+      clock.now = clock.now.add(const Duration(hours: 26)); // both sign-ins' access tokens have expired
+      await b.posts.upsert(draft());
+      final apps = <String?>[];
+      final used = <Map<String, String>>[];
+      await publisher(b, _TikTokPublishing(() async => PublishResult.ok(remoteId: 'v'), used: used), (r) async {
+        if (r.url.path.contains('/oauth/token/')) {
+          final body = Uri.splitQueryString(r.body);
+          final app = body['client_key'];
+          apps.add(app);
+          if (apps.length == 1) await b.engine.sync(); // B's start-up sync lands during the first token call
+          final ok = body['client_secret'] == 'cs-$app-fake' && body['refresh_token'] == 'rft-$app-fake';
+          return ok
+              ? http.Response(
+                  jsonEncode({'access_token': 'act-$app-renewed', 'expires_in': 86400, 'refresh_token': 'rft-$app-fake', 'refresh_expires_in': 31536000, 'open_id': 'o', 'token_type': 'Bearer'}),
+                  200,
+                  headers: jsonHeaders)
+              : http.Response(jsonEncode({'error': 'invalid_client', 'error_description': 'Client key does not match', 'log_id': 'x'}), 400, headers: jsonHeaders);
+        }
+        return http.Response('{}', 200, headers: jsonHeaders);
+      }, coordinated: false)
+          .publish('p');
+      expect(apps, ['ck-old', 'ck-new'], reason: 'the old renewal dropped, the arrived sign-in renewed with its own app');
+      expect(used.single['access_token'], 'act-ck-new-renewed', reason: 'never an expired token');
+      expect((await b.secrets.read(id))!['access_token'], 'act-ck-new-renewed');
+      expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
+      expect((await b.accounts.get(id))!.lastError, isNull, reason: 'no false "needs reconnecting"');
     });
   });
 
@@ -2882,12 +3054,18 @@ class _CloudFolder extends SyncBackend {
 /// TikTok as the publish service sees it, with an upload the test controls;
 /// everything else, the renewal included, is the real adapter.
 class _TikTokPublishing extends TikTokAdapter {
-  _TikTokPublishing(this.onPublish);
+  _TikTokPublishing(this.onPublish, {this.used});
   final Future<PublishResult> Function() onPublish;
+
+  /// The keys each upload ran with.
+  final List<Map<String, String>>? used;
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
   @override
-  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) => onPublish();
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) {
+    used?.add(Map.of(secrets));
+    return onPublish();
+  }
 }
 
 /// A cloud client over real [FolderSyncBackend]s, one folder per device, as
@@ -2946,6 +3124,100 @@ class _CloudClient {
     }
     _seenCopies[device] = serverCopies.keys.toSet();
     await Future<void>.delayed(const Duration(milliseconds: 5)); // distinct file times
+  }
+}
+
+/// A keychain that throws on reads after [failReadsAfter] of them.
+class _ThrowingSecrets extends InMemorySecretStore {
+  int failReadsAfter = 1 << 30;
+  int reads = 0;
+
+  /// Every read throws while set.
+  bool locked = false;
+  @override
+  Future<Map<String, String>?> read(String key) async {
+    reads++;
+    if (locked || reads > failReadsAfter) throw StateError('keychain locked');
+    return super.read(key);
+  }
+}
+
+/// X and Tumblr with an upload that always works; the renewal is the real
+/// adapter's.
+class _RotatingPublishing {
+  static PlatformAdapter of(String network) => network == 'x' ? _XPublishing() : _TumblrPublishing();
+}
+
+class _XPublishing extends XAdapter {
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => PublishResult.ok(remoteId: 'r1');
+}
+
+class _TumblrPublishing extends TumblrAdapter {
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => PublishResult.ok(remoteId: 'r1');
+}
+
+/// An OAuth 2.0 token server that rotates refresh tokens, as X and Tumblr
+/// do, for several developer apps: a refresh token works once, and only with
+/// the app that issued it (the critic's round-8 server).
+class _RotatingTokenServer {
+  _RotatingTokenServer(this.network);
+  final String network; // 'x' or 'tumblr'
+  final valid = <String, String>{}; // app -> the one refresh token that works
+  final _issued = <String, int>{};
+  int calls = 0;
+
+  /// Runs once, while the next token call is in flight.
+  Future<void> Function()? during;
+
+  String get _secretKey => network == 'x' ? XAdapter.secretClientSecret : TumblrAdapter.secretConsumerSecret;
+
+  Map<String, String> issue(String app, DateTime expires) {
+    final n = (_issued[app] ?? 0) + 1;
+    _issued[app] = n;
+    valid[app] = 'rft-$app-$n-fake';
+    return {
+      'access_token': 'act-$app-$n-fake',
+      'refresh_token': 'rft-$app-$n-fake',
+      'expires_at': expires.toUtc().toIso8601String(),
+      'token_type': 'Bearer',
+      _secretKey: 'cs-$app-fake',
+    };
+  }
+
+  Future<http.Response> handle(http.Request r) async {
+    if (!r.url.path.contains('oauth2/token')) return http.Response('{}', 200, headers: jsonHeaders);
+    calls++;
+    final hook = during;
+    during = null;
+    if (hook != null) await hook();
+    final body = Uri.splitQueryString(r.body);
+    final app = body['client_id'];
+    var secret = body['client_secret'];
+    final auth = r.headers['authorization'] ?? r.headers['Authorization'];
+    if (auth != null && auth.startsWith('Basic ')) secret = utf8.decode(base64Decode(auth.substring(6))).split(':').skip(1).join(':');
+    if (app == null || secret != 'cs-$app-fake' || body['refresh_token'] != valid[app]) {
+      return http.Response(jsonEncode({'error': 'invalid_grant', 'error_description': 'refresh token invalid'}), 400, headers: jsonHeaders);
+    }
+    final n = (_issued[app] ?? 0) + 1;
+    _issued[app] = n;
+    valid[app] = 'rft-$app-$n-fake';
+    return http.Response(jsonEncode({'access_token': 'act-$app-$n-fake', 'refresh_token': 'rft-$app-$n-fake', 'expires_in': 7200, 'token_type': 'bearer'}), 200,
+        headers: jsonHeaders);
+  }
+
+  /// Which app the account and its keys belong to, and whether the keys can
+  /// still be renewed.
+  String verdict(ConnectedAccount a, Map<String, String>? k) {
+    final app = a.configString(network == 'x' ? XAdapter.cfgClientId : TumblrAdapter.cfgConsumerKey);
+    final keyApp = (k?[_secretKey] ?? '?').replaceAll('cs-', '').replaceAll('-fake', '');
+    final live = k != null && k['refresh_token'] == valid[app] && keyApp == app;
+    return 'account app=$app; keys of app $keyApp; ${live ? 'renewable' : 'DEAD'}';
   }
 }
 

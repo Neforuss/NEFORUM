@@ -8,6 +8,7 @@ import '../adapters/adapter_context.dart';
 import '../adapters/adapter_registry.dart';
 import '../adapters/platform_adapter.dart';
 import '../auth/auth_broker.dart';
+import '../auth/oauth2_pkce.dart';
 import '../handoff/handoff_plan.dart';
 import '../http/neforum_http.dart';
 import '../media_hosts/media_host.dart';
@@ -590,8 +591,11 @@ class PublishService {
 
   /// Current secrets for [account], refreshed when needed. Returns the error
   /// instead when the sign-in cannot be renewed.
+  ///
+  /// [again]: whether keys that a sync brought during the renewal may be
+  /// renewed in turn (once).
   Future<(Map<String, String>?, PublishError?)> _freshSecrets(
-      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx) async {
+      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {bool again = true}) async {
     final secretMap = await secrets.read(account.id) ?? const <String, String>{};
     try {
       final coordinator = secretsCoordinator;
@@ -599,21 +603,33 @@ class PublishService {
           ? await coordinator.renew(account, secretMap, (s) => adapter.refreshSecrets(account, s, ctx))
           : await adapter.refreshSecrets(account, secretMap, ctx);
       if (refreshed == null) return (secretMap, null);
-      // 1.3.5: the keys stored here changed while the network answered: a
-      // sync brought others (a reconnect made on another device, perhaps
-      // through another app), or the coordinator's renew() stored this
-      // renewal and shared it already. What is stored wins, account and keys
-      // together: storing a renewal of the old sign-in over a reconnect would
-      // pair the new account with the old keys on every device.
-      // A keychain that cannot be read now never costs the renewal (with
-      // rotating keys the old ones are dead already): then it is stored.
+      // 1.3.5: the keys stored here changed while the network answered.
+      // * The coordinator's renew() stores its renewal itself, after the same
+      //   check against a sync, and shares it: then they hold that renewal,
+      //   or the keys a sync brought instead of it.
+      // * Otherwise a sync brought other keys (a reconnect made on another
+      //   device, perhaps through another app), and this renewal of the old
+      //   sign-in is dropped: storing it over a reconnect would pair the new
+      //   account with the old keys on every device.
+      // What is stored wins, account and keys together. A keychain that
+      // cannot be read now never costs the renewal (with rotating keys the
+      // old ones are dead already): then it is stored.
       Map<String, String>? stored;
       try {
         stored = await secrets.read(account.id) ?? const <String, String>{};
       } on Object catch (e) {
         _log.warn('Could not re-read the ${adapter.descriptor.name} keys before storing the renewal: $e');
       }
-      if (stored != null && !_sameKeys(stored, secretMap)) return (stored, null);
+      if (stored != null && !_sameKeys(stored, secretMap)) {
+        // Keys that arrived expired themselves (the other device's sign-in
+        // aged while this one was offline) are renewed once, with the account
+        // as stored now, through this same path, rather than posting with a
+        // dead token and asking for a reconnect that is not needed.
+        final expired = OAuthTokens.fromSecrets(stored)?.isExpired(now: _now()) ?? false;
+        final current = again && expired ? await accounts.get(account.id) : null;
+        if (current != null) return await _freshSecrets(current, adapter, ctx, again: false);
+        return (stored, null);
+      }
       await secrets.write(account.id, refreshed);
       return (refreshed, null);
     } on AdapterException catch (e) {
