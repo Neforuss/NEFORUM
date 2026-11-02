@@ -203,6 +203,46 @@ void main() {
     }, timeout: _timeout);
   });
 
+  test('a device holding nothing that joins a file holding one account twice: nothing is said to come from it', () async {
+    final folder = await syncFolderForTest(addTearDown);
+    const mc = {'instance': 'https://m.example', 'domain': 'm.example', 'remoteAccountId': '42'};
+    const u2 = '6f1c2d3e-0000-4abc-9def-000000000002', u3 = '6f1c2d3e-0000-4abc-9def-000000000003';
+    final a = SyncTestDevice(folder), b = SyncTestDevice(folder), c = SyncTestDevice(folder), d = SyncTestDevice(folder);
+    for (final x in [a, b, c, d]) {
+      addTearDown(x.dispose);
+    }
+    await a.addAccount(fakeAccount('x-1', 'x', tier: PlatformTier.byokApi, handle: '@a'), keys: {'access_token': 'fake'});
+    await a.syncOnce();
+    await b.addAccount(fakeAccount(u2, 'mastodon', handle: '@me@m.example', config: mc));
+    await c.addAccount(fakeAccount(u3, 'mastodon', handle: '@me@m.example', config: mc));
+    await c.posts.upsert(Post.fromJson({
+      'id': 'pc',
+      'text': 'post pc',
+      'createdAt': '2026-10-19T08:00:00.000Z',
+      'updatedAt': '2026-10-19T08:00:00.000Z',
+      'status': 'draft',
+      'targets': [
+        {'accountId': u3},
+      ],
+    }));
+    // B and C join at the same moment, both over A's file: the cloud app
+    // keeps C's write as a conflicted copy next to B's.
+    final file = File('$folder/$kSyncFileName');
+    final fromA = file.readAsBytesSync();
+    await b.syncOnce();
+    final fromB = file.readAsBytesSync();
+    file.writeAsBytesSync(fromA);
+    await c.syncOnce();
+    File('$folder/NEFORUM (conflicted copy).neforumsync').writeAsBytesSync(file.readAsBytesSync());
+    file.writeAsBytesSync(fromB);
+    final planner = await d.sync.joinPlanner(FolderSyncBackend(folder), d.passphrase);
+    final s = describeJoinPreview(await planner.preview());
+    planner.dispose();
+    expect(s.details.where((l) => l.contains('from this device')), isEmpty, reason: 'this device sends nothing of its own');
+    expect(s.headline, startsWith('This device gets 2 accounts and 1 post from '));
+    expect(s.details, contains(startsWith('The sync file holds 1 account twice')));
+  }, timeout: _timeout);
+
   group('the dry run in words', () {
     test('what arrives, from which device, and why', () {
       final s = describeJoinPreview(_preview(received: {

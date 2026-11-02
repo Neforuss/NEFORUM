@@ -1,10 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
+import 'package:neforum_core/src/adapters/tiktok/tiktok_adapter.dart';
 import 'package:test/test.dart';
+
+import 'support/test_context.dart';
 
 const _fast = BackupKdfParams.testing;
 const _pass = 'shared sync passphrase';
@@ -53,6 +57,55 @@ class _Device {
   int deriveCount = 0;
 
   Future<List<String>> ids(String platform) async => [for (final a in await accounts.all()) if (a.platformId == platform) a.id]..sort();
+}
+
+/// The property the dry run must hold: [d]'s preview equals what its sync
+/// then does, for every kind of record, here and in the file. Runs the
+/// preview, checks it wrote nothing, syncs for real, and compares.
+Future<SyncPreview> _expectDryRunEqualsSync(_Device d, {List<SyncSource> extra = const []}) async {
+  final cipher = BackupCipher(_pass, params: _fast, minimum: _fast);
+  Future<Map<String, SyncItem>> records() async => {
+        for (final s in [AccountsSyncSource(d.accounts), SecretsSyncSource(d.accounts, d.secrets), PostsSyncSource(d.posts), ...extra])
+          for (final e in (await s.snapshot()).entries) '${s.prefix}:${e.key}': e.value,
+      };
+  Future<SyncDocument> file() async {
+    final blob = await d.backend.read();
+    return blob == null ? SyncDocument() : SyncDocument.parse(await cipher.open(blob.bytes));
+  }
+
+  final before = await records();
+  final fileBefore = await file();
+  final stateBefore = d.stateStore.data == null ? null : jsonEncode(d.stateStore.data);
+  final blobBefore = (await d.backend.read())?.bytes;
+  final p = await d.engine.preview();
+  expect((await d.backend.read())?.bytes, blobBefore, reason: '${d.id}: the dry run writes nothing into the file');
+  expect(d.stateStore.data == null ? null : jsonEncode(d.stateStore.data), stateBefore, reason: '${d.id}: nor the sync state');
+  expect({for (final e in (await records()).entries) e.key: syncHash(e.value.value)}, {for (final e in before.entries) e.key: syncHash(e.value.value)},
+      reason: '${d.id}: nor anything here');
+  await d.engine.sync();
+  final after = await records();
+  final fileAfter = await file();
+  String? h(SyncItem? i) => i == null ? null : syncHash(i.value);
+  final changed = {for (final k in {...before.keys, ...after.keys}) if (h(before[k]) != h(after[k])) k};
+  final kinds = {for (final k in changed) k.substring(0, k.indexOf(':')), for (final k in p.received.keys) k.substring(0, k.indexOf(':'))};
+  for (final kind in kinds) {
+    bool of(String k) => k.startsWith('$kind:');
+    expect(p.received.keys.where(of).toSet(), {for (final k in changed.where(of)) if (after.containsKey(k)) k}, reason: '${d.id} $kind: what arrives or changes here');
+    for (final k in p.received.keys.where(of)) {
+      expect(syncHash(p.received[k]), h(after[k]), reason: '${d.id} $k: the value that arrives');
+    }
+    expect(p.removed.where(of).toSet(), {for (final k in changed.where(of)) if (!after.containsKey(k)) k}, reason: '${d.id} $kind: what goes here');
+  }
+  SyncRecord? live(SyncDocument doc, String k) => doc.records[k] == null || doc.records[k]!.deleted ? null : doc.records[k];
+  final sent = {
+    for (final k in fileAfter.records.keys)
+      if (live(fileAfter, k) != null && before[k] != null && live(fileAfter, k)!.hash != live(fileBefore, k)?.hash && h(before[k]) != live(fileBefore, k)?.hash) k,
+  };
+  expect(p.sent, sent, reason: "${d.id}: this device's own records the file gets");
+  for (final k in sent) {
+    expect(syncHash(p.sentValues[k]), live(fileAfter, k)!.hash, reason: '${d.id} $k: the value the file gets');
+  }
+  return p;
 }
 
 /// Each device syncs once, a minute apart, [n] times over.
@@ -1701,30 +1754,7 @@ void main() {
     });
 
     group('the dry run counts what the sync then does, record kind by record kind', () {
-      Future<Map<String, String>> records(_Device d) async => {
-            for (final s in [AccountsSyncSource(d.accounts), SecretsSyncSource(d.accounts, d.secrets), PostsSyncSource(d.posts)])
-              for (final e in (await s.snapshot()).entries) '${s.prefix}:${e.key}': syncHash(e.value.value),
-          };
-
-      Future<void> expectMatches(_Device d) async {
-        final before = await records(d);
-        final p = await d.engine.preview();
-        await d.engine.sync();
-        final after = await records(d);
-        for (final prefix in ['account', 'secrets', 'post']) {
-          final changed = {
-            for (final k in {...before.keys, ...after.keys})
-              if (k.startsWith('$prefix:') && before[k] != after[k]) k,
-          };
-          final arrived = {for (final k in changed) if (after.containsKey(k) && !(p.mergeEdits.containsKey(k) && before.containsKey(k))) k};
-          final gone = {for (final k in changed) if (!after.containsKey(k)) k};
-          expect(p.received.keys.where((k) => k.startsWith('$prefix:')).toSet(), arrived, reason: '${d.id} $prefix: what arrives');
-          expect(p.receivedOf(prefix), arrived.length);
-          expect({...p.removed, for (final e in p.mergeEdits.entries) if (e.value == null) e.key}.where((k) => k.startsWith('$prefix:') && before.containsKey(k)).toSet(),
-              gone,
-              reason: '${d.id} $prefix: what goes');
-        }
-      }
+      Future<void> expectMatches(_Device d) => _expectDryRunEqualsSync(d);
 
       test('a plain first sync', () async {
         await a.accounts.upsert(_account('x-1', 'x'));
@@ -1769,6 +1799,128 @@ void main() {
         await expectMatches(_Device('F', t.folder, clock));
       });
 
+      test('a setting a merge rewrites (default targets naming a merged copy) is counted, from the device that wrote it', () async {
+        await a.accounts.upsert(_account('x-1', 'x'));
+        await a.engine.sync();
+        final at = clock.now;
+        await putInFile('account:$_uuid2', SyncRecord.of(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig).toJson(), at: at, by: 'A'));
+        await putInFile('account:$_uuid3', SyncRecord.tombstone(at: at, by: 'A', mergedInto: _uuid2));
+        await putInFile('alias:$_uuid3', SyncRecord.of({'into': _uuid2}, at: at, by: 'A'));
+        await putInFile('setting:defaultTargetIds', SyncRecord.of([_uuid3, 'x-1'], at: at, by: 'A'));
+        final values = <String, Object?>{'defaultTargetIds': <Object?>[]};
+        final settings = CallbackSyncSource(
+          prefix: 'setting',
+          snapshot: () async => {for (final e in values.entries) e.key: SyncItem(e.value)},
+          apply: (k, v) async => values[k] = v,
+          appliesDeletions: false,
+          remapAccountIds: (key, value, ids) => value is List && value.any(ids.containsKey) ? [...{for (final id in value) ids[id] ?? id}] : value,
+        );
+        final f = _Device('F', backend, clock, extra: [settings]);
+        final p = await _expectDryRunEqualsSync(f, extra: [settings]);
+        expect(p.receivedOf('setting'), 1);
+        expect(values['defaultTargetIds'], [_uuid2, 'x-1']);
+        expect(p.fromDevices, ['A'], reason: 'the device that wrote the records that arrive');
+      });
+
+      test('an account arriving through a merge still names the device it came from', () async {
+        final folder = _CloudFolder();
+        final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock);
+        await x.accounts.upsert(_account('x-1', 'x'));
+        await x.engine.sync();
+        folder.freeze();
+        await y.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+        // Z's sign-in is newer: the merge rewrites the kept record with it.
+        await z.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 9), config: _mastodonConfig));
+        await y.engine.sync();
+        await z.engine.sync();
+        folder.thaw();
+        final p = await _expectDryRunEqualsSync(_Device('F', folder, clock));
+        expect(p.received.keys, containsAll(['account:x-1', 'account:$_uuid2']));
+        expect(p.fromDevices, containsAll(['X', 'Y']), reason: "the merged account is Y's record, rewritten by the merge");
+      });
+
+      test('a setting put back to its default (an explicit null) arrives as a change', () async {
+        final aValues = <String, Object?>{'accent': 0xFF112233};
+        CallbackSyncSource settings(Map<String, Object?> values) => CallbackSyncSource(
+              prefix: 'setting',
+              snapshot: () async => {for (final e in values.entries) e.key: SyncItem(e.value)},
+              apply: (k, v) async => values[k] = v,
+              appliesDeletions: false,
+            );
+        final aSource = settings(aValues);
+        final x = _Device('X', backend, clock, extra: [aSource]);
+        await x.engine.sync();
+        final bValues = <String, Object?>{'accent': 0xFF112233};
+        final bSource = settings(bValues);
+        final y = _Device('Y', backend, clock, extra: [bSource]);
+        await y.engine.sync();
+        aValues['accent'] = null; // put back to its default on X
+        await x.engine.sync();
+        final p = await _expectDryRunEqualsSync(y, extra: [bSource]);
+        expect(p.received, {'setting:accent': null});
+        expect(bValues.containsKey('accent'), isTrue);
+      });
+
+      test('a conflicted copy with an edit and a renewal', () async {
+        final folder = _CloudFolder();
+        final x = _Device('X', folder, clock), y = _Device('Y', folder, clock);
+        final tk = _account(_uuid1, 'tiktok', config: const {'clientKey': 'app', 'openId': 'o1'});
+        await x.accounts.upsert(tk);
+        await x.secrets.write(_uuid1, {'access_token': 'fake-a', 'expires_at': '2026-10-21T12:00:00.000Z'});
+        await x.engine.sync();
+        await y.engine.sync();
+        folder.freeze();
+        await x.secrets.write(_uuid1, {'access_token': 'fake-b', 'expires_at': '2026-10-22T12:00:00.000Z'});
+        await x.engine.sync();
+        clock.now = clock.now.add(const Duration(minutes: 1));
+        await y.accounts.upsert(tk.copyWith(enabled: false));
+        await y.engine.sync();
+        folder.thaw();
+        await _expectDryRunEqualsSync(x);
+        await _expectDryRunEqualsSync(y);
+      });
+
+      test('a copy a 1.3.4 device brought back, merged again', () async {
+        await a.accounts.upsert(_account('x-1', 'x'));
+        await a.engine.sync();
+        const mk = {'instance': 'https://mk.example'};
+        final at = clock.now;
+        await putInFile('account:$_uuid2', SyncRecord.of(_account(_uuid2, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).toJson(), at: at, by: 'O'));
+        await putInFile('alias:$_uuid3', SyncRecord.of({'into': _uuid2}, at: at, by: 'O'));
+        await putInFile('account:$_uuid3', SyncRecord.of(_account(_uuid3, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).toJson(), at: at, by: 'P134'));
+        await _expectDryRunEqualsSync(a);
+      });
+
+      test("a first sync where this device's setup wins, with a hand-off twin and a post", () async {
+        await a.accounts.upsert(_account('instagram-handoff-$_uuid1', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+        await a.engine.sync();
+        await b.accounts.upsert(_account('instagram-handoff-$_uuid2', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+        await b.accounts.upsert(_account('x-2', 'x'));
+        await b.posts.upsert(_post('pb', targets: [PostTarget(accountId: 'instagram-handoff-$_uuid2')]));
+        await _expectDryRunEqualsSync(b);
+      });
+
+      test('a first sync combining both versions of a record', () async {
+        final xHosts = <String, Object?>{'all': {'main': 'x-main', 'fallback': null}};
+        final yHosts = <String, Object?>{'all': {'main': 'y-main', 'fallback': 'y-fallback'}};
+        CallbackSyncSource hosts(Map<String, Object?> s) => CallbackSyncSource(
+              prefix: 'mediaHosts',
+              snapshot: () async => {for (final e in s.entries) e.key: SyncItem(e.value)},
+              apply: (id, v) async => s[id] = v,
+              joinMerge: (id, here, there, {required hereWins}) {
+                final w = (hereWins ? here : there)! as Map, l = (hereWins ? there : here)! as Map;
+                return {'main': w['main'] ?? l['main'], 'fallback': w['fallback'] ?? l['fallback']};
+              },
+            );
+        final x = _Device('X', backend, clock, extra: [hosts(xHosts)]);
+        await x.accounts.upsert(_account('one', 'x'));
+        await x.engine.sync();
+        final ySource = hosts(yHosts);
+        final y = _Device('Y', backend, clock, extra: [ySource]);
+        final p = await _expectDryRunEqualsSync(y, extra: [ySource]);
+        expect(p.received['mediaHosts:all'], {'main': 'x-main', 'fallback': 'y-fallback'});
+      });
+
       test('an ordinary sync after joining, with edits and a deletion elsewhere', () async {
         await a.posts.upsert(_post('p1'));
         await a.posts.upsert(_post('p2'));
@@ -1780,6 +1932,173 @@ void main() {
         await a.engine.sync();
         await expectMatches(b);
       });
+    });
+  });
+
+  group('an account and its keys come from one sign-in; targets keep every live part; links bring copies back (1.3.5)', () {
+    ConnectedAccount tiktok({required String app, required DateTime createdAt, bool enabled = true}) => ConnectedAccount(
+          id: _uuid1,
+          platformId: 'tiktok',
+          tier: PlatformTier.byokApi,
+          displayName: 'Me on TikTok',
+          handle: '@me',
+          createdAt: createdAt,
+          config: {'clientKey': app, 'openId': 'open-$app'},
+          enabled: enabled,
+        );
+    Map<String, String> tiktokKeys(String app, DateTime expires) => {
+          'access_token': 'act-$app-fake',
+          'refresh_token': 'rft-$app-fake',
+          'expires_at': expires.toUtc().toIso8601String(),
+          'refresh_expires_at': '2027-10-20T12:00:00.000Z',
+          'token_type': 'Bearer',
+          'client_secret': 'cs-$app-fake',
+        };
+
+    /// TikTok's token endpoint: a renewal works only when the client key (on
+    /// the account), the client secret and the refresh token (in the keys)
+    /// all belong to one developer app.
+    Future<String> renewal(ConnectedAccount account, Map<String, String> keys) async {
+      final ctx = testContext(
+        now: DateTime.utc(2026, 10, 25),
+        handler: (r) async {
+          final body = Uri.splitQueryString(r.body);
+          final app = body['client_key'];
+          final ok = body['client_secret'] == 'cs-$app-fake' && body['refresh_token'] == 'rft-$app-fake';
+          return ok
+              ? http.Response(jsonEncode({'access_token': 'act-x', 'expires_in': 86400, 'refresh_token': 'rft-x', 'refresh_expires_in': 31536000, 'open_id': 'o', 'token_type': 'Bearer'}), 200,
+                  headers: jsonHeaders)
+              : http.Response(jsonEncode({'error': 'invalid_client', 'error_description': 'Client key does not match', 'log_id': 'x'}), 400, headers: jsonHeaders);
+        },
+      );
+      try {
+        await TikTokAdapter().refreshSecrets(account, keys, ctx);
+        return 'renewed';
+      } on AdapterException catch (e) {
+        return 'refused (${e.error.kind.name})';
+      }
+    }
+
+    for (final variant in ['the edit after the reconnect', 'the edit before the reconnect', 'no edit', 'a conflicted copy']) {
+      test('a reconnect with another TikTok app on X while Y switches the account off ($variant): the renewal works on both', () async {
+        final store = variant == 'a conflicted copy' ? _CloudFolder() : MemorySyncBackend();
+        final x = _Device('X', store, clock), y = _Device('Y', store, clock);
+        final old = tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1));
+        await x.accounts.upsert(old);
+        await x.secrets.write(_uuid1, tiktokKeys('ck-old', DateTime.utc(2026, 10, 21)));
+        await x.engine.sync();
+        await y.engine.sync();
+        if (store is _CloudFolder) store.freeze();
+        if (variant.contains('before')) await y.accounts.upsert(old.copyWith(enabled: false));
+        clock.now = clock.now.add(const Duration(minutes: 1));
+        await x.accounts.upsert(tiktok(app: 'ck-new', createdAt: clock.now));
+        await x.secrets.write(_uuid1, tiktokKeys('ck-new', DateTime.utc(2026, 10, 21, 13)));
+        await x.engine.sync();
+        clock.now = clock.now.add(const Duration(minutes: 1));
+        if (variant.contains('after') || variant.contains('copy')) await y.accounts.upsert(old.copyWith(enabled: false));
+        await y.engine.sync();
+        if (store is _CloudFolder) store.thaw();
+        await _rounds([x, y, x, y], clock, 1);
+        for (final d in [x, y]) {
+          final account = (await d.accounts.get(_uuid1))!;
+          expect(await renewal(account, (await d.secrets.read(_uuid1))!), 'renewed', reason: '${d.id}: the account and its keys come from one sign-in');
+          expect(account.configString('clientKey'), 'ck-new');
+          expect(account.enabled, variant == 'no edit', reason: "${d.id}: Y's switch is kept");
+        }
+      });
+    }
+
+    test('this device reconnected with another TikTok app while the other switched the account off and synced first: the renewal works on both', () async {
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock);
+      final old = tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1));
+      await x.accounts.upsert(old);
+      await x.secrets.write(_uuid1, tiktokKeys('ck-old', DateTime.utc(2026, 10, 21)));
+      await x.engine.sync();
+      await y.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await y.accounts.upsert(old.copyWith(enabled: false));
+      await y.engine.sync(); // Y's switch reaches the file first
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await x.accounts.upsert(tiktok(app: 'ck-new', createdAt: clock.now)); // X reconnects, not synced yet
+      await x.secrets.write(_uuid1, tiktokKeys('ck-new', DateTime.utc(2026, 10, 21, 13)));
+      await _rounds([x, y, x, y], clock, 1);
+      for (final d in [x, y]) {
+        final account = (await d.accounts.get(_uuid1))!;
+        expect(account.configString('clientKey'), 'ck-new', reason: "${d.id}: this device's newer sign-in brings its registration");
+        expect(await renewal(account, (await d.secrets.read(_uuid1))!), 'renewed', reason: d.id);
+      }
+    });
+
+    test('a thread that broke off partway keeps its live parts and its resume state when two targets become one', () {
+      final partial = {
+        'accountId': _uuid3,
+        'status': 'failed',
+        'result': PublishResult.partialFailure(const PublishError.network('connection reset'), remoteId: 'p1', threadRemoteIds: ['p1', 'p2'], resumable: true).toJson(),
+      };
+      final plainFailed = {'accountId': _uuid2, 'status': 'failed', 'result': PublishResult.failure(const PublishError.auth('revoked')).toJson()};
+      final published = {'accountId': _uuid2, 'status': 'published', 'result': PublishResult.ok(remoteId: '111').toJson()};
+      final src = PostsSyncSource(InMemoryPostRepository());
+      PostTarget collapse(List<Object> targets) => Post.fromJson(Map<String, dynamic>.from(src.remapAccountIds(
+              'p', Post.fromJson({..._post('p').toJson(), 'status': 'partial', 'targets': targets}).toJson(), {_uuid3: _uuid2})! as Map))
+          .targets
+          .single;
+      final a = collapse([plainFailed, partial]);
+      expect(a.result?.allRemoteIds, ['p1', 'p2'], reason: 'a retry must not post the live parts again');
+      expect(a.result?.resumable, isTrue);
+      final b = collapse([published, partial]);
+      expect(b.status, TargetStatus.published);
+      expect(b.result?.allRemoteIds, containsAll(['111', 'p1', 'p2']), reason: 'no live post is forgotten');
+      // A winner without a result takes the other's whole.
+      final pending = {'accountId': _uuid2, 'status': 'pending'};
+      final handedOff = {'accountId': _uuid3, 'status': 'failed', 'result': PublishResult.handedOff(remoteUrl: 'https://example.com/p').toJson()};
+      final c = collapse([pending, handedOff]);
+      expect(c.status, TargetStatus.pending);
+      expect(c.result?.remoteUrl, 'https://example.com/p');
+    });
+
+    test('a copy a 1.3.4 device brought back (an edit beats a deletion) is merged again into the account its link names', () async {
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.engine.sync();
+      const mk = {'instance': 'https://mk.example'};
+      final cipher = BackupCipher(_pass, params: _fast, minimum: _fast);
+      final doc = await file();
+      doc.records['account:$_uuid2'] = SyncRecord.of(_account(_uuid2, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).toJson(), at: clock.now, by: 'O');
+      doc.records['account:$_uuid3'] = SyncRecord.tombstone(at: clock.now, by: 'O', mergedInto: _uuid2);
+      doc.records['alias:$_uuid3'] = SyncRecord.of({'into': _uuid2}, at: clock.now, by: 'O');
+      await backend.write(await cipher.seal(doc.toJson(writtenBy: 'O', writtenAt: clock.now)), ifMatch: (await backend.read())!.version);
+      await _rounds([a], clock, 1);
+      // The 1.3.4 phone had switched its copy off before it pulled the merge.
+      final doc2 = await file();
+      doc2.records['account:$_uuid3'] = SyncRecord.of(
+          _account(_uuid3, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).copyWith(enabled: false).toJson(),
+          at: clock.now,
+          by: 'P134');
+      await backend.write(await cipher.seal(doc2.toJson(writtenBy: 'P134', writtenAt: clock.now)), ifMatch: (await backend.read())!.version);
+      await _rounds([a], clock, 2);
+      expect(await a.ids('misskey'), [_uuid2]);
+      expect((await file()).records['account:$_uuid3']?.deleted, isTrue);
+    });
+
+    test('malformed links and keys stop nothing', () async {
+      await a.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+      await a.posts.upsert(_post('p', targets: const [PostTarget(accountId: _uuid3)]));
+      await a.engine.sync();
+      final at = clock.now;
+      for (final e in {
+        'alias:': SyncRecord.of({'into': _uuid2}, at: at, by: 'O'),
+        'alias:a': SyncRecord.of({'into': 5}, at: at, by: 'O'),
+        'alias:b': SyncRecord.of('not a map', at: at, by: 'O'),
+        'alias:c': SyncRecord.of(null, at: at, by: 'O'),
+        'alias:$_uuid3': SyncRecord.of({'into': _uuid2, 'extra': [1, 2]}, at: at, by: 'O'),
+        'alias:loop': SyncRecord.of({'into': 'loop'}, at: at, by: 'O'),
+        ':x': SyncRecord.of(1, at: at, by: 'O'),
+        'account:': SyncRecord.tombstone(at: at, by: 'O', mergedInto: _uuid2),
+      }.entries) {
+        await putInFile(e.key, e.value);
+      }
+      await _rounds([a], clock, 1);
+      await a.engine.preview();
+      expect((await a.posts.get('p'))!.targets.single.accountId, _uuid2);
     });
   });
 
@@ -1924,15 +2243,6 @@ void main() {
   });
 
   group('dry run (1.3.5)', () {
-    Future<Map<String, String>> localRecords(_Device d) async => {
-          for (final s in [AccountsSyncSource(d.accounts), SecretsSyncSource(d.accounts, d.secrets), PostsSyncSource(d.posts)])
-            for (final e in (await s.snapshot()).entries) '${s.prefix}:${e.key}': syncHash(e.value.value),
-        };
-    Map<String, String> changed(Map<String, String> before, Map<String, String> after) => {
-          for (final k in {...before.keys, ...after.keys})
-            if (before[k] != after[k]) k: after[k] ?? 'removed',
-        };
-
     test('the dry run says exactly what the first sync then does, and does none of it', () async {
       await a.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
       await a.secrets.write(_uuid1, {'access_token': 'fake-a'});
@@ -1946,31 +2256,18 @@ void main() {
       await b.accounts.upsert(_account('bsky', 'bluesky'));
       await b.posts.upsert(_post('pb', targets: const [PostTarget(accountId: _uuid2)]));
 
-      final localBefore = await localRecords(b);
-      final fileBefore = {for (final e in (await file()).records.entries) e.key: e.value.toJson().toString()};
       final writes = backend.writes;
-      final preview = await b.engine.preview();
-      expect(backend.writes, writes, reason: 'the dry run writes nothing');
-      expect(b.stateStore.data, isNull, reason: 'nor the sync state');
-      expect(await localRecords(b), localBefore, reason: 'nor anything here');
-
+      final preview = await _expectDryRunEqualsSync(b);
+      expect(backend.writes, writes + 1, reason: 'only the real sync writes');
       expect(preview.firstJoin, isTrue);
       expect(preview.seed, SyncSeed.file);
       expect(preview.here, SyncSideSummary(accounts: 2, oldestConnection: DateTime.utc(2026, 10, 1)));
       expect(preview.file.accounts, 3);
       expect(preview.mergedAccounts, {_uuid2: _uuid1});
       expect(preview.fromDevices, ['A']);
-      expect(preview.removed, isEmpty);
-
-      final report = await b.engine.sync();
-      final localChanges = changed(localBefore, await localRecords(b));
-      final fileAfter = {for (final e in (await file()).records.entries) e.key: e.value.toJson().toString()};
-      final fileChanges = {for (final k in {...fileBefore.keys, ...fileAfter.keys}) if (fileBefore[k] != fileAfter[k]) k};
-      expect(localChanges.keys.toSet(), {...preview.received.keys, ...preview.mergeEdits.keys}, reason: 'what arrived here is what the dry run said');
-      expect(fileChanges, preview.sent, reason: 'what went into the file is what the dry run said');
-      expect(report.mergedAccounts, preview.mergedAccounts.length);
-      expect(report.received, preview.received.length + preview.removed.length);
-      expect(report.sent, preview.sent.length);
+      expect(preview.removed, {'account:$_uuid2', 'secrets:$_uuid2'}, reason: 'the merged copy goes');
+      expect(preview.sent, containsAll(['account:bsky', 'post:pb']), reason: "this device's own records");
+      expect(preview.sent, isNot(contains('account:$_uuid1')), reason: 'a merge rewrite is not "from this device"');
     });
 
     test('a file that holds one account twice: the joining device is told what really arrives', () async {

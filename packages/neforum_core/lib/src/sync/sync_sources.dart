@@ -193,32 +193,44 @@ class PostsSyncSource extends SyncSource {
     return {...value.cast<String, Object?>(), 'targets': out};
   }
 
-  static int _progress(Object? status) => switch (status) {
-        'published' => 5,
-        'heldByPlatform' || 'handedOff' => 4,
-        'publishing' => 3,
-        'awaitingHandoff' => 2,
-        'pending' => 1,
-        _ => 0, // failed, cancelled, skipped
-      };
+  static int _progress(Map<Object?, Object?> target) {
+    final result = target['result'];
+    return switch (target['status']) {
+      'published' => 6,
+      'heldByPlatform' || 'handedOff' => 5,
+      'publishing' => 4,
+      'awaitingHandoff' => 3,
+      'pending' => 2,
+      // A thread or series that broke off partway, with its live parts
+      // recorded: it got further than a plain failure.
+      _ when result is Map && result['resumable'] == true => 1,
+      _ => 0, // failed, cancelled, skipped
+    };
+  }
+
+  static List<String> _liveIds(Object? result) => result is! Map
+      ? const []
+      : <Object?>[result['remoteId'], ...?(result['threadRemoteIds'] as List?), ...?(result['additionalRemoteIds'] as List?), ...?(result['seriesRemoteIds'] as List?)]
+          .whereType<String>()
+          .toList();
 
   /// 1.3.5: two targets of one post that name the same account (after its
   /// two copies were merged) as one: the one that got furthest (published,
   /// then held by the platform or handed off, then publishing, then waiting,
-  /// then failed), and the live post ids of the other added to its result,
-  /// so no live post is forgotten and none is posted again. Target JSON.
+  /// then a thread that broke off partway, then failed), with every live
+  /// post id of the other (a partial failure's too) added to its result, so
+  /// no live post is forgotten and none is posted again. A winner without a
+  /// result takes the other's whole, with its resume state. Target JSON.
   static Map<String, Object?> mergeTargets(Map<Object?, Object?> first, Map<Object?, Object?> second) {
-    final keepFirst = _progress(first['status']) >= _progress(second['status']);
+    final keepFirst = _progress(first) >= _progress(second);
     final winner = (keepFirst ? first : second).cast<String, Object?>(), other = keepFirst ? second : first;
     final otherResult = other['result'];
-    if (otherResult is! Map || otherResult['success'] != true) return winner;
-    final ids = <Object?>[otherResult['remoteId'], ...?(otherResult['threadRemoteIds'] as List?), ...?(otherResult['additionalRemoteIds'] as List?), ...?(otherResult['seriesRemoteIds'] as List?)];
     final mine = winner['result'];
-    if (mine is! Map) return {...winner, 'result': otherResult};
-    final kept = <String>{
-      ...[mine['remoteId'], ...?(mine['threadRemoteIds'] as List?), ...?(mine['additionalRemoteIds'] as List?), ...?(mine['seriesRemoteIds'] as List?)].whereType<String>(),
-    };
-    final added = [for (final x in ids.whereType<String>()) if (!kept.contains(x)) x];
+    if (otherResult is Map && mine is! Map) return {...winner, 'result': otherResult};
+    final ids = _liveIds(otherResult);
+    if (ids.isEmpty || mine is! Map) return winner;
+    final kept = _liveIds(mine).toSet();
+    final added = [for (final x in ids) if (!kept.contains(x)) x];
     if (added.isEmpty) return winner;
     return {
       ...winner,

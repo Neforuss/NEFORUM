@@ -136,6 +136,7 @@ Each account, post and setting merges on its own, so changes on different things
 - A post that has already gone out beats a later edit, so nothing is posted twice.
 - Otherwise, the newer edit wins.
 - For a sign-in, the most recently renewed keys win, because those are the ones the network still accepts.
+- An account's sign-in (the developer app it is connected through, and its keys) always comes from the most recent sign-in, as one piece. Your own changes to the account (switched off, renamed, quotas) follow the rules above on their own, so a reconnect on one device never pairs the new app with the old keys, or the other way round.
 - An edit beats a deletion, so nothing you were working on disappears.
 
 Cloud apps sometimes keep two copies when two devices save at the same moment, for example "NEFORUM (conflicted copy).neforumsync". NEFORUM merges such copies into the main file and then removes them.
