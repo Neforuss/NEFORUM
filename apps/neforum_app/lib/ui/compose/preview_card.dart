@@ -1,3 +1,4 @@
+import 'dart:convert' show jsonEncode;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -11,6 +12,8 @@ import '../../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvid
 import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/card_design.dart';
+import '../../media/card_design_edits.dart';
+import '../../media/card_renderer.dart' show CardDesignPainter, cardCoverDrawn;
 import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../media/text_card_background.dart';
@@ -36,6 +39,7 @@ import 'card_design_view.dart';
 import 'card_designer_sheet.dart';
 import 'font_picker_sheet.dart';
 import 'rich_text.dart';
+import 'text_card_style_editor.dart';
 
 /// How a platform presents a post; drives the preview layout.
 enum PreviewFamily { microblog, visual, forum, chat, blog }
@@ -469,7 +473,10 @@ class _TextCardPreview extends ConsumerWidget {
     final alignment = textCardAlignmentOf(placeholder);
     final showsHandle = textCardShowsHandleOf(placeholder);
     final text = textCardText(_previewPost(ref), p.target);
-    final byline = p.account.handle ?? p.account.displayName;
+    // 1.3.5: cards. The style, and the @handle the card shows: the style's
+    // own, else this account's.
+    final style = textCardStyleOf(placeholder);
+    final byline = style.bylineFor(p.account.handle ?? p.account.displayName);
     final size = textCardSizeOf(placeholder, id);
     final aspect = size.width / size.height;
     final background = textCardParametersOf(placeholder)?['background'] != null ? TextCardBackground.tryParse(composer.textCardBackground) : null;
@@ -477,6 +484,11 @@ class _TextCardPreview extends ConsumerWidget {
     // 1.3.1: cards. A card from the card designer is drawn by the renderer
     // of the saved card, at this network's size.
     final design = textCardDesignOf(placeholder);
+    // 1.3.5 round 6: a design that places the words or the @handle can leave
+    // some of them off this card (cut, or no room); say so under the card,
+    // whether or not an editor is open.
+    final fit = design != null && (design.placeWords || design.placeHandle) ? _wordsFitOf(_previewPost(ref), [(p, placeholder)], composer.textCardStyle, design) : null;
+    final warning = fit == null ? null : textCardFitWarning(fit);
     return LayoutBuilder(builder: (context, c) {
       // Portrait cards at phone width; square and wider ones fill the column
       // up to a comfortable size.
@@ -515,11 +527,21 @@ class _TextCardPreview extends ConsumerWidget {
                         alignment: alignment,
                         backdrop: previewBackdrop(ref, background),
                         customFont: customFont,
+                        style: style,
                       ),
               ),
             ),
           ),
         ),
+        if (warning != null)
+          Padding(
+            padding: const EdgeInsets.only(top: Space.sm),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.warning_amber_rounded, size: 16, color: nf.warning),
+              const SizedBox(width: Space.xs),
+              Flexible(child: Text(warning, key: ValueKey('text-card-fit-warning-$id'), style: context.text.bodySmall)),
+            ]),
+          ),
         const SizedBox(height: Space.sm),
         Center(
           child: _CardStylePicker(
@@ -536,10 +558,265 @@ class _TextCardPreview extends ConsumerWidget {
             background: background,
             withText: composer.textCardWithText[id] ?? true,
             design: design,
+            style: style,
+            // 1.3.5: cards. "Text & @handle…" only where no master editor is:
+            // with two or more cards the master editor above the previews
+            // is the one place that edits every network's card.
+            accountId: TextCardMasterPanel._cardsByNetwork(TextCardMasterPanel.withCards(ref.watch(composerPreviewsProvider))).length < 2 ? p.account.id : null,
           ),
         ),
       ]);
     });
+  }
+}
+
+/// 1.3.5: cards. Opens the text card's "Text & @handle" editor for the
+/// network of [accountId]'s preview: that network's card, live at its own
+/// shape, above the [TextCardStyleEditor]. The style is the post's, so the
+/// change reaches every network's card; the sheet says so when more than one
+/// network gets one.
+Future<void> _showTextCardStyleSheet(BuildContext context, {required String accountId}) {
+  final sheet = _TextCardStyleSheet(accountId: accountId);
+  if (context.isCompact) {
+    return showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, builder: (_) => sheet);
+  }
+  return showDialog<void>(
+    context: context,
+    builder: (_) => Dialog(
+      clipBehavior: Clip.antiAlias,
+      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 680, maxHeight: 860), child: sheet),
+    ),
+  );
+}
+
+class _TextCardStyleSheet extends ConsumerWidget {
+  const _TextCardStyleSheet({required this.accountId});
+  final String accountId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final previews = ref.watch(composerPreviewsProvider);
+    final p = previews.where((x) => x.account.id == accountId).firstOrNull;
+    final card = p == null ? null : _textCardOf(p.variant.mediaOfPart(0));
+    // The post changed under the sheet (the card went away): nothing to edit.
+    if (p == null || card == null) {
+      return Padding(
+        padding: const EdgeInsets.all(Space.xl),
+        child: Text('This network no longer gets a text card.', style: context.text.bodyMedium),
+      );
+    }
+    final others = TextCardMasterPanel._cardsByNetwork(TextCardMasterPanel.withCards(previews)).length - 1;
+    final composer = ref.watch(composerProvider);
+    final background = textCardParametersOf(card)?['background'] != null ? TextCardBackground.tryParse(composer.textCardBackground) : null;
+    final picture = _TextCardPicture(p: p, placeholder: card, maxWidth: 260);
+    final editor = TextCardStyleEditor(
+      keyPrefix: 'text-card-style',
+      ownHandles: [p.account.handle ?? p.account.displayName],
+      // The style is the post's: with other cards, it speaks of all of them.
+      where: others > 0 ? 'every network' : p.descriptor.name,
+      master: others > 0,
+      theme: textCardThemeOf(card) ?? TextCardTheme.dark,
+      handleShownNowhere: !textCardShowsHandleOf(card),
+      background: background,
+      design: textCardDesignOf(card),
+      // The sheet is opened for these controls: unfolded.
+      initiallyExpanded: true,
+      wordsFit: () => _wordsFitOf(_previewPost(ref), [(p, card)], composer.textCardStyle, textCardDesignOf(card)),
+    );
+    final wide = MediaQuery.sizeOf(context).width >= 760;
+    return Material(
+      color: Colors.transparent,
+      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(Space.xl, Space.lg, Space.sm, 0),
+          child: Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text('Text & @handle', style: context.text.titleMedium),
+                Text(
+                  others > 0 ? 'For the card on every network (${others + 1}), each at its own shape' : 'For the ${p.descriptor.name} card',
+                  style: context.text.bodySmall?.copyWith(color: nf.textFaint),
+                ),
+              ]),
+            ),
+            IconButton(tooltip: 'Close', icon: const Icon(Icons.close_rounded), onPressed: () => Navigator.of(context).maybePop()),
+          ]),
+        ),
+        Flexible(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(Space.xl, Space.sm, Space.xl, Space.xl),
+            child: wide
+                ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    SizedBox(width: 240, child: picture),
+                    const SizedBox(width: Space.xl),
+                    Expanded(child: editor),
+                  ])
+                : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [Center(child: picture), editor]),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+/// 1.3.5: cards. How large [post]'s words come out on the networks' cards
+/// ([cards]: each preview and its card's stand-in), against what the
+/// editor's size control asks: on the classic card the size drawn against
+/// the size at 100% ([TextCardPainter.measureWords]), on [design] the pixels
+/// its words shrink to ([CardDesignPainter.drawnWordsSize]) against its
+/// words' size. The network where they fall shortest; null without words.
+///
+/// Measured once per set of inputs (the words, each card's shape and
+/// choices, the style or design) and kept for the last few: a composer
+/// change that leaves them alone (a title, a schedule, another network's
+/// setting) measures nothing again.
+TextCardWordsFit? _wordsFitOf(Post post, List<(TargetPreview, MediaAttachment)> cards, TextCardStyle style, CardDesign? design) {
+  final key = [
+    design == null ? jsonEncode(style.toJson()) : jsonEncode(design.toJson()),
+    for (final (p, m) in cards) '${p.account.id}|${p.account.handle}|${jsonEncode(m.renderParameters)}|${m.width}x${m.height}|${textCardText(post, p.target)}',
+  ].join('\n');
+  if (_wordsFitCache.containsKey(key)) {
+    final hit = _wordsFitCache.remove(key);
+    return _wordsFitCache[key] = hit;
+  }
+  final fit = _measureWordsFit(post, cards, style, design);
+  _wordsFitCache[key] = fit;
+  if (_wordsFitCache.length > 16) _wordsFitCache.remove(_wordsFitCache.keys.first);
+  return fit;
+}
+
+/// The last measurements of [_wordsFitOf], oldest first.
+final Map<String, TextCardWordsFit?> _wordsFitCache = {};
+
+/// How many times [_wordsFitOf] measured, for tests.
+@visibleForTesting
+int debugTextCardWordsFitMeasurements = 0;
+
+TextCardWordsFit? _measureWordsFit(Post post, List<(TargetPreview, MediaAttachment)> cards, TextCardStyle style, CardDesign? design) {
+  debugTextCardWordsFitMeasurements++;
+  TextCardWordsFit? shortest;
+  for (final (p, m) in cards) {
+    final id = p.descriptor.id;
+    final text = textCardText(post, p.target);
+    if (text.isEmpty) continue;
+    final size = textCardSizeOf(m, id);
+    final safe = textCardSafeOf(m) ? fullScreenSafeArea(id) : EdgeInsets.zero;
+    final byline = textCardShowsHandleOf(m) ? style.bylineFor(p.account.handle ?? p.account.displayName) : null;
+    final branded = textCardBrandedOf(m);
+    final double asked, drawn;
+    var cut = false, dropped = false, handleDropped = false;
+    String? fitsAt;
+    if (design != null) {
+      final picture = textCardParametersOf(m)?['background'] != null;
+      ({double size, bool cut, bool dropped, bool handleDropped})? measure(CardDesign d) => CardDesignPainter(
+            design: d,
+            texts: {CardBlockRole.postText: text, CardBlockRole.handle: byline ?? '', if (!branded) CardBlockRole.signature: ''},
+            safe: safe,
+            platformId: id,
+            // The saved card draws its waveform (renderDesignedTextCard);
+            // only whether one is drawn matters for the room.
+            waveform: d.waveform.visible ? const [1.0] : null,
+            coverShown: cardCoverDrawn(d, picture: picture),
+          ).drawnWords(size);
+      final measured = measure(design);
+      if (measured == null) continue;
+      asked = design.wordsSize;
+      drawn = measured.size;
+      cut = measured.cut;
+      dropped = measured.dropped;
+      handleDropped = measured.handleDropped;
+      // Round 6: advice that is true. Another position is named only when
+      // it was measured to show every word on this card.
+      if ((cut || dropped) && design.placeWords) {
+        for (final position in TextCardTextPosition.values) {
+          if (position == design.wordsPosition) continue;
+          final other = measure(design.withWordsPosition(position));
+          if (other != null && !other.cut && !other.dropped) {
+            fitsAt = position.label;
+            break;
+          }
+        }
+      }
+    } else {
+      final words = TextCardPainter(
+        text: text,
+        theme: textCardThemeOf(m) ?? TextCardTheme.dark,
+        byline: byline,
+        branded: branded,
+        font: textCardFontOf(m).resolve(id),
+        safe: safe,
+        alignment: textCardAlignmentOf(m),
+        customFont: textCardCustomFontOf(m),
+        style: style,
+      ).measureWords(size);
+      asked = style.textSize;
+      drawn = words.fitted <= 0 ? 1 : words.drawn / words.fitted;
+    }
+    // The network with the worst news comes first (words left off, the
+    // @handle left off, words cut), then the one where they fall shortest.
+    int severity(bool dropped, bool handleDropped, bool cut) => dropped ? 3 : (handleDropped ? 2 : (cut ? 1 : 0));
+    final mine = severity(dropped, handleDropped, cut);
+    final theirs = shortest == null ? -1 : severity(shortest.dropped, shortest.handleDropped, shortest.cut);
+    if (shortest == null || mine > theirs || (mine == theirs && drawn / asked < shortest.drawn / shortest.asked)) {
+      shortest = (network: p.descriptor.name, asked: asked, drawn: drawn, cut: cut, dropped: dropped, handleDropped: handleDropped, fitsAt: fitsAt);
+    }
+  }
+  return shortest;
+}
+
+/// A network's text card as it will be saved, from its composer stand-in
+/// ([placeholder]): the classic card or the card designer's, at the
+/// network's shape, no wider than [maxWidth].
+class _TextCardPicture extends ConsumerWidget {
+  const _TextCardPicture({required this.p, required this.placeholder, this.maxWidth = 300});
+  final TargetPreview p;
+  final MediaAttachment placeholder;
+  final double maxWidth;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nf = context.nf;
+    final id = p.descriptor.id;
+    final composer = ref.watch(composerProvider);
+    final style = textCardStyleOf(placeholder);
+    final showsHandle = textCardShowsHandleOf(placeholder);
+    final byline = showsHandle ? style.bylineFor(p.account.handle ?? p.account.displayName) : null;
+    final size = textCardSizeOf(placeholder, id);
+    final background = textCardParametersOf(placeholder)?['background'] != null ? TextCardBackground.tryParse(composer.textCardBackground) : null;
+    final safe = textCardSafeOf(placeholder) ? fullScreenSafeArea(id) : EdgeInsets.zero;
+    final design = textCardDesignOf(placeholder);
+    final text = textCardText(_previewPost(ref), p.target);
+    final aspect = size.width / size.height;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: aspect < 1 ? maxWidth * aspect.clamp(0.6, 1.0) : maxWidth),
+      child: ClipRRect(
+        borderRadius: Radii.rMd,
+        child: DecoratedBox(
+          key: ValueKey('text-card-picture-$id'),
+          position: DecorationPosition.foreground,
+          decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+          child: design != null
+              ? CardDesignView(
+                  request: CardPreviewRequest.text(
+                      design: design, platformId: id, size: size, safe: safe, text: text, byline: byline, signed: textCardBrandedOf(placeholder), background: background),
+                )
+              : TextCardView(
+                  text: text,
+                  theme: textCardThemeOf(placeholder) ?? TextCardTheme.dark,
+                  font: textCardFontOf(placeholder).resolve(id),
+                  aspect: aspect,
+                  byline: byline,
+                  branded: textCardBrandedOf(placeholder),
+                  safe: safe,
+                  alignment: textCardAlignmentOf(placeholder),
+                  backdrop: previewBackdrop(ref, background),
+                  customFont: textCardCustomFontOf(placeholder),
+                  style: style,
+                ),
+        ),
+      ),
+    );
   }
 }
 
@@ -667,7 +944,11 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
     ];
 
     final text = textCardText(_previewPost(ref), first.target);
-    final byline = first.account.handle ?? first.account.displayName;
+    // 1.3.5: cards. The style is the post's, on every card alike; its own
+    // @handle replaces every network's.
+    final style = textCardStyleOf(firstCard);
+    final byline = style.bylineFor(first.account.handle ?? first.account.displayName);
+    final ownHandles = {for (final (p, _) in cards) p.account.handle ?? p.account.displayName}.toList();
     // The master card: square, with what most networks show.
     const size = Size(1080, 1080);
     final signed = branded ?? TextCardMasterPanel._most(cards.map((c) => textCardBrandedOf(c.$2)));
@@ -694,6 +975,7 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
             alignment: alignment,
             backdrop: previewBackdrop(ref, background),
             customFont: customFont,
+            style: style,
           );
 
     return NfCard(
@@ -724,39 +1006,82 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
         ]),
         if (open) ...[
           const SizedBox(height: Space.md),
-          Center(
-            child: SizedBox(
-              key: const Key('text-card-master-preview'),
-              width: 220,
-              child: ClipRRect(
-                borderRadius: Radii.rMd,
-                child: DecoratedBox(
-                  position: DecorationPosition.foreground,
-                  decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
-                  child: picture,
+          LayoutBuilder(builder: (context, box) {
+            final preview = Center(
+              child: SizedBox(
+                key: const Key('text-card-master-preview'),
+                width: 220,
+                child: ClipRRect(
+                  borderRadius: Radii.rMd,
+                  child: DecoratedBox(
+                    position: DecorationPosition.foreground,
+                    decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+                    child: picture,
+                  ),
                 ),
               ),
-            ),
-          ),
-          const SizedBox(height: Space.sm),
-          Center(
-            child: _CardStylePicker(
-              key: const ValueKey('text-card-style-master'),
-              current: theme,
-              font: font,
-              customFont: customFont,
-              platform: first.descriptor,
-              branded: branded,
-              text: text,
-              byline: byline,
-              alignment: alignment,
-              showsHandle: showsHandle,
+            );
+            final pills = Center(
+              child: _CardStylePicker(
+                key: const ValueKey('text-card-style-master'),
+                current: theme,
+                font: font,
+                customFont: customFont,
+                platform: first.descriptor,
+                branded: branded,
+                text: text,
+                byline: byline,
+                alignment: alignment,
+                showsHandle: showsHandle,
+                background: background,
+                withText: withText,
+                design: design,
+                networks: ids,
+                style: style,
+              ),
+            );
+            // 1.3.5: cards. The @handle written on every card, and the
+            // words' size, colours, spacing, place and margins.
+            final editor = TextCardStyleEditor(
+              key: const ValueKey('text-card-master-style-editor'),
+              keyPrefix: 'text-card-master-style',
+              master: true,
+              ownHandles: ownHandles,
+              where: 'every network',
+              theme: theme,
+              handleHiddenOn: showsHandle == null ? [for (final (p, m) in cards) if (!textCardShowsHandleOf(m)) p.descriptor.name] : const [],
+              handleShownNowhere: showsHandle == false,
               background: background,
-              withText: withText,
               design: design,
-              networks: ids,
-            ),
-          ),
+              wordsFit: () => _wordsFitOf(_previewPost(ref), cards, composer.textCardStyle, design),
+            );
+            // With room (a tablet, or a computer window that shows the
+            // previews on their own), the card and its pills stay in view
+            // beside the editor, as in a design tool; else one column.
+            if (box.maxWidth >= 680) {
+              return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                SizedBox(
+                  width: 300,
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [preview, const SizedBox(height: Space.md), pills]),
+                ),
+                const SizedBox(width: Space.lg),
+                Expanded(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(border: Border(left: BorderSide(color: nf.border))),
+                    child: Padding(padding: const EdgeInsets.only(left: Space.lg), child: editor),
+                  ),
+                ),
+              ]);
+            }
+            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+              preview,
+              const SizedBox(height: Space.sm),
+              pills,
+              const SizedBox(height: Space.sm),
+              Divider(height: 1, color: nf.border),
+              editor,
+            ]);
+          }),
         ],
         if (differences.isNotEmpty) ...[
           const SizedBox(height: Space.md),
@@ -966,7 +1291,9 @@ Widget _optionPill(BuildContext context,
 /// network, a colour or photo background, and saving the card as an image.
 /// With [networks] (the master editor, [TextCardMasterPanel]) the signature,
 /// the @handle and "Post text too" are set for every one of those networks
-/// at once, and a null one is on for some of them only.
+/// at once, and a null one is on for some of them only. Under one network's
+/// card, "Text & @handle…" (1.3.5) opens the [TextCardStyleEditor] the
+/// master editor shows inline.
 class _CardStylePicker extends ConsumerStatefulWidget {
   const _CardStylePicker({
     super.key,
@@ -983,6 +1310,8 @@ class _CardStylePicker extends ConsumerStatefulWidget {
     required this.withText,
     this.design,
     this.networks,
+    this.style = TextCardStyle.classic,
+    this.accountId,
   });
   final TextCardTheme current;
   final TextCardFont font;
@@ -1010,6 +1339,14 @@ class _CardStylePicker extends ConsumerStatefulWidget {
   /// 1.3.3: the master editor's networks (platform ids); null for one
   /// network's own controls.
   final List<String>? networks;
+
+  /// 1.3.5: cards. The post's style, drawn on the saved image too.
+  final TextCardStyle style;
+
+  /// 1.3.5: cards. The account whose preview this is, for the "Text &
+  /// @handle" sheet; null in the master editor, which shows the editor
+  /// inline.
+  final String? accountId;
 
   @override
   ConsumerState<_CardStylePicker> createState() => _CardStylePickerState();
@@ -1053,6 +1390,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         alignment: widget.alignment,
         backdrop: backdrop,
         customFont: widget.customFont,
+        style: widget.style,
       );
       final stamp = DateFormat('yyyy-MM-dd HHmm').format(DateTime.now());
       final r = await FileExport.save(
@@ -1097,8 +1435,10 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           ),
         );
 
+    // A colour of the card's own (1.3.5) is neither theme; picking one puts
+    // the theme's colours back.
     Widget themeOption(TextCardTheme t) => pill(
-          selected: t == widget.current,
+          selected: t == widget.current && !widget.style.hasCardColours,
           label: t.label,
           leading: Container(
             width: 14,
@@ -1304,6 +1644,17 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           ),
         ),
       ),
+      // 1.3.5: cards. The @handle written on the card and the words' size,
+      // colours, spacing, place and margins; inline in the master editor.
+      if (!master && widget.accountId != null)
+        pill(
+          key: Key('$keyPrefix-text-style'),
+          selected: !widget.style.isClassic,
+          label: 'Text & @handle…',
+          tooltip: 'Your own @handle on the card, its size and corner, and the size, colours, line spacing, place and margins of the words',
+          leading: Icon(Icons.tune_rounded, size: 14, color: !widget.style.isClassic ? nf.accent : nf.textFaint),
+          onTap: () => _showTextCardStyleSheet(context, accountId: widget.accountId!),
+        ),
       // Each network saves its own card, at its own shape.
       if (!master) Builder(
         builder: (bc) => pill(

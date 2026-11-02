@@ -32,3 +32,6 @@ apps/neforum_app/test/failures/
 
 # Release files built locally
 /dist/
+
+# Agent worktrees (each one is a full checkout; never commit them)
+.claude/worktrees/

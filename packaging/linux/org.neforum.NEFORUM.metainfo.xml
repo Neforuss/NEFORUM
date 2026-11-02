@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.3.5" date="2026-11-02">
+      <description>
+        <p>Each account card shows how the account is connected: the method, the developer app or server, and what it is allowed to do, never its keys. Sync carries the exact setup between devices, media hosts and connections included, shows what joining will do before it changes anything, starts from the device with the most accounts, and merges the same account into one instead of making copies. The text card editor lets you edit the @handle and gives far more control over the card's layout, so words and the handle never cover the picture.</p>
+      </description>
+    </release>
     <release version="1.3.4" date="2026-10-31">
       <description>
         <p>Photo dumps go out whole: more photos and videos than a network takes in one post are split by its own limits, in your order, into further posts of a thread on X, Bluesky, Mastodon and Misskey, and into a numbered series of posts elsewhere, instead of being dropped. The preview shows every post, and a thread or series that breaks off is finished by Retry without posting anything twice.</p>

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/painting.dart' show Color;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
@@ -8,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../media/audio_plan.dart';
 import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
 import '../media/card_design.dart';
+import '../media/card_design_edits.dart' show designWithHandle;
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -64,6 +66,8 @@ class ComposerState {
     this.textCardCustomFont, // 1.3.1: cards
     this.textCardDesign, // 1.3.1: cards
     this.audioCardDesign, // 1.3.1: cards
+    this.textCardStyle = TextCardStyle.classic, // 1.3.5: cards
+    this.textCardDesignBeforeEdits, // 1.3.5: cards
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -207,6 +211,21 @@ class ComposerState {
   /// [textCardDesign], or the Settings default; null for the classic card.
   CardDesign? textDesign(AppSettings settings) => effectiveCardDesign(textCardDesign, settings.textCardDesign);
 
+  /// 1.3.5: cards. The classic text card's size, colours, line spacing,
+  /// margins, word position and @handle (its words, size, corner and
+  /// colour), the same on every network's card; [TextCardStyle.classic] for
+  /// the card as it always was. Set from the master editor or under any
+  /// network's card; its @handle also goes on designed cards.
+  final TextCardStyle textCardStyle;
+
+  /// 1.3.5: cards. The post's design as it was before the text card
+  /// editor's controls first changed it, as `{'design': <its JSON or null>}`
+  /// (null inside: the post followed the Settings default); null when the
+  /// editor has changed nothing since a design was picked or the post was
+  /// opened or saved. "Reset handle and words" puts it back, however often
+  /// the editor is folded or rebuilt, and the composer's draft keeps it.
+  final Map<String, dynamic>? textCardDesignBeforeEdits;
+
   /// [audioCardDesign], or the Settings default; null for the classic card.
   CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
 
@@ -265,6 +284,7 @@ class ComposerState {
     Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
     Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
+    TextCardStyle? textCardStyle, // 1.3.5: cards
     bool clearPoll = false,
     bool clearSchedule = false,
     bool clearTitle = false,
@@ -273,6 +293,9 @@ class ComposerState {
     bool clearFocus = false,
     bool clearArtwork = false,
     bool clearTextCardBackground = false,
+    Map<String, dynamic>? textCardDesignBeforeEdits, // 1.3.5: cards
+    bool clearTextCardDesign = false,
+    bool clearTextCardDesignBeforeEdits = false,
   }) =>
       ComposerState(
         editingPostId: editingPostId ?? this.editingPostId,
@@ -307,8 +330,11 @@ class ComposerState {
         mediaParts: mediaParts ?? this.mediaParts,
         audioDetails: audioDetails ?? this.audioDetails,
         textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
-        textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
+        textCardDesign: clearTextCardDesign ? null : (textCardDesign ?? this.textCardDesign), // 1.3.1: cards
         audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
+        textCardStyle: textCardStyle ?? this.textCardStyle, // 1.3.5: cards
+        textCardDesignBeforeEdits:
+            clearTextCardDesignBeforeEdits ? null : (textCardDesignBeforeEdits ?? this.textCardDesignBeforeEdits), // 1.3.5: cards
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -404,6 +430,17 @@ class ComposerNotifier extends Notifier<ComposerState> {
         state = state.copyWith(selected: _defaultTargets(next));
       }
     });
+    // 1.3.5 round 5: a post with no theme of its own follows Settings > Text
+    // cards' theme, so a theme changed there gets the same readability rule
+    // as the composer's theme chip ([setTextCardTheme]): a words or @handle
+    // colour that would not read on the new plain card (under 3:1) goes, and
+    // neither the preview nor a scheduled re-render draws white on white. A
+    // photo card keeps its colours: they were picked for the photo.
+    ref.listen(settingsProvider.select((s) => s.textCardTheme), (prev, next) {
+      if (prev == next || state.textCardTheme != null || state.textCardBackground != null) return;
+      final style = _readableOn(state.textCardStyle, next);
+      if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
+    });
     final settings = ref.read(settingsProvider);
     return ComposerState(
       visibility: settings.defaultVisibility,
@@ -457,7 +494,56 @@ class ComposerNotifier extends Notifier<ComposerState> {
     return out;
   }
   void focus(String? accountId) => state = accountId == null ? state.copyWith(clearFocus: true) : state.copyWith(focusedAccountId: accountId);
-  void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t);
+
+  /// "White on black" or "Black on white": the theme's colours, so colours
+  /// of the card's own ([TextCardStyle]) go.
+  void setTextCardTheme(TextCardTheme t) {
+    // On a plain card a @handle colour that would vanish on the new theme
+    // goes too (1.3.5).
+    final style = state.textCardStyle.withoutColours();
+    state = state.copyWith(textCardTheme: t, textCardStyle: state.textCardBackground == null ? _readableOn(style, t) : style);
+  }
+
+  /// 1.3.5: cards. The text card's style for every network.
+  void setTextCardStyle(TextCardStyle style) => state = state.copyWith(textCardStyle: style);
+
+  /// 1.3.5: cards. Where the words sit, top to bottom: one setting for the
+  /// master editor and the background photo's "Words" controls
+  /// ([textCardWordsPosition]). A place the photo chose before 1.3.5 is
+  /// folded into it, so the two never disagree.
+  void setTextCardWordsPosition(TextCardTextPosition position) {
+    final photo = TextCardBackground.tryParse(state.textCardBackground);
+    state = state.copyWith(
+      textCardStyle: state.textCardStyle.copyWith(textPosition: position),
+      textCardBackground: photo != null && photo.textPosition != TextCardTextPosition.center
+          ? photo.copyWith(textPosition: TextCardTextPosition.center).toJson()
+          : null,
+    );
+  }
+
+  /// 1.3.5: cards. The words' own colour (opaque ARGB) for every network,
+  /// set in the master editor or with the photo's "Other…": null for the
+  /// theme's, or over a photo white or black, whichever reads. A white or
+  /// black the photo chose is folded in, so the last change wins
+  /// ([textCardWordsColour]).
+  void setTextCardWordsColour(int? argb) {
+    final photo = TextCardBackground.tryParse(state.textCardBackground);
+    final style = state.textCardStyle;
+    state = state.copyWith(
+      textCardStyle: argb == null ? style.copyWith(clearTextColor: true) : style.copyWith(textColor: argb),
+      textCardBackground: photo != null && photo.textColor != TextCardTextColor.automatic ? photo.copyWith(textColor: TextCardTextColor.automatic).toJson() : null,
+    );
+  }
+
+  /// 1.3.5: cards. The background photo's own words colour (Automatic,
+  /// White or Black, as before 1.3.5): it goes with the photo, and clears a
+  /// words colour of the style's so the last change wins. Without a photo
+  /// it does nothing.
+  void setTextCardPhotoWordsColour(TextCardTextColor colour) {
+    final photo = TextCardBackground.tryParse(state.textCardBackground);
+    if (photo == null) return;
+    state = state.copyWith(textCardBackground: photo.copyWith(textColor: colour).toJson(), textCardStyle: state.textCardStyle.copyWith(clearTextColor: true));
+  }
   /// A built-in font for the card's words (no installed or imported one).
   void setTextCardFont(TextCardFont f) => state = state.copyWith(textCardFont: f, textCardCustomFont: const {});
 
@@ -466,7 +552,36 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setTextCardCustomFont(CaptionFont? font) => state = state.copyWith(textCardCustomFont: font?.toJson() ?? const {});
 
   /// 1.3.1: cards. This post's text card design; null for the classic card.
-  void setTextCardDesign(CardDesign? design) => state = state.copyWith(textCardDesign: design?.toJson() ?? const {});
+  /// A design picked (in the designer, or a template) starts afresh: the
+  /// text card editor's "Reset" has nothing to put back.
+  void setTextCardDesign(CardDesign? design) =>
+      state = state.copyWith(textCardDesign: design?.toJson() ?? const {}, clearTextCardDesignBeforeEdits: true);
+
+  /// 1.3.5: cards. The design the text card editor's controls made from the
+  /// post's design ([textCardDesignBeforeEdits] remembers the design before
+  /// the first such change, or that the post followed the Settings
+  /// default).
+  void setTextCardDesignEdited(CardDesign design) => state = state.copyWith(
+        textCardDesign: design.toJson(),
+        textCardDesignBeforeEdits: state.textCardDesignBeforeEdits ?? {'design': state.textCardDesign},
+      );
+
+  /// 1.3.5: cards. The post was saved: what the editor changed is now the
+  /// post's own design, with nothing to put back.
+  void forgetTextCardDesignEdits() {
+    if (state.textCardDesignBeforeEdits != null) state = state.copyWith(clearTextCardDesignBeforeEdits: true);
+  }
+
+  /// 1.3.5: cards. Puts back the design the editor's controls started from;
+  /// a post that followed the Settings default follows it again.
+  void resetTextCardDesignEdits() {
+    final before = state.textCardDesignBeforeEdits;
+    if (before == null) return;
+    final design = before['design'];
+    state = design is Map
+        ? state.copyWith(textCardDesign: Map<String, dynamic>.from(design), clearTextCardDesignBeforeEdits: true)
+        : state.copyWith(clearTextCardDesign: true, clearTextCardDesignBeforeEdits: true);
+  }
 
   /// 1.3.1: cards. This post's audio card design; null for the classic card.
   void setAudioCardDesign(CardDesign? design) => state = state.copyWith(audioCardDesign: design?.toJson() ?? const {});
@@ -479,8 +594,29 @@ class ComposerNotifier extends Notifier<ComposerState> {
   void setTextCardHandle(String platformId, bool show) => state = state.copyWith(textCardHandle: {...state.textCardHandle, platformId: show});
   void setCaptionStyle(Map<String, dynamic> style) => state = state.copyWith(captionStyle: style);
   void setAudioQuality(AudioQuality quality) => state = state.copyWith(audioQuality: quality);
-  void setTextCardBackground(Map<String, dynamic>? background) =>
-      state = background == null ? state.copyWith(clearTextCardBackground: true) : state.copyWith(textCardBackground: background);
+  /// The card's background photo (TextCardBackground.toJson); null for the
+  /// plain colour. Going back to the colour never leaves words the card
+  /// cannot show (1.3.5): a words colour of the style's too close to the
+  /// card's colour (a contrast under 3:1, such as black words picked for a
+  /// light photo, now on a black card) goes back to the theme's.
+  void setTextCardBackground(Map<String, dynamic>? background) {
+    if (background != null) {
+      state = state.copyWith(textCardBackground: background);
+      return;
+    }
+    final theme = state.textCardTheme ?? ref.read(settingsProvider).textCardTheme;
+    state = state.copyWith(clearTextCardBackground: true, textCardStyle: _readableOn(state.textCardStyle, theme));
+  }
+
+  /// [style] with its words and @handle colours that would not read on the
+  /// plain card of [theme] (a contrast under 3:1 with the card's colour) put
+  /// back: the words to the theme's, the @handle to the words' (faded).
+  /// What is left is always legible, whatever was picked for a photo.
+  static TextCardStyle _readableOn(TextCardStyle style, TextCardTheme theme) {
+    final card = style.backgroundColorOr(theme.background);
+    bool unreadable(int? argb) => argb != null && textCardContrast(Color(argb), card) < 3;
+    return style.copyWith(clearTextColor: unreadable(style.textColor), clearHandleColor: unreadable(style.handleColor));
+  }
   void setTextCardEveryNetwork(bool on) => state = state.copyWith(textCardEveryNetwork: on);
   void setTextCardWithText(String platformId, bool on) => state = state.copyWith(textCardWithText: {...state.textCardWithText, platformId: on});
 
@@ -749,6 +885,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
         textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
         audioCardDesign: audioCardDesignOfPost(post), // 1.3.1: cards
+        textCardStyle: textCardStyleOfPost(post) ?? TextCardStyle.classic, // 1.3.5: cards
       );
   }
 
@@ -806,6 +943,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
       textCardDesign: state.textCardDesign, // 1.3.1: cards
       audioCardDesign: state.audioCardDesign, // 1.3.1: cards
+      textCardStyle: state.textCardStyle, // 1.3.5: cards
     );
   }
 }
@@ -836,7 +974,9 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   // 1.3.1: cards. Watching the card's own font starts loading it; read once,
   // before the loop (the 1.2.1 AOT crash).
   final cardFont = c.cardCustomFont(settings);
-  final cardDesign = c.textDesign(settings);
+  // 1.3.5: cards. A written @handle gets a block on a design without one.
+  final designOwn = c.textDesign(settings);
+  final cardDesign = designOwn == null ? null : designWithHandle(designOwn, c.textCardStyle.handle);
   final cardFontMissing = settings.textCards && cardFont != null && ref.watch(captionFontReadyProvider(cardFont)).value == false;
   final cardFontFamily = cardFont?.family ?? '';
   final out = <TargetPreview>[];
@@ -870,6 +1010,12 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             story: story,
             customFont: cardFont,
             design: cardDesign,
+            // 1.3.5: cards. The post's style, and the @handle written in
+            // place of the network's own: recorded only then, so a stand-in
+            // for an untouched card has the parameters 1.3.4 gave it (the
+            // previews draw the network's own @handle without it).
+            byline: c.textCardStyle.handle,
+            style: c.textCardStyle,
           ).copyWith(altText: textCardAltText(textCardText(post, target)));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
@@ -1087,7 +1233,8 @@ class PostActions {
     post = withTextCardChoices(post,
         everyNetwork: c.cardOnEveryNetwork(ref.read(settingsProvider)),
         withText: c.textCardWithText,
-        platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId);
+        platformOf: (id) => accounts.where((a) => a.id == id).firstOrNull?.platformId,
+        style: c.textCardStyle);
     // 1.3.1: cards. After the card choices, which replace the targets' extras.
     post = withCardDesigns(post, text: c.textCardDesign, audio: c.audioCardDesignToSave(ref.read(settingsProvider)));
     // Hand the old cards and fitted photos over so unchanged ones are reused,
@@ -1102,7 +1249,8 @@ class PostActions {
         handle: c.textCardHandle,
         background: c.textCardBackground ?? const {},
         customFont: c.textCardCustomFont,
-        design: c.textCardDesign);
+        design: c.textCardDesign,
+        cardStyle: c.textCardStyle);
     post = await attachFittedPhotos(s, post, ref.read(settingsProvider));
     post = await attachCaptionedPhotos(s, post, ref.read(settingsProvider), choices: c.captionOnPhoto, style: c.captionStyle);
     post = await attachAudioRenditions(s, post, ref.read(settingsProvider));
@@ -1111,6 +1259,8 @@ class PostActions {
     // reuses them. Publishing now makes them in the run, with progress.
     if (status == PostStatus.scheduled) post = await attachShrunkVideos(s, post, ref.read(settingsProvider));
     await s.posts.upsert(post);
+    // 1.3.5: cards. Saved: the text card editor's design changes are the post's.
+    ref.read(composerProvider.notifier).forgetTextCardDesignEdits();
     return post;
   }
 

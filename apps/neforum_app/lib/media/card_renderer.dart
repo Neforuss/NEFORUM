@@ -1,3 +1,4 @@
+import 'dart:convert' show jsonEncode;
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,7 @@ import '../theme/tokens.dart';
 import 'aligned_text.dart';
 import 'caption_fonts.dart';
 import 'card_design.dart';
+import 'card_templates.dart' show cardShapeOf, cardTemplateById, kCardTemplatePictureAreas;
 import 'photo_composite.dart';
 import 'photo_pixels.dart';
 import 'render_parameters.dart' show stableHash;
@@ -53,6 +55,76 @@ Rect cardCoverRect(CardCoverLayer c, Rect frame) {
   final side = math.min(frame.width, frame.height) * c.size;
   return placeInFrame(frame, Size(side, side), c.anchor, c.offsetX, c.offsetY);
 }
+
+/// 1.3.5: whether [d]'s cover layer is drawn on a card that has a
+/// [picture] for it (a text card's background photo, an audio card's
+/// cover): a record shows without one too, as [CardComposeJob] draws it.
+bool cardCoverDrawn(CardDesign d, {required bool picture}) => d.cover.visible && (picture || d.cover.shape == CardCoverShape.vinyl);
+
+/// 1.3.5: [d]'s picture areas in [frame], worked out from its layers: the
+/// cover's square as [_drawCover] draws it, turned, when [coverShown] (its
+/// border is drawn inside that square, so it adds nothing: round 5 counted
+/// it a second time outside and cut Polaroid's words for room they had),
+/// and the waveform when [waveformShown]. The cover's soft shadow is not a
+/// picture: text may sit on its faint edge, as on the untouched templates.
+List<Rect> cardLayerPictureAreas(CardDesign d, Rect frame, double u, {required bool coverShown, required bool waveformShown}) {
+  final c = d.cover;
+  return [
+    if (coverShown) () {
+      final r = cardCoverRect(c, frame);
+      final turn = c.rotation * math.pi / 180;
+      final half = r.width / 2 * (math.cos(turn).abs() + math.sin(turn).abs());
+      return Rect.fromCenter(center: r.center, width: half * 2, height: half * 2);
+    }(),
+    if (waveformShown) cardWaveformRect(d.waveform, frame),
+  ];
+}
+
+/// 1.3.5: the areas of a card of [size] the text card editor's words and
+/// @handle keep out of. For a design that is a built-in template as made
+/// (its cover, waveform and margin unchanged) these are the template's
+/// declared areas for the card's shape ([kCardTemplatePictureAreas], fixed
+/// rectangles in fractions of the frame, each taking in its drawn layer);
+/// for any other design they are worked out from its layers
+/// ([cardLayerPictureAreas]).
+List<Rect> cardPictureAreas(CardDesign d, Size size, EdgeInsets safe, {required bool coverShown, required bool waveformShown}) {
+  final frame = cardFrameOf(size, safe, d.margin);
+  final declared = kCardTemplatePictureAreas[d.template];
+  final template = cardTemplateById(d.template)?.design(d.kind);
+  final asMade = declared != null &&
+      template != null &&
+      d.margin == template.margin &&
+      jsonEncode(d.cover.toJson()) == jsonEncode(template.cover.toJson()) &&
+      jsonEncode(d.waveform.toJson()) == jsonEncode(template.waveform.toJson());
+  final layers = cardLayerPictureAreas(d, frame, cardUnit(size), coverShown: coverShown, waveformShown: waveformShown);
+  if (!asMade) return layers;
+  final shape = cardShapeOf(size);
+  final s = frame.shortestSide;
+  // Covers in the frame's short side from its top centre, waveforms in
+  // fractions of the frame ([CardPictureAreas]).
+  Rect coverIn(Rect f) => Rect.fromLTRB(frame.center.dx + f.left * s, frame.top + f.top * s, frame.center.dx + f.right * s, frame.top + f.bottom * s);
+  Rect inFrame(Rect f) => Rect.fromLTRB(frame.left + f.left * frame.width, frame.top + f.top * frame.height, frame.left + f.right * frame.width, frame.top + f.bottom * frame.height);
+  // On every network's card the declared rectangle holds the drawn layer
+  // (tested), so taking it in changes nothing there; on a card of a size no
+  // network uses (a landscape frame, an odd custom size) it keeps the text
+  // off the picture all the same.
+  Rect held(Rect? declaredRect, Rect drawn) => declaredRect == null ? drawn : declaredRect.expandToInclude(drawn);
+  final cover = declared.cover[shape], wave = declared.waveform[shape];
+  return [
+    if (coverShown) held(cover == null ? null : coverIn(cover), layers.first),
+    if (waveformShown) held(wave == null ? null : inFrame(wave), layers.last),
+  ];
+}
+
+/// 1.3.5: the smallest the text card editor's placed words are set, in
+/// pixels at 1080 wide: in a band too short for the whole post at this size
+/// they are cut (with an ellipsis) rather than shrunk into unreadable type.
+const double kPlacedWordsMinPx = 28;
+
+/// 1.3.5 round 5: the room the text card editor's placed words and @handle
+/// keep from a picture and from other text, in pixels at 1080 wide: this
+/// much above and below, half of it to the side.
+const double kPlacedTextGapPx = 24;
 
 /// Where the waveform layer goes.
 Rect cardWaveformRect(CardWaveformLayer w, Rect frame) =>
@@ -107,8 +179,14 @@ class CardRenderInput {
 Future<Uint8List> renderCardDesign(CardRenderInput input, {bool png = false}) async {
   final width = input.size.width.round(), height = input.size.height.round();
   final words = await rasterizeWordsLayer(width, height, (canvas) {
-    CardDesignPainter(design: input.design, texts: input.texts, safe: input.safe, platformId: input.platformId, waveform: input.waveform)
-        .paint(canvas, input.size);
+    CardDesignPainter(
+      design: input.design,
+      texts: input.texts,
+      safe: input.safe,
+      platformId: input.platformId,
+      waveform: input.waveform,
+      coverShown: cardCoverDrawn(input.design, picture: input.cover != null),
+    ).paint(canvas, input.size);
   });
   return compute(composeCardDesign, CardComposeJob.forInput(input, words, png: png));
 }
@@ -120,7 +198,8 @@ Future<Uint8List> renderCardDesign(CardRenderInput input, {bool png = false}) as
 /// Paints a design's waveform and text blocks (the layer the engine draws).
 /// Repaints when an installed or imported font finishes loading.
 class CardDesignPainter extends CustomPainter {
-  CardDesignPainter({required this.design, this.texts = const {}, this.safe = EdgeInsets.zero, this.platformId, this.waveform})
+  CardDesignPainter(
+      {required this.design, this.texts = const {}, this.safe = EdgeInsets.zero, this.platformId, this.waveform, this.coverShown = false})
       : super(repaint: captionFontsRevision);
 
   final CardDesign design;
@@ -129,13 +208,176 @@ class CardDesignPainter extends CustomPainter {
   final String? platformId;
   final List<double>? waveform;
 
+  /// 1.3.5: the cover layer is drawn on this card ([cardCoverDrawn]), so
+  /// the text card editor's words and @handle keep out of it.
+  final bool coverShown;
+
   @override
   void paint(Canvas canvas, Size size) {
     final u = cardUnit(size);
     final frame = cardFrameOf(size, safe, design.margin);
     final levels = waveform;
     if (design.waveform.visible && levels != null && levels.isNotEmpty) _paintWaveform(canvas, design.waveform, cardWaveformRect(design.waveform, frame), levels, u);
-    _paintBlocks(canvas, frame, u);
+    _paintBlocks(canvas, frame, u, size);
+  }
+
+  /// 1.3.5: whether [b] is placed by the text card editor (in a free band,
+  /// [_placeEditorBlocks]) rather than where its anchor puts it: the words
+  /// with [CardDesign.placeWords], the @handle with [CardDesign.placeHandle].
+  bool _editorPlaced(CardTextBlock b) =>
+      (design.placeWords && b.role == CardBlockRole.postText) || (design.placeHandle && b.role == CardBlockRole.handle);
+
+  /// The design's own visible blocks with words, by anchor (blocks at one
+  /// anchor stack, in their order); the editor's blocks are placed apart.
+  Map<CardAnchor, List<CardTextBlock>> _groups() {
+    final groups = <CardAnchor, List<CardTextBlock>>{};
+    for (final b in design.blocks) {
+      if (b.visible && wordsOf(b).isNotEmpty && !_editorPlaced(b)) (groups[b.anchor] ??= []).add(b);
+    }
+    return groups;
+  }
+
+  /// The design's own blocks laid out in [frame] and placed where their
+  /// anchors and offsets put them, as designs have always been drawn: each
+  /// layout with its top left corner. The caller paints and releases them.
+  List<(_LaidBlock, Offset)> _placeGroups(Rect frame, double u) {
+    final out = <(_LaidBlock, Offset)>[];
+    for (final MapEntry(key: anchor, value: blocks) in _groups().entries) {
+      final (:laid, :total) = _layoutGroup(blocks, frame, u);
+      var y = frame.top + (frame.height - total) * anchor.y;
+      for (var i = 0; i < laid.length; i++) {
+        final l = laid[i];
+        if (i > 0) y += l.block.gapBefore * u;
+        out.add((l, _inFrame(l, Offset(frame.left + (frame.width - l.width) * anchor.x + l.block.offsetX * frame.width, y + l.block.offsetY * frame.height), frame)));
+        y += l.height;
+      }
+    }
+    return out;
+  }
+
+  /// [at] kept inside the frame, so a network's buttons never cover [l].
+  static Offset _inFrame(_LaidBlock l, Offset at, Rect frame) => Offset(
+        at.dx.clamp(frame.left, math.max(frame.left, frame.right - l.width)),
+        at.dy.clamp(frame.top, math.max(frame.top, frame.bottom - l.height)),
+      );
+
+  /// 1.3.5: the text card editor's @handle and words, each in a band of the
+  /// frame that nothing else crosses within its width: the template's
+  /// picture areas ([cardPictureAreas]: the record or framed photo when it
+  /// is drawn, the waveform) and the ink of the design's own blocks, which
+  /// stay where they are ([placed]). The @handle goes first, then counts as
+  /// taken for the words. A block on the top (bottom) row takes the topmost
+  /// (lowest) band tall enough, one in the middle row the tallest band,
+  /// centred in it. The words need a fifth of the frame and are fitted to
+  /// the band's height once (an auto-fitting block shrinks into the band, no
+  /// further, and never below [kPlacedWordsMinPx]); without such a band they
+  /// take the tallest one.
+  ///
+  /// 1.3.5 round 6 (review 5, finding 2): a placed block is never drawn outside a free band.
+  /// When the margins and the @handle's size leave no band that holds the
+  /// @handle, or one line of the words at [kPlacedWordsMinPx], that block is
+  /// left off the card ([wordsDropped], [handleDropped]) and the text card
+  /// editor says so with what makes room. Laying it over the framed photo
+  /// (round 5 fell back to the whole frame) or quietly overriding the
+  /// margins the user just set would both surprise more.
+  ({List<(_LaidBlock, Offset)> laid, bool wordsDropped, bool handleDropped}) _placeEditorBlocks(
+      Rect frame, double u, Size size, List<(_LaidBlock, Offset)> placed) {
+    if (!design.placeWords && !design.placeHandle) return (laid: const [], wordsDropped: false, handleDropped: false);
+    final gap = kPlacedTextGapPx * u;
+    final taken = <Rect>[
+      ...cardPictureAreas(design, size, safe, coverShown: coverShown, waveformShown: design.waveform.visible && (waveform?.isNotEmpty ?? false)),
+      for (final (l, at) in placed) l.inkAt(at),
+    ];
+    CardTextBlock? editorBlock(CardBlockRole role) =>
+        design.blocks.where((b) => b.role == role && b.visible && wordsOf(b).isNotEmpty && _editorPlaced(b)).firstOrNull;
+    double yIn(Rect band, double height, double row) => row == 0 ? band.top : (row == 1 ? band.bottom - height : band.top + (band.height - height) / 2);
+    final out = <(_LaidBlock, Offset)>[];
+    var wordsDropped = false, handleDropped = false;
+    final handle = editorBlock(CardBlockRole.handle);
+    if (handle != null) {
+      final laid = _layout(handle, frame, u, null);
+      final x = frame.left + (frame.width - laid.width) * handle.anchor.x + handle.offsetX * frame.width;
+      final ink = laid.inkAt(Offset(x, frame.top));
+      final band = _freeBand(frame, taken, ink.left, ink.right, laid.height, handle.anchor.y, gap);
+      if (band == null || band.height + 0.5 < laid.height) {
+        laid.dispose();
+        handleDropped = true;
+      } else {
+        final at = Offset(x.clamp(frame.left, math.max(frame.left, frame.right - laid.width)), yIn(band, laid.height, handle.anchor.y));
+        out.add((laid, at));
+        taken.add(laid.inkAt(at));
+      }
+    }
+    final words = editorBlock(CardBlockRole.postText);
+    if (words != null) {
+      final w = frame.width * words.width;
+      final x = frame.left + (frame.width - w) * words.anchor.x + words.offsetX * frame.width;
+      final band = _freeBand(frame, taken, x, x + w, frame.height * 0.2, words.anchor.y, gap);
+      final laid = band == null ? null : _layout(words, frame, u, band.height, floor: kPlacedWordsMinPx);
+      // Never taller than its band: _layout keeps one line however short
+      // the band, so a band without room for one line at the floor drops it.
+      if (band == null || laid == null || laid.height > band.height + 0.5) {
+        laid?.dispose();
+        wordsDropped = true;
+      } else {
+        out.add((laid, Offset(x.clamp(frame.left, math.max(frame.left, frame.right - laid.width)), yIn(band, laid.height, words.anchor.y))));
+      }
+    }
+    return (laid: out, wordsDropped: wordsDropped, handleDropped: handleDropped);
+  }
+
+  /// The band of [frame] (its full width, a span of its height) that none
+  /// of [taken] crosses between [left] and [right] (each kept [gap] away
+  /// above and below, half that to the side):
+  /// the topmost one at least [need] tall for [row] 0, the lowest for row 1,
+  /// the tallest for the middle; the tallest when none is tall enough; null
+  /// when nothing is free (never the whole frame: that put the words over
+  /// the picture).
+  static Rect? _freeBand(Rect frame, List<Rect> taken, double left, double right, double need, double row, double gap) {
+    // Across, half the gap is enough: text beside a picture or another line
+    // is read apart at that distance, and a short @handle still fits beside
+    // Vinyl's record.
+    final side = gap / 2;
+    final blocked = [
+      for (final t in taken)
+        if (t.left - side < right && left < t.right + side && t.bottom > frame.top && t.top < frame.bottom)
+          (math.max(frame.top, t.top - gap), math.min(frame.bottom, t.bottom + gap)),
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+    final free = <Rect>[];
+    var y = frame.top;
+    for (final (top, bottom) in blocked) {
+      if (top > y) free.add(Rect.fromLTRB(frame.left, y, frame.right, top));
+      y = math.max(y, bottom);
+    }
+    if (y < frame.bottom) free.add(Rect.fromLTRB(frame.left, y, frame.right, frame.bottom));
+    if (free.isEmpty) return null;
+    final tallest = free.reduce((a, b) => b.height > a.height ? b : a);
+    final fit = [for (final f in free) if (f.height >= need) f];
+    if (fit.isEmpty || row == 0.5) return tallest;
+    return row == 0 ? fit.first : fit.last;
+  }
+
+  /// [blocks] (one anchor's) laid out in [room], in their order, with their
+  /// height together.
+  ({List<_LaidBlock> laid, double total}) _layoutGroup(List<CardTextBlock> blocks, Rect room, double u) {
+    final laid = <_LaidBlock>[];
+    // Fixed blocks first: blocks that fit themselves get the room left.
+    var fixedHeight = 0.0;
+    for (final b in blocks.where((b) => !b.autoFit)) {
+      final l = _layout(b, room, u, null);
+      laid.add(l);
+      fixedHeight += l.height + b.gapBefore * u;
+    }
+    for (final b in blocks.where((b) => b.autoFit)) {
+      final fit = math.max(room.height * 0.08, room.height * b.maxHeight - fixedHeight);
+      laid.add(_layout(b, room, u, fit));
+    }
+    laid.sort((a, b) => blocks.indexOf(a.block).compareTo(blocks.indexOf(b.block)));
+    var total = 0.0;
+    for (var i = 0; i < laid.length; i++) {
+      total += laid[i].height + (i == 0 ? 0 : laid[i].block.gapBefore * u);
+    }
+    return (laid: laid, total: total);
   }
 
   /// The words of block [b]; empty leaves it out.
@@ -219,49 +461,21 @@ class CardDesignPainter extends CustomPainter {
     );
   }
 
-  void _paintBlocks(Canvas canvas, Rect frame, double u) {
-    // Blocks at the same anchor stack, in their order.
-    final groups = <CardAnchor, List<CardTextBlock>>{};
-    for (final b in design.blocks) {
-      if (b.visible && wordsOf(b).isNotEmpty) (groups[b.anchor] ??= []).add(b);
-    }
-    for (final MapEntry(key: anchor, value: blocks) in groups.entries) {
-      final laid = <_LaidBlock>[];
-      // Fixed blocks first: blocks that fit themselves get the room left.
-      var fixedHeight = 0.0;
-      for (final b in blocks.where((b) => !b.autoFit)) {
-        final l = _layout(b, frame, u, null);
-        laid.add(l);
-        fixedHeight += l.height + b.gapBefore * u;
-      }
-      for (final b in blocks.where((b) => b.autoFit)) {
-        final room = math.max(frame.height * 0.08, frame.height * b.maxHeight - fixedHeight);
-        laid.add(_layout(b, frame, u, room));
-      }
-      laid.sort((a, b) => blocks.indexOf(a.block).compareTo(blocks.indexOf(b.block)));
-      var total = 0.0;
-      for (var i = 0; i < laid.length; i++) {
-        total += laid[i].height + (i == 0 ? 0 : laid[i].block.gapBefore * u);
-      }
-      var y = frame.top + (frame.height - total) * anchor.y;
-      for (var i = 0; i < laid.length; i++) {
-        final l = laid[i];
-        if (i > 0) y += l.block.gapBefore * u;
-        final b = l.block;
-        var at = Offset(frame.left + (frame.width - l.width) * anchor.x + b.offsetX * frame.width, y + b.offsetY * frame.height);
-        // Kept inside the frame, so a network's buttons never cover it.
-        at = Offset(
-          at.dx.clamp(frame.left, math.max(frame.left, frame.right - l.width)),
-          at.dy.clamp(frame.top, math.max(frame.top, frame.bottom - l.height)),
-        );
-        l.paint(canvas, at);
-        y += l.height;
-        l.dispose();
-      }
+  void _paintBlocks(Canvas canvas, Rect frame, double u, Size size) {
+    // The design's own blocks where they always were; then the text card
+    // editor's words and @handle in the bands left free (1.3.5).
+    final placed = _placeGroups(frame, u);
+    final editor = _placeEditorBlocks(frame, u, size, placed).laid;
+    for (final (l, at) in [...placed, ...editor]) {
+      l.paint(canvas, at);
+      l.dispose();
     }
   }
 
-  _LaidBlock _layout(CardTextBlock b, Rect frame, double u, double? fitHeight) {
+  /// [b] laid out [frame]'s width, fitted to [fitHeight] (else its own share
+  /// of the frame); an auto-fitting block shrinks no further than a third of
+  /// its size, or, when [floor] is given (pixels at 1080 wide), than that.
+  _LaidBlock _layout(CardTextBlock b, Rect frame, double u, double? fitHeight, {double? floor}) {
     final words = wordsOf(b);
     final width = frame.width * b.width;
     final maxHeight = fitHeight ?? frame.height * b.maxHeight;
@@ -279,7 +493,10 @@ class CardDesignPainter extends CustomPainter {
     var fs = b.size * u;
     var text = make(fs, lines);
     if (b.autoFit) {
-      final minFs = math.max(12 * u, b.size * u / 3);
+      // A design's own blocks stop at a third of their size, as always; the
+      // editor's placed words go down to [floor] whatever size was picked
+      // (round 6: at 240 px they stopped at 80 and were cut where 40 fitted).
+      final minFs = floor == null ? math.max(12 * u, b.size * u / 3) : math.max(12 * u, math.min(floor, b.size) * u);
       while (text.height > maxHeight && fs > minFs) {
         text.dispose();
         fs = math.max(minFs, fs - 3 * u);
@@ -309,12 +526,68 @@ class CardDesignPainter extends CustomPainter {
         maxLines: lines,
       )..layout(width, fill: true);
     }
-    return _LaidText(b, text, outline, width);
+    return _LaidText(b, text, outline, width, fs);
+  }
+
+  /// 1.3.5: cards. The size the post's words come out at on a card of
+  /// [size], in pixels at 1080 wide: a block that fits itself starts at its
+  /// size and shrinks into its room (its anchor's, or the band the text card
+  /// editor places it in), laid out exactly as [paint] lays it out. Null
+  /// without a words block (or words). The text card editor says so when a
+  /// larger size changes nothing.
+  double? drawnWordsSize(Size size) => drawnWords(size)?.size;
+
+  /// 1.3.5 round 5: [drawnWordsSize] and whether the words were cut to fit
+  /// (the last line ends in an ellipsis): placed words never shrink below
+  /// [kPlacedWordsMinPx], so a post too long for its band at that size is
+  /// cut, and the text card editor says so rather than letting words go
+  /// missing from the published card unannounced.
+  ///
+  /// Round 6 (review 5, finding 2): [dropped] when there is no room left for the
+  /// placed words at all (they are not drawn; [size] is then 0), and
+  /// [handleDropped] when the placed @handle has none.
+  ({double size, bool cut, bool dropped, bool handleDropped})? drawnWords(Size size) {
+    final u = cardUnit(size);
+    final frame = cardFrameOf(size, safe, design.margin);
+    final words = design.blocks.where((b) => b.role == CardBlockRole.postText && b.visible && wordsOf(b).isNotEmpty).firstOrNull;
+    if (words == null) return null;
+    final placed = _placeGroups(frame, u);
+    final editor = _placeEditorBlocks(frame, u, size, placed);
+    final all = [...placed, ...editor.laid];
+    final mine = all.where((p) => identical(p.$1.block, words)).firstOrNull?.$1;
+    final fs = mine == null ? 0.0 : (mine is _LaidText ? mine.fontSize : words.size * u);
+    final cut = mine is _LaidText && mine.text.didExceedMaxLines;
+    for (final (l, _) in all) {
+      l.dispose();
+    }
+    return (size: fs / u, cut: cut, dropped: editor.wordsDropped, handleDropped: editor.handleDropped);
+  }
+
+  /// 1.3.5 round 5: the boxes the text card editor's words and @handle are
+  /// laid out in on a card of [size], by role, placed as [paint] places
+  /// them; empty when the design places neither. The gaps they keep are
+  /// checked on these, where the pixels hide them in the glyphs' leading.
+  @visibleForTesting
+  Map<CardBlockRole, Rect> editorPlacements(Size size) {
+    final u = cardUnit(size);
+    final frame = cardFrameOf(size, safe, design.margin);
+    final placed = _placeGroups(frame, u);
+    final editor = _placeEditorBlocks(frame, u, size, placed).laid;
+    final out = {for (final (l, at) in editor) l.block.role: l.inkAt(at)};
+    for (final (l, _) in [...placed, ...editor]) {
+      l.dispose();
+    }
+    return out;
   }
 
   @override
   bool shouldRepaint(CardDesignPainter old) =>
-      old.design != design || !mapEquals(old.texts, texts) || old.safe != safe || old.platformId != platformId || old.waveform != waveform;
+      old.design != design ||
+      !mapEquals(old.texts, texts) ||
+      old.safe != safe ||
+      old.platformId != platformId ||
+      old.waveform != waveform ||
+      old.coverShown != coverShown;
 }
 
 abstract class _LaidBlock {
@@ -322,20 +595,30 @@ abstract class _LaidBlock {
   final CardTextBlock block;
   double get width;
   double get height;
+
+  /// The rectangle its ink takes when its top left corner is at [at].
+  Rect inkAt(Offset at) => Rect.fromLTWH(at.dx, at.dy, width, height);
   void paint(Canvas canvas, Offset at);
   void dispose() {}
 }
 
 class _LaidText extends _LaidBlock {
-  _LaidText(super.block, this.text, this.outline, this._width);
+  _LaidText(super.block, this.text, this.outline, this._width, this.fontSize);
   final AlignedText text;
   final AlignedText? outline;
   final double _width;
+
+  /// The size the words were laid out at, in the card's pixels.
+  final double fontSize;
 
   @override
   double get width => _width;
   @override
   double get height => text.height;
+
+  /// The lines only, not the block's whole width.
+  @override
+  Rect inkAt(Offset at) => text.lineBounds.shift(at);
 
   @override
   void paint(Canvas canvas, Offset at) {

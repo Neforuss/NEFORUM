@@ -16,9 +16,10 @@ This guide keeps your accounts, their keys, your posts and your settings the sam
 1. Go to **Settings > Sync > Set up…** and pick the **same storage**.
 2. Choose the same folder or file, or fill in the same WebDAV address or S3 bucket and key.
 3. Enter the **same passphrase**.
-4. Choose **Turn on sync**. NEFORUM opens the existing file and adds what the device has.
-5. If the device already has accounts of its own, choose **which data should win** where both have the same account, setting or post: this device's or the sync file's.
-   - Choose this device's when it is the one with your real setup (for example a computer joining a file a new phone just started). Everything else from both sides is kept either way.
+4. Choose **Turn on sync**. NEFORUM opens the existing file and shows what joining will do, before it changes anything. For example: "This device gets 16 accounts, 2 media hosts and 41 settings from DESKTOP-X (Windows)", or "This device's setup will be used".
+5. Choose **Join**.
+   - To keep the other side's setup instead, choose **Use this device's setup instead** (or **Use the sync file's setup instead**). NEFORUM shows what that would do, and you confirm again.
+6. Optional: check that the accounts arrived set up the same way. On both devices, go to **Accounts** and open **Connection** on an account card. It shows the account's server, your own app or client ID, its Page, board or channel, when the sign-in runs out, and which keys the device holds, marked **Synced**. **Copy setup** (one account) or **Copy all setups** (top of the page) puts this in your clipboard to compare. Keys, passwords and tokens are never shown or copied.
 
 ## Steps: Google Drive (direct)
 
@@ -49,7 +50,28 @@ Like KeePassXC, NEFORUM keeps one encrypted file in storage you already use, and
 
 Every device must use the same storage and the same file. For example: your PC, your iPhone and your Android phone all use **Google Drive (direct)** with the same Client ID; or your PC syncs a Dropbox folder and your iPhone picks the same folder in the Files app.
 
-Hand-off accounts that you set up on both devices before syncing become one account.
+### A device's first sync
+
+The first time a device syncs with a file that already exists:
+
+- **Nothing is deleted.** Everything only one side has (an account, its keys, a post) is kept, and goes to the other side. Media hosts have two slots, so see below.
+- **The setup with the most accounts wins.** Where the device and the file have different versions of the same thing (a setting, an account's details, a media host), the side with more accounts keeps its version (an account the file holds twice counts once). If both have as many accounts, the side whose oldest account was connected first wins. If that is a tie too, the file wins, because your other devices already use it. You see which side wins before you join, and you can pick the other one.
+- **One account, not two.** Mastodon, Pixelfed, TikTok and most hand-off accounts get a different id on each device, so one account connected on two devices can arrive twice. NEFORUM makes it one account, keeps the newer sign-in (its details and keys together), and moves posts and default targets to it. See "When accounts are merged" below.
+- **Media hosts, slot by slot.** The winning side keeps its hosts in their slots (main and fallback). A host of the other side goes into a slot left empty, so it is kept, and a device without a media host never removes another device's. Only when the winning side uses both slots is a host of the other side replaced, and NEFORUM names it before you join.
+
+After the first sync, each change travels on its own, including a setting put back to its default and a media host you remove.
+
+### When accounts are merged
+
+NEFORUM merges two copies of one account only in these cases:
+
+- **Mastodon, Pixelfed and TikTok accounts** with the same id on their server (or the same TikTok user for the same app): on any sync, on any device, also on devices that joined long ago. This is how two devices that join at the same moment, or a sync that was interrupted, end with one account.
+- **Other accounts with a made-up id**, matched by their handle (capital letters and a leading @ ignored): only when one copy is new to the sync file in that sync. Two copies that both were in the file already are never merged.
+- **Hand-off accounts:** only on a device's first sync, when a hand-off made on that device has the same name or handle as one in the sync file, on the same site (WordPress, Ghost and WriteFreely blogs are told apart by their whole address, path included).
+
+NEFORUM never merges two accounts whose ids come from the accounts themselves (X, Bluesky, YouTube, Reddit, a WordPress blog and most others), accounts on two different servers or sites, or accounts with two different handles. The first sync's dry run lists the merges it will make.
+
+After a merge, the old copy and its keys stay on the device until the sync file holds the merged account. A post that still names the old copy, such as a draft you were editing, moves to the merged account on the next sync, for 90 days. A device with NEFORUM 1.3.4 leaves such a post as it is, and does not remove the link from the sync file; the next device with 1.3.5 to sync moves the post.
 
 ### Where the file can live
 
@@ -100,10 +122,11 @@ Use a private bucket and a key that can only read and write that bucket.
 |---|---|
 | Accounts and their keys | Yes |
 | Drafts, scheduled posts and history | Yes |
-| Settings (theme, text cards, photo fitting, posting rules, default targets) | Yes |
-| Media hosts and their keys | Yes |
+| Settings (theme, text cards, photo fitting, posting rules, default targets, how the browser extension posts) | Yes |
+| Media hosts (main and fallback) and their keys | Yes |
 | Photos and videos | No: they stay on the device they were added on |
-| Device settings (tray, start at sign-in, browser extension, Sync itself) | No |
+| Device settings (start at sign-in, tray, the browser extension being on, automatic posting, zoom and text size, background picture, update checks, Sync itself) | No |
+| An account's last error | No: another device may have no problem with that account |
 
 NEFORUM syncs when it starts, every five minutes, and a few seconds after you change something. You can also choose **Sync now** at any time.
 
@@ -111,12 +134,23 @@ NEFORUM syncs when it starts, every five minutes, and a few seconds after you ch
 
 Each account, post and setting merges on its own, so changes on different things never clash. When the same thing was changed on two devices before they synced:
 
-- A post that has already gone out beats a later edit, so nothing is posted twice.
-- Otherwise, the newer edit wins.
-- For a sign-in, the most recently renewed keys win, because those are the ones the network still accepts.
+- A post that went out, was tried (even if it failed or was cancelled) or is being published beats another device's version that has not got that far, even a newer edit, so nothing is posted twice. Between two versions that got as far, the newer edit wins, by each device's clock.
+- An account's sign-in (the developer app or server it is connected through, its ids and its keys) comes as one piece between devices with 1.3.5, also when a sync arrives while NEFORUM is posting or renewing that sign-in, with one rare exception named at the end of this point. When you reconnect it through another app or server on one device while another device renews the old sign-in, the most recent connection wins, even though the renewed keys expire later, so the new app is never paired with the old keys, or the other way round. Through the same app with the same settings, the keys renewed last win, because those are the ones the network still accepts. A device with 1.3.4 can break this; see the limitation below. One rare window remains, inherited from 1.3.4: if another device renewed the old sign-in since the last sync, a sync that runs in the very instant you finish reconnecting the account can still pair the new app with the old keys. If the account asks to be reconnected right after you reconnected it, reconnect it once more.
+- Your own changes to an account (switched on or off, renamed, quotas), a setting and a media host carry no time of the change. When the same one was changed on two devices before either synced, the device that syncs second keeps its own version, even when the other change was made later. This assumes both devices' clocks are right: a device whose clock runs ahead can keep its version even when it syncs first. To be sure a change sticks, make it on one device and let it sync before you change the same thing on another.
 - An edit beats a deletion, so nothing you were working on disappears.
 
 Cloud apps sometimes keep two copies when two devices save at the same moment, for example "NEFORUM (conflicted copy).neforumsync". NEFORUM merges such copies into the main file and then removes them.
+
+**Known limitation: devices with NEFORUM 1.3.4 or older.** Update every synced device to 1.3.5 or later. An older device:
+
+- does not send a setting you put back to its default;
+- does not take the settings that 1.3.5 added to sync (how the browser extension posts), and removes them from the sync file;
+- asks "which data should win" instead of showing what joining will do;
+- keeps the keys that expire later without looking at the account: after you reconnect an account through another app on a 1.3.5 device, a 1.3.4 device that renewed the old sign-in meanwhile can pair the new app with the old keys, on every device. Reconnect the account again on a 1.3.5 device to fix it.
+
+When an older device removes a setting from the file, the devices with 1.3.5 keep their own value. A device that joins after that keeps its own value too, unless its setup wins. On their next sync, the devices already syncing put their value back into the file once, so the new device gets it.
+
+**Known limitation: a device with a newer NEFORUM.** Something only a newer version knows, such as a post in a state this version does not have, stays in the sync file for the devices that know it, but is not stored on this device. Before a first sync, the dry run may still count it among what arrives.
 
 ## X and Tumblr
 

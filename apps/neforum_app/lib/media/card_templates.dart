@@ -1,6 +1,89 @@
+import 'package:flutter/painting.dart' show Rect, Size;
+
 import '../state/settings.dart' show TextCardAlignment;
 import 'card_design.dart';
 import 'text_card.dart' show TextCardFont;
+
+/// 1.3.5: a card's shape, for the template data that depends on it: square
+/// (1:1), portrait (4:5, 2:3) or a full-screen story (9:16).
+enum CardShape { square, portrait, story }
+
+/// The shape of a card of [size].
+CardShape cardShapeOf(Size size) {
+  final aspect = size.width / size.height;
+  return aspect >= 0.9 ? CardShape.square : (aspect >= 0.6 ? CardShape.portrait : CardShape.story);
+}
+
+/// 1.3.5: where a template's pictures are on a text card, for each card
+/// shape, as fixed rectangles: the cover (Vinyl's record, Polaroid's framed
+/// photo) and the waveform. The text card editor's words and @handle keep
+/// out of them (card_renderer.dart). Each rectangle holds the picture as it
+/// is drawn on every network's card of that shape (the 1:1, 4:5, 2:3 and
+/// full-screen cards, with their safe areas), padded by 0.012:
+/// text_card_editor_round5_test.dart checks both that it holds the drawn
+/// picture and that it is no more than 24 px looser. A design changed from
+/// the template (its cover, waveform or margin) has its areas worked out
+/// from its layers instead (cardPictureAreas in card_renderer.dart).
+class CardPictureAreas {
+  const CardPictureAreas({this.cover = const {}, this.waveform = const {}});
+
+  /// The cover's rectangle in units of the frame's shorter side, from the
+  /// middle of the frame's top edge (x across from the centre line, y down
+  /// from the top): a cover is sized by that side, so one rectangle fits
+  /// each card of a shape closely (round 5 used fractions of the frame,
+  /// which left Pinterest and Instagram story cards up to 176 px short).
+  final Map<CardShape, Rect> cover;
+
+  /// The waveform's rectangle in fractions of the frame (it is sized by the
+  /// frame's width and height).
+  final Map<CardShape, Rect> waveform;
+}
+
+/// The built-in templates' picture areas on text cards: only Vinyl,
+/// Polaroid (covers) and Gradient wave (waveform) draw pictures there.
+const Map<String, CardPictureAreas> kCardTemplatePictureAreas = {
+  // The record at the top centre (drawn without a photo too).
+  'vinyl': CardPictureAreas(
+    cover: {
+      CardShape.square: Rect.fromLTRB(-0.292, -0.012, 0.292, 0.572),
+      CardShape.portrait: Rect.fromLTRB(-0.292, -0.012, 0.292, 0.572),
+      CardShape.story: Rect.fromLTRB(-0.292, -0.012, 0.292, 0.572),
+    },
+  ),
+  // The waveform along the bottom.
+  'gradientWave': CardPictureAreas(
+    waveform: {
+      CardShape.square: Rect.fromLTRB(-0.012, 0.848, 1.012, 1.012),
+      CardShape.portrait: Rect.fromLTRB(-0.012, 0.848, 1.012, 1.012),
+      CardShape.story: Rect.fromLTRB(-0.012, 0.848, 1.012, 1.012),
+    },
+  ),
+  // The tilted framed photo; its white border is inside the drawn square
+  // (drawn with a photo).
+  'polaroid': CardPictureAreas(
+    cover: {
+      CardShape.square: Rect.fromLTRB(-0.390, -0.010, 0.390, 0.770),
+      CardShape.portrait: Rect.fromLTRB(-0.390, -0.004, 0.390, 0.782),
+      CardShape.story: Rect.fromLTRB(-0.390, -0.003, 0.390, 0.789),
+    },
+  ),
+};
+
+/// 1.3.5: where the text card editor puts the @handle it adds to a template
+/// without one (when a @handle is typed), for each card shape: a corner or
+/// edge the template leaves free. The handle then goes in the free band on
+/// that edge (card_renderer.dart) and never moves the template's own
+/// blocks.
+const Map<String, Map<CardShape, CardAnchor>> kCardTemplateHandleSlots = {
+  // Beside the record, in the top-right corner the signature leaves free.
+  'vinyl': {CardShape.square: CardAnchor.topRight, CardShape.portrait: CardAnchor.topRight, CardShape.story: CardAnchor.topRight},
+  // Bottom left, above the waveform, clear of the signature's corner.
+  'gradientWave': {CardShape.square: CardAnchor.bottomLeft, CardShape.portrait: CardAnchor.bottomLeft, CardShape.story: CardAnchor.bottomLeft},
+  // Above the centred signature.
+  'neon': {CardShape.square: CardAnchor.bottomCenter, CardShape.portrait: CardAnchor.bottomCenter, CardShape.story: CardAnchor.bottomCenter},
+  // The top-left corner: the words are at the bottom, the signature top right.
+  'sunset': {CardShape.square: CardAnchor.topLeft, CardShape.portrait: CardAnchor.topLeft, CardShape.story: CardAnchor.topLeft},
+};
 
 /// A starting point in the card designer: a whole [CardDesign] for each kind
 /// of card, everything editable afterwards.

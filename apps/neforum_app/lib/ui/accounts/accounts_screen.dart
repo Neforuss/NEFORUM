@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/neforum_logo.dart';
+import '../../state/account_connection.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
@@ -12,7 +14,11 @@ import '../../widgets/surfaces.dart';
 import '../root.dart';
 import '../router.dart';
 import 'account_card.dart';
+import 'connection_section.dart';
 import 'tier_explainer.dart';
+
+/// The order the page groups accounts in, by how they publish.
+const List<PlatformTier> _tierOrder = [PlatformTier.openApi, PlatformTier.byokApi, PlatformTier.webSession, PlatformTier.handoff];
 
 /// Connected accounts, grouped by how they publish.
 class AccountsScreen extends ConsumerWidget {
@@ -30,7 +36,10 @@ class AccountsScreen extends ConsumerWidget {
         eyebrow: 'Accounts',
         title: 'Your networks',
         subtitle: accounts.isEmpty ? 'Connect the places you post to.' : '${accounts.length} connected · $auto post automatically',
-        actions: [PrimaryAction(label: 'Add account', icon: Icons.add_rounded, onPressed: add, compact: context.isCompact)],
+        actions: [
+          if (accounts.isNotEmpty) _CopyAllSetupsButton(accounts: [for (final tier in _tierOrder) ...accounts.where((a) => a.tier == tier)]),
+          PrimaryAction(label: 'Add account', icon: Icons.add_rounded, onPressed: add, compact: context.isCompact),
+        ],
       ),
       const SizedBox(height: Space.x3),
       if (loading)
@@ -38,7 +47,7 @@ class AccountsScreen extends ConsumerWidget {
       else if (accounts.isEmpty)
         const _Welcome()
       else ...[
-        for (final tier in const [PlatformTier.openApi, PlatformTier.byokApi, PlatformTier.webSession, PlatformTier.handoff])
+        for (final tier in _tierOrder)
           if (accounts.any((a) => a.tier == tier)) ...[
             SectionHeader(
               switch (tier) {
@@ -66,6 +75,72 @@ class AccountsScreen extends ConsumerWidget {
       ],
     ]);
   }
+}
+
+/// 1.3.5: "Copy all setups": every account's setup as text, in the page's
+/// order, to paste next to the same list from another device. No key values
+/// (see connectionSetupText). Disabled while a copy runs, so a second tap
+/// neither asks the keychain twice nor shows two toasts. An account whose
+/// keys the keychain will not read still gets its block and the toast says
+/// how many; a keychain that does not answer at all (a prompt left open)
+/// times out with its own message; any other failure says nothing was copied.
+class _CopyAllSetupsButton extends ConsumerStatefulWidget {
+  const _CopyAllSetupsButton({required this.accounts});
+
+  /// In the page's order.
+  final List<ConnectedAccount> accounts;
+
+  /// How long one keychain read may take before the copy gives up on it.
+  static const Duration readTimeout = Duration(seconds: 15);
+
+  @override
+  ConsumerState<_CopyAllSetupsButton> createState() => _CopyAllSetupsButtonState();
+}
+
+class _CopyAllSetupsButtonState extends ConsumerState<_CopyAllSetupsButton> {
+  bool _busy = false;
+
+  Future<void> _copy() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final count = widget.accounts.length;
+    try {
+      final result = await allConnectionSetupsText(
+        widget.accounts,
+        secrets: ref.read(connectionSecretsProvider),
+        registry: ref.read(registryProvider),
+        travel: currentKeysTravel(ref),
+        deviceLabel: ref.read(connectionDeviceLabelProvider),
+        readTimeout: _CopyAllSetupsButton.readTimeout,
+      );
+      await Clipboard.setData(ClipboardData(text: result.text));
+      if (!mounted) return;
+      final copied = '${count == 1 ? 'Setup' : 'Setups of $count accounts'} copied, without keys or passwords';
+      final n = result.unreadable;
+      final accountsWord = n == 1 ? 'account' : 'accounts';
+      if (result.timedOut) {
+        showToast(context, '$copied. The keychain did not answer, so the keys of $n $accountsWord were not read: unlock it and copy again.',
+            icon: Icons.warning_amber_rounded);
+      } else if (n > 0) {
+        showToast(context, '$copied. The keys of $n $accountsWord could not be read on this device.', icon: Icons.warning_amber_rounded);
+      } else {
+        showToast(context, copied, icon: Icons.check_rounded);
+      }
+    } on Object {
+      if (mounted) showToast(context, 'Could not copy the setups. Nothing was copied.', icon: Icons.error_outline_rounded);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+        onPressed: _busy ? null : _copy,
+        icon: _busy
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.copy_all_rounded, size: 18),
+        label: const Text('Copy all setups'),
+      );
 }
 
 class _Welcome extends ConsumerWidget {

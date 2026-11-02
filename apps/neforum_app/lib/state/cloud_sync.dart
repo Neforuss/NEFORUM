@@ -98,6 +98,27 @@ SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets,
   }
 }
 
+/// 1.3.5: what tells one sync file from another for [providerId] with
+/// [config] (as the sync form collects it): the folder on a computer, the
+/// picked location on a phone or tablet ([filesApp]), the Google Cloud
+/// client, the WebDAV address and user, the S3 endpoint, bucket and folder.
+/// Two setups with the same identity reach the same file; a different one is
+/// a new file, which gets a fresh dry run and a fresh sync state. A Mac's
+/// saved folder bookmark is not part of it (the form never has one).
+String syncStorageIdentity(String? providerId, Map<String, String> config, {required bool filesApp}) {
+  final provider = syncProviderById(providerId);
+  if (provider == null) return '';
+  String v(String k) => (config[k] ?? '').trim();
+  String url(String k) => v(k).replaceFirst(RegExp(r'/+$'), '').toLowerCase();
+  final parts = switch (provider.kind) {
+    SyncBackendKind.folder => filesApp ? [v('bookmark'), v('target')] : [v('folder')],
+    SyncBackendKind.googleDrive => [v('clientId')],
+    SyncBackendKind.webdav => [url('url'), v('username')],
+    SyncBackendKind.s3 => [url('endpoint'), v('bucket'), v('folder').replaceAll(RegExp(r'^/+|/+$'), '')],
+  };
+  return [provider.kind.name, ...parts].join('\n');
+}
+
 /// Key stretching on a background isolate, so the window never stalls.
 Future<List<int>> _deriveOffThread(String passphrase, List<int> salt, BackupKdfParams params) =>
     Isolate.run(() => deriveBackupKey(passphrase, salt, params));
@@ -263,8 +284,16 @@ class CloudSync implements SecretsCoordinator {
       return;
     }
     final id = await deviceId();
+    _engine = _engineFor(backend, passphrase, id, _StateFile(storage));
+    status.value = CloudSyncStatus(CloudSyncPhase.ok, deviceId: id);
+  }
+
+  /// The engine for [backend] with every source this device syncs: one
+  /// recipe for syncing and for the dry run, so the dry run sees exactly
+  /// what the sync will.
+  SyncEngine _engineFor(SyncBackend backend, String passphrase, String id, SyncStateStore state) {
     final host = deviceHostName();
-    _engine = SyncEngine(
+    return SyncEngine(
       backend: backend,
       cipher: BackupCipher(passphrase, derive: _deriveOffThread),
       deviceId: id,
@@ -281,10 +310,18 @@ class CloudSync implements SecretsCoordinator {
         _settingsSource(),
         _mediaHostsSource(),
       ],
-      state: _StateFile(storage),
+      state: state,
       secrets: secrets,
     );
-    status.value = CloudSyncStatus(CloudSyncPhase.ok, deviceId: id);
+  }
+
+  /// 1.3.5: the dry run before this device's first sync with the file in
+  /// [backend]: what joining would bring here and send there, without doing
+  /// any of it. The returned planner stretches the passphrase once and can
+  /// be asked again with the other side's setup winning.
+  Future<SyncJoinPlanner> joinPlanner(SyncBackend backend, String passphrase) async {
+    final st = MemorySyncStateStore();
+    return SyncJoinPlanner._(_engineFor(backend, passphrase, await deviceId(), st), st);
   }
 
   /// This device's id in the sync file, made once.
@@ -299,17 +336,33 @@ class CloudSync implements SecretsCoordinator {
     return _deviceId = id;
   }
 
-  /// Settings that travel (the same allowlist as "Move to another device").
+  /// Settings that travel (the same allowlist as "Move to another device"),
+  /// one record each. 1.3.5: every shared setting is always there with its
+  /// value, defaults included ([syncedSettings]), so a setting put back to
+  /// its default travels, and the setup that wins a first sync wins whole.
+  /// Settings this version does not share (a newer NEFORUM's) are left in
+  /// the file, and a deletion (an older NEFORUM leaves defaults out) changes
+  /// nothing here.
   SyncSource _settingsSource() => CallbackSyncSource(
         prefix: 'setting',
-        snapshot: () async => {for (final e in exportableSettings(_currentSettings()).entries) e.key: SyncItem(e.value)},
+        snapshot: () async => {for (final e in syncedSettings(_currentSettings()).entries) e.key: SyncItem(e.value)},
         apply: (key, value) async {
-          if (value == null || !kExportableSettings.contains(key)) return;
+          if (!kExportableSettings.contains(key)) return;
           await _storeSettings(withImportedSettings(_currentSettings(), {key: value}));
+        },
+        handles: kExportableSettings.contains,
+        appliesDeletions: false,
+        remapAccountIds: (key, value, ids) {
+          if (key != 'defaultTargetIds' || value is! List || !value.any(ids.containsKey)) return value;
+          return [...{for (final id in value) ids[id] ?? id}];
         },
       );
 
-  /// Both media hosts with their keys, as one record.
+  /// Both media hosts with their keys, as one record (so a host never
+  /// arrives without its keys). On a first sync where both sides have
+  /// hosts, each slot the winning side left empty keeps the other side's
+  /// host ([mergeMediaHostsOnJoin]): a device without a media host never
+  /// takes another device's away.
   SyncSource _mediaHostsSource() => CallbackSyncSource(
         prefix: 'mediaHosts',
         snapshot: () async {
@@ -324,6 +377,8 @@ class CloudSync implements SecretsCoordinator {
           if (value is Map) s = await withImportedMediaHosts(s, secrets, Map<String, dynamic>.from(value));
           await _storeSettings(s);
         },
+        handles: (id) => id == 'all',
+        joinMerge: (_, here, file, {required hereWins}) => mergeMediaHostsOnJoin(here, file, hereWins: hereWins),
       );
 
   /// Syncs now; errors land in [status].
@@ -366,6 +421,123 @@ class CloudSync implements SecretsCoordinator {
     _engine?.dispose();
     status.dispose();
   }
+}
+
+/// 1.3.5: the dry run of this device's first sync with one sync file
+/// ([CloudSync.joinPlanner]). Reads only: nothing is stored or written.
+class SyncJoinPlanner {
+  SyncJoinPlanner._(this._engine, this._state);
+  final SyncEngine _engine;
+  final MemorySyncStateStore _state;
+
+  /// What joining would do with [seed]'s setup winning where both sides
+  /// differ, or with the seed rule's choice when `null`.
+  Future<SyncPreview> preview({SyncSeed? seed}) {
+    _state.data = SyncEngine.joinState(seed);
+    return _engine.preview();
+  }
+
+  void dispose() => _engine.dispose();
+}
+
+/// 1.3.5: a dry run in words, for the dialog before a first sync.
+@immutable
+class SyncJoinSummary {
+  const SyncJoinSummary({required this.headline, required this.details, required this.swapLabel});
+
+  /// "This device gets 16 accounts, 2 media hosts and 41 settings from
+  /// DESKTOP-X (Windows)." or "This device's setup will be used (...)."
+  final String headline;
+  final List<String> details;
+
+  /// The button that makes the other side's setup win instead.
+  final String swapLabel;
+}
+
+String _count(int n, String one, [String? many]) => '$n ${n == 1 ? one : (many ?? '${one}s')}';
+
+/// "a", "a and b", "a, b and c".
+String _listed(List<String> parts) => switch (parts.length) {
+      0 => '',
+      1 => parts.single,
+      _ => '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}',
+    };
+
+/// A media host kind as a dry run names it: "S3-compatible bucket", "Catbox".
+String _hostName(String id) => (mediaHostRegistry.descriptor(id)?.name ?? id).split(' (').first;
+
+/// "replaced by Catbox and removed"; when both are one kind, says that the
+/// one that stays is the other side's own, with its own settings and keys.
+String _replacement(String id, String? by, String whose) {
+  if (by == null) return 'removed';
+  if (by == id) return "replaced by $whose own ${_hostName(by)} (other settings and keys) and removed";
+  return "replaced by $whose ${_hostName(by)} and removed";
+}
+
+/// 1.3.5: [p] in words. [chosen]: the user picked whose setup wins instead
+/// of the seed rule. Media hosts are counted and named exactly: the ones
+/// that arrive, move to the other slot or are removed, on each side.
+SyncJoinSummary describeJoinPreview(SyncPreview p, {bool chosen = false}) {
+  final from = p.fromDevices;
+  final source = from.isEmpty ? null : (from.length == 1 ? from.single : '${from.first} and ${_count(from.length - 1, 'other device')}');
+  const hostsKey = 'mediaHosts:all';
+  final here = p.received.containsKey(hostsKey) ? mediaHostChanges(p.hereBefore[hostsKey], p.received[hostsKey]) : null;
+  final there = p.sent.contains(hostsKey) ? mediaHostChanges(p.fileBefore[hostsKey], p.sentValues[hostsKey]) : null;
+  final hostsArriving = here?.arrived.length ?? 0, hostsSent = there?.arrived.length ?? 0;
+  final arriving = _listed([
+    if (p.receivedOf('account') > 0) _count(p.receivedOf('account'), 'account'),
+    if (hostsArriving > 0) _count(hostsArriving, 'media host'),
+    if (p.receivedOf('setting') > 0) _count(p.receivedOf('setting'), 'setting'),
+    if (p.receivedOf('post') > 0) _count(p.receivedOf('post'), 'post'),
+  ]);
+  final sending = _listed([
+    if (p.sentOf('account') > 0) _count(p.sentOf('account'), 'account'),
+    if (hostsSent > 0) _count(hostsSent, 'media host'),
+    if (p.sentOf('setting') > 0) _count(p.sentOf('setting'), 'setting'),
+    if (p.sentOf('post') > 0) _count(p.sentOf('post'), 'post'),
+  ]);
+  final hostLines = [
+    for (final m in here?.moved ?? const <({MediaHostPlace host, String to})>[])
+      "This device's ${m.host.slot} media host (${_hostName(m.host.id)}) moves to the ${m.to} slot.",
+    for (final r in here?.removed ?? const <({MediaHostPlace host, String? replacedBy})>[])
+      "This device's ${r.host.slot} media host (${_hostName(r.host.id)}) is ${_replacement(r.host.id, r.replacedBy, "the sync file's")}: both slots are taken.",
+    for (final m in there?.moved ?? const <({MediaHostPlace host, String to})>[])
+      "Your other devices' ${m.host.slot} media host (${_hostName(m.host.id)}) moves to the ${m.to} slot.",
+    for (final r in there?.removed ?? const <({MediaHostPlace host, String? replacedBy})>[])
+      "Your other devices' ${r.host.slot} media host (${_hostName(r.host.id)}) is ${_replacement(r.host.id, r.replacedBy, "this device's")}: both slots are taken.",
+  ];
+  final hostsRemoved = (here?.removed.isNotEmpty ?? false) || (there?.removed.isNotEmpty ?? false);
+  final mine = p.seed == SyncSeed.thisDevice;
+  final h = p.here.accounts, f = p.file.accounts;
+  final String why;
+  if (chosen) {
+    why = 'as you chose';
+  } else if (h != f) {
+    why = mine ? 'it has more accounts: $h against $f in the sync file' : 'it has more accounts: $f against $h on this device';
+  } else if (p.here.oldestConnection != p.file.oldestConnection && (p.here.oldestConnection != null || p.file.oldestConnection != null)) {
+    why = 'both have ${_count(h, 'account')}, and its oldest connection is older';
+  } else {
+    why = 'both have ${_count(h, 'account')}, so the sync file stays as it is';
+  }
+  final fromPart = source == null ? '' : ' from $source';
+  final headline = mine
+      ? "This device's setup will be used ($why)."
+      : (arriving.isEmpty ? 'This device already has everything the sync file has.' : 'This device gets $arriving$fromPart.');
+  return SyncJoinSummary(
+    headline: headline,
+    details: [
+      if (!mine) "Where the two differ, the sync file's setup wins ($why).",
+      if (mine && arriving.isNotEmpty) 'This device also gets $arriving$fromPart.',
+      if (sending.isNotEmpty) 'The sync file gets $sending from this device.',
+      if (p.mergedAccounts.length > p.mergedInFile.length)
+        '${_count(p.mergedAccounts.length - p.mergedInFile.length, 'account')} connected on both ${p.mergedAccounts.length - p.mergedInFile.length == 1 ? 'becomes' : 'become'} one, with the newer sign-in.',
+      if (p.mergedInFile.isNotEmpty)
+        'The sync file holds ${_count(p.mergedInFile.length, 'account')} twice (two devices connected ${p.mergedInFile.length == 1 ? 'it' : 'them'} at the same moment): ${p.mergedInFile.length == 1 ? 'it becomes' : 'each becomes'} one, with the newer sign-in.',
+      ...hostLines,
+      hostsRemoved ? 'Apart from that, nothing is deleted: what only one side has is kept.' : 'Nothing is deleted: what only one side has is kept.',
+    ],
+    swapLabel: mine ? "Use the sync file's setup instead" : "Use this device's setup instead",
+  );
 }
 
 /// [e] as a sentence for the sync settings.

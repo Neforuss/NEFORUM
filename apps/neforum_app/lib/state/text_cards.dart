@@ -6,6 +6,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/caption_fonts.dart';
 import '../media/card_design.dart';
+import '../media/card_design_edits.dart' show designWithHandle;
 import '../media/render_parameters.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -34,9 +35,39 @@ const String kTextCardReplacedMediaIdsKey = 'textCardReplacedMediaIds';
 /// `true`. Absent: cards only where an image is needed, as before 1.3.
 const String kTextCardEveryNetworkKey = 'textCardEveryNetwork';
 
+/// `PostOverrides.extra` key, on every target of a post whose text cards are
+/// restyled (1.3.5): the [TextCardStyle]'s JSON. Absent: the classic card,
+/// or the style the post's cards record. Written beside the cards' own
+/// render parameters so a scheduled or background run makes cards that did
+/// not exist yet (a network added, cards turned on) with the saved style.
+const String kTextCardStyleKey = 'textCardStyle';
+
 /// Whether [post] gives its text card to every network that takes images
 /// ([kTextCardEveryNetworkKey]).
 bool textCardEveryNetworkOfPost(Post post) => post.targets.any((t) => t.overrides.extra[kTextCardEveryNetworkKey] == true);
+
+/// The style written on [post]'s targets ([kTextCardStyleKey]); null when
+/// none is.
+TextCardStyle? textCardStyleChoiceOfPost(Post post) {
+  for (final t in post.targets) {
+    final raw = t.overrides.extra[kTextCardStyleKey];
+    if (raw is Map) return TextCardStyle.fromJson(raw);
+  }
+  return null;
+}
+
+/// The style of [post]'s text cards (1.3.5), as the composer keeps it: the
+/// one written on its targets, else the one its cards were drawn with
+/// ([TextCardStyle.classic] for cards from before 1.3.5); null when the post
+/// has neither.
+TextCardStyle? textCardStyleOfPost(Post post) {
+  final chosen = textCardStyleChoiceOfPost(post);
+  if (chosen != null) return chosen;
+  for (final m in post.media) {
+    if (isRenderedTextCard(m)) return textCardStyleOf(m);
+  }
+  return null;
+}
 
 /// Platform id -> whether the post's text goes along with its card there;
 /// only networks where it does not ([kTextCardOnlyKey]) are listed, for the
@@ -48,10 +79,14 @@ Map<String, bool> textCardWithTextOfPost(Post post, String? Function(String acco
 
 /// [post] with the composer's card choices written into its targets, so a
 /// scheduled or background run makes the cards the way the post was saved:
-/// [everyNetwork] on every target, and for each network whose
-/// [withText] is false, the card without the post's text.
+/// [everyNetwork] on every target, for each network whose [withText] is
+/// false, the card without the post's text, and (1.3.5) a restyled card's
+/// [style] ([kTextCardStyleKey]).
 Post withTextCardChoices(Post post,
-        {required bool everyNetwork, required Map<String, bool> withText, required String? Function(String accountId) platformOf}) =>
+        {required bool everyNetwork,
+        required Map<String, bool> withText,
+        required String? Function(String accountId) platformOf,
+        TextCardStyle style = TextCardStyle.classic}) =>
     post.copyWith(targets: [
       for (final t in post.targets)
         t.copyWith(
@@ -59,6 +94,7 @@ Post withTextCardChoices(Post post,
             ...withoutTextCardChoices(t.overrides).extra,
             if (everyNetwork) kTextCardEveryNetworkKey: true,
             if (withText[platformOf(t.accountId)] == false) kTextCardOnlyKey: true,
+            if (!style.isClassic) kTextCardStyleKey: style.toJson(),
           }),
         ),
     ]);
@@ -68,8 +104,8 @@ Post withTextCardChoices(Post post,
 PostOverrides withoutTextCardChoices(PostOverrides o) {
   // 1.3.1: cards. The card designs are the composer's choices too.
   o = withoutCardDesigns(o);
-  return o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey)
-      ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey))
+  return o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey) || o.extra.containsKey(kTextCardStyleKey)
+      ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey)..remove(kTextCardStyleKey))
       : o;
 }
 
@@ -112,7 +148,10 @@ PostOverrides _withOwnMediaIds(PostOverrides o, List<String>? own) {
 /// use [font], the user is told, and the cards are made again where it is.
 /// [design] (1.3.1) is a card designer design (CardDesign.toJson; an empty
 /// map for the classic card; null for the post's own, else the Settings
-/// default): with one, it is the cards' whole look.
+/// default): with one, it is the cards' whole look. [cardStyle] (1.3.5) is the
+/// classic card's [TextCardStyle] (null for the post's own, else the classic
+/// card); its @handle replaces each network's own on every card that shows
+/// the @handle, designed ones included.
 Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     {TextCardTheme? theme,
     TextCardFont? font,
@@ -121,20 +160,25 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     Map<String, bool> handle = const {},
     Map<String, dynamic>? background,
     Map<String, dynamic>? customFont,
-    Map<String, dynamic>? design}) async {
+    Map<String, dynamic>? design,
+    TextCardStyle? cardStyle}) async {
   final cards = {for (final m in post.media.where(isRenderedTextCard)) m.id: m};
   final backgrounds = [for (final m in post.media) if (isTextCardBackground(m)) m];
   if (!settings.textCards && cards.isEmpty && backgrounds.isEmpty) return post;
   final style = theme ?? textCardThemeOfPost(post) ?? settings.textCardTheme;
   final face = font ?? textCardFontOfPost(post) ?? settings.textCardFont;
   final align = alignment ?? textCardAlignmentOfPost(post) ?? settings.textCardAlignment;
+  // 1.3.5: cards. No Settings default: a post nobody restyled is classic.
+  final look = cardStyle ?? textCardStyleOfPost(post) ?? TextCardStyle.classic;
   // 1.3.1: cards. Loaded once, when the first card needs it.
   final fontChoice = customFont ?? textCardCustomFontOfPost(post);
   final CaptionFont? cardFont = fontChoice != null ? CaptionFont.tryParse(fontChoice) : settings.textCardCustomFontChoice;
   Future<bool>? fontReady;
   Future<bool> fontMissing() async => cardFont != null && !await (fontReady ??= prepareCaptionFontForRender(s.storage, cardFont, usage: 'the text card'));
   // 1.3.1: cards. The card designer's design, its fonts loaded once.
-  final CardDesign? cardDesign = effectiveCardDesign(design ?? textCardDesignOfPost(post), settings.textCardDesign);
+  final CardDesign? designOwn = effectiveCardDesign(design ?? textCardDesignOfPost(post), settings.textCardDesign);
+  // 1.3.5: cards. A written @handle gets a block on a design without one.
+  final CardDesign? cardDesign = designOwn == null ? null : designWithHandle(designOwn, look.handle);
   Future<bool>? designReady;
   Future<bool> designFontMissing() async =>
       cardDesign != null && !await (designReady ??= prepareCardDesignFonts(s.storage, cardDesign, usage: 'the text card'));
@@ -206,7 +250,8 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     }
 
     final text = textCardText(p, base);
-    final byline = account.handle ?? account.displayName;
+    // The @handle drawn: the style's own, else this account's.
+    final byline = look.bylineFor(account.handle ?? account.displayName);
     final signed = branded[d.id] ?? (oldCard == null ? null : textCardBrandedOf(oldCard)) ?? settings.textCardBranded(d.id);
     final showsHandle = handle[d.id] ?? (oldCard == null ? null : textCardShowsHandleOf(oldCard)) ?? settings.textCardShowsHandle(d.id);
 
@@ -232,6 +277,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
         customFontFallback: fontFallback,
         design: cardDesign,
         designFontFallback: designFallback,
+        style: look,
       );
       final params = paramsWith(fontFallback: fallback);
       // Without the font here, a card drawn in it on a device that has it is
@@ -273,6 +319,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
             alignment: align,
             backdrop: backdrop,
             customFont: fallback ? null : cardFont,
+            style: look,
           ))
               .timeout(kRenderTimeLimit);
           final m = await s.media.importBytes(bytes, fileName: textCardFileName(style, branded: signed, font: face, safe: hasSafe), mimeHint: 'image/jpeg');

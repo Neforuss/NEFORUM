@@ -146,6 +146,48 @@ class _OnRows extends ConsumerWidget {
   }
 }
 
+/// 1.3.5: the answer to the dry run before a first sync.
+enum SyncJoinChoice {
+  /// Join with the setup the dry run showed.
+  join,
+
+  /// Show the dry run again with the other side's setup winning.
+  swap,
+}
+
+/// 1.3.5: the dry run before this device's first sync with an existing
+/// file: what it gets, what it gives, whose setup wins where both differ.
+/// Pops a [SyncJoinChoice], or `null` when cancelled.
+class SyncJoinDialog extends StatelessWidget {
+  const SyncJoinDialog({super.key, required this.summary});
+  final SyncJoinSummary summary;
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    return AlertDialog(
+      title: const Text('Join the sync file?'),
+      content: SizedBox(
+        width: 480,
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(summary.headline, style: context.text.bodyLarge),
+          const SizedBox(height: Space.sm),
+          for (final line in summary.details)
+            Padding(
+              padding: const EdgeInsets.only(top: Space.xs),
+              child: Text(line, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+            ),
+        ]),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        TextButton(onPressed: () => Navigator.of(context).pop(SyncJoinChoice.swap), child: Text(summary.swapLabel)),
+        FilledButton(onPressed: () => Navigator.of(context).pop(SyncJoinChoice.join), child: const Text('Join')),
+      ],
+    );
+  }
+}
+
 /// Choose the storage, fill in where the file is, and the passphrase.
 class SyncSetupDialog extends ConsumerStatefulWidget {
   /// [opened]: a sync file tapped in the Files app, already chosen.
@@ -366,30 +408,49 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       setState(() => _progress = 'Looking for a sync file…');
       final blob = await backend.read();
       final before = ref.read(settingsProvider);
-      final changedStorage = before.syncProviderId != p.id ||
-          before.syncConfig['folder'] != config['folder'] ||
-          before.syncConfig['bookmark'] != config['bookmark'] ||
-          before.syncConfig['clientId'] != config['clientId'];
-      var keepLocal = false;
-      if (blob != null) {
+      final changedStorage = syncStorageIdentity(before.syncProviderId, before.syncConfig, filesApp: Env.isMobile) !=
+          syncStorageIdentity(p.id, config, filesApp: Env.isMobile);
+      if (blob != null && !changedStorage) {
+        // The same file: no dry run, but the passphrase must still open it,
+        // or every sync after this one would fail.
         setState(() => _progress = 'Unlocking the sync file: this takes a moment on purpose…');
-        final opened = await openSyncFileOffThread(secrets['passphrase']!, blob.bytes);
-        // Joining a file while this device already has data: ask whose
-        // version stays where both have the same account, setting or post.
-        final here = (await s.accounts.all()).length;
-        if (changedStorage && here > 0) {
-          if (!mounted) return;
-          final choice = await _askWhoWins(here: here, inFile: accountsInSyncFile(opened));
-          if (choice == null) {
-            if (mounted) {
-              setState(() {
-                _busy = false;
-                _progress = null;
-              });
+        await openSyncFileOffThread(secrets['passphrase']!, blob.bytes);
+      }
+      // Joining an existing file: the dry run shows what this device gets
+      // and gives, and whose setup wins where both differ; the user
+      // confirms, or picks the other side's setup. The confirmed choice is
+      // what the first sync then uses.
+      SyncSeed? seed;
+      if (blob != null && changedStorage) {
+        setState(() => _progress = 'Unlocking the sync file: this takes a moment on purpose…');
+        final planner = await s.cloudSync.joinPlanner(backend, secrets['passphrase']!);
+        try {
+          SyncSeed? chosen;
+          while (true) {
+            final preview = await planner.preview(seed: chosen);
+            if (!mounted) return;
+            final answer = await showDialog<SyncJoinChoice>(
+              context: context,
+              builder: (_) => SyncJoinDialog(summary: describeJoinPreview(preview, chosen: chosen != null)),
+            );
+            if (answer == null) {
+              if (mounted) {
+                setState(() {
+                  _busy = false;
+                  _progress = null;
+                });
+              }
+              return;
             }
-            return;
+            if (answer == SyncJoinChoice.join) {
+              seed = preview.seed;
+              break;
+            }
+            chosen = preview.seed == SyncSeed.thisDevice ? SyncSeed.file : SyncSeed.thisDevice;
+            if (mounted) setState(() => _progress = 'Working out what changes…');
           }
-          keepLocal = choice;
+        } finally {
+          planner.dispose();
         }
       }
       var stored = config;
@@ -406,9 +467,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       } else {
         await s.secrets.delete(kSyncOAuthKey);
       }
-      if (changedStorage) {
-        await s.storage.writeJson('sync-state.json', keepLocal ? Map.of(SyncEngine.keepThisDeviceOnJoin) : const <String, dynamic>{});
-      }
+      if (changedStorage) await s.storage.writeJson('sync-state.json', SyncEngine.joinState(seed));
       await ref.read(settingsProvider.notifier).update((x) => x.copyWith(syncProviderId: p.id, syncConfig: stored));
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -428,28 +487,6 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       }
     }
   }
-
-  /// Whose version wins on this device's first sync with an existing file:
-  /// true = this device's, false = the file's, null = cancel.
-  Future<bool?> _askWhoWins({required int here, required int inFile}) => showDialog<bool>(
-        context: context,
-        builder: (c) {
-          final mineFirst = here >= inFile;
-          return AlertDialog(
-            title: const Text('Which data should win?'),
-            content: Text(
-                'This device has $here ${here == 1 ? 'account' : 'accounts'}; the sync file has $inFile. Everything from both is kept. '
-                'Where both have the same account, setting or post, NEFORUM keeps one version: which one?'),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('Cancel')),
-              if (mineFirst) TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text("The sync file's")),
-              if (mineFirst) FilledButton(onPressed: () => Navigator.of(c).pop(true), child: const Text("This device's")),
-              if (!mineFirst) TextButton(onPressed: () => Navigator.of(c).pop(true), child: const Text("This device's")),
-              if (!mineFirst) FilledButton(onPressed: () => Navigator.of(c).pop(false), child: const Text("The sync file's")),
-            ],
-          );
-        },
-      );
 
   /// "Create the sync file" is only for the first device: a second one
   /// would start a separate file next to the real one.

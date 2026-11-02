@@ -840,6 +840,20 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
       _label(context, 'Margin'),
       _slider(context, 'Margin', d.margin, 0, 240, _px(d.margin), (v) => _edit((x) => x.copyWith(margin: v.roundToDouble())), key: const Key('card-margin')),
       Text('Room around everything. Full-screen stories also keep clear of the network\'s buttons.', style: context.text.bodySmall),
+      // 1.3.5: the text card editor's placement of the words and @handle.
+      if (_kind == CardKind.text)
+        _switch(
+          context,
+          'Keep the words and handle clear of the pictures',
+          d.placeWords || d.placeHandle,
+          (on) => _edit((x) => x.copyWith(
+                placeWords: on && x.blocks.any((b) => b.role == CardBlockRole.postText),
+                placeHandle: on && x.blocks.any((b) => b.role == CardBlockRole.handle),
+              )),
+          key: const Key('card-place-clear'),
+          subtitle: 'On: the words and the handle go where no picture or other text is (set by Top, Middle, Bottom and the handle\'s place in the text card editor). '
+              'Off: they stay where their place and offsets put them.',
+        ),
       if (element >= -2) ...[
         _label(context, 'Place'),
         _chips(elements.keys.toList(), element, (k) => elements[k]!, (k) => setState(() => _element = k), keyPrefix: 'card-layout-element'),
