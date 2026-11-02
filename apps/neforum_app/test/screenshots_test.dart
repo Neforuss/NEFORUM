@@ -21,9 +21,11 @@ import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/theme/tokens.dart';
+import 'package:neforum_app/ui/accounts/account_card.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
+import 'package:neforum_core/neforum_core.dart' show OAuthTokens;
 
 /// Storage whose images render as soft gradients (decoding real JPEGs in a
 /// widget test would need real async I/O).
@@ -154,7 +156,31 @@ void main() {
   testWidgets('compose light', (t) => shoot(t, name: 'compose-light', size: desktop, brightness: Brightness.light, route: '/compose', before: writePost));
   testWidgets('queue', (t) => shoot(t, name: 'queue-dark', size: desktop, brightness: Brightness.dark, route: '/queue'));
   testWidgets('activity', (t) => shoot(t, name: 'activity-light', size: desktop, brightness: Brightness.light, route: '/activity'));
-  testWidgets('accounts', (t) => shoot(t, name: 'accounts-dark', size: desktop, brightness: Brightness.dark, route: '/accounts'));
+  // 1.3.5: one card with its Connection section open, set up as on a real
+  // device (demo accounts have no server or keys). The key values are dummies
+  // and never shown: the section lists keys by name.
+  testWidgets('accounts', (t) => shoot(t, name: 'accounts-dark', size: desktop, brightness: Brightness.dark, route: '/accounts', before: (tester, c) async {
+        final s = c.read(servicesProvider);
+        final mastodon = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon');
+        await tester.runAsync(() async {
+          await s.accounts.upsert(mastodon.copyWith(config: {'instance': 'https://fosstodon.org', 'software': 'mastodon'}));
+          await s.secrets.write(mastodon.id, {
+            OAuthTokens.keyAccessToken: 'screenshot',
+            OAuthTokens.keyRefreshToken: 'screenshot',
+            OAuthTokens.keyExpiresAt: DateTime.now().add(const Duration(hours: 2)).toUtc().toIso8601String(),
+          });
+        });
+        await tester.pump(const Duration(milliseconds: 300));
+        final card = find.byWidgetPredicate((w) => w is AccountCard && w.account.id == mastodon.id);
+        await tester.tap(find.descendant(of: card, matching: find.text('Connection')));
+        // The section reads the keychain, then grows.
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+        for (var i = 0; i < 4; i++) {
+          await tester.pump(const Duration(milliseconds: 150));
+        }
+        expect(find.descendant(of: card, matching: find.text('Server address')), findsOneWidget, reason: 'the shot shows the section open');
+        expect(find.text('Copy all setups'), findsOneWidget);
+      }));
   testWidgets('add account', (t) => shoot(t, name: 'add-account-light', size: desktop, brightness: Brightness.light, route: '/accounts/add'));
   testWidgets('settings', (t) => shoot(t, name: 'settings-dark', size: desktop, brightness: Brightness.dark, route: '/settings'));
   testWidgets('phone compose', (t) => shoot(t, name: 'phone-compose-dark', size: phone, brightness: Brightness.dark, route: '/compose', before: writePost));

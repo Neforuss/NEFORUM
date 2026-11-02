@@ -23,6 +23,7 @@ This guide puts your accounts, their keys and your settings into **one encrypted
 6. Choose **Import**.
    - Posts that were scheduled on the other device arrive as **drafts** with their time, so only one device publishes them: schedule them again where they should go out. Copies a platform already holds (for example a scheduled Facebook post) are not sent again.
 7. If you chose **Move**: on the first device, open **Settings > Data & privacy** and choose **Remove them here** (or **Use them here again** if you changed your mind).
+8. Optional: check that each account arrived set up the same way. On both devices, go to **Accounts** and open **Connection** on the account's card: it shows its server, your own app or client ID, its Page, board or channel, when the sign-in runs out and which keys the device holds. **Copy all setups** at the top of the page puts every account's setup in your clipboard to compare. Keys, passwords and tokens are never shown or copied.
 
 It works the same in both directions: PC to phone, phone to PC, Mac to iPhone.
 

@@ -19,6 +19,7 @@ This guide keeps your accounts, their keys, your posts and your settings the sam
 4. Choose **Turn on sync**. NEFORUM opens the existing file and adds what the device has.
 5. If the device already has accounts of its own, choose **which data should win** where both have the same account, setting or post: this device's or the sync file's.
    - Choose this device's when it is the one with your real setup (for example a computer joining a file a new phone just started). Everything else from both sides is kept either way.
+6. Optional: check that the accounts arrived set up the same way. On both devices, go to **Accounts** and open **Connection** on an account card. It shows the account's server, your own app or client ID, its Page, board or channel, when the sign-in runs out, and which keys the device holds, marked **Synced**. **Copy setup** (one account) or **Copy all setups** (top of the page) puts this in your clipboard to compare. Keys, passwords and tokens are never shown or copied.
 
 ## Steps: Google Drive (direct)
 
