@@ -8,7 +8,7 @@
 //     wave's waveform.
 //  4. Words placed at the top before a photo is added keep clear of
 //     Polaroid's framed photo.
-//  6. The "Otherâ€¦" then Black chip order, the editor's chips against the
+//  6. The "Other…" then Black chip order, the editor's chips against the
 //     drawn card, and the words' room under a cover.
 //  7. A design that hides its handle says so.
 //  8. Vinyl's handle at the top centre keeps clear of the record.
@@ -272,7 +272,7 @@ void main() {
   });
 
   group('6. tests for the mutations that survived round 3', () {
-    testWidgets('M1: "Otherâ€¦" yellow, then the photo\'s Black chip: the card follows the last change (black)', (tester) async {
+    testWidgets('M1: "Other…" yellow, then the photo\'s Black chip: the card follows the last change (black)', (tester) async {
       final (_, c) = await boot(tester);
       await compose(tester, c);
       c.read(composerProvider.notifier)

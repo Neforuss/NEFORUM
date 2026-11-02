@@ -391,7 +391,7 @@ void main() {
       await tester.enterText(find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController), _long);
       await settle(tester);
       expect(find.textContaining('Shrinks to fit on'), findsNothing);
-      expect(find.textContaining('Too long for this place on'), findsOneWidget);
+      expect(find.textContaining('Too long for this card on'), findsOneWidget, reason: 'no position was measured to help on a design that does not place its words');
       await finish(tester);
     });
   });

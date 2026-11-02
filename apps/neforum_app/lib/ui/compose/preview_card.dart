@@ -484,6 +484,11 @@ class _TextCardPreview extends ConsumerWidget {
     // 1.3.1: cards. A card from the card designer is drawn by the renderer
     // of the saved card, at this network's size.
     final design = textCardDesignOf(placeholder);
+    // 1.3.5 round 6: a design that places the words or the @handle can leave
+    // some of them off this card (cut, or no room); say so under the card,
+    // whether or not an editor is open.
+    final fit = design != null && (design.placeWords || design.placeHandle) ? _wordsFitOf(_previewPost(ref), [(p, placeholder)], composer.textCardStyle, design) : null;
+    final warning = fit == null ? null : textCardFitWarning(fit);
     return LayoutBuilder(builder: (context, c) {
       // Portrait cards at phone width; square and wider ones fill the column
       // up to a comfortable size.
@@ -528,6 +533,15 @@ class _TextCardPreview extends ConsumerWidget {
             ),
           ),
         ),
+        if (warning != null)
+          Padding(
+            padding: const EdgeInsets.only(top: Space.sm),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.warning_amber_rounded, size: 16, color: nf.warning),
+              const SizedBox(width: Space.xs),
+              Flexible(child: Text(warning, key: ValueKey('text-card-fit-warning-$id'), style: context.text.bodySmall)),
+            ]),
+          ),
         const SizedBox(height: Space.sm),
         Center(
           child: _CardStylePicker(
@@ -691,19 +705,39 @@ TextCardWordsFit? _measureWordsFit(Post post, List<(TargetPreview, MediaAttachme
     final byline = textCardShowsHandleOf(m) ? style.bylineFor(p.account.handle ?? p.account.displayName) : null;
     final branded = textCardBrandedOf(m);
     final double asked, drawn;
-    var cut = false;
+    var cut = false, dropped = false, handleDropped = false;
+    String? fitsAt;
     if (design != null) {
-      final measured = CardDesignPainter(
-        design: design,
-        texts: {CardBlockRole.postText: text, CardBlockRole.handle: byline ?? '', if (!branded) CardBlockRole.signature: ''},
-        safe: safe,
-        platformId: id,
-        coverShown: cardCoverDrawn(design, picture: textCardParametersOf(m)?['background'] != null),
-      ).drawnWords(size);
+      final picture = textCardParametersOf(m)?['background'] != null;
+      ({double size, bool cut, bool dropped, bool handleDropped})? measure(CardDesign d) => CardDesignPainter(
+            design: d,
+            texts: {CardBlockRole.postText: text, CardBlockRole.handle: byline ?? '', if (!branded) CardBlockRole.signature: ''},
+            safe: safe,
+            platformId: id,
+            // The saved card draws its waveform (renderDesignedTextCard);
+            // only whether one is drawn matters for the room.
+            waveform: d.waveform.visible ? const [1.0] : null,
+            coverShown: cardCoverDrawn(d, picture: picture),
+          ).drawnWords(size);
+      final measured = measure(design);
       if (measured == null) continue;
       asked = design.wordsSize;
       drawn = measured.size;
       cut = measured.cut;
+      dropped = measured.dropped;
+      handleDropped = measured.handleDropped;
+      // Round 6: advice that is true. Another position is named only when
+      // it was measured to show every word on this card.
+      if ((cut || dropped) && design.placeWords) {
+        for (final position in TextCardTextPosition.values) {
+          if (position == design.wordsPosition) continue;
+          final other = measure(design.withWordsPosition(position));
+          if (other != null && !other.cut && !other.dropped) {
+            fitsAt = position.label;
+            break;
+          }
+        }
+      }
     } else {
       final words = TextCardPainter(
         text: text,
@@ -719,9 +753,13 @@ TextCardWordsFit? _measureWordsFit(Post post, List<(TargetPreview, MediaAttachme
       asked = style.textSize;
       drawn = words.fitted <= 0 ? 1 : words.drawn / words.fitted;
     }
-    // A network whose words are cut comes first: that is the one to tell.
-    if (shortest == null || (cut && !shortest.cut) || (cut == shortest.cut && drawn / asked < shortest.drawn / shortest.asked)) {
-      shortest = (network: p.descriptor.name, asked: asked, drawn: drawn, cut: cut);
+    // The network with the worst news comes first (words left off, the
+    // @handle left off, words cut), then the one where they fall shortest.
+    int severity(bool dropped, bool handleDropped, bool cut) => dropped ? 3 : (handleDropped ? 2 : (cut ? 1 : 0));
+    final mine = severity(dropped, handleDropped, cut);
+    final theirs = shortest == null ? -1 : severity(shortest.dropped, shortest.handleDropped, shortest.cut);
+    if (shortest == null || mine > theirs || (mine == theirs && drawn / asked < shortest.drawn / shortest.asked)) {
+      shortest = (network: p.descriptor.name, asked: asked, drawn: drawn, cut: cut, dropped: dropped, handleDropped: handleDropped, fitsAt: fitsAt);
     }
   }
   return shortest;

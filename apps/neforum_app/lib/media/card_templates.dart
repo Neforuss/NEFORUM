@@ -15,18 +15,27 @@ CardShape cardShapeOf(Size size) {
 }
 
 /// 1.3.5: where a template's pictures are on a text card, for each card
-/// shape, as fixed rectangles in fractions of the card's frame (the card
-/// less its margin and the network's safe area): the cover (Vinyl's record,
-/// Polaroid's framed photo) and the waveform. The text card editor's words
-/// and @handle keep out of them (card_renderer.dart). Each rectangle holds
-/// the picture on every network's card of that shape with a little room
-/// to spare (text_card_editor_round5_test.dart checks it against the drawn
-/// layers on every network's card). A design changed from the template (its
-/// cover, waveform or margin) has its areas worked out from its layers
-/// instead (cardPictureAreas in card_renderer.dart).
+/// shape, as fixed rectangles: the cover (Vinyl's record, Polaroid's framed
+/// photo) and the waveform. The text card editor's words and @handle keep
+/// out of them (card_renderer.dart). Each rectangle holds the picture as it
+/// is drawn on every network's card of that shape (the 1:1, 4:5, 2:3 and
+/// full-screen cards, with their safe areas), padded by 0.012:
+/// text_card_editor_round5_test.dart checks both that it holds the drawn
+/// picture and that it is no more than 24 px looser. A design changed from
+/// the template (its cover, waveform or margin) has its areas worked out
+/// from its layers instead (cardPictureAreas in card_renderer.dart).
 class CardPictureAreas {
   const CardPictureAreas({this.cover = const {}, this.waveform = const {}});
+
+  /// The cover's rectangle in units of the frame's shorter side, from the
+  /// middle of the frame's top edge (x across from the centre line, y down
+  /// from the top): a cover is sized by that side, so one rectangle fits
+  /// each card of a shape closely (round 5 used fractions of the frame,
+  /// which left Pinterest and Instagram story cards up to 176 px short).
   final Map<CardShape, Rect> cover;
+
+  /// The waveform's rectangle in fractions of the frame (it is sized by the
+  /// frame's width and height).
   final Map<CardShape, Rect> waveform;
 }
 
@@ -36,25 +45,26 @@ const Map<String, CardPictureAreas> kCardTemplatePictureAreas = {
   // The record at the top centre (drawn without a photo too).
   'vinyl': CardPictureAreas(
     cover: {
-      CardShape.square: Rect.fromLTRB(0.200, -0.020, 0.800, 0.580),
-      CardShape.portrait: Rect.fromLTRB(0.200, -0.020, 0.800, 0.453),
-      CardShape.story: Rect.fromLTRB(0.200, -0.020, 0.800, 0.435),
+      CardShape.square: Rect.fromLTRB(-0.292, -0.012, 0.292, 0.572),
+      CardShape.portrait: Rect.fromLTRB(-0.292, -0.012, 0.292, 0.572),
+      CardShape.story: Rect.fromLTRB(-0.292, -0.012, 0.292, 0.572),
     },
   ),
   // The waveform along the bottom.
   'gradientWave': CardPictureAreas(
     waveform: {
-      CardShape.square: Rect.fromLTRB(-0.020, 0.840, 1.020, 1.020),
-      CardShape.portrait: Rect.fromLTRB(-0.020, 0.840, 1.020, 1.020),
-      CardShape.story: Rect.fromLTRB(-0.020, 0.840, 1.020, 1.020),
+      CardShape.square: Rect.fromLTRB(-0.012, 0.848, 1.012, 1.012),
+      CardShape.portrait: Rect.fromLTRB(-0.012, 0.848, 1.012, 1.012),
+      CardShape.story: Rect.fromLTRB(-0.012, 0.848, 1.012, 1.012),
     },
   ),
-  // The tilted framed photo, with its white border (drawn with a photo).
+  // The tilted framed photo; its white border is inside the drawn square
+  // (drawn with a photo).
   'polaroid': CardPictureAreas(
     cover: {
-      CardShape.square: Rect.fromLTRB(0.069, -0.051, 0.931, 0.811),
-      CardShape.portrait: Rect.fromLTRB(0.069, -0.039, 0.931, 0.636),
-      CardShape.story: Rect.fromLTRB(0.063, -0.041, 0.937, 0.612),
+      CardShape.square: Rect.fromLTRB(-0.390, -0.010, 0.390, 0.770),
+      CardShape.portrait: Rect.fromLTRB(-0.390, -0.004, 0.390, 0.782),
+      CardShape.story: Rect.fromLTRB(-0.390, -0.003, 0.390, 0.789),
     },
   ),
 };

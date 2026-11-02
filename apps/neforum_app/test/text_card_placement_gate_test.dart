@@ -1,32 +1,36 @@
 // 1.3.5: the placement gate for the text card editor's words and @handle on
 // card designer designs. Written before the layout it judges (round 5 of the
-// review), and judged on rendered pixels only, so it cannot be satisfied by
-// how the code is organised.
+// review) and judged on rendered pixels: the picture areas come from the
+// pictures as the compositor DRAWS them (the card without its text, cover
+// shadow off, against the same card without its cover and waveform), never
+// from the layout's own geometry, so a picture drawn somewhere the layout
+// does not expect fails here (round-5 critic, G1).
 //
-// The matrix: every built-in template x words Top / Middle / Bottom x a
-// typed @handle or not x a photo or not x the 1:1, 4:5 and 9:16 (TikTok, with
-// its safe area) card shapes: 360 cells. Each cell renders the card (PNG, a
-// third of its size) and checks:
+// Two parts, on the six real card shapes (1:1 Bluesky, 4:5 Instagram, 2:3
+// Pinterest, and the 9:16 TikTok, Snapchat and Instagram story cards, each
+// with its safe area):
+//
+// The matrix: every built-in template x words Top / Middle / Bottom x a typed
+// @handle or not x a photo or not: 720 cells.
+// The sweep: Vinyl, Polaroid and Gradient wave with a photo x margins 24 /
+// 120 / 200 / 240 x @handle size 28 / 64 / 96 x words at the template's size
+// or 240 x Top / Middle / Bottom, on the 1:1 and TikTok cards: 432 cells.
+//
+// Each cell checks:
 //  (a) no pixel of the editor's text (the words, and the @handle when the
-//      editor placed it) inside a picture area of the template (the cover or
-//      record, with its border and turn, when it is drawn; the waveform), nor
-//      on the template's own text (its signature, its @handle, its lines),
-//      nor inside the network's safe area;
-//  (b) the template's own blocks the user did not touch (the signature, the
-//      template's @handle, its other lines) are drawn exactly where the
-//      untouched template draws them;
-//  (c) the words come out at no less than kMinWordsPx (pixels at 1080 wide):
-//      a long post at the top or the bottom is never shrunk twice into
-//      unreadable type. Where the room left is too short for every word at
-//      that size they are cut with an ellipsis (the stated minimum); the
-//      cells where that happens are listed, not failed;
-//  (d) the @handle, where one shows, is drawn, outside the picture areas
-//      when the editor placed it, and never under the words.
-// The picture areas are worked out here from the design's layers, the same
-// way the compositor draws them, independently of the layout code.
+//      editor placed it) on a drawn picture or inside the picture's drawn
+//      bounds (between a waveform's bars counts), on the template's own text,
+//      or inside the network's safe area;
+//  (b) matrix only: the template's own blocks are drawn exactly where the
+//      untouched template draws them (the sweep resizes some on purpose);
+//  (c) the words come out at no less than kMinWordsPx (pixels at 1080 wide),
+//      and every word is on the card: words cut (ellipsis) or left off for
+//      want of room FAIL when another position shows every word on that
+//      card; only cells where no position can are listed, with the reason;
+//  (d) the @handle the editor placed is drawn (or reported left off, under
+//      the same rule) and never under the words.
 
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -65,81 +69,124 @@ Future<void> _loadFonts() async {
   await family('Inter', ['assets/fonts/Inter-Regular.ttf', 'assets/fonts/Inter-Medium.ttf', 'assets/fonts/Inter-SemiBold.ttf', 'assets/fonts/Inter-Bold.ttf']);
   await family('Bricolage', ['assets/fonts/BricolageGrotesque-Bold.ttf', 'assets/fonts/BricolageGrotesque-ExtraBold.ttf']);
   await family('TikTok Sans', ['assets/fonts/TikTokSans.ttf']);
-  await family('Times New Roman', [r'C:\Windows\Fonts\times.ttf']);
+  await family('Times New Roman', [r'C:\Windows\Fonts\times.ttf', r'C:\Windows\Fonts\timesi.ttf']);
   await family('Arial', [r'C:\Windows\Fonts\arial.ttf', r'C:\Windows\Fonts\arialbd.ttf']);
 }
 
-/// The card shapes: (name, size at a third, safe area in pixels at 1080).
-final _shapes = [
-  ('1:1', const Size(360, 360), EdgeInsets.zero),
-  ('4:5', const Size(360, 450), EdgeInsets.zero),
-  ('9:16', const Size(360, 640), fullScreenSafeArea('tiktok')),
+/// A card shape: its name, the size it is rendered at here, its real size
+/// (measured at) and its safe area in pixels at 1080.
+typedef _Shape = (String name, Size render, Size real, EdgeInsets safe);
+
+final List<_Shape> _shapes = [
+  ('1:1', const Size(360, 360), textCardSize('bluesky'), EdgeInsets.zero),
+  ('4:5', const Size(360, 450), textCardSize('instagram'), EdgeInsets.zero),
+  ('2:3', const Size(400, 600), textCardSize('pinterest'), EdgeInsets.zero),
+  ('9:16 TikTok', const Size(360, 640), textCardSize('tiktok'), textCardSafeArea('tiktok')),
+  ('9:16 Snapchat', const Size(360, 640), textCardSize('snapchat'), textCardSafeArea('snapchat')),
+  ('9:16 Instagram story', const Size(360, 640), textCardSize('instagram', story: true), textCardSafeArea('instagram', story: true)),
 ];
 
-/// The drawn square of [d]'s cover in [frame], turned, with its border.
-Rect _coverArea(CardDesign d, Rect frame, double u) {
-  final c = d.cover;
-  final r = cardCoverRect(c, frame);
-  final turn = c.rotation * math.pi / 180;
-  final half = r.width / 2 * (math.cos(turn).abs() + math.sin(turn).abs()) + c.borderWidth * u;
-  return Rect.fromCenter(center: r.center, width: half * 2, height: half * 2);
+/// A rendered card's pixels, RGB.
+class _Px {
+  _Px(img.Image i)
+      : width = i.width,
+        height = i.height,
+        rgb = i.getBytes(order: img.ChannelOrder.rgb);
+  final int width, height;
+  final Uint8List rgb;
 }
 
-/// The template's picture areas on a card of [size] (design pixels), each
-/// shrunk by 2 pixels for anti-aliasing at their edges.
-List<Rect> _pictureAreas(CardDesign d, Size size, EdgeInsets safe, {required bool photo}) {
-  final u = cardUnit(size);
-  final frame = cardFrameOf(size, safe, d.margin);
-  return [
-    if (d.cover.visible && (photo || d.cover.shape == CardCoverShape.vinyl)) _coverArea(d, frame, u).deflate(2),
-    if (d.waveform.visible) cardWaveformRect(d.waveform, frame).deflate(2),
-  ];
+/// Where [a] and [b] differ by more than [threshold] (summed over RGB), every
+/// pixel: 1 or 0 per pixel.
+Uint8List _mask(_Px a, _Px b, [int threshold = 60]) {
+  final m = Uint8List(a.width * a.height);
+  final p = a.rgb, q = b.rgb;
+  for (var i = 0, o = 0; i < m.length; i++, o += 3) {
+    if ((p[o] - q[o]).abs() + (p[o + 1] - q[o + 1]).abs() + (p[o + 2] - q[o + 2]).abs() > threshold) m[i] = 1;
+  }
+  return m;
 }
 
-/// The network's safe area as rects on a card of [size].
-List<Rect> _safeAreas(Size size, EdgeInsets safe) {
-  final u = cardUnit(size);
-  return [
-    if (safe.top > 0) Rect.fromLTWH(0, 0, size.width, safe.top * u - 1),
-    if (safe.right > 0) Rect.fromLTWH(size.width - safe.right * u + 1, 0, safe.right * u - 1, size.height),
-    if (safe.bottom > 0) Rect.fromLTWH(0, size.height - safe.bottom * u + 1, size.width, safe.bottom * u - 1),
-  ];
+int _count(Uint8List m) {
+  var n = 0;
+  for (final v in m) {
+    n += v;
+  }
+  return n;
 }
 
-class _Card {
-  _Card(this.image);
-  final img.Image image;
+int _both(Uint8List a, Uint8List b) {
+  var n = 0;
+  for (var i = 0; i < a.length; i++) {
+    n += a[i] & b[i];
+  }
+  return n;
 }
 
-/// Sampled points (every 2 pixels) where [a] and [b] differ.
-List<Offset> _differing(img.Image a, img.Image b) {
-  final out = <Offset>[];
-  for (var y = 0; y < a.height; y += 2) {
-    for (var x = 0; x < a.width; x += 2) {
-      final p = a.getPixel(x, y), q = b.getPixel(x, y);
-      if ((p.r - q.r).abs() + (p.g - q.g).abs() + (p.b - q.b).abs() > 60) out.add(Offset(x.toDouble(), y.toDouble()));
+Uint8List _or(Uint8List a, Uint8List b) => Uint8List.fromList([for (var i = 0; i < a.length; i++) a[i] | b[i]]);
+
+/// The drawn pictures as one mask: their pixels, and the bounding box of
+/// each picture's pixels (so the gaps between a waveform's bars count).
+Uint8List _pictureArea(Uint8List drawn, int width) {
+  final out = Uint8List.fromList(drawn);
+  // A box per run of rows that hold picture pixels: each picture of these
+  // templates is one such run (a cover above, a waveform below).
+  final height = drawn.length ~/ width;
+  var y = 0;
+  while (y < height) {
+    // Find the next run of rows with picture pixels.
+    bool rowHas(int r) {
+      for (var x = 0; x < width; x++) {
+        if (drawn[r * width + x] == 1) return true;
+      }
+      return false;
+    }
+
+    while (y < height && !rowHas(y)) {
+      y++;
+    }
+    if (y >= height) break;
+    final top = y;
+    var left = width, right = -1;
+    while (y < height && rowHas(y)) {
+      for (var x = 0; x < width; x++) {
+        if (drawn[y * width + x] == 1) {
+          if (x < left) left = x;
+          if (x > right) right = x;
+        }
+      }
+      y++;
+    }
+    for (var r = top; r < y; r++) {
+      for (var x = left; x <= right; x++) {
+        out[r * width + x] = 1;
+      }
     }
   }
   return out;
 }
 
-int _inside(List<Offset> points, List<Rect> areas) => points.where((p) => areas.any((r) => r.contains(p))).length;
+/// Pixels of [m] inside the network's safe area.
+int _inSafe(Uint8List m, int width, Size size, EdgeInsets safe) {
+  final u = size.width / 1080, height = m.length ~/ width;
+  var n = 0;
+  for (var y = 0; y < height; y++) {
+    for (var x = 0; x < width; x++) {
+      if (m[y * width + x] == 0) continue;
+      if (y < safe.top * u - 1 || x > size.width - safe.right * u + 1 || y > size.height - safe.bottom * u + 1) n++;
+    }
+  }
+  return n;
+}
 
 CardDesign _withoutWords(CardDesign d) => d.copyWith(blocks: [for (final b in d.blocks) if (b.role != CardBlockRole.postText) b]);
-
-/// Points of [points] that are also in [others] (both sampled on the same
-/// even grid by [_differing]).
-int _shared(List<Offset> points, List<Offset> others) {
-  final set = others.toSet();
-  return points.where(set.contains).length;
-}
 
 void main() {
   setUpAll(_loadFonts);
 
   PhotoPixels? photo;
 
-  Future<_Card> draw(WidgetTester tester, CardDesign d, Size size, EdgeInsets safe, {required Map<CardBlockRole, String> texts, required bool withPhoto}) async {
+  Future<_Px> draw(WidgetTester tester, CardDesign d, _Shape shape, {required Map<CardBlockRole, String> texts, required bool withPhoto}) async {
     if (withPhoto && photo == null) {
       final src = img.Image(width: 160, height: 160);
       for (var y = 0; y < 160; y++) {
@@ -152,8 +199,8 @@ void main() {
     final bytes = (await tester.runAsync(() => renderCardDesign(
         CardRenderInput(
           design: d,
-          size: size,
-          safe: safe,
+          size: shape.$2,
+          safe: shape.$4,
           platformId: 'instagram',
           texts: texts,
           photo: withPhoto ? photo : null,
@@ -162,21 +209,119 @@ void main() {
           waveform: d.waveform.visible ? decorativeWaveform(7) : null,
         ),
         png: true)))!;
-    return _Card(img.decodePng(bytes)!);
+    return _Px(img.decodePng(bytes)!);
+  }
+
+  // Renders that do not depend on the words, kept per key.
+  final cache = <String, Object>{};
+  Future<T> kept<T extends Object>(String key, Future<T> Function() make) async => (cache[key] ??= await make()) as T;
+
+  /// The drawn pictures of [d] on [shape] (with [withPhoto]), as an area.
+  Future<Uint8List> pictures(WidgetTester tester, CardDesign d, _Shape shape, bool withPhoto) => kept('pic|${d.template}|${d.margin}|${shape.$1}|$withPhoto', () async {
+        final on = await draw(tester, d.copyWith(blocks: const [], cover: d.cover.copyWith(shadow: 0)), shape, texts: const {}, withPhoto: withPhoto);
+        final off = await draw(tester, d.copyWith(blocks: const [], cover: d.cover.copyWith(visible: false), waveform: d.waveform.copyWith(visible: false)), shape,
+            texts: const {}, withPhoto: withPhoto);
+        return _pictureArea(_mask(on, off, 40), on.width);
+      });
+
+  ({double size, bool cut, bool dropped, bool handleDropped})? measure(CardDesign d, _Shape shape, Map<CardBlockRole, String> texts, bool withPhoto) =>
+      CardDesignPainter(
+        design: d,
+        texts: texts,
+        safe: shape.$4,
+        platformId: 'instagram',
+        waveform: d.waveform.visible ? decorativeWaveform(7) : null,
+        coverShown: cardCoverDrawn(d, picture: withPhoto),
+      ).drawnWords(shape.$3);
+
+  /// The rule for words that do not all show: a FAIL when another position
+  /// shows every word on this card, else a listed cell with the reason.
+  /// Null when every word shows.
+  (bool fail, String why)? missing(CardDesign d, TextCardTextPosition position, _Shape shape, Map<CardBlockRole, String> texts, bool withPhoto, String label) {
+    final m = measure(d, shape, texts, withPhoto);
+    if (m == null || (!m.cut && !m.dropped && !m.handleDropped)) return null;
+    final what = m.dropped ? 'words left off' : (m.cut ? 'words cut at ${m.size.toStringAsFixed(1)} px' : 'handle left off');
+    for (final other in TextCardTextPosition.values) {
+      if (other == position) continue;
+      final o = measure(d.withWordsPosition(other), shape, texts, withPhoto);
+      if (o != null && !o.cut && !o.dropped && !o.handleDropped) return (true, '(c) $what where ${other.name} shows everything');
+    }
+    return (false, '$label: $what; no position fits it (${m.dropped || m.handleDropped ? 'no free band left by the margins and handle size' : 'the post is longer than any free band holds at ${kMinWordsPx.toInt()} px'})');
   }
 
   final summary = <String>[];
-  final cut = <String>[];
+  final sweep = <String>[];
+  final listed = <String>[];
   tearDownAll(() {
+    int fails(List<String> s) => s.where((l) => l.startsWith('FAIL')).length;
     // ignore: avoid_print
-    print('PLACEMENT GATE: ${summary.where((s) => s.startsWith('FAIL')).length} of ${summary.length} cells fail');
+    print('PLACEMENT GATE: ${fails(summary)} of ${summary.length} cells fail');
     // ignore: avoid_print
-    print('Words cut at the ${kMinWordsPx.toInt()} px minimum: ${cut.length} of ${summary.length} cells${cut.isEmpty ? '' : ':\n  ${cut.join('\n  ')}'}');
-    for (final s in summary.where((s) => s.startsWith('FAIL'))) {
+    print('PLACEMENT SWEEP: ${fails(sweep)} of ${sweep.length} cells fail');
+    for (final s in [...summary, ...sweep].where((s) => s.startsWith('FAIL'))) {
       // ignore: avoid_print
       print(s);
     }
+    // ignore: avoid_print
+    print('Cells where no arrangement shows everything: ${listed.length}${listed.isEmpty ? '' : '\n  ${listed.join('\n  ')}'}');
   });
+
+  /// One cell; returns its problems (empty: PASS).
+  Future<List<String>> cell(WidgetTester tester, CardDesign template, CardDesign design, TextCardTextPosition position, _Shape shape,
+      {required bool typed, required bool withPhoto, required bool checkMoved, required String label}) async {
+    final handleText = typed ? _typed : _own;
+    // The editor placed the @handle when it added one for a typed handle, or
+    // when the handle was edited onto a design that places it.
+    final editorHandle = design.placeHandle && design.handleBlock != null;
+    final texts = {CardBlockRole.postText: _long, CardBlockRole.handle: handleText};
+    final noEditorTexts = {...texts, if (editorHandle) CardBlockRole.handle: ''};
+    final full = await draw(tester, design, shape, texts: texts, withPhoto: withPhoto);
+    final noWords = await draw(tester, _withoutWords(design), shape, texts: texts, withPhoto: withPhoto);
+    final noEditorText = await draw(tester, _withoutWords(design), shape, texts: noEditorTexts, withPhoto: withPhoto);
+    final reference = await kept('ref|${template.template}|${shape.$1}|$withPhoto|${noEditorTexts[CardBlockRole.handle]}',
+        () => draw(tester, _withoutWords(template), shape, texts: noEditorTexts, withPhoto: withPhoto));
+    final bare = await kept('bare|${design.template}|${design.margin}|${shape.$1}|$withPhoto', () => draw(tester, design.copyWith(blocks: const []), shape, texts: texts, withPhoto: withPhoto));
+    final picture = await pictures(tester, design, shape, withPhoto);
+    final words = _mask(full, noWords);
+    final handle = editorHandle ? _mask(noWords, noEditorText) : Uint8List(words.length);
+    final editor = _or(words, handle);
+    final templateText = _mask(noEditorText, bare);
+    final problems = <String>[];
+    // (a)
+    final onPicture = _both(editor, picture);
+    if (onPicture > 0) problems.add('(a) $onPicture text pixels on a drawn picture');
+    final onTemplate = _both(words, templateText) + _both(handle, templateText);
+    if (onTemplate > 3) problems.add('(a) $onTemplate text pixels on the template\'s own text');
+    final inSafe = _inSafe(editor, full.width, shape.$2, shape.$4);
+    if (inSafe > 0) problems.add('(a) $inSafe text pixels in the safe area');
+    // (b)
+    if (checkMoved) {
+      final moved = _count(_mask(noEditorText, reference));
+      if (moved > 3) problems.add('(b) template blocks moved ($moved pixels)');
+    }
+    // (c)
+    final m = measure(design, shape, texts, withPhoto);
+    final miss = missing(design, position, shape, texts, withPhoto, label);
+    if (miss != null) {
+      if (miss.$1) {
+        problems.add(miss.$2);
+      } else {
+        listed.add(miss.$2);
+      }
+    }
+    if (m != null && !m.dropped && m.size < kMinWordsPx) problems.add('(c) words at ${m.size.toStringAsFixed(1)} px');
+    // Cut while they could still have shrunk: the post loses words for a
+    // size nobody needs.
+    if (m != null && m.cut && m.size > kMinWordsPx + 0.5) problems.add('(c) words cut at ${m.size.toStringAsFixed(1)} px, above the ${kMinWordsPx.toInt()} px they may shrink to');
+    if (m != null && !m.dropped && _count(words) < 30) problems.add('(c) words not drawn');
+    // (d)
+    if (editorHandle && !(m?.handleDropped ?? false)) {
+      if (_count(handle) < 8) problems.add('(d) handle not drawn');
+      final under = _both(handle, words);
+      if (under > 2) problems.add('(d) handle under the words ($under pixels)');
+    }
+    return problems;
+  }
 
   for (final t in kCardTemplates) {
     testWidgets('placement gate: ${t.name}', (tester) async {
@@ -185,69 +330,46 @@ void main() {
       for (final position in TextCardTextPosition.values) {
         for (final typed in [false, true]) {
           for (final withPhoto in [false, true]) {
-            for (final (shape, size, safe) in _shapes) {
-              final cell = '${t.id} words=${position.name} handle=${typed ? 'typed' : 'own'} photo=$withPhoto $shape';
+            for (final shape in _shapes) {
+              final label = '${t.id} words=${position.name} handle=${typed ? 'typed' : 'own'} photo=$withPhoto ${shape.$1}';
               var design = template.withWordsPosition(position);
               if (typed) design = designWithHandle(design, _typed);
-              final handleText = typed ? _typed : _own;
-              // The template draws a handle of its own (untouched): the
-              // editor placed it only when it added one for a typed handle.
-              final editorHandle = typed && template.handleBlock == null;
-              final texts = {CardBlockRole.postText: _long, CardBlockRole.handle: handleText};
-              final full = await draw(tester, design, size, safe, texts: texts, withPhoto: withPhoto);
-              final noWords = await draw(tester, _withoutWords(design), size, safe, texts: texts, withPhoto: withPhoto);
-              final noEditorText = await draw(tester, _withoutWords(design), size, safe,
-                  texts: {...texts, if (editorHandle) CardBlockRole.handle: ''}, withPhoto: withPhoto);
-              // The untouched template without its words: where its own
-              // blocks belong.
-              final reference = await draw(tester, _withoutWords(template), size, safe,
-                  texts: {...texts, if (editorHandle) CardBlockRole.handle: ''}, withPhoto: withPhoto);
-              // The template's own text as drawn: the reference against the
-              // bare pictures.
-              final bare = await draw(tester, template.copyWith(blocks: const []), size, safe, texts: texts, withPhoto: withPhoto);
-              final templateText = _differing(reference.image, bare.image);
-              final pictures = _pictureAreas(design, size, safe, photo: withPhoto);
-              final safeAreas = _safeAreas(size, safe);
-              final words = _differing(full.image, noWords.image);
-              final handle = editorHandle ? _differing(noWords.image, noEditorText.image) : const <Offset>[];
-              final problems = <String>[];
-              // (a)
-              final onPictures = _inside(words, pictures) + _inside(handle, pictures);
-              if (onPictures > 3) problems.add('(a) $onPictures text points on a picture');
-              final onTemplateText = _shared(words, templateText) + _shared(handle, templateText);
-              if (onTemplateText > 3) problems.add('(a) $onTemplateText text points on the template\'s own text');
-              final onSafe = _inside(_differing(full.image, reference.image), safeAreas);
-              if (onSafe > 0) problems.add('(a) $onSafe text points in the safe area');
-              // (b)
-              final moved = _differing(noEditorText.image, reference.image).length;
-              if (moved > 3) problems.add('(b) template blocks moved ($moved points)');
-              // (c)
-              final drawn = CardDesignPainter(
-                design: design,
-                texts: texts,
-                safe: safe,
-                platformId: 'instagram',
-                waveform: design.waveform.visible ? decorativeWaveform(7) : null,
-                coverShown: cardCoverDrawn(design, picture: withPhoto),
-              ).drawnWords(Size(size.width * 3, size.height * 3));
-              final px = drawn?.size;
-              if (px != null && px < kMinWordsPx) problems.add('(c) words at ${px.toStringAsFixed(1)} px');
-              if (drawn != null && drawn.cut) cut.add('$cell (${px!.toStringAsFixed(1)} px)');
-              if (words.length < 20) problems.add('(c) words not drawn');
-              // (d)
-              if (editorHandle) {
-                if (handle.length < 8) problems.add('(d) handle not drawn');
-                final under = handle.where((p) => words.any((w) => (w - p).distance < 3)).length;
-                if (under > 2) problems.add('(d) handle under the words ($under points)');
-              }
-              final line = '${problems.isEmpty ? 'PASS' : 'FAIL'} $cell${problems.isEmpty ? '' : ': ${problems.join('; ')}'}';
+              final problems = await cell(tester, template, design, position, shape, typed: typed, withPhoto: withPhoto, checkMoved: true, label: label);
+              final line = '${problems.isEmpty ? 'PASS' : 'FAIL'} $label${problems.isEmpty ? '' : ': ${problems.join('; ')}'}';
               summary.add(line);
               if (problems.isNotEmpty) failures.add(line);
             }
           }
         }
       }
+      cache.clear();
       expect(failures, isEmpty, reason: failures.join('\n'));
-    }, timeout: const Timeout(Duration(minutes: 6)));
+    }, timeout: const Timeout(Duration(minutes: 10)));
+  }
+
+  for (final id in ['vinyl', 'polaroid', 'gradientWave']) {
+    testWidgets('placement sweep: $id, margins x handle size x words size', (tester) async {
+      final template = cardTemplateById(id)!.design(CardKind.text);
+      final failures = <String>[];
+      for (final margin in [24.0, 120.0, 200.0, 240.0]) {
+        for (final handleSize in [28.0, 64.0, 96.0]) {
+          for (final wordsSize in [null, 240.0]) {
+            for (final position in TextCardTextPosition.values) {
+              for (final shape in [_shapes[0], _shapes[3]]) {
+                final label = '$id margin=${margin.toInt()} handle=${handleSize.toInt()} words=${wordsSize?.toInt() ?? 'template'} ${position.name} ${shape.$1}';
+                var design = designWithHandle(template.withWordsPosition(position), _typed).withMargin(margin).withHandleSize(handleSize);
+                if (wordsSize != null) design = design.withWordsSize(wordsSize);
+                final problems = await cell(tester, template, design, position, shape, typed: true, withPhoto: true, checkMoved: false, label: label);
+                final line = '${problems.isEmpty ? 'PASS' : 'FAIL'} sweep $label${problems.isEmpty ? '' : ': ${problems.join('; ')}'}';
+                sweep.add(line);
+                if (problems.isNotEmpty) failures.add(line);
+              }
+            }
+          }
+        }
+      }
+      cache.clear();
+      expect(failures, isEmpty, reason: failures.join('\n'));
+    }, timeout: const Timeout(Duration(minutes: 15)));
   }
 }

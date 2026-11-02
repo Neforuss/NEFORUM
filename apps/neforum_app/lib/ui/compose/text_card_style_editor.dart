@@ -15,9 +15,31 @@ import 'card_colour_dialog.dart';
 /// How large a post's words come out against what the editor's size control
 /// asks, on the network where they fall shortest: on the classic card both
 /// are against the size at 100% (1.0), on a design both are pixels at 1080
-/// wide. [cut] (1.3.5 round 5): a design's placed words were cut to fit at
-/// their smallest readable size ([CardDesignPainter.drawnWords]).
-typedef TextCardWordsFit = ({String network, double asked, double drawn, bool cut});
+/// wide. 1.3.5 rounds 5 and 6, from [CardDesignPainter.drawnWords]: [cut], a
+/// design's words were cut to fit at their smallest readable size;
+/// [dropped], its placed words found no room at all and are left off;
+/// [handleDropped], the same for its placed @handle; [fitsAt], another
+/// position measured to show every word on that card, if there is one.
+typedef TextCardWordsFit = ({String network, double asked, double drawn, bool cut, bool dropped, bool handleDropped, String? fitsAt});
+
+/// 1.3.5 round 6: what to tell the user when [fit] says words or the
+/// @handle are missing from a network's card; null when nothing is. The
+/// advice is only what was measured to help: another position when one
+/// shows every word, else what makes room.
+String? textCardFitWarning(TextCardWordsFit fit) {
+  final net = fit.network;
+  if (fit.dropped) {
+    return 'No room for the words on $net: ${fit.fitsAt != null ? '${fit.fitsAt} shows them, or ' : ''}smaller margins or a smaller handle make room';
+  }
+  if (fit.handleDropped) return 'No room for the handle on $net: smaller margins or a smaller handle make room';
+  if (fit.cut) {
+    final px = '${fit.drawn.round()} px';
+    return fit.fitsAt != null
+        ? 'Too long for this place on $net: cut at $px. ${fit.fitsAt} shows every word'
+        : 'Too long for this card on $net: cut at $px. Shorter words or smaller margins make room';
+  }
+  return null;
+}
 
 /// 1.3.5: cards. The text card editor's "more editing power": the @handle
 /// written on the cards, its size, place and colour, and the words' size,
@@ -315,17 +337,20 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
 
     // How large the words come out, when a larger size changes nothing or
     // the design's words shrink to fit.
+    // Round 6: on a design that places the words or the @handle, words or
+    // a handle can go missing from a card (cut, or no room left), so that
+    // is worked out folded too and shown under the fold.
     String? fitNote;
-    final fit = _expanded ? widget.wordsFit?.call() : null;
-    if (fit != null) {
+    final placing = design != null && (design.placeWords || design.placeHandle);
+    final fit = _expanded || placing ? widget.wordsFit?.call() : null;
+    final warning = design == null || fit == null ? null : textCardFitWarning(fit);
+    if (fit != null && _expanded) {
       if (design == null) {
         if (style.textSize > 1 && fit.drawn < fit.asked - 0.02) {
           fitNote = fit.drawn <= 1.005 ? 'Already as large as these words fit on ${fit.network}' : 'As large as fits on ${fit.network}: ${percent(fit.drawn)}';
         }
-      } else if (fit.cut) {
-        // 1.3.5 round 5: placed words stop shrinking at a readable size, so
-        // a post too long for the room left is cut; say so, never silently.
-        fitNote = 'Too long for this place on ${fit.network}: cut at ${px(fit.drawn)}. Shorter words or another position show them all';
+      } else if (warning != null) {
+        fitNote = warning;
       } else if (fit.drawn < fit.asked - 1) {
         fitNote = 'Shrinks to fit on ${fit.network}: ${px(fit.drawn)}';
       }
@@ -578,6 +603,15 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
             ),
           ),
           if (_expanded) ...controls,
+          if (!_expanded && warning != null)
+            Padding(
+              padding: const EdgeInsets.only(top: Space.sm),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Icon(Icons.warning_amber_rounded, size: 18, color: nf.warning),
+                const SizedBox(width: Space.xs),
+                Expanded(child: Text(warning, key: _key('fit-warning'), style: context.text.bodySmall)),
+              ]),
+            ),
           const SizedBox(height: Space.sm),
           Wrap(
             spacing: Space.xs,

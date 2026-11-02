@@ -62,15 +62,18 @@ Rect cardCoverRect(CardCoverLayer c, Rect frame) {
 bool cardCoverDrawn(CardDesign d, {required bool picture}) => d.cover.visible && (picture || d.cover.shape == CardCoverShape.vinyl);
 
 /// 1.3.5: [d]'s picture areas in [frame], worked out from its layers: the
-/// cover's drawn square (turned, with its border) when [coverShown], the
-/// waveform when [waveformShown].
+/// cover's square as [_drawCover] draws it, turned, when [coverShown] (its
+/// border is drawn inside that square, so it adds nothing: round 5 counted
+/// it a second time outside and cut Polaroid's words for room they had),
+/// and the waveform when [waveformShown]. The cover's soft shadow is not a
+/// picture: text may sit on its faint edge, as on the untouched templates.
 List<Rect> cardLayerPictureAreas(CardDesign d, Rect frame, double u, {required bool coverShown, required bool waveformShown}) {
   final c = d.cover;
   return [
     if (coverShown) () {
       final r = cardCoverRect(c, frame);
       final turn = c.rotation * math.pi / 180;
-      final half = r.width / 2 * (math.cos(turn).abs() + math.sin(turn).abs()) + c.borderWidth * u;
+      final half = r.width / 2 * (math.cos(turn).abs() + math.sin(turn).abs());
       return Rect.fromCenter(center: r.center, width: half * 2, height: half * 2);
     }(),
     if (waveformShown) cardWaveformRect(d.waveform, frame),
@@ -96,15 +99,20 @@ List<Rect> cardPictureAreas(CardDesign d, Size size, EdgeInsets safe, {required 
   final layers = cardLayerPictureAreas(d, frame, cardUnit(size), coverShown: coverShown, waveformShown: waveformShown);
   if (!asMade) return layers;
   final shape = cardShapeOf(size);
+  final s = frame.shortestSide;
+  // Covers in the frame's short side from its top centre, waveforms in
+  // fractions of the frame ([CardPictureAreas]).
+  Rect coverIn(Rect f) => Rect.fromLTRB(frame.center.dx + f.left * s, frame.top + f.top * s, frame.center.dx + f.right * s, frame.top + f.bottom * s);
   Rect inFrame(Rect f) => Rect.fromLTRB(frame.left + f.left * frame.width, frame.top + f.top * frame.height, frame.left + f.right * frame.width, frame.top + f.bottom * frame.height);
   // On every network's card the declared rectangle holds the drawn layer
   // (tested), so taking it in changes nothing there; on a card of a size no
   // network uses (a landscape frame, an odd custom size) it keeps the text
   // off the picture all the same.
-  Rect held(Rect? declaredRect, Rect drawn) => declaredRect == null ? drawn : inFrame(declaredRect).expandToInclude(drawn);
+  Rect held(Rect? declaredRect, Rect drawn) => declaredRect == null ? drawn : declaredRect.expandToInclude(drawn);
+  final cover = declared.cover[shape], wave = declared.waveform[shape];
   return [
-    if (coverShown) held(declared.cover[shape], layers.first),
-    if (waveformShown) held(declared.waveform[shape], layers.last),
+    if (coverShown) held(cover == null ? null : coverIn(cover), layers.first),
+    if (waveformShown) held(wave == null ? null : inFrame(wave), layers.last),
   ];
 }
 
@@ -264,8 +272,17 @@ class CardDesignPainter extends CustomPainter {
   /// the band's height once (an auto-fitting block shrinks into the band, no
   /// further, and never below [kPlacedWordsMinPx]); without such a band they
   /// take the tallest one.
-  List<(_LaidBlock, Offset)> _placeEditorBlocks(Rect frame, double u, Size size, List<(_LaidBlock, Offset)> placed) {
-    if (!design.placeWords && !design.placeHandle) return const [];
+  ///
+  /// 1.3.5 round 6 (review 5, finding 2): a placed block is never drawn outside a free band.
+  /// When the margins and the @handle's size leave no band that holds the
+  /// @handle, or one line of the words at [kPlacedWordsMinPx], that block is
+  /// left off the card ([wordsDropped], [handleDropped]) and the text card
+  /// editor says so with what makes room. Laying it over the framed photo
+  /// (round 5 fell back to the whole frame) or quietly overriding the
+  /// margins the user just set would both surprise more.
+  ({List<(_LaidBlock, Offset)> laid, bool wordsDropped, bool handleDropped}) _placeEditorBlocks(
+      Rect frame, double u, Size size, List<(_LaidBlock, Offset)> placed) {
+    if (!design.placeWords && !design.placeHandle) return (laid: const [], wordsDropped: false, handleDropped: false);
     final gap = kPlacedTextGapPx * u;
     final taken = <Rect>[
       ...cardPictureAreas(design, size, safe, coverShown: coverShown, waveformShown: design.waveform.visible && (waveform?.isNotEmpty ?? false)),
@@ -275,33 +292,48 @@ class CardDesignPainter extends CustomPainter {
         design.blocks.where((b) => b.role == role && b.visible && wordsOf(b).isNotEmpty && _editorPlaced(b)).firstOrNull;
     double yIn(Rect band, double height, double row) => row == 0 ? band.top : (row == 1 ? band.bottom - height : band.top + (band.height - height) / 2);
     final out = <(_LaidBlock, Offset)>[];
+    var wordsDropped = false, handleDropped = false;
     final handle = editorBlock(CardBlockRole.handle);
     if (handle != null) {
       final laid = _layout(handle, frame, u, null);
       final x = frame.left + (frame.width - laid.width) * handle.anchor.x + handle.offsetX * frame.width;
       final ink = laid.inkAt(Offset(x, frame.top));
       final band = _freeBand(frame, taken, ink.left, ink.right, laid.height, handle.anchor.y, gap);
-      final at = _inFrame(laid, Offset(x, yIn(band, laid.height, handle.anchor.y)), frame);
-      out.add((laid, at));
-      taken.add(laid.inkAt(at));
+      if (band == null || band.height + 0.5 < laid.height) {
+        laid.dispose();
+        handleDropped = true;
+      } else {
+        final at = Offset(x.clamp(frame.left, math.max(frame.left, frame.right - laid.width)), yIn(band, laid.height, handle.anchor.y));
+        out.add((laid, at));
+        taken.add(laid.inkAt(at));
+      }
     }
     final words = editorBlock(CardBlockRole.postText);
     if (words != null) {
       final w = frame.width * words.width;
       final x = frame.left + (frame.width - w) * words.anchor.x + words.offsetX * frame.width;
       final band = _freeBand(frame, taken, x, x + w, frame.height * 0.2, words.anchor.y, gap);
-      final laid = _layout(words, frame, u, band.height, floor: kPlacedWordsMinPx);
-      out.add((laid, _inFrame(laid, Offset(x, yIn(band, laid.height, words.anchor.y)), frame)));
+      final laid = band == null ? null : _layout(words, frame, u, band.height, floor: kPlacedWordsMinPx);
+      // Never taller than its band: _layout keeps one line however short
+      // the band, so a band without room for one line at the floor drops it.
+      if (band == null || laid == null || laid.height > band.height + 0.5) {
+        laid?.dispose();
+        wordsDropped = true;
+      } else {
+        out.add((laid, Offset(x.clamp(frame.left, math.max(frame.left, frame.right - laid.width)), yIn(band, laid.height, words.anchor.y))));
+      }
     }
-    return out;
+    return (laid: out, wordsDropped: wordsDropped, handleDropped: handleDropped);
   }
 
   /// The band of [frame] (its full width, a span of its height) that none
   /// of [taken] crosses between [left] and [right] (each kept [gap] away
   /// above and below, half that to the side):
   /// the topmost one at least [need] tall for [row] 0, the lowest for row 1,
-  /// the tallest for the middle; the tallest when none is tall enough.
-  static Rect _freeBand(Rect frame, List<Rect> taken, double left, double right, double need, double row, double gap) {
+  /// the tallest for the middle; the tallest when none is tall enough; null
+  /// when nothing is free (never the whole frame: that put the words over
+  /// the picture).
+  static Rect? _freeBand(Rect frame, List<Rect> taken, double left, double right, double need, double row, double gap) {
     // Across, half the gap is enough: text beside a picture or another line
     // is read apart at that distance, and a short @handle still fits beside
     // Vinyl's record.
@@ -318,7 +350,7 @@ class CardDesignPainter extends CustomPainter {
       y = math.max(y, bottom);
     }
     if (y < frame.bottom) free.add(Rect.fromLTRB(frame.left, y, frame.right, frame.bottom));
-    if (free.isEmpty) return frame;
+    if (free.isEmpty) return null;
     final tallest = free.reduce((a, b) => b.height > a.height ? b : a);
     final fit = [for (final f in free) if (f.height >= need) f];
     if (fit.isEmpty || row == 0.5) return tallest;
@@ -433,7 +465,7 @@ class CardDesignPainter extends CustomPainter {
     // The design's own blocks where they always were; then the text card
     // editor's words and @handle in the bands left free (1.3.5).
     final placed = _placeGroups(frame, u);
-    final editor = _placeEditorBlocks(frame, u, size, placed);
+    final editor = _placeEditorBlocks(frame, u, size, placed).laid;
     for (final (l, at) in [...placed, ...editor]) {
       l.paint(canvas, at);
       l.dispose();
@@ -442,7 +474,7 @@ class CardDesignPainter extends CustomPainter {
 
   /// [b] laid out [frame]'s width, fitted to [fitHeight] (else its own share
   /// of the frame); an auto-fitting block shrinks no further than a third of
-  /// its size, or than [floor] (pixels at 1080 wide) when given.
+  /// its size, or, when [floor] is given (pixels at 1080 wide), than that.
   _LaidBlock _layout(CardTextBlock b, Rect frame, double u, double? fitHeight, {double? floor}) {
     final words = wordsOf(b);
     final width = frame.width * b.width;
@@ -461,7 +493,10 @@ class CardDesignPainter extends CustomPainter {
     var fs = b.size * u;
     var text = make(fs, lines);
     if (b.autoFit) {
-      final minFs = math.max(12 * u, math.max(b.size * u / 3, math.min(floor ?? 0, b.size) * u));
+      // A design's own blocks stop at a third of their size, as always; the
+      // editor's placed words go down to [floor] whatever size was picked
+      // (round 6: at 240 px they stopped at 80 and were cut where 40 fitted).
+      final minFs = floor == null ? math.max(12 * u, b.size * u / 3) : math.max(12 * u, math.min(floor, b.size) * u);
       while (text.height > maxHeight && fs > minFs) {
         text.dispose();
         fs = math.max(minFs, fs - 3 * u);
@@ -507,20 +542,25 @@ class CardDesignPainter extends CustomPainter {
   /// [kPlacedWordsMinPx], so a post too long for its band at that size is
   /// cut, and the text card editor says so rather than letting words go
   /// missing from the published card unannounced.
-  ({double size, bool cut})? drawnWords(Size size) {
+  ///
+  /// Round 6 (review 5, finding 2): [dropped] when there is no room left for the
+  /// placed words at all (they are not drawn; [size] is then 0), and
+  /// [handleDropped] when the placed @handle has none.
+  ({double size, bool cut, bool dropped, bool handleDropped})? drawnWords(Size size) {
     final u = cardUnit(size);
     final frame = cardFrameOf(size, safe, design.margin);
     final words = design.blocks.where((b) => b.role == CardBlockRole.postText && b.visible && wordsOf(b).isNotEmpty).firstOrNull;
     if (words == null) return null;
     final placed = _placeGroups(frame, u);
-    final all = [...placed, ..._placeEditorBlocks(frame, u, size, placed)];
-    final mine = all.firstWhere((p) => identical(p.$1.block, words)).$1;
-    final fs = mine is _LaidText ? mine.fontSize : words.size * u;
+    final editor = _placeEditorBlocks(frame, u, size, placed);
+    final all = [...placed, ...editor.laid];
+    final mine = all.where((p) => identical(p.$1.block, words)).firstOrNull?.$1;
+    final fs = mine == null ? 0.0 : (mine is _LaidText ? mine.fontSize : words.size * u);
     final cut = mine is _LaidText && mine.text.didExceedMaxLines;
     for (final (l, _) in all) {
       l.dispose();
     }
-    return (size: fs / u, cut: cut);
+    return (size: fs / u, cut: cut, dropped: editor.wordsDropped, handleDropped: editor.handleDropped);
   }
 
   /// 1.3.5 round 5: the boxes the text card editor's words and @handle are
@@ -532,7 +572,7 @@ class CardDesignPainter extends CustomPainter {
     final u = cardUnit(size);
     final frame = cardFrameOf(size, safe, design.margin);
     final placed = _placeGroups(frame, u);
-    final editor = _placeEditorBlocks(frame, u, size, placed);
+    final editor = _placeEditorBlocks(frame, u, size, placed).laid;
     final out = {for (final (l, at) in editor) l.block.role: l.inkAt(at)};
     for (final (l, _) in [...placed, ...editor]) {
       l.dispose();
