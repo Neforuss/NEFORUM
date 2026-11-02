@@ -1,3 +1,4 @@
+import 'dart:convert' show jsonEncode;
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -651,7 +652,35 @@ class _TextCardStyleSheet extends ConsumerWidget {
 /// the size at 100% ([TextCardPainter.measureWords]), on [design] the pixels
 /// its words shrink to ([CardDesignPainter.drawnWordsSize]) against its
 /// words' size. The network where they fall shortest; null without words.
+///
+/// Measured once per set of inputs (the words, each card's shape and
+/// choices, the style or design) and kept for the last few: a composer
+/// change that leaves them alone (a title, a schedule, another network's
+/// setting) measures nothing again.
 TextCardWordsFit? _wordsFitOf(Post post, List<(TargetPreview, MediaAttachment)> cards, TextCardStyle style, CardDesign? design) {
+  final key = [
+    design == null ? jsonEncode(style.toJson()) : jsonEncode(design.toJson()),
+    for (final (p, m) in cards) '${p.account.id}|${p.account.handle}|${jsonEncode(m.renderParameters)}|${m.width}x${m.height}|${textCardText(post, p.target)}',
+  ].join('\n');
+  if (_wordsFitCache.containsKey(key)) {
+    final hit = _wordsFitCache.remove(key);
+    return _wordsFitCache[key] = hit;
+  }
+  final fit = _measureWordsFit(post, cards, style, design);
+  _wordsFitCache[key] = fit;
+  if (_wordsFitCache.length > 16) _wordsFitCache.remove(_wordsFitCache.keys.first);
+  return fit;
+}
+
+/// The last measurements of [_wordsFitOf], oldest first.
+final Map<String, TextCardWordsFit?> _wordsFitCache = {};
+
+/// How many times [_wordsFitOf] measured, for tests.
+@visibleForTesting
+int debugTextCardWordsFitMeasurements = 0;
+
+TextCardWordsFit? _measureWordsFit(Post post, List<(TargetPreview, MediaAttachment)> cards, TextCardStyle style, CardDesign? design) {
+  debugTextCardWordsFitMeasurements++;
   TextCardWordsFit? shortest;
   for (final (p, m) in cards) {
     final id = p.descriptor.id;

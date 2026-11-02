@@ -433,9 +433,11 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
   }
 
   /// Where the words sit, their colour and the box behind them. The place
-  /// and the colour are one setting with the text card editor's (1.3.5,
-  /// [textCardWordsPosition], [textCardWordsColour]): what either sets shows
-  /// in both, and the card follows the last change.
+  /// is one setting with the text card editor's (1.3.5,
+  /// [textCardWordsPosition]). The colour shows what the card uses
+  /// ([textCardWordsColour]): Automatic, White and Black are the photo's
+  /// own and go with it; "Other…" is the editor's words colour for every
+  /// card. Either way the card follows the last change.
   List<Widget> _wordsControls(BuildContext context, TextCardBackground current) {
     final style = ref.watch(composerProvider.select((c) => c.textCardStyle));
     final composer = ref.read(composerProvider.notifier);
@@ -460,7 +462,9 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
             key: Key('card-background-text-${c.name}'),
             label: Text(c.label),
             selected: colour == argb,
-            onSelected: (_) => composer.setTextCardWordsColour(argb),
+            // The photo's own choice, gone with the photo; it clears a words
+            // colour of the style's so the card follows this last change.
+            onSelected: (_) => composer.setTextCardPhotoWordsColour(c),
           ),
         ChoiceChip(
           key: const Key('card-background-text-own'),

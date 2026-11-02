@@ -1,5 +1,7 @@
 import '../state/settings.dart' show TextCardAlignment;
 import 'card_design.dart';
+import 'card_templates.dart' show cardTemplateById;
+import 'text_card.dart' show TextCardFont;
 import 'text_card_background.dart' show TextCardTextPosition;
 import 'text_card_style.dart' show TextCardHandlePosition;
 
@@ -21,8 +23,9 @@ const double kDesignWordsSizeMax = 240;
 const double kDesignHandleSizeMin = 14;
 const double kDesignHandleSizeMax = 96;
 
-/// The margins it offers, in pixels at 1080 wide.
-const double kDesignMarginMin = 0;
+/// The margins it offers, in pixels at 1080 wide: never edge to edge (the
+/// classic card's floor too); a network's safe area comes on top.
+const double kDesignMarginMin = 24;
 const double kDesignMarginMax = 240;
 
 /// The line spacings it offers, as a multiple of the words' size.
@@ -58,6 +61,17 @@ TextCardAlignment cardAlignmentAt(CardAnchor anchor) => switch (anchor.x) {
       1.0 => TextCardAlignment.right,
       _ => TextCardAlignment.center,
     };
+
+/// The design a post's cards are drawn from (1.3.5): [design], with a
+/// @handle block added when a @handle is written ([handle]) but the design
+/// has none (Gradient wave, Vinyl, Neon, Sunset), so what is typed is on
+/// every card. The block goes where the template leaves room
+/// ([CardDesignEdits.withHandleBlock]); a design that has one is unchanged.
+CardDesign designWithHandle(CardDesign design, String? handle) => handle != null && design.handleBlock == null ? design.withHandleBlock() : design;
+
+/// Whether a design's cover layer is drawn on a card: Vinyl's record always
+/// is, a framed photo only when the post's cards have a background photo.
+bool designCoverShown(CardDesign design, {required bool photo}) => design.cover.visible && (design.cover.shape == CardCoverShape.vinyl || photo);
 
 extension CardDesignEdits on CardDesign {
   int _index(CardBlockRole role) => blocks.indexWhere((b) => b.role == role);
@@ -117,13 +131,17 @@ extension CardDesignEdits on CardDesign {
         _ => TextCardTextPosition.center,
       };
 
-  /// The words at the top, in the middle or at the bottom, moved by no
-  /// offset. At the top or bottom they join the @handle (or the signature)
-  /// already on that edge, so the two stack instead of overlapping: the
-  /// @handle stays on the edge, the words next to it.
-  CardDesign withWordsPosition(TextCardTextPosition position) {
+  /// The words at the top, in the middle or at the bottom. At the top or
+  /// bottom they join the @handle (or the signature) already on that edge,
+  /// so the two stack instead of overlapping: the @handle stays on the
+  /// edge, the words next to it. A cover picture drawn on that edge
+  /// ([coverShown]: by default Vinyl's record, see [designCoverShown]) is
+  /// kept clear too: the words start past it, on every card's shape (the
+  /// picture is never taller than its size in the frame's height).
+  CardDesign withWordsPosition(TextCardTextPosition position, {bool? coverShown}) {
     final words = wordsBlock;
     if (words == null) return this;
+    final shown = coverShown ?? designCoverShown(this, photo: false);
     final row = switch (position) {
       TextCardTextPosition.top => 0,
       TextCardTextPosition.center => 1,
@@ -136,7 +154,16 @@ extension CardDesignEdits on CardDesign {
       partner = onRow(h) ? h!.anchor : (onRow(s) ? s!.anchor : null);
     }
     final anchor = partner ?? CardAnchor.values[row * 3 + words.anchor.index % 3];
-    return _withWords((b) => b.copyWith(anchor: anchor, offsetY: 0))._stackedAroundWords();
+    // The template's own room for the words, where a cover asks for less.
+    final room = cardTemplateById(template ?? '')?.design(kind).wordsBlock?.maxHeight ?? words.maxHeight;
+    var offsetY = 0.0, maxHeight = room;
+    final c = cover;
+    if (row != 1 && shown && c.anchor.y == row / 2) {
+      const gap = 0.03;
+      offsetY = row == 0 ? c.offsetY + c.size + gap : c.offsetY - c.size - gap;
+      maxHeight = (1 - offsetY.abs()).clamp(0.1, room);
+    }
+    return _withWords((b) => b.copyWith(anchor: anchor, offsetY: offsetY, maxHeight: maxHeight))._stackedAroundWords();
   }
 
   /// The blocks sharing the words' anchor on the top or bottom edge put on
@@ -174,15 +201,33 @@ extension CardDesignEdits on CardDesign {
   // The @handle.
 
   /// This design with its @handle block changed; a design without one gets
-  /// a classic-looking @handle (the words' colour, faded, 28 px) on a
-  /// bottom corner the signature leaves free.
+  /// one first ([withHandleBlock]).
   CardDesign _withHandle(CardTextBlock Function(CardTextBlock b) change) {
-    final i = _index(CardBlockRole.handle);
-    if (i >= 0) return withBlock(i, change);
-    final anchor = signatureBlock?.anchor == CardAnchor.bottomRight ? CardAnchor.bottomLeft : CardAnchor.bottomRight;
+    final d = handleBlock == null ? withHandleBlock() : this;
+    return d.withBlock(d._index(CardBlockRole.handle), change);
+  }
+
+  /// This design with a classic-looking @handle (the words' colour, faded,
+  /// 28 px, in the words' font) where the template leaves room: under the
+  /// words when they sit on the bottom edge (Vinyl, Sunset), above a
+  /// signature in the middle of the bottom edge (Neon), else on the bottom
+  /// corner the signature leaves free (Gradient wave). Unchanged when it has
+  /// one.
+  CardDesign withHandleBlock() {
+    if (handleBlock != null) return this;
+    final words = wordsBlock, signature = signatureBlock;
+    final CardAnchor anchor;
+    if (words != null && words.anchor.y == 1) {
+      anchor = words.anchor;
+    } else if (signature != null && signature.anchor == CardAnchor.bottomCenter) {
+      anchor = CardAnchor.bottomCenter;
+    } else {
+      anchor = signature?.anchor == CardAnchor.bottomRight ? CardAnchor.bottomLeft : CardAnchor.bottomRight;
+    }
     final added = CardTextBlock(
       role: CardBlockRole.handle,
       anchor: anchor,
+      font: words?.font ?? TextCardFont.original,
       size: 28,
       weight: 500,
       color: (wordsColor & 0xFFFFFF) | 0x9E000000,
@@ -190,7 +235,12 @@ extension CardDesignEdits on CardDesign {
       maxLines: 1,
       maxHeight: 0.4,
     );
-    return copyWith(blocks: [...blocks, change(added)]);
+    // Above a signature at its anchor (the stack runs top to bottom), else
+    // after the other blocks; at the words' anchor under them.
+    final s = signature != null && signature.anchor == anchor ? _index(CardBlockRole.signature) : -1;
+    final list = [...blocks];
+    s >= 0 ? list.insert(s, added) : list.add(added);
+    return copyWith(blocks: list)._stackedAroundWords();
   }
 
   /// The @handle's size, in pixels at 1080 wide.

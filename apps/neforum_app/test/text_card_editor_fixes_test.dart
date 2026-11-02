@@ -201,7 +201,7 @@ void main() {
       expect(vinyl.handleBlock, isNull);
       final withHandle = vinyl.withHandleSize(40);
       expect(withHandle.handleBlock!.size, 40);
-      expect(withHandle.handleBlock!.anchor, CardAnchor.bottomRight);
+      expect(withHandle.handleBlock!.anchor, vinyl.wordsBlock!.anchor, reason: 'under Vinyl\'s words at the bottom');
       final m = _template('minimal');
       for (final p in kDesignHandlePositions) {
         final moved = m.withHandlePosition(p);
@@ -310,8 +310,10 @@ void main() {
       await settle(tester);
       final afterSheet = c.read(composerProvider);
       expect(afterSheet.textCardStyle.textPosition, TextCardTextPosition.top, reason: 'no silent override: the sheet\'s place is the card\'s');
-      expect(afterSheet.textCardStyle.textColor, 0xFFFFFFFF);
-      expect(TextCardBackground.tryParse(afterSheet.textCardBackground)!.textColor, TextCardTextColor.automatic);
+      // White is the photo's own (round 3): it goes with the photo.
+      expect(afterSheet.textCardStyle.textColor, isNull);
+      expect(TextCardBackground.tryParse(afterSheet.textCardBackground)!.textColor, TextCardTextColor.white);
+      expect(textCardWordsColour(afterSheet.textCardStyle, TextCardBackground.tryParse(afterSheet.textCardBackground)), 0xFFFFFFFF);
       for (final a in accounts.values) {
         expect(textCardStyleOf(placeholderOf(c, a)).textPosition, TextCardTextPosition.top);
       }

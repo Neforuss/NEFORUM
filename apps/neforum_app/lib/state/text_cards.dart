@@ -6,6 +6,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/caption_fonts.dart';
 import '../media/card_design.dart';
+import '../media/card_design_edits.dart' show designWithHandle;
 import '../media/render_parameters.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -175,7 +176,9 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
   Future<bool>? fontReady;
   Future<bool> fontMissing() async => cardFont != null && !await (fontReady ??= prepareCaptionFontForRender(s.storage, cardFont, usage: 'the text card'));
   // 1.3.1: cards. The card designer's design, its fonts loaded once.
-  final CardDesign? cardDesign = effectiveCardDesign(design ?? textCardDesignOfPost(post), settings.textCardDesign);
+  final CardDesign? designOwn = effectiveCardDesign(design ?? textCardDesignOfPost(post), settings.textCardDesign);
+  // 1.3.5: cards. A written @handle gets a block on a design without one.
+  final CardDesign? cardDesign = designOwn == null ? null : designWithHandle(designOwn, look.handle);
   Future<bool>? designReady;
   Future<bool> designFontMissing() async =>
       cardDesign != null && !await (designReady ??= prepareCardDesignFonts(s.storage, cardDesign, usage: 'the text card'));

@@ -108,10 +108,6 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
   late bool _expanded =
       widget.initiallyExpanded ?? (widget.design == null && !ref.read(composerProvider).textCardStyle.copyWith(clearHandle: true).isClassic);
 
-  /// The design as it was before this editor first changed it, for "Reset
-  /// handle and words" on a designed card.
-  CardDesign? _designBefore;
-
   /// What the folded controls are set to, in a few words.
   static String _summary(TextCardStyle s) {
     final set = [
@@ -139,12 +135,13 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
   void _edit(TextCardStyle Function(TextCardStyle s) change) => _composer.setTextCardStyle(change(_style));
 
   /// Changes the post's design as it is now (the post's own, or the
-  /// Settings default it starts from).
+  /// Settings default it starts from). The composer remembers the design
+  /// before the first change ([ComposerState.textCardDesignBeforeEdits]),
+  /// so "Reset" works however often the editor is folded or rebuilt.
   void _editDesign(CardDesign Function(CardDesign d) change) {
     final current = ref.read(composerProvider).textDesign(ref.read(settingsProvider));
     if (current == null) return;
-    _designBefore ??= current;
-    _composer.setTextCardDesign(change(current));
+    _composer.setTextCardDesignEdited(change(current));
   }
 
   Key _key(String name) => Key('${widget.keyPrefix}-$name');
@@ -160,7 +157,10 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
     final composer = ref.watch(composerProvider);
     final style = composer.textCardStyle;
     // A design that draws the cards, as it is now in the composer.
-    final CardDesign? design = widget.design == null ? null : (composer.textDesign(ref.watch(settingsProvider)) ?? widget.design);
+    // With a written @handle, as the cards draw it ([designWithHandle]).
+    final own = widget.design == null ? null : (composer.textDesign(ref.watch(settingsProvider)) ?? widget.design);
+    final CardDesign? design = own == null ? null : designWithHandle(own, style.handle);
+    final designEdited = composer.textCardDesignBeforeEdits != null;
     // The field follows a style changed elsewhere (reset, a post loaded, the
     // other editor), never the user's own typing.
     ref.listen(composerProvider.select((c) => c.textCardStyle.handle), (_, next) {
@@ -439,7 +439,7 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
               step: 8, note: fitNote),
           slider('line-spacing', 'Line spacing', design.wordsLineHeight, kDesignLineHeightMin, kDesignLineHeightMax, design.wordsLineHeight.toStringAsFixed(2),
               (v) => _editDesign((d) => d.withWordsLineHeight((v * 20).round() / 20))),
-          labelled('Position', chips('position', TextCardTextPosition.values, design.wordsPosition, (p) => p.label, (p) => _editDesign((d) => d.withWordsPosition(p)))),
+          labelled('Position', chips('position', TextCardTextPosition.values, design.wordsPosition, (p) => p.label, (p) => _editDesign((d) => d.withWordsPosition(p, coverShown: designCoverShown(d, photo: background != null))))),
           labelled(
             'Colours',
             Wrap(
@@ -485,7 +485,7 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
       ];
     }
 
-    final canReset = design == null ? !style.isClassic : (_designBefore != null || style.handle != null);
+    final canReset = design == null ? !style.isClassic : (designEdited || style.handle != null);
 
     // Tab walks the editor's own controls in reading order, top to bottom,
     // before it leaves the editor: without the group, reading order across
@@ -541,7 +541,7 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
                 padding: const EdgeInsets.fromLTRB(Space.md, Space.sm, Space.sm, Space.sm),
                 decoration: BoxDecoration(
                   borderRadius: Radii.rMd,
-                  border: Border.all(color: design == null && style.copyWith(clearHandle: true).isClassic || design != null && _designBefore == null ? nf.border : nf.accent),
+                  border: Border.all(color: design == null && style.copyWith(clearHandle: true).isClassic || design != null && !designEdited ? nf.border : nf.accent),
                 ),
                 child: Row(
                   children: [
@@ -580,15 +580,14 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
                     ? null
                     : () {
                         _handle.clear();
-                        final before = _designBefore;
                         if (design == null) {
                           _composer.setTextCardStyle(TextCardStyle.classic);
                         } else {
-                          // The design as it was; the classic styling stays
-                          // for when the design is turned off.
+                          // The design as it was (the Settings default
+                          // again, if the post followed it); the classic
+                          // styling stays for when the design is turned off.
                           _edit((s) => s.copyWith(clearHandle: true));
-                          if (before != null) _composer.setTextCardDesign(before);
-                          setState(() => _designBefore = null);
+                          _composer.resetTextCardDesignEdits();
                         }
                       },
                 icon: const Icon(Icons.restart_alt_rounded, size: 18),

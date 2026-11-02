@@ -59,6 +59,14 @@ int? textCardWordsColour(TextCardStyle style, TextCardBackground? background) =>
       _ => null,
     };
 
+/// The contrast ratio of two colours (WCAG): 1 for the same colour, 21 for
+/// black and white. Under 3 a card's words are hard to read on it.
+double textCardContrast(Color a, Color b) {
+  final la = a.computeLuminance(), lb = b.computeLuminance();
+  final hi = la > lb ? la : lb, lo = la > lb ? lb : la;
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 /// How a classic text card is set, beyond its theme, font, alignment,
 /// signature and background photo: the words' size, colour, line spacing and
 /// place top to bottom, the card's colour and margins, and the @handle's
