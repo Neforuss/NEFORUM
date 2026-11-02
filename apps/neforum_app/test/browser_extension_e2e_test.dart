@@ -23,12 +23,13 @@ void main() {
 
   test('the real extension pairs, gets the job and its file, reports back and unpairs', () async {
     final secrets = InMemorySecretStore();
-    // A free port of its own: fixed ones can be reserved by Windows (Hyper-V).
-    final port = await _freePort();
-    final bridge = BrowserBridge.create(secrets: secrets, ports: [port]);
+    // Port 0: the system picks a free one as the server opens it, so no other
+    // program can take it in between, and none Windows reserves (Hyper-V).
+    final bridge = BrowserBridge.create(secrets: secrets, ports: [0]);
     await bridge.start();
     addTearDown(bridge.dispose);
-    expect(bridge.status.value.listening, isTrue, reason: 'port $port must be free');
+    expect(bridge.status.value.listening, isTrue);
+    final port = bridge.status.value.port!;
 
     final bytes = Uint8List.fromList(List.generate(1500000, (i) => i % 251));
     bytes[0] = 1;
@@ -65,17 +66,13 @@ void main() {
     expect(out['unpaired'], isTrue);
     expect(out['status3'], containsPair('paired', false));
 
-    await Future<void>.delayed(const Duration(milliseconds: 100));
+    // No wait needed: the app queued the result for `results` (a microtask)
+    // before it sent the extension its answer, and Node exited only after
+    // reading that answer, so the result is in by the time Process.run returns.
+    // Unpairing removed the browser before its answer too.
     expect(results.single.status, BrowserFillStatus.filled);
     expect(results.single.media, 1);
     expect(results.single.message, 'e2e');
     expect(bridge.browsers.value, isEmpty, reason: 'unpair removed the browser');
   }, skip: hasNode ? false : 'Node is not installed');
-}
-
-Future<int> _freePort() async {
-  final s = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
-  final port = s.port;
-  await s.close();
-  return port;
 }
