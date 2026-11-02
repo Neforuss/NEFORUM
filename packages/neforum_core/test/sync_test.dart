@@ -2554,6 +2554,53 @@ void main() {
         expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
       });
 
+      for (final atomic in [true, false]) {
+        test('$network (${atomic ? 'atomic' : 'folder-like'} storage): A reconnected through another app long ago and those keys expired too; B publishes before syncing: renew() renews them with the account as stored now', () async {
+          final server = _RotatingTokenServer(network);
+          final store = MemorySyncBackend(atomicWrites: atomic);
+          final a = _Device('A', store, clock), b = _Device('B', store, clock);
+          await a.accounts.upsert(rotating(network, 'app-old', DateTime.utc(2026, 10, 1)));
+          await a.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(minutes: 30))));
+          await a.engine.sync();
+          await b.engine.sync();
+          clock.now = clock.now.add(const Duration(hours: 1));
+          await a.accounts.upsert(rotating(network, 'app-new', clock.now));
+          await a.secrets.write(id, server.issue('app-new', clock.now.add(const Duration(hours: 2))));
+          await a.engine.sync();
+          clock.now = clock.now.add(const Duration(hours: 3)); // both sign-ins' access tokens have expired
+          await b.posts.upsert(draft());
+          await publisher(b, _RotatingPublishing.of(network, now: () => clock.now), server.handle).publish('p');
+          expect(server.calls, 1);
+          expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published, reason: 'no false "reconnect the account"');
+          expect((await b.accounts.get(id))!.lastError, isNull);
+          await _rounds([b, a, b, a], clock, 1);
+          for (final d in [a, b]) {
+            expect(server.verdict((await d.accounts.get(id))!, await d.secrets.read(id)), 'account app=app-new; keys of app app-new; renewable', reason: d.id);
+          }
+        });
+      }
+
+      test('$network: the keys renew() starts from came in its own sync (A renewed while B was offline, and that expired too): the renewal is stored', () async {
+        final server = _RotatingTokenServer(network);
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+        await a.accounts.upsert(rotating(network, 'app-old', DateTime.utc(2026, 10, 1)));
+        await a.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(minutes: 30))));
+        await a.engine.sync();
+        await b.engine.sync();
+        clock.now = clock.now.add(const Duration(minutes: 31));
+        await a.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(hours: 2)))); // A renews the same sign-in
+        await a.engine.sync();
+        clock.now = clock.now.add(const Duration(hours: 3)); // A's renewal has expired as well; B never synced
+        await b.posts.upsert(draft());
+        await publisher(b, _RotatingPublishing.of(network, now: () => clock.now), server.handle).publish('p');
+        expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        await _rounds([b, a, b, a], clock, 1);
+        for (final d in [a, b]) {
+          expect(server.verdict((await d.accounts.get(id))!, await d.secrets.read(id)), 'account app=app-old; keys of app app-old; renewable',
+              reason: '${d.id}: a renewal of the keys that arrived is the only live key, and is kept');
+        }
+      });
+
       test('$network: the keychain locks while renew() waits on the network: the rotating renewal is still stored', () async {
         final server = _RotatingTokenServer(network);
         final store = _ThrowingSecrets();
@@ -3145,21 +3192,35 @@ class _ThrowingSecrets extends InMemorySecretStore {
 /// X and Tumblr with an upload that always works; the renewal is the real
 /// adapter's.
 class _RotatingPublishing {
-  static PlatformAdapter of(String network) => network == 'x' ? _XPublishing() : _TumblrPublishing();
+  /// With [now], an upload made with an expired access token fails, as the
+  /// network would refuse it.
+  static PlatformAdapter of(String network, {DateTime Function()? now}) => network == 'x' ? _XPublishing(now) : _TumblrPublishing(now);
+
+  static PublishResult upload(Map<String, String> secrets, DateTime Function()? now) {
+    final exp = DateTime.tryParse(secrets['expires_at'] ?? '');
+    if (now != null && exp != null && !exp.isAfter(now())) return PublishResult.failure(const PublishError.auth('access token expired'));
+    return PublishResult.ok(remoteId: 'r1');
+  }
 }
 
 class _XPublishing extends XAdapter {
+  _XPublishing(this.now);
+  final DateTime Function()? now;
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
   @override
-  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => PublishResult.ok(remoteId: 'r1');
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
+      _RotatingPublishing.upload(secrets, now);
 }
 
 class _TumblrPublishing extends TumblrAdapter {
+  _TumblrPublishing(this.now);
+  final DateTime Function()? now;
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
   @override
-  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => PublishResult.ok(remoteId: 'r1');
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
+      _RotatingPublishing.upload(secrets, now);
 }
 
 /// An OAuth 2.0 token server that rotates refresh tokens, as X and Tumblr

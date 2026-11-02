@@ -600,7 +600,11 @@ class PublishService {
     try {
       final coordinator = secretsCoordinator;
       final refreshed = coordinator != null && adapter.rotatesRefreshTokensFor(account)
-          ? await coordinator.renew(account, secretMap, (s) => adapter.refreshSecrets(account, s, ctx))
+          // 1.3.5: renew() syncs before it renews, and that sync can bring a
+          // reconnect made on another device (another app, its keys): the
+          // keys it hands over are renewed with the account as stored now,
+          // never the one this attempt loaded before that sync.
+          ? await coordinator.renew(account, secretMap, (s) async => adapter.refreshSecrets(await accounts.get(account.id) ?? account, s, ctx))
           : await adapter.refreshSecrets(account, secretMap, ctx);
       if (refreshed == null) return (secretMap, null);
       // 1.3.5: the keys stored here changed while the network answered.
