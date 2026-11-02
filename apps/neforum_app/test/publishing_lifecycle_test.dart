@@ -3,6 +3,7 @@
 // unused files are cleaned up at startup, runs can be cancelled, failed
 // posts can be cleared together, and times follow the clock setting.
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -50,6 +51,32 @@ class _MemoryStorage implements AppStorage {
   Future<int> mediaBytes() async => 0;
   @override
   Widget image(String path, {BoxFit fit = BoxFit.cover, double? width, double? height, int? cacheWidth}) => SizedBox(width: width, height: height);
+}
+
+/// A timer that goes off only when the test says so ([fire]): with a real
+/// 300 ms pause and real sleeps around it, a busy machine wrote the draft
+/// file too late for the test, and the write still under way then held the
+/// data folder when the test deleted it.
+class _HeldTimer implements Timer {
+  _HeldTimer(this.duration, this._callback);
+  final Duration duration;
+  final void Function() _callback;
+  bool _active = true;
+
+  @override
+  bool get isActive => _active;
+
+  @override
+  int get tick => 0;
+
+  @override
+  void cancel() => _active = false;
+
+  void fire() {
+    if (!_active) throw StateError('That timer was cancelled or has gone off already.');
+    _active = false;
+    _callback();
+  }
 }
 
 final _now = DateTime(2026, 10, 25, 18);
@@ -441,24 +468,64 @@ void main() {
     });
 
     test('publishing empties the draft file at once; other changes wait a moment', () async {
-      final container = ProviderContainer(overrides: [servicesProvider.overrideWithValue(services)]);
-      addTearDown(container.dispose);
+      final pauses = <_HeldTimer>[];
+      final container = ProviderContainer(overrides: [
+        servicesProvider.overrideWithValue(services),
+        composerDraftTimerProvider.overrideWithValue((duration, callback) {
+          final pause = _HeldTimer(duration, callback);
+          pauses.add(pause);
+          return pause;
+        }),
+      ]);
+      // Any write the keeper still makes as it goes is done before the data
+      // folder is deleted (this runs before the group's tearDown), even when
+      // the test stops early.
+      ComposerDraftKeeper? kept;
+      addTearDown(() async {
+        try {
+          container.dispose();
+        } finally {
+          await kept?.lastWrite;
+        }
+      });
       container.listen(composerDraftKeeperProvider, (_, _) {});
-      final keeper = container.read(composerDraftKeeperProvider)!;
+      final keeper = kept = container.read(composerDraftKeeperProvider)!;
       while (!keeper.restored) {
         await Future<void>.delayed(const Duration(milliseconds: 5));
       }
       final composer = container.read(composerProvider.notifier);
       composer.setText('Going out now');
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await pumpEventQueue();
+      await keeper.lastWrite;
       expect(await storage.readJson(kComposerDraftFile), isNull, reason: 'typing is written after a pause');
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-      expect((await storage.readJson(kComposerDraftFile))!['post'], isNotNull);
+      final pause = pauses.where((p) => p.isActive).single;
+      expect(pause.duration, const Duration(milliseconds: 300));
+      pause.fire();
+      await keeper.lastWrite;
+      expect((await storage.readJson(kComposerDraftFile))!['post'], isNotNull, reason: 'written once the pause is over');
 
       await container.read(postActionsProvider).publishNow();
       expect(container.read(composerProvider).text, isEmpty);
       expect(await storage.readJson(kComposerDraftFile), isEmpty, reason: 'written before publishNow returned, no pause');
       expect(await services.publishJournal.entries(), isEmpty, reason: 'a finished run leaves nothing on record');
+    });
+  });
+
+  group('the post being written', () {
+    // The app's own pause, the one 'publishing empties the draft file at
+    // once' holds: on the test's fake clock, so it is as exact as a held timer.
+    testWidgets('typing is written 300 ms after the last change, not before', (tester) async {
+      final memory = _MemoryStorage();
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final keeper = ComposerDraftKeeper(memory, createTimer: container.read(composerDraftTimerProvider))..restored = true;
+      keeper.changed(const ComposerState(text: 'Going'));
+      await tester.pump(const Duration(milliseconds: 200));
+      keeper.changed(const ComposerState(text: 'Going out now'));
+      await tester.pump(const Duration(milliseconds: 299));
+      expect(await memory.readJson(kComposerDraftFile), isNull, reason: '299 ms since the last change');
+      await tester.pump(const Duration(milliseconds: 1));
+      expect((await memory.readJson(kComposerDraftFile))!['post']['text'], 'Going out now');
     });
   });
 
