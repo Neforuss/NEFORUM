@@ -24,11 +24,17 @@
 //  (b) matrix only: the template's own blocks are drawn exactly where the
 //      untouched template draws them (the sweep resizes some on purpose);
 //  (c) the words come out at no less than kMinWordsPx (pixels at 1080 wide),
-//      and every word is on the card: words cut (ellipsis) or left off for
-//      want of room FAIL when another position shows every word on that
-//      card; only cells where no position can are listed, with the reason;
+//      and every word is on the card: in the matrix (the template's own
+//      margin and @handle size) words cut (ellipsis) or left off FAIL, even
+//      when no position would fit (round 7); in the sweep they FAIL when
+//      another position shows every word, and only cells where no position
+//      can are listed, with the reason;
 //  (d) the @handle the editor placed is drawn (or reported left off, under
 //      the same rule) and never under the words.
+//
+// Plus, on full-size renders: the room under the drawn picture for Top on
+// Vinyl and on Polaroid with a photo is at most kPlacedTextGapPx + the
+// card's declared slack + 6 px (round 7).
 
 import 'dart:io';
 
@@ -121,6 +127,14 @@ int _both(Uint8List a, Uint8List b) {
     n += a[i] & b[i];
   }
   return n;
+}
+
+/// The last row of [m] (rows [width] wide) with a pixel set; null if none.
+int? _lastRow(Uint8List m, int width) {
+  for (var i = m.length - 1; i >= 0; i--) {
+    if (m[i] == 1) return i ~/ width;
+  }
+  return null;
 }
 
 Uint8List _or(Uint8List a, Uint8List b) => Uint8List.fromList([for (var i = 0; i < a.length; i++) a[i] | b[i]]);
@@ -268,7 +282,7 @@ void main() {
 
   /// One cell; returns its problems (empty: PASS).
   Future<List<String>> cell(WidgetTester tester, CardDesign template, CardDesign design, TextCardTextPosition position, _Shape shape,
-      {required bool typed, required bool withPhoto, required bool checkMoved, required String label}) async {
+      {required bool typed, required bool withPhoto, required bool checkMoved, required bool strict, required String label}) async {
     final handleText = typed ? _typed : _own;
     // The editor placed the @handle when it added one for a typed handle, or
     // when the handle was edited onto a design that places it.
@@ -303,8 +317,12 @@ void main() {
     final m = measure(design, shape, texts, withPhoto);
     final miss = missing(design, position, shape, texts, withPhoto, label);
     if (miss != null) {
-      if (miss.$1) {
-        problems.add(miss.$2);
+      // Round 7 (critic 6): at the template's own margin and handle size
+      // (the matrix, [strict]) every word of the 215-character post must
+      // show, whether or not another position would fit: a geometry that
+      // wastes room (round 5's Polaroid) fails here instead of being listed.
+      if (miss.$1 || strict) {
+        problems.add(strict && !miss.$1 ? '(c) at the template\'s own margin and handle size: ${miss.$2.substring(label.length + 2)}' : miss.$2);
       } else {
         listed.add(miss.$2);
       }
@@ -334,7 +352,7 @@ void main() {
               final label = '${t.id} words=${position.name} handle=${typed ? 'typed' : 'own'} photo=$withPhoto ${shape.$1}';
               var design = template.withWordsPosition(position);
               if (typed) design = designWithHandle(design, _typed);
-              final problems = await cell(tester, template, design, position, shape, typed: typed, withPhoto: withPhoto, checkMoved: true, label: label);
+              final problems = await cell(tester, template, design, position, shape, typed: typed, withPhoto: withPhoto, checkMoved: true, strict: true, label: label);
               final line = '${problems.isEmpty ? 'PASS' : 'FAIL'} $label${problems.isEmpty ? '' : ': ${problems.join('; ')}'}';
               summary.add(line);
               if (problems.isNotEmpty) failures.add(line);
@@ -347,6 +365,56 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 10)));
   }
 
+  // Round 7 (critic 6): the room left under a drawn picture, on full-size
+  // renders (1080 px wide; Pinterest's 1000) of every shape. For Top on
+  // Vinyl (with and without a photo) and on Polaroid with a photo, from the
+  // picture's lowest drawn pixel (cover shadow off) to the words' laid-out
+  // box top, the room is at most kPlacedTextGapPx + that card's declared
+  // slack + 6 px. The slack is the template's declared rectangle (the data
+  // in kCardTemplatePictureAreas, read here, not through the layout's
+  // geometry) below that drawn pixel, so room counted twice (round 5 counted
+  // Polaroid's border outside its square as well as inside) fails here.
+  testWidgets('room under the picture, full size: Top on Vinyl and on Polaroid with a photo', (tester) async {
+    final failures = <String>[];
+    for (final (id, photos) in [('vinyl', [false, true]), ('polaroid', [true])]) {
+      final template = cardTemplateById(id)!.design(CardKind.text);
+      final design = template.withWordsPosition(TextCardTextPosition.top);
+      for (final withPhoto in photos) {
+        for (final shape in _shapes) {
+          final full = (shape.$1, shape.$3, shape.$3, shape.$4);
+          final size = shape.$3, u = cardUnit(size);
+          final on = await draw(tester, design.copyWith(blocks: const [], cover: design.cover.copyWith(shadow: 0)), full, texts: const {}, withPhoto: withPhoto);
+          final off = await draw(tester, design.copyWith(blocks: const [], cover: design.cover.copyWith(visible: false)), full, texts: const {}, withPhoto: withPhoto);
+          final lowest = _lastRow(_mask(on, off, 40), on.width);
+          final box = CardDesignPainter(
+            design: design,
+            texts: const {CardBlockRole.postText: _long, CardBlockRole.handle: _own},
+            safe: shape.$4,
+            platformId: 'instagram',
+            coverShown: cardCoverDrawn(design, picture: withPhoto),
+          ).editorPlacements(size)[CardBlockRole.postText];
+          final label = '$id photo=$withPhoto ${shape.$1}';
+          if (lowest == null || box == null) {
+            failures.add('$label: ${lowest == null ? 'no picture drawn' : 'no words placed'}');
+            continue;
+          }
+          final pictureBottom = lowest + 1.0;
+          final frame = cardFrameOf(size, shape.$4, design.margin);
+          final declared = kCardTemplatePictureAreas[id]!.cover[cardShapeOf(size)]!;
+          final declaredBottom = frame.top + declared.bottom * frame.shortestSide;
+          final slack = (declaredBottom - pictureBottom).clamp(0.0, double.infinity) / u;
+          final room = (box.top - pictureBottom) / u;
+          final bound = kPlacedTextGapPx + slack + 6;
+          final line = 'ROOM $label: room ${room.toStringAsFixed(1)} px, bound ${bound.toStringAsFixed(1)} px (slack ${slack.toStringAsFixed(1)}), margin ${(bound - room).toStringAsFixed(1)} px';
+          // ignore: avoid_print
+          print(line);
+          if (room > bound) failures.add(line);
+          if (room < kPlacedTextGapPx - 1) failures.add('$line: closer than the gap');
+        }
+      }
+    }
+    expect(failures, isEmpty, reason: failures.join('\n'));
+  }, timeout: const Timeout(Duration(minutes: 10)));
   for (final id in ['vinyl', 'polaroid', 'gradientWave']) {
     testWidgets('placement sweep: $id, margins x handle size x words size', (tester) async {
       final template = cardTemplateById(id)!.design(CardKind.text);
@@ -359,7 +427,7 @@ void main() {
                 final label = '$id margin=${margin.toInt()} handle=${handleSize.toInt()} words=${wordsSize?.toInt() ?? 'template'} ${position.name} ${shape.$1}';
                 var design = designWithHandle(template.withWordsPosition(position), _typed).withMargin(margin).withHandleSize(handleSize);
                 if (wordsSize != null) design = design.withWordsSize(wordsSize);
-                final problems = await cell(tester, template, design, position, shape, typed: true, withPhoto: true, checkMoved: false, label: label);
+                final problems = await cell(tester, template, design, position, shape, typed: true, withPhoto: true, checkMoved: false, strict: false, label: label);
                 final line = '${problems.isEmpty ? 'PASS' : 'FAIL'} sweep $label${problems.isEmpty ? '' : ': ${problems.join('; ')}'}';
                 sweep.add(line);
                 if (problems.isNotEmpty) failures.add(line);

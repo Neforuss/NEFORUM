@@ -427,10 +427,14 @@ void main() {
   group('N6: the size the words come out at is measured where they are placed', () {
     test('round 6: Polaroid under a photo on a square card shows every word of the long post at every position', () {
       // Critic 5, finding 1: with the border counted once the 215-character
-      // post fits whole (about 31 px) where round 5 cut it at 28 px.
+      // post fits whole (about 31 px) where round 5 cut it at 28 px. Round 7
+      // (critic 6): drawn with the template's own @handle, as the repro was,
+      // so the handle takes its room under the words and round 5's geometry
+      // fails here.
       for (final p in TextCardTextPosition.values) {
         final d = _template('polaroid').withWordsPosition(p);
-        final m = CardDesignPainter(design: d, texts: const {CardBlockRole.postText: _long}, coverShown: true).drawnWords(const Size(1080, 1080))!;
+        final m = CardDesignPainter(design: d, texts: const {CardBlockRole.postText: _long, CardBlockRole.handle: '@robin.makes'}, coverShown: true)
+            .drawnWords(const Size(1080, 1080))!;
         expect(m.cut, isFalse, reason: p.name);
         expect(m.dropped, isFalse, reason: p.name);
         expect(m.size, greaterThanOrEqualTo(kPlacedWordsMinPx), reason: p.name);
