@@ -73,6 +73,13 @@ const Set<String> kSyncedAccountFields = {
   'enabled',
 };
 
+/// 1.3.5: the account fields the user edits in NEFORUM (switching it off,
+/// renaming it, quotas). When a cloud app's conflicted copy holds the same
+/// account changed on two devices, these follow the later edit, while the
+/// rest (tier, app registration, ids, everything the keys depend on) travels
+/// with the newer sign-in.
+const Set<String> kUserEditedAccountFields = {'enabled', 'displayName', 'quotaOverrides'};
+
 /// 1.3.5: the account fields that stay on the device, each with why.
 const Map<String, String> kDeviceOnlyAccountFields = {
   'lastError': 'What went wrong the last time this device used the account: another device may have no problem at all.',
@@ -158,23 +165,67 @@ class PostsSyncSource extends SyncSource {
   }
 
   /// The post's targets follow a merged account. A post that went to both
-  /// copies keeps one target for the account (the first, with its own
-  /// settings): it is never published to one account twice.
+  /// copies keeps one target for the account, so it is never published to
+  /// one account twice: the one that got furthest ([mergeTargets]), with
+  /// every remote id of both.
   @override
   Object? remapAccountIds(String id, Object? value, Map<String, String> ids) {
     if (value is! Map || value['targets'] is! List) return value;
     final targets = value['targets'] as List;
     if (!targets.any((t) => t is Map && ids.containsKey(t['accountId']))) return value;
-    final seen = <Object?>{};
+    final out = <Object?>[];
+    final at = <Object?, int>{};
+    for (final t in targets) {
+      if (t is! Map) {
+        out.add(t);
+        continue;
+      }
+      final account = ids[t['accountId']] ?? t['accountId'];
+      final moved = <String, Object?>{...t.cast<String, Object?>(), 'accountId': account};
+      final i = at[account];
+      if (i == null) {
+        at[account] = out.length;
+        out.add(moved);
+      } else {
+        out[i] = mergeTargets(out[i]! as Map, moved);
+      }
+    }
+    return {...value.cast<String, Object?>(), 'targets': out};
+  }
+
+  static int _progress(Object? status) => switch (status) {
+        'published' => 5,
+        'heldByPlatform' || 'handedOff' => 4,
+        'publishing' => 3,
+        'awaitingHandoff' => 2,
+        'pending' => 1,
+        _ => 0, // failed, cancelled, skipped
+      };
+
+  /// 1.3.5: two targets of one post that name the same account (after its
+  /// two copies were merged) as one: the one that got furthest (published,
+  /// then held by the platform or handed off, then publishing, then waiting,
+  /// then failed), and the live post ids of the other added to its result,
+  /// so no live post is forgotten and none is posted again. Target JSON.
+  static Map<String, Object?> mergeTargets(Map<Object?, Object?> first, Map<Object?, Object?> second) {
+    final keepFirst = _progress(first['status']) >= _progress(second['status']);
+    final winner = (keepFirst ? first : second).cast<String, Object?>(), other = keepFirst ? second : first;
+    final otherResult = other['result'];
+    if (otherResult is! Map || otherResult['success'] != true) return winner;
+    final ids = <Object?>[otherResult['remoteId'], ...?(otherResult['threadRemoteIds'] as List?), ...?(otherResult['additionalRemoteIds'] as List?), ...?(otherResult['seriesRemoteIds'] as List?)];
+    final mine = winner['result'];
+    if (mine is! Map) return {...winner, 'result': otherResult};
+    final kept = <String>{
+      ...[mine['remoteId'], ...?(mine['threadRemoteIds'] as List?), ...?(mine['additionalRemoteIds'] as List?), ...?(mine['seriesRemoteIds'] as List?)].whereType<String>(),
+    };
+    final added = [for (final x in ids.whereType<String>()) if (!kept.contains(x)) x];
+    if (added.isEmpty) return winner;
     return {
-      ...value.cast<String, Object?>(),
-      'targets': [
-        for (final t in targets)
-          if (t is! Map)
-            t
-          else if (seen.add(ids[t['accountId']] ?? t['accountId']))
-            ids.containsKey(t['accountId']) ? {...t.cast<String, Object?>(), 'accountId': ids[t['accountId']]} : t,
-      ],
+      ...winner,
+      'result': {
+        ...mine.cast<String, Object?>(),
+        'additionalRemoteIds': [...?(mine['additionalRemoteIds'] as List?), ...added],
+      },
     };
   }
 }

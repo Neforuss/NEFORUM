@@ -1426,6 +1426,363 @@ void main() {
     });
   });
 
+  group('merges in a mixed-version file, conflicted copies, dry run counts (1.3.5)', () {
+    final cipher = BackupCipher(_pass, params: _fast, minimum: _fast);
+
+    /// What NEFORUM 1.3.4 does to the file on any write (its heartbeat writes
+    /// every 15 minutes), from origin/main's sync_document.dart: every record
+    /// goes through its SyncRecord.tryParse and toJson. A live record keeps
+    /// {v, at, by}, of whatever kind; a tombstone keeps {deleted, at, by}
+    /// only; a record it cannot read is dropped.
+    Future<void> olderDeviceRewrites(SyncBackend store) async {
+      final blob = (await store.read())!;
+      final j = await cipher.open(blob.bytes);
+      final records = (j['records'] as Map).cast<String, Object?>();
+      for (final e in records.entries.toList()) {
+        final r = e.value;
+        if (r is! Map || DateTime.tryParse('${r['at'] ?? ''}') == null || r['by'] is! String) {
+          records.remove(e.key);
+        } else if (r['deleted'] == true) {
+          records[e.key] = {'deleted': true, 'at': r['at'], 'by': r['by']};
+        } else if (r.containsKey('v')) {
+          records[e.key] = {'v': r['v'], 'at': r['at'], 'by': r['by']};
+        } else {
+          records.remove(e.key);
+        }
+      }
+      await store.write(await cipher.seal(j), ifMatch: blob.version);
+    }
+
+    /// X joined; Y and Z join at once through a cloud folder with one
+    /// Mastodon account; Z's post pz names Z's copy. X absorbs and merges.
+    Future<({_CloudFolder folder, _Device x, _Device y, _Device z, Post pz})> twinsInFile() async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock);
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 2), config: _mastodonConfig));
+      await y.secrets.write(_uuid2, {'access_token': 'fake-y'});
+      await z.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 3), config: _mastodonConfig));
+      await z.secrets.write(_uuid3, {'access_token': 'fake-z'});
+      final pz = _post('pz', targets: const [PostTarget(accountId: _uuid3)], updatedAt: DateTime.utc(2026, 10, 19, 8));
+      await z.posts.upsert(pz);
+      folder.freeze();
+      await y.engine.sync();
+      await z.engine.sync();
+      folder.thaw();
+      await _rounds([x, y, z, x], clock, 1);
+      return (folder: folder, x: x, y: y, z: z, pz: pz);
+    }
+
+    Future<void> saveLate(_Device d, Post p) =>
+        d.posts.upsert(Post.fromJson({...p.toJson(), 'text': 'edited later', 'updatedAt': clock.now.add(const Duration(minutes: 1)).toIso8601String()}));
+
+    test('a merge link survives a NEFORUM 1.3.4 device writing the file; a draft saved later still finds its account', () async {
+      final t = await twinsInFile();
+      expect((await t.folder.read()) != null, isTrue);
+      await olderDeviceRewrites(t.folder);
+      final doc = SyncDocument.parse(await cipher.open((await t.folder.read())!.bytes));
+      expect(doc.records['account:$_uuid3']?.mergedInto, isNull, reason: '1.3.4 writes the tombstone back without the link');
+      expect(doc.records['alias:$_uuid3']?.value, {'into': _uuid2}, reason: 'the link of its own, a kind 1.3.4 leaves as it is');
+      await saveLate(t.z, t.pz);
+      await _rounds([t.z, t.x, t.y], clock, 3);
+      for (final d in [t.x, t.y, t.z]) {
+        expect((await d.posts.get('pz'))!.targets.single.accountId, _uuid2, reason: d.id);
+      }
+    });
+
+    test('every device that saw the merge keeps the link, even when the file loses it', () async {
+      final t = await twinsInFile();
+      // Worst case: the file loses every trace of the link.
+      final blob = (await t.folder.read())!;
+      final j = await cipher.open(blob.bytes);
+      final records = (j['records'] as Map).cast<String, Object?>()
+        ..remove('alias:$_uuid3')
+        ..['account:$_uuid3'] = {'deleted': true, 'at': clock.now.toUtc().toIso8601String(), 'by': 'old'};
+      j['records'] = records;
+      await t.folder.write(await cipher.seal(j), ifMatch: blob.version);
+      await saveLate(t.z, t.pz);
+      await _rounds([t.z, t.x, t.y], clock, 2);
+      for (final d in [t.x, t.y, t.z]) {
+        expect((await d.posts.get('pz'))!.targets.single.accountId, _uuid2, reason: d.id);
+      }
+    });
+
+    test('links: a chain is followed, a cycle, a self-link or a link to a deleted account changes nothing, and nothing churns', () async {
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.engine.sync();
+      final at = clock.now;
+      final doc = await file();
+      doc.records['account:$_uuid3'] = SyncRecord.of(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, config: _mastodonConfig).toJson(), at: at, by: 'o');
+      doc.records['account:$_uuid1'] = SyncRecord.tombstone(at: at, by: 'o', mergedInto: _uuid2);
+      doc.records['alias:$_uuid2'] = SyncRecord.of({'into': _uuid3}, at: at, by: 'o'); // chain via both kinds of link
+      doc.records['alias:c1'] = SyncRecord.of({'into': 'c2'}, at: at, by: 'o');
+      doc.records['alias:c2'] = SyncRecord.of({'into': 'c1'}, at: at, by: 'o');
+      doc.records['alias:self'] = SyncRecord.of({'into': 'self'}, at: at, by: 'o');
+      doc.records['alias:gone-1'] = SyncRecord.of({'into': 'gone-2'}, at: at, by: 'o');
+      doc.records['account:gone-2'] = SyncRecord.tombstone(at: at, by: 'o');
+      for (final p in {'chain': [_uuid1], 'both': [_uuid1, _uuid2, _uuid3], 'cycle': ['c1'], 'self': ['self'], 'gone': ['gone-1']}.entries) {
+        doc.records['post:${p.key}'] = SyncRecord.of(_post(p.key, targets: [for (final id in p.value) PostTarget(accountId: id)]).toJson(), at: at, by: 'o');
+      }
+      await backend.write(await cipher.seal(doc.toJson(writtenBy: 'o', writtenAt: at)), ifMatch: (await backend.read())!.version);
+      await a.engine.sync();
+      final writes = backend.writes;
+      await _rounds([a], clock, 3);
+      Future<List<String>> targets(String id) async => [for (final t in (await a.posts.get(id))!.targets) t.accountId];
+      expect(await targets('chain'), [_uuid3]);
+      expect(await targets('both'), [_uuid3]);
+      expect(await targets('cycle'), ['c1']);
+      expect(await targets('self'), ['self']);
+      expect(await targets('gone'), ['gone-1'], reason: 'a link to an account deleted since moves nothing');
+      expect(backend.writes, writes, reason: 'no churn');
+    });
+
+    test('a link never moves a post away from an account that lives again, and links on this device expire after 90 days', () async {
+      await a.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, config: _mastodonConfig));
+      await a.accounts.upsert(_account(_uuid2, 'tiktok', config: const {'clientKey': 'k', 'openId': 'o'}));
+      await a.posts.upsert(_post('live', targets: const [PostTarget(accountId: _uuid1)]));
+      await a.posts.upsert(_post('old', targets: const [PostTarget(accountId: 'merged-long-ago')]));
+      await a.engine.sync();
+      a.stateStore.data = {
+        ...a.stateStore.data!,
+        'aliases': {
+          _uuid1: {'into': _uuid2, 'at': clock.now.toUtc().toIso8601String()}, // a stale link: _uuid1 lives
+          'merged-long-ago': {'into': _uuid2, 'at': clock.now.subtract(const Duration(days: 91)).toUtc().toIso8601String()},
+        },
+      };
+      await _rounds([a], clock, 2);
+      expect((await a.posts.get('live'))!.targets.single.accountId, _uuid1);
+      expect((await a.posts.get('old'))!.targets.single.accountId, 'merged-long-ago', reason: 'the link expired with the tombstones');
+      expect((a.stateStore.data!['aliases'] as Map).containsKey('merged-long-ago'), isFalse);
+    });
+
+    test('a post that went to both copies keeps the target that went live, with every live id', () async {
+      final t = await twinsInFile();
+      final published = {
+        'accountId': _uuid3,
+        'status': 'published',
+        'result': PublishResult.ok(remoteId: '111', remoteUrl: 'https://mastodon.example/@me/111').toJson(),
+      };
+      final failed = {'accountId': _uuid2, 'status': 'failed', 'attempts': 3};
+      final doc = SyncDocument.parse(await cipher.open((await t.folder.read())!.bytes));
+      final post = Post.fromJson({..._post('both').toJson(), 'status': 'partial', 'targets': [failed, published]});
+      doc.records['post:both'] = SyncRecord.of(post.toJson(), at: clock.now, by: 'O');
+      await t.folder.write(await cipher.seal(doc.toJson(writtenBy: 'O', writtenAt: clock.now)), ifMatch: (await t.folder.read())!.version);
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await t.x.engine.sync();
+      final target = (await t.x.posts.get('both'))!.targets.single;
+      expect(target.accountId, _uuid2);
+      expect(target.status, TargetStatus.published, reason: 'a retry would post it twice');
+      expect(target.result?.remoteUrl, 'https://mastodon.example/@me/111');
+    });
+
+    test('two targets for one account become one: the furthest status, the live ids of both', () {
+      Map<String, Object?> target(String status, [List<String> ids = const []]) => {
+            'accountId': 'a',
+            'status': status,
+            if (ids.isNotEmpty) 'result': PublishResult.ok(remoteId: ids.first, additionalRemoteIds: ids.sublist(1)).toJson(),
+          };
+      expect(PostsSyncSource.mergeTargets(target('failed'), target('published', ['1']))['status'], 'published');
+      expect(PostsSyncSource.mergeTargets(target('heldByPlatform', ['1']), target('publishing'))['status'], 'heldByPlatform');
+      expect(PostsSyncSource.mergeTargets(target('publishing'), target('pending'))['status'], 'publishing');
+      expect(PostsSyncSource.mergeTargets(target('failed'), target('pending'))['status'], 'pending');
+      final both = PostsSyncSource.mergeTargets(target('published', ['1', '2']), target('published', ['3']));
+      expect(PublishResult.fromJson((both['result']! as Map).cast<String, dynamic>()).allRemoteIds, ['1', '2', '3'], reason: 'never lose a live post\'s ids');
+    });
+
+    test('a conflicted copy: the user switching an account off survives a renewal made at the same moment, and the newer keys stay', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock);
+      final tk = _account(_uuid1, 'tiktok', handle: '@me', config: const {'clientKey': 'app', 'openId': 'o1'});
+      await x.accounts.upsert(tk);
+      await x.secrets.write(_uuid1, {'access_token': 'fake-a', 'expires_at': '2026-10-21T12:00:00.000Z'});
+      await x.engine.sync();
+      await y.engine.sync();
+      folder.freeze();
+      await x.secrets.write(_uuid1, {'access_token': 'fake-b', 'expires_at': '2026-10-22T12:00:00.000Z'}); // X renews
+      await x.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await y.accounts.upsert(tk.copyWith(enabled: false, displayName: 'Renamed on Y')); // Y switches it off a minute later
+      await y.engine.sync();
+      folder.thaw();
+      await _rounds([x, y, x, y], clock, 1);
+      for (final d in [x, y]) {
+        final acc = (await d.accounts.get(_uuid1))!;
+        expect([acc.enabled, acc.displayName], [false, 'Renamed on Y'], reason: '${d.id}: the later edit');
+        expect((await d.secrets.read(_uuid1))?['access_token'], 'fake-b', reason: '${d.id}: the newer keys');
+      }
+    });
+
+    test('a conflicted copy holding the newer sign-in brings in its keys and the app registration with them', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock);
+      final tk = _account(_uuid1, 'tiktok', config: const {'clientKey': 'app', 'openId': 'o1', 'scopes': 'old'});
+      await x.accounts.upsert(tk);
+      await x.secrets.write(_uuid1, {'access_token': 'fake-a', 'expires_at': '2026-10-21T12:00:00.000Z'});
+      await x.engine.sync();
+      await y.engine.sync();
+      folder.freeze();
+      // X saves a draft and writes first (the main file); Y reconnects the
+      // account a minute later (newer keys, a new app registration) and its
+      // write becomes the conflicted copy.
+      await x.posts.upsert(_post('px'));
+      await x.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await y.accounts.upsert(_account(_uuid1, 'tiktok', createdAt: DateTime.utc(2026, 10, 20), config: const {'clientKey': 'app', 'openId': 'o1', 'scopes': 'new'}));
+      await y.secrets.write(_uuid1, {'access_token': 'fake-y-new', 'expires_at': '2026-10-25T12:00:00.000Z'});
+      await y.engine.sync();
+      folder.thaw();
+      await _rounds([x, y, x, y], clock, 1);
+      for (final d in [x, y]) {
+        final acc = (await d.accounts.get(_uuid1))!;
+        expect(acc.config['scopes'], 'new', reason: '${d.id}: the registration goes with the newer keys');
+        expect((await d.secrets.read(_uuid1))?['access_token'], 'fake-y-new', reason: d.id);
+        expect(await d.posts.get('px'), isNotNull);
+      }
+    });
+
+    test('a conflicted copy with a later edit but the older sign-in: the edit is taken, the registration stays with the newer keys', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock);
+      final tk = _account(_uuid1, 'tiktok', config: const {'clientKey': 'app', 'openId': 'o1', 'scopes': 'old'});
+      await x.accounts.upsert(tk);
+      await x.secrets.write(_uuid1, {'access_token': 'fake-a', 'expires_at': '2026-10-21T12:00:00.000Z'});
+      await x.engine.sync();
+      await y.engine.sync();
+      folder.freeze();
+      // Y reconnects (newer keys, a new registration) and writes first: the main file.
+      await y.accounts.upsert(_account(_uuid1, 'tiktok', createdAt: DateTime.utc(2026, 10, 20), config: const {'clientKey': 'app', 'openId': 'o1', 'scopes': 'new'}));
+      await y.secrets.write(_uuid1, {'access_token': 'fake-y-new', 'expires_at': '2026-10-25T12:00:00.000Z'});
+      await y.engine.sync();
+      // X switches the account off a minute later: the conflicted copy.
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await x.accounts.upsert(tk.copyWith(enabled: false));
+      await x.engine.sync();
+      folder.thaw();
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await y.engine.sync(); // Y reads both
+      final onY = (await y.accounts.get(_uuid1))!;
+      expect(onY.config['scopes'], 'new', reason: 'the registration of the newer sign-in');
+      expect(onY.enabled, isFalse, reason: "X's later switch");
+      expect((await y.secrets.read(_uuid1))?['access_token'], 'fake-y-new');
+    });
+
+    test('links in the file leave it with the tombstones, after 90 days', () async {
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.engine.sync();
+      await putInFile('alias:old', SyncRecord.of({'into': 'x-1'}, at: clock.now.subtract(const Duration(days: 91)), by: 'o'));
+      await putInFile('alias:recent', SyncRecord.of({'into': 'x-1'}, at: clock.now.subtract(const Duration(days: 10)), by: 'o'));
+      await a.engine.sync();
+      final doc = await file();
+      expect(doc.records.containsKey('alias:old'), isFalse);
+      expect(doc.records.containsKey('alias:recent'), isTrue);
+    });
+
+    test('a record key without a colon, in the file and in a conflicted copy, stops nothing', () async {
+      final folder = _CloudFolder();
+      final d = _Device('D', folder, clock);
+      final doc = SyncDocument()..records['future'] = SyncRecord.of('a', at: clock.now, by: 'N');
+      folder.bytes = await cipher.seal(doc.toJson(writtenBy: 'N', writtenAt: clock.now));
+      folder.version = 1;
+      final copy = SyncDocument()..records['future'] = SyncRecord.of('b', at: clock.now.add(const Duration(seconds: 1)), by: 'M');
+      folder.copies.add(SyncSideCopy('NEFORUM (conflicted copy).neforumsync', await cipher.seal(copy.toJson(writtenBy: 'M', writtenAt: clock.now))));
+      await d.engine.sync();
+      expect((SyncDocument.parse(await cipher.open((await folder.read())!.bytes))).records['future']?.value, 'b');
+    });
+
+    test('a hand-off held here in both copies (made here twice) is never merged, not even on a first sync', () async {
+      await a.accounts.upsert(_account('instagram-handoff-$_uuid1', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+      await a.engine.sync();
+      // Turned off and on again (a fresh state: a first sync again), with a second hand-off of the same name made here.
+      await a.accounts.upsert(_account('instagram-handoff-$_uuid2', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+      a.stateStore.data = null;
+      await a.engine.sync();
+      expect(await a.ids('instagram'), hasLength(2));
+    });
+
+    group('the dry run counts what the sync then does, record kind by record kind', () {
+      Future<Map<String, String>> records(_Device d) async => {
+            for (final s in [AccountsSyncSource(d.accounts), SecretsSyncSource(d.accounts, d.secrets), PostsSyncSource(d.posts)])
+              for (final e in (await s.snapshot()).entries) '${s.prefix}:${e.key}': syncHash(e.value.value),
+          };
+
+      Future<void> expectMatches(_Device d) async {
+        final before = await records(d);
+        final p = await d.engine.preview();
+        await d.engine.sync();
+        final after = await records(d);
+        for (final prefix in ['account', 'secrets', 'post']) {
+          final changed = {
+            for (final k in {...before.keys, ...after.keys})
+              if (k.startsWith('$prefix:') && before[k] != after[k]) k,
+          };
+          final arrived = {for (final k in changed) if (after.containsKey(k) && !(p.mergeEdits.containsKey(k) && before.containsKey(k))) k};
+          final gone = {for (final k in changed) if (!after.containsKey(k)) k};
+          expect(p.received.keys.where((k) => k.startsWith('$prefix:')).toSet(), arrived, reason: '${d.id} $prefix: what arrives');
+          expect(p.receivedOf(prefix), arrived.length);
+          expect({...p.removed, for (final e in p.mergeEdits.entries) if (e.value == null) e.key}.where((k) => k.startsWith('$prefix:') && before.containsKey(k)).toSet(),
+              gone,
+              reason: '${d.id} $prefix: what goes');
+        }
+      }
+
+      test('a plain first sync', () async {
+        await a.accounts.upsert(_account('x-1', 'x'));
+        await a.secrets.write('x-1', {'k': 'fake'});
+        await a.posts.upsert(_post('pa'));
+        await a.engine.sync();
+        await b.accounts.upsert(_account('bsky', 'bluesky'));
+        await expectMatches(b);
+      });
+
+      test('a first sync merging an account connected on both', () async {
+        await a.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+        await a.secrets.write(_uuid1, {'k': 'fake-a'});
+        await a.engine.sync();
+        await b.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 9), config: _mastodonConfig));
+        await b.secrets.write(_uuid2, {'k': 'fake-b'});
+        await b.posts.upsert(_post('pb', targets: const [PostTarget(accountId: _uuid2)]));
+        await expectMatches(b);
+      });
+
+      test('a fresh device and a file holding one account twice, with posts for both copies', () async {
+        final folder = _CloudFolder();
+        final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock), fresh = _Device('F', folder, clock);
+        await x.accounts.upsert(_account('x-1', 'x'));
+        await x.engine.sync();
+        await y.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+        await y.posts.upsert(_post('py', targets: const [PostTarget(accountId: _uuid2)]));
+        await z.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+        await z.posts.upsert(_post('pz', targets: const [PostTarget(accountId: _uuid3)]));
+        folder.freeze();
+        await y.engine.sync();
+        await z.engine.sync();
+        folder.thaw();
+        await expectMatches(fresh);
+      });
+
+      test('a fresh device and a post in the file still naming a merged copy', () async {
+        final t = await twinsInFile();
+        final doc = SyncDocument.parse(await cipher.open((await t.folder.read())!.bytes));
+        doc.records['post:late'] = SyncRecord.of(_post('late', targets: const [PostTarget(accountId: _uuid3)]).toJson(), at: clock.now, by: 'W');
+        await t.folder.write(await cipher.seal(doc.toJson(writtenBy: 'W', writtenAt: clock.now)), ifMatch: (await t.folder.read())!.version);
+        await expectMatches(_Device('F', t.folder, clock));
+      });
+
+      test('an ordinary sync after joining, with edits and a deletion elsewhere', () async {
+        await a.posts.upsert(_post('p1'));
+        await a.posts.upsert(_post('p2'));
+        await a.engine.sync();
+        await b.engine.sync();
+        await a.posts.upsert(_post('p1', text: 'edited', updatedAt: DateTime.utc(2026, 10, 20, 12, 30)));
+        await a.posts.delete('p2');
+        await a.accounts.upsert(_account('t-1', 'tumblr'));
+        await a.engine.sync();
+        await expectMatches(b);
+      });
+    });
+  });
+
   group('records a version does not manage (1.3.5)', () {
     /// Settings-like records: [values] always present, deletions not taken.
     CallbackSyncSource settingsLike(Map<String, Object?> values, {Set<String>? known}) => CallbackSyncSource(

@@ -232,7 +232,8 @@ class SyncEngine implements SecretsCoordinator {
         for (final k in copy.records.keys) {
           if (k.startsWith('account:') && mine.records[k] == null) fromCopies.add(k.substring(8));
         }
-        doc.absorb(copy, prefer: (key, _, __) => _preferCopy(key, mine, copy));
+        doc.absorb(copy, prefer: (key, _, __) => key.startsWith('secrets:') ? _preferCopy(key, mine, copy) : null);
+        _mergeAccountEdits(doc, mine, copy);
         copies.add(c);
       } on BackupException catch (e) {
         _log.warn('Not merging ${c.name}: ${e.message}');
@@ -247,6 +248,7 @@ class SyncEngine implements SecretsCoordinator {
   /// (the later write) for everything else and for a tie.
   static bool? _preferCopy(String key, SyncDocument mine, SyncDocument copy) {
     final i = key.indexOf(':');
+    if (i <= 0) return null; // not a record kind this version knows: the later write
     final prefix = key.substring(0, i), id = key.substring(i + 1);
     if (prefix != 'account' && prefix != 'secrets') return null;
     Map<Object?, Object?>? live(SyncDocument d, String k) {
@@ -260,6 +262,30 @@ class SyncEngine implements SecretsCoordinator {
     if (holdsNewerSignIn(first: a2, firstKeys: k2, second: a1, secondKeys: k1)) return true;
     if (holdsNewerSignIn(first: a1, firstKeys: k1, second: a2, secondKeys: k2)) return false;
     return null;
+  }
+
+  /// 1.3.5: one account changed in the main file ([mine]) and in a cloud
+  /// app's conflicted copy at the same moment: the parts the keys depend on
+  /// (tier, app registration, ids) come from the newer sign-in, together with
+  /// its keys; the user's own edits ([kUserEditedAccountFields]: switched
+  /// off, renamed, quotas) follow the later write. Without a newer sign-in
+  /// on either side, the later write stands whole, as [SyncDocument.absorb]
+  /// left it.
+  static void _mergeAccountEdits(SyncDocument doc, SyncDocument mine, SyncDocument copy) {
+    for (final e in copy.records.entries) {
+      if (!e.key.startsWith('account:')) continue;
+      final a = mine.records[e.key], b = e.value;
+      if (a == null || a.deleted || b.deleted || a.value is! Map || b.value is! Map || a.hash == b.hash) continue;
+      final signIn = _preferCopy(e.key, mine, copy);
+      if (signIn == null) continue;
+      final later = b.at.isAfter(a.at) ? b : a, keys = signIn ? b : a;
+      final merged = <String, Object?>{
+        ...(keys.value! as Map).cast<String, Object?>(),
+        for (final f in kUserEditedAccountFields)
+          if ((later.value! as Map).containsKey(f)) f: (later.value! as Map)[f],
+      };
+      doc.records[e.key] = SyncRecord.of(merged, at: later.at, by: keys.by);
+    }
   }
 
   Future<String?> _write(_Remote remote, SyncDocument doc) async {
@@ -425,11 +451,16 @@ class SyncEngine implements SecretsCoordinator {
     for (final e in merge.newAliases.entries) {
       aliases[e.key] = (into: e.value, at: now);
     }
-    // A merged account this device held in neither copy simply arrives: the
-    // dry run counts it as received.
+    // Every link this device saw in the file stays here too, whatever later
+    // happens to the file.
+    for (final e in merge.fileLinks.entries) {
+      if (now.difference(e.value.at) <= tombstoneLife) aliases.putIfAbsent(e.key, () => e.value);
+    }
+    // A record a merge rewrote that this device did not hold (an account, its
+    // keys, a post naming a merged copy) simply arrives: the dry run counts it.
     final arrivedMerged = <String, Object?>{};
     for (final e in merge.edits.entries) {
-      if (e.value != null && local[e.key] == null && (e.key.startsWith('account:') || e.key.startsWith('secrets:'))) arrivedMerged[e.key] = e.value;
+      if (e.value != null && local[e.key] == null) arrivedMerged[e.key] = e.value;
       toApply.remove(e.key);
       hereBefore.remove(e.key);
       removedKeys.remove(e.key);
@@ -440,8 +471,8 @@ class SyncEngine implements SecretsCoordinator {
       }
     }
 
-    // Forget old tombstones, finished leases and claims.
-    doc.records.removeWhere((k, rec) => rec.deleted && now.difference(rec.at) > tombstoneLife);
+    // Forget old tombstones and links, finished leases and claims.
+    doc.records.removeWhere((k, rec) => (rec.deleted || k.startsWith('alias:')) && now.difference(rec.at) > tombstoneLife);
     newBase.removeWhere((k, _) => !doc.records.containsKey(k) && !local.containsKey(k));
     doc.leases.removeWhere((id, lease) => !lease.liveAt(now) || (lease.by == deviceId && !_renewing.contains(id)));
     doc.claims.removeWhere((id, _) => _postStatus(doc.records['post:$id']) != 'scheduled');
@@ -452,8 +483,8 @@ class SyncEngine implements SecretsCoordinator {
 
     // The devices the received records come from, most records first.
     final from = <String, int>{};
-    for (final key in toApply.keys) {
-      final by = doc.records[key]?.by;
+    for (final key in [...toApply.keys, ...arrivedMerged.keys]) {
+      final by = original[key]?.by ?? doc.records[key]?.by;
       if (by == null || by == deviceId) continue;
       final d = doc.devices[by];
       final name = d == null ? 'another device' : (d.label.isEmpty ? d.platform : d.label);
@@ -728,7 +759,12 @@ class SyncEngine implements SecretsCoordinator {
   /// one taken back), and returns the merges of this pass (other id -> kept
   /// id), what to store here (`null`: remove the merged copy, which
   /// [_execute] does only after the file is written) and the new links.
-  ({Map<String, String> twins, Map<String, Object?> edits, Map<String, String> newAliases}) _mergeDuplicates(
+  ({
+    Map<String, String> twins,
+    Map<String, Object?> edits,
+    Map<String, String> newAliases,
+    Map<String, ({String into, DateTime at})> fileLinks,
+  }) _mergeDuplicates(
     SyncDocument doc,
     Map<String, SyncRecord> original,
     DateTime now,
@@ -804,6 +840,14 @@ class SyncEngine implements SecretsCoordinator {
       } else {
         doc.records[key] = SyncRecord.tombstone(at: now, by: deviceId, mergedInto: mergedInto);
         send(key, null);
+        if (mergedInto != null) {
+          // The link also as a live record of its own: NEFORUM 1.3.4 writes
+          // a tombstone back without the extra field, but leaves a record
+          // of a kind it does not know as it is.
+          final alias = 'alias:${_idOf(key)}';
+          doc.records[alias] = SyncRecord.of({'into': mergedInto}, at: now, by: deviceId);
+          send(alias, {'into': mergedInto});
+        }
       }
       edits[key] = null;
     }
@@ -833,8 +877,12 @@ class SyncEngine implements SecretsCoordinator {
     // Every merged id this pass, in the file or on this device, leads to an
     // account that still exists.
     final links = <String, String>{...aliases, ...twins};
+    final fileLinks = <String, ({String into, DateTime at})>{};
     for (final e in doc.records.entries) {
-      if (e.key.startsWith('account:') && e.value.deleted && e.value.mergedInto != null) links[e.key.substring(8)] = e.value.mergedInto!;
+      final link = _linkIn(e.key, e.value);
+      if (link == null) continue;
+      links[link] = e.key.startsWith('alias:') ? '${(e.value.value! as Map)['into']}' : e.value.mergedInto!;
+      fileLinks[link] = (into: links[link]!, at: e.value.at);
     }
     String? resolve(String id) {
       var k = id;
@@ -857,7 +905,15 @@ class SyncEngine implements SecretsCoordinator {
         if (!identical(value, rec.value) && value != null) put(key, value, at: rec.at);
       }
     }
-    return (twins: {for (final o in twins.keys) o: keptFor(o)}, edits: edits, newAliases: newAliases);
+    return (twins: {for (final o in twins.keys) o: keptFor(o)}, edits: edits, newAliases: newAliases, fileLinks: fileLinks);
+  }
+
+  /// The merged-away account id a record links from: an `alias:<id>` record
+  /// (`{"into": <kept id>}`) or an account tombstone naming the kept id.
+  static String? _linkIn(String key, SyncRecord rec) {
+    if (key.startsWith('alias:') && !rec.deleted && rec.value is Map && (rec.value! as Map)['into'] is String) return key.substring(6);
+    if (key.startsWith('account:') && rec.deleted && rec.mergedInto != null) return key.substring(8);
+    return null;
   }
 
   // -------------------------------------------------------------------------

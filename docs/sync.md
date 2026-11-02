@@ -70,7 +70,7 @@ NEFORUM merges two copies of one account only in these cases:
 
 NEFORUM never merges two accounts whose ids come from the accounts themselves (X, Bluesky, YouTube, Reddit, a WordPress blog and most others), accounts on two different servers or sites, or accounts with two different handles. The first sync's dry run lists the merges it will make.
 
-After a merge, the old copy and its keys stay on the device until the sync file holds the merged account. A post that still names the old copy, such as a draft you were editing, moves to the merged account on the next sync, for 90 days.
+After a merge, the old copy and its keys stay on the device until the sync file holds the merged account. A post that still names the old copy, such as a draft you were editing, moves to the merged account on the next sync, for 90 days. A device with NEFORUM 1.3.4 leaves such a post as it is, and does not remove the link from the sync file; the next device with 1.3.5 to sync moves the post.
 
 ### Where the file can live
 
