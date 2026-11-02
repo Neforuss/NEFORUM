@@ -133,9 +133,9 @@ NEFORUM syncs when it starts, every five minutes, and a few seconds after you ch
 
 Each account, post and setting merges on its own, so changes on different things never clash. When the same thing was changed on two devices before they synced:
 
-- A post that has already gone out beats a later edit, so nothing is posted twice. Otherwise, the newer edit of a post wins.
-- An account's sign-in (the developer app or server it is connected through, its ids and its keys) always comes as one piece. When you reconnect it through another app or server on one device while another device renews the old sign-in, the most recent connection wins, even though the renewed keys expire later, so the new app is never paired with the old keys, or the other way round. Through the same app, the keys renewed last win, because those are the ones the network still accepts.
-- Your own changes to an account (switched on or off, renamed, quotas), a setting and a media host carry no time of the change. When the same one was changed on two devices before either synced, the device that syncs second keeps its own version, even when the other change was made later. To be sure a change sticks, make it on one device and let it sync before you change the same thing on another.
+- A post that went out, was tried (even if it failed or was cancelled) or is being published beats another device's version that has not got that far, even a newer edit, so nothing is posted twice. Between two versions that got as far, the newer edit wins, by each device's clock.
+- An account's sign-in (the developer app or server it is connected through, its ids and its keys) always comes as one piece between devices with 1.3.5, also when a sync arrives while NEFORUM is posting or renewing that sign-in. When you reconnect it through another app or server on one device while another device renews the old sign-in, the most recent connection wins, even though the renewed keys expire later, so the new app is never paired with the old keys, or the other way round. Through the same app with the same settings, the keys renewed last win, because those are the ones the network still accepts. A device with 1.3.4 can break this; see the limitation below.
+- Your own changes to an account (switched on or off, renamed, quotas), a setting and a media host carry no time of the change. When the same one was changed on two devices before either synced, the device that syncs second keeps its own version, even when the other change was made later. This assumes both devices' clocks are right: a device whose clock runs ahead can keep its version even when it syncs first. To be sure a change sticks, make it on one device and let it sync before you change the same thing on another.
 - An edit beats a deletion, so nothing you were working on disappears.
 
 Cloud apps sometimes keep two copies when two devices save at the same moment, for example "NEFORUM (conflicted copy).neforumsync". NEFORUM merges such copies into the main file and then removes them.
@@ -144,7 +144,8 @@ Cloud apps sometimes keep two copies when two devices save at the same moment, f
 
 - does not send a setting you put back to its default;
 - does not take the settings that 1.3.5 added to sync (how the browser extension posts), and removes them from the sync file;
-- asks "which data should win" instead of showing what joining will do.
+- asks "which data should win" instead of showing what joining will do;
+- keeps the keys that expire later without looking at the account: after you reconnect an account through another app on a 1.3.5 device, a 1.3.4 device that renewed the old sign-in meanwhile can pair the new app with the old keys, on every device. Reconnect the account again on a 1.3.5 device to fix it.
 
 When an older device removes a setting from the file, the devices with 1.3.5 keep their own value. A device that joins after that keeps its own value too, unless its setup wins. On their next sync, the devices already syncing put their value back into the file once, so the new device gets it.
 

@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/tiktok/tiktok_adapter.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 import 'support/test_context.dart';
@@ -2096,8 +2098,11 @@ void main() {
           await x.engine.sync();
         }
 
-        // Y renews as the publish service does: through the engine, then it
-        // stores whatever comes back. TikTok answers with keys of the old app
+        // Y renews through the engine's renew(), the path the publish service
+        // takes for rotating keys (X, Tumblr, DeviantArt), and stores whatever
+        // comes back, as the publish service does. TikTok itself does not
+        // rotate and renews without renew(): that path is the publish-service
+        // test further down. The network answers with keys of the old app
         // that expire after X's.
         Future<void> yRenews({Future<void> Function()? meanwhile}) async {
           final fresh = await y.engine.renew((await y.accounts.get(_uuid1))!, (await y.secrets.read(_uuid1))!, (current) async {
@@ -2211,6 +2216,151 @@ void main() {
         expect(await renewal(account, (await d.secrets.read(_uuid1))!), 'renewed', reason: d.id);
       }
     });
+
+    // The publish service, the other writer of accounts and keys: a sync can
+    // land while it waits on the network (an upload, a token call).
+    http.Response tokenAnswer(http.Request r) {
+      final body = Uri.splitQueryString(r.body);
+      final app = body['client_key'];
+      final ok = body['client_secret'] == 'cs-$app-fake' && body['refresh_token'] == 'rft-$app-fake';
+      return ok
+          ? http.Response(
+              jsonEncode({'access_token': 'act-$app-fake', 'expires_in': 86400, 'refresh_token': 'rft-$app-fake', 'refresh_expires_in': 31536000, 'open_id': 'open-$app', 'token_type': 'Bearer'}),
+              200,
+              headers: jsonHeaders)
+          : http.Response(jsonEncode({'error': 'invalid_client', 'error_description': 'Client key does not match', 'log_id': 'x'}), 400, headers: jsonHeaders);
+    }
+
+    PublishService publisher(_Device d, PlatformAdapter adapter, Future<http.Response> Function(http.Request) handler) => PublishService(
+          registry: AdapterRegistry([adapter]),
+          accounts: d.accounts,
+          posts: d.posts,
+          secrets: d.secrets,
+          quota: QuotaTracker(InMemoryQuotaRepository()),
+          http: NeforumHttp(client: MockClient(handler), maxRetries: 0),
+          clock: () => clock.now,
+        );
+
+    Future<(_Device, _Device)> joinedOnTikTok() async {
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock);
+      await x.accounts.upsert(tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1)));
+      await x.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(minutes: 30))));
+      await x.engine.sync();
+      await y.engine.sync();
+      return (x, y);
+    }
+
+    Future<void> xReconnectsAndBothSync(_Device x, _Device y) async {
+      await x.accounts.upsert(tiktok(app: 'ck-new', createdAt: clock.now));
+      await x.secrets.write(_uuid1, tiktokKeys('ck-new', clock.now.add(const Duration(hours: 24))));
+      await x.engine.sync();
+      await y.engine.sync();
+    }
+
+    Future<void> expectOneSignIn(List<_Device> devices, {String app = 'ck-new'}) async {
+      for (final d in devices) {
+        final account = (await d.accounts.get(_uuid1))!;
+        final keys = (await d.secrets.read(_uuid1))!;
+        expect(account.configString('clientKey'), app, reason: '${d.id}: the reconnect stays');
+        expect(keys['client_secret'], 'cs-$app-fake', reason: "${d.id}: the account's keys come with it");
+        expect(await renewal(account, keys), 'renewed', reason: '${d.id}: an account and its keys always from one sign-in');
+      }
+    }
+
+    test('the publish service renews TikTok (no coordinator) while a sync brings a reconnect through another app: the reconnect is kept, not the renewal', () async {
+      final (x, y) = await joinedOnTikTok();
+      clock.now = clock.now.add(const Duration(minutes: 31)); // Y's keys have expired
+      await y.posts.upsert(_post('p', targets: const [PostTarget(accountId: _uuid1)]));
+      var tokenCalls = 0;
+      final service = publisher(y, _TikTokPublishing(() async => PublishResult.ok(remoteId: 'v1')), (r) async {
+        if (r.url.path.contains('/oauth/token/')) {
+          tokenCalls++;
+          // While TikTok answers, X reconnects and syncs, and Y's timer sync runs.
+          await xReconnectsAndBothSync(x, y);
+          clock.now = clock.now.add(const Duration(seconds: 2));
+          return tokenAnswer(r);
+        }
+        return http.Response('{}', 200, headers: jsonHeaders);
+      });
+      await service.publish('p');
+      expect(tokenCalls, 1, reason: 'the renewal ran, on the path TikTok takes');
+      expect((await y.secrets.read(_uuid1))!['client_secret'], 'cs-ck-new-fake', reason: 'the renewal of the old sign-in was dropped');
+      await _rounds([y, x, y, x], clock, 1);
+      await expectOneSignIn([x, y]);
+    });
+
+    for (final outcome in ['a success clears an old warning', 'an auth failure saves a warning']) {
+      test('the publish service changes only the warning, on the account as stored now ($outcome): a reconnect that arrived by sync mid-upload stays', () async {
+        final (x, y) = await joinedOnTikTok();
+        clock.now = clock.now.add(const Duration(minutes: 5)); // Y's keys are still valid
+        final success = outcome.contains('success');
+        if (success) {
+          await y.accounts.upsert(tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1)).copyWith(lastError: 'TikTok sign-in expired; reconnect the account'));
+        }
+        await y.posts.upsert(_post('p', targets: const [PostTarget(accountId: _uuid1)]));
+        final service = publisher(y, _TikTokPublishing(() async {
+          // The upload takes a while: the sync a post change schedules brings
+          // X's reconnect in meanwhile.
+          await xReconnectsAndBothSync(x, y);
+          return success ? PublishResult.ok(remoteId: 'v1') : PublishResult.failure(const PublishError.auth('access_token_invalid'));
+        }), (r) async => tokenAnswer(r));
+        await service.publish('p');
+        await Future<void>.delayed(const Duration(milliseconds: 20)); // the warning is saved without waiting
+        final warning = (await y.accounts.get(_uuid1))!.lastError;
+        expect(warning, success ? isNull : isNotNull, reason: 'the warning itself still changes');
+        await _rounds([y, x, y, x], clock, 1);
+        await expectOneSignIn([x, y]);
+        expect((await x.accounts.get(_uuid1))!.lastError, isNull, reason: "a warning is this device's own");
+      });
+    }
+
+    for (final reverse in [false, true]) {
+      test(
+          reverse
+              ? "real folders and a cloud client: X's reconnect is the conflicted copy (Y's renewal reached the cloud first), and still wins"
+              : "real folders and a cloud client: Y's renewal of the old sign-in is the conflicted copy, and the reconnect wins",
+          () async {
+        final root = await Directory.systemTemp.createTemp('neforum-cloud');
+        addTearDown(() => root.delete(recursive: true));
+        final cloud = _CloudClient(root);
+        final x = _Device('X', cloud.folder('X'), clock), y = _Device('Y', cloud.folder('Y'), clock);
+        Future<void> run(_Device d) async {
+          await cloud.sync(d.id);
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          await d.engine.sync();
+          await cloud.sync(d.id);
+        }
+
+        await x.accounts.upsert(tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1)));
+        await x.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(minutes: 30))));
+        await run(x);
+        await run(y);
+        await run(x);
+        clock.now = clock.now.add(const Duration(minutes: 31));
+        await x.accounts.upsert(tiktok(app: 'ck-new', createdAt: clock.now));
+        await x.secrets.write(_uuid1, tiktokKeys('ck-new', clock.now.add(const Duration(hours: 24))));
+        if (reverse) {
+          // X's cloud client is offline: X syncs into its own folder only.
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          await x.engine.sync();
+        } else {
+          await run(x);
+        }
+        // Y's client is offline: Y renews the old sign-in on its stale folder.
+        clock.now = clock.now.add(const Duration(minutes: 1));
+        final fresh = await y.engine.renew((await y.accounts.get(_uuid1))!, (await y.secrets.read(_uuid1))!,
+            (current) async => tiktokKeys('ck-old', clock.now.add(const Duration(hours: 24))));
+        if (fresh != null) await y.secrets.write(_uuid1, fresh);
+        await cloud.sync('Y');
+        if (reverse) await cloud.sync('X'); // X's write becomes the copy
+        expect(cloud.serverCopies, isNotEmpty, reason: 'the race goes through a conflicted copy');
+        for (final d in [y, x, y, x]) {
+          await run(d);
+        }
+        expect(cloud.serverCopies, isEmpty, reason: 'merged and removed');
+        await expectOneSignIn([x, y]);
+      });
+    }
 
     test('a thread that broke off partway keeps its live parts and its resume state when two targets become one', () {
       final partial = {
@@ -2727,6 +2877,76 @@ class _CloudFolder extends SyncBackend {
 
   @override
   Future<void> check() async {}
+}
+
+/// TikTok as the publish service sees it, with an upload the test controls;
+/// everything else, the renewal included, is the real adapter.
+class _TikTokPublishing extends TikTokAdapter {
+  _TikTokPublishing(this.onPublish);
+  final Future<PublishResult> Function() onPublish;
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) => onPublish();
+}
+
+/// A cloud client over real [FolderSyncBackend]s, one folder per device, as
+/// the critic built it in round 7: it uploads a changed main file, downloads
+/// a newer one, and when both changed keeps the server's as the main file and
+/// turns the device's into a conflicted copy (a file of its own, with its own
+/// time and size, in every folder). Unlike [_CloudFolder], a device's reads
+/// see its own writes, and the version it holds is its own file's.
+class _CloudClient {
+  _CloudClient(this.root);
+  final Directory root;
+  Uint8List? server;
+  final serverCopies = <String, Uint8List>{};
+  final _known = <String, String?>{}; // device -> hash of the main file at its last cloud sync
+  final _seenCopies = <String, Set<String>>{};
+  final _dirs = <String, Directory>{};
+  int _conflicts = 0;
+
+  FolderSyncBackend folder(String device) {
+    final d = Directory(p.join(root.path, device))..createSync(recursive: true);
+    _dirs[device] = d;
+    _known[device] = null;
+    _seenCopies[device] = {};
+    return FolderSyncBackend(d.path);
+  }
+
+  static String? _hash(Uint8List? b) => b == null ? null : crypto.sha256.convert(b).toString();
+
+  Future<void> sync(String device) async {
+    final dir = _dirs[device]!;
+    final main = File(p.join(dir.path, kSyncFileName));
+    final local = main.existsSync() ? main.readAsBytesSync() : null;
+    final known = _known[device];
+    final lh = _hash(local), sh = _hash(server);
+    if (lh != known && sh != known && lh != sh) {
+      _conflicts++;
+      serverCopies['NEFORUM ($device conflicted copy $_conflicts).neforumsync'] = local!;
+      main.writeAsBytesSync(server!, flush: true);
+    } else if (lh != known) {
+      server = local;
+    } else if (sh != known) {
+      main.writeAsBytesSync(server!, flush: true);
+    }
+    _known[device] = _hash(server);
+    // A copy removed on a device that had it is removed everywhere; a new
+    // one on the server is downloaded.
+    final here = {
+      for (final f in dir.listSync().whereType<File>())
+        if (p.basename(f.path).contains('conflicted copy')) p.basename(f.path),
+    };
+    for (final gone in _seenCopies[device]!.difference(here)) {
+      serverCopies.remove(gone);
+    }
+    for (final e in serverCopies.entries) {
+      if (!here.contains(e.key)) File(p.join(dir.path, e.key)).writeAsBytesSync(e.value, flush: true);
+    }
+    _seenCopies[device] = serverCopies.keys.toSet();
+    await Future<void>.delayed(const Duration(milliseconds: 5)); // distinct file times
+  }
 }
 
 class _Killed implements Exception {}
