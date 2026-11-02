@@ -19,6 +19,8 @@ import '../../theme/tokens.dart';
 import '../../widgets/color_swatch_field.dart';
 import '../../widgets/layout.dart' show showToast;
 import '../../widgets/media_thumb.dart';
+import '../settings/appearance_section.dart' show hexColor;
+import 'card_colour_dialog.dart';
 
 /// Longest side a card's background photo is decoded at for the composer's
 /// previews; the saved card uses [kBackdropMaxSide].
@@ -216,6 +218,9 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           alignment: look.alignment,
           backdrop: previewBackdrop(ref, current),
           customFont: look.customFont,
+          // 1.3.5: cards. The post's style as it is now: the words' place
+          // and colour set here are the style's too.
+          style: composer.textCardStyle,
           ),
         ),
       ),
@@ -427,27 +432,52 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
     ];
   }
 
-  /// Where the words sit, their colour and the box behind them.
-  List<Widget> _wordsControls(BuildContext context, TextCardBackground current) => [
-        _label(context, 'Position'),
-        Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
-          for (final p in TextCardTextPosition.values)
-            ChoiceChip(
-              key: Key('card-background-position-${p.name}'),
-              label: Text(p.label),
-              selected: current.textPosition == p,
-              onSelected: (_) => _edit((b) => b.copyWith(textPosition: p)),
-            ),
-        ]),
-        _label(context, 'Text colour'),
-        Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
-          for (final c in TextCardTextColor.values)
-            ChoiceChip(
-              label: Text(c.label),
-              selected: current.textColor == c,
-              onSelected: (_) => _edit((b) => b.copyWith(textColor: c)),
-            ),
-        ]),
+  /// Where the words sit, their colour and the box behind them. The place
+  /// is one setting with the text card editor's (1.3.5,
+  /// [textCardWordsPosition]). The colour shows what the card uses
+  /// ([textCardWordsColour]): Automatic, White and Black are the photo's
+  /// own and go with it; "Other…" is the editor's words colour for every
+  /// card. Either way the card follows the last change.
+  List<Widget> _wordsControls(BuildContext context, TextCardBackground current) {
+    final style = ref.watch(composerProvider.select((c) => c.textCardStyle));
+    final composer = ref.read(composerProvider.notifier);
+    final position = textCardWordsPosition(style, current);
+    final colour = textCardWordsColour(style, current);
+    final own = colour != null && colour != 0xFFFFFFFF && colour != 0xFF000000;
+    return [
+      _label(context, 'Position'),
+      Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+        for (final p in TextCardTextPosition.values)
+          ChoiceChip(
+            key: Key('card-background-position-${p.name}'),
+            label: Text(p.label),
+            selected: position == p,
+            onSelected: (_) => composer.setTextCardWordsPosition(p),
+          ),
+      ]),
+      _label(context, 'Text colour'),
+      Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
+        for (final (c, argb) in [(TextCardTextColor.automatic, null), (TextCardTextColor.white, 0xFFFFFFFF), (TextCardTextColor.black, 0xFF000000)])
+          ChoiceChip(
+            key: Key('card-background-text-${c.name}'),
+            label: Text(c.label),
+            selected: colour == argb,
+            // The photo's own choice, gone with the photo; it clears a words
+            // colour of the style's so the card follows this last change.
+            onSelected: (_) => composer.setTextCardPhotoWordsColour(c),
+          ),
+        ChoiceChip(
+          key: const Key('card-background-text-own'),
+          avatar: own ? CircleAvatar(backgroundColor: Color(colour)) : const Icon(Icons.palette_outlined, size: 16),
+          label: Text(own ? 'Own ${hexColor(colour)}' : 'Other…'),
+          selected: own,
+          onSelected: (_) async {
+            final choice = await showCardColourDialog(context,
+                title: 'Colour of the words', current: own ? colour : null, fallback: Color(colour ?? 0xFFFFFFFF), defaultLabel: 'Automatic');
+            if (choice != null) composer.setTextCardWordsColour(choice.color);
+          },
+        ),
+      ]),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: Text('Box behind the words', style: context.text.bodyMedium),
@@ -456,6 +486,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           onChanged: (v) => _edit((b) => b.copyWith(textBox: v)),
         ),
       ];
+  }
 
   /// The one place the editor picks a colour. To use the colour wheel
   /// (lib/widgets/color_wheel.dart) instead, change only this method.
