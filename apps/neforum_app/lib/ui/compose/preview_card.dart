@@ -691,17 +691,19 @@ TextCardWordsFit? _measureWordsFit(Post post, List<(TargetPreview, MediaAttachme
     final byline = textCardShowsHandleOf(m) ? style.bylineFor(p.account.handle ?? p.account.displayName) : null;
     final branded = textCardBrandedOf(m);
     final double asked, drawn;
+    var cut = false;
     if (design != null) {
-      final px = CardDesignPainter(
+      final measured = CardDesignPainter(
         design: design,
         texts: {CardBlockRole.postText: text, CardBlockRole.handle: byline ?? '', if (!branded) CardBlockRole.signature: ''},
         safe: safe,
         platformId: id,
         coverShown: cardCoverDrawn(design, picture: textCardParametersOf(m)?['background'] != null),
-      ).drawnWordsSize(size);
-      if (px == null) continue;
+      ).drawnWords(size);
+      if (measured == null) continue;
       asked = design.wordsSize;
-      drawn = px;
+      drawn = measured.size;
+      cut = measured.cut;
     } else {
       final words = TextCardPainter(
         text: text,
@@ -717,7 +719,10 @@ TextCardWordsFit? _measureWordsFit(Post post, List<(TargetPreview, MediaAttachme
       asked = style.textSize;
       drawn = words.fitted <= 0 ? 1 : words.drawn / words.fitted;
     }
-    if (shortest == null || drawn / asked < shortest.drawn / shortest.asked) shortest = (network: p.descriptor.name, asked: asked, drawn: drawn);
+    // A network whose words are cut comes first: that is the one to tell.
+    if (shortest == null || (cut && !shortest.cut) || (cut == shortest.cut && drawn / asked < shortest.drawn / shortest.asked)) {
+      shortest = (network: p.descriptor.name, asked: asked, drawn: drawn, cut: cut);
+    }
   }
   return shortest;
 }

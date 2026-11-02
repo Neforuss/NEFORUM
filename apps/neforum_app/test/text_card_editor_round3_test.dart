@@ -11,6 +11,7 @@
 //  7. A design's margins never go under 24.
 //  8. The size note is measured once per set of inputs.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -260,15 +261,20 @@ void main() {
       });
     }
 
-    test('it goes where the template leaves room', () {
-      final vinyl = _template('vinyl').withHandleBlock();
-      expect(vinyl.handleBlock!.anchor, vinyl.wordsBlock!.anchor, reason: 'under the words at the bottom');
-      expect([for (final b in vinyl.blocks) if (b.anchor == vinyl.wordsBlock!.anchor) b.role].last, CardBlockRole.handle);
-      final neon = _template('neon').withHandleBlock();
-      expect(neon.handleBlock!.anchor, CardAnchor.bottomCenter);
-      expect([for (final b in neon.blocks) if (b.anchor == CardAnchor.bottomCenter) b.role], [CardBlockRole.handle, CardBlockRole.signature]);
-      expect(_template('gradientWave').withHandleBlock().handleBlock!.anchor, CardAnchor.bottomLeft, reason: 'the corner the signature leaves free');
-      expect(_template('sunset').withHandleBlock().handleBlock!.anchor, CardAnchor.bottomLeft);
+    test('round 5: it goes in the template\'s declared free slot, added on the end, the template\'s blocks untouched', () {
+      // kCardTemplateHandleSlots: the corner or edge each template leaves
+      // free on every card shape; the renderer then places it clear of the
+      // pictures and the template's own text (placeHandle).
+      const slots = {'vinyl': CardAnchor.topRight, 'neon': CardAnchor.bottomCenter, 'gradientWave': CardAnchor.bottomLeft, 'sunset': CardAnchor.topLeft};
+      for (final MapEntry(key: id, value: anchor) in slots.entries) {
+        final t = _template(id);
+        final d = t.withHandleBlock();
+        expect(d.handleBlock!.anchor, anchor, reason: id);
+        expect(d.placeHandle, isTrue, reason: id);
+        expect(d.placeWords, isFalse, reason: '$id: the words stay where the template put them');
+        expect(d.blocks.last.role, CardBlockRole.handle, reason: id);
+        expect(jsonEncode([for (final b in d.blocks.take(t.blocks.length)) b.toJson()]), jsonEncode([for (final b in t.blocks) b.toJson()]), reason: '$id: the template\'s blocks never move for the handle');
+      }
     });
 
     testWidgets('on a design without one, the saved card has the typed @handle', (tester) async {
@@ -292,16 +298,17 @@ void main() {
 
   group('4. words moved to the top on Vinyl keep clear of the record', () {
     test('the design keeps its edges clear (worked out when drawn); back in the middle the words have the template\'s room', () {
-      // Round 4: the clearance moved from a baked offset to the renderer
-      // (CardDesign.keepClear), so no later edit or photo undoes it.
+      // Round 5: the words are placed by the renderer in a free band
+      // (CardDesign.placeWords), on every card shape; the pixels are judged
+      // by text_card_placement_gate_test.dart on 1:1, 4:5 and 9:16.
       final vinyl = _template('vinyl');
       final top = vinyl.withWordsPosition(TextCardTextPosition.top);
-      expect(top.keepClear, isTrue);
+      expect(top.placeWords, isTrue);
       expect(top.wordsBlock!.offsetY, 0);
       final middle = top.withWordsPosition(TextCardTextPosition.center);
       expect(middle.wordsBlock!.maxHeight, vinyl.wordsBlock!.maxHeight);
-      expect(vinyl.keepClear, isFalse, reason: 'an untouched template is drawn as before');
-      expect(vinyl.toJson().containsKey('keepClear'), isFalse);
+      expect(vinyl.placeWords, isFalse, reason: 'an untouched template is drawn as before');
+      expect(vinyl.toJson().containsKey('placeWords'), isFalse);
     });
 
     testWidgets('the pixels: no words on the record', (tester) async {

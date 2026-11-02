@@ -184,33 +184,33 @@ void main() {
       expect(d.withWordsPosition(TextCardTextPosition.top).wordsBlock!.offsetY, 0);
     });
 
-    test('words moved to the @handle\'s edge stack with it, the @handle on the edge', () {
+    test('round 5: words moved to the @handle\'s edge are placed by the renderer, not stacked into the @handle\'s anchor', () {
       // Photo overlay: the @handle at the top left, the words at the bottom.
-      final up = _template('photoOverlay').withWordsPosition(TextCardTextPosition.top);
-      expect(up.wordsBlock!.anchor, CardAnchor.topLeft, reason: 'joins the @handle\'s anchor instead of overlapping it');
-      final atTop = [for (final b in up.blocks) if (b.anchor == CardAnchor.topLeft) b.role];
-      expect(atTop, [CardBlockRole.handle, CardBlockRole.postText], reason: 'the @handle first: on the top edge');
-      // Minimal: the @handle at the bottom left.
-      final down = _template('minimal').withWordsPosition(TextCardTextPosition.bottom);
-      final atBottom = [for (final b in down.blocks) if (b.anchor == down.wordsBlock!.anchor) b.role];
-      expect(atBottom.last, CardBlockRole.handle, reason: 'the @handle last: on the bottom edge');
+      // Round 4 joined the words to the @handle's anchor; round 5 leaves every
+      // template block where it is and places the words in the free band
+      // under the @handle when the card is drawn (CardDesign.placeWords).
+      final t = _template('photoOverlay');
+      final up = t.withWordsPosition(TextCardTextPosition.top);
+      expect(up.wordsBlock!.anchor.name, startsWith('top'));
+      expect(up.placeWords, isTrue);
+      expect(up.handleBlock!.toJson(), t.handleBlock!.toJson(), reason: 'the template\'s @handle is not moved for the words');
+      expect([for (final b in up.blocks) b.role], [for (final b in t.blocks) b.role], reason: 'no reorder');
     });
 
-    test('the @handle: size, colour, the six places; a design without one gets one; the signature trades places', () {
+    test('the @handle: size, colour, the six places; a design without one gets one in its free slot; the signature stays', () {
       final vinyl = _template('vinyl');
       expect(vinyl.handleBlock, isNull);
       final withHandle = vinyl.withHandleSize(40);
       expect(withHandle.handleBlock!.size, 40);
-      expect(withHandle.handleBlock!.anchor, vinyl.wordsBlock!.anchor, reason: 'under Vinyl\'s words at the bottom');
+      expect(withHandle.handleBlock!.anchor, CardAnchor.topRight, reason: 'Vinyl\'s declared slot: beside the record, across from the signature');
       final m = _template('minimal');
       for (final p in kDesignHandlePositions) {
         final moved = m.withHandlePosition(p);
         expect(moved.handlePosition, p);
         expect(moved.handleBlock!.alignment, cardAlignmentAt(cardAnchorOfHandlePosition(p)));
+        expect(moved.placeHandle, isTrue);
+        expect(moved.signatureBlock!.toJson(), m.signatureBlock!.toJson(), reason: 'round 5: the signature never moves; the @handle is placed clear of it');
       }
-      // Minimal's signature is at the bottom right.
-      final swapped = m.withHandlePosition(TextCardHandlePosition.bottomRight);
-      expect(swapped.signatureBlock!.anchor, CardAnchor.bottomLeft);
       expect(m.withHandleColor(0xFFFF3B30).handleBlock!.color, 0xFFFF3B30);
     });
 
@@ -383,9 +383,15 @@ void main() {
     testWidgets('a design whose words shrink to fit says the size they come out at', (tester) async {
       final (_, c) = await boot(tester);
       c.read(composerProvider.notifier).setTextCardDesign(_template('minimal').withWordsSize(220));
-      await compose(tester, c, text: _long);
+      await compose(tester, c, text: 'Words set large, shrinking to fit.');
       await unfold(tester);
       expect(find.textContaining('Shrinks to fit on'), findsOneWidget);
+      // Round 5: a post too long even at the smallest size is cut, and the
+      // note says that rather than only the size.
+      await tester.enterText(find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController), _long);
+      await settle(tester);
+      expect(find.textContaining('Shrinks to fit on'), findsNothing);
+      expect(find.textContaining('Too long for this place on'), findsOneWidget);
       await finish(tester);
     });
   });

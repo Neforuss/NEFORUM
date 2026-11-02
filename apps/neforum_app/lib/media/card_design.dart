@@ -724,7 +724,8 @@ class CardDesign {
     this.waveform = const CardWaveformLayer(),
     this.blocks = const [],
     this.margin = 80,
-    this.keepClear = false,
+    this.placeWords = false,
+    this.placeHandle = false,
   });
 
   /// Null when [j] is not a design (or is empty: the classic card).
@@ -742,7 +743,8 @@ class CardDesign {
       waveform: CardWaveformLayer.fromJson(_map(m['waveform'])),
       blocks: raw is List ? [for (final b in raw.take(24)) if (b is Map) CardTextBlock.fromJson(Map<String, dynamic>.from(b))] : const [],
       margin: _num(m['margin'], 80, 0, 240),
-      keepClear: _bool(m['keepClear'], false),
+      placeWords: _bool(m['placeWords'], false),
+      placeHandle: _bool(m['placeHandle'], false),
     );
   }
 
@@ -759,15 +761,20 @@ class CardDesign {
   /// frame, in pixels at 1080 wide.
   final double margin;
 
-  /// 1.3.5: the blocks on the top and bottom edges keep clear of the
-  /// pictures on that edge (the cover or record, when it is drawn, and the
-  /// waveform), and the post's words of the other blocks on their edge
-  /// (card_renderer.dart). Worked out each time a card is drawn, so it
-  /// holds whatever the order of the edits and when a photo arrives. Set by
-  /// the text card editor's place controls (card_design_edits.dart); off,
-  /// every block is placed in the whole frame, as designs made before
-  /// 1.3.5 are.
-  final bool keepClear;
+  /// 1.3.5: the post's words were placed by the text card editor (Top,
+  /// Middle or Bottom, card_design_edits.dart): they go in the band of the
+  /// frame their row names that no picture of the template (its declared
+  /// picture areas: the record or framed photo when drawn, the waveform) and
+  /// no other block crosses, worked out each time a card is drawn
+  /// (card_renderer.dart). Every other block stays where the design puts
+  /// it. Off, the words are placed like any block, as designs made before
+  /// 1.3.5 are. The designer's Layout switch turns it off.
+  final bool placeWords;
+
+  /// 1.3.5: the @handle was added or placed by the text card editor: it goes
+  /// in a free band on its edge like the words ([placeWords]), and is laid
+  /// out before them. Off, it is placed like any block.
+  final bool placeHandle;
 
   /// Every installed or imported font its blocks use, once each.
   Set<CaptionFont> get customFonts => {
@@ -783,7 +790,8 @@ class CardDesign {
     CardWaveformLayer? waveform,
     List<CardTextBlock>? blocks,
     double? margin,
-    bool? keepClear,
+    bool? placeWords,
+    bool? placeHandle,
   }) =>
       CardDesign(
         kind: kind,
@@ -793,7 +801,8 @@ class CardDesign {
         waveform: waveform ?? this.waveform,
         blocks: blocks ?? this.blocks,
         margin: margin ?? this.margin,
-        keepClear: keepClear ?? this.keepClear,
+        placeWords: placeWords ?? this.placeWords,
+        placeHandle: placeHandle ?? this.placeHandle,
       );
 
   /// This design with block [index] changed.
@@ -810,7 +819,8 @@ class CardDesign {
         'margin': margin,
         // 1.3.5: only when on, so designs made before keep their JSON (and
         // the render parameters of their cards).
-        if (keepClear) 'keepClear': true,
+        if (placeWords) 'placeWords': true,
+        if (placeHandle) 'placeHandle': true,
       };
 }
 

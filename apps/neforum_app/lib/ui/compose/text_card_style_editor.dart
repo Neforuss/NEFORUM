@@ -15,8 +15,9 @@ import 'card_colour_dialog.dart';
 /// How large a post's words come out against what the editor's size control
 /// asks, on the network where they fall shortest: on the classic card both
 /// are against the size at 100% (1.0), on a design both are pixels at 1080
-/// wide.
-typedef TextCardWordsFit = ({String network, double asked, double drawn});
+/// wide. [cut] (1.3.5 round 5): a design's placed words were cut to fit at
+/// their smallest readable size ([CardDesignPainter.drawnWords]).
+typedef TextCardWordsFit = ({String network, double asked, double drawn, bool cut});
 
 /// 1.3.5: cards. The text card editor's "more editing power": the @handle
 /// written on the cards, its size, place and colour, and the words' size,
@@ -321,6 +322,10 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
         if (style.textSize > 1 && fit.drawn < fit.asked - 0.02) {
           fitNote = fit.drawn <= 1.005 ? 'Already as large as these words fit on ${fit.network}' : 'As large as fits on ${fit.network}: ${percent(fit.drawn)}';
         }
+      } else if (fit.cut) {
+        // 1.3.5 round 5: placed words stop shrinking at a readable size, so
+        // a post too long for the room left is cut; say so, never silently.
+        fitNote = 'Too long for this place on ${fit.network}: cut at ${px(fit.drawn)}. Shorter words or another position show them all';
       } else if (fit.drawn < fit.asked - 1) {
         fitNote = 'Shrinks to fit on ${fit.network}: ${px(fit.drawn)}';
       }

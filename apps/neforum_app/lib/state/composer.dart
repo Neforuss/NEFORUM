@@ -430,6 +430,17 @@ class ComposerNotifier extends Notifier<ComposerState> {
         state = state.copyWith(selected: _defaultTargets(next));
       }
     });
+    // 1.3.5 round 5: a post with no theme of its own follows Settings > Text
+    // cards' theme, so a theme changed there gets the same readability rule
+    // as the composer's theme chip ([setTextCardTheme]): a words or @handle
+    // colour that would not read on the new plain card (under 3:1) goes, and
+    // neither the preview nor a scheduled re-render draws white on white. A
+    // photo card keeps its colours: they were picked for the photo.
+    ref.listen(settingsProvider.select((s) => s.textCardTheme), (prev, next) {
+      if (prev == next || state.textCardTheme != null || state.textCardBackground != null) return;
+      final style = _readableOn(state.textCardStyle, next);
+      if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
+    });
     final settings = ref.read(settingsProvider);
     return ComposerState(
       visibility: settings.defaultVisibility,

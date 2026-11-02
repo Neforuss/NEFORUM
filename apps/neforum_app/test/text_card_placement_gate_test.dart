@@ -10,13 +10,16 @@
 //  (a) no pixel of the editor's text (the words, and the @handle when the
 //      editor placed it) inside a picture area of the template (the cover or
 //      record, with its border and turn, when it is drawn; the waveform), nor
-//      inside the network's safe area;
+//      on the template's own text (its signature, its @handle, its lines),
+//      nor inside the network's safe area;
 //  (b) the template's own blocks the user did not touch (the signature, the
 //      template's @handle, its other lines) are drawn exactly where the
 //      untouched template draws them;
 //  (c) the words come out at no less than kMinWordsPx (pixels at 1080 wide):
 //      a long post at the top or the bottom is never shrunk twice into
-//      unreadable type;
+//      unreadable type. Where the room left is too short for every word at
+//      that size they are cut with an ellipsis (the stated minimum); the
+//      cells where that happens are listed, not failed;
 //  (d) the @handle, where one shows, is drawn, outside the picture areas
 //      when the editor placed it, and never under the words.
 // The picture areas are worked out here from the design's layers, the same
@@ -124,6 +127,13 @@ int _inside(List<Offset> points, List<Rect> areas) => points.where((p) => areas.
 
 CardDesign _withoutWords(CardDesign d) => d.copyWith(blocks: [for (final b in d.blocks) if (b.role != CardBlockRole.postText) b]);
 
+/// Points of [points] that are also in [others] (both sampled on the same
+/// even grid by [_differing]).
+int _shared(List<Offset> points, List<Offset> others) {
+  final set = others.toSet();
+  return points.where(set.contains).length;
+}
+
 void main() {
   setUpAll(_loadFonts);
 
@@ -156,9 +166,12 @@ void main() {
   }
 
   final summary = <String>[];
+  final cut = <String>[];
   tearDownAll(() {
     // ignore: avoid_print
     print('PLACEMENT GATE: ${summary.where((s) => s.startsWith('FAIL')).length} of ${summary.length} cells fail');
+    // ignore: avoid_print
+    print('Words cut at the ${kMinWordsPx.toInt()} px minimum: ${cut.length} of ${summary.length} cells${cut.isEmpty ? '' : ':\n  ${cut.join('\n  ')}'}');
     for (final s in summary.where((s) => s.startsWith('FAIL'))) {
       // ignore: avoid_print
       print(s);
@@ -189,6 +202,10 @@ void main() {
               // blocks belong.
               final reference = await draw(tester, _withoutWords(template), size, safe,
                   texts: {...texts, if (editorHandle) CardBlockRole.handle: ''}, withPhoto: withPhoto);
+              // The template's own text as drawn: the reference against the
+              // bare pictures.
+              final bare = await draw(tester, template.copyWith(blocks: const []), size, safe, texts: texts, withPhoto: withPhoto);
+              final templateText = _differing(reference.image, bare.image);
               final pictures = _pictureAreas(design, size, safe, photo: withPhoto);
               final safeAreas = _safeAreas(size, safe);
               final words = _differing(full.image, noWords.image);
@@ -197,21 +214,25 @@ void main() {
               // (a)
               final onPictures = _inside(words, pictures) + _inside(handle, pictures);
               if (onPictures > 3) problems.add('(a) $onPictures text points on a picture');
+              final onTemplateText = _shared(words, templateText) + _shared(handle, templateText);
+              if (onTemplateText > 3) problems.add('(a) $onTemplateText text points on the template\'s own text');
               final onSafe = _inside(_differing(full.image, reference.image), safeAreas);
               if (onSafe > 0) problems.add('(a) $onSafe text points in the safe area');
               // (b)
               final moved = _differing(noEditorText.image, reference.image).length;
               if (moved > 3) problems.add('(b) template blocks moved ($moved points)');
               // (c)
-              final px = CardDesignPainter(
+              final drawn = CardDesignPainter(
                 design: design,
                 texts: texts,
                 safe: safe,
                 platformId: 'instagram',
                 waveform: design.waveform.visible ? decorativeWaveform(7) : null,
                 coverShown: cardCoverDrawn(design, picture: withPhoto),
-              ).drawnWordsSize(Size(size.width * 3, size.height * 3));
+              ).drawnWords(Size(size.width * 3, size.height * 3));
+              final px = drawn?.size;
               if (px != null && px < kMinWordsPx) problems.add('(c) words at ${px.toStringAsFixed(1)} px');
+              if (drawn != null && drawn.cut) cut.add('$cell (${px!.toStringAsFixed(1)} px)');
               if (words.length < 20) problems.add('(c) words not drawn');
               // (d)
               if (editorHandle) {

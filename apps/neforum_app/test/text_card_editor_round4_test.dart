@@ -8,7 +8,7 @@
 //     wave's waveform.
 //  4. Words placed at the top before a photo is added keep clear of
 //     Polaroid's framed photo.
-//  6. The "Other…" then Black chip order, the editor's chips against the
+//  6. The "Otherâ€¦" then Black chip order, the editor's chips against the
 //     drawn card, and the words' room under a cover.
 //  7. A design that hides its handle says so.
 //  8. Vinyl's handle at the top centre keeps clear of the record.
@@ -110,6 +110,12 @@ int _differing(img.Image a, img.Image b, Rect area) {
 /// [d] with no text: the pictures alone.
 CardDesign _picturesOnly(CardDesign d) => d.copyWith(blocks: const []);
 
+/// 1.3.5 round 5: [d] without the editor's words and @handle, the
+/// template's own blocks kept: Gradient wave's signature sits on its own
+/// waveform as the template was made, and only the editor's text is judged.
+CardDesign _withoutEditorText(CardDesign d) =>
+    d.copyWith(blocks: [for (final b in d.blocks) if (b.role != CardBlockRole.postText && b.role != CardBlockRole.handle) b]);
+
 void main() {
   setUpAll(_loadFonts);
 
@@ -172,11 +178,18 @@ void main() {
       });
     }
 
-    test('the words join the handle on its edge, so the two stack instead of overlapping', () {
-      final d = _template('vinyl').withWordsPosition(TextCardTextPosition.top).withHandlePosition(TextCardHandlePosition.topCenter);
-      expect(d.wordsBlock!.anchor, CardAnchor.topCenter);
-      final atTop = [for (final b in d.blocks) if (b.anchor == CardAnchor.topCenter) b.role];
-      expect(atTop.indexOf(CardBlockRole.handle), lessThan(atTop.indexOf(CardBlockRole.postText)), reason: 'the handle on the edge, the words under it');
+    test('round 5: both are placed by the renderer, and the template\'s blocks keep their order and places', () {
+      final vinyl = _template('vinyl');
+      final d = vinyl.withWordsPosition(TextCardTextPosition.top).withHandlePosition(TextCardHandlePosition.topCenter);
+      expect(d.placeWords, isTrue);
+      expect(d.placeHandle, isTrue);
+      expect(d.wordsBlock!.anchor.name, startsWith('top'));
+      expect([for (final b in d.blocks) b.role], [for (final b in vinyl.blocks) b.role, CardBlockRole.handle], reason: 'no stacking reorder any more; the added handle goes on the end');
+      for (var i = 0; i < vinyl.blocks.length; i++) {
+        final b = d.blocks[i], was = vinyl.blocks[i];
+        if (b.role == CardBlockRole.postText || b.role == CardBlockRole.handle) continue;
+        expect((b.anchor, b.offsetX, b.offsetY), (was.anchor, was.offsetX, was.offsetY), reason: '${b.role} never moves');
+      }
     });
   });
 
@@ -230,14 +243,14 @@ void main() {
     testWidgets('the handle added for a typed handle', (tester) async {
       final d = designWithHandle(_template('gradientWave'), '@a.rather.long.handle');
       final withText = await _draw(tester, d, handle: '@a.rather.long.handle', text: 'Hi.');
-      final alone = await _draw(tester, _picturesOnly(d), text: 'Hi.');
+      final alone = await _draw(tester, _withoutEditorText(d), text: 'Hi.');
       expect(_differing(withText, alone, waveOf(d)), lessThan(6));
     });
 
     testWidgets('words moved to the bottom', (tester) async {
       final d = _template('gradientWave').withWordsPosition(TextCardTextPosition.bottom);
       final withText = await _draw(tester, d);
-      final alone = await _draw(tester, _picturesOnly(d));
+      final alone = await _draw(tester, _withoutEditorText(d));
       expect(_differing(withText, alone, waveOf(d)), lessThan(6));
     });
   });
@@ -259,7 +272,7 @@ void main() {
   });
 
   group('6. tests for the mutations that survived round 3', () {
-    testWidgets('M1: "Other…" yellow, then the photo\'s Black chip: the card follows the last change (black)', (tester) async {
+    testWidgets('M1: "Otherâ€¦" yellow, then the photo\'s Black chip: the card follows the last change (black)', (tester) async {
       final (_, c) = await boot(tester);
       await compose(tester, c);
       c.read(composerProvider.notifier)
@@ -323,11 +336,11 @@ void main() {
 
     testWidgets('also on a design with a handle of its own (the place chip itself keeps it clear)', (tester) async {
       // Vinyl as a user design that already has a handle at the bottom,
-      // saved before keepClear existed.
-      final own = _template('vinyl').withHandleBlock().copyWith(keepClear: false);
-      expect(own.keepClear, isFalse);
+      // saved before 1.3.5 placement existed.
+      final own = _template('vinyl').withHandleBlock().copyWith(placeHandle: false);
+      expect(own.placeHandle, isFalse);
       final d = own.withHandlePosition(TextCardHandlePosition.topCenter);
-      expect(d.keepClear, isTrue);
+      expect(d.placeHandle, isTrue);
       final withText = await _draw(tester, d, handle: '@a.handle.long.enough.to.see', text: 'Hi.');
       final alone = await _draw(tester, _picturesOnly(d), text: 'Hi.');
       expect(_differing(withText, alone, recordOf(d)), lessThan(6));
