@@ -306,6 +306,10 @@ void main() {
     }
     expect(find.byKey(const Key('text-card-master')), findsOneWidget, reason: 'two networks get a card');
     await tester.ensureVisible(find.byKey(const Key('text-card-match')));
+    // ensureVisible scrolls but draws no frame; on the real engine the tap
+    // would read the button's place from before the scroll. 1.3.5's taller
+    // master editor is the first layout where the button has to scroll.
+    await pumpFor(300);
     await tester.tap(find.byKey(const Key('text-card-match')));
     await pumpFor(800);
     expect(c.read(composerProvider).textCardBranded['bluesky'], isTrue, reason: 'Make them match');
