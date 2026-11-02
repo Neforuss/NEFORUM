@@ -98,6 +98,27 @@ SyncBackend? buildSyncBackend(AppSettings settings, Map<String, String> secrets,
   }
 }
 
+/// 1.3.5: what tells one sync file from another for [providerId] with
+/// [config] (as the sync form collects it): the folder on a computer, the
+/// picked location on a phone or tablet ([filesApp]), the Google Cloud
+/// client, the WebDAV address and user, the S3 endpoint, bucket and folder.
+/// Two setups with the same identity reach the same file; a different one is
+/// a new file, which gets a fresh dry run and a fresh sync state. A Mac's
+/// saved folder bookmark is not part of it (the form never has one).
+String syncStorageIdentity(String? providerId, Map<String, String> config, {required bool filesApp}) {
+  final provider = syncProviderById(providerId);
+  if (provider == null) return '';
+  String v(String k) => (config[k] ?? '').trim();
+  String url(String k) => v(k).replaceFirst(RegExp(r'/+$'), '').toLowerCase();
+  final parts = switch (provider.kind) {
+    SyncBackendKind.folder => filesApp ? [v('bookmark'), v('target')] : [v('folder')],
+    SyncBackendKind.googleDrive => [v('clientId')],
+    SyncBackendKind.webdav => [url('url'), v('username')],
+    SyncBackendKind.s3 => [url('endpoint'), v('bucket'), v('folder').replaceAll(RegExp(r'^/+|/+$'), '')],
+  };
+  return [provider.kind.name, ...parts].join('\n');
+}
+
 /// Key stretching on a background isolate, so the window never stalls.
 Future<List<int>> _deriveOffThread(String passphrase, List<int> salt, BackupKdfParams params) =>
     Isolate.run(() => deriveBackupKey(passphrase, salt, params));
@@ -445,6 +466,14 @@ String _listed(List<String> parts) => switch (parts.length) {
 /// A media host kind as a dry run names it: "S3-compatible bucket", "Catbox".
 String _hostName(String id) => (mediaHostRegistry.descriptor(id)?.name ?? id).split(' (').first;
 
+/// "replaced by Catbox and removed"; when both are one kind, says that the
+/// one that stays is the other side's own, with its own settings and keys.
+String _replacement(String id, String? by, String whose) {
+  if (by == null) return 'removed';
+  if (by == id) return "replaced by $whose own ${_hostName(by)} (other settings and keys) and removed";
+  return "replaced by $whose ${_hostName(by)} and removed";
+}
+
 /// 1.3.5: [p] in words. [chosen]: the user picked whose setup wins instead
 /// of the seed rule. Media hosts are counted and named exactly: the ones
 /// that arrive, move to the other slot or are removed, on each side.
@@ -471,11 +500,11 @@ SyncJoinSummary describeJoinPreview(SyncPreview p, {bool chosen = false}) {
     for (final m in here?.moved ?? const <({MediaHostPlace host, String to})>[])
       "This device's ${m.host.slot} media host (${_hostName(m.host.id)}) moves to the ${m.to} slot.",
     for (final r in here?.removed ?? const <({MediaHostPlace host, String? replacedBy})>[])
-      "This device's ${r.host.slot} media host (${_hostName(r.host.id)}) is ${r.replacedBy == null ? 'removed' : 'replaced by ${_hostName(r.replacedBy!)} and removed'}: both slots are taken.",
+      "This device's ${r.host.slot} media host (${_hostName(r.host.id)}) is ${_replacement(r.host.id, r.replacedBy, "the sync file's")}: both slots are taken.",
     for (final m in there?.moved ?? const <({MediaHostPlace host, String to})>[])
       "Your other devices' ${m.host.slot} media host (${_hostName(m.host.id)}) moves to the ${m.to} slot.",
     for (final r in there?.removed ?? const <({MediaHostPlace host, String? replacedBy})>[])
-      "Your other devices' ${r.host.slot} media host (${_hostName(r.host.id)}) is ${r.replacedBy == null ? 'removed' : "replaced by this device's ${_hostName(r.replacedBy!)} and removed"}: both slots are taken.",
+      "Your other devices' ${r.host.slot} media host (${_hostName(r.host.id)}) is ${_replacement(r.host.id, r.replacedBy, "this device's")}: both slots are taken.",
   ];
   final hostsRemoved = (here?.removed.isNotEmpty ?? false) || (there?.removed.isNotEmpty ?? false);
   final mine = p.seed == SyncSeed.thisDevice;

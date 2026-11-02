@@ -60,7 +60,10 @@ SyncSeed chooseSyncSeed({required SyncSideSummary here, required SyncSideSummary
   return SyncSeed.file;
 }
 
-final RegExp _uuid = RegExp(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}');
+/// The whole made-up forms: a bare UUID, or a network prefix with
+/// `:handoff:`, `-handoff-` or `-handoff:` before it. A UUID inside a natural
+/// id (`deviantart:<the user's UUID>`) does not count.
+final RegExp _madeUp = RegExp(r'^(?:[a-z0-9_]+(?::handoff:|-handoff-|-handoff:))?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
 final RegExp _clockId = RegExp(r'^nostr-handoff-\d+$');
 
 /// 1.3.5: whether [id] was made up on the device that connected the account
@@ -80,7 +83,7 @@ final RegExp _clockId = RegExp(r'^nostr-handoff-\d+$');
 ///   `lemmy:<name>@<server>`, `youtube:<channel id>`, `discord:<webhook id>`,
 ///   ...) or from its server (`lemmy-handoff:<server>`), the same on every
 ///   device for the same account.
-bool isDeviceMadeAccountId(String id) => _uuid.hasMatch(id) || _clockId.hasMatch(id);
+bool isDeviceMadeAccountId(String id) => _madeUp.hasMatch(id) || _clockId.hasMatch(id);
 
 /// 1.3.5: an account handle as compared across devices: case-insensitive,
 /// without the leading `@`, `null` when empty. `@Alice@Mastodon.Social` and

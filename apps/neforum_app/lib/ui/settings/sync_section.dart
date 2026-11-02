@@ -408,10 +408,14 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       setState(() => _progress = 'Looking for a sync file…');
       final blob = await backend.read();
       final before = ref.read(settingsProvider);
-      final changedStorage = before.syncProviderId != p.id ||
-          before.syncConfig['folder'] != config['folder'] ||
-          before.syncConfig['bookmark'] != config['bookmark'] ||
-          before.syncConfig['clientId'] != config['clientId'];
+      final changedStorage = syncStorageIdentity(before.syncProviderId, before.syncConfig, filesApp: Env.isMobile) !=
+          syncStorageIdentity(p.id, config, filesApp: Env.isMobile);
+      if (blob != null && !changedStorage) {
+        // The same file: no dry run, but the passphrase must still open it,
+        // or every sync after this one would fail.
+        setState(() => _progress = 'Unlocking the sync file: this takes a moment on purpose…');
+        await openSyncFileOffThread(secrets['passphrase']!, blob.bytes);
+      }
       // Joining an existing file: the dry run shows what this device gets
       // and gives, and whose setup wins where both differ; the user
       // confirms, or picks the other side's setup. The confirmed choice is

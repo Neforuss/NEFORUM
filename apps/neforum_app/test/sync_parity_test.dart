@@ -271,7 +271,33 @@ void main() {
     final onC = await _setup(c);
     expect(onC['settings'], setup['settings'], reason: "the seed holds: ${diffPaths(setup['settings'], onC['settings'])}");
   }, timeout: _timeout);
+
+  test('a media host kind from a newer NEFORUM, next to one this version knows, stays in the file', () async {
+    final folder = await syncFolderForTest(addTearDown);
+    final a = SyncTestDevice(folder);
+    addTearDown(a.dispose);
+    await a.addAccount(fakeAccount('x-1', 'x', tier: PlatformTier.byokApi, handle: '@a'), keys: {'access_token': 'fake'});
+    await a.addMediaHost(MediaHostSlot.main, 'catbox', {'userhash': 'fake-userhash'});
+    await a.syncOnce();
+    await a.syncOnce();
+    // A 1.3.6 device puts a kind 1.3.5 does not know in main, keeps catbox as the fallback.
+    await _putInFile(folder, a.passphrase, {
+      'mediaHosts:all': SyncRecord.of({
+        'main': {'id': 'hostFromTheFuture', 'config': {'region': 'fake'}, 'secrets': {'token': 'fake-future-token'}},
+        'fallback': {'id': 'catbox', 'config': <String, Object?>{}, 'secrets': {'userhash': 'fake-userhash'}},
+      }, at: DateTime.utc(2026, 11, 1), by: 'newer-1.3.6'),
+    });
+    for (var i = 0; i < 3; i++) {
+      await a.syncOnce();
+    }
+    final hosts = (await _doc(folder, a.passphrase)).records['mediaHosts:all']?.value as Map?;
+    expect((hosts?['main'] as Map?)?['id'], 'hostFromTheFuture', reason: 'a 1.3.5 device never deletes a host it cannot keep');
+    expect(a.settings.fallbackMediaHostId, 'catbox', reason: 'it keeps what it knows');
+  }, timeout: _timeout);
 }
+
+Future<SyncDocument> _doc(String folder, String passphrase) async =>
+    SyncDocument.parse(await BackupCipher(passphrase).open((await FolderSyncBackend(folder).read())!.bytes));
 
 /// Another device writes [records] into the sync file in [folder].
 Future<void> _putInFile(String folder, String passphrase, Map<String, SyncRecord> records) async {

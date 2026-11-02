@@ -675,6 +675,23 @@ void main() {
       expect((await a.accounts.get('m1'))?.displayName, 'From B', reason: 'B has been in use since 2024');
     });
 
+    test('keys of one account on both sides follow the newer sign-in, not the seed, on a first sync', () async {
+      // The file's side has more accounts, so its setup wins; but this device
+      // signed in to x-1 again later, and its keys do not expire.
+      await a.accounts.upsert(_account('x-1', 'x', createdAt: DateTime.utc(2026, 1, 1)));
+      await a.secrets.write('x-1', {'oauth_token': 'fake-old-revoked'});
+      await a.accounts.upsert(_account('t-1', 'tumblr'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account('x-1', 'x', createdAt: DateTime.utc(2026, 10, 15)));
+      await b.secrets.write('x-1', {'oauth_token': 'fake-new-working'});
+      expect((await b.engine.preview()).seed, SyncSeed.file);
+      await b.engine.sync();
+      await a.engine.sync();
+      for (final d in [a, b]) {
+        expect((await d.secrets.read('x-1'))?['oauth_token'], 'fake-new-working', reason: d.id);
+      }
+    });
+
     test('the choice confirmed in the dry run beats the seed rule', () async {
       await a.accounts.upsert(_account('m1', 'mastodon', name: 'In the file'));
       await a.engine.sync();
@@ -830,6 +847,11 @@ void main() {
       expect(normalizedAccountHandle(null), isNull);
       expect(isDeviceMadeAccountId('instagram-handoff-$_uuid1'), isTrue);
       expect(isDeviceMadeAccountId('bluesky:did:plc:abc'), isFalse);
+      expect(isDeviceMadeAccountId(_uuid1), isTrue, reason: 'Mastodon, TikTok');
+      expect(isDeviceMadeAccountId('tumblr:handoff:$_uuid1'), isTrue);
+      expect(isDeviceMadeAccountId('threads-handoff:$_uuid1'), isTrue);
+      expect(isDeviceMadeAccountId('deviantart:$_uuid1'), isFalse, reason: "DeviantArt's own user id is a UUID: a natural id");
+      expect(isDeviceMadeAccountId('x-$_uuid1-extra'), isFalse, reason: 'only the whole made-up forms');
     });
 
     group('who is the same account, adapter family by adapter family', () {
@@ -938,10 +960,10 @@ void main() {
     });
   });
 
-  group('an interrupted first sync keeps its decisions (1.3.5)', () {
+  group('an interrupted first sync never loses the newer sign-in (1.3.5)', () {
     /// X holds the file: 3 accounts (its setup wins), and an old Mastodon
     /// sign-in. Y connected the same account later: the newer sign-in.
-    Future<void> setUpTwins(_Device x, _Device y) async {
+    Future<void> setUpTwins(_Device x, _Device y, {Map<String, String> yKeys = const {'access_token': 'fake-new-working'}}) async {
       await x.accounts.upsert(_account(_uuid1, 'mastodon',
           tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 1, 1), config: _mastodonConfig));
       await x.secrets.write(_uuid1, {'access_token': 'fake-old-revoked'});
@@ -950,18 +972,18 @@ void main() {
       await x.engine.sync();
       await y.accounts.upsert(_account(_uuid2, 'mastodon',
           tier: PlatformTier.openApi, handle: 'me@mastodon.example', createdAt: DateTime.utc(2026, 10, 15), config: _mastodonConfig));
-      await y.secrets.write(_uuid2, {'access_token': 'fake-new-working'});
+      await y.secrets.write(_uuid2, yKeys);
       await y.posts.upsert(_post('py', targets: const [PostTarget(accountId: _uuid2)]));
     }
 
-    Future<void> expectMergedWithNewerSignIn(_Device x, _Device y) async {
+    Future<void> expectMergedWithNewerSignIn(_Device x, _Device y, {String token = 'fake-new-working'}) async {
       for (final d in [x, y]) {
         expect((await d.accounts.all()).where((a) => a.platformId == 'mastodon').map((a) => a.id), [_uuid1]);
-        expect((await d.secrets.read(_uuid1))?['access_token'], 'fake-new-working', reason: 'the newer sign-in survives on ${d.id}');
+        expect((await d.secrets.read(_uuid1))?['access_token'], token, reason: 'the newer sign-in survives on ${d.id}');
       }
       expect(await y.secrets.read(_uuid2), isNull);
       expect((await y.posts.get('py'))!.targets.single.accountId, _uuid1);
-      expect(y.stateStore.data?['merging'], isNull, reason: 'the first sync completed');
+      expect(y.stateStore.data?['joined'], isTrue);
     }
 
     test('another device writing during the first sync: the retried pass keeps the newer sign-in', () async {
@@ -979,14 +1001,27 @@ void main() {
       await expectMergedWithNewerSignIn(x, y);
     });
 
-    test('a first sync whose file write never happens: the next sync keeps the newer sign-in', () async {
+    test('a first sync whose file write never happens: the old copy and its keys stay until a write succeeds', () async {
       final flaky = _FlakyBackend(backend);
       final x = _Device('X', backend, clock), y = _Device('Y', flaky, clock);
       await setUpTwins(x, y);
       await expectLater(y.engine.sync(), throwsA(isA<SyncBackendException>()));
-      expect(y.stateStore.data?['joined'], isFalse);
-      expect(y.stateStore.data?['merging'], {_uuid2: {'into': _uuid1, 'hereNewer': true}}, reason: 'the decision is kept before anything changes here');
-      expect(y.stateStore.data?['preferFile'], isTrue, reason: 'and so is the seed');
+      expect(await y.accounts.get(_uuid2), isNotNull, reason: 'nothing is removed before the file holds the merged account');
+      expect((await y.secrets.read(_uuid2))?['access_token'], 'fake-new-working');
+      expect(y.stateStore.data, isNull, reason: 'no sync state is needed to finish the merge');
+      await y.engine.sync();
+      await x.engine.sync();
+      await expectMergedWithNewerSignIn(x, y);
+    });
+
+    test('a failed write, then Set up again (the sync state starts over): the newer sign-in still wins', () async {
+      final flaky = _FlakyBackend(backend);
+      final x = _Device('X', backend, clock), y = _Device('Y', flaky, clock);
+      await setUpTwins(x, y);
+      await expectLater(y.engine.sync(), throwsA(isA<SyncBackendException>()));
+      // Turn off, Set up again (on a Mac, every Set up): the dialog writes
+      // the confirmed seed over whatever the state held.
+      y.stateStore.data = SyncEngine.joinState((await y.engine.preview()).seed);
       await y.engine.sync();
       await x.engine.sync();
       await expectMergedWithNewerSignIn(x, y);
@@ -999,12 +1034,122 @@ void main() {
       await y.engine.sync();
       expect(await y.accounts.get(_uuid2), isNotNull, reason: 'a failed step leaves a duplicate, never a lost account');
       expect((await y.secrets.read(_uuid2))?['access_token'], 'fake-new-working');
-      expect(y.stateStore.data?['joined'], isFalse, reason: 'the merge is not finished: the first sync stays open');
-      final inFile = (await file()).records.keys.where((k) => k.startsWith('account:')).toSet();
+      final inFile = (await file()).records.entries.where((e) => e.key.startsWith('account:') && !e.value.deleted).map((e) => e.key).toSet();
       expect(inFile, {'account:$_uuid1', 'account:x-1', 'account:t-1'}, reason: 'the old copy never reaches the file');
       await y.engine.sync();
       await x.engine.sync();
       await expectMergedWithNewerSignIn(x, y);
+    });
+
+    test('a record this version cannot store (a newer post) holds up nothing: the merge finishes and later renewals win', () async {
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock);
+      await setUpTwins(x, y, yKeys: {'access_token': 'fake-y-new', 'expires_at': '2026-11-01T00:00:00.000Z'});
+      await putInFile('post:future', SyncRecord.of({
+        'id': 'future',
+        'text': 'from 1.3.6',
+        'createdAt': '2026-10-20T00:00:00.000Z',
+        'updatedAt': '2026-10-20T00:00:00.000Z',
+        'status': 'queuedForReview',
+        'targets': <Object?>[],
+      }, at: clock.now, by: 'newer-1.3.6'));
+      for (var i = 0; i < 3; i++) {
+        clock.now = clock.now.add(const Duration(minutes: 5));
+        await y.engine.sync();
+      }
+      expect((await y.accounts.all()).where((a) => a.platformId == 'mastodon').map((a) => a.id), [_uuid1]);
+      expect(y.stateStore.data?['joined'], isTrue);
+      await x.engine.sync();
+      // X renews the sign-in: a later expiry. Y must not force its copy back.
+      await x.secrets.write(_uuid1, {'access_token': 'fake-x-renewed', 'expires_at': '2026-12-01T00:00:00.000Z'});
+      await x.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 5));
+      await y.engine.sync();
+      await x.engine.sync();
+      for (final d in [x, y]) {
+        expect((await d.secrets.read(_uuid1))?['access_token'], 'fake-x-renewed', reason: d.id);
+      }
+    });
+
+    test('a resumed first sync after another device renewed the merged account: the later renewal wins', () async {
+      final flaky = _FlakyBackend(backend)..failures = 1 << 20; // offline until it is back
+      final x = _Device('X', backend, clock), y = _Device('Y', flaky, clock);
+      const tt = {'clientKey': 'fake-client-key', 'openId': 'fake-open-id'};
+      await x.accounts.upsert(_account(_uuid1, 'tiktok', name: 'Me', createdAt: DateTime.utc(2026, 1, 1), config: tt));
+      await x.secrets.write(_uuid1, {'access_token': 'x-a', 'refresh_token': 'x-r', 'expires_at': '2026-10-20T13:00:00.000Z'});
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'tiktok', name: 'Me', createdAt: DateTime.utc(2026, 10, 15), config: tt));
+      await y.secrets.write(_uuid2, {'access_token': 'y-a', 'refresh_token': 'y-r', 'expires_at': '2026-10-21T12:00:00.000Z'});
+      await expectLater(y.engine.sync(), throwsA(isA<SyncBackendException>()));
+      // Y stays offline for two days; X renews meanwhile (a later expiry).
+      clock.now = clock.now.add(const Duration(days: 2));
+      await x.secrets.write(_uuid1, {'access_token': 'x-a2', 'refresh_token': 'x-r2', 'expires_at': '2026-10-23T12:00:00.000Z'});
+      await x.engine.sync();
+      flaky.failures = 0;
+      await y.engine.sync();
+      await x.engine.sync();
+      for (final d in [x, y]) {
+        expect((await d.secrets.read(_uuid1))?['access_token'], 'x-a2', reason: 'the most recently renewed sign-in wins on ${d.id}');
+      }
+    });
+
+    test('the dry run of a first sync matches what it then does to the keys', () async {
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock);
+      await x.accounts.upsert(_account(_uuid1, 'mastodon',
+          tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 1, 1), config: _mastodonConfig));
+      await x.secrets.write(_uuid1, {'access_token': 'fake-old'});
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'mastodon',
+          tier: PlatformTier.openApi, handle: 'me@mastodon.example', createdAt: DateTime.utc(2026, 10, 15), config: _mastodonConfig));
+      await y.secrets.write(_uuid2, {'access_token': 'fake-y-new'});
+      final p = await y.engine.preview();
+      expect(p.mergedAccounts, {_uuid2: _uuid1});
+      expect(p.mergeEdits['secrets:$_uuid1'], {'access_token': 'fake-y-new'});
+      await y.engine.sync();
+      await x.engine.sync();
+      expect((await x.secrets.read(_uuid1))?['access_token'], 'fake-y-new');
+    });
+
+    test('no accounts on either side and the file holds settings: the file wins, nothing is deleted', () async {
+      final av = <String, Object?>{'theme': 'dark'}, bv = <String, Object?>{'theme': 'light'};
+      CallbackSyncSource settings(Map<String, Object?> values) => CallbackSyncSource(
+            prefix: 'setting',
+            snapshot: () async => {for (final e in values.entries) e.key: SyncItem(e.value)},
+            apply: (id, v) async => values[id] = v,
+            appliesDeletions: false,
+          );
+      final x = _Device('X', backend, clock, extra: [settings(av)]), y = _Device('Y', backend, clock, extra: [settings(bv)]);
+      await x.engine.sync();
+      expect((await y.engine.preview()).seed, SyncSeed.file);
+      await y.engine.sync();
+      await x.engine.sync();
+      expect([av['theme'], bv['theme']], ['dark', 'dark']);
+    });
+
+    test('two devices joining at once through a synced folder end with the account once', () async {
+      final folder = _CloudFolder();
+      final a = _Device('A', folder, clock), b = _Device('B', folder, clock), c = _Device('C', folder, clock);
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+      await b.secrets.write(_uuid2, {'access_token': 'fake-b'});
+      await c.accounts.upsert(_account(_uuid3, 'mastodon',
+          tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 9), config: _mastodonConfig));
+      await c.secrets.write(_uuid3, {'access_token': 'fake-c-newer'});
+      await c.posts.upsert(_post('pc', targets: const [PostTarget(accountId: _uuid3)]));
+      folder.freeze(); // both read one version and write before the cloud app syncs
+      await b.engine.sync();
+      await c.engine.sync();
+      folder.thaw();
+      for (final d in [a, b, c, a, b, c]) {
+        clock.now = clock.now.add(const Duration(minutes: 1));
+        await d.engine.sync();
+      }
+      for (final d in [a, b, c]) {
+        expect((await d.accounts.all()).where((x) => x.platformId == 'mastodon').map((x) => x.id), [_uuid2], reason: d.id);
+        expect((await d.secrets.read(_uuid2))?['access_token'], 'fake-c-newer', reason: '${d.id}: the newer sign-in');
+        expect((await d.posts.get('pc'))?.targets.single.accountId, _uuid2, reason: d.id);
+      }
     });
   });
 
@@ -1338,6 +1483,65 @@ class _FlakyBackend extends SyncBackend {
     }
     return inner.write(bytes, ifMatch: ifMatch);
   }
+
+  @override
+  Future<void> check() async {}
+}
+
+/// A synced folder whose cloud app keeps both versions when two devices
+/// write over the same version (a conflicted copy), as Dropbox or OneDrive
+/// do.
+class _CloudFolder extends SyncBackend {
+  Uint8List? bytes;
+  int version = 0;
+  bool frozen = false;
+  Uint8List? frozenBytes;
+  int? frozenVersion;
+  final copies = <SyncSideCopy>[];
+  final pendingCopies = <SyncSideCopy>[];
+
+  /// From now on every device reads the version of this moment (the cloud
+  /// app has not delivered newer ones yet).
+  void freeze() {
+    frozen = true;
+    frozenBytes = bytes;
+    frozenVersion = version;
+  }
+
+  /// The cloud app catches up and shows the conflicted copies.
+  void thaw() {
+    frozen = false;
+    copies.addAll(pendingCopies);
+    pendingCopies.clear();
+  }
+
+  @override
+  bool get atomicWrites => false;
+  @override
+  String get label => 'cloud folder';
+
+  @override
+  Future<SyncBlob?> read() async {
+    if (frozen) return frozenBytes == null ? null : SyncBlob(Uint8List.fromList(frozenBytes!), '$frozenVersion');
+    return bytes == null ? null : SyncBlob(Uint8List.fromList(bytes!), '$version');
+  }
+
+  @override
+  Future<String?> write(Uint8List data, {required String? ifMatch}) async {
+    if (frozen && bytes != null && version != frozenVersion) {
+      pendingCopies.add(SyncSideCopy('NEFORUM (conflicted copy ${pendingCopies.length}).neforumsync', Uint8List.fromList(data)));
+      return '$version';
+    }
+    bytes = Uint8List.fromList(data);
+    version++;
+    return '$version';
+  }
+
+  @override
+  Future<List<SyncSideCopy>> conflictCopies() async => List.of(copies);
+
+  @override
+  Future<void> removeConflictCopy(SyncSideCopy copy) async => copies.remove(copy);
 
   @override
   Future<void> check() async {}

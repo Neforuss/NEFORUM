@@ -261,6 +261,8 @@ class SyncEngine implements SecretsCoordinator {
     final doc = remote.doc;
     final before = syncHash(doc.toJson(writtenBy: '', writtenAt: DateTime.utc(2000)));
     final firstJoin = !st.joined;
+    // The file as read, before this pass merges anything into it.
+    final original = Map<String, SyncRecord>.of(doc.records);
 
     final local = <String, SyncItem>{};
     for (final s in _sources.values) {
@@ -270,8 +272,7 @@ class SyncEngine implements SecretsCoordinator {
     }
 
     // A device's first sync: whose version is kept where both sides hold a
-    // different one (the seed rule, or the choice confirmed in the dry run),
-    // and one account connected on both sides under two ids becomes one.
+    // different one (the seed rule, or the choice confirmed in the dry run).
     final here = SyncSideSummary.ofAccounts([for (final e in local.entries) if (e.key.startsWith('account:')) e.value.value]);
     final there = SyncSideSummary.ofAccounts([
       for (final e in doc.records.entries)
@@ -279,17 +280,13 @@ class SyncEngine implements SecretsCoordinator {
     ]);
     final seed = firstJoin ? (st.seed ?? chooseSyncSeed(here: here, file: there)) : null;
     final localWins = seed == SyncSeed.thisDevice;
-    final mergeEdits = <String, Object?>{};
-    final forceLocal = <String>{};
-    final decisions = <String, _MergeDecision>{};
-    final twins = firstJoin && remote.exists ? _mergeTwins(local, doc, mergeEdits, forceLocal, st.merging, decisions) : const <String, String>{};
 
     // A device that joined the file since this one last synced: values kept
     // over an older NEFORUM's deletion go back into the file once, for it.
     final newDevice = !firstJoin && doc.devices.keys.any((id) => id != deviceId && !st.seen.containsKey(id));
 
     final localHash = {for (final e in local.entries) e.key: syncHash(e.value.value)};
-    var received = 0, sent = 0, conflicts = 0;
+    var conflicts = 0;
     final toApply = <String, Object?>{};
     final removedKeys = <String>{};
     final hereBefore = <String, Object?>{};
@@ -297,11 +294,11 @@ class SyncEngine implements SecretsCoordinator {
     final fileBefore = <String, Object?>{};
     final newBase = <String, String>{};
     // Notes a record written into the file (the caller writes it), with
-    // what the file held before, for the dry run.
-    void send(String key, Object? value, SyncRecord? rec) {
-      fileBefore[key] = rec == null || rec.deleted ? null : rec.value;
+    // what the file held before this pass, for the dry run.
+    void send(String key, Object? value) {
+      final was = original[key];
+      fileBefore.putIfAbsent(key, () => was == null || was.deleted ? null : was.value);
       sentValues[key] = value;
-      sent++;
     }
 
     final keys = {...local.keys, ...doc.records.keys, ...st.base.keys};
@@ -336,7 +333,7 @@ class SyncEngine implements SecretsCoordinator {
         if (l == b) {
           final item = local[key]!;
           doc.records[key] = SyncRecord.of(item.value, at: item.modifiedAt ?? now, by: deviceId);
-          send(key, item.value, rec);
+          send(key, item.value);
           newBase[key] = l!;
           continue;
         }
@@ -345,9 +342,6 @@ class SyncEngine implements SecretsCoordinator {
       if (rec == null) {
         // Not in the file at all (a new file, or a forgotten tombstone):
         // never a reason to delete here.
-        takeRemote = false;
-      } else if (forceLocal.contains(key)) {
-        // A merged account whose newer sign-in is this device's.
         takeRemote = false;
       } else if (l == b) {
         takeRemote = true;
@@ -363,30 +357,47 @@ class SyncEngine implements SecretsCoordinator {
           final m = syncHash(merged);
           if (m != r) {
             doc.records[key] = SyncRecord.of(merged, at: now, by: deviceId);
-            send(key, merged, rec);
+            send(key, merged);
           }
           if (m != l) {
             toApply[key] = merged;
             hereBefore[key] = item!.value;
-            received++;
           }
           newBase[key] = m;
           continue;
         }
-        takeRemote = _remoteWins(key, item, rec, now, firstJoin: firstJoin, localWins: localWins);
+        final id = _idOf(key);
+        takeRemote = _remoteWins(key, item, rec, now,
+            firstJoin: firstJoin, localWins: localWins, hereAccount: local['account:$id']?.value, fileAccount: original['account:$id']?.value);
       }
       if (takeRemote) {
         toApply[key] = rec!.deleted ? null : rec.value;
         hereBefore[key] = local[key]?.value;
         if (rec.deleted) removedKeys.add(key);
         if (r != null) newBase[key] = r;
-        received++;
       } else {
         final item = local[key];
-        send(key, item?.value, rec);
+        send(key, item?.value);
         doc.records[key] =
             item == null ? SyncRecord.tombstone(at: now, by: deviceId) : SyncRecord.of(item.value, at: item.modifiedAt ?? now, by: deviceId);
         if (l != null) newBase[key] = l;
+      }
+    }
+
+    // One account under two ids becomes one, worked out on what both sides
+    // now agree on (every pass, until none is left).
+    final merge = _mergeDuplicates(doc, original, now, send, (key) {
+      sentValues.remove(key);
+      fileBefore.remove(key);
+    });
+    for (final e in merge.edits.entries) {
+      toApply.remove(e.key);
+      hereBefore.remove(e.key);
+      removedKeys.remove(e.key);
+      if (e.value == null) {
+        newBase.remove(e.key);
+      } else {
+        newBase[e.key] = syncHash(e.value);
       }
     }
 
@@ -416,14 +427,13 @@ class SyncEngine implements SecretsCoordinator {
       remote: remote,
       before: before,
       local: local,
-      mergeEdits: mergeEdits,
+      mergeEdits: merge.edits,
       toApply: toApply,
       newBase: newBase,
-      received: received,
-      sent: sent,
+      received: toApply.length,
+      sent: sentValues.length,
       conflicts: conflicts,
-      twins: twins,
-      decisions: decisions,
+      twins: merge.twins,
       preview: SyncPreview(
         fileExists: remote.exists,
         firstJoin: firstJoin,
@@ -439,50 +449,21 @@ class SyncEngine implements SecretsCoordinator {
         sent: Set.unmodifiable(sentValues.keys),
         sentValues: Map.unmodifiable(sentValues),
         fileBefore: Map.unmodifiable(fileBefore),
-        mergedAccounts: Map.unmodifiable(twins),
-        mergeEdits: Map.unmodifiable(mergeEdits),
+        mergedAccounts: Map.unmodifiable(merge.twins),
+        mergeEdits: Map.unmodifiable(merge.edits),
         fromDevices: List.unmodifiable(from.keys.toList()..sort((a, b) => from[b]!.compareTo(from[a]!))),
       ),
     );
   }
 
-  /// Does what [plan] worked out: stores the merged accounts and what came
-  /// from the file here, writes the file when it changed, and remembers
-  /// what both sides now agree on.
+  /// Does what [plan] worked out: stores what came from the file and the
+  /// merged accounts here, writes the file when it changed, and only then
+  /// removes the merged copies here, so their keys outlive any write that
+  /// fails (whatever happens to the sync state, the next pass finds the
+  /// same copies and merges them the same way). Then remembers what both
+  /// sides agree on.
   Future<_Pass> _execute(_Plan plan) async {
     final now = plan.now, st = plan.state, remote = plan.remote, doc = plan.remote.doc, newBase = plan.newBase;
-    final seed = plan.preview.seed;
-    final firstJoin = plan.preview.firstJoin;
-
-    // A first sync keeps its seed and its account merges in the sync state
-    // before it changes anything here: when the file write that follows is
-    // refused (another device wrote meanwhile) or never happens (offline,
-    // the app closed), the next pass makes the same decisions instead of
-    // working them out again from what this pass already changed, which
-    // would let the file's older sign-in replace the newer one.
-    if (firstJoin) {
-      await state.write(_State(
-        base: st.base,
-        joined: false,
-        lastSyncAt: st.lastSyncAt,
-        claims: st.claims,
-        seen: st.seen,
-        preferLocal: seed == SyncSeed.thisDevice,
-        preferFile: seed == SyncSeed.file,
-        merging: plan.decisions,
-      ).toJson());
-    }
-
-    // Merged accounts first, then what came from the file (which wins where
-    // both touch the same record). Every value before any removal, so a
-    // merged account is stored under the file's id before its old copy
-    // goes; within each, accounts before their keys before the posts that
-    // use them.
-    final changes = {...plan.mergeEdits, ...plan.toApply};
-    int order(String a, String b) {
-      final byRemoval = (changes[a] == null ? 1 : 0).compareTo(changes[b] == null ? 1 : 0);
-      return byRemoval != 0 ? byRemoval : _applyRank(a).compareTo(_applyRank(b));
-    }
 
     void retryNextTime(String key) {
       final b = st.base[key];
@@ -493,37 +474,47 @@ class SyncEngine implements SecretsCoordinator {
       }
     }
 
-    var failed = false, mergeUnfinished = false;
+    // Values first (merged accounts win where they touch a record the file
+    // sent too), accounts before their keys before the posts that use them;
+    // the file's own removals after them.
+    final changes = <String, Object?>{
+      ...plan.toApply,
+      for (final e in plan.mergeEdits.entries)
+        if (e.value != null) e.key: e.value,
+    };
+    int order(String a, String b) {
+      final byRemoval = (changes[a] == null ? 1 : 0).compareTo(changes[b] == null ? 1 : 0);
+      return byRemoval != 0 ? byRemoval : _applyRank(a).compareTo(_applyRank(b));
+    }
+
+    var mergeStepFailed = false;
     final stored = <String, Set<String>>{};
     for (final key in changes.keys.toList()..sort(order)) {
       final value = changes[key];
-      // A merged account's old copy only goes once everything else landed:
-      // a failed step leaves a duplicate, never a lost account, and the
-      // merge is done again on the next sync (the first sync stays open).
-      if (value == null && failed && plan.mergeEdits.containsKey(key)) {
-        mergeUnfinished = true;
-        continue;
-      }
       try {
         await _sourceOf(key)!.apply(_idOf(key), value);
         if (value != null) (stored[key.substring(0, key.indexOf(':'))] ??= {}).add(_idOf(key));
       } on Object catch (e) {
-        failed = true;
-        if (plan.mergeEdits.containsKey(key)) mergeUnfinished = true;
+        if (plan.mergeEdits.containsKey(key)) mergeStepFailed = true;
         _log.warn('Could not store $key from the sync file: $e');
         retryNextTime(key);
       }
     }
-    // Agreement is only recorded for what really landed: a value this device
-    // could not keep (a media host a newer NEFORUM added) is not "deleted
-    // here" on the next sync, which would write a deletion over the device
-    // that has it.
+    // Agreement is what really landed here. A value this device could not
+    // keep at all is asked for again next time; one it kept only in part (a
+    // media host kind a newer NEFORUM added, next to one it knows) is agreed
+    // as it landed, so this device takes the file's version again instead
+    // of reading its partial copy as a change and writing it over the file.
     for (final e in stored.entries) {
       final present = await _sources[e.key]!.snapshot();
       for (final id in e.value) {
-        if (!present.containsKey(id)) {
-          _log.warn('${e.key}:$id from the sync file did not land here; trying again next time');
-          retryNextTime('${e.key}:$id');
+        final key = '${e.key}:$id';
+        final landed = present[id];
+        if (landed == null) {
+          _log.warn('$key from the sync file did not land here; trying again next time');
+          retryNextTime(key);
+        } else {
+          newBase[key] = syncHash(landed.value);
         }
       }
     }
@@ -539,18 +530,29 @@ class SyncEngine implements SecretsCoordinator {
       _cachedDoc = doc.copy();
       _cachedVersion = remote.version;
     }
-    // The first sync completes here, unless an account merge could not be
-    // finished: then its seed and merges stay for the next sync.
-    final stillJoining = firstJoin && mergeUnfinished;
+
+    // The file now holds the merged accounts with the newer sign-in: the
+    // copies they replace can go here. Not while one of the merge's own
+    // steps failed here: the copy then stays (a duplicate, never a lost
+    // account), it is not agreed on, and the next pass merges it again.
+    for (final e in plan.twins.entries) {
+      _log.info('Account ${e.key} is ${e.value} in the sync file: merged into one');
+    }
+    for (final key in plan.mergeEdits.keys.where((k) => plan.mergeEdits[k] == null).toList()..sort((a, b) => _applyRank(b).compareTo(_applyRank(a)))) {
+      if (mergeStepFailed) continue;
+      try {
+        await _sourceOf(key)!.apply(_idOf(key), null);
+      } on Object catch (e) {
+        _log.warn('Could not remove the merged copy $key here yet: $e');
+      }
+    }
+
     await state.write(_State(
       base: newBase,
-      joined: !stillJoining,
+      joined: true,
       lastSyncAt: now,
       claims: {for (final e in doc.claims.entries) e.key: e.value.by},
       seen: {for (final e in doc.devices.entries) e.key: e.value.seenAt},
-      preferLocal: stillJoining && seed == SyncSeed.thisDevice,
-      preferFile: stillJoining && seed == SyncSeed.file,
-      merging: stillJoining ? plan.decisions : const {},
     ).toJson());
     final received = plan.received, sent = plan.sent, conflicts = plan.conflicts;
     if (received > 0 || sent > 0) _log.info('Synced: $received in, $sent out${conflicts > 0 ? ', $conflicts on both sides' : ''}');
@@ -600,7 +602,8 @@ class SyncEngine implements SecretsCoordinator {
       };
 
   /// Both sides changed [key]: whether the file's version wins.
-  bool _remoteWins(String key, SyncItem? local, SyncRecord rec, DateTime now, {required bool firstJoin, bool localWins = false}) {
+  bool _remoteWins(String key, SyncItem? local, SyncRecord rec, DateTime now,
+      {required bool firstJoin, bool localWins = false, Object? hereAccount, Object? fileAccount}) {
     if (rec.deleted) return local == null; // an edit beats a deletion
     if (local == null) return true;
     final prefix = key.substring(0, key.indexOf(':'));
@@ -614,6 +617,13 @@ class SyncEngine implements SecretsCoordinator {
       // The most recently renewed sign-in is the one the network accepts.
       final le = _expiry(local.value), re = _expiry(rec.value);
       if (le != null && re != null && le != re) return re.isAfter(le);
+      // On a first sync, keys that do not expire follow the newer sign-in
+      // too (the account connected later), never the seed: an old token the
+      // user replaced may be revoked already.
+      if (firstJoin && hereAccount is Map && fileAccount is Map) {
+        final lc = DateTime.tryParse('${hereAccount['createdAt'] ?? ''}'), rc = DateTime.tryParse('${fileAccount['createdAt'] ?? ''}');
+        if (lc != null && rc != null && lc != rc) return rc.isAfter(lc);
+      }
     }
     // A device's first sync: the version of the side whose setup wins.
     if (firstJoin) return !localWins;
@@ -636,100 +646,118 @@ class SyncEngine implements SecretsCoordinator {
     return v is Map ? v['status'] as String? : null;
   }
 
-  /// One account connected on this device and in the file under two ids
-  /// (Mastodon, Pixelfed and TikTok make up a random id on each device, and
-  /// so do hand-off accounts: [isDeviceMadeAccountId]) becomes one on the
-  /// device's first sync, matched by its identity on the network
-  /// ([naturalAccountKey]) or its handle ([isSameConnectedAccount]). It
-  /// keeps the file's id, so the devices
-  /// already syncing change nothing; it keeps the newer sign-in, account and
-  /// keys together (a server's app registration and its token belong to each
-  /// other) ([holdsNewerSignIn]); and every post and setting naming the old
-  /// id follows ([SyncSource.remapAccountIds]).
+  /// One account under two ids becomes one (Mastodon, Pixelfed and TikTok
+  /// make up a random id on each device, and so do hand-off accounts:
+  /// [isDeviceMadeAccountId]), matched by its identity on the network
+  /// ([naturalAccountKey]) or its handle ([isSameConnectedAccount]). It runs
+  /// on every pass, on what both sides agree on once the records are merged
+  /// ([doc]), so it needs no memory between passes: a copy this device
+  /// connected before its first sync, two devices that joined at once through
+  /// a synced folder, a pass interrupted halfway, all end the same way.
   ///
-  /// Works on [local] (this device's records, changed in place) and lists in
-  /// [edits] what to store here; [forceLocal] gets the records whose version
-  /// here must replace the file's. [pending] holds the merges an earlier,
-  /// unfinished pass of this first sync decided: they are made again with
-  /// the same decision, whatever that pass already changed here; [decisions]
-  /// gets every merge of this pass, to keep until the first sync completes.
-  /// Returns this device's id -> the file's.
-  Map<String, String> _mergeTwins(Map<String, SyncItem> local, SyncDocument doc, Map<String, Object?> edits, Set<String> forceLocal,
-      Map<String, _MergeDecision> pending, Map<String, _MergeDecision> decisions) {
-    Map<Object?, Object?>? asMap(Object? v) => v is Map ? v : null;
-    final mine = <String, Map<Object?, Object?>>{
-      for (final e in local.entries)
-        if (e.key.startsWith('account:') && e.value.value is Map) e.key.substring(8): e.value.value as Map<Object?, Object?>,
+  /// * The id kept is the one the file already had ([original]); between two
+  ///   already there, an id taken from the account itself, else the smaller
+  ///   one, so that every device picks the same.
+  /// * The newer sign-in wins, account and keys together (a server's app
+  ///   registration and its token belong to each other): [holdsNewerSignIn].
+  /// * Every post and setting naming the other id follows
+  ///   ([SyncSource.remapAccountIds]); the other id's records leave the file.
+  /// * Two hand-off accounts last written by one device are two the user
+  ///   made there on purpose, never twins.
+  ///
+  /// Changes [doc], notes every record written with [send], and returns the
+  /// merges (other id -> kept id) and what to store here (`null`: remove the
+  /// merged copy, which [_execute] does only after the file is written).
+  ({Map<String, String> twins, Map<String, Object?> edits}) _mergeDuplicates(
+      SyncDocument doc, Map<String, SyncRecord> original, DateTime now, void Function(String key, Object? value) send, void Function(String key) unsend) {
+    Map<Object?, Object?>? live(String key) {
+      final rec = doc.records[key];
+      return rec == null || rec.deleted || rec.value is! Map ? null : rec.value as Map<Object?, Object?>;
+    }
+
+    final accounts = <String, Map<Object?, Object?>>{
+      for (final k in doc.records.keys)
+        if (k.startsWith('account:') && live(k) != null) k.substring(8): live(k)!,
     };
-    final theirs = <String, Map<Object?, Object?>>{
-      for (final e in doc.records.entries)
-        if (e.key.startsWith('account:') && !e.value.deleted && e.value.value is Map) e.key.substring(8): e.value.value as Map<Object?, Object?>,
-    };
-    final twins = <String, String>{
-      for (final e in pending.entries)
-        // Still to do, or done here already (this device then has the
-        // account under the file's id).
-        if (theirs.containsKey(e.value.into) || mine.containsKey(e.value.into)) e.key: e.value.into,
-    };
-    for (final m in mine.entries) {
-      if (theirs.containsKey(m.key) || twins.containsKey(m.key) || twins.containsValue(m.key)) continue;
-      for (final t in theirs.entries) {
-        if (mine.containsKey(t.key) || twins.containsValue(t.key)) continue;
-        if (isSameConnectedAccount(m.value, t.value)) {
-          twins[m.key] = t.key;
-          break;
+    bool inFileBefore(String id) => original['account:$id']?.deleted == false;
+    final twins = <String, String>{};
+    final ids = accounts.keys.toList()..sort();
+    for (var i = 0; i < ids.length; i++) {
+      for (var j = i + 1; j < ids.length; j++) {
+        final a = ids[i], b = ids[j];
+        if (twins.containsKey(a) || twins.containsKey(b)) continue;
+        if (!isSameConnectedAccount(accounts[a]!, accounts[b]!)) continue;
+        if (accounts[a]!['tier'] == 'handoff' && doc.records['account:$a']!.by == doc.records['account:$b']!.by) continue;
+        final String keep;
+        if (inFileBefore(a) != inFileBefore(b)) {
+          keep = inFileBefore(a) ? a : b;
+        } else if (isDeviceMadeAccountId(a) != isDeviceMadeAccountId(b)) {
+          keep = isDeviceMadeAccountId(a) ? b : a;
+        } else {
+          keep = a;
         }
+        twins[keep == a ? b : a] = keep;
       }
     }
-    if (twins.isEmpty) return twins;
+    final edits = <String, Object?>{};
+    if (twins.isEmpty) return (twins: twins, edits: edits);
 
-    for (final e in twins.entries) {
-      final hereId = e.key, fileId = e.value;
-      final hereAccount = mine[hereId];
-      final keysRecord = doc.records['secrets:$fileId'];
-      final fileKeys = keysRecord == null || keysRecord.deleted ? null : asMap(keysRecord.value);
-      if (hereAccount == null) {
-        // An earlier pass already stored the merged account under the
-        // file's id: keep its decision, and clear what may be left of the
-        // old copy's keys.
-        final decision = pending[hereId]!;
-        decisions[hereId] = decision;
-        // Only what this device holds wins: forcing a record it does not
-        // hold would write a deletion over the file's.
-        if (decision.hereNewer) forceLocal.addAll(['account:$fileId', 'secrets:$fileId'].where(local.containsKey));
-        edits['secrets:$hereId'] = null;
-        continue;
+    void put(String key, Object value, {DateTime? at}) {
+      final rec = doc.records[key];
+      if (rec == null || rec.deleted || rec.hash != syncHash(value)) {
+        doc.records[key] = SyncRecord.of(value, at: at ?? now, by: deviceId);
+        send(key, value);
       }
-      final hereKeys = asMap(local['secrets:$hereId']?.value);
-      final fileAccount = theirs[fileId] ?? mine[fileId];
-      final hereNewer = pending[hereId]?.hereNewer ??
-          (fileAccount == null || holdsNewerSignIn(first: hereAccount, firstKeys: hereKeys, second: fileAccount, secondKeys: fileKeys));
-      decisions[hereId] = _MergeDecision(fileId, hereNewer: hereNewer);
-      final Object account = hereNewer || fileAccount == null ? {...hereAccount.cast<String, Object?>(), 'id': fileId} : fileAccount;
-      final keys = hereNewer ? (hereKeys ?? fileKeys) : (fileKeys ?? hereKeys);
-
-      local.remove('account:$hereId');
-      edits['account:$hereId'] = null;
-      if (local.remove('secrets:$hereId') != null) edits['secrets:$hereId'] = null;
-      local['account:$fileId'] = SyncItem(account);
-      edits['account:$fileId'] = account;
-      if (keys != null) {
-        local['secrets:$fileId'] = SyncItem(keys);
-        edits['secrets:$fileId'] = keys;
-      }
-      if (hereNewer) forceLocal.addAll(['account:$fileId', 'secrets:$fileId'].where(local.containsKey));
-      _log.info('Account $hereId is $fileId from the sync file: merged into one (${hereNewer ? "this device's" : "the file's"} sign-in kept)');
+      edits[key] = value;
     }
 
-    for (final e in local.entries.toList()) {
-      final source = _sourceOf(e.key);
-      if (source == null) continue;
-      final value = source.remapAccountIds(_idOf(e.key), e.value.value, twins);
-      if (identical(value, e.value.value)) continue;
-      local[e.key] = SyncItem(value, modifiedAt: e.value.modifiedAt);
-      edits[e.key] = value;
+    void drop(String key) {
+      final was = original[key];
+      if (was == null || was.deleted) {
+        // Never in the file as a live record (a copy only this device had):
+        // it leaves no trace there.
+        if (was == null) {
+          doc.records.remove(key);
+        } else {
+          doc.records[key] = was;
+        }
+        unsend(key);
+      } else {
+        doc.records[key] = SyncRecord.tombstone(at: now, by: deviceId);
+        send(key, null);
+      }
+      edits[key] = null;
     }
-    return twins;
+
+    String keptFor(String id) {
+      var k = id;
+      while (twins.containsKey(k)) {
+        k = twins[k]!;
+      }
+      return k;
+    }
+
+    for (final other in twins.keys) {
+      final keep = keptFor(other);
+      final otherKeys = live('secrets:$other'), keepKeys = live('secrets:$keep');
+      final otherNewer = holdsNewerSignIn(first: accounts[other]!, firstKeys: otherKeys, second: accounts[keep]!, secondKeys: keepKeys);
+      final account = {...(otherNewer ? accounts[other]! : accounts[keep]!).cast<String, Object?>(), 'id': keep};
+      final keys = otherNewer ? (otherKeys ?? keepKeys) : (keepKeys ?? otherKeys);
+      accounts[keep] = account;
+      put('account:$keep', account);
+      if (keys != null) put('secrets:$keep', keys);
+      drop('account:$other');
+      if (doc.records.containsKey('secrets:$other') || original.containsKey('secrets:$other')) drop('secrets:$other');
+    }
+    final resolved = {for (final o in twins.keys) o: keptFor(o)};
+    for (final key in doc.records.keys.toList()) {
+      final rec = doc.records[key]!;
+      final source = _sourceOf(key);
+      if (rec.deleted || source == null || !source.handles(_idOf(key)) || key.startsWith('account:') || key.startsWith('secrets:')) continue;
+      final value = source.remapAccountIds(_idOf(key), rec.value, resolved);
+      if (!identical(value, rec.value) && value != null) put(key, value, at: rec.at);
+    }
+    return (twins: resolved, edits: edits);
   }
 
   // -------------------------------------------------------------------------
@@ -978,16 +1006,11 @@ class _Plan {
     required this.sent,
     required this.conflicts,
     required this.twins,
-    required this.decisions,
     required this.preview,
   });
 
   final DateTime now;
   final _State state;
-
-  /// The account merges decided, to keep in the state until the first sync
-  /// completes.
-  final Map<String, _MergeDecision> decisions;
 
   /// The file as read, its document already merged (written by _execute).
   final _Remote remote;
@@ -995,10 +1018,11 @@ class _Plan {
   /// The document's hash before merging: unchanged means no write.
   final String before;
 
-  /// This device's records after merging accounts.
+  /// This device's records.
   final Map<String, SyncItem> local;
 
-  /// What merging accounts stores here (key -> value; `null` removes).
+  /// What merging accounts stores here (key -> value; `null`: a merged copy,
+  /// removed once the file is written).
   final Map<String, Object?> mergeEdits;
 
   /// What comes from the file and is stored here.
@@ -1009,25 +1033,6 @@ class _Plan {
   final SyncPreview preview;
 }
 
-/// 1.3.5: a merge of two copies of one account, decided on a first sync and
-/// kept in the sync state until that first sync completes, so that a retried
-/// or interrupted pass makes the same decision again instead of working it
-/// out anew from what the interrupted pass already changed.
-class _MergeDecision {
-  const _MergeDecision(this.into, {required this.hereNewer});
-
-  static _MergeDecision? tryParse(Object? raw) =>
-      raw is Map && raw['into'] is String ? _MergeDecision(raw['into'] as String, hereNewer: raw['hereNewer'] == true) : null;
-
-  /// The file's id of the account, which the merged account keeps.
-  final String into;
-
-  /// Whether this device holds the newer sign-in (its account and keys win).
-  final bool hereNewer;
-
-  Map<String, dynamic> toJson() => {'into': into, 'hereNewer': hereNewer};
-}
-
 class _State {
   _State(
       {required this.base,
@@ -1036,8 +1041,7 @@ class _State {
       this.claims = const {},
       this.seen = const {},
       this.preferLocal = false,
-      this.preferFile = false,
-      this.merging = const {}});
+      this.preferFile = false});
 
   factory _State.parse(Map<String, dynamic>? j) {
     final raw = j?['base'];
@@ -1050,11 +1054,6 @@ class _State {
       joined: j?['joined'] == true,
       preferLocal: j?['preferLocal'] == true,
       preferFile: j?['preferFile'] == true,
-      merging: {
-        if (j?['merging'] case final Map<Object?, Object?> m)
-          for (final e in m.entries)
-            if (e.key is String && _MergeDecision.tryParse(e.value) != null) e.key as String: _MergeDecision.tryParse(e.value)!,
-      },
       lastSyncAt: DateTime.tryParse('${j?['lastSyncAt'] ?? ''}'),
       claims: {
         if (j?['claims'] case final Map<Object?, Object?> m)
@@ -1089,12 +1088,7 @@ class _State {
   /// Device id -> its last heartbeat, as last seen.
   final Map<String, DateTime> seen;
 
-  /// 1.3.5: the account merges of a first sync that has not completed yet:
-  /// this device's id -> the decision.
-  final Map<String, _MergeDecision> merging;
-
-  /// The seed and the merges hold until the first sync completes; after it
-  /// they are gone.
+  /// The confirmed seed holds until the first sync completes.
   Map<String, dynamic> toJson() => {
         'base': base,
         'joined': joined,
@@ -1103,6 +1097,5 @@ class _State {
         if (seen.isNotEmpty) 'seen': {for (final e in seen.entries) e.key: e.value.toUtc().toIso8601String()},
         if (!joined && preferLocal) 'preferLocal': true,
         if (!joined && preferFile) 'preferFile': true,
-        if (!joined && merging.isNotEmpty) 'merging': {for (final e in merging.entries) e.key: e.value.toJson()},
       };
 }

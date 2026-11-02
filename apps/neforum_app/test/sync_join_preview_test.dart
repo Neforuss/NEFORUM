@@ -152,7 +152,7 @@ void main() {
       final s = await dryRun(b, folder);
       expect(s.details, contains(startsWith('This device also gets 1 account and 1 media host from ')));
       expect(s.details.join(' '), isNot(contains('2 media hosts')));
-      expect(s.details, contains("Your other devices' main media host (Catbox) is replaced by this device's Catbox and removed: both slots are taken."));
+      expect(s.details, contains("Your other devices' main media host (Catbox) is replaced by this device's own Catbox (other settings and keys) and removed: both slots are taken."));
       expect(s.details.last, 'Apart from that, nothing is deleted: what only one side has is kept.');
       await b.syncOnce();
       expect(b.settings.mediaHostId, 'catbox');
@@ -194,7 +194,7 @@ void main() {
       await b.addMediaHost(MediaHostSlot.main, 'webdav',
           {'webdavUrl': 'https://dav.example.com/m', 'username': 'u', 'password': 'fake-pass', 'publicUrlTemplate': 'https://dav.example.com/{path}'});
       final s = await dryRun(b, folder);
-      expect(s.details, contains("This device's main media host (Nextcloud / WebDAV) is replaced by Catbox and removed: both slots are taken."));
+      expect(s.details, contains("This device's main media host (Nextcloud / WebDAV) is replaced by the sync file's Catbox and removed: both slots are taken."));
       expect(s.details.join(' '), isNot(contains('Nothing is deleted')));
       await b.syncOnce();
       expect([b.settings.mediaHostId, b.settings.fallbackMediaHostId], ['catbox', 'litterbox']);
