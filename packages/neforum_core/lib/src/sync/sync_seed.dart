@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import '../auth/oauth2_pkce.dart';
+import 'sync_document.dart';
 
 /// 1.3.5: whose setup a device's first sync keeps where this device and the
 /// sync file hold different versions of the same record. Everything only one
@@ -193,14 +194,50 @@ bool isSameConnectedAccount(Map<Object?, Object?> a, Map<Object?, Object?> b) {
 }
 
 /// 1.3.5: of two copies of one account, whether [first] holds the newer
-/// sign-in: the keys that expire later (renewed more recently) when both
-/// expire, otherwise the account connected later. A tie is not newer.
+/// sign-in. A tie is not newer.
+///
+/// * Through two registrations ([sharesRegistration] is false: another
+///   developer app, another server, another tier): the account connected
+///   later, then the keys that expire later. A renewal never changes the
+///   connection and a reconnect always does, so a device that renews the
+///   old sign-in while another reconnects with another app gets keys that
+///   expire later, yet belong to the app the account no longer uses.
+/// * Through one registration: the keys that expire later (renewed more
+///   recently: a renewal that worked proves its sign-in is live, and with
+///   rotating keys it may have ended the other), then the account connected
+///   later. Either set of keys fits the account then.
+///
+/// The sync decides the keys record by this same rule, so an account and its
+/// keys always come from one sign-in.
 bool holdsNewerSignIn({required Map<Object?, Object?> first, Map<Object?, Object?>? firstKeys, required Map<Object?, Object?> second, Map<Object?, Object?>? secondKeys}) {
   DateTime? at(Object? v) => DateTime.tryParse('${v ?? ''}');
   final e1 = at(firstKeys?[OAuthTokens.keyExpiresAt]), e2 = at(secondKeys?[OAuthTokens.keyExpiresAt]);
-  if (e1 != null && e2 != null && e1 != e2) return e1.isAfter(e2);
-  final c1 = at(first['createdAt']), c2 = at(second['createdAt']);
-  return c1 != null && c2 != null && c1.isAfter(c2);
+  final e = e1 == null || e2 == null ? 0 : e1.compareTo(e2);
+  final c = compareConnections(first, second);
+  if (sharesRegistration(first, second)) return e != 0 ? e > 0 : c > 0;
+  return c != 0 ? c > 0 : e > 0;
+}
+
+/// 1.3.5: whether two copies of one account sign in through the same
+/// registration: the same network, tier and connection settings (the
+/// developer app, the server, the account's ids on it). Profile details and
+/// the user's own edits aside, their keys are then interchangeable.
+bool sharesRegistration(Map<Object?, Object?> first, Map<Object?, Object?> second) {
+  final platform = first['platformId'];
+  return platform is String &&
+      platform == second['platformId'] &&
+      first['tier'] == second['tier'] &&
+      syncHash(first['config'] ?? const <String, Object?>{}) == syncHash(second['config'] ?? const <String, Object?>{});
+}
+
+/// 1.3.5: which of two copies of one account was connected later (the
+/// `createdAt` a connection sets): positive for [first], negative for
+/// [second], 0 when they are one connection or either date is missing or
+/// unreadable.
+int compareConnections(Object? first, Object? second) {
+  DateTime? at(Object? a) => a is Map ? DateTime.tryParse('${a['createdAt'] ?? ''}') : null;
+  final c1 = at(first), c2 = at(second);
+  return c1 == null || c2 == null ? 0 : c1.compareTo(c2);
 }
 
 /// 1.3.5: what a sync would do, worked out without doing it

@@ -763,6 +763,27 @@ void main() {
       expect((await a.accounts.get('m1'))?.displayName, 'From B', reason: 'B has been in use since 2024');
     });
 
+    test('the file counts an account it holds twice (two devices connected it at the same moment) once', () async {
+      await a.accounts.upsert(_account('m1', 'mastodon', name: 'From A', createdAt: DateTime.utc(2026, 5, 1)));
+      await a.engine.sync();
+      for (final id in [_uuid2, _uuid3]) {
+        await putInFile('account:$id',
+            SyncRecord.of(_account(id, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig, createdAt: DateTime.utc(2026, 5, 1)).toJson(), at: clock.now, by: 'O'));
+      }
+      // B has two accounts, one of them older: the file holds two accounts
+      // too, under three ids, so the oldest connection decides, for B.
+      await b.accounts.upsert(_account('m1', 'mastodon', name: 'From B', createdAt: DateTime.utc(2026, 5, 1)));
+      await b.accounts.upsert(_account('b2', 'tumblr', createdAt: DateTime.utc(2024, 3, 1)));
+      final p = await b.engine.preview();
+      expect(p.file.accounts, 2, reason: 'm1, and the Mastodon account held twice, counted once');
+      expect(p.here.accounts, 2);
+      expect(p.mergedInFile, hasLength(1));
+      expect(p.seed, SyncSeed.thisDevice, reason: 'a tie on accounts, and B has been in use since 2024');
+      await b.engine.sync();
+      expect((await b.accounts.get('m1'))?.displayName, 'From B');
+      expect(await b.ids('mastodon'), hasLength(2), reason: 'm1 and the merged copy');
+    });
+
     test('keys of one account on both sides follow the newer sign-in, not the seed, on a first sync', () async {
       // The file's side has more accounts, so its setup wins; but this device
       // signed in to x-1 again later, and its keys do not expire.
@@ -1037,14 +1058,38 @@ void main() {
       });
     });
 
-    test('the newer sign-in: later expiry first, then the later connection; a tie is not newer', () {
-      final early = {'createdAt': '2026-01-01T00:00:00.000Z'}, late = {'createdAt': '2026-06-01T00:00:00.000Z'};
+    test('the newer sign-in: through two apps the later connection, then the later expiry; through one app the reverse; a tie is not newer', () {
+      Map<String, Object?> acc(String created, String app) =>
+          {'platformId': 'tiktok', 'tier': 'byokApi', 'createdAt': created, 'config': {'clientKey': app}, 'displayName': 'Me $app'};
+      final early = acc('2026-01-01T00:00:00.000Z', 'ck-old'), late = acc('2026-06-01T00:00:00.000Z', 'ck-new');
+      final lateSameApp = {...acc('2026-06-01T00:00:00.000Z', 'ck-old'), 'displayName': 'renamed', 'handle': '@other-profile'};
       Map<String, String> keys(String expires) => {'expires_at': expires};
       expect(holdsNewerSignIn(first: late, second: early), isTrue);
       expect(holdsNewerSignIn(first: early, second: late), isFalse);
-      expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-12-01T00:00:00Z'), second: late, secondKeys: keys('2026-11-01T00:00:00Z')), isTrue,
-          reason: 'renewed more recently beats connected more recently');
+      // Two apps: a renewal of the older connection never beats a reconnect.
+      expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-12-01T00:00:00Z'), second: late, secondKeys: keys('2026-11-01T00:00:00Z')), isFalse,
+          reason: 'a renewal of the old app never beats a reconnect with another');
+      expect(holdsNewerSignIn(first: late, firstKeys: keys('2026-11-01T00:00:00Z'), second: early, secondKeys: keys('2026-12-01T00:00:00Z')), isTrue);
+      // One app (profile details and the user's edits aside): renewed more recently wins.
+      expect(sharesRegistration(early, lateSameApp), isTrue);
+      expect(sharesRegistration(early, late), isFalse);
+      expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-12-01T00:00:00Z'), second: lateSameApp, secondKeys: keys('2026-11-01T00:00:00Z')), isTrue,
+          reason: 'one app: the renewal that worked last');
+      expect(holdsNewerSignIn(first: lateSameApp, firstKeys: keys('2026-11-01T00:00:00Z'), second: early, secondKeys: keys('2026-12-01T00:00:00Z')), isFalse);
+      expect(holdsNewerSignIn(first: lateSameApp, second: early), isTrue, reason: 'one app, no expiry: the later connection');
+      expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-12-01T00:00:00Z'), second: early, secondKeys: keys('2026-11-01T00:00:00Z')), isTrue,
+          reason: 'one connection: renewed more recently wins');
+      expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-11-01T00:00:00Z'), second: early, secondKeys: keys('2026-12-01T00:00:00Z')), isFalse);
       expect(holdsNewerSignIn(first: early, second: early), isFalse);
+      expect(holdsNewerSignIn(first: early, firstKeys: keys('2026-12-01T00:00:00Z'), second: early, secondKeys: keys('2026-12-01T00:00:00Z')), isFalse);
+      expect(holdsNewerSignIn(first: const {}, firstKeys: keys('2026-12-01T00:00:00Z'), second: late, secondKeys: keys('2026-11-01T00:00:00Z')), isTrue,
+          reason: 'no readable connection time on one side: the expiry decides');
+      expect(sharesRegistration(const {}, const {}), isFalse, reason: 'no network named: never one registration');
+      expect(sharesRegistration({...early, 'tier': 'openApi'}, early), isFalse);
+      expect(compareConnections(late, early), greaterThan(0));
+      expect(compareConnections(early, late), lessThan(0));
+      expect(compareConnections(early, {'createdAt': 'not a date'}), 0);
+      expect(compareConnections(null, early), 0);
     });
   });
 
@@ -1163,7 +1208,7 @@ void main() {
       }
     });
 
-    test('a resumed first sync after another device renewed the merged account: the later renewal wins', () async {
+    test('a resumed first sync after another device renewed the merged account (one app on both copies): the later renewal wins', () async {
       final flaky = _FlakyBackend(backend)..failures = 1 << 20; // offline until it is back
       final x = _Device('X', backend, clock), y = _Device('Y', flaky, clock);
       const tt = {'clientKey': 'fake-client-key', 'openId': 'fake-open-id'};
@@ -1183,6 +1228,7 @@ void main() {
       await x.engine.sync();
       for (final d in [x, y]) {
         expect((await d.secrets.read(_uuid1))?['access_token'], 'x-a2', reason: 'the most recently renewed sign-in wins on ${d.id}');
+        expect((await d.accounts.get(_uuid1))!.createdAt, DateTime.utc(2026, 1, 1), reason: '${d.id}: the account comes with its keys');
       }
     });
 
@@ -2029,6 +2075,143 @@ void main() {
       }
     });
 
+    // Only the keys changed on both sides: Y renews the old sign-in (keys
+    // that expire later than X's) while X reconnects with another app. The
+    // account record changed on X alone, so it simply comes from X; the keys
+    // must come with it, by the connection, not by the expiry.
+    for (final variant in ['the renewal in flight while X reconnects', 'Y renews while the file is out of reach', 'a conflicted copy']) {
+      test('Y renews the old sign-in while X reconnects with another TikTok app ($variant): one sign-in on both, and it renews', () async {
+        final folder = variant == 'a conflicted copy' ? _CloudFolder() : null;
+        final flaky = _FlakyBackend(backend)..failures = 0;
+        final SyncBackend store = folder ?? flaky;
+        final x = _Device('X', store, clock), y = _Device('Y', store, clock);
+        await x.accounts.upsert(tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1)));
+        await x.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(minutes: 30))));
+        await x.engine.sync();
+        await y.engine.sync();
+
+        Future<void> xReconnects() async {
+          await x.accounts.upsert(tiktok(app: 'ck-new', createdAt: clock.now));
+          await x.secrets.write(_uuid1, tiktokKeys('ck-new', clock.now.add(const Duration(hours: 24))));
+          await x.engine.sync();
+        }
+
+        // Y renews as the publish service does: through the engine, then it
+        // stores whatever comes back. TikTok answers with keys of the old app
+        // that expire after X's.
+        Future<void> yRenews({Future<void> Function()? meanwhile}) async {
+          final fresh = await y.engine.renew((await y.accounts.get(_uuid1))!, (await y.secrets.read(_uuid1))!, (current) async {
+            await meanwhile?.call();
+            clock.now = clock.now.add(const Duration(seconds: 2));
+            return tiktokKeys('ck-old', clock.now.add(const Duration(hours: 24)));
+          });
+          if (fresh != null) await y.secrets.write(_uuid1, fresh);
+        }
+
+        clock.now = clock.now.add(const Duration(minutes: 31)); // Y's keys have expired
+        if (variant.contains('in flight')) {
+          await yRenews(meanwhile: xReconnects);
+        } else if (folder != null) {
+          folder.freeze();
+          await xReconnects();
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          await yRenews();
+          folder.thaw();
+          expect(folder.copies, isNotEmpty, reason: "Y's writes became conflicted copies");
+        } else {
+          await xReconnects();
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          flaky.down = true;
+          await yRenews();
+          flaky.down = false;
+          expect((await y.secrets.read(_uuid1))!['client_secret'], 'cs-ck-old-fake', reason: 'Y renewed alone');
+        }
+        await _rounds([y, x, y, x], clock, 1);
+        for (final d in [x, y]) {
+          final account = (await d.accounts.get(_uuid1))!;
+          final keys = (await d.secrets.read(_uuid1))!;
+          expect(account.configString('clientKey'), 'ck-new', reason: '${d.id}: the reconnect is the newer sign-in');
+          expect(keys['client_secret'], 'cs-ck-new-fake', reason: "${d.id}: the account's keys come with it");
+          expect(await renewal(account, keys), 'renewed', reason: '${d.id}: an account and its keys always from one sign-in');
+        }
+      });
+    }
+
+    test('Y renews while X reconnects through the same TikTok app: the keys renewed last win, and they fit the account', () async {
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock);
+      await x.accounts.upsert(tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1)));
+      await x.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(minutes: 30))));
+      await x.engine.sync();
+      await y.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 31));
+      await x.accounts.upsert(tiktok(app: 'ck-old', createdAt: clock.now));
+      await x.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(hours: 24))));
+      await x.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      final renewed = tiktokKeys('ck-old', clock.now.add(const Duration(hours: 24)));
+      await y.secrets.write(_uuid1, renewed); // Y renewed the first sign-in a minute later
+      await _rounds([y, x, y, x], clock, 1);
+      for (final d in [x, y]) {
+        final account = (await d.accounts.get(_uuid1))!;
+        final keys = (await d.secrets.read(_uuid1))!;
+        expect(keys['expires_at'], renewed['expires_at'], reason: '${d.id}: through one app, the renewal that worked last');
+        expect(await renewal(account, keys), 'renewed', reason: d.id);
+      }
+    });
+
+    test('a renewal of the old sign-in with an edit on Y, against a reconnect on X (expiry and connection time disagree): the connection decides', () async {
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock);
+      final old = tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1));
+      await x.accounts.upsert(old);
+      await x.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(minutes: 30))));
+      await x.engine.sync();
+      await y.engine.sync();
+      clock.now = clock.now.add(const Duration(minutes: 31));
+      await x.accounts.upsert(tiktok(app: 'ck-new', createdAt: clock.now));
+      await x.secrets.write(_uuid1, tiktokKeys('ck-new', clock.now.add(const Duration(hours: 24))));
+      await x.engine.sync();
+      // Y, not synced yet, renews the old sign-in (its keys expire after X's)
+      // and renames the account: both of Y's records conflict with X's.
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await y.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(hours: 24))));
+      await y.accounts.upsert(old.copyWith(displayName: 'Renamed on Y'));
+      await _rounds([y, x, y, x], clock, 1);
+      for (final d in [x, y]) {
+        final account = (await d.accounts.get(_uuid1))!;
+        final keys = (await d.secrets.read(_uuid1))!;
+        expect(account.configString('clientKey'), 'ck-new', reason: '${d.id}: the later connection, not the later expiry');
+        expect(keys['client_secret'], 'cs-ck-new-fake', reason: d.id);
+        expect(await renewal(account, keys), 'renewed', reason: d.id);
+        expect(account.displayName, 'Renamed on Y', reason: "${d.id}: the user's own edit is kept (Y synced second)");
+      }
+    });
+
+    test('one connection changed on both devices: the sign-in comes from the keys renewed last, the edit from the device that syncs second', () async {
+      final x = _Device('X', backend, clock), y = _Device('Y', backend, clock);
+      final acc = tiktok(app: 'ck-old', createdAt: DateTime.utc(2026, 10, 1));
+      await x.accounts.upsert(acc);
+      await x.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(minutes: 30))));
+      await x.engine.sync();
+      await y.engine.sync();
+      // Y renews the same connection, and the renewal brings a wider grant
+      // onto the account (a sign-in field); Y syncs first.
+      clock.now = clock.now.add(const Duration(minutes: 31));
+      await y.secrets.write(_uuid1, tiktokKeys('ck-old', clock.now.add(const Duration(hours: 24))));
+      await y.accounts.upsert(acc.copyWith(config: {...acc.config, 'scopes': 'video.publish'}));
+      await y.engine.sync();
+      // X, not synced since, renames the account, then syncs: the two
+      // accounts are one connection (same createdAt), so the keys decide.
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await x.accounts.upsert(acc.copyWith(displayName: 'Renamed on X'));
+      await _rounds([x, y, x, y], clock, 1);
+      for (final d in [x, y]) {
+        final account = (await d.accounts.get(_uuid1))!;
+        expect(account.configString('scopes'), 'video.publish', reason: "${d.id}: the sign-in fields of the keys renewed last (Y's)");
+        expect(account.displayName, 'Renamed on X', reason: "${d.id}: X's edit (X synced second)");
+        expect(await renewal(account, (await d.secrets.read(_uuid1))!), 'renewed', reason: d.id);
+      }
+    });
+
     test('a thread that broke off partway keeps its live parts and its resume state when two targets become one', () {
       final partial = {
         'accountId': _uuid3,
@@ -2077,6 +2260,51 @@ void main() {
       await _rounds([a], clock, 2);
       expect(await a.ids('misskey'), [_uuid2]);
       expect((await file()).records['account:$_uuid3']?.deleted, isTrue);
+    });
+
+    test('a copy 1.3.4 brought back after two merges in a row (a into b, then b into c) is merged into the end of the chain; a loop of links stops nothing', () async {
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.engine.sync();
+      const mk = {'instance': 'https://mk.example'};
+      const u4 = '6f1c2d3e-0000-4abc-9def-000000000004', l1 = '6f1c2d3e-0000-4abc-9def-0000000000a1', l2 = '6f1c2d3e-0000-4abc-9def-0000000000a2';
+      final at = clock.now;
+      for (final e in {
+        'account:$u4': SyncRecord.of(_account(u4, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).toJson(), at: at, by: 'O'),
+        'account:$_uuid3': SyncRecord.tombstone(at: at, by: 'O', mergedInto: u4),
+        'alias:$_uuid3': SyncRecord.of({'into': u4}, at: at, by: 'O'),
+        'alias:$_uuid2': SyncRecord.of({'into': _uuid3}, at: at, by: 'O'),
+        // 1.3.4 brought the first copy back (an edit beats the tombstone it
+        // rewrote without the link).
+        'account:$_uuid2':
+            SyncRecord.of(_account(_uuid2, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).copyWith(enabled: false).toJson(), at: at, by: 'P134'),
+        // Two links that point at each other, neither to a live account.
+        'alias:$l1': SyncRecord.of({'into': l2}, at: at, by: 'O'),
+        'alias:$l2': SyncRecord.of({'into': l1}, at: at, by: 'O'),
+      }.entries) {
+        await putInFile(e.key, e.value);
+      }
+      await _rounds([a], clock, 2);
+      expect(await a.ids('misskey'), [u4], reason: 'the link chain leads from the first copy to the account it ended in');
+      final doc = await file();
+      expect(doc.records['account:$_uuid2']?.deleted, isTrue);
+      expect((doc.records['alias:$_uuid2']?.value as Map?)?['into'], u4);
+    });
+
+    test('two copies whose links point at each other become one, the same one on every device', () async {
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.engine.sync();
+      const mk = {'instance': 'https://mk.example'};
+      final at = clock.now;
+      for (final e in {
+        'account:$_uuid2': SyncRecord.of(_account(_uuid2, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).toJson(), at: at, by: 'O'),
+        'account:$_uuid3': SyncRecord.of(_account(_uuid3, 'misskey', tier: PlatformTier.openApi, handle: '@me@mk.example', config: mk).toJson(), at: at, by: 'O'),
+        'alias:$_uuid2': SyncRecord.of({'into': _uuid3}, at: at, by: 'O'),
+        'alias:$_uuid3': SyncRecord.of({'into': _uuid2}, at: at, by: 'O'),
+      }.entries) {
+        await putInFile(e.key, e.value);
+      }
+      await _rounds([a], clock, 2);
+      expect(await a.ids('misskey'), [_uuid3], reason: 'the first link followed (the smaller id merges into the other)');
     });
 
     test('malformed links and keys stop nothing', () async {
@@ -2413,16 +2641,23 @@ class _FlakyBackend extends SyncBackend {
   final MemorySyncBackend inner;
   int failures = 1;
 
+  /// Out of reach altogether (a folder not mounted yet, a server down):
+  /// reads fail too.
+  bool down = false;
+
   @override
   String get label => 'flaky';
   @override
   bool get atomicWrites => true;
   @override
-  Future<SyncBlob?> read() => inner.read();
+  Future<SyncBlob?> read() async {
+    if (down) throw const SyncBackendException('offline', temporary: true);
+    return inner.read();
+  }
   @override
   Future<String?> write(Uint8List bytes, {required String? ifMatch}) async {
-    if (failures > 0) {
-      failures--;
+    if (down || failures > 0) {
+      if (!down) failures--;
       throw const SyncBackendException('offline', temporary: true);
     }
     return inner.write(bytes, ifMatch: ifMatch);
@@ -2474,7 +2709,10 @@ class _CloudFolder extends SyncBackend {
   Future<String?> write(Uint8List data, {required String? ifMatch}) async {
     if (frozen && bytes != null && version != frozenVersion) {
       pendingCopies.add(SyncSideCopy('NEFORUM (conflicted copy ${pendingCopies.length}).neforumsync', Uint8List.fromList(data)));
-      return '$version';
+      // The version of the file this device wrote, as a folder reports it
+      // (its time and size): never the version of the other device's file
+      // that the cloud app puts in its place later.
+      return 'copy ${pendingCopies.length}';
     }
     bytes = Uint8List.fromList(data);
     version++;

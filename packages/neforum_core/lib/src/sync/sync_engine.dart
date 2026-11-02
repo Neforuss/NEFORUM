@@ -344,8 +344,8 @@ class SyncEngine implements SecretsCoordinator {
   }
 
   /// 1.3.5: which version of an account or its keys a cloud app's conflicted
-  /// copy brings in: the newer sign-in, account and keys together (later
-  /// expiry, else the account connected later), not the later write; `null`
+  /// copy brings in: the newer sign-in, account and keys together
+  /// ([holdsNewerSignIn]), not the later write; `null`
   /// (the later write) for everything else and for a tie.
   static bool? _preferCopy(String key, SyncDocument mine, SyncDocument copy) {
     final i = key.indexOf(':');
@@ -428,10 +428,21 @@ class SyncEngine implements SecretsCoordinator {
     // A device's first sync: whose version is kept where both sides hold a
     // different one (the seed rule, or the choice confirmed in the dry run).
     final here = SyncSideSummary.ofAccounts([for (final e in local.entries) if (e.key.startsWith('account:')) e.value.value]);
-    final there = SyncSideSummary.ofAccounts([
+    final aliases = {
+      for (final e in st.aliases.entries)
+        if (now.difference(e.value.at) <= tombstoneLife) e.key: e.value,
+    };
+    // The file's side counts each account once: two copies of one account
+    // that this pass makes one (two devices that connected it at the same
+    // moment) are one account, the way the dry run then says.
+    final inFile = <String, Map<Object?, Object?>>{
       for (final e in doc.records.entries)
-        if (e.key.startsWith('account:') && !e.value.deleted) e.value.value,
-    ]);
+        if (e.key.startsWith('account:') && !e.value.deleted && e.value.value is Map) e.key.substring(8): e.value.value! as Map<Object?, Object?>,
+    };
+    final twinsInFile = _pairTwins(inFile, _recordedLinks(doc, {for (final e in aliases.entries) e.key: e.value.into}),
+        inFileBefore: (_) => true, fresh: remote.fromCopies.contains, firstJoin: firstJoin, localIds: const {});
+    final allInFile = SyncSideSummary.ofAccounts(inFile.values);
+    final there = SyncSideSummary(accounts: allInFile.accounts - twinsInFile.length, oldestConnection: allInFile.oldestConnection);
     final seed = firstJoin ? (st.seed ?? chooseSyncSeed(here: here, file: there)) : null;
     final localWins = seed == SyncSeed.thisDevice;
 
@@ -536,10 +547,6 @@ class SyncEngine implements SecretsCoordinator {
     // One account under two ids becomes one, worked out on what both sides
     // now agree on ([_mergeDuplicates] says which copies, and when).
     final localIds = {for (final k in local.keys) if (k.startsWith('account:')) k.substring(8)};
-    final aliases = {
-      for (final e in st.aliases.entries)
-        if (now.difference(e.value.at) <= tombstoneLife) e.key: e.value,
-    };
     final merge = _mergeDuplicates(doc, original, now, send, written.remove,
         firstJoin: firstJoin, localIds: localIds, fromCopies: remote.fromCopies, aliases: {for (final e in aliases.entries) e.key: e.value.into});
     for (final e in merge.newAliases.entries) {
@@ -782,15 +789,23 @@ class SyncEngine implements SecretsCoordinator {
       return lt == null || rec.at.isAfter(lt);
     }
     if (prefix == 'secrets') {
-      // The most recently renewed sign-in is the one the network accepts.
-      final le = _expiry(local.value), re = _expiry(rec.value);
-      if (le != null && re != null && le != re) return re.isAfter(le);
-      // On a first sync, keys that do not expire follow the newer sign-in
-      // too (the account connected later), never the seed: an old token the
-      // user replaced may be revoked already.
-      if (firstJoin && hereAccount is Map && fileAccount is Map) {
-        final lc = DateTime.tryParse('${hereAccount['createdAt'] ?? ''}'), rc = DateTime.tryParse('${fileAccount['createdAt'] ?? ''}');
-        if (lc != null && rc != null && lc != rc) return rc.isAfter(lc);
+      // The keys of the newer sign-in by the rule the account follows
+      // ([holdsNewerSignIn], each side's account with its own keys), so the
+      // two always come from one sign-in, also when only the keys changed
+      // on both sides and the account simply takes the side that changed
+      // it. A reconnect with another app on one device beats a renewal of
+      // the old sign-in on another (whose keys expire later, but belong to
+      // an app the account no longer uses); through one app, the most
+      // recently renewed keys are the ones the network accepts. On a first
+      // sync this goes before the seed too: an old token the user replaced
+      // may be revoked already.
+      if (hereAccount is Map && fileAccount is Map) {
+        final lk = local.value is Map ? local.value as Map<Object?, Object?> : null, rk = rec.value is Map ? rec.value as Map<Object?, Object?> : null;
+        if (holdsNewerSignIn(first: fileAccount, firstKeys: rk, second: hereAccount, secondKeys: lk)) return true;
+        if (holdsNewerSignIn(first: hereAccount, firstKeys: lk, second: fileAccount, secondKeys: rk)) return false;
+      } else {
+        final le = _expiry(local.value), re = _expiry(rec.value);
+        if (le != null && re != null && le != re) return re.isAfter(le);
       }
     }
     // A device's first sync: the version of the side whose setup wins.
@@ -876,45 +891,8 @@ class SyncEngine implements SecretsCoordinator {
         if (k.startsWith('account:') && live(k) != null) k.substring(8): live(k)!,
     };
     bool inFileBefore(String id) => original['account:$id']?.deleted == false;
-    bool fresh(String id) => !inFileBefore(id) || fromCopies.contains(id);
-    // The merges the file (or this device) already records: a copy brought
-    // back to life by NEFORUM 1.3.4 (it keeps an edit over a deletion) is
-    // merged into its link's account again.
-    final recorded = <String, String>{...aliases};
-    for (final e in doc.records.entries) {
-      final from = _linkIn(e.key, e.value);
-      if (from != null) recorded[from] = e.key.startsWith('alias:') ? '${(e.value.value! as Map)['into']}' : e.value.mergedInto!;
-    }
-    final twins = <String, String>{};
-    final ids = accounts.keys.toList()..sort();
-    for (var i = 0; i < ids.length; i++) {
-      for (var j = i + 1; j < ids.length; j++) {
-        final a = ids[i], b = ids[j];
-        if (twins.containsKey(a) || twins.containsKey(b)) continue;
-        final va = accounts[a]!, vb = accounts[b]!;
-        if (!isSameConnectedAccount(va, vb)) continue;
-        final String keep;
-        if (recorded[a] == b || recorded[b] == a) {
-          keep = recorded[a] == b ? b : a;
-        } else if (va['tier'] == 'handoff') {
-          final here = !inFileBefore(a) && localIds.contains(a) ? a : (!inFileBefore(b) && localIds.contains(b) ? b : null);
-          final there = here == a ? b : a;
-          if (!firstJoin || here == null || !inFileBefore(there) || localIds.contains(there)) continue;
-          keep = there;
-        } else {
-          final natural = naturalAccountKey(va) != null && naturalAccountKey(vb) != null;
-          if (!natural && !fresh(a) && !fresh(b)) continue;
-          if (inFileBefore(a) != inFileBefore(b)) {
-            keep = inFileBefore(a) ? a : b;
-          } else if (isDeviceMadeAccountId(a) != isDeviceMadeAccountId(b)) {
-            keep = isDeviceMadeAccountId(a) ? b : a;
-          } else {
-            keep = a;
-          }
-        }
-        twins[keep == a ? b : a] = keep;
-      }
-    }
+    final twins = _pairTwins(accounts, _recordedLinks(doc, aliases),
+        inFileBefore: inFileBefore, fresh: (id) => !inFileBefore(id) || fromCopies.contains(id), firstJoin: firstJoin, localIds: localIds);
 
     final edits = <String, Object?>{};
     final newAliases = <String, String>{};
@@ -1009,6 +987,80 @@ class SyncEngine implements SecretsCoordinator {
     return (twins: {for (final o in twins.keys) o: keptFor(o)}, edits: edits, newAliases: newAliases, fileLinks: fileLinks);
   }
 
+  /// The links the file and this device record (merged-away id -> the id it
+  /// was merged into): `alias:` records, tombstones that name the kept id,
+  /// and [aliases] kept on this device.
+  static Map<String, String> _recordedLinks(SyncDocument doc, Map<String, String> aliases) {
+    final recorded = <String, String>{...aliases};
+    for (final e in doc.records.entries) {
+      final from = _linkIn(e.key, e.value);
+      if (from != null) recorded[from] = e.key.startsWith('alias:') ? '${(e.value.value! as Map)['into']}' : e.value.mergedInto!;
+    }
+    return recorded;
+  }
+
+  /// Which of [accounts] (id -> account) are copies of one account, and the
+  /// id each keeps (merged id -> kept id), by the rules [_mergeDuplicates]
+  /// lists. [recorded] are the links already made ([_recordedLinks]): a copy
+  /// brought back to life by NEFORUM 1.3.4 (it keeps an edit over a
+  /// deletion) is merged into its link's account again. Also counts each
+  /// account in the file once for the seed rule ([_plan]).
+  static Map<String, String> _pairTwins(
+    Map<String, Map<Object?, Object?>> accounts,
+    Map<String, String> recorded, {
+    required bool Function(String id) inFileBefore,
+    required bool Function(String id) fresh,
+    required bool firstJoin,
+    required Set<String> localIds,
+  }) {
+    // Whether [from]'s links lead to [to], over every hop: an account merged
+    // twice (a into b, then b into c) links a to c through b. At most 16
+    // hops, and a loop ends the walk.
+    bool leadsTo(String from, String to) {
+      var k = from;
+      for (var hops = 0; hops < 16; hops++) {
+        final next = recorded[k];
+        if (next == null || next == from) return false;
+        if (next == to) return true;
+        k = next;
+      }
+      return false;
+    }
+
+    final twins = <String, String>{};
+    final ids = accounts.keys.toList()..sort();
+    for (var i = 0; i < ids.length; i++) {
+      for (var j = i + 1; j < ids.length; j++) {
+        final a = ids[i], b = ids[j];
+        if (twins.containsKey(a) || twins.containsKey(b)) continue;
+        final va = accounts[a]!, vb = accounts[b]!;
+        if (!isSameConnectedAccount(va, vb)) continue;
+        final String keep;
+        final aToB = leadsTo(a, b);
+        if (aToB || leadsTo(b, a)) {
+          keep = aToB ? b : a;
+        } else if (va['tier'] == 'handoff') {
+          final here = !inFileBefore(a) && localIds.contains(a) ? a : (!inFileBefore(b) && localIds.contains(b) ? b : null);
+          final there = here == a ? b : a;
+          if (!firstJoin || here == null || !inFileBefore(there) || localIds.contains(there)) continue;
+          keep = there;
+        } else {
+          final natural = naturalAccountKey(va) != null && naturalAccountKey(vb) != null;
+          if (!natural && !fresh(a) && !fresh(b)) continue;
+          if (inFileBefore(a) != inFileBefore(b)) {
+            keep = inFileBefore(a) ? a : b;
+          } else if (isDeviceMadeAccountId(a) != isDeviceMadeAccountId(b)) {
+            keep = isDeviceMadeAccountId(a) ? b : a;
+          } else {
+            keep = a;
+          }
+        }
+        twins[keep == a ? b : a] = keep;
+      }
+    }
+    return twins;
+  }
+
   /// The merged-away account id a record links from: an `alias:<id>` record
   /// (`{"into": <kept id>}`) or an account tombstone naming the kept id.
   static String? _linkIn(String key, SyncRecord rec) {
@@ -1101,6 +1153,7 @@ class SyncEngine implements SecretsCoordinator {
       return fresh;
     }
     _renewing.add(account.id);
+    var shared = false;
     try {
       var latest = current;
       try {
@@ -1144,15 +1197,29 @@ class SyncEngine implements SecretsCoordinator {
       }
       final result = fresh ?? latest;
       await store.write(account.id, result);
-      return _differs(result, current);
+      _renewing.remove(account.id);
+      shared = await _shareRenewal(account);
+      // 1.3.5: what this device holds once the renewal is shared, which the
+      // caller stores: a reconnect made on another device while the network
+      // renewed the old sign-in wins that sync, account and keys together
+      // (see [holdsNewerSignIn]), and storing the renewal of the old sign-in
+      // over it would pair the new app with the old keys.
+      return _differs(shared ? await store.read(account.id) ?? result : result, current);
     } finally {
       _renewing.remove(account.id);
-      // Share the new keys and give the lease back.
-      try {
-        await _locked(_syncLoop);
-      } on Object catch (e) {
-        _log.warn('Could not share the renewed ${account.displayName} sign-in yet: $e');
-      }
+      if (!shared) await _shareRenewal(account);
+    }
+  }
+
+  /// Shares a renewal (the new keys) and gives the lease back; whether that
+  /// sync went through.
+  Future<bool> _shareRenewal(ConnectedAccount account) async {
+    try {
+      await _locked(_syncLoop);
+      return true;
+    } on Object catch (e) {
+      _log.warn('Could not share the renewed ${account.displayName} sign-in yet: $e');
+      return false;
     }
   }
 

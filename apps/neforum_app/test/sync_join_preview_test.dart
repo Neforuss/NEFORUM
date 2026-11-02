@@ -241,6 +241,8 @@ void main() {
     expect(s.details.where((l) => l.contains('from this device')), isEmpty, reason: 'this device sends nothing of its own');
     expect(s.headline, startsWith('This device gets 2 accounts and 1 post from '));
     expect(s.details, contains(startsWith('The sync file holds 1 account twice')));
+    expect(s.details, contains("Where the two differ, the sync file's setup wins (it has more accounts: 2 against 0 on this device)."),
+        reason: 'the account held twice counts once, as the next line says it becomes one');
   }, timeout: _timeout);
 
   group('the dry run in words', () {

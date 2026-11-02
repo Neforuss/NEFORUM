@@ -54,7 +54,7 @@ Every device must use the same storage and the same file. For example: your PC, 
 The first time a device syncs with a file that already exists:
 
 - **Nothing is deleted.** Everything only one side has (an account, its keys, a post) is kept, and goes to the other side. Media hosts have two slots, so see below.
-- **The setup with the most accounts wins.** Where the device and the file have different versions of the same thing (a setting, an account's details, a media host), the side with more accounts keeps its version. If both have as many accounts, the side whose oldest account was connected first wins. If that is a tie too, the file wins, because your other devices already use it. You see which side wins before you join, and you can pick the other one.
+- **The setup with the most accounts wins.** Where the device and the file have different versions of the same thing (a setting, an account's details, a media host), the side with more accounts keeps its version (an account the file holds twice counts once). If both have as many accounts, the side whose oldest account was connected first wins. If that is a tie too, the file wins, because your other devices already use it. You see which side wins before you join, and you can pick the other one.
 - **One account, not two.** Mastodon, Pixelfed, TikTok and most hand-off accounts get a different id on each device, so one account connected on two devices can arrive twice. NEFORUM makes it one account, keeps the newer sign-in (its details and keys together), and moves posts and default targets to it. See "When accounts are merged" below.
 - **Media hosts, slot by slot.** The winning side keeps its hosts in their slots (main and fallback). A host of the other side goes into a slot left empty, so it is kept, and a device without a media host never removes another device's. Only when the winning side uses both slots is a host of the other side replaced, and NEFORUM names it before you join.
 
@@ -133,10 +133,9 @@ NEFORUM syncs when it starts, every five minutes, and a few seconds after you ch
 
 Each account, post and setting merges on its own, so changes on different things never clash. When the same thing was changed on two devices before they synced:
 
-- A post that has already gone out beats a later edit, so nothing is posted twice.
-- Otherwise, the newer edit wins.
-- For a sign-in, the most recently renewed keys win, because those are the ones the network still accepts.
-- An account's sign-in (the developer app it is connected through, and its keys) always comes from the most recent sign-in, as one piece. Your own changes to the account (switched off, renamed, quotas) follow the rules above on their own, so a reconnect on one device never pairs the new app with the old keys, or the other way round.
+- A post that has already gone out beats a later edit, so nothing is posted twice. Otherwise, the newer edit of a post wins.
+- An account's sign-in (the developer app or server it is connected through, its ids and its keys) always comes as one piece. When you reconnect it through another app or server on one device while another device renews the old sign-in, the most recent connection wins, even though the renewed keys expire later, so the new app is never paired with the old keys, or the other way round. Through the same app, the keys renewed last win, because those are the ones the network still accepts.
+- Your own changes to an account (switched on or off, renamed, quotas), a setting and a media host carry no time of the change. When the same one was changed on two devices before either synced, the device that syncs second keeps its own version, even when the other change was made later. To be sure a change sticks, make it on one device and let it sync before you change the same thing on another.
 - An edit beats a deletion, so nothing you were working on disappears.
 
 Cloud apps sometimes keep two copies when two devices save at the same moment, for example "NEFORUM (conflicted copy).neforumsync". NEFORUM merges such copies into the main file and then removes them.
@@ -148,6 +147,8 @@ Cloud apps sometimes keep two copies when two devices save at the same moment, f
 - asks "which data should win" instead of showing what joining will do.
 
 When an older device removes a setting from the file, the devices with 1.3.5 keep their own value. A device that joins after that keeps its own value too, unless its setup wins. On their next sync, the devices already syncing put their value back into the file once, so the new device gets it.
+
+**Known limitation: a device with a newer NEFORUM.** Something only a newer version knows, such as a post in a state this version does not have, stays in the sync file for the devices that know it, but is not stored on this device. Before a first sync, the dry run may still count it among what arrives.
 
 ## X and Tumblr
 
