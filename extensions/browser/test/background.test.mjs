@@ -86,8 +86,8 @@ const server = http.createServer((req, res) => {
   send(404, { error: 'nope' });
 });
 
-/** Loads background.js in a sandbox with a fake extension API. */
-function loadBackground() {
+/** Loads background.js in a sandbox with a fake extension API, and [extra] globals. */
+function loadBackground(extra = {}) {
   const store = {};
   const listeners = { message: null, connect: null };
   const chrome = {
@@ -103,10 +103,10 @@ function loadBackground() {
       onConnect: { addListener: (f) => (listeners.connect = f) },
     },
   };
-  const sandbox = { chrome, fetch, AbortSignal, URL, navigator: { userAgent: 'Mozilla/5.0 Chrome/141.0' }, btoa, atob, module: { exports: {} }, console, NEFORUM_PORTS: PORTS };
+  const sandbox = { chrome, fetch, AbortSignal, URL, navigator: { userAgent: 'Mozilla/5.0 Chrome/141.0' }, btoa, atob, module: { exports: {} }, console, NEFORUM_PORTS: PORTS, ...extra };
   vm.runInNewContext(readFileSync(new URL('../src/background.js', import.meta.url), 'utf8'), sandbox);
   const send = (msg) => new Promise((resolve) => listeners.message(msg, {}, resolve));
-  return { store, send, listeners };
+  return { store, send, listeners, exports: sandbox.module.exports };
 }
 
 before(async () => {
@@ -122,6 +122,72 @@ test('ports: the app\'s list, the 5277x ports first, then the 4177x ones below W
   const range = (from, n) => Array.from({ length: n }, (_, i) => from + i);
   assert.deepEqual([...sandbox.module.exports.PORTS], [...range(52772, 8), ...range(41772, 8)]);
   assert.ok(sandbox.module.exports.PORTS.slice(8).every((p) => p < 49152), 'outside 49152-65535, where Hyper-V reserves ports');
+});
+
+test('discovery: every port at once without the token, the first in order that answers; the port that answered last first; a busy NEFORUM found', async () => {
+  assert.equal(loadBackground().exports.HELLO_TIMEOUT_MS, 5000);
+  // Stand-ins in the extension's order, on ports of their own (port 0, so no other program can
+  // take one in between): "quick" is NEFORUM and answers at once, but acts as a closed port until
+  // switched on; "busy" is NEFORUM and takes busyMs to answer (extension 1.1.3 gave each port
+  // 900 ms); "other" is some other program. Each notes the Authorization of every request.
+  let busyMs = 1000;
+  let quickOn = false;
+  const seen = { quick: [], busy: [], other: [] };
+  const json = { 'Content-Type': 'application/json' };
+  const standIn = (name, answer) =>
+    http.createServer((req, res) => {
+      if (name === 'quick' && !quickOn) return req.socket.destroy();
+      seen[name].push(req.headers.authorization ?? null);
+      answer(res);
+    });
+  const neforum = (version, ms) => (res) =>
+    setTimeout(() => {
+      res.writeHead(200, json);
+      res.end(JSON.stringify({ app: 'NEFORUM', version, protocol: 1, paired: false }));
+    }, ms());
+  const quick = standIn('quick', neforum('quick', () => 0));
+  const busy = standIn('busy', neforum('busy', () => busyMs));
+  const other = standIn('other', (res) => {
+    res.writeHead(200, json);
+    res.end(JSON.stringify({ app: 'something else' }));
+  });
+  const servers = [quick, busy, other];
+  for (const s of servers) await new Promise((r) => s.listen(0, '127.0.0.1', r));
+  const ports = servers.map((s) => s.address().port);
+  try {
+    const bg = loadBackground({ NEFORUM_PORTS: ports });
+    bg.store.token = TOKEN;
+    let r = await bg.send({ type: 'status' });
+    assert.deepEqual({ app: r.value.app, version: r.value.version }, { app: true, version: 'busy' }, 'found, though it took 1 s to answer');
+    assert.deepEqual(seen.other, [null], 'every port asked at once, a later one too, without the token');
+    assert.deepEqual(seen.busy, [null, `Bearer ${TOKEN}`], 'the token only to the port found to be NEFORUM');
+
+    // The first port now answers too, and at once: the port that answered last is still asked
+    // first, alone, and waited for.
+    quickOn = true;
+    busyMs = 300;
+    r = await bg.send({ type: 'status' });
+    assert.equal(r.value.version, 'busy', 'the port that answered last, not the quickest');
+    assert.deepEqual([seen.quick, seen.other], [[], [null]], 'no search while it answers');
+
+    // The wait has a limit: what does not answer within it is not taken for NEFORUM.
+    busyMs = 400;
+    const impatient = loadBackground({ NEFORUM_PORTS: [ports[1]], NEFORUM_HELLO_TIMEOUT_MS: 100 });
+    assert.equal((await impatient.send({ type: 'status' })).value.app, false);
+
+    // The app moved: the search again, and the first in order wins.
+    busy.closeAllConnections();
+    await new Promise((res) => busy.close(res));
+    r = await bg.send({ type: 'status' });
+    assert.equal(r.value.version, 'quick');
+    assert.deepEqual(seen.quick, [null, `Bearer ${TOKEN}`]);
+    assert.deepEqual(seen.other, [null, null], 'never the token');
+  } finally {
+    for (const s of servers) {
+      s.closeAllConnections();
+      if (s.listening) await new Promise((res) => s.close(res));
+    }
+  }
 });
 
 test('pairing, status, job, media in chunks, result, and a revoked token', async () => {
