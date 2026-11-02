@@ -305,8 +305,12 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
         : widget.handleHiddenOn.isEmpty
         ? null
         : 'Stays off on ${widget.handleHiddenOn.join(', ')}, where Show @handle is off.';
-    // Which handles a written one replaces, so what goes away can be checked.
-    final replaced = 'In place of ${widget.ownHandles.join(' · ')}';
+    // Which handles a written one replaces, so what goes away can be checked;
+    // a design that hides its @handle block draws none, and says so.
+    final hiddenByDesign = design != null && design.handleBlock != null && !design.handleBlock!.visible;
+    final replaced = hiddenByDesign
+        ? 'This design hides its handle, so no card shows it. Show it in Design card to use this.'
+        : 'In place of ${widget.ownHandles.join(' · ')}';
 
     // How large the words come out, when a larger size changes nothing or
     // the design's words shrink to fit.
@@ -439,7 +443,7 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
               step: 8, note: fitNote),
           slider('line-spacing', 'Line spacing', design.wordsLineHeight, kDesignLineHeightMin, kDesignLineHeightMax, design.wordsLineHeight.toStringAsFixed(2),
               (v) => _editDesign((d) => d.withWordsLineHeight((v * 20).round() / 20))),
-          labelled('Position', chips('position', TextCardTextPosition.values, design.wordsPosition, (p) => p.label, (p) => _editDesign((d) => d.withWordsPosition(p, coverShown: designCoverShown(d, photo: background != null))))),
+          labelled('Position', chips('position', TextCardTextPosition.values, design.wordsPosition, (p) => p.label, (p) => _editDesign((d) => d.withWordsPosition(p)))),
           labelled(
             'Colours',
             Wrap(

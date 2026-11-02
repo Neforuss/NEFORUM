@@ -69,10 +69,6 @@ TextCardAlignment cardAlignmentAt(CardAnchor anchor) => switch (anchor.x) {
 /// ([CardDesignEdits.withHandleBlock]); a design that has one is unchanged.
 CardDesign designWithHandle(CardDesign design, String? handle) => handle != null && design.handleBlock == null ? design.withHandleBlock() : design;
 
-/// Whether a design's cover layer is drawn on a card: Vinyl's record always
-/// is, a framed photo only when the post's cards have a background photo.
-bool designCoverShown(CardDesign design, {required bool photo}) => design.cover.visible && (design.cover.shape == CardCoverShape.vinyl || photo);
-
 extension CardDesignEdits on CardDesign {
   int _index(CardBlockRole role) => blocks.indexWhere((b) => b.role == role);
   CardTextBlock? _block(CardBlockRole role) {
@@ -131,17 +127,17 @@ extension CardDesignEdits on CardDesign {
         _ => TextCardTextPosition.center,
       };
 
-  /// The words at the top, in the middle or at the bottom. At the top or
-  /// bottom they join the @handle (or the signature) already on that edge,
-  /// so the two stack instead of overlapping: the @handle stays on the
-  /// edge, the words next to it. A cover picture drawn on that edge
-  /// ([coverShown]: by default Vinyl's record, see [designCoverShown]) is
-  /// kept clear too: the words start past it, on every card's shape (the
-  /// picture is never taller than its size in the frame's height).
-  CardDesign withWordsPosition(TextCardTextPosition position, {bool? coverShown}) {
+  /// The words at the top, in the middle or at the bottom, moved by no
+  /// offset, with the template's room. At the top or bottom they join the
+  /// @handle (or the signature) already on that edge, so the two stack: the
+  /// @handle stays on the edge, the words next to it. The design keeps its
+  /// edge blocks clear of the pictures on that edge ([CardDesign.keepClear]:
+  /// Vinyl's record, a framed photo once there is one, the waveform),
+  /// worked out when each card is drawn, so no later edit or photo puts
+  /// words on them.
+  CardDesign withWordsPosition(TextCardTextPosition position) {
     final words = wordsBlock;
     if (words == null) return this;
-    final shown = coverShown ?? designCoverShown(this, photo: false);
     final row = switch (position) {
       TextCardTextPosition.top => 0,
       TextCardTextPosition.center => 1,
@@ -154,16 +150,10 @@ extension CardDesignEdits on CardDesign {
       partner = onRow(h) ? h!.anchor : (onRow(s) ? s!.anchor : null);
     }
     final anchor = partner ?? CardAnchor.values[row * 3 + words.anchor.index % 3];
-    // The template's own room for the words, where a cover asks for less.
+    // The template's own room for the words (a design changed by an
+    // earlier 1.3.5 build may have had it cut for a cover).
     final room = cardTemplateById(template ?? '')?.design(kind).wordsBlock?.maxHeight ?? words.maxHeight;
-    var offsetY = 0.0, maxHeight = room;
-    final c = cover;
-    if (row != 1 && shown && c.anchor.y == row / 2) {
-      const gap = 0.03;
-      offsetY = row == 0 ? c.offsetY + c.size + gap : c.offsetY - c.size - gap;
-      maxHeight = (1 - offsetY.abs()).clamp(0.1, room);
-    }
-    return _withWords((b) => b.copyWith(anchor: anchor, offsetY: offsetY, maxHeight: maxHeight))._stackedAroundWords();
+    return _withWords((b) => b.copyWith(anchor: anchor, offsetY: 0, maxHeight: room))._stackedAroundWords().copyWith(keepClear: true);
   }
 
   /// The blocks sharing the words' anchor on the top or bottom edge put on
@@ -240,7 +230,8 @@ extension CardDesignEdits on CardDesign {
     final s = signature != null && signature.anchor == anchor ? _index(CardBlockRole.signature) : -1;
     final list = [...blocks];
     s >= 0 ? list.insert(s, added) : list.add(added);
-    return copyWith(blocks: list)._stackedAroundWords();
+    // Clear of the pictures on its edge (Gradient wave's waveform).
+    return copyWith(blocks: list, keepClear: true)._stackedAroundWords();
   }
 
   /// The @handle's size, in pixels at 1080 wide.
@@ -273,7 +264,9 @@ extension CardDesignEdits on CardDesign {
 
   /// The @handle at [position], lined up to that side and moved by no
   /// offset. Put where the signature is, the two trade places rather than
-  /// stack; put on the words' edge, it joins them there on the edge.
+  /// stack; put on the words' edge, it joins them there on the edge. Both
+  /// keep clear of the pictures on that edge ([CardDesign.keepClear]), so a
+  /// place never puts the @handle or the words on Vinyl's record.
   CardDesign withHandlePosition(TextCardHandlePosition position) {
     final to = cardAnchorOfHandlePosition(position);
     final from = handleBlock?.anchor;
@@ -284,6 +277,6 @@ extension CardDesignEdits on CardDesign {
     }
     final words = d.wordsBlock;
     if (words != null && words.anchor.y == to.y && words.anchor != to) d = d._withWords((b) => b.copyWith(anchor: to, offsetY: 0));
-    return d._stackedAroundWords();
+    return d._stackedAroundWords().copyWith(keepClear: true);
   }
 }

@@ -13,7 +13,7 @@ import '../../media/caption_overlay.dart';
 import '../../media/caption_style.dart';
 import '../../media/card_design.dart';
 import '../../media/card_design_edits.dart';
-import '../../media/card_renderer.dart' show CardDesignPainter;
+import '../../media/card_renderer.dart' show CardDesignPainter, cardCoverDrawn;
 import '../../media/card_templates.dart' show cardTemplateLabel;
 import '../../media/text_card.dart';
 import '../../media/text_card_background.dart';
@@ -697,6 +697,7 @@ TextCardWordsFit? _measureWordsFit(Post post, List<(TargetPreview, MediaAttachme
         texts: {CardBlockRole.postText: text, CardBlockRole.handle: byline ?? '', if (!branded) CardBlockRole.signature: ''},
         safe: safe,
         platformId: id,
+        coverShown: cardCoverDrawn(design, picture: textCardParametersOf(m)?['background'] != null),
       ).drawnWordsSize(size);
       if (px == null) continue;
       asked = design.wordsSize;

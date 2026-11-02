@@ -291,24 +291,17 @@ void main() {
   });
 
   group('4. words moved to the top on Vinyl keep clear of the record', () {
-    test('on every card shape the words start below the record; back in the middle they have the template\'s room', () {
+    test('the design keeps its edges clear (worked out when drawn); back in the middle the words have the template\'s room', () {
+      // Round 4: the clearance moved from a baked offset to the renderer
+      // (CardDesign.keepClear), so no later edit or photo undoes it.
       final vinyl = _template('vinyl');
       final top = vinyl.withWordsPosition(TextCardTextPosition.top);
-      for (final (size, safe) in [
-        (const Size(1080, 1080), EdgeInsets.zero),
-        (const Size(1080, 1350), EdgeInsets.zero),
-        (const Size(1080, 1920), fullScreenSafeArea('tiktok')),
-      ]) {
-        final frame = cardFrameOf(size, safe, top.margin);
-        final record = cardCoverRect(top.cover, frame);
-        final wordsTop = frame.top + top.wordsBlock!.offsetY * frame.height;
-        expect(wordsTop, greaterThanOrEqualTo(record.bottom), reason: '$size');
-      }
+      expect(top.keepClear, isTrue);
+      expect(top.wordsBlock!.offsetY, 0);
       final middle = top.withWordsPosition(TextCardTextPosition.center);
-      expect(middle.wordsBlock!.offsetY, 0);
       expect(middle.wordsBlock!.maxHeight, vinyl.wordsBlock!.maxHeight);
-      // No cover drawn on that edge: nothing to keep clear of.
-      expect(_template('minimal').withWordsPosition(TextCardTextPosition.top).wordsBlock!.offsetY, 0);
+      expect(vinyl.keepClear, isFalse, reason: 'an untouched template is drawn as before');
+      expect(vinyl.toJson().containsKey('keepClear'), isFalse);
     });
 
     testWidgets('the pixels: no words on the record', (tester) async {

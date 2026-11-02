@@ -486,7 +486,12 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   /// "White on black" or "Black on white": the theme's colours, so colours
   /// of the card's own ([TextCardStyle]) go.
-  void setTextCardTheme(TextCardTheme t) => state = state.copyWith(textCardTheme: t, textCardStyle: state.textCardStyle.withoutColours());
+  void setTextCardTheme(TextCardTheme t) {
+    // On a plain card a @handle colour that would vanish on the new theme
+    // goes too (1.3.5).
+    final style = state.textCardStyle.withoutColours();
+    state = state.copyWith(textCardTheme: t, textCardStyle: state.textCardBackground == null ? _readableOn(style, t) : style);
+  }
 
   /// 1.3.5: cards. The text card's style for every network.
   void setTextCardStyle(TextCardStyle style) => state = state.copyWith(textCardStyle: style);
@@ -588,11 +593,18 @@ class ComposerNotifier extends Notifier<ComposerState> {
       state = state.copyWith(textCardBackground: background);
       return;
     }
-    final style = state.textCardStyle;
-    final words = style.textColor;
-    final card = style.backgroundColorOr((state.textCardTheme ?? ref.read(settingsProvider).textCardTheme).background);
-    final unreadable = words != null && textCardContrast(Color(words), card) < 3;
-    state = state.copyWith(clearTextCardBackground: true, textCardStyle: unreadable ? style.copyWith(clearTextColor: true) : null);
+    final theme = state.textCardTheme ?? ref.read(settingsProvider).textCardTheme;
+    state = state.copyWith(clearTextCardBackground: true, textCardStyle: _readableOn(state.textCardStyle, theme));
+  }
+
+  /// [style] with its words and @handle colours that would not read on the
+  /// plain card of [theme] (a contrast under 3:1 with the card's colour) put
+  /// back: the words to the theme's, the @handle to the words' (faded).
+  /// What is left is always legible, whatever was picked for a photo.
+  static TextCardStyle _readableOn(TextCardStyle style, TextCardTheme theme) {
+    final card = style.backgroundColorOr(theme.background);
+    bool unreadable(int? argb) => argb != null && textCardContrast(Color(argb), card) < 3;
+    return style.copyWith(clearTextColor: unreadable(style.textColor), clearHandleColor: unreadable(style.handleColor));
   }
   void setTextCardEveryNetwork(bool on) => state = state.copyWith(textCardEveryNetwork: on);
   void setTextCardWithText(String platformId, bool on) => state = state.copyWith(textCardWithText: {...state.textCardWithText, platformId: on});

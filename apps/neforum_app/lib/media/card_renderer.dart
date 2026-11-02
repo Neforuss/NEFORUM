@@ -54,6 +54,11 @@ Rect cardCoverRect(CardCoverLayer c, Rect frame) {
   return placeInFrame(frame, Size(side, side), c.anchor, c.offsetX, c.offsetY);
 }
 
+/// 1.3.5: whether [d]'s cover layer is drawn on a card that has a
+/// [picture] for it (a text card's background photo, an audio card's
+/// cover): a record shows without one too, as [CardComposeJob] draws it.
+bool cardCoverDrawn(CardDesign d, {required bool picture}) => d.cover.visible && (picture || d.cover.shape == CardCoverShape.vinyl);
+
 /// Where the waveform layer goes.
 Rect cardWaveformRect(CardWaveformLayer w, Rect frame) =>
     placeInFrame(frame, Size(frame.width * w.width, frame.height * w.height), w.anchor, w.offsetX, w.offsetY);
@@ -107,8 +112,14 @@ class CardRenderInput {
 Future<Uint8List> renderCardDesign(CardRenderInput input, {bool png = false}) async {
   final width = input.size.width.round(), height = input.size.height.round();
   final words = await rasterizeWordsLayer(width, height, (canvas) {
-    CardDesignPainter(design: input.design, texts: input.texts, safe: input.safe, platformId: input.platformId, waveform: input.waveform)
-        .paint(canvas, input.size);
+    CardDesignPainter(
+      design: input.design,
+      texts: input.texts,
+      safe: input.safe,
+      platformId: input.platformId,
+      waveform: input.waveform,
+      coverShown: cardCoverDrawn(input.design, picture: input.cover != null),
+    ).paint(canvas, input.size);
   });
   return compute(composeCardDesign, CardComposeJob.forInput(input, words, png: png));
 }
@@ -120,7 +131,8 @@ Future<Uint8List> renderCardDesign(CardRenderInput input, {bool png = false}) as
 /// Paints a design's waveform and text blocks (the layer the engine draws).
 /// Repaints when an installed or imported font finishes loading.
 class CardDesignPainter extends CustomPainter {
-  CardDesignPainter({required this.design, this.texts = const {}, this.safe = EdgeInsets.zero, this.platformId, this.waveform})
+  CardDesignPainter(
+      {required this.design, this.texts = const {}, this.safe = EdgeInsets.zero, this.platformId, this.waveform, this.coverShown = false})
       : super(repaint: captionFontsRevision);
 
   final CardDesign design;
@@ -129,6 +141,10 @@ class CardDesignPainter extends CustomPainter {
   final String? platformId;
   final List<double>? waveform;
 
+  /// 1.3.5: the cover layer is drawn on this card ([cardCoverDrawn]), so
+  /// blocks of a [CardDesign.keepClear] design keep clear of it.
+  final bool coverShown;
+
   @override
   void paint(Canvas canvas, Size size) {
     final u = cardUnit(size);
@@ -136,6 +152,101 @@ class CardDesignPainter extends CustomPainter {
     final levels = waveform;
     if (design.waveform.visible && levels != null && levels.isNotEmpty) _paintWaveform(canvas, design.waveform, cardWaveformRect(design.waveform, frame), levels, u);
     _paintBlocks(canvas, frame, u);
+  }
+
+  /// The visible blocks with words, by anchor (blocks at one anchor stack,
+  /// in their order).
+  Map<CardAnchor, List<CardTextBlock>> _groups() {
+    final groups = <CardAnchor, List<CardTextBlock>>{};
+    for (final b in design.blocks) {
+      if (b.visible && wordsOf(b).isNotEmpty) (groups[b.anchor] ??= []).add(b);
+    }
+    return groups;
+  }
+
+  /// 1.3.5: the room each anchor's blocks are laid out and placed in: the
+  /// whole frame, except on a [CardDesign.keepClear] design, where a group on
+  /// the top (bottom) edge starts below (ends above) the pictures on that
+  /// edge it would cross (the drawn cover with its border and turn, the
+  /// waveform), and a group holding the post's words also clear of the
+  /// other blocks on its edge. A room under a tenth of the frame falls back
+  /// to the whole frame rather than leave nothing.
+  Map<CardAnchor, Rect> _rooms(Map<CardAnchor, List<CardTextBlock>> groups, Rect frame, double u) {
+    final rooms = {for (final a in groups.keys) a: frame};
+    if (!design.keepClear) return rooms;
+    final gap = 24 * u;
+    final pictures = <Rect>[
+      if (coverShown) _coverBounds(frame, u),
+      if (design.waveform.visible && (waveform?.isNotEmpty ?? false)) cardWaveformRect(design.waveform, frame),
+    ];
+    Rect across(CardAnchor a, List<CardTextBlock> blocks) {
+      final w = frame.width * blocks.map((b) => b.width).reduce(math.max);
+      final left = frame.left + (frame.width - w) * a.x;
+      return Rect.fromLTRB(left, frame.top, left + w, frame.bottom);
+    }
+
+    Rect roomOf(CardAnchor a, List<CardTextBlock> blocks, List<Rect> obstacles) {
+      final x = across(a, blocks);
+      var top = frame.top, bottom = frame.bottom;
+      for (final o in obstacles) {
+        if (o.left >= x.right || x.left >= o.right) continue;
+        if (a.y == 0 && o.center.dy < frame.center.dy) top = math.max(top, o.bottom + gap);
+        if (a.y == 1 && o.center.dy > frame.center.dy) bottom = math.min(bottom, o.top - gap);
+      }
+      final r = Rect.fromLTRB(frame.left, top, frame.right, bottom);
+      return r.height >= frame.height * 0.1 ? r : frame;
+    }
+
+    // The edges' other blocks first, then the words clear of them too.
+    final placed = <Rect>[];
+    for (final MapEntry(key: a, value: blocks) in groups.entries) {
+      if (a.y == 0.5 || blocks.any((b) => b.role == CardBlockRole.postText)) continue;
+      final room = roomOf(a, blocks, pictures);
+      rooms[a] = room;
+      final g = _layoutGroup(blocks, room, u);
+      for (final l in g.laid) {
+        l.dispose();
+      }
+      final x = across(a, blocks);
+      placed.add(a.y == 0 ? Rect.fromLTRB(x.left, room.top, x.right, room.top + g.total) : Rect.fromLTRB(x.left, room.bottom - g.total, x.right, room.bottom));
+    }
+    for (final MapEntry(key: a, value: blocks) in groups.entries) {
+      if (a.y == 0.5 || !blocks.any((b) => b.role == CardBlockRole.postText)) continue;
+      rooms[a] = roomOf(a, blocks, [...pictures, ...placed]);
+    }
+    return rooms;
+  }
+
+  /// The cover's square as drawn: turned, with its border.
+  Rect _coverBounds(Rect frame, double u) {
+    final c = design.cover;
+    final r = cardCoverRect(c, frame);
+    final turn = c.rotation * math.pi / 180;
+    final half = r.width / 2 * (math.cos(turn).abs() + math.sin(turn).abs()) + c.borderWidth * u;
+    return Rect.fromCenter(center: r.center, width: half * 2, height: half * 2);
+  }
+
+  /// [blocks] (one anchor's) laid out in [room], in their order, with their
+  /// height together.
+  ({List<_LaidBlock> laid, double total}) _layoutGroup(List<CardTextBlock> blocks, Rect room, double u) {
+    final laid = <_LaidBlock>[];
+    // Fixed blocks first: blocks that fit themselves get the room left.
+    var fixedHeight = 0.0;
+    for (final b in blocks.where((b) => !b.autoFit)) {
+      final l = _layout(b, room, u, null);
+      laid.add(l);
+      fixedHeight += l.height + b.gapBefore * u;
+    }
+    for (final b in blocks.where((b) => b.autoFit)) {
+      final fit = math.max(room.height * 0.08, room.height * b.maxHeight - fixedHeight);
+      laid.add(_layout(b, room, u, fit));
+    }
+    laid.sort((a, b) => blocks.indexOf(a.block).compareTo(blocks.indexOf(b.block)));
+    var total = 0.0;
+    for (var i = 0; i < laid.length; i++) {
+      total += laid[i].height + (i == 0 ? 0 : laid[i].block.gapBefore * u);
+    }
+    return (laid: laid, total: total);
   }
 
   /// The words of block [b]; empty leaves it out.
@@ -220,39 +331,23 @@ class CardDesignPainter extends CustomPainter {
   }
 
   void _paintBlocks(Canvas canvas, Rect frame, double u) {
-    // Blocks at the same anchor stack, in their order.
-    final groups = <CardAnchor, List<CardTextBlock>>{};
-    for (final b in design.blocks) {
-      if (b.visible && wordsOf(b).isNotEmpty) (groups[b.anchor] ??= []).add(b);
-    }
+    // Blocks at the same anchor stack, in their order, in their room (the
+    // whole frame, or on a keepClear design clear of the edge's pictures).
+    final groups = _groups();
+    final rooms = _rooms(groups, frame, u);
     for (final MapEntry(key: anchor, value: blocks) in groups.entries) {
-      final laid = <_LaidBlock>[];
-      // Fixed blocks first: blocks that fit themselves get the room left.
-      var fixedHeight = 0.0;
-      for (final b in blocks.where((b) => !b.autoFit)) {
-        final l = _layout(b, frame, u, null);
-        laid.add(l);
-        fixedHeight += l.height + b.gapBefore * u;
-      }
-      for (final b in blocks.where((b) => b.autoFit)) {
-        final room = math.max(frame.height * 0.08, frame.height * b.maxHeight - fixedHeight);
-        laid.add(_layout(b, frame, u, room));
-      }
-      laid.sort((a, b) => blocks.indexOf(a.block).compareTo(blocks.indexOf(b.block)));
-      var total = 0.0;
-      for (var i = 0; i < laid.length; i++) {
-        total += laid[i].height + (i == 0 ? 0 : laid[i].block.gapBefore * u);
-      }
-      var y = frame.top + (frame.height - total) * anchor.y;
+      final room = rooms[anchor]!;
+      final (:laid, :total) = _layoutGroup(blocks, room, u);
+      var y = room.top + (room.height - total) * anchor.y;
       for (var i = 0; i < laid.length; i++) {
         final l = laid[i];
         if (i > 0) y += l.block.gapBefore * u;
         final b = l.block;
-        var at = Offset(frame.left + (frame.width - l.width) * anchor.x + b.offsetX * frame.width, y + b.offsetY * frame.height);
+        var at = Offset(room.left + (room.width - l.width) * anchor.x + b.offsetX * room.width, y + b.offsetY * room.height);
         // Kept inside the frame, so a network's buttons never cover it.
         at = Offset(
-          at.dx.clamp(frame.left, math.max(frame.left, frame.right - l.width)),
-          at.dy.clamp(frame.top, math.max(frame.top, frame.bottom - l.height)),
+          at.dx.clamp(room.left, math.max(room.left, room.right - l.width)),
+          at.dy.clamp(room.top, math.max(room.top, room.bottom - l.height)),
         );
         l.paint(canvas, at);
         y += l.height;
@@ -322,15 +417,13 @@ class CardDesignPainter extends CustomPainter {
     final frame = cardFrameOf(size, safe, design.margin);
     final words = design.blocks.where((b) => b.role == CardBlockRole.postText && b.visible && wordsOf(b).isNotEmpty).firstOrNull;
     if (words == null) return null;
-    var fixedHeight = 0.0;
-    for (final b in design.blocks.where((b) => b.visible && !b.autoFit && b.anchor == words.anchor && wordsOf(b).isNotEmpty)) {
-      final l = _layout(b, frame, u, null);
-      fixedHeight += l.height + b.gapBefore * u;
+    final groups = _groups();
+    final (:laid, total: _) = _layoutGroup(groups[words.anchor]!, _rooms(groups, frame, u)[words.anchor]!, u);
+    final mine = laid.firstWhere((l) => identical(l.block, words));
+    final fs = mine is _LaidText ? mine.fontSize : words.size * u;
+    for (final l in laid) {
       l.dispose();
     }
-    final laid = _layout(words, frame, u, words.autoFit ? math.max(frame.height * 0.08, frame.height * words.maxHeight - fixedHeight) : null);
-    final fs = laid is _LaidText ? laid.fontSize : words.size * u;
-    laid.dispose();
     return fs / u;
   }
 
