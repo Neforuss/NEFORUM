@@ -15,7 +15,14 @@ class _Device {
       : accounts = accountRepo ?? InMemoryAccountRepository(),
         posts = InMemoryPostRepository(),
         secrets = InMemorySecretStore(),
-        stateStore = MemorySyncStateStore() {
+        stateStore = MemorySyncStateStore(),
+        _extra = extra,
+        _log = log {
+    restart();
+  }
+
+  /// A fresh process: a new engine over the same data, keychain and state.
+  void restart() {
     engine = SyncEngine(
       backend: backend,
       cipher: BackupCipher(_pass, params: _fast, minimum: _fast, derive: (p, s, k) {
@@ -24,12 +31,12 @@ class _Device {
       }),
       deviceId: id,
       device: SyncDeviceInfo(label: id, platform: 'test', appVersion: '1.0.8', seenAt: DateTime.utc(2000)),
-      sources: [AccountsSyncSource(accounts), SecretsSyncSource(accounts, secrets), PostsSyncSource(posts), ...extra],
+      sources: [AccountsSyncSource(accounts), SecretsSyncSource(accounts, secrets), PostsSyncSource(posts), ..._extra],
       state: stateStore,
       secrets: secrets,
       clock: () => clock.now,
       sleep: (d) async => clock.now = clock.now.add(d),
-      log: log == null ? null : Logger('sync', sink: log),
+      log: _log == null ? null : Logger('sync', sink: _log),
     );
   }
 
@@ -40,8 +47,36 @@ class _Device {
   final InMemoryPostRepository posts;
   final InMemorySecretStore secrets;
   final MemorySyncStateStore stateStore;
-  late final SyncEngine engine;
+  final List<SyncSource> _extra;
+  final LogSink? _log;
+  late SyncEngine engine;
   int deriveCount = 0;
+
+  Future<List<String>> ids(String platform) async => [for (final a in await accounts.all()) if (a.platformId == platform) a.id]..sort();
+}
+
+/// Each device syncs once, a minute apart, [n] times over.
+Future<void> _rounds(List<_Device> devices, _Clock clock, int n) async {
+  for (var i = 0; i < n; i++) {
+    for (final d in devices) {
+      clock.now = clock.now.add(const Duration(minutes: 1));
+      await d.engine.sync();
+    }
+  }
+}
+
+/// A WordPress hand-off as WordPressAdapter connects one: a natural id with
+/// the site's path, a name with its host only.
+ConnectedAccount _wordPressHandoff(String siteUrl, DateTime at) {
+  final site = Uri.parse(siteUrl);
+  return ConnectedAccount(
+      id: 'wordpress-handoff:${site.host}${site.path}',
+      platformId: 'wordpress',
+      tier: PlatformTier.handoff,
+      displayName: '${site.host} (hand-off)',
+      profileUrl: site.toString(),
+      createdAt: at,
+      config: {'site': site.toString()});
 }
 
 class _Clock {
@@ -216,13 +251,13 @@ void main() {
     });
 
     test('hand-off twins made before syncing become one account', () async {
-      await a.accounts.upsert(_account('h-a', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+      await a.accounts.upsert(_account('instagram-handoff-$_uuid1', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
       await a.engine.sync();
-      await b.accounts.upsert(_account('h-b', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
-      await b.posts.upsert(_post('p1', targets: const [PostTarget(accountId: 'h-b')]));
+      await b.accounts.upsert(_account('instagram-handoff-$_uuid2', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+      await b.posts.upsert(_post('p1', targets: [const PostTarget(accountId: 'instagram-handoff-$_uuid2')]));
       await b.engine.sync();
-      expect((await b.accounts.all()).map((x) => x.id), ['h-a']);
-      expect((await b.posts.get('p1'))!.targets.single.accountId, 'h-a');
+      expect((await b.accounts.all()).map((x) => x.id), ['instagram-handoff-$_uuid1']);
+      expect((await b.posts.get('p1'))!.targets.single.accountId, 'instagram-handoff-$_uuid1');
     });
 
     test('a write that collides with another device is merged and retried', () async {
@@ -839,8 +874,8 @@ void main() {
       expect(isSameConnectedAccount(acc(_uuid1, 'mastodon'), acc(_uuid2, 'mastodon')), isFalse, reason: 'nothing to tell them apart is not a match');
       expect(isSameConnectedAccount(acc('x-1', 'x', handle: '@me'), acc('x-2', 'x', handle: '@me')), isFalse, reason: 'two natural ids are two accounts');
       expect(isSameConnectedAccount(acc(_uuid1, 'x', handle: '@me'), acc('x-2', 'x', handle: '@me')), isTrue, reason: 'one made-up id may match');
-      expect(isSameConnectedAccount(acc('h-a', 'instagram', tier: 'handoff', name: 'IG'), acc('h-b', 'instagram', tier: 'handoff', name: 'IG')), isTrue);
-      expect(isSameConnectedAccount(acc('h-a', 'instagram', tier: 'handoff', name: 'IG'), acc('h-b', 'instagram', tier: 'handoff', name: 'IG 2')), isFalse);
+      expect(isSameConnectedAccount(acc('instagram-handoff-$_uuid1', 'instagram', tier: 'handoff', name: 'IG'), acc('instagram-handoff-$_uuid2', 'instagram', tier: 'handoff', name: 'IG')), isTrue);
+      expect(isSameConnectedAccount(acc('instagram-handoff-$_uuid1', 'instagram', tier: 'handoff', name: 'IG'), acc('instagram-handoff-$_uuid2', 'instagram', tier: 'handoff', name: 'IG 2')), isFalse);
       expect(isSameConnectedAccount(acc(_uuid1, 'mastodon', handle: 'a@m'), acc(_uuid2, 'mastodon', tier: 'handoff', handle: 'a@m')), isFalse);
       expect(normalizedAccountHandle('  @@Alice@Mastodon.Social '), 'alice@mastodon.social');
       expect(normalizedAccountHandle('@'), isNull);
@@ -965,13 +1000,13 @@ void main() {
     /// sign-in. Y connected the same account later: the newer sign-in.
     Future<void> setUpTwins(_Device x, _Device y, {Map<String, String> yKeys = const {'access_token': 'fake-new-working'}}) async {
       await x.accounts.upsert(_account(_uuid1, 'mastodon',
-          tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 1, 1), config: _mastodonConfig));
+          tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 1, 1), config: {..._mastodonConfig, 'scopes': 'old app'}));
       await x.secrets.write(_uuid1, {'access_token': 'fake-old-revoked'});
       await x.accounts.upsert(_account('x-1', 'x'));
       await x.accounts.upsert(_account('t-1', 'tumblr'));
       await x.engine.sync();
       await y.accounts.upsert(_account(_uuid2, 'mastodon',
-          tier: PlatformTier.openApi, handle: 'me@mastodon.example', createdAt: DateTime.utc(2026, 10, 15), config: _mastodonConfig));
+          tier: PlatformTier.openApi, handle: 'me@mastodon.example', createdAt: DateTime.utc(2026, 10, 15), config: {..._mastodonConfig, 'scopes': 'new app'}));
       await y.secrets.write(_uuid2, yKeys);
       await y.posts.upsert(_post('py', targets: const [PostTarget(accountId: _uuid2)]));
     }
@@ -980,7 +1015,12 @@ void main() {
       for (final d in [x, y]) {
         expect((await d.accounts.all()).where((a) => a.platformId == 'mastodon').map((a) => a.id), [_uuid1]);
         expect((await d.secrets.read(_uuid1))?['access_token'], token, reason: 'the newer sign-in survives on ${d.id}');
+        expect((await d.accounts.get(_uuid1))!.config['scopes'], 'new app',
+            reason: "${d.id}: the account's details come with its keys (an app registration and its token belong together)");
       }
+      final doc = await file();
+      expect(doc.records.containsKey('account:$_uuid2'), isFalse, reason: 'a copy that never was in the file leaves no trace there');
+      expect(doc.records.containsKey('secrets:$_uuid2'), isFalse);
       expect(await y.secrets.read(_uuid2), isNull);
       expect((await y.posts.get('py'))!.targets.single.accountId, _uuid1);
       expect(y.stateStore.data?['joined'], isTrue);
@@ -1150,6 +1190,239 @@ void main() {
         expect((await d.secrets.read(_uuid2))?['access_token'], 'fake-c-newer', reason: '${d.id}: the newer sign-in');
         expect((await d.posts.get('pc'))?.targets.single.accountId, _uuid2, reason: d.id);
       }
+    });
+  });
+
+  group('different accounts are never merged, and a merge leaves nothing dangling (1.3.5)', () {
+    test('two blogs of one WordPress multisite made on two joined devices stay two', () async {
+      await a.accounts.upsert(_wordPressHandoff('https://example.com/blog-one', DateTime.utc(2026, 5, 1)));
+      await a.engine.sync();
+      await b.engine.sync(); // B joins with nothing
+      await b.accounts.upsert(_wordPressHandoff('https://example.com/blog-two', DateTime.utc(2026, 6, 1)));
+      await b.posts.upsert(_post('p-two', targets: const [PostTarget(accountId: 'wordpress-handoff:example.com/blog-two')]));
+      await _rounds([b, a, b, a], clock, 1);
+      expect(await a.ids('wordpress'), hasLength(2), reason: 'two natural ids are two blogs');
+      expect((await a.posts.get('p-two'))!.targets.single.accountId, 'wordpress-handoff:example.com/blog-two');
+    });
+
+    test('switching one of two blogs off on another device does not make them twins, and a post to both keeps both', () async {
+      await a.accounts.upsert(_wordPressHandoff('https://example.com/blog-one', DateTime.utc(2026, 5, 1)));
+      await a.accounts.upsert(_wordPressHandoff('https://example.com/blog-two', DateTime.utc(2026, 6, 1)));
+      await a.posts.upsert(_post('p-both', targets: const [
+        PostTarget(accountId: 'wordpress-handoff:example.com/blog-one'),
+        PostTarget(accountId: 'wordpress-handoff:example.com/blog-two'),
+      ]));
+      await a.engine.sync();
+      await b.engine.sync();
+      final two = await b.accounts.get('wordpress-handoff:example.com/blog-two');
+      await b.accounts.upsert(two!.copyWith(enabled: false));
+      await _rounds([b, a, b, a], clock, 1);
+      expect(await a.ids('wordpress'), hasLength(2));
+      expect((await a.posts.get('p-both'))!.targets.map((t) => t.accountId), ['wordpress-handoff:example.com/blog-one', 'wordpress-handoff:example.com/blog-two']);
+    });
+
+    test('hand-off copies that both live in the file are never merged later; only a first sync merges a hand-off', () async {
+      // Made on two devices that were already syncing, under one name.
+      await a.engine.sync();
+      await b.engine.sync();
+      await a.accounts.upsert(_account('instagram-handoff-$_uuid1', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+      await a.engine.sync();
+      await b.accounts.upsert(_account('instagram-handoff-$_uuid2', 'instagram', tier: PlatformTier.handoff, name: 'Instagram (hand-off)'));
+      await _rounds([b, a, b, a], clock, 1);
+      expect(await a.ids('instagram'), hasLength(2), reason: 'two hand-off accounts the user made on purpose');
+    });
+
+    test('a hand-off on another site, or with another handle, is never a twin', () {
+      Map<String, Object?> h(String id, {String? site, String? handle}) => {
+            'id': id,
+            'platformId': 'wordpress',
+            'tier': 'handoff',
+            'displayName': 'example.com (hand-off)',
+            'handle': handle,
+            'config': {'site': ?site},
+          };
+      expect(isSameConnectedAccount(h(_uuid1, site: 'https://example.com/blog-one'), h(_uuid2, site: 'https://example.com/blog-two')), isFalse);
+      expect(isSameConnectedAccount(h(_uuid1, site: 'https://example.com/blog-one/'), h(_uuid2, site: 'https://Example.com/blog-one')), isTrue);
+      expect(isSameConnectedAccount(h(_uuid1, handle: 'alice'), h(_uuid2, handle: 'bob')), isFalse);
+      expect(isSameConnectedAccount(h('wordpress-handoff:example.com/a', site: 'https://example.com/a'), h('wordpress-handoff:example.com/a2', site: 'https://example.com/a')),
+          isFalse,
+          reason: 'two natural ids, whatever the tier');
+      expect(handoffSite({'config': {'site': 'https://Example.com/blog-one/'}}), 'example.com/blog-one');
+    });
+
+    test('accounts matched by a handle alone are never the same on two servers', () {
+      Map<String, Object?> m(String id, String server) =>
+          {'id': id, 'platformId': 'mastodon', 'tier': 'openApi', 'handle': 'alice', 'displayName': 'alice', 'config': {'domain': server}};
+      expect(isSameConnectedAccount(m(_uuid1, 'one.example'), m(_uuid2, 'two.example')), isFalse);
+      expect(isSameConnectedAccount(m(_uuid1, 'one.example'), m(_uuid2, 'one.example')), isTrue);
+    });
+
+    test('accounts matched by their handle, joining at once through a cloud folder, become one', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock);
+      const config = {'instance': 'https://mastodon.example', 'domain': 'mastodon.example'}; // connected before the account id was recorded
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: config));
+      await z.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, handle: '@Me@Mastodon.Example', config: config));
+      folder.freeze();
+      await y.engine.sync();
+      await z.engine.sync();
+      folder.thaw();
+      await _rounds([x, y, z], clock, 2);
+      for (final d in [x, y, z]) {
+        expect(await d.ids('mastodon'), [_uuid2], reason: '${d.id}: the copy that arrived through the conflicted copy is new to the file');
+      }
+    });
+
+    test('two copies matched by their handle alone that both already were in the file are left apart', () async {
+      await a.engine.sync();
+      const config = {'instance': 'https://mastodon.example', 'domain': 'mastodon.example'};
+      for (final id in [_uuid1, _uuid2]) {
+        await putInFile('account:$id', SyncRecord.of(_account(id, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: config).toJson(), at: clock.now, by: 'other'));
+      }
+      await _rounds([a, b], clock, 2);
+      expect(await a.ids('mastodon'), [_uuid1, _uuid2], reason: 'without an identity on the network, only a copy new to the file merges');
+    });
+
+    test('a post to both copies of a merged account keeps one target', () {
+      final p = PostsSyncSource(InMemoryPostRepository());
+      final value = _post('p', targets: const [PostTarget(accountId: 'old'), PostTarget(accountId: 'kept'), PostTarget(accountId: 'other')]).toJson();
+      final moved = p.remapAccountIds('p', value, {'old': 'kept'})! as Map;
+      expect([for (final t in moved['targets'] as List) (t as Map)['accountId']], ['kept', 'other']);
+    });
+
+    test('three devices, TikTok twins joining at once through a cloud folder: the sign-in that expires last survives', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock);
+      const tt = {'clientKey': 'fake-client-key', 'openId': 'fake-open-id'};
+      await x.accounts.upsert(_account(_uuid3, 'tiktok', name: 'Me', createdAt: DateTime.utc(2026, 1, 1), config: tt));
+      await x.secrets.write(_uuid3, {'access_token': 'x-a', 'refresh_token': 'x-r', 'expires_at': '2026-10-20T13:00:00.000Z'});
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid1, 'tiktok', name: 'Me', createdAt: DateTime.utc(2026, 10, 18), config: tt));
+      await y.secrets.write(_uuid1, {'access_token': 'y-a', 'refresh_token': 'y-r', 'expires_at': '2026-10-21T12:00:00.000Z'});
+      await z.accounts.upsert(_account(_uuid2, 'tiktok', name: 'Me', createdAt: DateTime.utc(2026, 10, 10), config: tt));
+      await z.secrets.write(_uuid2, {'access_token': 'z-a', 'refresh_token': 'z-r', 'expires_at': '2026-10-20T18:00:00.000Z'});
+      for (final d in [x, y, z]) {
+        await d.posts.upsert(_post('p-${d.id}', targets: [PostTarget(accountId: (await d.ids('tiktok')).single)]));
+      }
+      folder.freeze();
+      await y.engine.sync();
+      clock.now = clock.now.add(const Duration(seconds: 30));
+      await z.engine.sync(); // the cloud app keeps Z's write as a conflicted copy
+      folder.thaw();
+      await _rounds([x, y, z], clock, 4);
+      for (final d in [x, y, z]) {
+        expect(await d.ids('tiktok'), [_uuid3], reason: d.id);
+        expect((await d.secrets.read(_uuid3))?['access_token'], 'y-a', reason: '${d.id}: the later expiry');
+        for (final p in ['p-X', 'p-Y', 'p-Z']) {
+          expect((await d.posts.get(p))?.targets.single.accountId, _uuid3, reason: '${d.id} $p');
+        }
+      }
+    });
+
+    test('a crash between the file write and the removal of the merged copy: the restarted app converges', () async {
+      final crashing = _CrashAfterWrite(backend);
+      final x = _Device('X', backend, clock), y = _Device('Y', crashing, clock);
+      await x.accounts.upsert(_account(_uuid1, 'mastodon',
+          tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 1, 1), config: _mastodonConfig));
+      await x.secrets.write(_uuid1, {'access_token': 'fake-old-revoked'});
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'mastodon',
+          tier: PlatformTier.openApi, handle: 'me@mastodon.example', createdAt: DateTime.utc(2026, 10, 15), config: _mastodonConfig));
+      await y.secrets.write(_uuid2, {'access_token': 'fake-new-working'});
+      await y.posts.upsert(_post('p-y', targets: const [PostTarget(accountId: _uuid2)]));
+      crashing.crashNext = true;
+      await expectLater(y.engine.sync(), throwsA(isA<_Killed>()));
+      y.restart();
+      await _rounds([y, x, y, x], clock, 1);
+      expect(await y.ids('mastodon'), [_uuid1]);
+      expect(await y.secrets.read(_uuid2), isNull);
+      expect((await x.secrets.read(_uuid1))?['access_token'], 'fake-new-working');
+      expect((await x.posts.get('p-y'))?.targets.single.accountId, _uuid1);
+    });
+
+    test('three devices through a cloud folder: the kept id and keys never flip', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock);
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 2), config: _mastodonConfig));
+      await y.secrets.write(_uuid3, {'access_token': 'fake-y'});
+      await z.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 9), config: _mastodonConfig));
+      await z.secrets.write(_uuid1, {'access_token': 'fake-z'});
+      folder.freeze();
+      await y.engine.sync();
+      await z.engine.sync();
+      folder.thaw();
+      final seen = <String>{};
+      for (var i = 0; i < 5; i++) {
+        for (final d in [z, y, x]) {
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          await d.engine.sync();
+          if (i > 0) seen.add('${(await d.ids('mastodon')).join(',')}:${(await d.secrets.read(_uuid1))?['access_token']}');
+        }
+      }
+      expect(seen, {'$_uuid1:fake-z'}, reason: 'the smaller id, with the newer sign-in, everywhere and for good');
+    });
+
+    test('a draft saved under the old id after a merge on a joined device still finds its account', () async {
+      await a.accounts.upsert(_account('x-1', 'x'));
+      await a.engine.sync();
+      await b.engine.sync(); // both joined
+      await b.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 18), config: _mastodonConfig));
+      await b.secrets.write(_uuid2, {'access_token': 'fake-b'});
+      await b.engine.sync();
+      await a.accounts.upsert(_account(_uuid1, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', createdAt: DateTime.utc(2026, 10, 19), config: _mastodonConfig));
+      await a.secrets.write(_uuid1, {'access_token': 'fake-a'});
+      final draft = _post('draft', targets: const [PostTarget(accountId: _uuid1)], updatedAt: DateTime.utc(2026, 10, 20, 11));
+      await a.posts.upsert(draft);
+      clock.now = clock.now.add(const Duration(minutes: 5));
+      await a.engine.sync(); // merges _uuid1 into the file's _uuid2
+      expect(await a.ids('mastodon'), [_uuid2]);
+      // The composer, still holding the old draft, saves it.
+      await a.posts.upsert(_post('draft', text: 'edited', targets: const [PostTarget(accountId: _uuid1)], updatedAt: clock.now.add(const Duration(minutes: 1))));
+      await _rounds([a, b, a, b], clock, 1);
+      for (final d in [a, b]) {
+        final target = (await d.posts.get('draft'))!.targets.single.accountId;
+        expect(target, _uuid2, reason: d.id);
+        expect((await d.posts.get('draft'))!.text, 'edited');
+      }
+    });
+
+    test('a merged copy that already was in the file leaves a tombstone naming the kept account; a remapped post keeps its time', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock);
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+      await z.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+      final postTime = DateTime.utc(2026, 10, 19, 8);
+      await z.posts.upsert(_post('pz', targets: const [PostTarget(accountId: _uuid3)], updatedAt: postTime));
+      folder.freeze();
+      await y.engine.sync();
+      await z.engine.sync();
+      folder.thaw();
+      await x.engine.sync(); // absorbs the conflicted copy and merges
+      final doc = SyncDocument.parse(await BackupCipher(_pass, params: _fast, minimum: _fast).open((await folder.read())!.bytes));
+      expect(doc.records['account:$_uuid3']?.deleted, isTrue);
+      expect(doc.records['account:$_uuid3']?.mergedInto, _uuid2);
+      expect(doc.records['post:pz']?.at, postTime, reason: 'the remap keeps the post\'s own time, which decides its conflicts');
+      expect([for (final t in (doc.records['post:pz']?.value as Map)['targets'] as List) (t as Map)['accountId']], [_uuid2]);
+    });
+
+    test("between two copies already in the file, the account's own id is kept over a made-up one", () async {
+      await a.engine.sync();
+      const natural = 'mastodon:42@mastodon.example';
+      for (final id in [natural, _uuid1]) {
+        await putInFile('account:$id', SyncRecord.of(_account(id, 'mastodon', tier: PlatformTier.openApi, config: _mastodonConfig).toJson(), at: clock.now, by: 'other'));
+      }
+      await a.engine.sync();
+      expect(await a.ids('mastodon'), [natural]);
+      final doc = await file();
+      expect(doc.records['account:$_uuid1']?.mergedInto, natural);
     });
   });
 
@@ -1341,6 +1614,23 @@ void main() {
       expect(report.mergedAccounts, preview.mergedAccounts.length);
       expect(report.received, preview.received.length + preview.removed.length);
       expect(report.sent, preview.sent.length);
+    });
+
+    test('a file that holds one account twice: the joining device is told what really arrives', () async {
+      final folder = _CloudFolder();
+      final x = _Device('X', folder, clock), y = _Device('Y', folder, clock), z = _Device('Z', folder, clock), fresh = _Device('D', folder, clock);
+      await x.accounts.upsert(_account('x-1', 'x'));
+      await x.engine.sync();
+      await y.accounts.upsert(_account(_uuid2, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+      await z.accounts.upsert(_account(_uuid3, 'mastodon', tier: PlatformTier.openApi, handle: '@me@mastodon.example', config: _mastodonConfig));
+      folder.freeze();
+      await y.engine.sync();
+      await z.engine.sync();
+      folder.thaw();
+      final p = await fresh.engine.preview();
+      await fresh.engine.sync();
+      expect(p.receivedOf('account'), (await fresh.accounts.all()).length, reason: 'the dry run counts what arrives');
+      expect(p.mergedInFile, {_uuid3}, reason: 'this device had neither copy');
     });
 
     test('after joining, the dry run lists the next ordinary sync', () async {
@@ -1542,6 +1832,33 @@ class _CloudFolder extends SyncBackend {
 
   @override
   Future<void> removeConflictCopy(SyncSideCopy copy) async => copies.remove(copy);
+
+  @override
+  Future<void> check() async {}
+}
+
+class _Killed implements Exception {}
+
+/// The write reaches the storage, then the app dies before anything else.
+class _CrashAfterWrite extends SyncBackend {
+  _CrashAfterWrite(this.inner);
+  final MemorySyncBackend inner;
+  bool crashNext = false;
+  @override
+  bool get atomicWrites => true;
+  @override
+  String get label => 'crash after write';
+  @override
+  Future<SyncBlob?> read() => inner.read();
+  @override
+  Future<String?> write(Uint8List bytes, {required String? ifMatch}) async {
+    final v = await inner.write(bytes, ifMatch: ifMatch);
+    if (crashNext) {
+      crashNext = false;
+      throw _Killed();
+    }
+    return v;
+  }
 
   @override
   Future<void> check() async {}

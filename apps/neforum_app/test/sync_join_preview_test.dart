@@ -38,6 +38,7 @@ SyncPreview _preview({
   Map<String, Object?> received = const {},
   Set<String> sent = const {},
   Map<String, String> merged = const {},
+  Set<String> mergedInFile = const {},
   List<String> from = const ['DESKTOP-X (Windows)'],
   DateTime? hereOldest,
   DateTime? fileOldest,
@@ -51,6 +52,7 @@ SyncPreview _preview({
       received: received,
       sent: sent,
       mergedAccounts: merged,
+      mergedInFile: mergedInFile,
       fromDevices: from,
     );
 
@@ -233,6 +235,17 @@ void main() {
         '1 account connected on both becomes one, with the newer sign-in.',
         'Nothing is deleted: what only one side has is kept.',
       ]);
+    });
+
+    test('an account the sync file holds twice, which this device has in neither copy, is worded as such', () {
+      final s = describeJoinPreview(_preview(received: {'account:a': {}}, merged: {'copy': 'kept', 'here-id': 'file-id'}, mergedInFile: {'copy'}));
+      expect(s.details, containsAll([
+        '1 account connected on both becomes one, with the newer sign-in.',
+        'The sync file holds 1 account twice (two devices connected it at the same moment): it becomes one, with the newer sign-in.',
+      ]));
+      final only = describeJoinPreview(_preview(received: {'account:kept': {}}, merged: {'copy': 'kept'}, mergedInFile: {'copy'}));
+      expect(only.details.join(' '), isNot(contains('connected on both')));
+      expect(only.headline, startsWith('This device gets 1 account'));
     });
 
     test('this device wins; nothing to get; a full tie', () {

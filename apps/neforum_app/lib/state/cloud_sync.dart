@@ -529,8 +529,10 @@ SyncJoinSummary describeJoinPreview(SyncPreview p, {bool chosen = false}) {
       if (!mine) "Where the two differ, the sync file's setup wins ($why).",
       if (mine && arriving.isNotEmpty) 'This device also gets $arriving$fromPart.',
       if (sending.isNotEmpty) 'The sync file gets $sending from this device.',
-      if (p.mergedAccounts.isNotEmpty)
-        '${_count(p.mergedAccounts.length, 'account')} connected on both ${p.mergedAccounts.length == 1 ? 'becomes' : 'become'} one, with the newer sign-in.',
+      if (p.mergedAccounts.length > p.mergedInFile.length)
+        '${_count(p.mergedAccounts.length - p.mergedInFile.length, 'account')} connected on both ${p.mergedAccounts.length - p.mergedInFile.length == 1 ? 'becomes' : 'become'} one, with the newer sign-in.',
+      if (p.mergedInFile.isNotEmpty)
+        'The sync file holds ${_count(p.mergedInFile.length, 'account')} twice (two devices connected ${p.mergedInFile.length == 1 ? 'it' : 'them'} at the same moment): ${p.mergedInFile.length == 1 ? 'it becomes' : 'each becomes'} one, with the newer sign-in.',
       ...hostLines,
       hostsRemoved ? 'Apart from that, nothing is deleted: what only one side has is kept.' : 'Nothing is deleted: what only one side has is kept.',
     ],

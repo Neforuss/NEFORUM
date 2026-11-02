@@ -157,17 +157,23 @@ class PostsSyncSource extends SyncSource {
     await posts.upsert(Post.fromJson(Map<String, dynamic>.from(value as Map)));
   }
 
-  /// The post's targets follow a merged account.
+  /// The post's targets follow a merged account. A post that went to both
+  /// copies keeps one target for the account (the first, with its own
+  /// settings): it is never published to one account twice.
   @override
   Object? remapAccountIds(String id, Object? value, Map<String, String> ids) {
     if (value is! Map || value['targets'] is! List) return value;
     final targets = value['targets'] as List;
     if (!targets.any((t) => t is Map && ids.containsKey(t['accountId']))) return value;
+    final seen = <Object?>{};
     return {
       ...value.cast<String, Object?>(),
       'targets': [
         for (final t in targets)
-          if (t is Map && ids.containsKey(t['accountId'])) {...t.cast<String, Object?>(), 'accountId': ids[t['accountId']]} else t,
+          if (t is! Map)
+            t
+          else if (seen.add(ids[t['accountId']] ?? t['accountId']))
+            ids.containsKey(t['accountId']) ? {...t.cast<String, Object?>(), 'accountId': ids[t['accountId']]} : t,
       ],
     };
   }

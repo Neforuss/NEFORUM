@@ -11,20 +11,20 @@ import '../backup/backup_format.dart';
 /// the thing back.
 @immutable
 class SyncRecord {
-  const SyncRecord({required this.value, required this.hash, required this.at, required this.by, this.deleted = false});
+  const SyncRecord({required this.value, required this.hash, required this.at, required this.by, this.deleted = false, this.mergedInto});
 
   factory SyncRecord.of(Object? value, {required DateTime at, required String by}) =>
       SyncRecord(value: value, hash: syncHash(value), at: at, by: by);
 
-  factory SyncRecord.tombstone({required DateTime at, required String by}) =>
-      SyncRecord(value: null, hash: '', at: at, by: by, deleted: true);
+  factory SyncRecord.tombstone({required DateTime at, required String by, String? mergedInto}) =>
+      SyncRecord(value: null, hash: '', at: at, by: by, deleted: true, mergedInto: mergedInto);
 
   static SyncRecord? tryParse(Object? raw) {
     if (raw is! Map) return null;
     final at = DateTime.tryParse('${raw['at'] ?? ''}');
     final by = raw['by'];
     if (at == null || by is! String) return null;
-    if (raw['deleted'] == true) return SyncRecord.tombstone(at: at, by: by);
+    if (raw['deleted'] == true) return SyncRecord.tombstone(at: at, by: by, mergedInto: raw['mergedInto'] is String ? raw['mergedInto'] as String : null);
     if (!raw.containsKey('v')) return null;
     return SyncRecord.of(raw['v'], at: at, by: by);
   }
@@ -42,8 +42,14 @@ class SyncRecord {
   final String by;
   final bool deleted;
 
+  /// 1.3.5, on an account's tombstone: the account it was merged into (one
+  /// account under two ids), so a post or setting still naming this id is
+  /// moved to that one on any later sync. An optional field: older NEFORUM
+  /// reads the record as a plain deletion.
+  final String? mergedInto;
+
   Map<String, dynamic> toJson() => deleted
-      ? {'deleted': true, 'at': at.toUtc().toIso8601String(), 'by': by}
+      ? {'deleted': true, 'at': at.toUtc().toIso8601String(), 'by': by, if (mergedInto != null) 'mergedInto': mergedInto}
       : {'v': value, 'at': at.toUtc().toIso8601String(), 'by': by};
 }
 
@@ -171,12 +177,18 @@ class SyncDocument {
       };
 
   /// Folds [other] (a cloud client's conflicting copy) into this document:
-  /// per record the newer version wins, devices keep their latest heartbeat,
-  /// live leases and claims are kept.
-  void absorb(SyncDocument other) {
+  /// per record the newer version wins, unless [prefer] decides (1.3.5: it
+  /// returns true for [other]'s version, false for this one's, null for the
+  /// newer); devices keep their latest heartbeat, live leases and claims are
+  /// kept.
+  void absorb(SyncDocument other, {bool? Function(String key, SyncRecord mine, SyncRecord theirs)? prefer}) {
     for (final e in other.records.entries) {
       final mine = records[e.key];
-      if (mine == null || e.value.at.isAfter(mine.at)) records[e.key] = e.value;
+      if (mine == null) {
+        records[e.key] = e.value;
+        continue;
+      }
+      if (prefer?.call(e.key, mine, e.value) ?? e.value.at.isAfter(mine.at)) records[e.key] = e.value;
     }
     for (final e in other.devices.entries) {
       final mine = devices[e.key];

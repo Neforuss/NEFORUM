@@ -55,10 +55,22 @@ The first time a device syncs with a file that already exists:
 
 - **Nothing is deleted.** Everything only one side has (an account, its keys, a post) is kept, and goes to the other side. Media hosts have two slots, so see below.
 - **The setup with the most accounts wins.** Where the device and the file have different versions of the same thing (a setting, an account's details, a media host), the side with more accounts keeps its version. If both have as many accounts, the side whose oldest account was connected first wins. If that is a tie too, the file wins, because your other devices already use it. You see which side wins before you join, and you can pick the other one.
-- **One account, not two.** An account you connected on both devices before syncing (Mastodon and hand-off accounts get a different id on each device) becomes one account. NEFORUM matches it by network, by the kind of connection, and by the account's handle (ignoring capital letters and a leading @) or its id on its server. It keeps the newer sign-in, and posts and default targets follow it. Two different accounts on the same network are never merged. If two devices join at the same moment, or a sync is interrupted, the next sync finishes the merge. The old copy and its keys stay on the device until the sync file holds the merged account.
+- **One account, not two.** Mastodon, Pixelfed, TikTok and most hand-off accounts get a different id on each device, so one account connected on two devices can arrive twice. NEFORUM makes it one account, keeps the newer sign-in (its details and keys together), and moves posts and default targets to it. See "When accounts are merged" below.
 - **Media hosts, slot by slot.** The winning side keeps its hosts in their slots (main and fallback). A host of the other side goes into a slot left empty, so it is kept, and a device without a media host never removes another device's. Only when the winning side uses both slots is a host of the other side replaced, and NEFORUM names it before you join.
 
 After the first sync, each change travels on its own, including a setting put back to its default and a media host you remove.
+
+### When accounts are merged
+
+NEFORUM merges two copies of one account only in these cases:
+
+- **Mastodon, Pixelfed and TikTok accounts** with the same id on their server (or the same TikTok user for the same app): on any sync, on any device, also on devices that joined long ago. This is how two devices that join at the same moment, or a sync that was interrupted, end with one account.
+- **Other accounts with a made-up id**, matched by their handle (capital letters and a leading @ ignored): only when one copy is new to the sync file in that sync. Two copies that both were in the file already are never merged.
+- **Hand-off accounts:** only on a device's first sync, when a hand-off made on that device has the same name or handle as one in the sync file, on the same site (WordPress, Ghost and WriteFreely blogs are told apart by their whole address, path included).
+
+NEFORUM never merges two accounts whose ids come from the accounts themselves (X, Bluesky, YouTube, Reddit, a WordPress blog and most others), accounts on two different servers or sites, or accounts with two different handles. The first sync's dry run lists the merges it will make.
+
+After a merge, the old copy and its keys stay on the device until the sync file holds the merged account. A post that still names the old copy, such as a draft you were editing, moves to the merged account on the next sync, for 90 days.
 
 ### Where the file can live
 

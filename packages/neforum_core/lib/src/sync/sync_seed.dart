@@ -140,32 +140,53 @@ String? naturalAccountKey(Map<Object?, Object?> account) {
   return null;
 }
 
+/// 1.3.5: the site a hand-off account posts to, whole: host and path
+/// (`example.com/blog-one`), from `site`, `instance`, `base` or `baseUrl`,
+/// else its `domain`; `null` when it records none. Two blogs of one
+/// WordPress multisite share a host, never a path.
+String? handoffSite(Map<Object?, Object?> account) {
+  final config = account['config'];
+  if (config is! Map) return null;
+  for (final key in const ['site', 'instance', 'base', 'baseUrl']) {
+    final u = Uri.tryParse(_text(config[key]) ?? '');
+    if (u != null && u.host.isNotEmpty) return '${u.host.toLowerCase()}${u.path.replaceFirst(RegExp(r'/+$'), '')}';
+  }
+  return _text(config['domain'])?.toLowerCase();
+}
+
 /// 1.3.5: whether the accounts [a] and [b] (ConnectedAccount JSON, different
 /// ids) are one account connected on two devices. Same network, same tier
-/// family (hand-off or not), not on two different servers when both record
-/// one ([accountServer]), and:
+/// family (hand-off or not), at least one id made up on its device
+/// ([isDeviceMadeAccountId]: two ids taken from the accounts themselves are
+/// two accounts, whatever the tier), not on two different servers when both
+/// record one ([accountServer]), and:
 ///
-/// * hand-off accounts: the same name or the same handle (they only open the
-///   network's app, so two same-named ones on one server are the same thing);
-/// * other accounts: at least one id made up on its device
-///   ([isDeviceMadeAccountId]), and the same identity on the network
-///   ([naturalAccountKey]) when both recorded it, otherwise the same handle
+/// * hand-off accounts: not two different sites ([handoffSite], path
+///   included) or handles when both record one, and the same name or the
+///   same handle;
+/// * other accounts: the same identity on the network ([naturalAccountKey])
+///   when both recorded it, otherwise the same handle
 ///   ([normalizedAccountHandle]).
 ///
 /// Different accounts on one network are never the same: their natural ids,
-/// identities, servers or handles differ.
+/// identities, servers, sites or handles differ. When two copies that are
+/// the same may actually merge is the sync engine's call (a hand-off only on
+/// a device's first sync, for one).
 bool isSameConnectedAccount(Map<Object?, Object?> a, Map<Object?, Object?> b) {
   final platform = a['platformId'];
   if (platform is! String || platform != b['platformId']) return false;
   final handoffA = a['tier'] == 'handoff', handoffB = b['tier'] == 'handoff';
   if (handoffA != handoffB) return false;
+  if (!isDeviceMadeAccountId('${a['id']}') && !isDeviceMadeAccountId('${b['id']}')) return false;
   final sa = accountServer(a), sb = accountServer(b);
   if (sa != null && sb != null && sa != sb) return false;
   final ha = normalizedAccountHandle(a['handle']), hb = normalizedAccountHandle(b['handle']);
   if (handoffA) {
+    final pa = handoffSite(a), pb = handoffSite(b);
+    if (pa != null && pb != null && pa != pb) return false;
+    if (ha != null && hb != null && ha != hb) return false;
     return (a['displayName'] is String && a['displayName'] == b['displayName']) || (ha != null && ha == hb);
   }
-  if (!isDeviceMadeAccountId('${a['id']}') && !isDeviceMadeAccountId('${b['id']}')) return false;
   final na = naturalAccountKey(a), nb = naturalAccountKey(b);
   if (na != null && nb != null) return na == nb;
   return ha != null && ha == hb;
@@ -199,6 +220,7 @@ class SyncPreview {
     required this.mergedAccounts,
     required this.fromDevices,
     this.removed = const {},
+    this.mergedInFile = const {},
     this.mergeEdits = const {},
     this.hereBefore = const {},
     this.sentValues = const {},
@@ -244,6 +266,11 @@ class SyncPreview {
   /// Accounts connected on both sides under two ids, merged into one: this
   /// device's id -> the id the file has (and keeps).
   final Map<String, String> mergedAccounts;
+
+  /// Of [mergedAccounts], the ones this device held in neither copy: the
+  /// sync file held one account twice. Their merged account counts as
+  /// [received].
+  final Set<String> mergedInFile;
 
   /// What merging those accounts stores here before anything else: the
   /// account under the file's id, its keys, the posts and settings that
