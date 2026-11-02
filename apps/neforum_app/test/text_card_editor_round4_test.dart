@@ -66,9 +66,13 @@ class _MemoryStorage implements AppStorage {
 }
 
 Future<void> _loadFonts() async {
+  // A system font missing (CI runs on Linux) is skipped: the card is then
+  // drawn and measured in the fallback font, so the layout stays consistent.
   Future<void> family(String name, List<String> files) async {
+    final present = [for (final f in files) if (File(f).existsSync()) f];
+    if (present.isEmpty) return;
     final loader = FontLoader(name);
-    for (final f in files) {
+    for (final f in present) {
       loader.addFont(Future.value(ByteData.view(File(f).readAsBytesSync().buffer)));
     }
     await loader.load();
