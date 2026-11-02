@@ -3,6 +3,7 @@
 // stored and whether sync carries them) so two devices can be compared, and
 // never shows a key, not even part of one.
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -298,7 +299,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       _acct('tumblr', PlatformTier.byokApi, {'consumerKey': tumblrKey, 'blogName': 'guardblog', 'authMode': 'oauth1'}, id: 'real-tumblr-oauth1'),
       OAuth1Credentials(consumerKey: tumblrKey, consumerSecret: f.next(), token: f.next(), tokenSecret: f.next()).toSecrets(),
       keys: oauth1Keys,
-      show: ['OAuth Consumer Key: $kWithheldValue', 'Blog: guardblog', 'Sign-in method: OAuth 1.0a keys'],
+      show: ['OAuth Consumer Key: $kStoredKeyValue', 'Blog: guardblog', 'Sign-in method: OAuth 1.0a keys'],
     ),
     _Real(
       _acct('instagram', PlatformTier.byokApi, {
@@ -487,6 +488,42 @@ Future<(ProviderContainer, AppServices)> _pumpAccounts(
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 600));
   return (container, services);
+}
+
+/// A keychain prompt nobody answers: every read waits forever.
+class _HangingSecretStore extends SecretStore {
+  int reads = 0;
+  @override
+  Future<Map<String, String>?> read(String accountId) {
+    reads++;
+    return Completer<Map<String, String>?>().future;
+  }
+
+  @override
+  Future<void> write(String accountId, Map<String, String> secrets) async {}
+  @override
+  Future<void> delete(String accountId) async {}
+}
+
+/// A keychain that answers only once [open] is called, or never when [hang].
+class _GatedSecretStore extends SecretStore {
+  late SecretStore inner;
+  final Completer<void> _gate = Completer<void>();
+  bool hang = false;
+  int reads = 0;
+  void open() => _gate.complete();
+  @override
+  Future<Map<String, String>?> read(String accountId) async {
+    reads++;
+    if (hang) return Completer<Map<String, String>?>().future;
+    await _gate.future;
+    return inner.read(accountId);
+  }
+
+  @override
+  Future<void> write(String accountId, Map<String, String> secrets) => inner.write(accountId, secrets);
+  @override
+  Future<void> delete(String accountId) => inner.delete(accountId);
 }
 
 /// A keychain that refuses to answer for some accounts, as a locked macOS
@@ -884,7 +921,7 @@ Connected: 2026-10-12''');
       expect(connectionCopyDate(instant.toLocal()), '2026-10-12');
       expect(connectionCopyMoment(instant), '2026-10-12T20:30Z');
       expect(connectionCopyMoment(instant.toLocal()), '2026-10-12T20:30Z');
-      expect(connectionCopyHeader('Test device', instant), 'Setup copied from Test device on 2026-10-12');
+      expect(connectionCopyHeader('Test device', instant), 'Setup copied from Test device on ${connectionLocalDate(instant)}');
       // Either side of midnight UTC: a day taken from the device's own clock
       // would land on the wrong side on any device not set to UTC.
       for (final (stored, day, moment) in [
@@ -933,7 +970,7 @@ Connected: 2026-10-12''');
       final blocks = result.text.split('\n\n');
       expect(result.unreadable, 1);
       expect(blocks, hasLength(3));
-      expect(blocks[0], 'Setup copied from Test device on 2026-11-01');
+      expect(blocks[0], 'Setup copied from Test device on ${connectionLocalDate(now)}');
       expect(blocks[1], contains('Keys on this device: Access token, Client ID, Client secret (Only on this device)'));
       expect(blocks[2], startsWith('Telegram: Robin News (@robinnews)'));
       expect(blocks[2], contains('Keys on this device: Could not be read on this device'));
@@ -998,8 +1035,85 @@ Connected: 2026-10-12''');
     });
   });
 
+  group('round 3', () {
+    test('item 1: a value that is a stored key says so; one that only shares characters says that', () {
+      final tumblr = _realAccounts(_Fakes(), now).firstWhere((r) => r.account.id == 'real-tumblr-oauth1');
+      final c = describeAccountConnection(tumblr.account, adapter: _adapter('tumblr'), secrets: tumblr.secrets, now: now);
+      expect(c.details.firstWhere((d) => d.label == 'OAuth Consumer Key').value, kStoredKeyValue);
+      final partial = connectionDetails(_acct('facebook', PlatformTier.byokApi, {'app_id': '1234567890'}), _adapter('facebook'),
+          secrets: {StoredSecretKeys.appSecret: 'ab7890cd'});
+      expect(partial.single.value, kWithheldValue);
+      final guard = SecretGuard({'k': 'QWXZ7788'});
+      expect((guard.isKey('QWXZ7788'), guard.isKey(' QWXZ7788 '), guard.isKey('QWXZ778')), (true, true, false));
+    });
+
+    test('item 2: a key address counts as written too, so its encoded form is caught', () {
+      final path = SecretGuard({'webhook_url': 'https://hooks.example/in/tok%2Fen%2Fvalue'});
+      expect(path.reveals('tok%2Fen'), isTrue, reason: 'the encoded path segment');
+      expect(path.reveals('en/value'), isTrue, reason: 'the decoded path segment');
+      final query = SecretGuard({'url': 'https://hooks.example/in?key=ab%20cd%26ef'});
+      expect(query.reveals('…%26ef'), isTrue, reason: 'the encoded query value');
+      expect(query.reveals('cd&ef'), isTrue, reason: 'the decoded query value');
+      final fragment = SecretGuard({'url': 'https://app.example/cb#tok%2Fen'});
+      expect((fragment.reveals('k%2F'), fragment.reveals('ok/e')), (true, true));
+      expect(SecretGuard({'webhook_url': 'https://discord.com/api/webhooks/123456/TOKEN'}).reveals('webhooks'), isFalse,
+          reason: 'the public Discord start stays public in its written form too');
+    });
+
+    test('item 3: a keychain that does not answer times out once and marks the rest unread', () async {
+      final real = _realAccounts(_Fakes(), now);
+      final accounts = [for (final r in real.take(3)) r.account];
+      final store = _HangingSecretStore();
+      final result = await allConnectionSetupsText(accounts,
+          secrets: store, registry: builtinRegistry(), travel: KeysTravel.synced, deviceLabel: 'Test device', now: now, readTimeout: const Duration(milliseconds: 50));
+      expect((result.timedOut, result.unreadable, store.reads), (true, 3, 1), reason: 'one wait, not one per account');
+      expect('Keys on this device: Could not be read on this device'.allMatches(result.text), hasLength(3));
+    });
+
+    test('item 4: the header names the device\'s own day; the account blocks stay in UTC', () {
+      final instant = DateTime.parse('2026-10-13T03:00:00Z');
+      final local = instant.toLocal();
+      expect(connectionLocalDate(instant), '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}');
+      expect(connectionCopyHeader('Test device', instant), 'Setup copied from Test device on ${connectionLocalDate(instant)}');
+      expect(connectionCopyDate(instant), '2026-10-13', reason: 'blocks keep the UTC day, the same on every device');
+    });
+  });
+
   group('on the Accounts page', () {
     tearDown(() => AccountConnectionSection.debugStartOpen = false);
+
+    testWidgets('round 3, item 3: Copy all setups is disabled while it copies, and a stuck keychain times out with a clear message', (tester) async {
+      final copied = _captureClipboard(tester);
+      final mastodon = _realAccounts(_Fakes(), DateTime.now()).firstWhere((r) => r.account.platformId == 'mastodon');
+      final gate = _GatedSecretStore();
+      await _pumpAccounts(tester, accounts: [(mastodon.account, mastodon.secrets)], keepDemoAccounts: false, secretStore: (s) => gate..inner = s.secrets);
+      OutlinedButton button() => tester.widget<OutlinedButton>(find.ancestor(of: find.text('Copy all setups'), matching: find.byType(OutlinedButton)));
+
+      await _tap(tester, find.text('Copy all setups'));
+      expect(button().onPressed, isNull, reason: 'disabled while the keychain is read');
+      await tester.tap(find.text('Copy all setups'), warnIfMissed: false);
+      await tester.pump();
+      gate.open();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(copied, hasLength(1), reason: 'a second tap did not copy again');
+      expect(gate.reads, 1);
+      expect(button().onPressed, isNotNull);
+
+      // A prompt nobody answers: the copy gives up after its timeout.
+      gate.hang = true;
+      await _tap(tester, find.text('Copy all setups'));
+      await tester.pump(const Duration(seconds: 16));
+      // The earlier toast animates away before the new one shows.
+      for (var i = 0; i < 6; i++) {
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+      expect(find.textContaining('The keychain did not answer'), findsOneWidget);
+      expect(copied, hasLength(2));
+      expect(copied.last, contains('Keys on this device: Could not be read on this device'));
+      expect(button().onPressed, isNotNull);
+      await _unmount(tester);
+    });
 
     testWidgets('round 2, finding 2: 12-hour and 24-hour devices copy the same setup; each screen keeps its own clock', (tester) async {
       final copied = _captureClipboard(tester);
@@ -1086,7 +1200,7 @@ Connected: 2026-10-12''');
 
       await _tap(tester, find.descendant(of: card, matching: find.text('Copy setup')));
       expect(copied, hasLength(1));
-      expect(copied.single, startsWith('Setup copied from Test device on ${connectionCopyDate(DateTime.now())}\n\nMastodon: Someone (@someone)\nHow it posts: '));
+      expect(copied.single, startsWith('Setup copied from Test device on ${connectionLocalDate(DateTime.now())}\n\nMastodon: Someone (@someone)\nHow it posts: '));
       expect(copied.single, contains('\nConnected: 2026-10-12'));
       expect(copied.single, contains('Keys on this device: Access token, Refresh token, Client ID, Client secret (Only on this device)'));
       expect(find.text('Setup copied, without keys or passwords'), findsOneWidget);

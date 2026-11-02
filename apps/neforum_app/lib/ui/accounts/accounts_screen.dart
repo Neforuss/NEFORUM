@@ -31,44 +31,13 @@ class AccountsScreen extends ConsumerWidget {
     final auto = accounts.where((a) => a.tier != PlatformTier.handoff).length;
     void add() => context.go('${AppSection.accounts.path}/add');
 
-    // 1.3.5: every account's setup as text, in the page's order, to paste
-    // next to the same list from another device. No key values: see
-    // connectionSetupText. An account whose keys the keychain will not read
-    // still gets its block, and the toast says how many; any other failure
-    // says nothing was copied instead of failing silently.
-    Future<void> copyAll() async {
-      final count = accounts.length;
-      try {
-        final result = await allConnectionSetupsText(
-          [for (final tier in _tierOrder) ...accounts.where((a) => a.tier == tier)],
-          secrets: ref.read(connectionSecretsProvider),
-          registry: ref.read(registryProvider),
-          travel: currentKeysTravel(ref),
-          deviceLabel: ref.read(connectionDeviceLabelProvider),
-        );
-        await Clipboard.setData(ClipboardData(text: result.text));
-        if (!context.mounted) return;
-        final copied = '${count == 1 ? 'Setup' : 'Setups of $count accounts'} copied, without keys or passwords';
-        final n = result.unreadable;
-        if (n == 0) {
-          showToast(context, copied, icon: Icons.check_rounded);
-        } else {
-          showToast(context, '$copied. The keys of $n ${n == 1 ? 'account' : 'accounts'} could not be read on this device.',
-              icon: Icons.warning_amber_rounded);
-        }
-      } on Object {
-        if (context.mounted) showToast(context, 'Could not copy the setups. Nothing was copied.', icon: Icons.error_outline_rounded);
-      }
-    }
-
     return PageBody(children: [
       PageHeader(
         eyebrow: 'Accounts',
         title: 'Your networks',
         subtitle: accounts.isEmpty ? 'Connect the places you post to.' : '${accounts.length} connected · $auto post automatically',
         actions: [
-          if (accounts.isNotEmpty)
-            OutlinedButton.icon(onPressed: copyAll, icon: const Icon(Icons.copy_all_rounded, size: 18), label: const Text('Copy all setups')),
+          if (accounts.isNotEmpty) _CopyAllSetupsButton(accounts: [for (final tier in _tierOrder) ...accounts.where((a) => a.tier == tier)]),
           PrimaryAction(label: 'Add account', icon: Icons.add_rounded, onPressed: add, compact: context.isCompact),
         ],
       ),
@@ -106,6 +75,72 @@ class AccountsScreen extends ConsumerWidget {
       ],
     ]);
   }
+}
+
+/// 1.3.5: "Copy all setups": every account's setup as text, in the page's
+/// order, to paste next to the same list from another device. No key values
+/// (see connectionSetupText). Disabled while a copy runs, so a second tap
+/// neither asks the keychain twice nor shows two toasts. An account whose
+/// keys the keychain will not read still gets its block and the toast says
+/// how many; a keychain that does not answer at all (a prompt left open)
+/// times out with its own message; any other failure says nothing was copied.
+class _CopyAllSetupsButton extends ConsumerStatefulWidget {
+  const _CopyAllSetupsButton({required this.accounts});
+
+  /// In the page's order.
+  final List<ConnectedAccount> accounts;
+
+  /// How long one keychain read may take before the copy gives up on it.
+  static const Duration readTimeout = Duration(seconds: 15);
+
+  @override
+  ConsumerState<_CopyAllSetupsButton> createState() => _CopyAllSetupsButtonState();
+}
+
+class _CopyAllSetupsButtonState extends ConsumerState<_CopyAllSetupsButton> {
+  bool _busy = false;
+
+  Future<void> _copy() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    final count = widget.accounts.length;
+    try {
+      final result = await allConnectionSetupsText(
+        widget.accounts,
+        secrets: ref.read(connectionSecretsProvider),
+        registry: ref.read(registryProvider),
+        travel: currentKeysTravel(ref),
+        deviceLabel: ref.read(connectionDeviceLabelProvider),
+        readTimeout: _CopyAllSetupsButton.readTimeout,
+      );
+      await Clipboard.setData(ClipboardData(text: result.text));
+      if (!mounted) return;
+      final copied = '${count == 1 ? 'Setup' : 'Setups of $count accounts'} copied, without keys or passwords';
+      final n = result.unreadable;
+      final accountsWord = n == 1 ? 'account' : 'accounts';
+      if (result.timedOut) {
+        showToast(context, '$copied. The keychain did not answer, so the keys of $n $accountsWord were not read: unlock it and copy again.',
+            icon: Icons.warning_amber_rounded);
+      } else if (n > 0) {
+        showToast(context, '$copied. The keys of $n $accountsWord could not be read on this device.', icon: Icons.warning_amber_rounded);
+      } else {
+        showToast(context, copied, icon: Icons.check_rounded);
+      }
+    } on Object {
+      if (mounted) showToast(context, 'Could not copy the setups. Nothing was copied.', icon: Icons.error_outline_rounded);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+        onPressed: _busy ? null : _copy,
+        icon: _busy
+            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+            : const Icon(Icons.copy_all_rounded, size: 18),
+        label: const Text('Copy all setups'),
+      );
 }
 
 class _Welcome extends ConsumerWidget {

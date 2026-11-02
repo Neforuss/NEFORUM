@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
@@ -24,9 +26,10 @@ import 'providers.dart';
 class ConnectionDetail {
   const ConnectionDetail(this.label, this.value, {this.withheld = false});
 
-  /// A row whose value [SecretGuard] withheld: [value] is [kWithheldValue].
-  const ConnectionDetail.withheld(this.label)
-      : value = kWithheldValue,
+  /// A row whose value [SecretGuard] withheld: [value] is [kWithheldValue],
+  /// or [kStoredKeyValue] when the value is a stored key itself ([isKey]).
+  const ConnectionDetail.withheld(this.label, {bool isKey = false})
+      : value = isKey ? kStoredKeyValue : kWithheldValue,
         withheld = true;
 
   final String label;
@@ -294,6 +297,11 @@ const Map<String, Set<String>> _publicAddressPrefixes = {
 /// row stays (and two devices can see it is there) without the value.
 const String kWithheldValue = 'Not shown: it shares characters with a stored key';
 
+/// What a detail shows when its value is one of the stored keys itself (a
+/// Tumblr account connected with OAuth 1.0a keeps its consumer key in its
+/// config and with its keys).
+const String kStoredKeyValue = 'Not shown: it is one of the stored keys';
+
 /// Withholds any text that shares [run] (4) or more characters in a row with
 /// a stored key, so no part of a secret, not even its last 4 characters, can
 /// reach the screen or the clipboard.
@@ -324,6 +332,7 @@ class SecretGuard {
   SecretGuard(Map<String, String> secrets, {this.run = 4}) {
     for (final e in secrets.entries) {
       if (kSecretBookkeepingKeys.contains(e.key)) continue;
+      if (e.value.trim().isNotEmpty) _whole.add(e.value.trim());
       for (final part in secretParts(e.value)) {
         for (var i = 0; i + run <= part.length; i++) {
           _windows.add(part.substring(i, i + run));
@@ -334,29 +343,46 @@ class SecretGuard {
 
   final int run;
   final Set<String> _windows = {};
+  final Set<String> _whole = {};
+
+  /// Whether [text] is one of the stored keys itself, whole (not just
+  /// sharing characters with one).
+  bool isKey(String text) => _whole.contains(text.trim());
+
+  /// The values of a query or fragment as written ("a=1&b=2" -> "1", "2"),
+  /// still percent-encoded.
+  static Iterable<String> _rawValues(String q) => q.split('&').map((p) => p.contains('=') ? p.substring(p.indexOf('=') + 1) : p);
 
   /// The parts of [value] that are secret: all of it, except for a web
-  /// address (see [SecretGuard]).
+  /// address (see [SecretGuard]). Each part of an address counts both decoded
+  /// and as written, so a value holding the encoded form ("tok%2Fen") is
+  /// caught as well as the decoded one ("tok/en").
   static List<String> secretParts(String value) {
     final uri = Uri.tryParse(value.trim());
     if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https') || uri.host.isEmpty) return [value];
     final public = _publicAddressPrefixes[uri.host.toLowerCase()];
     final segments = uri.pathSegments;
-    var skip = 0;
-    if (public != null) {
-      while (skip < segments.length && public.contains(segments[skip].toLowerCase())) {
+    final rawSegments = uri.path.split('/').where((s) => s.isNotEmpty).toList();
+    int publicStart(List<String> s) {
+      var skip = 0;
+      while (public != null && skip < s.length && public.contains(s[skip].toLowerCase())) {
         skip++;
       }
+      return skip;
     }
+
     final fragment = uri.fragment;
-    return [
+    final decodedFragment = Uri.decodeComponent(fragment);
+    return {
       if (public == null) uri.host,
       uri.userInfo,
-      ...segments.skip(skip),
+      ...segments.skip(publicStart(segments)),
+      ...rawSegments.skip(publicStart(rawSegments)),
       for (final values in uri.queryParametersAll.values) ...values,
+      ..._rawValues(uri.query),
       // "#access_token=…&state=…" counts by its values, like a query.
-      if (fragment.contains('=')) ...Uri.splitQueryString(fragment).values else fragment,
-    ].where((s) => s.isNotEmpty).toList();
+      if (fragment.contains('=')) ...[...Uri.splitQueryString(fragment).values, ..._rawValues(fragment)] else ...[fragment, decodedFragment],
+    }.where((s) => s.isNotEmpty).toList();
   }
 
   /// Whether [text] would show part of a stored key.
@@ -650,7 +676,7 @@ List<ConnectionDetail> connectionDetails(ConnectedAccount account, PlatformAdapt
     if (handle != null && handle.isNotEmpty && bare == handle) return;
     if (group == _Group.identity && localPart != null && bare == localPart) return;
     if (displayName.isNotEmpty && value.trim().toLowerCase() == displayName) return;
-    grouped.add((group, guard.reveals(value) ? ConnectionDetail.withheld(label) : ConnectionDetail(label, value)));
+    grouped.add((group, guard.reveals(value) ? ConnectionDetail.withheld(label, isKey: guard.isKey(value)) : ConnectionDetail(label, value)));
   }
 
   bool hidden(String key) => _redirectKeys.contains(key) && !_registersRedirect.contains(account.platformId);
@@ -812,7 +838,17 @@ String connectionSetupText(ConnectedAccount account, AccountConnection c, {requi
 /// The first line of anything copied from the section, kept apart from the
 /// account blocks by a blank line so the blocks compare cleanly:
 /// "Setup copied from DESKTOP-AB12 (Windows) on 2026-11-01".
-String connectionCopyHeader(String deviceLabel, DateTime now) => 'Setup copied from $deviceLabel on ${connectionCopyDate(now)}';
+///
+/// Its date is the device's own day ([connectionLocalDate]), the day the user
+/// copied it: unlike the account blocks it names this device anyway, so it
+/// need not match another device's.
+String connectionCopyHeader(String deviceLabel, DateTime now) => 'Setup copied from $deviceLabel on ${connectionLocalDate(now)}';
+
+/// "2026-11-01": [t]'s day on this device's clock.
+String connectionLocalDate(DateTime t) {
+  final l = t.toLocal();
+  return '${l.year.toString().padLeft(4, '0')}-${_two(l.month)}-${_two(l.day)}';
+}
 
 /// This device as the copied setup names it, the way the sync settings list
 /// devices: "DESKTOP-AB12 (Windows)", or just the platform when the host
@@ -854,28 +890,37 @@ final accountConnectionProvider = FutureProvider.autoDispose.family<AccountConne
 /// blank lines. An account whose keys the keychain will not read still gets
 /// its block, saying so ([AccountConnection.keysUnreadable]), and is counted
 /// in [unreadable] so the page can tell the user.
-Future<({String text, int unreadable})> allConnectionSetupsText(
+///
+/// A read that takes longer than [readTimeout] (a keychain prompt nobody
+/// answers) sets [timedOut]: that account and every one after it are marked
+/// unread without asking the keychain again, so a stuck keychain costs one
+/// wait, not one per account.
+Future<({String text, int unreadable, bool timedOut})> allConnectionSetupsText(
   List<ConnectedAccount> accounts, {
   required SecretStore secrets,
   required AdapterRegistry registry,
   required KeysTravel travel,
   required String deviceLabel,
   DateTime? now,
+  Duration readTimeout = const Duration(seconds: 15),
 }) async {
   final at = now ?? DateTime.now();
   final parts = <String>[connectionCopyHeader(deviceLabel, at)];
   var unreadable = 0;
+  var timedOut = false;
   for (final a in accounts) {
     final adapter = registry.byId(a.platformId);
     AccountConnection c;
     try {
-      c = describeAccountConnection(a, adapter: adapter, secrets: await secrets.read(a.id) ?? const {}, now: at);
-    } on Object {
+      if (timedOut) throw TimeoutException('keychain did not answer');
+      c = describeAccountConnection(a, adapter: adapter, secrets: await secrets.read(a.id).timeout(readTimeout) ?? const {}, now: at);
+    } on Object catch (e) {
       // Never the error itself: it could quote what the keychain returned.
+      if (e is TimeoutException) timedOut = true;
       unreadable++;
       c = describeAccountConnection(a, adapter: adapter, now: at, keysUnreadable: true);
     }
     parts.add(connectionSetupText(a, c, travel: travel));
   }
-  return (text: parts.join('\n\n'), unreadable: unreadable);
+  return (text: parts.join('\n\n'), unreadable: unreadable, timedOut: timedOut);
 }
