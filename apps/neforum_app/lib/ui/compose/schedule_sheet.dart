@@ -30,7 +30,7 @@ class ScheduleSheetEnvironment {
   final ScheduleDevice? device;
 }
 
-final scheduleSheetEnvironmentProvider = Provider<ScheduleSheetEnvironment>((ref) => ScheduleSheetEnvironment(clock: systemClock, random: Random.secure()));
+final scheduleSheetEnvironmentProvider = Provider<ScheduleSheetEnvironment>((ref) => ScheduleSheetEnvironment(clock: ref.watch(scheduleClockProvider), random: Random.secure()));
 
 /// Picks a date and time for the post. Returns null when cancelled; a
 /// `DateTime(0)` sentinel means "clear the schedule". Pass [post] when
@@ -138,7 +138,11 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
 
   DateTime get _when => _randomOpen ? (_draw ?? _picked) : _picked;
 
-  DateTime _timeOf(String accountId) => _randomOpen ? (_draws[accountId] ?? _when) : (_times[accountId] ?? _picked);
+  /// Networks that already have an edited post. They keep their outcome and
+  /// their time, so no draw is made for them.
+  Set<String> _done = const {};
+
+  DateTime _timeOf(String accountId) => _randomOpen && !_done.contains(accountId) ? (_draws[accountId] ?? _when) : (_times[accountId] ?? _picked);
 
   /// The first and last day the calendars offer. The day already picked always
   /// fits: a stale schedule, or one from a device with another clock, must not
@@ -178,7 +182,10 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
     if (day == null || !mounted) return;
     final time = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(current));
     if (time == null || !mounted) return;
-    setState(() => _times[accountId] = _env.zone.momentOf(day.year, day.month, day.day, time.hour, time.minute));
+    setState(() {
+      _refused = false;
+      _times[accountId] = _env.zone.momentOf(day.year, day.month, day.day, time.hour, time.minute);
+    });
   }
 
   RandomScheduleRange? _rangeNow() {
@@ -199,6 +206,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
     if (range == null) return;
     if (_eachTarget && accounts.length > 1) {
       for (final a in accounts) {
+        if (_done.contains(a.id)) continue;
         final at = randomMoment(range, _env.random);
         if (at != null) _draws[a.id] = at;
       }
@@ -264,14 +272,19 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
       return;
     }
     final notifier = ref.read(composerProvider.notifier);
-    if (!_eachTarget || accounts.isEmpty) {
+    // What the sheet shows decides, not the switch's last state: with one network
+    // left the times per network are gone from the screen, so a saved one must
+    // not replace the time just picked.
+    if (!each || accounts.isEmpty) {
       notifier.setTargetSchedules(null);
       Navigator.pop(context, _when);
       return;
     }
     final times = {for (final a in accounts) a.id: _timeOf(a.id)};
     notifier.setTargetSchedules(times);
-    Navigator.pop(context, _earliest(times.values));
+    // The post's time is the next one still to go, never one already past.
+    final ahead = [for (final e in times.entries) if (!done.contains(e.key)) e.value];
+    Navigator.pop(context, _earliest(ahead.isEmpty ? times.values : ahead));
   }
 
   bool _tooClose(List<ConnectedAccount> accounts, Set<String> done, bool each) {
@@ -337,7 +350,13 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
         Icon(Icons.casino_outlined, color: nf.textMuted, size: 20),
         const SizedBox(width: Space.sm),
         Expanded(child: Text('Pick a random time', style: context.text.titleSmall)),
-        TextButton(onPressed: () => setState(() => _randomOpen = false), child: const Text('Choose a date')),
+        TextButton(
+          onPressed: () => setState(() {
+            _randomOpen = false;
+            _refused = false;
+          }),
+          child: const Text('Choose a date'),
+        ),
       ]),
       const SizedBox(height: Space.sm),
       Wrap(spacing: Space.sm, runSpacing: Space.xs, children: [
@@ -360,7 +379,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
           ]),
         ),
       if (each)
-        for (final (a, name) in rows)
+        for (final (a, name) in rows.where((r) => !_done.contains(r.$1.id)))
           Padding(
             padding: const EdgeInsets.only(bottom: Space.sm),
             child: Row(children: [
@@ -433,6 +452,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
         for (final t in existing.targets)
           if (t.isDone) t.accountId,
     };
+    _done = done;
     // A different time per network: only while composing, for two or more.
     final canEach = widget.post == null && rows.length > 1;
     final each = canEach && _eachTarget;
@@ -584,7 +604,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
                 OutlinedButton(
                   onPressed: () async {
                     final t = await showTimePicker(context: context, initialTime: TimeOfDay.fromDateTime(picked));
-                    if (t != null) {
+                    if (t != null && mounted) {
                       setState(() {
                         _refused = false;
                         _time = t;

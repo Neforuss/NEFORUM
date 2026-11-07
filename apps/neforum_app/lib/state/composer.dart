@@ -1189,6 +1189,10 @@ Post rescheduledPost(Post post, DateTime when, DateTime now) {
   return next.withScheduleFromTargets();
 }
 
+/// The clock [PostActions.schedule] and the schedule sheet judge a time by.
+/// Replaced in tests.
+final scheduleClockProvider = Provider<Clock>((ref) => systemClock);
+
 /// The post's time, or a network's, is past or under a minute ahead: scheduling
 /// it would send it at once. Nothing was saved.
 class SchedulePassedException implements Exception {
@@ -1336,7 +1340,7 @@ class PostActions {
     final c = ref.read(composerProvider);
     final editing = c.editingPostId;
     final existing = editing == null ? null : await s.posts.get(editing);
-    final now = DateTime.now();
+    final now = ref.read(scheduleClockProvider)();
     for (final id in c.selected) {
       if (existing?.targetFor(id)?.isDone ?? false) continue;
       final at = c.overrides[id]?.scheduledAt ?? c.scheduledAt;

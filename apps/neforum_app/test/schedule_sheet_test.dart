@@ -20,6 +20,16 @@ import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/widgets/buttons.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+/// Always the first minute of the range.
+class _FirstMinute implements Random {
+  @override
+  int nextInt(int max) => 0;
+  @override
+  bool nextBool() => false;
+  @override
+  double nextDouble() => 0;
+}
+
 class _MemoryStorage implements AppStorage {
   final Map<String, Object> _json = {};
   final Map<String, Uint8List> _media = {};
@@ -75,6 +85,7 @@ void main() {
     LocalZone zone = const LocalZone(),
     ScheduleDevice device = ScheduleDevice.desktop,
     double textScale = 1,
+    Random? random,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -85,7 +96,8 @@ void main() {
     late _Harness harness;
     await tester.pumpWidget(ProviderScope(overrides: [
       servicesProvider.overrideWithValue(services),
-      scheduleSheetEnvironmentProvider.overrideWithValue(ScheduleSheetEnvironment(clock: () => harness.now, random: Random(_seed), zone: zone, device: device)),
+      scheduleClockProvider.overrideWithValue(() => harness.now),
+      scheduleSheetEnvironmentProvider.overrideWithValue(ScheduleSheetEnvironment(clock: () => harness.now, random: random ?? Random(_seed), zone: zone, device: device)),
     ], child: const NeforumApp()));
     harness = _Harness(services, ProviderScope.containerOf(tester.element(find.byType(MaterialApp))));
     await tester.pump(const Duration(milliseconds: 300));
@@ -280,6 +292,61 @@ void main() {
       await done(tester);
     });
 
+    testWidgets('a network that already went gets no draw and keeps its time', (tester) async {
+      final h = await boot(tester);
+      final a = h.onDevice, b = h.second;
+      final past = _start.subtract(const Duration(hours: 1));
+      final later = _start.add(const Duration(hours: 3));
+      final saved = Post(
+        id: 'partly',
+        text: 'Hello',
+        createdAt: past,
+        updatedAt: past,
+        scheduledAt: later,
+        status: PostStatus.scheduled,
+        targets: [
+          PostTarget(accountId: a.id, overrides: PostOverrides(scheduledAt: past), status: TargetStatus.published, result: PublishResult.ok(remoteId: 'live')),
+          PostTarget(accountId: b.id, overrides: PostOverrides(scheduledAt: later)),
+        ],
+      );
+      await tester.runAsync(() => h.services.posts.upsert(saved));
+      h.notifier.load(saved);
+      await tester.pump();
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump();
+      await openSheet(tester, h);
+      await openRandom(tester);
+      expect(find.byKey(ValueKey('random-time-${a.id}')), findsNothing);
+      expect(find.byKey(ValueKey('random-time-${b.id}')), findsOneWidget);
+      await scheduleButton(tester);
+      final c = h.composer;
+      expect(c.overrides[a.id]!.scheduledAt, past, reason: 'its own time');
+      final drawn = c.overrides[b.id]!.scheduledAt!;
+      expect(drawn.isAfter(_start), isTrue);
+      expect(drawn, isNot(later));
+      expect(c.scheduledAt, drawn, reason: 'the next one still to go, not the one already past');
+      await done(tester);
+    });
+
+    testWidgets('a draw on the second 1:30 is kept: Confirm, the saved form and a reopen all give that instant', (tester) async {
+      // The second 1:30 AM of a US autumn change, on a machine in that zone. Elsewhere still one exact instant.
+      final second = DateTime.utc(2030, 11, 3, 9, 30).toLocal();
+      final h = await boot(tester, random: _FirstMinute());
+      h.now = second.subtract(kRandomScheduleMinLead);
+      compose(h);
+      await tester.pump();
+      await openSheet(tester, h);
+      await openRandom(tester);
+      await scheduleButton(tester);
+      expect(h.composer.scheduledAt, second);
+      final stored = h.composer.toPost(id: 'p', status: PostStatus.scheduled, now: h.now);
+      expect(Post.fromJson(stored.toJson()).scheduledAt, second);
+      await openSheet(tester, h);
+      await scheduleButton(tester);
+      expect(h.composer.scheduledAt, second);
+      await done(tester);
+    });
+
     testWidgets('a time gone stale while the sheet stayed open is refused, and a new draw fixes it', (tester) async {
       final h = await boot(tester);
       compose(h);
@@ -324,8 +391,7 @@ void main() {
 
     testWidgets('a hand-off drawn at night says it needs a tap', (tester) async {
       final h = await boot(tester);
-      final handoff = h.accounts.where((a) => a.tier == PlatformTier.handoff).firstOrNull;
-      if (handoff == null) return;
+      final handoff = h.accounts.firstWhere((a) => a.tier == PlatformTier.handoff);
       compose(h, targets: [handoff]);
       await tester.pump();
       h.notifier.setSchedule(DateTime(2030, 3, 5, 3, 12));
@@ -363,6 +429,25 @@ void main() {
       await openSheet(tester, h);
       await scheduleButton(tester);
       expect(h.composer.scheduledAt, second);
+      await done(tester);
+    });
+
+    testWidgets('one network left: the time just picked wins over a saved time per network', (tester) async {
+      final h = await boot(tester);
+      final a = h.onDevice, b = h.second;
+      compose(h, targets: [a, b]);
+      await tester.pump();
+      h.notifier.setTargetSchedules({a.id: DateTime(2030, 3, 5, 10), b.id: DateTime(2030, 3, 6, 10)});
+      h.notifier.selectAccounts([a.id]);
+      await tester.pump();
+      await openSheet(tester, h);
+      final day = find.text('9');
+      await tester.ensureVisible(day.first);
+      await tester.tap(day.first);
+      await tester.pumpAndSettle();
+      await scheduleButton(tester);
+      expect(h.composer.scheduledAt, DateTime(2030, 3, 9, 10));
+      expect(h.composer.overrides[a.id]?.scheduledAt, isNull);
       await done(tester);
     });
 
@@ -482,7 +567,7 @@ void main() {
       final h = await boot(tester);
       compose(h);
       await tester.pump();
-      final stale = DateTime.now().subtract(const Duration(days: 2));
+      final stale = _start.subtract(const Duration(days: 2));
       h.notifier.setSchedule(stale);
       await tester.pump();
       final before = (await tester.runAsync(() => h.services.posts.all()))!.length;
@@ -503,8 +588,8 @@ void main() {
       final a = h.onDevice, b = h.second;
       compose(h, targets: [a, b]);
       final actions = h.container.read(postActionsProvider);
-      final soon = DateTime.now().add(const Duration(seconds: 20));
-      final later = DateTime.now().add(const Duration(hours: 2));
+      final soon = _start.add(const Duration(seconds: 20));
+      final later = _start.add(const Duration(hours: 2));
       h.notifier.setSchedule(soon);
       Future<Object?> attempt() async {
         try {
@@ -516,7 +601,7 @@ void main() {
       }
 
       expect(await tester.runAsync(attempt), isA<SchedulePassedException>(), reason: 'under a minute ahead');
-      h.notifier.setTargetSchedules({a.id: DateTime.now().subtract(const Duration(hours: 1)), b.id: later});
+      h.notifier.setTargetSchedules({a.id: _start.subtract(const Duration(hours: 1)), b.id: later});
       expect(await tester.runAsync(attempt), isA<SchedulePassedException>(), reason: 'one network in the past');
       await done(tester);
     });
@@ -524,8 +609,8 @@ void main() {
     testWidgets('a network that already went does not count: its time is its own past', (tester) async {
       final h = await boot(tester);
       final a = h.onDevice, b = h.second;
-      final past = DateTime.now().subtract(const Duration(hours: 1));
-      final later = DateTime.now().add(const Duration(hours: 3));
+      final past = _start.subtract(const Duration(hours: 1));
+      final later = _start.add(const Duration(hours: 3));
       final saved = Post(
         id: 'partly',
         text: 'Hello',
