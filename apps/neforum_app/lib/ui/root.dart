@@ -15,6 +15,7 @@ import '../theme/app_theme.dart';
 import '../theme/text_scale.dart';
 import '../theme/tokens.dart';
 import 'router.dart';
+import 'shell/nav_input.dart';
 import 'ui_zoom.dart';
 
 /// Owns the [AppServices] instance and rebuilds the whole provider tree when
@@ -69,6 +70,7 @@ class NeforumApp extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settings = ref.watch(settingsProvider);
     final router = ref.watch(routerProvider);
+    final history = ref.watch(navHistoryProvider);
     ref.listen(settingsProvider.select((s) => s.minimizeToTray), (_, next) => DesktopIntegration.instance.setCloseToTray(next));
     ThemeData theme(Brightness brightness, {bool highContrast = false}) => buildTheme(
           brightness,
@@ -105,10 +107,18 @@ class NeforumApp extends ConsumerWidget {
             enabled: Env.isDesktop,
             zoom: settings.uiZoom,
             onChanged: (z) => ref.read(settingsProvider.notifier).update((x) => x.copyWith(uiZoom: z)),
-            // Phones and tablets: the text size from Settings > Appearance.
-            child: TextScale(
-              scale: Env.isMobile ? settings.mobileTextScale : 1,
-              child: _RenderWarningBanner(child: child ?? const SizedBox.shrink()),
+            child: NavKeyboardShortcuts(
+              enabled: Env.isDesktop,
+              history: history,
+              child: NavMouseButtons(
+                enabled: Env.isDesktop,
+                history: history,
+                // Phones and tablets: the text size from Settings > Appearance.
+                child: TextScale(
+                  scale: Env.isMobile ? settings.mobileTextScale : 1,
+                  child: _RenderWarningBanner(child: child ?? const SizedBox.shrink()),
+                ),
+              ),
             ),
           ),
         );

@@ -175,7 +175,7 @@ class _EditorCardState extends ConsumerState<EditorCard> {
             const SizedBox(width: Space.xs),
             // Always laid out, so the text does not reflow when it appears.
             Visibility(
-              visible: _hasContent(c),
+              visible: c.hasContent,
               maintainSize: true,
               maintainAnimation: true,
               maintainState: true,
@@ -290,10 +290,6 @@ class _EditorCardState extends ConsumerState<EditorCard> {
       ]),
     );
   }
-
-  /// Something "Clear post" would remove.
-  static bool _hasContent(ComposerState c) =>
-      !c.isEmpty || c.additionalParts.isNotEmpty || c.poll != null || c.contentWarning != null || c.tags.isNotEmpty || c.overrides.isNotEmpty;
 
   /// Empties the whole post (targets stay). Undo brings it back until
   /// anything else changes.

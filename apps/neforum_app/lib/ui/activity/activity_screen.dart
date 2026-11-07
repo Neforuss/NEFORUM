@@ -12,6 +12,7 @@ import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
 import '../../widgets/surfaces.dart';
+import '../compose/open_in_composer.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
 import 'target_chip.dart';
@@ -70,7 +71,7 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
     final list = history.where(_matches).toList();
 
     void newPost() {
-      ref.read(composerProvider.notifier).reset();
+      startNewPostInComposer(context, ref);
       context.go(AppSection.compose.path);
     }
 

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -32,7 +31,7 @@ class PostDetailScreen extends ConsumerWidget {
     final nf = context.nf;
     final post = ref.watch(postByIdProvider(postId));
     final loading = ref.watch(postsProvider).isLoading && post == null;
-    void back() => context.canPop() ? context.pop() : context.go(AppSection.activity.path);
+    void back() => ref.read(navHistoryProvider).stepBackTo(AppSection.activity.path);
 
     final backButton = Align(
       alignment: Alignment.centerLeft,
