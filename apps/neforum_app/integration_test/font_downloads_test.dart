@@ -167,7 +167,11 @@ void main() {
     await pumpUntil(() => services.asked.contains('/v1/fonts'), 'the list to be asked for');
     await tester.enterText(find.byKey(const Key('font-search')), 'inter');
     await pumpUntil(() => find.byKey(const ValueKey('font-catalog-inter')).evaluate().isNotEmpty, 'the search to find it');
-    await tester.pump(const Duration(milliseconds: 100));
+    await pumpUntil(() => find.byKey(const ValueKey('font-catalog-lobster')).evaluate().isEmpty, 'the search to narrow the list');
+    await tester.ensureVisible(find.byKey(const ValueKey('font-catalog-inter')));
+    // On the real engine a tap right after scrolling reads the old position.
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 200));
     await tester.tap(find.byKey(const ValueKey('font-catalog-inter')));
     await pumpUntil(() => closed, 'one tap to install it and return it');
 

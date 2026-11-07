@@ -99,6 +99,10 @@ void main() {
         '/npm/@fontsource/inter@5.3.0/LICENSE',
       ], reason: 'pinned URLs built here: the answer offered evil.example and numbered slices');
       expect(fake.requests.every((r) => r.url.host == 'api.fontsource.org' || r.url.host == 'cdn.jsdelivr.net'), isTrue);
+      for (final r in fake.requests) {
+        expect(r.url.hasQuery, isFalse, reason: 'no key in the address');
+        expect(r.headers.keys.map((k) => k.toLowerCase()).toSet().difference({'user-agent'}), isEmpty, reason: 'no key, no account, nothing about the user: ${r.url}');
+      }
       expect(downloaded.subsets, ['latin', 'cyrillic']);
       expect(downloaded.weights, [400, 700]);
       expect(progress.last.bytes, downloaded.totalBytes);
@@ -254,6 +258,12 @@ void main() {
       expect((await tester.runAsync(() => fontFileDraws(subsetOf(interBytes, isLatin))))!, isTrue);
       expect((await tester.runAsync(() => fontFileDraws(blank)))!, isFalse);
       await expectRefused(tester, storage, serving({'latin-400-normal.ttf': blank}), 'x', contains('cannot be drawn'));
+    });
+
+    testWidgets('the draw test asks for what the file maps: "Ag" would pass a blank Cyrillic font on its missing-glyph box', (tester) async {
+      final blankCyrillic = blankExceptMissingGlyphOf(subsetOf(monoBytes, isCyrillic));
+      expect((await tester.runAsync(() => fontFileDraws(blankCyrillic)))!, isFalse);
+      expect((await tester.runAsync(() => fontFileDraws(subsetOf(monoBytes, isCyrillic))))!, isTrue, reason: 'the same font with its outlines');
     });
 
     testWidgets('a licence that cannot be fetched, or is an error page', (tester) async {

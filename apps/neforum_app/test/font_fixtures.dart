@@ -91,6 +91,20 @@ Uint8List blankOutlinesOf(Uint8List ttf) {
   return _build(_u32(ttf, 0), {...tables, 'loca': Uint8List(tables['loca']!.length)});
 }
 
+/// [ttf] with every outline gone except the missing-glyph box: a test asking
+/// for a character this font lacks would still see ink, from the box or from a
+/// fallback font. Only asking for what the font maps shows it is blank.
+Uint8List blankExceptMissingGlyphOf(Uint8List ttf) {
+  final tables = _tablesOf(ttf);
+  final loca = Uint8List.fromList(tables['loca']!);
+  final long = _u16(tables['head']!, 50) == 1;
+  final size = long ? 4 : 2;
+  for (var o = size * 2; o < loca.length; o += size) {
+    loca.setRange(o, o + size, loca, size);
+  }
+  return _build(_u32(ttf, 0), {...tables, 'loca': loca});
+}
+
 /// What the list answers, cut down. Rows that must stay hidden are included.
 List<Map<String, dynamic>> fontListFixture() => [
       _row('42dot-sans', '42dot Sans', subsets: ['korean', 'latin'], weights: [300, 400, 500, 600, 700, 800]),

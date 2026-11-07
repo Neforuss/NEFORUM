@@ -166,16 +166,17 @@ class FontDownloadsNotifier extends Notifier<FontDownloadsState> {
     final id = plan.detail.id;
     if (state.installs.containsKey(id)) return null;
     final cancel = _cancels[id] = FontInstallCancel();
-    final storage = ref.read(servicesProvider).storage;
+    // Read now: the workspace can change while this runs.
+    final services = ref.read(servicesProvider);
     final installer = _installer();
     _progress(id, FontInstallProgress(filesTotal: plan.files.length));
     try {
       final downloaded = await installer.install(plan, cancel: cancel, onProgress: (p) => _progress(id, p));
       forgetDownloadedFont(downloaded.family);
       final font = captionFontOf(downloaded);
-      await prepareCaptionFont(storage, font);
+      await prepareCaptionFont(services.storage, font);
       _fontsChanged();
-      await remakePicturesDrawnWithout(ref.read(servicesProvider), downloaded.family);
+      await remakePicturesDrawnWithout(services, downloaded.family);
       return font;
     } on FontInstallCancelled {
       return null;
@@ -285,18 +286,22 @@ bool _drawnWithout(MediaAttachment m, String family) {
 /// again stays as it is.
 Future<int> remakePicturesDrawnWithout(AppServices s, String family) async {
   var remade = 0;
-  for (final post in await s.posts.all()) {
-    if ((post.status != PostStatus.draft && post.status != PostStatus.scheduled) || post.hasHeldTargets) continue;
-    if (!post.media.any((m) => _drawnWithout(m, family))) continue;
-    try {
-      if (post.media.any((m) => isRenderedTextCard(m) && _drawnWithout(m, family))) {
-        await s.posts.upsert(await attachTextCards(s, post, s.settings));
+  try {
+    for (final post in await s.posts.all()) {
+      if ((post.status != PostStatus.draft && post.status != PostStatus.scheduled) || post.hasHeldTargets) continue;
+      if (!post.media.any((m) => _drawnWithout(m, family))) continue;
+      try {
+        if (post.media.any((m) => isRenderedTextCard(m) && _drawnWithout(m, family))) {
+          await s.posts.upsert(await attachTextCards(s, post, s.settings));
+        }
+        if (post.media.any((m) => isCaptionedCopy(m) && _drawnWithout(m, family))) await fitPhotosOfSavedPost(s, post.id);
+        remade++;
+      } on Object catch (e) {
+        debugPrint('Could not make the pictures of ${post.id} again: $e');
       }
-      if (post.media.any((m) => isCaptionedCopy(m) && _drawnWithout(m, family))) await fitPhotosOfSavedPost(s, post.id);
-      remade++;
-    } on Object catch (e) {
-      debugPrint('Could not make the pictures of ${post.id} again: $e');
     }
+  } on Object catch (e) {
+    debugPrint('Could not look through the saved posts: $e');
   }
   return remade;
 }

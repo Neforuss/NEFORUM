@@ -117,7 +117,8 @@ void main() {
 
   group('consent', () {
     _desktop('opening the picker and searching send nothing; the question explains; Not now changes nothing', (tester) async {
-      final h = await _pump(tester);
+      // A client that fails on any call, and records it.
+      final h = await _pump(tester, services: _servicesWithInter()..offline = true);
       await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
       await tester.pump(const Duration(seconds: 1));
       expect(find.text('Download'), findsNothing, reason: 'no section before the answer');

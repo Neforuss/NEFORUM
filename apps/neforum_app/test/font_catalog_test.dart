@@ -389,6 +389,24 @@ void main() {
     });
   });
 
+  group('what the documents say', () {
+    test('the README names everyone NEFORUM can contact, the update check included', () {
+      final readme = File('../../README.md').readAsStringSync();
+      final privacy = readme.substring(readme.indexOf('## Privacy'), readme.indexOf('## License'));
+      expect(privacy, contains('neforus.com if you turn on the update check'));
+      expect(privacy, contains('api.fontsource.org and cdn.jsdelivr.net if you turn on font downloads'));
+      expect(privacy, contains('see your IP address and the font names you look up, never your posts'));
+      expect(privacy, contains('downloaded fonts'), reason: 'what Delete everything removes');
+      expect(readme.substring(readme.indexOf('## License')), contains('keeps its own open licence'));
+    });
+
+    test('the sync and backup guides say font files do not travel', () {
+      expect(File('../../docs/sync.md').readAsStringSync(), contains('| Fonts | No: each device keeps its own font files.'));
+      expect(File('../../docs/sync.md').readAsStringSync(), contains('font downloads, Sync itself) | No |'));
+      expect(File('../../docs/backup.md').readAsStringSync(), contains('| Font files | Never.'));
+    });
+  });
+
   group('checking a font file', () {
     final real = File(kInterRegular).readAsBytesSync();
 
