@@ -318,7 +318,7 @@ void main() {
       expect(c.count(_isMedia) - before, 2);
     });
 
-    test('kept ids are gone after a success, also when the server holds the post', () async {
+    test('kept ids are gone once the server holds the post', () async {
       final when = DateTime.utc(2026, 11, 7);
       var fail = true;
       var uploads = 0;
@@ -337,6 +337,26 @@ void main() {
       final before = c.count(_isMedia);
       expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).isHeldByPlatform, isTrue);
       expect(c.count(_isMedia) - before, 2, reason: 'nothing kept once the post is with the server');
+    });
+
+    test('kept ids are gone once the post is up', () async {
+      var fail = true;
+      var uploads = 0;
+      final c = FaultClient((i, r) {
+        if (_isStatus(r.url.path)) return jsonAnswer({'id': 's$i', 'url': 'https://x/s$i'});
+        uploads++;
+        return fail && uploads >= 2 ? null : jsonAnswer({'id': 'm$uploads', 'url': 'u'});
+      });
+      final adapter = MastodonAdapter();
+      final v = PostVariant(text: 'x', media: [_image('i1'), _image('i2')], sourcePostId: 'p');
+      expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).success, isFalse);
+      fail = false;
+      expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).success, isTrue);
+      final before = c.count(_isMedia);
+      // The same post again, say the user posts it a second time: each id is
+      // spent, and the server takes an id once.
+      expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).success, isTrue);
+      expect(c.count(_isMedia) - before, 2, reason: 'nothing kept once the post is up');
     });
 
     test('a real refusal of the status is not retried without kept ids', () async {
