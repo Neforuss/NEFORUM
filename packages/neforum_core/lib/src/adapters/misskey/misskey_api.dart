@@ -214,6 +214,9 @@ class MisskeyApi {
       },
       files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)],
       timeout: _uploadTimeout,
+      // A Drive file is not a note. The worst a re-send leaves is an extra
+      // copy in the user's Drive, and only if an answer was lost.
+      retrySafe: true,
     );
     return r.jsonMap;
   }
@@ -234,9 +237,9 @@ Future<T> guardMisskey<T>(String context, AdapterContext ctx, Future<T> Function
   } on HttpFailure catch (f) {
     throw AdapterException(misskeyPublishError(f, context: context, now: ctx.now()));
   } on TimeoutException catch (e) {
-    throw AdapterException(PublishError.network('$context: timed out', raw: '$e'));
+    throw AdapterException(PublishError.network('$context: timed out', raw: NeforumHttp.transportDetails(e)));
   } on http.ClientException catch (e) {
-    throw AdapterException(PublishError.network('$context: network error', raw: e.message));
+    throw AdapterException(PublishError.network('$context: network error', raw: NeforumHttp.transportDetails(e)));
   } on FormatException catch (e) {
     throw AdapterException(PublishError.platform('$context: unexpected response', raw: e.message));
   }

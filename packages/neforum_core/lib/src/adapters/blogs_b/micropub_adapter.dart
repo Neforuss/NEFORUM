@@ -345,7 +345,7 @@ class MicropubAdapter extends PlatformAdapter {
     } on OAuthException catch (e) {
       throw AdapterException(e.toRefreshError('Your site'));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('Could not renew the Micropub token', raw: '$e'));
+      throw AdapterException(PublishError.network('Could not renew the Micropub token', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

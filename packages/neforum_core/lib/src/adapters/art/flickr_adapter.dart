@@ -270,7 +270,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
     } on Object catch (e) {
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Flickr ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Flickr (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       return PublishResult.failure(PublishError.platform('Flickr upload failed: $text', raw: text));
     }
@@ -310,7 +310,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
           AdapterException() => e.error,
           HttpFailure() => e.toPublishError(context: 'Uploading to Flickr'),
           _ => NeforumHttp.isTransportError(e)
-              ? PublishError.network('Could not reach Flickr ($e)', raw: '$e')
+              ? PublishError.network('Could not reach Flickr (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e))
               : PublishError.platform('Flickr upload failed: $e', raw: '$e'),
         };
         if (ids.isEmpty) return PublishResult.failure(error);

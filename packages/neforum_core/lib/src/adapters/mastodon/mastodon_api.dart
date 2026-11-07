@@ -73,9 +73,10 @@ class MastodonApi {
 
   /// `GET /api/v2/instance`, falling back to `/api/v1/instance` (Pleroma,
   /// Akkoma, older Mastodon). Returns `null` when neither answers JSON.
-  Future<MastodonInstanceProfile?> fetchInstance() async {
+  /// [timeout] replaces the client's time limit for each request.
+  Future<MastodonInstanceProfile?> fetchInstance({Duration? timeout}) async {
     for (final path in const ['/api/v2/instance', '/api/v1/instance']) {
-      final res = await ctx.http.get(url(path), headers: {'Accept': 'application/json'}, throwOnError: false);
+      final res = await ctx.http.send('GET', url(path), headers: {'Accept': 'application/json'}, throwOnError: false, timeout: timeout);
       final json = res.json;
       if (res.ok && json is Map) {
         return MastodonInstanceProfile.fromInstanceJson(Map<String, dynamic>.from(json), baseUrl: base.toString());
@@ -201,6 +202,11 @@ class MastodonApi {
   /// [description] replaces the file's alt text (a sound file's "Artist –
   /// Title"); [thumbnail] is the picture shown for a sound file or video
   /// (Mastodon 3.2 and later).
+  ///
+  /// A dropped connection re-sends the file: a media POST cannot publish
+  /// anything, and a second copy is an unattached file the server removes
+  /// after a day (`Vacuum::MediaAttachmentsVacuum`). Mastodon has no partial
+  /// upload, so the unit of a retry is the file.
   Future<String> uploadMedia(MediaAttachment media, Uint8List bytes, {int? descriptionLimit, String? description, HttpFilePart? thumbnail}) async {
     final alt = _truncate((description ?? media.altText)?.trim() ?? '', descriptionLimit);
     final fields = <String, String>{if (alt.isNotEmpty) 'description': alt};
@@ -216,6 +222,7 @@ class MastodonApi {
       files: [file, ?thumbnail],
       headers: _auth,
       throwOnError: false,
+      retrySafe: true,
     );
     if (res.statusCode == 404) {
       res = await ctx.http.multipart(
@@ -224,6 +231,7 @@ class MastodonApi {
         files: [file, ?thumbnail],
         headers: _auth,
         throwOnError: false,
+        retrySafe: true,
       );
     }
     if (!res.ok) throw HttpFailure(res);

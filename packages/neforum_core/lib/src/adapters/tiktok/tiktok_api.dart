@@ -241,7 +241,7 @@ PublishError? networkErrorFor(Object e, String context) {
   if (e is AdapterException) return e.error;
   if (e is HttpFailure) return e.toPublishError(context: context);
   if (e is http.ClientException || e is TimeoutException || isTransientIoError(e)) {
-    return PublishError.network('$context: network error ($e)');
+    return PublishError.network('$context: network error (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e));
   }
   return null;
 }

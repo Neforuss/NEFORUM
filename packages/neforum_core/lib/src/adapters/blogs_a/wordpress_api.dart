@@ -221,6 +221,6 @@ Future<T> guardWordPress<T>(String what, Future<T> Function() call) async {
   } on HttpFailure catch (f) {
     throw AdapterException(mapWordPressFailure(f, what));
   } on Exception catch (e) {
-    throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+    throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
   }
 }

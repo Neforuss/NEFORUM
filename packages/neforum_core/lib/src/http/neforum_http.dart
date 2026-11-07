@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'package:meta/meta.dart';
 
 import '../model/publish_result.dart';
 import '../publish/cancellation_signal.dart';
@@ -104,6 +105,63 @@ class HttpFailure implements Exception {
   String toString() => 'HttpFailure($statusCode ${url.host}${url.path}): ${body.length > 200 ? body.substring(0, 200) : body}';
 }
 
+/// What is known about a watched upload when it failed. The count is bytes
+/// handed to the connection, not bytes the server has: the operating system
+/// and the path can hold a good part of a file that never arrives.
+@immutable
+class UploadTrace {
+  const UploadTrace({required this.sentBytes, required this.totalBytes, required this.attempts, required this.elapsed});
+
+  final int sentBytes;
+  final int totalBytes;
+  final int attempts;
+  final Duration elapsed;
+
+  /// Every byte was handed over, so the server may have the whole request.
+  /// When this is false it cannot have acted on the request.
+  bool get wholeBodySent => sentBytes >= totalBytes;
+
+  String get summary => '$sentBytes of $totalBytes bytes handed to the connection, ${elapsed.inSeconds} s, attempt $attempts';
+}
+
+/// A request the connection dropped before an answer came. [message] and
+/// [toString] are plain words for people; [details] keeps the system's own
+/// text for the details box and for logs, with the address cut down to its
+/// origin (some APIs carry a token in the path or the query).
+class ConnectionFailed extends http.ClientException {
+  ConnectionFailed(Uri url, this.details, {String? message}) : super(message ?? 'The connection to ${url.host} failed.', url);
+
+  final String details;
+
+  @override
+  String toString() => message;
+}
+
+/// A watched upload the connection dropped before an answer came. On Windows
+/// this is what "Write failed" (errno 10053 or 10054) becomes. If the server
+/// sent an answer first, it is lost: dart:io only returns a response once the
+/// whole body went out.
+class UploadInterrupted extends ConnectionFailed {
+  UploadInterrupted(Uri url, String cause, this.trace)
+      : super(url, '$cause\n${trace.summary}', message: 'The upload to ${url.host} was cut off${_triedText(trace.attempts)}.');
+
+  final UploadTrace trace;
+}
+
+/// A request that got no answer in time. [message] and [toString] are plain
+/// words; [trace] is set when it was a watched upload.
+class RequestTimedOut extends TimeoutException {
+  RequestTimedOut(String super.message, super.duration, this.details, {this.trace});
+
+  final String details;
+  final UploadTrace? trace;
+
+  @override
+  String toString() => message!;
+}
+
+String _triedText(int attempts) => attempts > 1 ? ' (tried $attempts times)' : '';
+
 /// Thin wrapper over `package:http` with a NEFORUM user agent, JSON/form/
 /// multipart helpers, timeouts and bounded retries for transient failures.
 class NeforumHttp {
@@ -112,7 +170,7 @@ class NeforumHttp {
     this.userAgent = defaultUserAgent,
     this.maxRetries = 2,
     this.timeout = const Duration(seconds: 60),
-    this.uploadStallTimeout = const Duration(seconds: 90),
+    this.uploadStallTimeout = const Duration(seconds: 60),
     Logger? log,
   })  : _client = client ?? http.Client(),
         _log = log ?? Logger('http'),
@@ -135,7 +193,9 @@ class NeforumHttp {
 
   /// How long an upload may go without sending anything before it is given
   /// up. Uploads have no deadline of their own: on a slow or shared uplink a
-  /// big file takes as long as it takes, as long as it keeps moving.
+  /// big file takes as long as it takes, as long as it keeps moving. 60 s
+  /// matches nginx's `client_body_timeout`: a server that has given up is not
+  /// waited on for longer than it waits for us.
   final Duration uploadStallTimeout;
   final Logger _log;
 
@@ -180,14 +240,19 @@ class NeforumHttp {
     HeaderSigner? signHeaders,
     bool throwOnError = true,
     String method = 'POST',
+    bool retrySafe = false,
   }) =>
       send(method, url,
-          headers: headers, signHeaders: signHeaders, fields: fields, files: files, throwOnError: throwOnError);
+          headers: headers, signHeaders: signHeaders, fields: fields, files: files, throwOnError: throwOnError, retrySafe: retrySafe);
 
   /// Sends raw bytes (used for S3 presigned PUTs, chunked uploads, ...).
   Future<NeforumResponse> putBytes(Uri url, Uint8List bytes,
-          {Map<String, String>? headers, HeaderSigner? signHeaders, bool throwOnError = true, String method = 'PUT'}) =>
-      send(method, url, headers: headers, signHeaders: signHeaders, bytes: bytes, throwOnError: throwOnError);
+          {Map<String, String>? headers,
+          HeaderSigner? signHeaders,
+          bool throwOnError = true,
+          String method = 'PUT',
+          bool retrySafe = false}) =>
+      send(method, url, headers: headers, signHeaders: signHeaders, bytes: bytes, throwOnError: throwOnError, retrySafe: retrySafe);
 
   Future<Uint8List> download(Uri url, {Map<String, String>? headers}) async {
     final r = await send('GET', url, headers: headers);
@@ -197,6 +262,15 @@ class NeforumHttp {
   /// [signHeaders] is called before every attempt, retries included, and its
   /// headers go over [headers]: for signatures that must not be sent twice,
   /// such as OAuth 1.0a's (X and Tumblr refuse a nonce they have seen).
+  ///
+  /// [retrySafe]: the caller knows this request cannot create a post (a media
+  /// file nothing is attached to yet), so a dropped connection or a timeout
+  /// re-sends it up to [maxRetries] times at any size. It stays false for
+  /// anything that can publish: a platform where the upload is the post must
+  /// never set it.
+  ///
+  /// Transport failures leave as [ConnectionFailed], [UploadInterrupted] or
+  /// [RequestTimedOut], whose text is fit to show to a person.
   Future<NeforumResponse> send(
     String method,
     Uri url, {
@@ -209,39 +283,52 @@ class NeforumHttp {
     Uint8List? bytes,
     bool throwOnError = true,
     Duration? timeout,
+    bool retrySafe = false,
   }) async {
+    // Encoded up front so that a big JSON body (Pinterest's base64 images)
+    // counts as what it is: an upload.
+    final jsonBytes = jsonBody == null ? null : utf8.encode(jsonEncode(jsonBody));
+    final formBytes = form == null ? null : utf8.encode(encodeForm(form));
     // Uploads are watched instead of timed: they fail only when nothing has
     // been sent for [uploadStallTimeout], or no answer comes after the last
     // byte (a fixed budget failed 3 MB files on a busy 1 Mbit/s uplink). A
-    // big body is never re-sent automatically after a timeout or a dropped
-    // connection; the caller decides whether to retry.
-    final bodySize = (bytes?.length ?? 0) + (files ?? const <HttpFilePart>[]).fold<int>(0, (s, f) => s + f.bytes.length);
+    // big body is not re-sent automatically after a timeout or a dropped
+    // connection unless the caller says it is safe ([retrySafe]).
+    final bodySize = (jsonBytes?.length ?? 0) +
+        (formBytes?.length ?? 0) +
+        (bytes?.length ?? 0) +
+        (fields ?? const <String, String>{}).values.fold<int>(0, (s, v) => s + v.length) +
+        (files ?? const <HttpFilePart>[]).fold<int>(0, (s, f) => s + f.bytes.length);
     final base = timeout ?? this.timeout;
-    final upload = bodySize > 512 * 1024;
-    final retries = bodySize > 8 * 1024 * 1024 ? 0 : maxRetries;
+    final upload = bodySize > watchedBodyThreshold;
+    final retries = bodySize > 8 * 1024 * 1024 && !retrySafe ? 0 : maxRetries;
     // A POST that may already have been processed (gateway error, dropped
     // connection) is never re-sent here: that could publish twice. The
     // publish service retries the whole target later instead.
     final idempotent = _idempotentMethods.contains(method.toUpperCase()) ||
         (headers?.keys.any((k) => k.toLowerCase() == 'idempotency-key') ?? false);
     final signal = cancellation;
+    final meter = _UploadMeter();
+    final clock = Stopwatch()..start();
     var attempt = 0;
     while (true) {
       attempt++;
+      meter.sent = 0;
       signal?.throwIfCancelled();
       try {
         final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
-        _log.debug('$method $url (attempt $attempt)');
+        // The host only: some APIs carry a token in the path or the query.
+        _log.debug('$method ${url.host} (attempt $attempt)');
         final http.Response res;
         if (upload) {
-          res = await _unlessCancelled(_sendWatched(method, url, attemptHeaders, fields, files, bytes, base, signal), signal);
+          res = await _unlessCancelled(_sendWatched(method, url, attemptHeaders, jsonBytes, formBytes, fields, files, bytes, base, signal, meter), signal);
         } else {
-          final req = _build(method, url, attemptHeaders, jsonBody, form, fields, files, bytes, abortTrigger: signal?.whenCancelled);
+          final req = _build(method, url, attemptHeaders, jsonBytes, formBytes, fields, files, bytes, abortTrigger: signal?.whenCancelled);
           final streamed = await _unlessCancelled(_client.send(req).timeout(base), signal);
           res = await _unlessCancelled(http.Response.fromStream(streamed).timeout(base), signal);
         }
         final out = NeforumResponse(res.statusCode, _lowercase(res.headers), res.bodyBytes, url);
-        if (!out.ok && attempt <= retries && (idempotent ? _retryable(out.statusCode) : _notProcessed(out))) {
+        if (!out.ok && attempt <= retries && (idempotent ? _retryable(out.statusCode) : _notProcessed(out) || (retrySafe && _gatewayError(out)))) {
           final wait = out.retryAfter ?? _backoff(attempt);
           if (wait <= const Duration(seconds: 30)) {
             _log.warn('HTTP ${out.statusCode} from ${url.host}; retrying in ${wait.inSeconds}s');
@@ -259,16 +346,40 @@ class NeforumHttp {
         // An aborted request surfaces as a ClientException; report it as
         // the cancellation it is, never as a network error to retry.
         if (signal != null && signal.isCancelled) throw const OperationCancelledException();
-        final transient = e is TimeoutException || e is http.ClientException || isTransientIoError(e);
-        if (transient && idempotent && attempt <= retries) {
+        if (!isTransportError(e)) rethrow;
+        final cause = _withoutAddress('$e', url);
+        final trace = upload
+            ? UploadTrace(sentBytes: meter.sent, totalBytes: meter.total, attempts: attempt, elapsed: clock.elapsed)
+            : null;
+        final position = trace == null ? 'attempt $attempt' : trace.summary;
+        if ((idempotent || retrySafe) && attempt <= retries) {
           final wait = _backoff(attempt);
-          _log.warn('Network error calling ${url.host} ($e); retrying in ${wait.inSeconds}s');
+          _log.warn('Network error calling ${url.host} ($cause; $position); retrying in ${wait.inMilliseconds} ms');
           await _pause(wait, signal);
           continue;
         }
-        rethrow;
+        _log.warn('Network error calling ${url.host} ($cause; $position); giving up');
+        throw _plainFailure(e, cause, url, base, trace);
       }
     }
+  }
+
+  /// The failure callers see for a transport error [e], in words fit for a
+  /// person. [cause] is the system's own text, kept for the details box.
+  static Exception _plainFailure(Object e, String cause, Uri url, Duration base, UploadTrace? trace) {
+    if (e is TimeoutException) {
+      final what = (trace == null ? null : e.message) ?? '${url.host} did not answer within ${base.inSeconds} s';
+      final tried = trace == null ? '' : _triedText(trace.attempts);
+      return RequestTimedOut('$what$tried.', e.duration, trace == null ? cause : '$cause\n${trace.summary}', trace: trace);
+    }
+    return trace == null ? ConnectionFailed(url, cause) : UploadInterrupted(url, cause, trace);
+  }
+
+  /// [text] without [url]: `ClientException.toString` prints the whole address,
+  /// and some APIs carry a token in the path or the query.
+  static String _withoutAddress(String text, Uri url) {
+    final origin = '${url.scheme}://${url.host}';
+    return text.replaceAll(url.toString(), origin).replaceAll(RegExp(r'uri=\S+'), 'uri=$origin');
   }
 
   /// [future], or [OperationCancelledException] as soon as [signal] fires,
@@ -289,8 +400,8 @@ class NeforumHttp {
     String method,
     Uri url,
     Map<String, String>? headers,
-    Object? jsonBody,
-    Map<String, String>? form,
+    Uint8List? jsonBytes,
+    Uint8List? formBytes,
     Map<String, String>? fields,
     List<HttpFilePart>? files,
     Uint8List? bytes, {
@@ -307,16 +418,21 @@ class NeforumHttp {
       return req;
     }
     final req = http.AbortableRequest(method, url, abortTrigger: abortTrigger)..headers.addAll(h);
-    if (jsonBody != null) {
+    if (jsonBytes != null) {
       req.headers.putIfAbsent('Content-Type', () => 'application/json; charset=utf-8');
-      req.body = jsonEncode(jsonBody);
-    } else if (form != null) {
+      // As `Request.body` would: a type without a charset gets one.
+      final type = _mediaType(req.headers['Content-Type']!);
+      if (type != null && !type.parameters.containsKey('charset')) {
+        req.headers['Content-Type'] = type.change(parameters: {'charset': 'utf-8'}).toString();
+      }
+      req.bodyBytes = jsonBytes;
+    } else if (formBytes != null) {
       // The plain type, as browsers and curl send it: the body is
       // percent-encoded ASCII, and TikTok's token endpoint answers "The
       // request parameters are malformed" to `; charset=utf-8`. bodyFields
       // (and body) would add that charset, so set the bytes directly.
       req.headers.putIfAbsent('Content-Type', () => 'application/x-www-form-urlencoded');
-      req.bodyBytes = utf8.encode(encodeForm(form));
+      req.bodyBytes = formBytes;
     } else if (bytes != null) {
       req.headers.putIfAbsent('Content-Type', () => 'application/octet-stream');
       req.bodyBytes = bytes;
@@ -328,8 +444,8 @@ class NeforumHttp {
   /// fast as it can send them, and gives up only when no piece has gone out
   /// for [uploadStallTimeout], or when the server has not answered [base]
   /// twice over after the last one (it may still be processing a video).
-  Future<http.Response> _sendWatched(String method, Uri url, Map<String, String>? headers, Map<String, String>? fields,
-      List<HttpFilePart>? files, Uint8List? bytes, Duration base, CancellationSignal? signal) async {
+  Future<http.Response> _sendWatched(String method, Uri url, Map<String, String>? headers, Uint8List? jsonBytes, Uint8List? formBytes,
+      Map<String, String>? fields, List<HttpFilePart>? files, Uint8List? bytes, Duration base, CancellationSignal? signal, _UploadMeter meter) async {
     final abort = Completer<void>();
     final stalled = Completer<Never>();
     Timer? watchdog;
@@ -344,9 +460,12 @@ class NeforumHttp {
     final stallLimit = uploadStallTimeout;
     final answerLimit = base * 2;
     final trigger = signal == null ? abort.future : Future.any([abort.future, signal.whenCancelled]);
-    final plain = _build(method, url, headers, null, null, fields, files, bytes);
+    final plain = _build(method, url, headers, jsonBytes, formBytes, fields, files, bytes);
+    final source = plain.finalize();
+    meter.total = plain.contentLength ?? 0;
     final body = _watchedBody(
-      plain.finalize(),
+      source,
+      onPiece: (n) => meter.sent += n,
       onProgress: () => arm(stallLimit, 'Nothing could be sent to ${url.host} for ${stallLimit.inSeconds} s'),
       onSent: () => arm(answerLimit, '${url.host} did not answer within ${answerLimit.inSeconds} s of the upload'),
     );
@@ -364,17 +483,26 @@ class NeforumHttp {
     }
   }
 
-  static const int _uploadChunk = 64 * 1024;
+  /// From this body size on, a request is watched instead of timed: 60 s for
+  /// the whole request is too little for more than a few hundred KiB on a
+  /// starved uplink, and a timed request is not aborted when it gives up.
+  static const int watchedBodyThreshold = 64 * 1024;
 
-  /// [source] in pieces of at most [_uploadChunk] bytes, calling [onProgress]
-  /// each time the consumer takes one and [onSent] after the last. The
-  /// generator waits at each `yield` until the connection wants more, so the
-  /// calls follow what is really sent.
+  /// Small enough that 8 kbit/s still moves a piece well inside the stall limit.
+  static const int _uploadChunk = 16 * 1024;
+
+  /// [source] in pieces of at most [_uploadChunk] bytes. [onPiece] runs as a
+  /// piece is handed over, so while the count is short of the total, part of
+  /// the body certainly never left. [onProgress] runs each time the consumer
+  /// is ready for more and [onSent] after the last piece. The generator waits
+  /// at each `yield` until the connection wants more, so the calls follow what
+  /// is really sent.
   static Stream<List<int>> _watchedBody(Stream<List<int>> source,
-      {required void Function() onProgress, required void Function() onSent}) async* {
+      {required void Function(int) onPiece, required void Function() onProgress, required void Function() onSent}) async* {
     await for (final chunk in source) {
       for (var start = 0; start < chunk.length; start += _uploadChunk) {
         final end = start + _uploadChunk < chunk.length ? start + _uploadChunk : chunk.length;
+        onPiece(end - start);
         yield chunk is Uint8List ? Uint8List.sublistView(chunk, start, end) : chunk.sublist(start, end);
         onProgress();
       }
@@ -389,10 +517,37 @@ class NeforumHttp {
 
   static bool isTransportError(Object e) => e is TimeoutException || e is http.ClientException || isTransientIoError(e);
 
+  /// The trace of [e] when it is a watched upload that failed.
+  static UploadTrace? uploadTrace(Object e) => switch (e) {
+        UploadInterrupted(:final trace) => trace,
+        RequestTimedOut(:final trace) => trace,
+        _ => null,
+      };
+
+  /// The text for a person about transport error [e]: never an errno or a
+  /// Dart type name. [transportDetails] keeps those for the details box.
+  static String transportMessage(Object e) => switch (e) {
+        ConnectionFailed(:final message) => message,
+        RequestTimedOut(:final message?) => message,
+        TimeoutException() => 'The server did not answer in time.',
+        _ when isTransportError(e) => 'The connection failed.',
+        _ => '$e',
+      };
+
+  /// The system's own text for [e], for `PublishError.raw`. Any other
+  /// exception gives its `toString`.
+  static String transportDetails(Object e) => switch (e) {
+        ConnectionFailed(:final details) => details,
+        RequestTimedOut(:final details) => details,
+        _ => '$e',
+      };
+
   static bool _retryable(int status) => status == 429 || status == 502 || status == 503 || status == 504;
 
   /// The server says it did not act on the request, so re-sending is safe.
   static bool _notProcessed(NeforumResponse r) => r.statusCode == 503 || (r.statusCode == 429 && r.retryAfter != null);
+
+  static bool _gatewayError(NeforumResponse r) => r.statusCode == 502 || r.statusCode == 504;
 
   static const _idempotentMethods = {'GET', 'HEAD', 'PUT', 'DELETE', 'OPTIONS'};
 
@@ -400,6 +555,12 @@ class NeforumHttp {
 
   static Map<String, String> _lowercase(Map<String, String> h) =>
       {for (final e in h.entries) e.key.toLowerCase(): e.value};
+}
+
+/// Bytes of the current attempt handed to the connection.
+class _UploadMeter {
+  int sent = 0;
+  int total = 0;
 }
 
 /// A request whose body is a stream read only as the connection sends it

@@ -180,7 +180,7 @@ class InstagramApi {
       } on TimeoutException {
         throw AdapterException(PublishError.network('Timed out while $what'));
       } on http.ClientException catch (e) {
-        throw AdapterException(PublishError.network('Network error while $what: ${e.message}'));
+        throw AdapterException(PublishError.network('The connection failed while $what.', raw: NeforumHttp.transportDetails(e)));
       }
       final body = res.jsonMap;
       final code = _string(body['status_code']) ?? 'IN_PROGRESS';
@@ -233,7 +233,7 @@ class InstagramApi {
     } on TimeoutException {
       throw AdapterException(PublishError.network('Timed out while $what'));
     } on http.ClientException catch (e) {
-      throw AdapterException(PublishError.network('Network error while $what: ${e.message}'));
+      throw AdapterException(PublishError.network('The connection failed while $what.', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

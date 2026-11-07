@@ -26,7 +26,7 @@ Future<Uint8List> readBlogMedia(AdapterContext ctx, MediaAttachment m) async {
 /// so `publish` always returns a failure instead of throwing.
 PublishError unexpectedBlogError(String platform, Exception e) {
   if (e is HttpFailure) return e.toPublishError(context: platform);
-  if (NeforumHttp.isTransportError(e)) return PublishError.network('$platform: $e', raw: '$e');
+  if (NeforumHttp.isTransportError(e)) return PublishError.network('$platform: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e));
   return PublishError.platform('$platform: $e', raw: '$e');
 }
 

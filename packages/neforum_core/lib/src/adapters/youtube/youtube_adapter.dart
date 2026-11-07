@@ -251,7 +251,7 @@ class YouTubeAdapter extends PlatformAdapter {
       throw AdapterException(err);
     } on Object catch (e) {
       if (!isNetworkException(e)) rethrow;
-      throw AdapterException(PublishError.network('Could not reach Google to refresh the sign-in ($e)'));
+      throw AdapterException(PublishError.network('Could not reach Google to refresh the sign-in (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -478,7 +478,7 @@ class YouTubeAdapter extends PlatformAdapter {
           headers: {'Authorization': 'Bearer ${tokens.accessToken}'}, throwOnError: false);
     } on Object catch (e) {
       if (!isNetworkException(e)) rethrow;
-      throw AdapterException(PublishError.network('Could not reach YouTube to delete the scheduled video ($e)'));
+      throw AdapterException(PublishError.network('Could not reach YouTube to delete the scheduled video (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
     }
     if (res.ok) {
       ctx.log.info('Deleted scheduled YouTube video $videoId');

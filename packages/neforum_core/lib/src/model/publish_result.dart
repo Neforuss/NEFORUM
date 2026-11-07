@@ -35,6 +35,7 @@ class PublishError {
     this.statusCode,
     this.raw,
     this.retryAfter,
+    this.uploadInterrupted,
   });
 
   factory PublishError.fromJson(Map<String, dynamic> json) => PublishError(
@@ -46,6 +47,7 @@ class PublishError {
         retryAfter: json['retryAfterSeconds'] == null
             ? null
             : Duration(seconds: json['retryAfterSeconds'] as int),
+        uploadInterrupted: json['uploadInterrupted'] as bool?,
       );
 
   const PublishError.auth(String message, {String? raw, int? statusCode})
@@ -64,7 +66,7 @@ class PublishError {
   const PublishError.validation(String message, {String? raw, int? statusCode})
       : this(kind: PublishErrorKind.validation, message: message, raw: raw, statusCode: statusCode);
 
-  const PublishError.network(String message, {String? raw, int? statusCode, Duration? retryAfter})
+  const PublishError.network(String message, {String? raw, int? statusCode, Duration? retryAfter, bool? uploadInterrupted})
       : this(
           kind: PublishErrorKind.network,
           message: message,
@@ -72,6 +74,7 @@ class PublishError {
           statusCode: statusCode,
           retryAfter: retryAfter,
           retryable: true,
+          uploadInterrupted: uploadInterrupted,
         );
 
   const PublishError.platform(String message, {String? raw, int? statusCode, bool retryable = false})
@@ -98,17 +101,26 @@ class PublishError {
   final String? raw;
   final Duration? retryAfter;
 
+  /// The connection gave out during an upload, which a slow or busy uplink
+  /// usually explains. Omitted from JSON when null, so a device on an older
+  /// version reads the post as before.
+  final bool? uploadInterrupted;
+
+  /// [message] without its full stop, to go in the middle of a sentence.
+  String get _clause => message.endsWith('.') ? message.substring(0, message.length - 1) : message;
+
   /// Wraps an error that happened after some parts of a thread were already
   /// posted. Never retryable: a retry would post the earlier parts again.
   PublishError asPartialThread({required List<String> postedIds, required int total}) {
     if (postedIds.isEmpty) return this;
     return PublishError(
       kind: kind,
-      message: 'Part ${postedIds.length + 1} of $total failed: $message. '
+      message: 'Part ${postedIds.length + 1} of $total failed: $_clause. '
           'Parts already posted (${postedIds.join(', ')}) stay live; finish the thread by hand.',
       retryable: false,
       statusCode: statusCode,
       raw: raw,
+      uploadInterrupted: uploadInterrupted,
     );
   }
 
@@ -118,11 +130,12 @@ class PublishError {
     if (postedIds.isEmpty) return this;
     return PublishError(
       kind: kind,
-      message: 'Part ${postedIds.length + 1} of $total failed: $message. '
+      message: 'Part ${postedIds.length + 1} of $total failed: $_clause. '
           'The first ${postedIds.length} part(s) are live; Retry posts the rest of the thread.',
       retryable: false,
       statusCode: statusCode,
       raw: raw,
+      uploadInterrupted: uploadInterrupted,
     );
   }
 
@@ -139,6 +152,7 @@ class PublishError {
         if (statusCode != null) 'statusCode': statusCode,
         if (raw != null) 'raw': raw,
         if (retryAfter != null) 'retryAfterSeconds': retryAfter!.inSeconds,
+        if (uploadInterrupted != null) 'uploadInterrupted': uploadInterrupted,
       };
 
   @override

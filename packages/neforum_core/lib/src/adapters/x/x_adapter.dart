@@ -443,9 +443,9 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       // Only a rejected grant means "reconnect"; outages and 429s retry.
       throw AdapterException(e.toRefreshError('X'));
     } on TimeoutException catch (e) {
-      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: $e'));
+      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     } on ClientException catch (e) {
-      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: ${e.message}'));
+      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: ${e.message}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -571,9 +571,9 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     } on HttpFailure catch (e) {
       return _partial(XApi.mapError(e, now: ctx.now()), ids, parts.length, urlOf);
     } on TimeoutException catch (e) {
-      return _partial(PublishError.network('X did not answer in time: $e'), ids, parts.length, urlOf);
+      return _partial(PublishError.network('X did not answer in time: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)), ids, parts.length, urlOf);
     } on ClientException catch (e) {
-      return _partial(PublishError.network('Could not reach X: ${e.message}'), ids, parts.length, urlOf);
+      return _partial(PublishError.network('Could not reach X: ${e.message}', raw: NeforumHttp.transportDetails(e)), ids, parts.length, urlOf);
     }
     return PublishResult.ok(
       remoteId: ids.first,

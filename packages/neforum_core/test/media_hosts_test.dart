@@ -632,7 +632,9 @@ void main() {
       await expectLater(
           CatboxMediaHost.litterbox(http: flaky(2), retryDelay: noSleep).upload(fakeImage(), bytes),
           throwsA(isA<MediaHostException>()
-              .having((e) => e.message, 'message', allOf(contains('Connection reset by peer'), contains('tried twice')))
+              .having((e) => e.message, 'message', allOf(contains('litterbox.catbox.moe'), contains('tried twice'), isNot(contains('ClientException'))))
+              .having((e) => e.details, 'details', contains('Connection reset by peer'))
+              .having((e) => e.toPublishError().raw, 'raw for the details box', contains('Connection reset by peer'))
               .having((e) => e.temporary, 'temporary', isTrue)));
       expect(n, 2);
     });

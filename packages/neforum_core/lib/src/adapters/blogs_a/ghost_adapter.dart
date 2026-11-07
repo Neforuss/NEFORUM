@@ -426,7 +426,7 @@ class GhostAdapter extends PlatformAdapter {
       }
       throw AdapterException(mapGhostFailure(f, what));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

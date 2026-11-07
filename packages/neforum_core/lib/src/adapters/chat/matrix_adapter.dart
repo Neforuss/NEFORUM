@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../audio/audio_publishing.dart';
 import '../../auth/oauth2_pkce.dart';
+import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
@@ -570,7 +571,7 @@ class MatrixAdapter extends PlatformAdapter {
     } on AdapterException {
       rethrow;
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('Could not reach the homeserver', raw: '$e'));
+      throw AdapterException(PublishError.network('Could not reach the homeserver', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

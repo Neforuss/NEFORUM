@@ -245,10 +245,11 @@ class BlueskyApi {
 
   // --- repo ------------------------------------------------------------
 
-  /// Uploads raw bytes and returns the blob object to embed.
+  /// Uploads raw bytes and returns the blob object to embed. A blob is not a
+  /// post: no record points at it yet, and the PDS drops unreferenced blobs.
   Future<Map<String, dynamic>> uploadBlob(Uint8List bytes, String mimeType) async {
     final r = await ctx.http.putBytes(xrpc(pds, 'com.atproto.repo.uploadBlob'), bytes,
-        method: 'POST', headers: {..._auth, 'Content-Type': mimeType});
+        method: 'POST', headers: {..._auth, 'Content-Type': mimeType}, retrySafe: true);
     final blob = r.jsonMap['blob'];
     if (blob is! Map) {
       throw const AdapterException(PublishError.platform('Bluesky uploadBlob returned no blob'));

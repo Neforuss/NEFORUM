@@ -10,7 +10,6 @@ import '../../audio/audio_publishing.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
-import '../../http/transient_stub.dart' if (dart.library.io) '../../http/transient_io.dart';
 import '../../model/account.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
@@ -19,6 +18,7 @@ import '../../model/post.dart' show Visibility;
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
+import '../../publish/cancellation_signal.dart';
 import '../../text/rules_validator.dart';
 import '../../text/text_counter.dart';
 import '../../util/logger.dart' show Clock, systemClock;
@@ -463,21 +463,76 @@ class MastodonAdapter extends PlatformAdapter {
     try {
       return await _publish(variant, account, secrets, ctx);
     } on Exception catch (e) {
-      return PublishResult.failure(_toError(e, ctx));
+      return PublishResult.failure(_toError(e, ctx, live: variant.postedThreadIds.length));
     }
   }
 
-  /// Maps whatever a request ran into onto a [PublishError].
-  static PublishError _toError(Exception e, AdapterContext ctx, {String? context}) {
+  /// Maps whatever a request ran into onto a [PublishError]. [live] is how
+  /// many parts of this thread are already up, for the wording of an upload
+  /// that failed: a media POST never publishes, but those parts did.
+  static PublishError _toError(Exception e, AdapterContext ctx, {String? context, int live = 0}) {
     if (e is AdapterException) return e.error;
     if (e is HttpFailure) return MastodonApi.mapFailure(e, now: ctx.now(), context: context);
     final prefix = context == null ? '' : '$context: ';
-    if (e is TimeoutException) return PublishError.network('${prefix}The server did not answer in time');
-    if (e is http.ClientException) {
-      return PublishError.network('${prefix}Network error: ${e.message}', raw: e.toString());
+    final trace = NeforumHttp.uploadTrace(e);
+    if (trace != null) {
+      return PublishError.network(
+        '$prefix${NeforumHttp.transportMessage(e)} ${_outcomeOfUpload(trace, live)}',
+        raw: NeforumHttp.transportDetails(e),
+        uploadInterrupted: true,
+      );
     }
-    if (isTransientIoError(e)) return PublishError.network('${prefix}Network error: $e');
+    if (NeforumHttp.isTransportError(e)) {
+      return PublishError.network('$prefix${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e));
+    }
     return PublishError.platform('${prefix}Unexpected error: $e', raw: e.toString());
+  }
+
+  /// What a failed media upload means for the post. A file that went out
+  /// whole may be on the server, unattached; it never is a post.
+  static String _outcomeOfUpload(UploadTrace trace, int live) {
+    if (live > 0) return 'Nothing more was posted.';
+    return trace.wholeBodySent ? 'The file may have arrived, but nothing was posted.' : 'Nothing was posted.';
+  }
+
+  /// How long the one request to read the server's size limits may take.
+  static const Duration _limitProbeTimeout = Duration(seconds: 15);
+
+  /// The answer to an upload that failed: dart:io loses a server's early
+  /// answer, so a real 413 looks like a dropped connection. The server's
+  /// published limits tell the two apart when the file is over them. Null when
+  /// it is not, or when they cannot be read.
+  static Future<PublishError?> _refusedBySizeLimit(
+    MastodonApi api,
+    MediaAttachment m,
+    int size,
+    Exception failure,
+    MastodonInstanceProfile p,
+    AdapterContext ctx,
+    int live,
+  ) async {
+    final MastodonInstanceProfile? current;
+    try {
+      current = await api.fetchInstance(timeout: _limitProbeTimeout).timeout(_limitProbeTimeout);
+    } on OperationCancelledException {
+      rethrow;
+    } on Exception catch (e) {
+      ctx.log.info('Could not read the size limits of ${p.domain} after the upload failed: ${NeforumHttp.transportDetails(e)}');
+      return null;
+    }
+    final limit = m.isImage ? current?.imageSizeLimit : current?.videoSizeLimit;
+    if (limit == null || size <= limit) return null;
+    ctx.log.warn('${m.fileName ?? m.id} is $size bytes; ${p.domain} takes $limit, which explains the failed upload');
+    return PublishError.validation(
+      '${p.domain} takes ${m.noun}s up to ${_megabytes(limit)}, and this one is ${_megabytes(size)}. '
+      '${live > 0 ? 'Nothing more was posted.' : 'Nothing was posted.'}',
+      raw: NeforumHttp.transportDetails(failure),
+    );
+  }
+
+  static String _megabytes(int bytes) {
+    final tenths = (bytes * 10 + 512 * 1024) ~/ (1024 * 1024);
+    return tenths % 10 == 0 ? '${tenths ~/ 10} MB' : '${tenths ~/ 10}.${tenths % 10} MB';
   }
 
   Future<PublishResult> _publish(
@@ -525,9 +580,18 @@ class MastodonAdapter extends PlatformAdapter {
     final parts = v.isThread ? v.threadParts : [v.text];
     // A thread that broke off earlier goes on after its live parts.
     final start = v.postedThreadIds.length;
-    final mediaIds = [
-      for (var i = 0; i < parts.length; i++) i < start ? const <String>[] : await _uploadAll(api, v.mediaOfPart(i), p, ctx),
-    ];
+    var reusedUploads = false;
+    Future<List<String>> upload(int part, int live) => _uploadAll(
+      api,
+      v.mediaOfPart(part),
+      p,
+      ctx,
+      scope: _uploadScope(account, v),
+      part: part,
+      live: live,
+      onReused: () => reusedUploads = true,
+    );
+    final mediaIds = [for (var i = 0; i < parts.length; i++) i < start ? const <String>[] : await upload(i, start)];
     if (schedule != null && schedule.isBefore(ctx.now().add(_sendLead))) {
       throw AdapterException(
         PublishError.validation(
@@ -561,23 +625,58 @@ class MastodonAdapter extends PlatformAdapter {
         if (schedule != null && _isScheduledStatus(res)) {
           final at = DateTime.tryParse(_string(res['scheduled_at']) ?? '')?.toUtc() ?? schedule;
           ctx.log.info('${p.domain} holds the post until $at (scheduled status $id)');
+          _forgetUploads(_uploadScope(account, v));
           return PublishResult.scheduled(remoteId: id, scheduledFor: at);
         }
         if (schedule != null) ctx.log.warn('${p.domain} ignored scheduled_at and published immediately');
         ids.add(id);
         firstUrl ??= _string(res['url']) ?? _string(res['uri']);
       } on Exception catch (e) {
-        if (ids.isEmpty) rethrow;
+        var failure = e;
+        final scope = _uploadScope(account, v);
+        // No answer: the post may be live, holding the files we kept.
+        if (NeforumHttp.isTransportError(e)) _unansweredStatus.add('$scope|$i');
+        if (e is HttpFailure && e.statusCode == 422 && reusedUploads && _unansweredStatus.contains('$scope|$i')) {
+          // Kept files refused after a status that got no answer: most likely
+          // that status went through and the server has forgotten its key
+          // (an hour). Uploading again would post twice.
+          failure = AdapterException(
+            PublishError.platform(
+              '${p.domain} did not answer an earlier try at this post and now refuses its files, so it may be live already. '
+              'Check ${p.domain} before retrying.',
+              raw: e.body,
+              statusCode: 422,
+            ),
+          );
+        } else if (e is HttpFailure && e.statusCode == 422 && reusedUploads) {
+          // An id kept from an earlier attempt may be gone. The server refused
+          // this status, so sending it again cannot post twice; this happens
+          // at most once per attempt.
+          ctx.log.warn('${p.domain} refused a status with media kept from an earlier attempt; uploading the files again');
+          reusedUploads = false;
+          _forgetUploads(scope);
+          try {
+            for (var j = i; j < parts.length; j++) {
+              mediaIds[j] = await upload(j, ids.length);
+            }
+            i--;
+            continue;
+          } on Exception catch (again) {
+            failure = again;
+          }
+        }
+        if (ids.isEmpty) throw failure;
         // Earlier parts are live: they are recorded, and the next attempt
         // posts only the rest.
         return PublishResult.partialFailure(
-          _toError(e, ctx).asResumableThread(postedIds: ids, total: parts.length),
+          _toError(failure, ctx, live: ids.length).asResumableThread(postedIds: ids, total: parts.length),
           remoteId: ids.first,
           remoteUrl: firstUrl,
           threadRemoteIds: ids,
         );
       }
     }
+    _forgetUploads(_uploadScope(account, v));
     return PublishResult.ok(
       remoteId: ids.first,
       remoteUrl: firstUrl,
@@ -602,13 +701,28 @@ class MastodonAdapter extends PlatformAdapter {
     MastodonApi api,
     List<MediaAttachment> media,
     MastodonInstanceProfile p,
-    AdapterContext ctx,
-  ) async {
+    AdapterContext ctx, {
+    required String scope,
+    required int part,
+    required int live,
+    required void Function() onReused,
+  }) async {
+    _keptUploads.removeWhere((_, kept) => ctx.now().difference(kept.at) >= _keepUploadsFor);
     final ids = <String>[];
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
       ctx.progress('Uploading ${m.noun} ${i + 1} of ${media.length}');
       final bytes = await _read(m, ctx);
+      // Part and position are in the key because the server takes each id
+      // once: the same file used twice in a thread is two uploads.
+      final key = '$scope|$part|$i|${m.id}|${bytes.length}|${m.altText}';
+      final kept = _keptUploads[key];
+      if (kept != null) {
+        ctx.log.info('${m.fileName ?? m.id} reached ${p.domain} in an earlier attempt; using it as it is');
+        ids.add(kept.id);
+        onReused();
+        continue;
+      }
       // A sound file: "Artist – Title" when it has no alt text of its own,
       // and its cover as the picture the player shows.
       final caption = m.isAudio && (m.altText ?? '').trim().isEmpty ? m.audioCaption : null;
@@ -620,9 +734,35 @@ class MastodonAdapter extends PlatformAdapter {
         if (thumbnail == null || !mayRetryWithoutThumbnail(f.statusCode)) rethrow;
         ctx.log.warn('${p.domain} refused the upload of ${m.fileName ?? m.id} with its cover (HTTP ${f.statusCode}); trying without the cover');
         ids.add(await api.uploadMedia(m, bytes, descriptionLimit: p.descriptionLimit, description: caption));
+      } on Exception catch (e) {
+        if (NeforumHttp.uploadTrace(e) == null) rethrow;
+        final refused = await _refusedBySizeLimit(api, m, bytes.length, e, p, ctx, live);
+        if (refused != null) throw AdapterException(refused);
+        rethrow;
       }
+      _keptUploads[key] = (id: ids.last, at: ctx.now());
     }
     return ids;
+  }
+
+  /// Files that reached the server in an attempt that then failed, so the next
+  /// attempt sends only what is missing. Mastodon removes attachments nothing
+  /// uses after a day (`Vacuum::MediaAttachmentsVacuum::TTL`); [_keepUploadsFor]
+  /// stays well inside that, and an id the server has dropped anyway is
+  /// uploaded again. In memory only: an app restart re-sends the files.
+  final Map<String, ({String id, DateTime at})> _keptUploads = {};
+  static const Duration _keepUploadsFor = Duration(hours: 6);
+
+  /// Kept uploads belong to one post on one account: two posts that share a
+  /// file must not share its id, since the server takes each id once.
+  static String _uploadScope(ConnectedAccount account, PostVariant v) => '${account.id}|${v.sourcePostId ?? ''}';
+
+  /// Status POSTs of [_keptUploads]' posts that ended with no answer.
+  final Set<String> _unansweredStatus = {};
+
+  void _forgetUploads(String scope) {
+    _keptUploads.removeWhere((k, _) => k.startsWith('$scope|'));
+    _unansweredStatus.removeWhere((k) => k.startsWith('$scope|'));
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {

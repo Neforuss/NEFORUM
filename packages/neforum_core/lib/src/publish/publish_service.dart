@@ -651,7 +651,7 @@ class PublishService {
       return (null, err);
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        return (null, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: $e'));
+        return (null, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
       return (null, PublishError.auth('Could not refresh credentials: $e'));
     }
@@ -1101,7 +1101,7 @@ class PublishService {
   /// Maps an exception that escaped an adapter onto a sensible error kind.
   static PublishError _classifyUnexpected(Object e, String platform) {
     if (NeforumHttp.isTransportError(e)) {
-      return PublishError.network('Could not reach $platform: $e');
+      return PublishError.network('Could not reach $platform: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e));
     }
     final text = e.toString();
     // dart:io is off limits here (web builds), so recognise file errors by name.

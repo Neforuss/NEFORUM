@@ -225,7 +225,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
     } on Object catch (e) {
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Inkbunny ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Inkbunny (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       return PublishResult.failure(PublishError.platform('Inkbunny upload failed: $text', raw: text));
     }
@@ -259,7 +259,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
         InkbunnyException() => InkbunnyApi.mapError(e, context: 'Finishing the Inkbunny submission'),
         HttpFailure() => e.toPublishError(context: 'Finishing the Inkbunny submission'),
         _ => NeforumHttp.isTransportError(e)
-            ? PublishError.network('Could not reach Inkbunny ($e)', raw: '$e')
+            ? PublishError.network('Could not reach Inkbunny (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e))
             : PublishError.platform('Inkbunny upload failed: $e', raw: '$e'),
       };
       // The files are uploaded but the submission is not public yet; a retry

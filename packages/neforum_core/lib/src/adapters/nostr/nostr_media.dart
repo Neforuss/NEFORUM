@@ -97,7 +97,7 @@ class NostrMediaUploader {
     } on AdapterException {
       rethrow;
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('Upload to ${host.name} failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Upload to ${host.name} failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -129,7 +129,7 @@ class NostrMediaUploader {
       }
       throw AdapterException(mapNip96Failure(f, what));
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -167,7 +167,7 @@ class NostrMediaUploader {
     } on HttpFailure catch (f) {
       throw AdapterException(mapNip96Failure(f, 'Media upload'));
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('Media upload to ${Uri.parse(apiUrl).host} failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Media upload to ${Uri.parse(apiUrl).host} failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
     var body = r.jsonMap;
     if (r.statusCode == 202 || (body['processing_url'] is String && body['nip94_event'] == null)) {

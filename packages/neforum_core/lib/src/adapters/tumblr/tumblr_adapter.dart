@@ -506,7 +506,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       throw AdapterException(e.toRefreshError('Tumblr'));
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        throw AdapterException(PublishError.network('Could not reach Tumblr to renew the sign-in: $e'));
+        throw AdapterException(PublishError.network('Could not reach Tumblr to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
       rethrow;
     }
@@ -669,7 +669,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     } on HttpFailure catch (e) {
       return PublishResult.failure(TumblrApi.mapFailure(e, 'Posting to Tumblr'));
     } on Object catch (e) {
-      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Tumblr: $e'));
+      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Tumblr: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       if (e is FormatException) {
         return PublishResult.failure(PublishError.platform('Tumblr sent a response NEFORUM did not understand: $e'));
       }
@@ -931,7 +931,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       ctx.log.info('Tumblr post $postId was already gone from the queue');
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        throw AdapterException(PublishError.network('Could not reach Tumblr to remove the scheduled post: $e'));
+        throw AdapterException(PublishError.network('Could not reach Tumblr to remove the scheduled post: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
       rethrow;
     }
