@@ -1,3 +1,4 @@
+import '../../auth/jwt.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
@@ -103,6 +104,18 @@ class LemmyAdapter extends PlatformAdapter {
     serverSideScheduling: false,
     supportsLinkField: true,
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.lemmy(account);
+
+  /// The login JWT's own `exp`, with no network. An account connected before
+  /// 1.4 on a Lemmy 1.0 server has one a week out.
+  @override
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final jwt = _jwt(secrets);
+    final end = jwt == null ? null : jwtSignInEnd(jwt, now: ctx.now());
+    return end == null ? null : SignInServerRead(readAt: ctx.now(), expiresAt: end);
+  }
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
@@ -243,7 +256,7 @@ class LemmyAdapter extends PlatformAdapter {
           ...?community,
         },
       ),
-      secrets: OAuthTokens(accessToken: jwt, tokenType: 'Bearer').toSecrets(),
+      secrets: OAuthTokens(accessToken: jwt, tokenType: 'Bearer', expiresAt: jwtSignInEnd(jwt, now: ctx.now())).toSecrets(),
     );
   }
 
@@ -434,7 +447,8 @@ class LemmyAdapter extends PlatformAdapter {
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
-    // Lemmy JWTs do not expire; they only stop working after logout or a
+    // Lemmy 0.19 JWTs have no end, and a 1.0 login with stay_logged_in has
+    // none either; nothing can renew one that does. They stop working after logout or a
     // password change, which the API reports as not_logged_in.
     if (account.tier == PlatformTier.openApi && _jwt(secrets) == null) {
       throw const AdapterException(PublishError.auth('No Lemmy login stored; reconnect the account'));

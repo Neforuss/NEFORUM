@@ -58,6 +58,7 @@ class TelegramApiError implements Exception {
         d.contains('bot is not a member')) {
       return PublishError.auth(
           'The bot may not post here ($description). Add it as an administrator with "Post Messages".',
+          notAllowed: true,
           raw: snippet,
           statusCode: code);
     }

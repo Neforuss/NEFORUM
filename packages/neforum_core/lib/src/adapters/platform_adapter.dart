@@ -5,10 +5,14 @@ import '../model/platform_descriptor.dart';
 import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/publish_result.dart';
+import '../model/sign_in_lifetime.dart';
 import '../model/validation.dart';
 import '../text/rules_validator.dart';
 import 'adapter_context.dart';
 import 'connect_spec.dart';
+
+export '../model/sign_in_lifetime.dart';
+export 'sign_in_policies.dart';
 
 /// The contract every platform implements.
 ///
@@ -53,14 +57,28 @@ abstract class PlatformAdapter {
           ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
       null;
 
+  /// The documented facts about how long [account]'s sign-in lasts, from
+  /// [SignInPolicies]. No default on purpose: a new adapter has to answer, and
+  /// `sign_in_policy_table_test.dart` holds the answer to the docs.
+  SignInPolicy signInPolicyFor(ConnectedAccount account);
+
+  /// What the platform itself says about [secrets]' sign-in right now, or null
+  /// when it has no way to say (most have none). Called at connect, after a
+  /// publish and when the sign-ins page opens, at most once a day per account
+  /// (`SignInStatusTracker`). Must not throw for platform or network problems,
+  /// and must not count as use of a paid API: X stays null because its
+  /// pay-per-use pricing of a read is unknown.
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => null;
+
   /// The platform hands out a new refresh token on every renewal and kills
-  /// the old one (X, Tumblr). An account copied to a second device then stays
-  /// connected on only one of them: whichever renews first. Export warns.
+  /// the old one (X, Tumblr, TikTok, Pixelfed). An account copied to a second
+  /// device then stays connected on only one of them: whichever renews first.
+  /// Export warns.
   bool get rotatesRefreshTokens => false;
 
   /// [rotatesRefreshTokens] for one account: on X and Tumblr an account
-  /// connected with OAuth 1.0a keys never renews anything, so it can live on
-  /// several devices. Ask this, not the getter, when an account is at hand.
+  /// connected with OAuth 1.0a keys is never renewed, so one device cannot end
+  /// another's. Ask this, not the getter, when an account is at hand.
   bool rotatesRefreshTokensFor(ConnectedAccount account) => rotatesRefreshTokens;
 
   /// The photos this platform takes through [account] for [variant], as rules a photo can be

@@ -242,6 +242,7 @@ PublishError mapNip96Failure(HttpFailure f, String what) {
   return switch (f.statusCode) {
     401 => PublishError.auth(
         '$what: $host rejected the signed NIP-98 authorisation$detail. Check that the device clock is correct.',
+        notAllowed: true,
         raw: raw,
         statusCode: 401),
     402 => PublishError.quota('$what: $host requires a paid plan for this upload$detail', raw: raw, statusCode: 402),

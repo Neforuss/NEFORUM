@@ -271,7 +271,8 @@ class ThreadsApi {
       final data = res.jsonMap['data'];
       return data is Map ? ThreadsTokenInfo.fromJson(Map<String, dynamic>.from(data)) : null;
     } on Exception catch (e) {
-      log?.debug('Threads debug_token failed: $e');
+      // The type only: the error's text can quote the address, token included.
+      log?.debug('Threads debug_token failed (${e.runtimeType})');
       return null;
     }
   }
@@ -295,12 +296,12 @@ class ThreadsApi {
 
 /// What `debug_token` says about a Threads user access token.
 class ThreadsTokenInfo {
-  const ThreadsTokenInfo({required this.isValid, this.expiresAt, this.issuedAt, this.scopes = const [], this.userId});
+  const ThreadsTokenInfo({required this.isValid, this.expiresAt, this.dataAccessExpiresAt, this.issuedAt, this.scopes = const [], this.userId});
 
   factory ThreadsTokenInfo.fromJson(Map<String, dynamic> j) {
     DateTime? time(Object? v) {
       final secs = v is int ? v : int.tryParse('${v ?? ''}');
-      // 0 means "does not expire" / unknown; neither gives NEFORUM a date.
+      // Meta does not define 0; it gives NEFORUM no date either way.
       return secs == null || secs <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true);
     }
 
@@ -308,6 +309,7 @@ class ThreadsTokenInfo {
     return ThreadsTokenInfo(
       isValid: j['is_valid'] != false,
       expiresAt: time(j['expires_at']),
+      dataAccessExpiresAt: time(j['data_access_expires_at']),
       issuedAt: time(j['issued_at']),
       scopes: scopes is List ? scopes.map((s) => '$s').toList() : const [],
       userId: j['user_id']?.toString(),
@@ -316,6 +318,10 @@ class ThreadsTokenInfo {
 
   final bool isValid;
   final DateTime? expiresAt;
+
+  /// When the permission grant behind the token ends. Refreshing extends it on
+  /// a public profile; Meta's pages disagree about a private one.
+  final DateTime? dataAccessExpiresAt;
   final DateTime? issuedAt;
 
   /// Granted permissions; empty when Meta did not list them.

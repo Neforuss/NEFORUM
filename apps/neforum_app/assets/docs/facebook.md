@@ -99,11 +99,11 @@ When you press **Connect** with an Explorer token, NEFORUM:
 
 * exchanges the token for a long-lived user token (`GET /oauth/access_token?grant_type=fb_exchange_token`, needs the App ID and App Secret; "A long-lived token generally lasts about 60 days");
 * reads your name (`GET /me`) and the permissions you granted (`GET /me/permissions`), and stops with a clear message if `pages_manage_posts`, `pages_read_engagement` or `pages_show_list` is missing;
-* lists your Pages (`GET /me/accounts`) and stores the Page token of the chosen Page. Page tokens obtained with a long-lived user token "do not have an expiration date".
+* lists your Pages (`GET /me/accounts`) and stores the Page token of the chosen Page. Page tokens obtained with a long-lived user token "do not have an expiration date". That is no end date, not a promise: Meta warns lifetimes can change, and a password change, a removed app, a Meta app left Inactive for 90 days or a permission unused for 90 days can end it.
 
 If you pick your Page in the *User or Page* dropdown, the Explorer gives a Page token, which NEFORUM cannot turn into a long-lived one. NEFORUM recognises it and asks for a User token instead.
 
-Everything stays on your device: the App Secret, the user token and the Page token are kept in NEFORUM's secret store. NEFORUM sends `appsecret_proof` with every call, so you can switch on *App settings > Advanced > Require App Secret*.
+Everything stays on your device: the App Secret and the Page token are kept in NEFORUM's secret store. The 60-day user token only serves while connecting and is not kept (an account connected before NEFORUM 1.4 holds it until you reconnect, and nothing uses it). NEFORUM sends `appsecret_proof` with every call, so you can switch on *App settings > Advanced > Require App Secret*.
 
 ### Browser sign-in
 
@@ -177,7 +177,7 @@ Facebook Login does not take `http://127.0.0.1:52771/callback` or `neforum://cal
 | Error 368, or subcode 1390008 | Facebook temporarily blocked posting (policy, or "posting too fast"). Wait. |
 | Error 506 | The same text was just posted. Change it. |
 | Error 1609005 | Facebook could not read the link. Check the URL. |
-| Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. Reconnect (App states). |
+| Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. An admin must first restore the app in the App Dashboard, then reconnect. Permissions removed for disuse need approving again. (App states) |
 
 ## Where Meta's documentation disagrees
 

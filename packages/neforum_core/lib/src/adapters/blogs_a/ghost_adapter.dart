@@ -89,6 +89,9 @@ class GhostAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.ghost(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override

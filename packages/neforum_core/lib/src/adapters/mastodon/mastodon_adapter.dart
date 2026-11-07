@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'package:meta/meta.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../audio/audio_publishing.dart';
@@ -73,6 +74,9 @@ class MastodonAdapter extends PlatformAdapter {
 
   /// Lead still required right before `POST /api/v1/statuses` is sent.
   static const Duration _sendLead = Duration(minutes: 5, seconds: 20);
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.mastodon(account);
 
   @override
   PlatformDescriptor get descriptor => mastodonDescriptor;
@@ -256,8 +260,10 @@ class MastodonAdapter extends PlatformAdapter {
   // Tokens
   // ---------------------------------------------------------------------------
 
-  /// Mastodon and GoToSocial tokens never expire, so this normally returns
-  /// `null`. Pleroma/Akkoma issue expiring tokens with a refresh token.
+  /// Mastodon and GoToSocial document no limit on their tokens, so this
+  /// normally returns `null`. Pleroma and Akkoma issue expiring tokens with a
+  /// refresh token. A server that sends `expires_in` is handled whatever its
+  /// software (Mitra's 30 days).
   @override
   Future<Map<String, String>?> refreshSecrets(
     ConnectedAccount account,
@@ -269,8 +275,14 @@ class MastodonAdapter extends PlatformAdapter {
     if (tokens == null) {
       throw const AdapterException(PublishError.auth('No access token stored for this account. Reconnect it.'));
     }
+    if (!tokens.isExpired(now: ctx.now())) return null;
+    return renewToken(account, secrets, tokens, ctx);
+  }
+
+  /// Spends the refresh token. Throws [AdapterException] when it cannot.
+  @protected
+  Future<Map<String, String>> renewToken(ConnectedAccount account, Map<String, String> secrets, OAuthTokens tokens, AdapterContext ctx) async {
     final now = ctx.now();
-    if (!tokens.isExpired(now: now)) return null;
     final refresh = tokens.refreshToken;
     final clientId = secrets['client_id'];
     if (refresh == null || clientId == null) {

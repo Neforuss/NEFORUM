@@ -23,7 +23,7 @@ This guide connects a Telegram **channel** or **group** through a **bot that you
    - `plain` sends your text exactly as written.
 9. Press **Connect**. If anything is missing, NEFORUM tells you what to fix.
 
-There is no redirect URI and nothing to register. Bot tokens never expire.
+There is no redirect URI and nothing to register. Telegram publishes no end date for bot tokens. A new token from `/token` in @BotFather replaces the old one.
 
 ## Steps: hand-off
 

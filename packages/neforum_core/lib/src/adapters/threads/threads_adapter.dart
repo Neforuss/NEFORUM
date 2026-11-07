@@ -147,6 +147,19 @@ class ThreadsAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.threadsFor(account);
+
+  /// Threads' own `debug_token`, with the token as its own caller.
+  @override
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final token = OAuthTokens.fromSecrets(secrets)?.accessToken;
+    if (account.tier != PlatformTier.byokApi || token == null) return null;
+    final info = await ThreadsApi.debugToken(ctx.http, token, log: ctx.log);
+    if (info == null) return null;
+    return SignInServerRead(readAt: ctx.now(), expiresAt: info.expiresAt, dataAccessExpiresAt: info.dataAccessExpiresAt, isValid: info.isValid);
+  }
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override

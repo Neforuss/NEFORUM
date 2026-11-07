@@ -20,6 +20,9 @@ class DemoAdapter extends PlatformAdapter {
   PlatformDescriptor get descriptor => inner.descriptor;
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => inner.signInPolicyFor(account);
+
+  @override
   PlatformDescriptor descriptorForAccount(ConnectedAccount account) => inner.descriptorForAccount(account);
 
   @override

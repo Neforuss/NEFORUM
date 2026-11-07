@@ -34,7 +34,7 @@ Discord has no share link that can fill in a message, so NEFORUM has no hand-off
 
 When you connect, NEFORUM checks the webhook once (`GET /webhooks/{id}/{token}`) and stores the server and channel ids, so it can show you a link to each post.
 
-Treat the webhook URL like a password: anyone who has it can post in the channel. If it leaks, delete the webhook in Discord and create a new one. There is no redirect URI and nothing else to register. Webhooks don't expire until someone deletes them.
+Treat the webhook URL like a password: anyone who has it can post in the channel. If it leaks, delete the webhook in Discord and create a new one. There is no redirect URI and nothing else to register. Discord publishes no end date for webhooks. Anyone with Manage Webhooks in the server can delete one.
 
 ## What gets posted
 

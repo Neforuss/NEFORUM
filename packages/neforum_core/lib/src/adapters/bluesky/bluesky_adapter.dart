@@ -118,6 +118,18 @@ class BlueskyAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.bluesky(account);
+
+  /// The session JWT's own `exp`, with no network. It dates the short-lived
+  /// token only: the app password signs in again, so the person has no date.
+  @override
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final token = OAuthTokens.fromSecrets(secrets)?.accessToken;
+    final exp = token == null ? null : jwtExpiry(token);
+    return exp == null ? null : SignInServerRead(readAt: ctx.now(), accessExpiresAt: exp);
+  }
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override

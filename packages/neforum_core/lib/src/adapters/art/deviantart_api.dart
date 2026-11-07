@@ -144,6 +144,7 @@ class DeviantArtApi {
     if (error == 'unverified_account' || text.contains('unverified_account')) {
       return PublishError.auth(
         '${prefix}DeviantArt wants you to verify your email address first. Verify it on deviantart.com, then try again.',
+        notAllowed: true,
         raw: raw,
         statusCode: f.statusCode,
       );
@@ -154,7 +155,7 @@ class DeviantArtApi {
     }
     if (f.statusCode == 403 && error == 'insufficient_scope') {
       return PublishError.auth('${prefix}DeviantArt says NEFORUM may not post for you ($text). Reconnect DeviantArt and '
-          'allow every permission.', raw: raw, statusCode: 403);
+          'allow every permission.', raw: raw, statusCode: 403, notAllowed: true);
     }
     if (f.statusCode == 429) {
       return PublishError.quota('${prefix}DeviantArt is rate limiting requests; NEFORUM tries again later',

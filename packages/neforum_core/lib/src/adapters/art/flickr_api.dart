@@ -190,6 +190,7 @@ class FlickrApi {
           statusCode: e.statusCode),
       99 => PublishError.auth(
           '${prefix}Flickr says NEFORUM may not upload for you (${e.message}). Reconnect Flickr and allow it to upload.',
+          notAllowed: true,
           raw: raw,
           statusCode: e.statusCode),
       6 => PublishError.quota('${prefix}Your Flickr account reached its upload limit (${e.message})',

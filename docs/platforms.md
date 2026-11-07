@@ -8,6 +8,8 @@ NEFORUM reaches every platform in one of three ways. Each account you connect us
 
 The **Media** column is what one post holds. More than that is never dropped (1.3.4): through Auto and Your keys, the rest goes in further posts of a thread on X, Bluesky, Mastodon and Misskey, and in a numbered series of separate posts, one after the other, everywhere else. A hand-off is one post, and what does not fit is listed in its preview.
 
+How long each connection lasts, and when you have to step in, is in [How long each sign-in lasts](sign-in-lifetimes.md).
+
 Generated from the code on 2026-10-25.
 
 | Platform | Ways to post | Personal account OK | Text limit | Media | Quotas tracked | Server-side scheduling | Setup guide |

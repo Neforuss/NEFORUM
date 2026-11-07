@@ -101,6 +101,9 @@ class MatrixAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.matrix(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override
@@ -308,6 +311,9 @@ class MatrixAdapter extends PlatformAdapter {
         'identifier': {'type': 'm.id.user', 'user': user},
         'password': password,
         'initial_device_display_name': 'NEFORUM',
+        // `refresh_token: true` stays unset on purpose: on Matrix Authentication
+        // Service it brings 5-minute tokens and rotation, for no gain to a tool
+        // that posts now and then.
       }, auth: false);
       final at = chatStr(res['access_token']);
       final userId = chatStr(res['user_id']) ?? user;

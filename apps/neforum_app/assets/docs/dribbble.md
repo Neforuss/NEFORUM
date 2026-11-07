@@ -54,7 +54,7 @@ What goes where:
 
 Dribbble has no field for "Ask not to train AI".
 
-NEFORUM uses the Client Secret once, to sign in, and does not keep it. Dribbble's sign-in does not expire.
+NEFORUM uses the Client Secret once, to sign in, and does not keep it. Dribbble publishes no end date for its sign-in, and you can revoke it at any time.
 
 Dribbble answers a new shot with "accepted" while it processes the image; the shot appears on your profile shortly after.
 

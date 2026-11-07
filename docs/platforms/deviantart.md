@@ -56,7 +56,7 @@ What goes where:
 | Made with AI | Created using AI tools (`is_ai_generated`) |
 | Ask not to train AI | NoAI (`noai`). DeviantArt opts every deviation out of AI datasets by default |
 
-The sign-in lasts an hour and NEFORUM renews it by itself. The renewal key lasts 3 months: if NEFORUM does not post to DeviantArt for 3 months, click **Reconnect** once. DeviantArt hands out a new renewal key at every renewal, so an account copied to a second device stays connected on only one of them.
+The sign-in lasts an hour and NEFORUM renews it when it posts. The renewal key lasts 3 months: if NEFORUM does not post to DeviantArt for about 3 months, click **Reconnect** once. Accounts shows the date, worked out from that rule. DeviantArt's documents do not say whether a renewal hands out a new key, so NEFORUM treats it as if it does: without **Settings > Sync**, an account copied to a second device may stay connected on only one of them.
 
 Your client secret, if your app is Confidential, stays in this device's secure storage.
 

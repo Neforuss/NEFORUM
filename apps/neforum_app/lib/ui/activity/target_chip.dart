@@ -100,7 +100,7 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(e?.message ?? 'Unknown error', style: dialogContext.text.bodyMedium?.copyWith(color: nf.text)),
             const SizedBox(height: Space.md),
-            Text(_advice(e), style: dialogContext.text.bodySmall),
+            Text(publishErrorAdvice(e), style: dialogContext.text.bodySmall),
             if (e?.raw != null) ...[
               const SizedBox(height: Space.md),
               NfWell(
@@ -144,7 +144,9 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
   );
 }
 
-String _advice(PublishError? e) => switch (e?.kind) {
+/// The line under a failed post saying what to do next.
+String publishErrorAdvice(PublishError? e) => switch (e?.kind) {
+      PublishErrorKind.auth when e?.notAllowed == true => 'The sign-in works, but the network does not allow this. The message above says what to change. Then retry.',
       PublishErrorKind.auth => 'The sign-in expired or was revoked. Reconnect the account in Accounts, then retry.',
       PublishErrorKind.quota => 'A posting limit was reached. Retry after it resets, or post this one by hand-off.',
       PublishErrorKind.validation => 'The platform rejected the content. Customize the post for this network and retry.',

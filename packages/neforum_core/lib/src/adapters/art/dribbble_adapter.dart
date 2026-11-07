@@ -132,6 +132,9 @@ class DribbbleAdapter extends PlatformAdapter {
   static const String uploadUrl = 'https://dribbble.com/uploads/new';
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.dribbble(account);
+
+  @override
   PlatformDescriptor get descriptor => dribbbleDescriptor;
 
   @override
@@ -286,7 +289,7 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
           if (user.canUploadShot != null) cfgCanUploadShot: user.canUploadShot,
         },
       ),
-      // Dribbble tokens do not expire and are never renewed, so the client
+      // Dribbble publishes no end date and has no renewal, so the client
       // secret is not kept.
       secrets: tokens.toSecrets(),
     );
@@ -325,7 +328,8 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
     return 'Dribbble sign-in failed.${said.isEmpty ? ' ${e.message}.' : said}';
   }
 
-  /// Dribbble tokens do not expire; a missing one means reconnecting.
+  /// Dribbble publishes no end date for its tokens; a missing one means
+  /// reconnecting.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {

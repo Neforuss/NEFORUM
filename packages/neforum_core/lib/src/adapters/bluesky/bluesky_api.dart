@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../http/neforum_http.dart';
 import '../../model/publish_result.dart';
 import '../adapter_context.dart';
 import '../platform_adapter.dart';
+
+export '../../auth/jwt.dart' show jwtExpiry;
 
 /// Default entryway for accounts hosted by Bluesky itself.
 final Uri blueskyDefaultService = Uri.parse('https://bsky.social');
@@ -81,22 +82,6 @@ Uri? pdsFromDidDoc(Object? doc) {
     }
   }
   return null;
-}
-
-/// Reads the `exp` claim of a JWT without verifying it (we only need to know
-/// when to refresh). Returns `null` when the token is not a readable JWT.
-DateTime? jwtExpiry(String jwt) {
-  final parts = jwt.split('.');
-  if (parts.length < 2) return null;
-  try {
-    final payload = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
-    if (payload is! Map) return null;
-    final exp = payload['exp'];
-    if (exp is! num) return null;
-    return DateTime.fromMillisecondsSinceEpoch((exp * 1000).round(), isUtc: true);
-  } on FormatException {
-    return null;
-  }
 }
 
 /// Error codes that mean the session is no longer usable.

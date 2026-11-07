@@ -35,6 +35,7 @@ class PublishError {
     this.statusCode,
     this.raw,
     this.retryAfter,
+    this.notAllowed,
   });
 
   factory PublishError.fromJson(Map<String, dynamic> json) => PublishError(
@@ -46,10 +47,11 @@ class PublishError {
         retryAfter: json['retryAfterSeconds'] == null
             ? null
             : Duration(seconds: json['retryAfterSeconds'] as int),
+        notAllowed: json['notAllowed'] as bool?,
       );
 
-  const PublishError.auth(String message, {String? raw, int? statusCode})
-      : this(kind: PublishErrorKind.auth, message: message, raw: raw, statusCode: statusCode);
+  const PublishError.auth(String message, {String? raw, int? statusCode, bool? notAllowed})
+      : this(kind: PublishErrorKind.auth, message: message, raw: raw, statusCode: statusCode, notAllowed: notAllowed);
 
   const PublishError.quota(String message, {String? raw, int? statusCode, Duration? retryAfter})
       : this(
@@ -98,6 +100,13 @@ class PublishError {
   final String? raw;
   final Duration? retryAfter;
 
+  /// An `auth` error that means "not allowed" rather than "expired": the
+  /// sign-in works, but the network refuses this account or this action (a bot
+  /// without rights, a firewall, a missing permission). A nullable field and
+  /// not a new [PublishErrorKind]: a device on 1.3.5 reads synced posts with
+  /// `values.byName`, which throws on a kind it does not know.
+  final bool? notAllowed;
+
   /// Wraps an error that happened after some parts of a thread were already
   /// posted. Never retryable: a retry would post the earlier parts again.
   PublishError asPartialThread({required List<String> postedIds, required int total}) {
@@ -109,6 +118,7 @@ class PublishError {
       retryable: false,
       statusCode: statusCode,
       raw: raw,
+      notAllowed: notAllowed,
     );
   }
 
@@ -123,6 +133,7 @@ class PublishError {
       retryable: false,
       statusCode: statusCode,
       raw: raw,
+      notAllowed: notAllowed,
     );
   }
 
@@ -139,6 +150,7 @@ class PublishError {
         if (statusCode != null) 'statusCode': statusCode,
         if (raw != null) 'raw': raw,
         if (retryAfter != null) 'retryAfterSeconds': retryAfter!.inSeconds,
+        if (notAllowed == true) 'notAllowed': true,
       };
 
   @override

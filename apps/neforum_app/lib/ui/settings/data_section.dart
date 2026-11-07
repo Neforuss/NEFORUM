@@ -81,6 +81,7 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
       await s.secrets.delete(a.id);
       await s.accounts.delete(a.id);
     }
+    await s.signInStatusStore.clear();
     // The post being written goes too, then every post with its
     // notifications, then any media file left over.
     ref.read(composerProvider.notifier).reset();

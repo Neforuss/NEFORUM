@@ -1312,6 +1312,9 @@ class SyncEngine implements SecretsCoordinator {
   static String _networkName(ConnectedAccount a) => switch (a.platformId) {
         'x' => 'X',
         'tumblr' => 'Tumblr',
+        'tiktok' => 'TikTok',
+        'deviantart' => 'DeviantArt',
+        'pixelfed' => 'Pixelfed',
         _ => a.platformId,
       };
 }

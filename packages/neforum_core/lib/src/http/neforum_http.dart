@@ -231,7 +231,8 @@ class NeforumHttp {
       signal?.throwIfCancelled();
       try {
         final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
-        _log.debug('$method $url (attempt $attempt)');
+        // Host and path only: some APIs take a token in the query.
+        _log.debug('$method ${url.host}${url.path} (attempt $attempt)');
         final http.Response res;
         if (upload) {
           res = await _unlessCancelled(_sendWatched(method, url, attemptHeaders, fields, files, bytes, base, signal), signal);
@@ -262,7 +263,8 @@ class NeforumHttp {
         final transient = e is TimeoutException || e is http.ClientException || isTransientIoError(e);
         if (transient && idempotent && attempt <= retries) {
           final wait = _backoff(attempt);
-          _log.warn('Network error calling ${url.host} ($e); retrying in ${wait.inSeconds}s');
+          // The error's type only: http's ClientException quotes the address.
+          _log.warn('Network error calling ${url.host} (${e.runtimeType}); retrying in ${wait.inSeconds}s');
           await _pause(wait, signal);
           continue;
         }

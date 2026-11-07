@@ -14,6 +14,9 @@ import '../support/test_context.dart';
 /// A network that records what it is asked to post, and fails the posts
 /// [failOn] (1-based count of publish calls) once each.
 class _Network extends PlatformAdapter {
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
   _Network({required this.threads, this.resumes = false, this.quota});
 
   /// Media in every post of a thread (else a series of separate posts).

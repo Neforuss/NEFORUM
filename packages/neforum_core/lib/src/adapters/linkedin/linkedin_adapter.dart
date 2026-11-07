@@ -116,6 +116,9 @@ class LinkedInAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.linkedInFor(account);
+
+  @override
   PlatformDescriptor get descriptor => linkedInDescriptor;
 
   // ------------------------------------------------------------- connect
@@ -268,7 +271,7 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
           cfgRedirectUri: redirect.toString(),
         },
       ),
-      secrets: tokens.toSecrets({secretClientSecret: clientSecret}),
+      secrets: _withPartnerRefreshEnd(tokens.toSecrets({secretClientSecret: clientSecret}), ctx.now()),
     );
   }
 
@@ -303,6 +306,44 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
 
   // ------------------------------------------------------------- refresh
 
+  /// Partner (MDP) apps get a refresh token that lasts one year, fixed: a
+  /// renewal does not extend it, so an end already stored stays. The date is
+  /// worked out from that sentence: the page's sample `refresh_token_expires_in`
+  /// (525600) does not fit a year in seconds, so it is not trusted.
+  static Map<String, String> _withPartnerRefreshEnd(Map<String, String> secrets, DateTime now) {
+    if ((secrets[OAuthTokens.keyRefreshToken] ?? '').isEmpty || (secrets[SignInSecretKeys.refreshExpiresAt] ?? '').isNotEmpty) return secrets;
+    return {
+      ...secrets,
+      SignInSecretKeys.refreshExpiresAt: now.add(const Duration(days: 365)).toUtc().toIso8601String(),
+      SignInSecretKeys.refreshExpiresSource: SignInDateSource.computed.name,
+    };
+  }
+
+  /// `POST /oauth/v2/introspectToken` with the app's client id and secret.
+  @override
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final token = OAuthTokens.fromSecrets(secrets)?.accessToken;
+    final clientSecret = secrets[secretClientSecret] ?? '';
+    final clientId = account.configString(cfgClientId);
+    if (account.tier != PlatformTier.byokApi || token == null || clientSecret.isEmpty || clientId.isEmpty) return null;
+    try {
+      final res = await ctx.http.postForm(introspectEndpoint, {'client_id': clientId, 'client_secret': clientSecret, 'token': token}, throwOnError: false);
+      if (!res.ok) return null;
+      final body = res.jsonMap;
+      final exp = body['expires_at'];
+      return SignInServerRead(
+        readAt: ctx.now(),
+        expiresAt: exp is int && exp > 0 ? DateTime.fromMillisecondsSinceEpoch(exp * 1000, isUtc: true) : null,
+        isValid: body['active'] != false,
+      );
+    } on Exception catch (e) {
+      ctx.log.debug('LinkedIn token introspection failed (${e.runtimeType})');
+      return null;
+    }
+  }
+
+  static final Uri introspectEndpoint = Uri.parse('https://www.linkedin.com/oauth/v2/introspectToken');
+
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -321,7 +362,7 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
     }
     try {
       final fresh = await _oauthClient(clientId, clientSecret).refresh(ctx.http, refreshToken: refresh, now: ctx.now());
-      return fresh.toSecrets(secrets);
+      return _withPartnerRefreshEnd(fresh.toSecrets(secrets), ctx.now());
     } on OAuthException catch (e) {
       throw AdapterException(e.isGrantRejected ? PublishError.auth(_expiredMessage, raw: e.toString()) : e.toRefreshError('LinkedIn'));
     }

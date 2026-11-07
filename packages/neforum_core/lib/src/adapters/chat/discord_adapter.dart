@@ -142,6 +142,9 @@ class DiscordAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.discord(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override

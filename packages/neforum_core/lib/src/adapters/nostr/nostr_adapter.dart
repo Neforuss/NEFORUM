@@ -66,6 +66,9 @@ class NostrAdapter extends PlatformAdapter {
   static const int _largeEventBytes = 64 * 1024;
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.nostr(account);
+
+  @override
   PlatformDescriptor get descriptor => nostrDescriptor;
 
   @override

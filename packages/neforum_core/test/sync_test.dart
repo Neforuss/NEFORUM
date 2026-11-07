@@ -2293,6 +2293,28 @@ void main() {
       await expectOneSignIn([x, y]);
     });
 
+    test('a renewal carries when it happened and where its dates came from, in the keys record; the registration stays one', () async {
+      final (x, y) = await joinedOnTikTok();
+      final before = (await x.accounts.get(_uuid1))!.toJson();
+      clock.now = clock.now.add(const Duration(minutes: 31));
+      await y.posts.upsert(_post('p', targets: const [PostTarget(accountId: _uuid1)]));
+      final service = publisher(y, _TikTokPublishing(() async => PublishResult.ok(remoteId: 'v1')), (r) async => r.url.path.contains('/oauth/token/') ? tokenAnswer(r) : http.Response('{}', 200, headers: jsonHeaders));
+      await service.publish('p');
+      final renewedAt = clock.now.toUtc().toIso8601String();
+      await y.engine.sync();
+      await x.engine.sync();
+      for (final d in [x, y]) {
+        final keys = (await d.secrets.read(_uuid1))!;
+        expect(keys[StoredSecretKeys.lastRenewedAt], renewedAt, reason: d.id);
+        expect(keys[StoredSecretKeys.expiresAtSource], 'serverReported', reason: d.id);
+        expect(keys[StoredSecretKeys.refreshExpiresSource], 'serverReported', reason: d.id);
+        expect(DateTime.parse(keys[OAuthTokens.keyExpiresAt]!).isAfter(clock.now), isTrue, reason: '${d.id}: the renewed date came along');
+      }
+      final after = (await x.accounts.get(_uuid1))!.toJson();
+      expect(after['config'], before['config'], reason: 'nothing in config');
+      expect(sharesRegistration(before, after), isTrue, reason: 'a renewal never makes it another registration');
+    });
+
     for (final outcome in ['a success clears an old warning', 'an auth failure saves a warning']) {
       test('the publish service changes only the warning, on the account as stored now ($outcome): a reconnect that arrived by sync mid-upload stays', () async {
         final (x, y) = await joinedOnTikTok();
@@ -2535,6 +2557,25 @@ void main() {
         for (final d in [a, b]) {
           expect(server.verdict((await d.accounts.get(id))!, await d.secrets.read(id)), 'account app=app-new; keys of app app-new; renewable', reason: d.id);
         }
+      });
+
+      test('$network: a renewal through the coordinator shares its stamps with the keys, and the account stays one registration', () async {
+        final server = _RotatingTokenServer(network);
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+        await a.accounts.upsert(rotating(network, 'app-old', DateTime.utc(2026, 10, 1)));
+        await a.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(minutes: 30))));
+        await a.engine.sync();
+        await b.engine.sync();
+        final before = (await a.accounts.get(id))!.toJson();
+        clock.now = clock.now.add(const Duration(minutes: 31));
+        await b.posts.upsert(draft());
+        await publisher(b, _RotatingPublishing.of(network, now: () => clock.now), server.handle).publish('p');
+        expect(server.calls, 1);
+        await _rounds([b, a], clock, 1);
+        final keys = (await a.secrets.read(id))!;
+        expect(DateTime.tryParse(keys[StoredSecretKeys.lastRenewedAt] ?? ''), isNotNull, reason: 'it reached the other device');
+        expect(keys[StoredSecretKeys.expiresAtSource], 'serverReported');
+        expect(sharesRegistration(before, (await a.accounts.get(id))!.toJson()), isTrue);
       });
 
       test('$network: the keychain cannot be re-read after the renewal: the rotating renewal is still stored (the old keys are dead)', () async {
@@ -3348,6 +3389,9 @@ class _RecordingCoordinator implements SecretsCoordinator {
 }
 
 class _RotatingAdapter extends PlatformAdapter {
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
   @override
   PlatformDescriptor get descriptor => const PlatformDescriptor(
         id: 'rot',

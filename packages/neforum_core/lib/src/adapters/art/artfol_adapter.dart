@@ -1,3 +1,4 @@
+import '../../model/account.dart';
 import '../../model/artwork.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
@@ -36,6 +37,9 @@ class ArtfolAdapter extends ArtHandoffAdapter {
     setupGuide: 'docs/platforms/artfol.md',
     categories: {PlatformCategory.art},
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
 
   @override
   PlatformDescriptor get descriptor => _descriptor;

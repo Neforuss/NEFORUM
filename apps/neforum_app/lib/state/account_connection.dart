@@ -42,51 +42,6 @@ class ConnectionDetail {
   String toString() => '$label: $value';
 }
 
-/// How long before a sign-in ends the section starts warning about it.
-const Duration kSignInEndWarning = Duration(days: 14);
-
-/// Where the stored sign-in stands.
-enum SignInState {
-  /// NEFORUM renews it whenever needed and no end date is stored: a refresh
-  /// token, or Bluesky's app password, which it signs in again with. The
-  /// access token's own time (often 1 or 2 hours) is not shown: it changes
-  /// all day, and says nothing about when the user must act.
-  renews,
-
-  /// Renews automatically until [SignInExpiry.endsAt], when the refresh
-  /// token itself runs out (Google apps in "Testing", TikTok, Pinterest).
-  renewsUntil,
-
-  /// The token renews itself when NEFORUM posts with it (Threads,
-  /// Instagram); left unused, it ends at [SignInExpiry.endsAt].
-  renewsWhenUsed,
-
-  /// Nothing stored can renew it: it ends at [SignInExpiry.endsAt].
-  endsOn,
-
-  /// It ended at [SignInExpiry.endsAt] and nothing stored can renew it.
-  ended,
-}
-
-/// When the stored sign-in really ends, and whether NEFORUM renews it first.
-@immutable
-class SignInExpiry {
-  const SignInExpiry(this.state, {this.endsAt, this.endsSoon = false});
-
-  final SignInState state;
-
-  /// The moment that ends the sign-in, when one is known: the refresh
-  /// token's end for [SignInState.renewsUntil], else the access token's.
-  /// Null for [SignInState.renews].
-  final DateTime? endsAt;
-
-  /// [endsAt] is less than [kSignInEndWarning] away and has not passed.
-  final bool endsSoon;
-
-  bool get needsReconnecting => state == SignInState.ended;
-  bool get renewsAutomatically => state == SignInState.renews || state == SignInState.renewsUntil || state == SignInState.renewsWhenUsed;
-}
-
 /// Whether the account's keys reach the user's other devices.
 enum KeysTravel {
   /// Cloud sync is on: the keys are in the shared sync file.
@@ -150,7 +105,10 @@ class AccountConnection {
 
   /// Server, the user's own app, where posts go, options: see [connectionDetails].
   final List<ConnectionDetail> details;
-  final SignInExpiry? signIn;
+
+  /// Where the stored sign-in stands. Null with no keys to judge, or when this
+  /// way of connecting has no sign-in ([SignInPolicy.hasConnection]).
+  final SignInLifetime? signIn;
 
   /// The keys this device holds for the account, by friendly label, in a
   /// stable order.
@@ -168,7 +126,7 @@ class AccountConnection {
   final DateTime connectedAt;
 
   /// The platform replaces its keys on every renewal (X and Tumblr with OAuth
-  /// 2.0, DeviantArt: [PlatformAdapter.rotatesRefreshTokensFor]), so without
+  /// 2.0, DeviantArt, TikTok, Pixelfed: [PlatformAdapter.rotatesRefreshTokensFor]), so without
   /// sync a copy on another device stops working.
   final bool keysRotate;
 
@@ -241,12 +199,10 @@ const Set<String> kSecretBookkeepingKeys = {
   StoredSecretKeys.refreshedAt,
   StoredSecretKeys.userTokenExpiresAt,
   StoredSecretKeys.openId,
+  StoredSecretKeys.expiresAtSource,
+  StoredSecretKeys.refreshExpiresSource,
+  StoredSecretKeys.lastRenewedAt,
 };
-
-/// When a renewal timestamp is stored, the access token renews itself when
-/// NEFORUM posts with it (Threads, Instagram): no refresh token, but no
-/// "needs reconnecting" either until it actually runs out.
-const Set<String> _selfRenewingMarkers = {StoredSecretKeys.tokenIssuedAt, StoredSecretKeys.refreshedAt};
 
 /// Friendly names for the secret-store keys the adapters write. Checked
 /// before the connect form's own label because the standard OAuth keys are
@@ -706,42 +662,35 @@ List<ConnectionDetail> connectionDetails(ConnectedAccount account, PlatformAdapt
   return [for (final (_, (_, d)) in indexed) d];
 }
 
-/// When the sign-in in [secrets] really ends and whether NEFORUM renews it
-/// first, or null when nothing stored says (most API keys and passwords never
-/// run out on a set date). Reads [OAuthTokens.keyExpiresAt], the refresh
-/// token's end (`refresh_expires_at`) and the presence, never the value, of a
-/// refresh token, an app password or a renewal timestamp.
-SignInExpiry? signInExpiry(Map<String, String> secrets, {required DateTime now}) {
-  bool has(String k) => (secrets[k] ?? '').isNotEmpty;
-  DateTime? at(String k) => DateTime.tryParse(secrets[k] ?? '');
-  SignInExpiry ending(SignInState state, DateTime end) => SignInExpiry(state, endsAt: end, endsSoon: end.difference(now) < kSignInEndWarning);
-
-  final access = at(OAuthTokens.keyExpiresAt);
-  final refreshEnds = at(StoredSecretKeys.refreshExpiresAt);
-  final refresh = has(OAuthTokens.keyRefreshToken);
-  // Bluesky signs in again with its app password whenever its session ends.
-  if (has(StoredSecretKeys.appPassword) && has(OAuthTokens.keyAccessToken)) return const SignInExpiry(SignInState.renews);
-  if (refresh && (refreshEnds == null || now.isBefore(refreshEnds))) {
-    return refreshEnds == null ? const SignInExpiry(SignInState.renews) : ending(SignInState.renewsUntil, refreshEnds);
+/// [e] in words; [when] writes a date and time. Says "when NEFORUM posts"
+/// because that is the only time anything renews, "about" for a date worked out
+/// from a rule, and "at the latest" where something else can end it first.
+String signInText(SignInLifetime e, String Function(DateTime) when) {
+  final note = e.note == null ? '' : ' ${e.note}';
+  if (e.expiresAt == null) {
+    final days = e.disuseWindow?.inDays;
+    return switch (e.state) {
+      SignInState.renews when e.usesCredential => 'Renews automatically while the app password is valid.',
+      SignInState.renews => days == null ? 'Renews when NEFORUM posts. No end date is known.$note' : 'Renews when NEFORUM posts. It ends if nothing renews it for about $days days.$note',
+      _ when e.renewsItself && days != null => 'Ends within $days days of its last renewal. The date shows after NEFORUM first renews it.$note',
+      _ => switch (e.limit) {
+            SignInLimit.none => 'No end date. Ends only if revoked.$note',
+            SignInLimit.idleUnknown => 'Ends after idle time.$note',
+            SignInLimit.date => 'No date is known yet.$note',
+            SignInLimit.undocumented => 'No published end date.$note',
+          },
+    };
   }
-  // Nothing can renew it (no refresh token, or one that ran out itself): the
-  // sign-in ends with the last token that still works.
-  final ends = [?access, if (refresh) ?refreshEnds]..sort();
-  if (ends.isEmpty) return null;
-  final end = ends.last;
-  if (!now.isBefore(end)) return SignInExpiry(SignInState.ended, endsAt: end);
-  return ending(_selfRenewingMarkers.any(has) ? SignInState.renewsWhenUsed : SignInState.endsOn, end);
-}
-
-/// [e] in words; [when] writes a date and time.
-String signInText(SignInExpiry e, String Function(DateTime) when) {
-  final at = e.endsAt == null ? '' : when(e.endsAt!);
+  final latest = e.earlyRevocationPossible ? ' at the latest' : '';
+  final on = e.about ? 'about' : 'on';
+  final at = '$on ${when(e.expiresAt!)}$latest';
   return switch (e.state) {
-    SignInState.renews => 'Renews automatically.',
-    SignInState.renewsUntil => 'Renews automatically until $at, then needs reconnecting.',
-    SignInState.renewsWhenUsed => 'Renews when NEFORUM posts with it. Unused, it ends on $at.',
-    SignInState.endsOn => 'Ends on $at, then needs reconnecting.',
-    SignInState.ended => 'Ended on $at. Needs reconnecting.',
+    SignInState.renewsUntil when e.about => 'Renews when NEFORUM posts. Unused, it ends $at.$note',
+    SignInState.renewsUntil => 'Renews when NEFORUM posts, until ${when(e.expiresAt!)}$latest, then needs reconnecting.$note',
+    SignInState.renewsWhenUsed => 'Renews when NEFORUM posts with it. Unused, it ends $at.$note',
+    SignInState.ended when e.about => 'It probably ended about ${when(e.expiresAt!)}. If a post is refused, reconnect it.$note',
+    SignInState.ended => 'Ended on ${when(e.expiresAt!)}. Needs reconnecting.$note',
+    _ => 'Ends $at, then needs reconnecting.$note',
   };
 }
 
@@ -770,7 +719,9 @@ AccountConnection describeAccountConnection(
     tier: account.tier,
     method: connectionMethodText(account.tier, network),
     details: keysUnreadable ? const [] : connectionDetails(account, adapter, secrets: secrets),
-    signIn: keysUnreadable ? null : signInExpiry(secrets, now: now),
+    signIn: keysUnreadable || secrets.isEmpty || !(real?.signInPolicyFor(account).hasConnection ?? false)
+        ? null
+        : deriveSignInLifetime(real!.signInPolicyFor(account), secrets, now: now),
     storedKeys: keysUnreadable ? const [] : storedKeyLabels(secrets, adapter),
     needsKeys: needsKeys,
     noKeysReason: needsKeys ? null : _noKeysReason(account),
@@ -884,6 +835,18 @@ final accountConnectionProvider = FutureProvider.autoDispose.family<AccountConne
   },
   retry: (_, _) => null,
 );
+
+/// Every account's [SignInStatus] on this device, as of the last write, read
+/// with no keychain prompt: for closed cards, warnings and the schedule sheet.
+/// Empties on Delete everything. A date passes with no write, so ask
+/// [SignInStatus.hasEnded] and [SignInStatus.endsSoon] rather than its state.
+final signInStatusesProvider = StreamProvider<Map<String, SignInStatus>>((ref) async* {
+  final store = ref.watch(servicesProvider).signInStatusStore;
+  yield await store.all();
+  await for (final _ in store.changes) {
+    yield await store.all();
+  }
+});
 
 /// "Copy all setups" on the Accounts page: [connectionCopyHeader], then
 /// every account's [connectionSetupText] in [accounts]' order, separated by

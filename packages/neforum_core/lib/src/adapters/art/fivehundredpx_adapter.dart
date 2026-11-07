@@ -1,3 +1,4 @@
+import '../../model/account.dart';
 import '../../model/artwork.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
@@ -40,6 +41,9 @@ class FiveHundredPxAdapter extends ArtHandoffAdapter {
     setupGuide: 'docs/platforms/fivehundredpx.md',
     categories: {PlatformCategory.art},
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
 
   @override
   PlatformDescriptor get descriptor => _descriptor;

@@ -13,8 +13,10 @@ import '../util/logger.dart';
 /// Why NEFORUM offers them next to OAuth 2.0: X and Tumblr hand out a new
 /// OAuth 2.0 refresh token on every renewal and kill the old one, so an
 /// account used on several devices stays signed in on only one of them.
-/// OAuth 1.0a user tokens never expire and never change (until the user
-/// revokes or regenerates them), so every device can share the same keys.
+/// OAuth 1.0a user tokens are not renewed and do not change (until the user
+/// revokes or regenerates them), so every device can share the same keys. How
+/// long they last is each platform's own: see `SignInPolicies`. X retires
+/// them on 2027-01-31; Tumblr and Flickr publish no limit.
 @immutable
 class OAuth1Credentials {
   const OAuth1Credentials({

@@ -72,6 +72,9 @@ class InstagramAdapter extends PlatformAdapter {
   final Future<void> Function(Duration) _sleep;
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.instagramFor(account);
+
+  @override
   PlatformDescriptor get descriptor => InstagramRules.descriptor;
 
   @override
@@ -111,7 +114,7 @@ class InstagramAdapter extends PlatformAdapter {
               secret: true,
               help: 'App Dashboard > **API setup with Instagram login** > **Generate access tokens** > '
                   '**Generate token** next to your account (listed once it has accepted its Instagram Tester '
-                  'invite). Lasts 60 days; NEFORUM renews it automatically. With a token, leave the fields below '
+                  'invite). Lasts 60 days; NEFORUM renews it when it posts. With a token, leave the fields below '
                   'empty.',
             ),
             ConnectField(
@@ -162,7 +165,7 @@ class InstagramAdapter extends PlatformAdapter {
         config['tokenSource'] = 'dashboard';
       } else {
         final (token, appId, redirect) = await _oauth(input, ctx, api);
-        secrets = _tokenSecrets(token.accessToken, token.expiresIn ?? longLivedLifetime, ctx.now());
+        secrets = _renewedSecrets(token.accessToken, token.expiresIn, ctx.now());
         config
           ..['tokenSource'] = 'oauth'
           ..['appId'] = appId
@@ -296,6 +299,13 @@ class InstagramAdapter extends PlatformAdapter {
         keyRefreshedAt: now.toUtc().toIso8601String(),
       };
 
+  /// [token] with its end: the [reported] lifetime, else Meta's documented 60
+  /// days, marked as worked out.
+  Map<String, String> _renewedSecrets(String token, Duration? reported, DateTime now, [Map<String, String> existing = const {}]) => {
+        ..._tokenSecrets(token, reported ?? longLivedLifetime, now, existing),
+        SignInSecretKeys.expiresAtSource: (reported == null ? SignInDateSource.computed : SignInDateSource.serverReported).name,
+      };
+
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -321,7 +331,7 @@ class InstagramAdapter extends PlatformAdapter {
     try {
       ctx.progress('Refreshing the Instagram token…');
       final fresh = await _api(ctx).refresh(tokens.accessToken);
-      return _tokenSecrets(fresh.accessToken, fresh.expiresIn ?? longLivedLifetime, now, secrets);
+      return _renewedSecrets(fresh.accessToken, fresh.expiresIn, now, secrets);
     } on AdapterException catch (e) {
       if (e.error.kind == PublishErrorKind.auth) rethrow;
       ctx.log.warn('Instagram token refresh failed; keeping the current token: ${e.error.message}');
@@ -626,7 +636,7 @@ const String _apiIntro = '''
 1. Open <https://developers.facebook.com/apps/creation/> and create an app with the use case **Manage messaging & content on Instagram** (if asked for an app type, pick **Business**). No business portfolio? Pick **I don't want to connect a business portfolio yet**.
 2. **Use cases > Customize > Permissions and features**: click **+ Add** next to both `instagram_business_basic` and `instagram_business_content_publish` (neither is on by default). The list cuts the names off; each row's description shows the full name.
 3. **App roles > Roles > Add People > Instagram Tester**, enter your Instagram username, then accept the invite in Instagram: **Settings > Apps and websites > Tester invites**. Tokens can't be made without this.
-4. Open **API setup with Instagram login** (left menu). Your account now shows under **Generate access tokens**: click **Generate token**, log in in the pop-up, copy the token and paste it into the first field below. It lasts 60 days and NEFORUM renews it automatically.
+4. Open **API setup with Instagram login** (left menu). Your account now shows under **Generate access tokens**: click **Generate token**, log in in the pop-up, copy the token and paste it into the first field below. It lasts 60 days and NEFORUM renews it when it posts.
 5. Pick a **media host** in NEFORUM **Settings > Media hosting**, even for text-only posts (they go out as a text card image). **Litterbox** needs no setup and is fine to start; for regular posting a bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) is more reliable. The **Guide** button there explains each host.
 
 **Browser sign-in instead of a token:** copy the **Instagram app ID** and **Instagram app secret** from the top of the same page (the `-IG` app Meta made for you, not the Meta App ID), add `https://localhost:52771/callback` under **Set up Instagram business login > Business login settings > OAuth redirect URIs**, press **Sign in**, then paste the whole address of the page that fails to load.''';

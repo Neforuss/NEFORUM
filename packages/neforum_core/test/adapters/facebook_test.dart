@@ -220,8 +220,8 @@ void main() {
       expect((r.account.config['available_pages'] as List).length, 3);
       expect(r.secrets['access_token'], 'PT123');
       expect(r.secrets['app_secret'], 'APPSECRET');
-      expect(r.secrets['user_access_token'], 'EAALONG');
-      expect(r.secrets['user_token_expires_at'], isNotNull);
+      expect(r.secrets.containsKey('user_access_token'), isFalse, reason: 'it only served to list the Pages');
+      expect(r.secrets.containsKey('user_token_expires_at'), isFalse);
       expect(r.secrets.containsKey('refresh_token'), isFalse);
     });
 
@@ -275,8 +275,8 @@ void main() {
       });
       expect(r.secrets['access_token'], 'PT123');
       expect(r.secrets.containsKey('expires_at'), isFalse);
-      expect(r.secrets['user_access_token'], 'EAALONG');
-      expect(DateTime.parse(r.secrets['user_token_expires_at']!), testNow.add(const Duration(seconds: 5184000)));
+      expect(r.secrets.containsKey('user_access_token'), isFalse, reason: 'it only served to list the Pages');
+      expect(r.secrets.containsKey('user_token_expires_at'), isFalse);
       // Page tokens never expire, so there is nothing to refresh.
       expect(await adapter.refreshSecrets(r.account, r.secrets, ctx), isNull);
       expect(calls, hasLength(4));

@@ -7,6 +7,9 @@ import 'support/test_context.dart';
 
 /// A platform that records what it was asked to publish.
 class _Platform extends PlatformAdapter {
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
   _Platform(this.platformId, {this.scheduling = false, this.stories = false});
 
   final String platformId;

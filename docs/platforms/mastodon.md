@@ -100,9 +100,9 @@ If you let the server hold a scheduled post, NEFORUM uploads the media, sends th
 
 ### Sign-in lifetime
 
-Mastodon and GoToSocial sign-ins do not expire. They end only if you revoke NEFORUM under **Preferences → Account → Authorized apps**, or remove the account in NEFORUM (which revokes the token). Pleroma and Akkoma sign-ins can expire; NEFORUM renews them automatically.
+Mastodon and GoToSocial sign-ins have no end date. They end only if you revoke NEFORUM under **Preferences → Account → Authorized apps**, or remove the account in NEFORUM (which revokes the token). A password change also ends them. Pleroma and Akkoma sign-ins can expire; NEFORUM renews them when it posts. Mitra's last 30 days by default and cannot be renewed. Other servers decide for themselves, and NEFORUM shows any date the server sends.
 
-Mastodon plans optional expiring tokens and removal of tokens unused for two years in a future version 5.0. Reconnecting fixes either case.
+An older note here said Mastodon plans expiring tokens for version 5.0. The 5.0 beta's notes do not say so, so this is not confirmed. If it happens, NEFORUM shows the date the server sends, and reconnecting fixes it.
 
 ## Limits
 

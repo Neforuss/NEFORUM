@@ -38,7 +38,7 @@ Status as of October 2026: the API is open and free. You don't need a developer 
 
 - NEFORUM sends your username and password once to `POST /api/auth/login` and receives an **access token**. Only the token is stored, never the password.
 - NEFORUM reads your blogs with `GET /api/me/collections`.
-- When you remove the account, NEFORUM revokes the token with `DELETE /api/auth/me`. Tokens don't expire on their own.
+- When you remove the account, NEFORUM revokes the token with `DELETE /api/auth/me`. On a self-hosted WriteFreely server tokens have no end date. Write.as publishes none for its hosted service.
 
 ### Posting
 
