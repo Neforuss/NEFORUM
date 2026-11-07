@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../platform/env.dart';
 import '../../state/account_connection.dart';
 import '../../state/automatic_handoff.dart';
 import '../../state/composer.dart';
@@ -332,6 +333,10 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
     return otherMomentWithSameWallClock(at, zone: _env.zone) == null ? 'Time zone: $name' : 'This time happens twice that day. This is the one in $name.';
   }
 
+  /// The zone name, only when the wall clock reads the same twice that day: a
+  /// row per network has no room for a sentence.
+  String _whichOfTwo(DateTime at) => otherMomentWithSameWallClock(at, zone: _env.zone) == null ? '' : ' (${at.timeZoneName})';
+
   static String _presetLabel(RandomSchedulePreset p) => switch (p) {
         RandomSchedulePreset.next24Hours => 'Next 24 hours',
         RandomSchedulePreset.next7Days => 'Next 7 days',
@@ -388,7 +393,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
               Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text(name, style: context.text.labelLarge, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  if (_draws[a.id] case final at?) Text(_moment(at, format), key: ValueKey('random-time-${a.id}'), style: context.text.bodySmall),
+                  if (_draws[a.id] case final at?) Text('${_moment(at, format)}${_whichOfTwo(at)}', key: ValueKey('random-time-${a.id}'), style: context.text.bodySmall),
                 ]),
               ),
               ToolButton(
@@ -472,6 +477,8 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
       ),
       now: now,
       device: _env.device ?? ScheduleDevice.current,
+      // Linux has a tray only while a panel offers one, which takes a question to ask.
+      closeKeepsRunning: settings.minimizeToTray && !Env.isLinux,
       clock: format.clock,
     );
 
@@ -540,7 +547,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
                         onPressed: () => _pickTargetTime(a.id),
                         icon: const Icon(Icons.schedule_rounded, size: 16),
                         label: Text(
-                          format.scheduled(_timeOf(a.id)),
+                          '${format.scheduled(_timeOf(a.id))}${_whichOfTwo(_timeOf(a.id))}',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(color: _timeOf(a.id).isAfter(now) ? nf.text : nf.danger),

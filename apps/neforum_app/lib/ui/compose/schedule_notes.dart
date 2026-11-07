@@ -166,8 +166,10 @@ List<ScheduleNote> scheduleNotes(
   required DateTime now,
   required ScheduleDevice device,
   required String Function(DateTime) clock,
+  bool closeKeepsRunning = true,
 }) {
-  if (targets.isEmpty) return [ScheduleNote(ScheduleNoteKind.deviceOn, ScheduleNoteTone.info, _capitalized(_deviceLine(device)), accounts: 0)];
+  final deviceLine = _deviceLine(device, closeKeepsRunning: closeKeepsRunning);
+  if (targets.isEmpty) return [ScheduleNote(ScheduleNoteKind.deviceOn, ScheduleNoteTone.info, _capitalized(deviceLine), accounts: 0)];
 
   final notes = <ScheduleNote>[];
   final turnedOff = <String>[];
@@ -259,7 +261,7 @@ List<ScheduleNote> scheduleNotes(
         accounts: held.length));
   }
   if (onDevice.isNotEmpty) {
-    notes.add(ScheduleNote(ScheduleNoteKind.deviceOn, ScheduleNoteTone.info, '${_join(onDevice)}: ${_deviceLine(device)}', accounts: onDevice.length));
+    notes.add(ScheduleNote(ScheduleNoteKind.deviceOn, ScheduleNoteTone.info, '${_join(onDevice)}: $deviceLine', accounts: onDevice.length));
   }
   if (handoff.isNotEmpty) {
     notes.add(ScheduleNote(ScheduleNoteKind.handoff, ScheduleNoteTone.info, '${_join(handoff)}: you get a reminder to tap Post.', accounts: handoff.length));
@@ -322,10 +324,14 @@ class _SignInEnd {
   }
 }
 
-String _deviceLine(ScheduleDevice device) => switch (device) {
+/// [closeKeepsRunning]: closing the window leaves NEFORUM in the tray, so the
+/// line can say so. Off in Settings, closing it quits, and the post waits.
+String _deviceLine(ScheduleDevice device, {required bool closeKeepsRunning}) => switch (device) {
       ScheduleDevice.ios => 'at the scheduled time you get a notification with a Publish now button (iOS does not let apps post on a timer).',
-      ScheduleDevice.android => 'goes out in the background within a few minutes of its time.',
-      ScheduleDevice.desktop => 'keep NEFORUM running (it stays in the tray when you close the window) and it goes out on time.',
+      ScheduleDevice.android => 'goes out in the background, usually within a few minutes of its time. Android can delay it while the phone is idle.',
+      ScheduleDevice.desktop => closeKeepsRunning
+          ? 'keep NEFORUM running (it stays in the tray when you close the window) and it goes out on time.'
+          : 'keep NEFORUM running with its window open and it goes out on time.',
       ScheduleDevice.web => 'scheduling works in the installed apps; the web preview only stores the time.',
     };
 

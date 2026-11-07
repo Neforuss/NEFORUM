@@ -401,6 +401,18 @@ void main() {
       await done(tester);
     });
 
+    testWidgets('the tray is not promised when Settings has closing the window quit NEFORUM', (tester) async {
+      final h = await boot(tester);
+      compose(h);
+      await tester.pump();
+      h.container.read(settingsProvider.notifier).update((s) => s.copyWith(minimizeToTray: false));
+      await tester.pump();
+      await openSheet(tester, h);
+      expect(find.textContaining('window open'), findsOneWidget);
+      expect(find.textContaining('stays in the tray'), findsNothing);
+      await done(tester);
+    });
+
     testWidgets('warnings never block Schedule', (tester) async {
       final h = await boot(tester);
       compose(h);
@@ -525,6 +537,40 @@ void main() {
       await tester.pump();
       await openSheet(tester, h);
       expect(find.textContaining('This time happens twice that day. This is the one in'), findsOneWidget);
+      await done(tester);
+    });
+  });
+
+  group('a wall clock that happens twice, one row per network', () {
+    final first = DateTime(2030, 3, 10, 1, 30);
+    final twin = LocalZone(wallClockOf: (ms) {
+      final change = first.millisecondsSinceEpoch + const Duration(minutes: 30).inMilliseconds;
+      return DateTime.fromMillisecondsSinceEpoch(ms < change ? ms : ms - const Duration(hours: 1).inMilliseconds);
+    });
+
+    testWidgets('a draw names its zone', (tester) async {
+      final h = await boot(tester, zone: twin, random: _FirstMinute());
+      h.now = first.subtract(kRandomScheduleMinLead);
+      compose(h, targets: [h.onDevice, h.second]);
+      await tester.pump();
+      await openSheet(tester, h);
+      await openRandom(tester);
+      await tester.tap(find.text('Different time per network'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<Text>(find.byKey(ValueKey('random-time-${h.onDevice.id}'))).data, endsWith('(${first.timeZoneName})'));
+      await done(tester);
+    });
+
+    testWidgets('a time set by hand names its zone, and only that row', (tester) async {
+      final h = await boot(tester, zone: twin);
+      h.now = first.subtract(const Duration(hours: 2));
+      final a = h.onDevice, b = h.second;
+      compose(h, targets: [a, b]);
+      await tester.pump();
+      h.notifier.setTargetSchedules({a.id: first, b.id: first.add(const Duration(days: 3))});
+      await tester.pump();
+      await openSheet(tester, h);
+      expect(find.textContaining('(${first.timeZoneName})'), findsOneWidget);
       await done(tester);
     });
   });

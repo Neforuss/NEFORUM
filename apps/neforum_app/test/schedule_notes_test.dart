@@ -228,6 +228,14 @@ void main() {
       expect(notes([bluesky], atHour(12), device: ScheduleDevice.web).single.text, contains('installed apps'));
     });
 
+    test('the tray is only promised when closing the window really leaves NEFORUM running', () {
+      final target = scheduleNoteTargets(post: Post(id: 'p', text: 'Hello', createdAt: now, updatedAt: now, scheduledAt: atHour(12), status: PostStatus.scheduled, targets: [PostTarget(accountId: bluesky.id)]), accounts: [bluesky], registry: builtinRegistry(), resolver: const VariantResolver(), statuses: const {}, delegateSchedules: true, now: now);
+      String line(bool keeps) => scheduleNotes(target, now: now, device: ScheduleDevice.desktop, clock: (_) => '', closeKeepsRunning: keeps).single.text;
+      expect(line(true), contains('stays in the tray'));
+      expect(line(false), isNot(contains('tray')));
+      expect(line(false), contains('window open'));
+    });
+
     test('more than 30 days away on this device warns; exactly under it does not; held does not', () {
       expect(textOf(notes([bluesky], days(31)), ScheduleNoteKind.farAwayOnDevice), contains('more than 30 days'));
       expect(kinds(notes([bluesky], days(29))), isNot(contains(ScheduleNoteKind.farAwayOnDevice)));
@@ -299,6 +307,10 @@ void main() {
       expect(kinds(n), isNot(contains(ScheduleNoteKind.heldByPlatform)), reason: 'Facebook at its own 40 days');
       expect(textOf(n, ScheduleNoteKind.farAwayOnDevice), startsWith('Facebook:'));
     });
+  });
+
+  test('the guide in the app is the guide in the repository', () {
+    expect(File('assets/docs/scheduling.md').readAsStringSync(), File('../../docs/scheduling.md').readAsStringSync(), reason: 'run dart run tool/sync_docs.dart');
   });
 
   test('D14: the sheet reads no keychain and has no rule of its own about holding', () {
