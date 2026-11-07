@@ -544,6 +544,45 @@ void main() {
       expect(r?['refresh_token'], 'r1');
     });
 
+    group('another device holds the lease past the wait', () {
+      Future<int> renewalsOnB(String access) async {
+        await a.accounts.upsert(account);
+        await a.secrets.write('x1', _tokens(access, 'r0', access == 'a0' ? later : clock.now.subtract(const Duration(hours: 1))));
+        await a.engine.sync();
+        await b.engine.sync();
+        final cipher = BackupCipher(_pass, params: _fast, minimum: _fast);
+        final doc = SyncDocument.parse(await cipher.open(backend.bytes!));
+        doc.leases['x1'] = SyncLease(by: 'A', until: clock.now.add(const Duration(minutes: 30)));
+        backend.bytes = await cipher.seal(doc.toJson(writtenBy: 'A', writtenAt: clock.now));
+        final waitingB = SyncEngine(
+          backend: backend,
+          cipher: BackupCipher(_pass, params: _fast, minimum: _fast),
+          deviceId: 'B',
+          device: SyncDeviceInfo(label: 'B', platform: 'test', appVersion: '1', seenAt: DateTime.utc(2000)),
+          sources: [AccountsSyncSource(b.accounts), SecretsSyncSource(b.accounts, b.secrets)],
+          state: b.stateStore,
+          secrets: b.secrets,
+          clock: () => clock.now,
+          sleep: (d) async => clock.now = clock.now.add(d),
+        );
+        var renewals = 0;
+        await waitingB.renew(account, (await b.secrets.read('x1'))!, (s) async {
+          renewals++;
+          return _tokens('b1', 'rB', later);
+        }, renewsEarly: (s) => s['access_token'] == 'a0');
+        return renewals;
+      }
+
+      test('keys that still work do not renew: that could sign out the device with the lease', () async {
+        expect(await renewalsOnB('a0'), 0);
+        expect((await b.secrets.read('x1'))?['refresh_token'], 'r0');
+      });
+
+      test('dead keys renew anyway: nothing else can post', () async {
+        expect(await renewalsOnB('dead'), 1);
+      });
+    });
+
     test('keys due early that nothing else renewed: this device takes the lease and renews, once', () async {
       await a.accounts.upsert(account);
       await a.secrets.write('x1', _tokens('a0', 'r0', later));
@@ -2588,6 +2627,65 @@ void main() {
 
     Post draft() => _post('p', targets: const [PostTarget(accountId: id)]);
 
+    group('TikTok renews 10 minutes before the end, and two devices still take turns', () {
+      late String validRefresh;
+      late int issued;
+      late List<String> presented;
+      Future<http.Response> server(http.Request r) async {
+        if (!r.url.path.contains('oauth/token')) return http.Response('{}', 200, headers: jsonHeaders);
+        final body = Uri.splitQueryString(r.body);
+        presented.add(body['refresh_token'] ?? '?');
+        if (body['refresh_token'] != validRefresh) return http.Response(jsonEncode({'error': 'invalid_grant'}), 400, headers: jsonHeaders);
+        issued++;
+        validRefresh = 'r$issued';
+        return http.Response(jsonEncode({'access_token': 'a$issued', 'refresh_token': validRefresh, 'expires_in': 86400, 'refresh_expires_in': 31536000, 'open_id': 'o', 'token_type': 'Bearer'}), 200, headers: jsonHeaders);
+      }
+
+      setUp(() {
+        validRefresh = 'r1';
+        issued = 1;
+        presented = [];
+      });
+
+      Future<(_Device, _Device)> twoDevices({required Duration accessLeft}) async {
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+        await a.accounts.upsert(ConnectedAccount(id: id, platformId: 'tiktok', tier: PlatformTier.byokApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'clientKey': 'k', 'openId': 'o'}));
+        await a.secrets.write(id, {'access_token': 'a1', 'refresh_token': 'r1', 'client_secret': 's', 'token_type': 'Bearer', 'expires_at': clock.now.add(accessLeft).toUtc().toIso8601String()});
+        await a.engine.sync();
+        await b.engine.sync();
+        return (a, b);
+      }
+
+      for (final (label, left) in [('5 minutes left', const Duration(minutes: 5)), ('expired', const Duration(minutes: -5))]) {
+        test('$label: A renews and shares, B has not synced: B takes A\'s keys, spends nothing, and its post goes out', () async {
+          final (a, b) = await twoDevices(accessLeft: left);
+          final adapter = _TikTokProbe();
+          await a.posts.upsert(draft());
+          await publisher(a, adapter, server).publish('p');
+          expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+          await a.engine.sync();
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          await b.posts.upsert(_post('q', targets: const [PostTarget(accountId: id)]));
+          await publisher(b, adapter, server).publish('q');
+          final t = (await b.posts.get('q'))!.targets.single;
+          expect(presented, ['r1'], reason: 'B never replays the spent key');
+          expect((t.status, t.result?.error?.message), (TargetStatus.published, null));
+          expect((await b.accounts.get(id))!.lastError, isNull, reason: 'no reconnect is asked for');
+          expect((await b.secrets.read(id))!['refresh_token'], 'r2');
+        });
+      }
+
+      test('5 minutes left, refused with nobody to explain it: the token that has not ended posts', () async {
+        final (a, _) = await twoDevices(accessLeft: const Duration(minutes: 5));
+        validRefresh = 'somebody-else-spent-it';
+        await a.posts.upsert(draft());
+        await publisher(a, _TikTokProbe(), server).publish('p');
+        expect(presented, ['r1']);
+        expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        expect((await a.secrets.read(id))!['access_token'], 'a1');
+      });
+    });
+
     group('Pixelfed renews early, and two devices still take turns', () {
       // As the server does it: league/oauth2-server's refresh grant revokes the
       // old access token along with the refresh token it spends.
@@ -3667,6 +3765,13 @@ class _PixelfedProbe extends PixelfedAdapter {
   @override
   Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
       secrets['access_token'] == currentAccess() ? PublishResult.ok(remoteId: 'r') : PublishResult.failure(const PublishError.auth('HTTP 401: token revoked'));
+}
+
+class _TikTokProbe extends TikTokAdapter {
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => PublishResult.ok(remoteId: 'r');
 }
 
 class _RecordingCoordinator implements SecretsCoordinator {

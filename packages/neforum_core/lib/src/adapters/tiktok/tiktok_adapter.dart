@@ -52,6 +52,24 @@ class TikTokAdapter extends PlatformAdapter {
   @override
   bool rotatesRefreshTokensFor(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
 
+  /// How long before the access token ends a post renews it.
+  static const Duration renewalLeeway = Duration(minutes: 10);
+
+  /// Inside [renewalLeeway] a post renews a token that has not ended, and that
+  /// stops the refresh token the other devices hold, so the coordinator has to
+  /// know. Keys that cannot renew are not due: nothing would come of waiting.
+  @override
+  bool renewsEarly(ConnectedAccount account, Map<String, String> secrets, DateTime now) {
+    if (account.tier != PlatformTier.byokApi) return false;
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    if (tokens == null || tokens.isExpired(now: now) || !tokens.isExpired(now: now, leeway: renewalLeeway)) return false;
+    final refreshExp = DateTime.tryParse(secrets[TikTokSecretKeys.refreshExpiresAt] ?? '');
+    return (tokens.refreshToken ?? '').isNotEmpty &&
+        (refreshExp == null || refreshExp.isAfter(now)) &&
+        account.configString('clientKey').isNotEmpty &&
+        (secrets[TikTokSecretKeys.clientSecret] ?? '').isNotEmpty;
+  }
+
   @override
   PlatformDescriptor get descriptor => tiktokDescriptor;
 
@@ -150,7 +168,7 @@ class TikTokAdapter extends PlatformAdapter {
       throw const AdapterException(PublishError.auth('No TikTok token stored; reconnect the account'));
     }
     final now = ctx.now();
-    if (!tokens.isExpired(now: now, leeway: const Duration(minutes: 10))) return null;
+    if (!tokens.isExpired(now: now, leeway: renewalLeeway)) return null;
     final refresh = tokens.refreshToken;
     final refreshExp = DateTime.tryParse(secrets[TikTokSecretKeys.refreshExpiresAt] ?? '');
     if (refresh == null || refresh.isEmpty || (refreshExp != null && !refreshExp.isAfter(now))) {

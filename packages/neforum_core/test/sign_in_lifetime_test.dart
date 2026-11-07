@@ -455,6 +455,19 @@ void main() {
   group('TikTok', () {
     final account = _acct('tiktok', PlatformTier.byokApi, config: {'clientKey': 'ck'});
 
+    test('a post inside 10 minutes of the end renews early, so the coordinator takes turns; keys that cannot renew are not due', () {
+      final adapter = TikTokAdapter();
+      Map<String, String> keys(Duration left) => {OAuthTokens.keyAccessToken: 'a', OAuthTokens.keyRefreshToken: 'r', OAuthTokens.keyExpiresAt: _iso(_now.add(left)), 'client_secret': 's'};
+      expect(adapter.renewsEarly(account, keys(const Duration(minutes: 5)), _now), isTrue);
+      expect(adapter.renewsEarly(account, keys(const Duration(minutes: 11)), _now), isFalse, reason: 'not due');
+      expect(adapter.renewsEarly(account, keys(const Duration(minutes: 1)), _now), isFalse, reason: 'expired already: the coordinator counts that itself');
+      expect(adapter.renewsEarly(account, {...keys(const Duration(minutes: 5))}..remove(OAuthTokens.keyRefreshToken), _now), isFalse);
+      expect(adapter.renewsEarly(account, {...keys(const Duration(minutes: 5))}..remove('client_secret'), _now), isFalse);
+      expect(adapter.renewsEarly(account, {...keys(const Duration(minutes: 5)), 'refresh_expires_at': _iso(_now.subtract(const Duration(days: 1)))}, _now), isFalse);
+      expect(adapter.renewsEarly(_acct('tiktok', PlatformTier.byokApi), keys(const Duration(minutes: 5)), _now), isFalse, reason: 'no client key');
+      expect(adapter.renewsEarly(_acct('tiktok', PlatformTier.handoff), keys(const Duration(minutes: 5)), _now), isFalse);
+    });
+
     test('rotation is declared, so a sync coordinator takes the renewal', () async {
       expect(TikTokAdapter().rotatesRefreshTokensFor(account), isTrue);
       expect(TikTokAdapter().rotatesRefreshTokensFor(_acct('tiktok', PlatformTier.handoff)), isFalse);

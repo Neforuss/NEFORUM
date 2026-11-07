@@ -1161,6 +1161,9 @@ class SyncEngine implements SecretsCoordinator {
         latest = await _awaitTurn(account, current, store, due);
       } on _AlreadyRenewed catch (done) {
         return _differs(done.secrets, current);
+      } on _LeaseStillHeld catch (held) {
+        _log.warn('Not renewing ${account.displayName} early while another device holds the renewal');
+        return _differs(held.secrets, current);
       } on Object catch (e) {
         // Keys that still work can wait for the file: renewing them now could
         // sign the other devices out, for nothing this post needs.
@@ -1250,7 +1253,8 @@ class SyncEngine implements SecretsCoordinator {
 
   /// Syncs, then waits while another device holds the account's lease, then
   /// takes it. Returns the keys to renew; throws [_AlreadyRenewed] when
-  /// another device's renewal arrived meanwhile.
+  /// another device's renewal arrived meanwhile, and [_LeaseStillHeld] when the
+  /// wait ran out on keys that have not ended.
   Future<Map<String, String>> _awaitTurn(ConnectedAccount account, Map<String, String> current, SecretStore store, bool Function(Map<String, String>) due) async {
     final deadline = _now().add(renewalWait);
     while (true) {
@@ -1266,7 +1270,13 @@ class SyncEngine implements SecretsCoordinator {
       }
       final took = await _locked(() => _takeLease(account.id));
       if (took) return latest;
-      if (!_now().isBefore(deadline)) return latest;
+      if (!_now().isBefore(deadline)) {
+        // Past the wait, dead keys renew without the lease: nothing else can
+        // post. Keys that still work post as they are, because renewing them
+        // here could sign out the device that holds the lease.
+        if (!_expired(latest)) throw _LeaseStillHeld(latest);
+        return latest;
+      }
     }
   }
 
@@ -1339,6 +1349,11 @@ enum _Claim { mine, take, others }
 
 class _AlreadyRenewed implements Exception {
   _AlreadyRenewed(this.secrets);
+  final Map<String, String> secrets;
+}
+
+class _LeaseStillHeld implements Exception {
+  _LeaseStillHeld(this.secrets);
   final Map<String, String> secrets;
 }
 

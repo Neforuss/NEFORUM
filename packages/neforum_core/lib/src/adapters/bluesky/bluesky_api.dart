@@ -90,9 +90,14 @@ const Set<String> _authErrors = {
   'InvalidToken',
   'AuthenticationRequired',
   'AuthMissing',
+  'AuthFactorTokenRequired',
+};
+
+/// Error codes that mean the account cannot post, whatever its keys. A reconnect
+/// cannot help.
+const Set<String> _accountBlockedErrors = {
   'AccountTakedown',
   'AccountDeactivated',
-  'AuthFactorTokenRequired',
 };
 
 /// The XRPC `error` code of a failed response, if any.
@@ -129,6 +134,9 @@ PublishError mapBlueskyFailure(HttpFailure f, {required DateTime now, String con
   if (r.statusCode == 429 || code == 'RateLimitExceeded') {
     return PublishError.quota('$context rate limit reached ($text)',
         raw: raw, statusCode: r.statusCode, retryAfter: rateLimitResetIn(r, now));
+  }
+  if (code != null && _accountBlockedErrors.contains(code)) {
+    return PublishError.auth('$context will not let this account post ($text). Reconnecting will not help: check the account on Bluesky', raw: raw, statusCode: r.statusCode, notAllowed: true);
   }
   if (code != null && _authErrors.contains(code)) {
     return PublishError.auth('$context sign-in is no longer valid ($text); reconnect the account', raw: raw, statusCode: r.statusCode);

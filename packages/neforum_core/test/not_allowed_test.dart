@@ -11,6 +11,7 @@ import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/art/dribbble_api.dart' show DribbbleApi;
 import 'package:neforum_core/src/adapters/blogs_a/ghost_api.dart' show mapGhostFailure;
 import 'package:neforum_core/src/adapters/blogs_b/hashnode_api.dart' show HashnodeError, hashnodePublishError;
+import 'package:neforum_core/src/adapters/bluesky/bluesky_api.dart' show mapBlueskyFailure;
 import 'package:neforum_core/src/adapters/facebook/facebook_api.dart' show mapGraphFailure;
 import 'package:neforum_core/src/adapters/instagram/instagram_api.dart' show mapHttpFailure;
 import 'package:neforum_core/src/adapters/lemmy/lemmy_api.dart' show lemmyPublishError;
@@ -75,6 +76,8 @@ void main() {
       'Lemmy unverified email': () => lemmyPublishError(_f(400, {'error': 'email_not_verified'}), context: 'post'),
       'Lemmy pending application': () => lemmyPublishError(_f(400, {'error': 'registration_application_is_pending'}), context: 'post'),
       'Lemmy denied application': () => lemmyPublishError(_f(400, {'error': 'registration_denied'}), context: 'post'),
+      'Bluesky taken down': () => mapBlueskyFailure(_f(400, {'error': 'AccountTakedown', 'message': 'Account has been taken down'}), now: _now),
+      'Bluesky deactivated': () => mapBlueskyFailure(_f(400, {'error': 'AccountDeactivated', 'message': 'Account is deactivated'}), now: _now),
     };
     rows.forEach((name, map) {
       test(name, () {
@@ -105,6 +108,7 @@ void main() {
       'LinkedIn 401': () => LinkedInApi.mapFailure(_f(401, {'status': 401, 'code': 'EXPIRED_ACCESS_TOKEN', 'message': 'expired'}), 'post', _now),
       'Misskey AUTHENTICATION_FAILED': () => misskeyPublishError(_f(401, {'error': {'code': 'AUTHENTICATION_FAILED', 'message': 'no', 'id': 'x', 'kind': 'client'}}), context: 'post'),
       'Lemmy signed out': () => lemmyPublishError(_f(400, {'error': 'not_logged_in'}), context: 'post'),
+      'Bluesky expired': () => mapBlueskyFailure(_f(400, {'error': 'ExpiredToken', 'message': 'Token has expired'}), now: _now),
     };
     rows.forEach((name, map) {
       test(name, () {
