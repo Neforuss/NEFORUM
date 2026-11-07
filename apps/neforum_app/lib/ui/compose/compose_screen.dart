@@ -17,6 +17,7 @@ import 'action_bar.dart';
 import 'differentiation_panel.dart';
 import 'editor_card.dart';
 import 'media_tray.dart';
+import 'open_in_composer.dart';
 import 'preview_pane.dart';
 import 'publish_progress_sheet.dart';
 import 'schedule_sheet.dart';
@@ -39,7 +40,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
   final _focus = FocusNode();
   final _previewScroll = ScrollController();
   _Pane _pane = _Pane.write;
-  String? _loadedId;
+  String? _takingCommand;
   bool _busy = false;
 
   /// Phones and tablets: the on-screen keyboard is showing.
@@ -72,14 +73,25 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
   /// Takes the cursor out of the text field, which closes the keyboard.
   void _hideKeyboard() => FocusManager.instance.primaryFocus?.unfocus();
 
-  void _maybeLoad() {
+  /// `/compose?post=X` is a command, carried out once: X goes in the composer
+  /// and the location goes back to `/compose`. Nothing keeps the id, so the
+  /// same post can be opened again, and no history step can repeat the load.
+  void _takeEditCommand() {
     final id = widget.editPostId;
-    if (id == null || id == _loadedId) return;
+    if (id == null || id == _takingCommand) return;
     final post = ref.read(postByIdProvider(id));
-    if (post == null) return;
-    _loadedId = id;
+    // The list is still on its way at start: asked again when it arrives.
+    if (post == null && ref.read(postsProvider).isLoading) return;
+    _takingCommand = id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(composerProvider.notifier).load(post);
+      if (!mounted) return;
+      _takingCommand = null;
+      if (post == null) {
+        showToast(context, 'This post is no longer in NEFORUM', icon: Icons.search_off_rounded);
+      } else {
+        openPostInComposer(context, ref, post);
+      }
+      context.go(AppSection.compose.path);
     });
   }
 
@@ -158,8 +170,8 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(postByIdProvider(widget.editPostId ?? ''), (_, _) => _maybeLoad());
-    _maybeLoad();
+    ref.listen(postsProvider, (_, _) => _takeEditCommand());
+    _takeEditCommand();
     final nf = context.nf;
     final expanded = context.isExpanded;
     final compact = context.isCompact;
@@ -174,7 +186,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       busy: _busy,
     );
 
-    final write = _WriteColumn(focusNode: _focus, editing: widget.editPostId != null, targetGrid: compact, keyboardOpen: Env.isMobile && _keyboardOpen);
+    final write = _WriteColumn(focusNode: _focus, targetGrid: compact, keyboardOpen: Env.isMobile && _keyboardOpen);
 
     final Widget body;
     if (expanded) {
@@ -273,9 +285,8 @@ class _DragDownHidesKeyboard extends StatelessWidget {
 }
 
 class _WriteColumn extends ConsumerWidget {
-  const _WriteColumn({required this.focusNode, required this.editing, required this.targetGrid, required this.keyboardOpen});
+  const _WriteColumn({required this.focusNode, required this.targetGrid, required this.keyboardOpen});
   final FocusNode focusNode;
-  final bool editing;
   final bool targetGrid;
   final bool keyboardOpen;
 

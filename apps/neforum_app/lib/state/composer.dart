@@ -250,6 +250,9 @@ class ComposerState {
       (title ?? '').trim().isEmpty &&
       (link ?? '').trim().isEmpty;
 
+  /// Something that clearing or replacing the post would lose.
+  bool get hasContent => !isEmpty || additionalParts.isNotEmpty || poll != null || contentWarning != null || tags.isNotEmpty || overrides.isNotEmpty;
+
   ComposerState copyWith({
     String? editingPostId,
     String? text,

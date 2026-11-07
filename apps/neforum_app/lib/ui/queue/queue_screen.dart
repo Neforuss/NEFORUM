@@ -5,7 +5,6 @@ import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../platform/env.dart';
-import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
@@ -13,8 +12,14 @@ import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
 import '../activity/time_format.dart';
+import '../compose/open_in_composer.dart';
 import '../router.dart';
 import 'post_menu.dart';
+
+void _editPost(BuildContext context, WidgetRef ref, Post post) {
+  openPostInComposer(context, ref, post);
+  context.go(AppSection.compose.path);
+}
 
 /// Scheduled posts on a timeline, plus drafts.
 class QueueScreen extends ConsumerStatefulWidget {
@@ -34,7 +39,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
     final scheduled = ref.watch(scheduledPostsProvider);
     final drafts = ref.watch(draftPostsProvider);
     void newPost() {
-      ref.read(composerProvider.notifier).reset();
+      startNewPostInComposer(context, ref);
       context.go(AppSection.compose.path);
     }
 
@@ -113,7 +118,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             for (final p in drafts)
               PostCard(
                 post: p,
-                onTap: () => context.go('${AppSection.compose.path}?post=${p.id}'),
+                onTap: () => _editPost(context, ref, p),
                 actions: postMenuActions(context, ref, p),
               ),
           ],
@@ -239,7 +244,7 @@ class _AgendaRow extends ConsumerWidget {
         padding: EdgeInsets.only(bottom: last ? 0 : Space.md),
         child: PostCard(
           post: post,
-          onTap: () => context.go('${AppSection.compose.path}?post=${post.id}'),
+          onTap: () => _editPost(context, ref, post),
           actions: postMenuActions(context, ref, post),
         ),
       );
@@ -284,7 +289,7 @@ class _AgendaRow extends ConsumerWidget {
             child: PostCard(
               post: post,
               showTime: false,
-              onTap: () => context.go('${AppSection.compose.path}?post=${post.id}'),
+              onTap: () => _editPost(context, ref, post),
               actions: postMenuActions(context, ref, post),
             ),
           ),

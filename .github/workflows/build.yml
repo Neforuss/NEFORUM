@@ -179,6 +179,17 @@ jobs:
           Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
           flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/font_downloads_test.dart
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Mouse side buttons (profile build, real Windows messages)
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
+          Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+          flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/back_forward_test.dart | Tee-Object -Variable drive
+          $code = $LASTEXITCODE
+          # A hosted runner may have no input desktop: PostMessage still runs, but
+          # the SendInput lane then only reports SKIPPED, which must show on the run.
+          if ($drive -match 'SKIPPED') { Write-Output '::warning::Side button test: the SendInput lane was skipped on this runner' }
+          if ($code -ne 0) { exit $code }
       - name: Build Windows
         working-directory: apps/neforum_app
         shell: pwsh
@@ -377,7 +388,7 @@ jobs:
           # (integration tests without a desktop).
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev \
             libayatana-appindicator3-dev libsecret-1-dev libx11-dev libxi-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
-            xvfb xauth dbus-x11 gnome-keyring libgl1-mesa-dri file
+            xvfb xauth dbus-x11 gnome-keyring libgl1-mesa-dri file xdotool
       - name: Build Linux
         working-directory: apps/neforum_app
         run: |
@@ -402,6 +413,17 @@ jobs:
               --driver=test_driver/integration_test.dart --target=integration_test/captions_test.dart
             xvfb-run -a -s "-screen 0 1920x1080x24" flutter drive --profile -d linux \
               --driver=test_driver/integration_test.dart --target=integration_test/font_downloads_test.dart
+          '
+      # xdotool click 8 and 9 on the profile build, on Xvfb's private display,
+      # where NEFORUM is the only window a click can reach.
+      - name: Mouse side buttons (profile build, X server, xdotool)
+        if: matrix.arch == 'x64'
+        working-directory: apps/neforum_app
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "neforum-ci" | gnome-keyring-daemon --unlock --components=secrets > /dev/null
+            NEFORUM_XDOTOOL_LANE=1 xvfb-run -a -s "-screen 0 1920x1080x24" flutter drive --profile -d linux \
+              --driver=test_driver/integration_test.dart --target=integration_test/back_forward_test.dart
           '
       - name: Package (tarball and AppImage)
         working-directory: apps/neforum_app
