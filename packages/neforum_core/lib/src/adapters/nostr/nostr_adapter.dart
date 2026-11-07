@@ -324,6 +324,7 @@ class NostrAdapter extends PlatformAdapter {
               ? unknown
               : PublishError(
                   kind: unknown.kind,
+                  notAllowed: unknown.notAllowed,
                   outcomeUnknown: true,
                   raw: unknown.raw,
                   message: '${unknown.message} The first $i part${i == 1 ? ' is' : 's are'} already live at https://njump.me/${Nip19.encode('note', ids.first)}',
