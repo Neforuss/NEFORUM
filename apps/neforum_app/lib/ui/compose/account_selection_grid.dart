@@ -338,6 +338,8 @@ Map<String, String> accountGridHandles(List<ConnectedAccount> accounts) {
     // The adapters that share a handle write it after the name of the room.
     final suffix = ' (${a.handle})';
     if (h.endsWith(suffix) && h.length > suffix.length) return h.substring(0, h.length - suffix.length);
+    // A numbered one keeps its handle: cutting at the @ would leave "#1 ".
+    if (h != _nameOfAccount(a) && h != a.displayName) return h;
     final at = h.length < 2 ? -1 : h.indexOf('@', 1);
     return at > 0 ? h.substring(0, at) : h;
   }

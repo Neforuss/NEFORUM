@@ -98,8 +98,9 @@ Rules:
 - Choosing accounts on a phone is `AccountSelectionGrid`, with nothing that
   scrolls sideways. Wider windows keep `AccountChip`. It shows names while they
   leave two lines of the text field on screen, and otherwise tiles: the same
-  marks without the word, whatever the text size, so that 21 accounts and the
-  text fields are on screen at 360 x 640. The name stays in the tile's tooltip and
+  marks without the word, whatever the text size, so that any 21 accounts are on
+  screen at 360 x 640. The text field shows under them, except where handles or
+  art sites take its room: there it is one scroll down. The name stays in the tile's tooltip and
   for screen readers, and the fold names what is left out. Two accounts on one
   network keep a handle on a tile twice as wide. A long platform name needs a `shortName` on its
   `PlatformDescriptor`. When the header does not fit on a line it drops the

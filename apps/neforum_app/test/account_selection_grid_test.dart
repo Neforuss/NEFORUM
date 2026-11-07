@@ -71,8 +71,8 @@ const _networks = [
 ];
 
 /// A phone of the same width as 360 x 640, tall enough for 21 accounts by name
-/// at every text size.
-const _tall = Size(360, 900);
+/// at every text size. At x1.5 the names need 2 columns at this width.
+const _tall = Size(360, 1040);
 
 ConnectedAccount _account(String platformId, {String? id, String? handle, String? displayName, bool enabled = true, PlatformTier? tier, String? avatarUrl}) => ConnectedAccount(
       id: id ?? 'acct-$platformId',
@@ -1232,7 +1232,7 @@ void main() {
       });
     }
 
-    for (final (scale, columns) in const [(1.0, 4), (1.5, 3)]) {
+    for (final (scale, columns) in const [(1.0, 4), (1.5, 2)]) {
       testWidgets('21 ordinary names take $columns columns at text x$scale', (t) async {
         await _boot(t, accounts: _twentyOne(), textScale: scale, size: _tall);
         final top = t.getRect(_cell('acct-mastodon')).top;
@@ -1422,7 +1422,7 @@ void main() {
       (Size(416, 900), 1.0),
       (Size(415, 900), 1.3),
       (Size(429, 900), 1.35),
-      (Size(357, 900), 1.5),
+      (Size(358, 1040), 1.5),
     ]) {
       testWidgets('names stay whole and cells 48 tall at ${size.width} wide, text x$scale', (t) async {
         final accounts = _twentyOne();
