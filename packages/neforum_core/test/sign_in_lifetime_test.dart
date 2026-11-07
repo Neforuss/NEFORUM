@@ -26,7 +26,7 @@ import 'package:neforum_core/src/adapters/x/x_adapter.dart';
 import 'package:neforum_core/src/auth/jwt.dart';
 import 'package:test/test.dart';
 
-import 'support/test_context.dart' show fakeImage;
+import 'support/test_context.dart' show FakeMediaHost, fakeImage, fakeJpegBytes;
 
 final _now = DateTime.utc(2026, 11, 6, 12);
 String _iso(DateTime t) => t.toUtc().toIso8601String();
@@ -40,6 +40,45 @@ AdapterContext _ctx(Future<http.Response> Function(http.Request r) handler, {Log
     AdapterContext(http: NeforumHttp(client: MockClient(handler), maxRetries: 0, log: log), clock: () => _now, log: log);
 
 final _noNetwork = _ctx((r) async => fail('no network expected: ${r.url.host}'));
+
+/// What each adapter needs in its account to get as far as a request when it
+/// posts, so the secret guard sees what that request logs.
+const _guardConfig = <String, dynamic>{
+  'clientId': 'c',
+  'clientKey': 'c',
+  'app_id': '555',
+  'appId': '555',
+  'instance': 'https://guard.example',
+  'tokenEndpoint': 'https://guard.example/token',
+  'chatId': '@guard',
+  'page_id': '777',
+  'userId': '42',
+  ThreadsAdapter.configUserId: '42',
+  'did': 'did:plc:guard',
+  'pds': 'https://pds.guard.example',
+  'handle': 'guard.example',
+  'service': 'https://pds.guard.example',
+  'community': 'guard',
+  'communityId': 7,
+  'host': 'https://lemmy.guard.example',
+  'homeserver': 'https://matrix.guard.example',
+  'roomId': '!room:guard.example',
+  'personUrn': 'urn:li:person:guard',
+  'sub': 'guard',
+  'defaultSubreddit': 'guard',
+  'blogName': 'guard',
+  'blogUuid': 't:guard',
+  'boardId': 'board1',
+  'apiUrl': 'https://guard.example/ghost/api/admin/',
+  'restBase': 'https://guard.example/wp-json/wp/v2/',
+  'username': 'guard',
+  'alias': 'guard',
+  'micropubEndpoint': 'https://guard.example/micropub',
+  'publicationId': 'publication1',
+  'igUserId': '17',
+  'userNsid': '1@N00',
+  'site': 'https://guard.example',
+};
 
 /// A JWT with [payload]; the signature is not read.
 String _jwt(Map<String, Object?> payload) => 'e30.${base64Url.encode(utf8.encode(jsonEncode(payload))).replaceAll('=', '')}.sig';
@@ -365,11 +404,26 @@ void main() {
       expect(calls, 1);
     });
 
-    test('an early renewal that fails leaves the working token posting', () async {
-      for (final answer in [http.Response('{"error":"invalid_grant"}', 400), http.Response('down', 503)]) {
-        final out = await PixelfedAdapter().refreshSecrets(account, tokens(const Duration(days: 5)), _ctx((r) async => answer));
-        expect(out, isNull, reason: '${answer.statusCode}');
-      }
+    test('an early renewal that could not run leaves the working token posting', () async {
+      final out = await PixelfedAdapter().refreshSecrets(account, tokens(const Duration(days: 5)), _ctx((r) async => http.Response('down', 503)));
+      expect(out, isNull);
+      expect(await PixelfedAdapter().refreshSecrets(account, tokens(const Duration(days: 5)), _ctx((r) async => throw http.ClientException('failed', r.url))), isNull);
+    });
+
+    // Whether the post still goes out on the working token depends on why it was
+    // refused, which only the coordinator and the publish service can tell:
+    // sync_test.dart, 'folder storage'.
+    test('an early renewal the server refuses says so: another device may have spent the key', () async {
+      expect(
+        () => PixelfedAdapter().refreshSecrets(account, tokens(const Duration(days: 5)), _ctx((r) async => http.Response('{"error":"invalid_grant"}', 400))),
+        throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)),
+      );
+    });
+
+    test('keys with no client id cannot renew, so they are not due: nothing asks the server, nothing waits', () async {
+      final noClient = {...tokens(const Duration(days: 5))}..remove('client_id');
+      expect(PixelfedAdapter().renewsEarly(account, noClient, _now), isFalse);
+      expect(await PixelfedAdapter().refreshSecrets(account, noClient, _noNetwork), isNull);
     });
 
     test('a token already dead still fails as it did', () async {
@@ -842,10 +896,14 @@ void main() {
     });
 
     group('secret guard', () {
-      const secretValues = ['SECRETaccess1', 'SECRETrefresh2', 'SECRETclient3', 'SECRETapppw4', 'SECRETsession5', 'SECRETjwt6'];
+      const secretValues = ['SECRETaccess1', 'SECRETrefresh2', 'SECRETclient3', 'SECRETapppw4', 'SECRETsession5', 'SECRETjwt6', 'SECRETbotToken7', 'SECRETwebhookTokenValue8', 'SECRETconsumer9', 'SECRETtoken10', 'SECRETtokenSecret11', '5ec7e75ec7e75ec7e75ec7e75ec7e75ec7e75ec7e75ec7e75ec7e75ec7e7abcd'];
       final all = <String, String>{
+        // These two go in the request's address.
+        'bot_token': secretValues[6],
+        'webhook_url': 'https://discord.com/api/webhooks/123456789012345678/${secretValues[7]}',
         OAuthTokens.keyAccessToken: secretValues[0],
         OAuthTokens.keyRefreshToken: secretValues[1],
+        'client_id': 'guard-client',
         'client_secret': secretValues[2],
         'app_secret': secretValues[2],
         StoredSecretKeys.appPassword: secretValues[3],
@@ -877,9 +935,22 @@ void main() {
           // No answer at all: the exception's text holds the address.
           (r) async => throw http.ClientException('failed', r.url),
         ];
+        // Posting: the path every post takes, with what each kind of post needs.
+        final files = Directory.systemTemp.createTempSync('nf-guard');
+        addTearDown(() => files.deleteSync(recursive: true));
+        final picture = File('${files.path}/picture.jpg')..writeAsBytesSync(fakeJpegBytes);
+        final clip = File('${files.path}/clip.mp4')..writeAsBytesSync(fakeJpegBytes);
+        const words = 'A guard post with a long enough title';
+        final variants = [
+          const PostVariant(text: words, title: words),
+          PostVariant(text: words, title: words, tags: const ['guard', 'test', 'art', 'drawing', 'sketch', 'colour'], artwork: const ArtworkDetails(), media: [MediaAttachment(id: 'picture', path: picture.path, mimeType: 'image/jpeg', sizeBytes: fakeJpegBytes.length, width: 800, height: 600, altText: 'guard', fileName: 'picture.jpg')]),
+          PostVariant(text: words, title: words, tags: const ['guard', 'test', 'art'], media: [MediaAttachment(id: 'clip', path: clip.path, mimeType: 'video/mp4', sizeBytes: fakeJpegBytes.length, width: 1080, height: 1920, durationMs: 15000, fileName: 'clip.mp4')]),
+        ];
+        final keysForPosting = {...all, 'admin_api_key': '0123456789abcdef01234567:${secretValues[11]}', ...const OAuth1Credentials(consumerKey: 'guard-consumer', consumerSecret: 'SECRETconsumer9', token: 'SECRETtoken10', tokenSecret: 'SECRETtokenSecret11').toSecrets()};
+        final posted = <String>{};
         for (final adapter in builtinAdapters()) {
           for (final spec in adapter.connectSpecs) {
-            final a = ConnectedAccount(id: 'g-${adapter.id}-${spec.tier.name}', platformId: adapter.id, tier: spec.tier, displayName: 'g', createdAt: _now, config: const {'clientId': 'c', 'clientKey': 'c', 'app_id': '555', 'appId': '555', 'instance': 'https://guard.example', 'tokenEndpoint': 'https://guard.example/token'});
+            final a = ConnectedAccount(id: 'g-${adapter.id}-${spec.tier.name}', platformId: adapter.id, tier: spec.tier, displayName: 'g', createdAt: _now, config: _guardConfig);
             await accounts.upsert(a);
             await d.write(a.id, all);
             for (final answer in answers) {
@@ -890,6 +961,17 @@ void main() {
                 try {
                   await adapter.refreshSecrets(a, {...all, OAuthTokens.keyExpiresAt: _iso(_now.add(left))}, ctx);
                 } on Exception {
+                  // Refused or unreachable. Only what reached the log counts here.
+                }
+              }
+              final posting = _ctx((r) {
+                posted.add(adapter.id);
+                return answer(r);
+              }, log: guardLog.child(adapter.id)).copyWith(mediaHost: FakeMediaHost());
+              for (final variant in variants) {
+                try {
+                  await adapter.publish(variant, a, keysForPosting, posting);
+                } on Object {
                   // Refused or unreachable. Only what reached the log counts here.
                 }
               }
@@ -907,8 +989,10 @@ void main() {
         // The log really saw each layer, or the check above proves nothing.
         expect(logs.where((l) => l.contains(' ends ')), isNotEmpty, reason: 'the tracker');
         for (final (name, line) in [
-          ('the HTTP client', 'graph.facebook.com/'),
-          ('the HTTP client', 'introspectToken'),
+          ('the HTTP client', 'graph.facebook.com (attempt'),
+          ('the HTTP client', 'www.linkedin.com (attempt'),
+          ('a Telegram post, token in the path', 'api.telegram.org (attempt'),
+          ('a Discord post, token in the path', 'discord.com (attempt'),
           ('the Facebook adapter', 'Facebook debug_token failed'),
           ('the Threads API', 'Threads debug_token failed'),
           ('the LinkedIn adapter', 'LinkedIn token introspection failed'),
@@ -916,6 +1000,17 @@ void main() {
         ]) {
           expect(logs.where((l) => l.contains(line)), isNotEmpty, reason: '$name: "$line" reached the guard');
         }
+        // Every network with a connection really sent something while posting.
+        // Nostr is the one left out: it posts over relay sockets, not this client.
+        final connected = builtinAdapters().where((a) => a.connectSpecs.any((s) => s.tier != PlatformTier.handoff)).map((a) => a.id).toSet();
+        expect(posted, connected.difference({'nostr'}));
+      });
+
+      test('the HTTP log line names the host only, so no adapter can put a token in the log through its address', () async {
+        final lines = <String>[];
+        final ctx = _ctx((r) async => http.Response('{}', 200), log: Logger('guard', sink: (level, area, message, [error]) => lines.add(message)));
+        await ctx.http.get(Uri.parse('https://api.telegram.org/botSECRETbotToken7/sendMessage?access_token=SECRETaccess1'), throwOnError: false);
+        expect(lines, ['GET api.telegram.org (attempt 1)']);
       });
 
       test('a failed renewal or post through a token in the address never quotes it', () async {

@@ -224,6 +224,14 @@ void main() {
       }
     });
 
+    test('YouTube: the 1 hour its dates work back from is cited to the Google page that states it', () {
+      expect(SignInPolicies.youTube.accessLife, const Duration(hours: 1));
+      final cells = _docRows(doc, '## All 48 networks').firstWhere((c) => c[_h.name] == 'YouTube');
+      expect(cells[_h.lifetime], startsWith('Token 1 hour'));
+      expect(cells[_h.source], contains('(https://docs.cloud.google.com/docs/authentication/token-types)'), reason: 'the OAuth page says only "limited lifetimes"');
+      expect(cells[_h.status], contains('token types page'), reason: 'the row says where the figure comes from');
+    });
+
     test('says "no published limit", never "never expires", and uses plain words', () {
       expect(doc, isNot(contains('—')), reason: 'no em dashes');
       for (final line in doc.split('\n').where((l) => l.startsWith('|'))) {

@@ -234,8 +234,8 @@ class NeforumHttp {
       signal?.throwIfCancelled();
       try {
         final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
-        // Host and path only: some APIs take a token in the query.
-        _log.debug('$method ${url.host}${url.path} (attempt $attempt)');
+        // The host only: some APIs carry a token in the path or the query.
+        _log.debug('$method ${url.host} (attempt $attempt)');
         final http.Response res;
         if (upload) {
           res = await _unlessCancelled(_sendWatched(method, url, attemptHeaders, fields, files, bytes, base, signal), signal);

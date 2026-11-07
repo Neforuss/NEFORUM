@@ -2681,6 +2681,122 @@ void main() {
         expect((await a.secrets.read(id))!['access_token'], 'a1');
       });
 
+      group('folder storage: two copies of one file, and A\'s write reaches B\'s copy later', () {
+        Future<void> carry(SyncBackend from, MemorySyncBackend to) async {
+          final blob = await from.read();
+          await to.write(blob!.bytes, ifMatch: null);
+        }
+
+        ConnectedAccount pixelfedAccount() => ConnectedAccount(id: id, platformId: 'pixelfed', tier: PlatformTier.openApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'instance': 'https://pix.example', 'software': 'pixelfed'});
+        Map<String, String> keys(Duration left) => {'access_token': 'a1', 'refresh_token': 'r1', 'client_id': 'c', 'client_secret': 's', 'token_type': 'Bearer', 'expires_at': clock.now.add(left).toUtc().toIso8601String()};
+
+        /// A and B, each on its own copy, both holding the first keys and each
+        /// having seen the other.
+        Future<(_Device, _Device, MemorySyncBackend, MemorySyncBackend)> twoCopies(Duration left, {SyncBackend Function(MemorySyncBackend)? wrapB}) async {
+          final folderA = MemorySyncBackend(atomicWrites: false), folderB = MemorySyncBackend(atomicWrites: false);
+          final a = _Device('A', folderA, clock), b = _Device('B', wrapB?.call(folderB) ?? folderB, clock);
+          await a.accounts.upsert(pixelfedAccount());
+          await a.secrets.write(id, keys(left));
+          await a.engine.sync();
+          await carry(folderA, folderB);
+          await b.engine.sync();
+          await carry(folderB, folderA);
+          await a.engine.sync();
+          await carry(folderA, folderB);
+          return (a, b, folderA, folderB);
+        }
+
+        for (final (label, left) in [('early', const Duration(days: 10)), ('expired', const Duration(minutes: -5))]) {
+          test('$label: B replays the spent key before the file arrives: it waits, asks for no reconnect, and its post goes out once the file is there', () async {
+            final (a, b, folderA, folderB) = await twoCopies(left);
+            final adapter = _PixelfedProbe(() => validAccess);
+            await a.posts.upsert(draft());
+            await publisher(a, adapter, server).publish('p');
+            expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+            await a.engine.sync();
+            clock.now = clock.now.add(const Duration(minutes: 1));
+            await b.posts.upsert(_post('q', targets: const [PostTarget(accountId: id)]));
+
+            await publisher(b, adapter, server).publish('q');
+            final waiting = (await b.posts.get('q'))!.targets.single;
+            expect(presented, ['r1', 'r1'], reason: 'B cannot know yet, so it replays once and is refused');
+            expect((waiting.status, waiting.result?.error?.kind, waiting.result?.error?.retryable), (TargetStatus.pending, PublishErrorKind.network, true));
+            expect(waiting.result?.error?.message, contains('has not arrived here yet'));
+            expect((await b.accounts.get(id))!.lastError, isNull, reason: 'no reconnect is asked for');
+            expect((await b.secrets.read(id))!['access_token'], 'a1', reason: 'the keys wait for the file');
+
+            await carry(folderA, folderB);
+            clock.now = clock.now.add(const Duration(minutes: 20)); // the retry's backoff
+            await publisher(b, adapter, server).publish('q');
+            final done =(await b.posts.get('q'))!.targets.single;
+            expect((done.status, done.result?.error?.message), (TargetStatus.published, null));
+            expect(presented, ['r1', 'r1'], reason: 'the retry spends nothing: the file brought the keys');
+            expect((await b.accounts.get(id))!.lastError, isNull);
+            expect((await b.secrets.read(id))!['refresh_token'], 'r2');
+          });
+
+          test('$label: the file goes out of reach right after the refusal: B still waits, and asks for no reconnect', () async {
+            late _FlakyFolder flaky;
+            final (a, b, _, _) = await twoCopies(left, wrapB: (inner) => flaky = _FlakyFolder(inner)..failures = 0);
+            final adapter = _PixelfedProbe(() => validAccess);
+            await a.posts.upsert(draft());
+            await publisher(a, adapter, server).publish('p');
+            clock.now = clock.now.add(const Duration(minutes: 1));
+            await b.posts.upsert(_post('q', targets: const [PostTarget(accountId: id)]));
+            await publisher(b, adapter, (r) async {
+              if (r.url.path.contains('oauth/token')) flaky.down = true;
+              return server(r);
+            }).publish('q');
+            final t = (await b.posts.get('q'))!.targets.single;
+            expect((t.status, t.result?.error?.kind, t.result?.error?.retryable), (TargetStatus.pending, PublishErrorKind.network, true));
+            expect((await b.accounts.get(id))!.lastError, isNull);
+          });
+        }
+
+        test('early: the only device, refused: the token that still works posts, nothing waits', () async {
+          final a = _Device('A', MemorySyncBackend(atomicWrites: false), clock);
+          await a.accounts.upsert(pixelfedAccount());
+          await a.secrets.write(id, keys(const Duration(days: 10)));
+          await a.engine.sync();
+          validRefresh = 'revoked-on-the-server';
+          await a.posts.upsert(draft());
+          await publisher(a, _PixelfedProbe(() => validAccess), server).publish('p');
+          expect(presented, ['r1']);
+          expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+          expect((await a.secrets.read(id))!['access_token'], 'a1');
+        });
+
+        test('early: the other device went quiet long ago, refused: the token that still works posts, nothing waits for a file that is not coming', () async {
+          final (_, b, _, _) = await twoCopies(const Duration(days: 10));
+          clock.now = clock.now.add(const Duration(minutes: 31));
+          validRefresh = 'revoked-on-the-server';
+          await b.posts.upsert(draft());
+          await publisher(b, _PixelfedProbe(() => validAccess), server).publish('p');
+          expect(presented, ['r1']);
+          expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        });
+
+        test('early: the token address is down, not refusing: the token that still works posts, the other device or not', () async {
+          final (_, b, _, _) = await twoCopies(const Duration(days: 10));
+          await b.posts.upsert(draft());
+          await publisher(b, _PixelfedProbe(() => validAccess), (r) async => r.url.path.contains('oauth/token') ? http.Response('down', 503) : server(r)).publish('p');
+          expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
+          expect((await b.secrets.read(id))!['access_token'], 'a1');
+        });
+      });
+
+      test('early, no sync set up, refused: the token that still works posts, and the keys stay', () async {
+        final a = _Device('A', backend, clock);
+        await a.accounts.upsert(ConnectedAccount(id: id, platformId: 'pixelfed', tier: PlatformTier.openApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'instance': 'https://pix.example', 'software': 'pixelfed'}));
+        await a.secrets.write(id, {'access_token': 'a1', 'refresh_token': 'r1', 'client_id': 'c', 'client_secret': 's', 'token_type': 'Bearer', 'expires_at': clock.now.add(const Duration(days: 10)).toUtc().toIso8601String()});
+        validRefresh = 'revoked-on-the-server';
+        await a.posts.upsert(draft());
+        await publisher(a, _PixelfedProbe(() => validAccess), server, coordinated: false).publish('p');
+        expect(presented, ['r1']);
+        expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        expect((await a.secrets.read(id))!['access_token'], 'a1');
+      });
+
       test('not due yet: no sync, no lease, no token call', () async {
         final (a, _) = await twoDevices(accessLeft: const Duration(days: 40));
         await a.posts.upsert(draft());
@@ -3230,6 +3346,13 @@ class _FlakyBackend extends SyncBackend {
 
   @override
   Future<void> check() async {}
+}
+
+/// A synced folder (no compare and swap) that can go out of reach.
+class _FlakyFolder extends _FlakyBackend {
+  _FlakyFolder(super.inner);
+  @override
+  bool get atomicWrites => false;
 }
 
 /// A synced folder whose cloud app keeps both versions when two devices

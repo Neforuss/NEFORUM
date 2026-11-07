@@ -134,6 +134,7 @@ abstract final class SignInPolicies {
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
     disuseWindow: _sixMonths,
+    // User access tokens: https://docs.cloud.google.com/docs/authentication/token-types
     accessLife: Duration(hours: 1),
     earlyRevocationPossible: true,
     sourceUrl: 'https://developers.google.com/identity/protocols/oauth2',

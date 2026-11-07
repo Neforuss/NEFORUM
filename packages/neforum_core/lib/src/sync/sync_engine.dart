@@ -1184,7 +1184,7 @@ class SyncEngine implements SecretsCoordinator {
           again = await store.read(account.id) ?? latest;
         } on Object catch (syncError) {
           _log.warn('Could not re-read the sync file after the refused renewal: $syncError');
-          throw e;
+          throw _fileMayBeBehind() ? _waitForTheFile(account, e) : e;
         }
         if (_differs(again, latest) != null) {
           if (!due(again)) {
@@ -1192,12 +1192,8 @@ class SyncEngine implements SecretsCoordinator {
           }
           fresh = await refresh(again);
           latest = again;
-        } else if (!backend.atomicWrites && _otherDeviceActive()) {
-          throw AdapterException(PublishError.network(
-              '${_networkName(account)} refused the saved sign-in, probably because another device renewed it moments ago and '
-              'the sync file has not arrived here yet. NEFORUM tries again shortly; if this keeps happening, reconnect the account.',
-              raw: e.error.raw,
-              statusCode: e.error.statusCode));
+        } else if (_fileMayBeBehind()) {
+          throw _waitForTheFile(account, e);
         } else {
           rethrow;
         }
@@ -1290,6 +1286,19 @@ class SyncEngine implements SecretsCoordinator {
     }
     return false;
   }
+
+  /// Whether this device's copy of the file can be older than a renewal another
+  /// device has just made: storage without compare and swap (a synced folder
+  /// updates its copies on its own time) and a device seen lately.
+  bool _fileMayBeBehind() => !backend.atomicWrites && _otherDeviceActive();
+
+  /// A refused renewal that is probably [_fileMayBeBehind]: it waits and is
+  /// retried, without asking for a reconnect.
+  AdapterException _waitForTheFile(ConnectedAccount account, AdapterException refused) => AdapterException(PublishError.network(
+      '${_networkName(account)} refused the saved sign-in, probably because another device renewed it moments ago and '
+      'the sync file has not arrived here yet. NEFORUM tries again shortly; if this keeps happening, reconnect the account.',
+      raw: refused.error.raw,
+      statusCode: refused.error.statusCode));
 
   bool _otherDeviceActive() {
     final doc = _cachedDoc;
