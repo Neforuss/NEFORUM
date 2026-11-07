@@ -437,11 +437,7 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
       .replaceAll('\n', '<br />');
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ------------------------------------------------------------- hand-off

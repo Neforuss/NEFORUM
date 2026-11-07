@@ -89,8 +89,8 @@ class PublishError {
   const PublishError.unsupported(String message)
       : this(kind: PublishErrorKind.unsupported, message: message);
 
-  const PublishError.configuration(String message)
-      : this(kind: PublishErrorKind.configuration, message: message);
+  const PublishError.configuration(String message, {String? raw})
+      : this(kind: PublishErrorKind.configuration, message: message, raw: raw);
 
   final PublishErrorKind kind;
   final String message;
@@ -101,9 +101,9 @@ class PublishError {
   final String? raw;
   final Duration? retryAfter;
 
-  /// The connection gave out during an upload, which a slow or busy uplink
-  /// usually explains. Omitted from JSON when null, so a device on an older
-  /// version reads the post as before.
+  /// The connection ended during an upload. NEFORUM cannot tell a slow uplink
+  /// from a server that closed early. Omitted from JSON when null, so a device
+  /// on an older version reads the post as before.
   final bool? uploadInterrupted;
 
   /// [message] without its full stop, to go in the middle of a sentence.
@@ -139,11 +139,29 @@ class PublishError {
     );
   }
 
+  /// Wraps an error on a later post of a series, after its first [liveCount]
+  /// posts went live. The next attempt posts only the rest.
+  PublishError asResumableSeries({required int liveCount, required int total}) => PublishError(
+        kind: kind,
+        message: 'Post ${liveCount + 1} of $total failed: $_clause. '
+            'The first $liveCount post(s) are live; Retry posts the rest.',
+        retryable: false,
+        statusCode: statusCode,
+        raw: raw,
+        uploadInterrupted: uploadInterrupted,
+      );
+
   /// The wording of [asPartialThread] and [asResumableThread].
   static final _partialThread = RegExp(r'^Part \d+ of \d+ failed: ');
 
+  /// The wording of [asResumableSeries].
+  static final _partialSeries = RegExp(r'^Post \d+ of \d+ failed: ');
+
   /// Made by [asPartialThread]: the first parts of the thread are live.
   bool get isPartialThread => !retryable && _partialThread.hasMatch(message);
+
+  /// Made by [asResumableSeries]: the first posts of the series are live.
+  bool get isPartialSeries => !retryable && _partialSeries.hasMatch(message);
 
   Map<String, dynamic> toJson() => {
         'kind': kind.name,

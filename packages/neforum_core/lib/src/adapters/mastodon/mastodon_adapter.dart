@@ -38,8 +38,16 @@ import 'mastodon_instance.dart';
 /// portal. The server's real limits are read from `/api/v2/instance` and kept
 /// in the account config; [validate] checks posts against them.
 class MastodonAdapter extends PlatformAdapter {
-  MastodonAdapter({this.mediaPollInterval = const Duration(seconds: 2), this.maxMediaPolls = 90, Clock? clock})
-    : _clock = clock ?? systemClock;
+  MastodonAdapter({
+    this.mediaPollInterval = const Duration(seconds: 2),
+    this.maxMediaPolls = 90,
+    this.limitProbeTimeout = const Duration(seconds: 15),
+    Clock? clock,
+  }) : _clock = clock ?? systemClock;
+
+  /// How long the one request to read the server's size limits may take, after
+  /// an upload failed.
+  final Duration limitProbeTimeout;
 
   /// How long to wait between `GET /api/v1/media/:id` polls while a video is
   /// being processed.
@@ -463,7 +471,7 @@ class MastodonAdapter extends PlatformAdapter {
     try {
       return await _publish(variant, account, secrets, ctx);
     } on Exception catch (e) {
-      return PublishResult.failure(_toError(e, ctx, live: variant.postedThreadIds.length));
+      return PublishResult.failure(_toError(e, ctx, live: variant.postedThreadIds.length + ctx.livePostCount));
     }
   }
 
@@ -495,14 +503,11 @@ class MastodonAdapter extends PlatformAdapter {
     return trace.wholeBodySent ? 'The file may have arrived, but nothing was posted.' : 'Nothing was posted.';
   }
 
-  /// How long the one request to read the server's size limits may take.
-  static const Duration _limitProbeTimeout = Duration(seconds: 15);
-
   /// The answer to an upload that failed: dart:io loses a server's early
   /// answer, so a real 413 looks like a dropped connection. The server's
   /// published limits tell the two apart when the file is over them. Null when
   /// it is not, or when they cannot be read.
-  static Future<PublishError?> _refusedBySizeLimit(
+  Future<PublishError?> _refusedBySizeLimit(
     MastodonApi api,
     MediaAttachment m,
     int size,
@@ -513,7 +518,7 @@ class MastodonAdapter extends PlatformAdapter {
   ) async {
     final MastodonInstanceProfile? current;
     try {
-      current = await api.fetchInstance(timeout: _limitProbeTimeout).timeout(_limitProbeTimeout);
+      current = await api.fetchInstance(timeout: limitProbeTimeout).timeout(limitProbeTimeout);
     } on OperationCancelledException {
       rethrow;
     } on Exception catch (e) {
@@ -523,9 +528,12 @@ class MastodonAdapter extends PlatformAdapter {
     final limit = m.isImage ? current?.imageSizeLimit : current?.videoSizeLimit;
     if (limit == null || size <= limit) return null;
     ctx.log.warn('${m.fileName ?? m.id} is $size bytes; ${p.domain} takes $limit, which explains the failed upload');
+    final most = _megabytes(limit);
+    // Rounded to one decimal, a file just over the limit reads the same as it.
+    final thisOne = _megabytes(size) == most ? 'a little over that' : _megabytes(size);
     return PublishError.validation(
-      '${p.domain} takes ${m.noun}s up to ${_megabytes(limit)}, and this one is ${_megabytes(size)}. '
-      '${live > 0 ? 'Nothing more was posted.' : 'Nothing was posted.'}',
+      '${p.domain} takes ${m.noun}s up to $most, and this one is $thisOne. '
+      'Nothing was posted.',
       raw: NeforumHttp.transportDetails(failure),
     );
   }
@@ -591,7 +599,7 @@ class MastodonAdapter extends PlatformAdapter {
       live: live,
       onReused: () => reusedUploads = true,
     );
-    final mediaIds = [for (var i = 0; i < parts.length; i++) i < start ? const <String>[] : await upload(i, start)];
+    final mediaIds = [for (var i = 0; i < parts.length; i++) i < start ? const <String>[] : await upload(i, start + ctx.livePostCount)];
     if (schedule != null && schedule.isBefore(ctx.now().add(_sendLead))) {
       throw AdapterException(
         PublishError.validation(
@@ -657,7 +665,7 @@ class MastodonAdapter extends PlatformAdapter {
           _forgetUploads(scope);
           try {
             for (var j = i; j < parts.length; j++) {
-              mediaIds[j] = await upload(j, ids.length);
+              mediaIds[j] = await upload(j, ids.length + ctx.livePostCount);
             }
             i--;
             continue;
@@ -766,11 +774,7 @@ class MastodonAdapter extends PlatformAdapter {
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   static List<MapEntry<String, String>> _statusForm(

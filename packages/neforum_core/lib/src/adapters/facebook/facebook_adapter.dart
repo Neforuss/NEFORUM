@@ -868,11 +868,7 @@ class FacebookAdapter extends PlatformAdapter {
   }
 
   Future<Uint8List> _read(AdapterContext ctx, MediaAttachment m) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ---------------------------------------------------------------------

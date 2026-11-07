@@ -105,7 +105,7 @@ void main() {
     expect(seen, isA<http.AbortableRequest>());
   });
 
-  test('the numbers: 64 KiB is the line, 60 s the stall limit, the answer limit twice the base', () async {
+  test('the numbers: 64 KiB is the line, 60 s the stall limit', () async {
     expect(NeforumHttp.watchedBodyThreshold, 64 * 1024);
     expect(NeforumHttp().uploadStallTimeout, const Duration(seconds: 60));
     final seen = <http.BaseRequest>[];

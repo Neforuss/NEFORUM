@@ -547,11 +547,7 @@ class InstagramAdapter extends PlatformAdapter {
   }
 
   static Future<Uint8List> _read(AdapterContext ctx, MediaAttachment m) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Object catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   Future<void> _cleanup(List<HostedMedia> hosted, AdapterContext ctx) async {

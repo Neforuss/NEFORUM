@@ -158,11 +158,7 @@ class XApi {
   // ---------------------------------------------------------------------
 
   Future<Uint8List> _read(MediaAttachment m) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   Future<String> _simpleUpload(MediaAttachment m, Uint8List bytes) async {

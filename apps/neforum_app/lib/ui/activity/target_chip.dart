@@ -146,8 +146,8 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
 
 /// The advice line under a failed target's message.
 String targetErrorAdvice(PublishError? e) => switch (e?.kind) {
-      PublishErrorKind.network when e?.uploadInterrupted == true && (e!.retryable || e.isPartialThread) =>
-        'A slow or busy connection usually causes this. Retry when nothing else is uploading, or use a smaller file.',
+      PublishErrorKind.network when e?.uploadInterrupted == true && (e!.retryable || e.isPartialThread || e.isPartialSeries) =>
+        'A slow connection or the server can end an upload early, and NEFORUM cannot tell which it was. Retry when nothing else is uploading, or use a smaller file.',
       // The whole request went out and no answer came back.
       PublishErrorKind.network when e?.uploadInterrupted == true => 'Look on the site first: it may be there. Retry only if it is not.',
       PublishErrorKind.auth => 'The sign-in expired or was revoked. Reconnect the account in Accounts, then retry.',

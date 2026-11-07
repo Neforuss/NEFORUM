@@ -474,8 +474,7 @@ class PinterestAdapter extends PlatformAdapter {
       }
       // dart:io is off limits here, so recognise file errors by name.
       if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
-        return PublishResult.failure(PublishError.configuration(
-            'A media file for this Pin is missing or unreadable; re-attach it and try again ($text)'));
+        return PublishResult.failure(PublishError.configuration('A media file for this Pin is missing or unreadable. Re-attach it and try again.', raw: text));
       }
       return PublishResult.failure(PublishError.platform('Pinterest publish failed: $text', raw: text));
     }

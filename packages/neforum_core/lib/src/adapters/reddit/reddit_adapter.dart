@@ -517,11 +517,7 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   Map<String, String> _commonFields(PostVariant v, String sr, String title) {

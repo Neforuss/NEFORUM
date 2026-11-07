@@ -15,11 +15,7 @@ import '../platform_adapter.dart';
 /// Reads a media file, turning a missing or unreadable file into an
 /// [AdapterException] so `publish` can report it instead of throwing.
 Future<Uint8List> readBlogMedia(AdapterContext ctx, MediaAttachment m) async {
-  try {
-    return await ctx.readMedia(m);
-  } on Exception catch (e) {
-    throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-  }
+  return ctx.readMedia(m);
 }
 
 /// Last-resort mapping for an exception that escaped an adapter's helpers,
