@@ -11,6 +11,7 @@ import '../platform/notifications.dart';
 import 'automatic_handoff.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
+import 'publish_run_keeper.dart';
 import 'services.dart';
 
 /// Background task name shared with the WorkManager callback in main.dart.
@@ -104,12 +105,27 @@ class AppScheduler {
         final active = ref.read(activePublishingProvider.notifier);
         final signal = CancellationSignal();
         active.begin(p.id, signal);
+        // Android refuses this when the app is not on screen; the run then goes on
+        // as before, without the keep-alive.
+        final keeper = ref.read(publishRunKeeperProvider)..begin(p.id);
         final Post done;
         try {
           await fitPhotosOfSavedPost(_s, p.id);
+          final tracker = keeper.tracker(p.id);
           // Networks whose own time has not come yet wait for a later run.
-          final published =
-              await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal, dueTargetsOnly: true);
+          final published = await _s.publisher().publish(
+                p.id,
+                interactive: interactive,
+                retryFailed: false,
+                cancellation: signal,
+                dueTargetsOnly: true,
+                onPlan: (plan) {
+                  tracker.plan(plan);
+                  keeper.planned(p.id, plan);
+                },
+                onEvent: tracker.event,
+                onOutcome: tracker.outcome,
+              );
           // With automatic posting on, the browser extension posts the
           // hand-off targets now instead of leaving them waiting; Cancel in
           // Activity stops that too.
@@ -120,6 +136,7 @@ class AppScheduler {
           rethrow;
         } finally {
           active.end(p.id, signal);
+          unawaited(keeper.end(p.id));
         }
         out.add(done);
         final discarded = await _s.discardIfComplete(p.id);
@@ -330,6 +347,41 @@ Future<void> announcePublishResult(AppServices s, Post p, {bool discarded = fals
     body: p.text.length > 90 ? '${p.text.substring(0, 90)}…' : p.text,
     payload: 'post:${p.id}',
   );
+}
+
+/// What the background task says about a run it found dead, or null when the setting
+/// says not to tell. A post that may be live says so rather than offering a retry.
+({String key, String title, String body, String payload})? interruptedRunNotice(Post p, {required bool notifyOnPublish}) {
+  if (!notifyOnPublish) return null;
+  final maybeLive = p.targets.any((t) => t.result?.error?.outcomeUnknown ?? false);
+  return (
+    key: 'result:${p.id}',
+    title: 'Posting stopped',
+    body: maybeLive ? 'A network may have it. Check before you retry.' : AppServices.interruptedMessage,
+    payload: 'post:${p.id}',
+  );
+}
+
+/// The WorkManager and BGTask entry's work: first settles and announces runs that
+/// died (nothing else reports a stopped worker, and `due()` never returns a post left
+/// publishing), then publishes what is due. A live run elsewhere in this process keeps
+/// its heartbeat and is left alone. Returns how many posts were due.
+Future<int> runBackgroundPublish(AppServices s, {Future<void> Function({required String key, required String title, required String body, String? payload})? show}) async {
+  final notify = show ?? NotificationService.instance.show;
+  final settled = <Post>[];
+  try {
+    await s.recoverInterruptedPublishing(onSettled: settled.add);
+  } on Object catch (e) {
+    debugPrint('Recovery in the background task failed: $e');
+  }
+  for (final p in settled) {
+    final notice = interruptedRunNotice(p, notifyOnPublish: s.settings.notifyOnPublish);
+    if (notice != null) await notify(key: notice.key, title: notice.title, body: notice.body, payload: notice.payload);
+  }
+  await s.startCloudSync(background: true);
+  final due = await publishDueHeadless(s);
+  await s.cloudSync.syncNow();
+  return due;
 }
 
 /// Publishes all due posts without UI (WorkManager / iOS background task).

@@ -10,6 +10,7 @@ import '../platform/browser_bridge.dart';
 import '../platform/env.dart';
 import '../platform/media_library.dart';
 import '../platform/notifications.dart';
+import '../platform/process_identity.dart';
 import '../platform/secure_secret_store.dart';
 import '../platform/storage.dart';
 import '../platform/storage_maintenance.dart';
@@ -87,7 +88,7 @@ class AppServices {
   final Set<String> _skipped = {};
 
   /// [browserBridge] replaces the real one in tests.
-  static Future<AppServices> create({required bool demo, AppStorage? storage, BrowserBridge? browserBridge}) async {
+  static Future<AppServices> create({required bool demo, AppStorage? storage, BrowserBridge? browserBridge, @visibleForTesting String? journalProcess}) async {
     final st = storage ?? await openAppStorage();
     final settings = AppSettings.fromJson(await st.readJson('settings.json') ?? const {});
     final real = builtinRegistry();
@@ -110,7 +111,7 @@ class AppServices {
       registry = demoRegistry(real);
       await seedDemo(registry: registry, accounts: accounts, posts: posts, quota: quota, media: MediaLibrary(st));
     } else {
-      final store = JsonFileStore(st.dataDir ?? '');
+      final store = JsonFileStore(st.dataDir ?? '', process: journalProcess ?? publishProcessIdentity());
       accounts = store.accounts;
       posts = _NotificationCancellingPostRepository(store.posts);
       quota = store.quota;
@@ -334,6 +335,13 @@ class AppServices {
   /// Shown on targets a closed or crashed NEFORUM left unposted.
   static const interruptedMessage = 'NEFORUM closed before this was posted. Retry it.';
 
+  /// The same when the OS says the person stopped the app in the middle of a run.
+  static const stoppedByUserMessage = 'You stopped NEFORUM while it was posting. Retry it.';
+
+  /// What recovery writes on unfinished targets. main.dart sets it from the OS's
+  /// reason for the last exit.
+  String interruptionMessage = interruptedMessage;
+
   /// Shown on targets a run of this process did not reach because it
   /// stopped with [error].
   static String stoppedMessage(Object error) => 'Posting stopped before this was posted ($error). Retry it.';
@@ -368,7 +376,7 @@ class AppServices {
   ///
   /// A settled post keeps its last change time, so a newer real result
   /// still wins a sync merge.
-  Future<int> recoverInterruptedPublishing({DateTime? now, Set<String> exclude = const {}, bool atStartup = false}) async {
+  Future<int> recoverInterruptedPublishing({DateTime? now, Set<String> exclude = const {}, bool atStartup = false, void Function(Post settled)? onSettled}) async {
     await posts.reload();
     var recovered = 0;
     for (final outcome in _unsavedOutcomes.values.toList()) {
@@ -378,8 +386,10 @@ class AppServices {
     final at = now ?? DateTime.now();
     final roller = publisher();
     Future<void> settle(Post post, {Set<String> mayBeLive = const {}}) async {
-      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage, unconfirmed: await _unconfirmedMessages(mayBeLive))));
+      final settledPost = roller.rollUpStatus(failUnfinishedTargets(post, interruptionMessage, unconfirmed: await _unconfirmedMessages(mayBeLive)));
+      await posts.upsert(settledPost);
       recovered++;
+      onSettled?.call(settledPost);
     }
 
     final settled = <String>[];

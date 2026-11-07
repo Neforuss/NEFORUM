@@ -9,6 +9,7 @@ import 'package:workmanager/workmanager.dart';
 import 'platform/desktop.dart';
 import 'platform/env.dart';
 import 'platform/notifications.dart';
+import 'platform/publish_host.dart';
 import 'platform/storage.dart';
 import 'state/fitted_photos.dart';
 import 'state/scheduler.dart';
@@ -25,9 +26,7 @@ void callbackDispatcher() {
     try {
       await NotificationService.instance.init();
       final services = await AppServices.create(demo: false);
-      await services.startCloudSync(background: true);
-      await publishDueHeadless(services);
-      await services.cloudSync.syncNow();
+      await runBackgroundPublish(services);
       services.dispose();
       return true;
     } on Object catch (e) {
@@ -68,7 +67,11 @@ Future<void> _publishInBackground(String postId) async {
   }
 }
 
-Future<void> main(List<String> args) async {
+Future<void> main(List<String> args) => runNeforum(args);
+
+/// Starts the app. [prepare] runs on the workspace before the UI exists: only the
+/// background posting probe (integration_test/android_background_probe.dart) uses it.
+Future<void> runNeforum(List<String> args, {Future<void> Function(AppServices services)? prepare}) async {
   WidgetsFlutterBinding.ensureInitialized();
   final startMinimized = args.contains('--minimized');
 
@@ -84,9 +87,11 @@ Future<void> main(List<String> args) async {
   // The web build is a preview: always a demo workspace.
   final demo = Env.isWeb || (mode?['demo'] as bool? ?? false);
   final services = await AppServices.create(demo: demo, storage: storage);
+  if (kExitReasonsByUser.contains(await readLastExitReason())) services.interruptionMessage = AppServices.stoppedByUserMessage;
   // Before the UI exists, so no run of this process is mistaken for one a
   // closed NEFORUM left behind, and no file being attached is swept away.
   await services.performStartupMaintenance();
+  await prepare?.call(services);
 
   await DesktopIntegration.instance.setCloseToTray(services.settings.minimizeToTray);
   unawaited(services.startBrowserBridge());

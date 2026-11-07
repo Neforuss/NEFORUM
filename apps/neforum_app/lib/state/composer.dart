@@ -22,6 +22,7 @@ import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
+import 'publish_run_keeper.dart';
 import 'scheduler.dart';
 import 'settings.dart';
 import 'shrunk_videos.dart';
@@ -1340,27 +1341,33 @@ class PostActions {
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
     final id = c.editingPostId ?? _uuid.v7();
+    // At once, while the app is on screen: it is the one time Android lets it begin.
+    final keeper = ref.read(publishRunKeeperProvider)..begin(id);
     try {
-      await s.publishJournal.record(id);
-    } on Object catch (e) {
-      // Only recovery after a crash needs the record; posting goes on.
-      debugPrint('Could not record the run of $id in the publish journal: $e');
+      try {
+        await s.publishJournal.record(id);
+      } on Object catch (e) {
+        // Only recovery after a crash needs the record; posting goes on.
+        debugPrint('Could not record the run of $id in the publish journal: $e');
+      }
+      final Post p;
+      try {
+        // Every network goes now: the times per network go too, so a network
+        // that fails is retried after its backoff, not at its old time.
+        p = (await _save(PostStatus.publishing, id: id)).withoutSchedule();
+        await s.posts.upsert(p);
+      } on Object catch (e) {
+        // Nothing is publishing: the post keeps its previous state, if any.
+        unawaited(s.publishJournal.release(id).catchError((Object _) {}));
+        run.fail(null, e);
+        rethrow;
+      }
+      ref.read(composerProvider.notifier).reset();
+      await ref.read(composerDraftKeeperProvider)?.keep(ref.read(composerProvider));
+      return await publishExisting(p.id, accountIds: c.selected);
+    } finally {
+      unawaited(keeper.end(id));
     }
-    final Post p;
-    try {
-      // Every network goes now: the times per network go too, so a network
-      // that fails is retried after its backoff, not at its old time.
-      p = (await _save(PostStatus.publishing, id: id)).withoutSchedule();
-      await s.posts.upsert(p);
-    } on Object catch (e) {
-      // Nothing is publishing: the post keeps its previous state, if any.
-      unawaited(s.publishJournal.release(id).catchError((Object _) {}));
-      run.fail(null, e);
-      rethrow;
-    }
-    ref.read(composerProvider.notifier).reset();
-    await ref.read(composerDraftKeeperProvider)?.keep(ref.read(composerProvider));
-    return publishExisting(p.id, accountIds: c.selected);
   }
 
   /// Runs (or re-runs) publishing for an existing post. Copies held by
@@ -1376,6 +1383,7 @@ class PostActions {
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
+    final keeper = ref.read(publishRunKeeperProvider)..begin(postId);
     try {
       return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
@@ -1384,6 +1392,7 @@ class PostActions {
       rethrow;
     } finally {
       active.end(postId, signal);
+      unawaited(keeper.end(postId));
     }
   }
 
@@ -1414,15 +1423,28 @@ class PostActions {
     run.start(postId, starting);
     // 1.3: video. Videos too big for a network get their smaller copy now,
     // with its progress on that network's row.
+    final keeper = ref.read(publishRunKeeperProvider);
     post = await attachShrunkVideos(s, post, ref.read(settingsProvider),
-        onProgress: run.progress, cancellation: signal, onlyAccountIds: starting);
+        onProgress: (accountId, message) {
+          run.progress(accountId, message);
+          keeper.alive(postId);
+        },
+        cancellation: signal,
+        onlyAccountIds: starting);
     await s.posts.upsert(post);
+    final tracker = keeper.tracker(postId);
     final done = await s.publisher().publish(
           postId,
           interactive: true,
           onlyAccountIds: accountIds,
           retryFailed: retryFailed,
           onProgress: run.progress,
+          onPlan: (plan) {
+            tracker.plan(plan);
+            keeper.planned(postId, plan);
+          },
+          onEvent: tracker.event,
+          onOutcome: tracker.outcome,
           cancellation: signal,
           dueTargetsOnly: dueTargetsOnly,
         );
@@ -1446,10 +1468,7 @@ class PostActions {
   }
 
   /// Asks the run publishing [postId] in this process to stop.
-  void cancelPublishing(String postId) {
-    ref.read(activePublishingProvider.notifier).cancel(postId);
-    if (ref.read(publishRunProvider)?.postId == postId) ref.read(publishRunProvider.notifier).cancel();
-  }
+  void cancelPublishing(String postId) => cancelPublishRun(ref, postId);
 
   /// What the composer mentions, so deleting a post never takes a file the
   /// composer still shows (a duplicated post shares its photos).

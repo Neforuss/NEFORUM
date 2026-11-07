@@ -75,6 +75,9 @@ dependencies {
     implementation("androidx.media3:media3-transformer:1.8.0")
     implementation("androidx.media3:media3-effect:1.8.0")
     implementation("androidx.media3:media3-common:1.8.0")
+    // PublishService.kt: ServiceCompat, NotificationCompat.ProgressStyle (1.17 added it).
+    // 1.18 raised its compileSdk to 36.1; Flutter here builds with 36.
+    implementation("androidx.core:core:1.17.0")
 }
 
 flutter {

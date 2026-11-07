@@ -16,12 +16,14 @@ import '../../platform/update_check.dart';
 import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
 import '../../state/providers.dart';
+import '../../state/publish_run_keeper.dart';
 import '../../state/scheduler.dart';
 import '../../state/settings.dart' show NavigationChromeStyle;
 import '../../state/update_checks.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/buttons.dart';
+import '../../widgets/layout.dart';
 import '../compose/open_in_composer.dart';
 import '../handoff/handoff_sheet.dart';
 import '../root.dart';
@@ -107,6 +109,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     super.dispose();
   }
 
+
   void _go(AppSection s) {
     final i = AppSection.values.indexOf(s);
     widget.shell.goBranch(i, initialLocation: i == widget.shell.currentIndex);
@@ -152,6 +155,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget build(BuildContext context) {
     final w = context.width;
     final nf = context.nf;
+    ref.listen(publishKeepAliveRefusedProvider, (_, _) => showToast(context, kPublishKeepAliveRefused, icon: Icons.info_outline_rounded));
     // Keeps the post being written across restarts.
     ref.watch(composerDraftKeeperProvider);
     final demo = ref.watch(isDemoProvider);
