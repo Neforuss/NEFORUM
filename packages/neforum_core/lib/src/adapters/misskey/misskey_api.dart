@@ -131,7 +131,7 @@ PublishError misskeyPublishError(HttpFailure f, {required String context, DateTi
         raw: raw, statusCode: r.statusCode, retryAfter: r.retryAfter ?? _resetFromInfo(err?.info, now));
   }
   if (code == 'AUTHENTICATION_FAILED' || code == 'CREDENTIAL_REQUIRED' || code == 'PERMISSION_DENIED' || r.statusCode == 401) {
-    return PublishError.auth(msg('the access token was rejected; reconnect the account'), raw: raw, statusCode: r.statusCode);
+    return PublishError.auth(msg('the access token was rejected; reconnect the account'), raw: raw, statusCode: r.statusCode, notAllowed: code == 'PERMISSION_DENIED' ? true : null);
   }
   if (code != null && _accountCodes.contains(code)) {
     return PublishError.platform(msg(code), raw: raw, statusCode: r.statusCode);
@@ -150,7 +150,7 @@ PublishError misskeyPublishError(HttpFailure f, {required String context, DateTi
     return PublishError.validation(msg('HTTP ${r.statusCode}'), raw: raw, statusCode: r.statusCode);
   }
   if (serverMsg != null && r.statusCode < 500 && base.kind != PublishErrorKind.auth) {
-    return PublishError(kind: base.kind, message: msg(base.message), raw: raw, statusCode: r.statusCode, retryable: base.retryable);
+    return PublishError(kind: base.kind, notAllowed: base.notAllowed, message: msg(base.message), raw: raw, statusCode: r.statusCode, retryable: base.retryable);
   }
   return base;
 }

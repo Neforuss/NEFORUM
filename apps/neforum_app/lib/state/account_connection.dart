@@ -674,7 +674,9 @@ String signInText(SignInLifetime e, String Function(DateTime) when) {
       SignInState.renews => days == null ? 'Renews when NEFORUM posts. No end date is known.$note' : 'Renews when NEFORUM posts. It ends if nothing renews it for about $days days.$note',
       _ when e.renewsItself && days != null => 'Ends within $days days of its last renewal. The date shows after NEFORUM first renews it.$note',
       _ => switch (e.limit) {
-            SignInLimit.none => 'No end date. Ends only if revoked.$note',
+            // The policy's own sentence says what can end it, where that is
+            // not simply a revocation. A Nostr key has none at all.
+            SignInLimit.none => e.note == null ? 'No end date. Ends only if revoked.' : 'No end date.$note',
             SignInLimit.idleUnknown => 'Ends after idle time.$note',
             SignInLimit.date => 'No date is known yet.$note',
             SignInLimit.undocumented => 'No published end date.$note',
@@ -704,12 +706,17 @@ PlatformAdapter? _realAdapter(PlatformAdapter? a) => a is DemoAdapter ? a.inner 
 /// [keysUnreadable]: the keychain refused to answer for this account. Its
 /// details are left out too, since [SecretGuard] cannot check them against
 /// keys it could not read (the account card says the same).
+///
+/// [serverRead]: what the platform last said about this sign-in
+/// ([SignInStatus.serverRead]). It goes into the date here as it does in the
+/// status file, so the section and the closed card never disagree.
 AccountConnection describeAccountConnection(
   ConnectedAccount account, {
   PlatformAdapter? adapter,
   Map<String, String> secrets = const {},
   required DateTime now,
   bool keysUnreadable = false,
+  SignInServerRead? serverRead,
 }) {
   final network = adapter?.descriptor.name ?? account.platformId;
   final real = _realAdapter(adapter);
@@ -721,7 +728,7 @@ AccountConnection describeAccountConnection(
     details: keysUnreadable ? const [] : connectionDetails(account, adapter, secrets: secrets),
     signIn: keysUnreadable || secrets.isEmpty || !(real?.signInPolicyFor(account).hasConnection ?? false)
         ? null
-        : deriveSignInLifetime(real!.signInPolicyFor(account), secrets, now: now),
+        : deriveSignInLifetime(real!.signInPolicyFor(account), secrets, now: now, serverRead: serverRead),
     storedKeys: keysUnreadable ? const [] : storedKeyLabels(secrets, adapter),
     needsKeys: needsKeys,
     noKeysReason: needsKeys ? null : _noKeysReason(account),
@@ -830,8 +837,10 @@ final accountConnectionProvider = FutureProvider.autoDispose.family<AccountConne
     final account = ref.watch(accountByIdProvider(accountId));
     if (account == null) return null;
     final registry = ref.watch(registryProvider);
+    final statuses = ref.watch(servicesProvider).signInStatusStore;
     final secrets = await ref.watch(connectionSecretsProvider).read(accountId) ?? const <String, String>{};
-    return describeAccountConnection(account, adapter: registry.byId(account.platformId), secrets: secrets, now: DateTime.now());
+    final status = await statuses.get(accountId);
+    return describeAccountConnection(account, adapter: registry.byId(account.platformId), secrets: secrets, now: DateTime.now(), serverRead: status?.serverRead);
   },
   retry: (_, _) => null,
 );
@@ -858,6 +867,9 @@ final signInStatusesProvider = StreamProvider<Map<String, SignInStatus>>((ref) a
 /// answers) sets [timedOut]: that account and every one after it are marked
 /// unread without asking the keychain again, so a stuck keychain costs one
 /// wait, not one per account.
+///
+/// [statuses]: this device's [SignInStatus] by account, for what each platform
+/// last said, so a block reads as the Connection section does.
 Future<({String text, int unreadable, bool timedOut})> allConnectionSetupsText(
   List<ConnectedAccount> accounts, {
   required SecretStore secrets,
@@ -866,6 +878,7 @@ Future<({String text, int unreadable, bool timedOut})> allConnectionSetupsText(
   required String deviceLabel,
   DateTime? now,
   Duration readTimeout = const Duration(seconds: 15),
+  Map<String, SignInStatus> statuses = const {},
 }) async {
   final at = now ?? DateTime.now();
   final parts = <String>[connectionCopyHeader(deviceLabel, at)];
@@ -876,7 +889,7 @@ Future<({String text, int unreadable, bool timedOut})> allConnectionSetupsText(
     AccountConnection c;
     try {
       if (timedOut) throw TimeoutException('keychain did not answer');
-      c = describeAccountConnection(a, adapter: adapter, secrets: await secrets.read(a.id).timeout(readTimeout) ?? const {}, now: at);
+      c = describeAccountConnection(a, adapter: adapter, secrets: await secrets.read(a.id).timeout(readTimeout) ?? const {}, now: at, serverRead: statuses[a.id]?.serverRead);
     } on Object catch (e) {
       // Never the error itself: it could quote what the keychain returned.
       if (e is TimeoutException) timedOut = true;

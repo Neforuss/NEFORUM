@@ -311,6 +311,7 @@ class NostrAdapter extends PlatformAdapter {
           if (i == 0) throw AdapterException(err);
           throw AdapterException(PublishError(
             kind: err.kind,
+            notAllowed: err.notAllowed,
             message: 'Part ${i + 1} of ${parts.length} was not accepted by any relay (${err.message}). '
                 'The first $i part${i == 1 ? ' is' : 's are'} already live at https://njump.me/${Nip19.encode('note', ids.first)}',
             statusCode: err.statusCode,

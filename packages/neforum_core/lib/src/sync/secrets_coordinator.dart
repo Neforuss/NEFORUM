@@ -11,5 +11,9 @@ abstract class SecretsCoordinator {
   /// Runs [refresh] for [account] in step with the other devices. Returns
   /// the keys to use when they differ from [current] (renewed here or by
   /// another device), else `null`. Throws what [refresh] throws.
-  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh);
+  ///
+  /// [renewsEarly] says whether keys that have not expired are due anyway
+  /// (`PlatformAdapter.renewsEarly`). Those take turns like expired ones: the
+  /// renewal retires the keys the other devices hold.
+  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh, {bool Function(Map<String, String> secrets)? renewsEarly});
 }

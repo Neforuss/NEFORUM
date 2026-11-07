@@ -320,6 +320,7 @@ NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the si
         // Earlier files are on Flickr: a retry would upload them again.
         return PublishResult.failure(PublishError(
           kind: error.kind,
+          notAllowed: error.notAllowed,
           message: 'File ${i + 1} of ${files.length} failed: ${error.message}. The files already uploaded '
               '(${ids.join(', ')}) stay on Flickr; upload the rest yourself.',
           statusCode: error.statusCode,

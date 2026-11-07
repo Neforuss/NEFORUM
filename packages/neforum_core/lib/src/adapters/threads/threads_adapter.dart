@@ -484,7 +484,9 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
       ctx.log.warn('Threads token refresh failed; using the current token: ${e.error.message}');
       return null;
     } on Exception catch (e) {
-      ctx.log.warn('Threads token refresh failed; using the current token: $e');
+      // The type only: this request carries the token in its address, and the
+      // exception's text quotes the address.
+      ctx.log.warn('Threads token refresh failed; using the current token (${e.runtimeType})');
       return null;
     }
   }
@@ -669,7 +671,7 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
     } on MediaHostException catch (e) {
       return fail(e.toPublishError());
     } on Exception catch (e) {
-      return fail(PublishError.network('Could not reach Threads: $e'));
+      return fail(PublishError.network('Could not reach Threads (${e.runtimeType})'));
     } finally {
       await _cleanup(hosted, ctx);
     }

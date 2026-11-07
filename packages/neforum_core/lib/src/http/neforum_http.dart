@@ -81,8 +81,11 @@ class HttpFailure implements Exception {
     final where = '${url.host}${url.path}';
     switch (statusCode) {
       case 401:
-      case 403:
         return PublishError.auth('${prefix}HTTP $statusCode from $where', raw: snippet, statusCode: statusCode);
+      // Forbidden: the server knows who is asking and refuses this request. That is
+      // not an ended sign-in, and a reconnect is not what fixes it.
+      case 403:
+        return PublishError.auth('${prefix}HTTP $statusCode from $where', raw: snippet, statusCode: statusCode, notAllowed: true);
       case 429:
         return PublishError.quota('${prefix}rate limited by $where',
             raw: snippet, statusCode: statusCode, retryAfter: response.retryAfter);

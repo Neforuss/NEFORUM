@@ -146,7 +146,7 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
 
 /// The line under a failed post saying what to do next.
 String publishErrorAdvice(PublishError? e) => switch (e?.kind) {
-      PublishErrorKind.auth when e?.notAllowed == true => 'The sign-in works, but the network does not allow this. The message above says what to change. Then retry.',
+      PublishErrorKind.auth when e?.notAllowed == true => 'The network does not allow this. That does not mean the sign-in ended. The message above says what to change, if the network gave a reason. Then retry.',
       PublishErrorKind.auth => 'The sign-in expired or was revoked. Reconnect the account in Accounts, then retry.',
       PublishErrorKind.quota => 'A posting limit was reached. Retry after it resets, or post this one by hand-off.',
       PublishErrorKind.validation => 'The platform rejected the content. Customize the post for this network and retry.',

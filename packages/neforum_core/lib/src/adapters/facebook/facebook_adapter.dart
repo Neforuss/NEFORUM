@@ -340,7 +340,7 @@ class FacebookAdapter extends PlatformAdapter {
       res = await ctx.http.get(graphUri('me/permissions', withToken(const {}, userToken, appSecret)),
           throwOnError: false);
     } on Exception catch (e) {
-      ctx.log.debug('Could not read the granted Facebook permissions: $e');
+      ctx.log.debug('Could not read the granted Facebook permissions (${e.runtimeType})');
       return;
     }
     final data = res.jsonMap['data'];
@@ -473,7 +473,7 @@ class FacebookAdapter extends PlatformAdapter {
         final id = optString(info, 'app_id');
         if (id != null) return FacebookTokenApp(id, optString(info, 'application'));
       } on Exception catch (e) {
-        ctx.log.debug('Facebook debug_token failed: $e');
+        ctx.log.debug('Facebook debug_token failed (${e.runtimeType})');
       }
     }
     return null;
@@ -692,6 +692,7 @@ class FacebookAdapter extends PlatformAdapter {
           return PublishResult.partialFailure(
             PublishError(
               kind: error.kind,
+              notAllowed: error.notAllowed,
               message: 'Publishing $label failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on '
                   'Facebook (${ids.join(', ')}); post the rest by hand.',
               statusCode: error.statusCode,
@@ -721,7 +722,7 @@ class FacebookAdapter extends PlatformAdapter {
     } on TimeoutException catch (e) {
       return PublishResult.failure(PublishError.network('Facebook did not answer in time', raw: '$e'));
     } on Exception catch (e) {
-      return PublishResult.failure(PublishError.network('Could not reach Facebook: $e', raw: '$e'));
+      return PublishResult.failure(PublishError.network('Could not reach Facebook (${e.runtimeType})'));
     }
   }
 
@@ -794,7 +795,7 @@ class FacebookAdapter extends PlatformAdapter {
         HttpFailure() => mapGraphFailure(e),
         TimeoutException() => PublishError.network('Facebook did not answer in time', raw: '$e'),
         OperationCancelledException() => const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'),
-        Exception() => PublishError.network('Could not reach Facebook: $e', raw: '$e'),
+        Exception() => PublishError.network('Could not reach Facebook (${e.runtimeType})'),
         _ => null,
       };
 
@@ -944,7 +945,7 @@ class FacebookAdapter extends PlatformAdapter {
     } on TimeoutException catch (e) {
       throw AdapterException(PublishError.network('Facebook did not answer in time', raw: '$e'));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('Could not reach Facebook: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Could not reach Facebook (${e.runtimeType})'));
     }
     if (res.ok) {
       if (res.jsonMap['success'] == false) {

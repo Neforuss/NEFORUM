@@ -65,6 +65,7 @@ class SignInStatusStore {
       if (out == null) {
         return all.remove(accountId) != null;
       }
+      if (identical(out, all[accountId])) return false;
       all[accountId] = out!;
       return true;
     }).then((_) => out);
@@ -165,13 +166,27 @@ class SignInStatusTracker implements SignInOutcomes {
   /// read when they are at hand. Answers with the status as it then stands.
   Future<SignInStatus?> readFromServer(ConnectedAccount account, AdapterContext ctx, {Map<String, String>? secrets, bool force = false}) async {
     final now = _now();
+    bool due(SignInStatus? s) {
+      final last = s?.serverReadAt;
+      return force || last == null || now.difference(last) >= serverReadEvery;
+    }
+
+    // Checked first with no keychain read: most posts come here on a day that
+    // already had its read.
     final current = await store.get(account.id);
-    final last = current?.serverReadAt;
-    if (!force && last != null && now.difference(last) < serverReadEvery) return current;
+    if (!due(current)) return current;
     final adapter = registry.byId(account.platformId);
     if (adapter == null || !adapter.signInPolicyFor(account).hasConnection) return current;
     final keys = secrets ?? await this.secrets?.read(account.id);
     if (keys == null || keys.isEmpty) return current;
+    // Checked again and stamped in one serial step: of two posts that finish
+    // together, one asks the server and the other leaves it at that.
+    var mine = false;
+    final latest = await store.change(account.id, (s) {
+      mine = due(s);
+      return mine ? (s ?? _empty(account, now)).copyWith(serverReadAt: now) : s;
+    });
+    if (!mine) return latest;
     SignInServerRead? read;
     try {
       read = await adapter.readSignIn(account, keys, ctx);

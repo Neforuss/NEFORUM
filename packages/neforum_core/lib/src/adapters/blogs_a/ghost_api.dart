@@ -130,7 +130,7 @@ PublishError mapGhostFailure(HttpFailure f, String what) {
         'If you deleted or regenerated the integration key, reconnect with the new one.', raw: raw, statusCode: status);
   }
   if (status == 403 || type == 'NoPermissionError') {
-    return PublishError.auth('$what: this Admin API key is not allowed to do that$suffix', raw: raw, statusCode: status);
+    return PublishError.auth('$what: this Admin API key is not allowed to do that$suffix', raw: raw, statusCode: status, notAllowed: true);
   }
   if (status == 404 || type == 'NotFoundError') {
     return PublishError.configuration('$what: ${f.url.host} has no Ghost Admin API at ${f.url.path}$suffix. '

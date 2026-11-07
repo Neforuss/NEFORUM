@@ -827,6 +827,50 @@ void main() {
       expect(signInText(life(SignInPolicies.flickrPolicy, keys), when), 'No published end date.');
     });
 
+    test('no limit: says only what can really end it', () {
+      expect(signInText(life(SignInPolicies.nostrPolicy, {'nsec': 'k'}), when), 'No end date. A key does not expire.', reason: 'a Nostr key cannot be revoked');
+      expect(signInText(life(SignInPolicies.lemmyPolicy, {OAuthTokens.keyAccessToken: 'a'}), when), 'No end date. Logging out or a new password ends it.');
+      expect(signInText(life(SignInPolicies.facebook, {OAuthTokens.keyAccessToken: 'a'}), when), 'No end date. Meta can still end it: a password change, a removed app, or a Meta app left unused for 90 days.');
+    });
+
+    test('what the platform last said goes into the Connection section and the copied setup', () async {
+      final account = _acct('lemmy', PlatformTier.openApi, const {'instance': 'https://lemmy.example'});
+      final secrets = {OAuthTokens.keyAccessToken: 'a'};
+      final read = SignInServerRead(readAt: now, expiresAt: ahead);
+      final without = describeAccountConnection(account, adapter: _adapter('lemmy'), secrets: secrets, now: now);
+      expect(without.signIn!.expiresAt, isNull, reason: 'nothing read yet');
+      final c = describeAccountConnection(account, adapter: _adapter('lemmy'), secrets: secrets, now: now, serverRead: read);
+      expect((c.signIn!.expiresAt, c.signIn!.source), (ahead, SignInDateSource.serverReported));
+      expect(signInText(c.signIn!, when), 'Ends on 1/12/2026 at the latest, then needs reconnecting. Logging out or a new password ends it.');
+      final store = InMemorySecretStore();
+      await store.write(account.id, secrets);
+      final status = SignInStatus(accountId: account.id, limit: SignInLimit.none, source: SignInDateSource.serverReported, renewsItself: false, state: SignInState.endsOn, serverRead: read);
+      final all = await allConnectionSetupsText([account], secrets: store, registry: builtinRegistry(), travel: KeysTravel.thisDeviceOnly, deviceLabel: 'Test device', now: now, statuses: {account.id: status});
+      expect(all.text, contains('at the latest'));
+      expect(all.text, contains(connectionCopyMoment(ahead)));
+    });
+
+    testWidgets('the open section reads the status file: a one week Lemmy login from before 1.4 shows its date', (tester) async {
+      final account = _acct('lemmy', PlatformTier.openApi, const {'instance': 'https://lemmy.example'}, id: 'section-lemmy');
+      final end = DateTime.now().toUtc().add(const Duration(days: 5));
+      await tester.runAsync(() async {
+        final s = await AppServices.create(demo: true, storage: _MemoryStorage(const {}), browserBridge: BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0]));
+        addTearDown(s.dispose);
+        await s.accounts.upsert(account);
+        await s.secrets.write(account.id, {OAuthTokens.keyAccessToken: 'a'});
+        await s.signInStatusStore.change(account.id, (c) => SignInStatus(accountId: account.id, limit: SignInLimit.none, source: SignInDateSource.serverReported, renewsItself: false, state: SignInState.endsOn, expiresAt: end, serverRead: SignInServerRead(readAt: DateTime.now().toUtc(), expiresAt: end)));
+        final container = ProviderContainer(overrides: [servicesProvider.overrideWithValue(s)]);
+        addTearDown(container.dispose);
+        final keep = container.listen(accountConnectionProvider(account.id), (_, _) {});
+        addTearDown(keep.close);
+        final accounts = container.listen(accountsProvider, (_, _) {});
+        addTearDown(accounts.close);
+        await container.read(accountsProvider.future);
+        final c = await container.read(accountConnectionProvider(account.id).future);
+        expect(c!.signIn!.expiresAt, end);
+      });
+    });
+
     test('no date: no limit, no published limit and idle time are three different things', () {
       expect(signInText(life(SignInPolicies.mastodonNoLimit, {OAuthTokens.keyAccessToken: 'a'}), when), 'No end date. Ends only if revoked.');
       expect(signInText(life(SignInPolicies.telegramPolicy, {'bot_token': 'b'}), when), 'No published end date.');
@@ -866,6 +910,7 @@ void main() {
       expect(publishErrorAdvice(const PublishError.auth('expired')), contains('expired or was revoked'));
       expect(publishErrorAdvice(const PublishError.auth('no rights', notAllowed: true)), isNot(contains('expired')));
       expect(publishErrorAdvice(const PublishError.auth('no rights', notAllowed: true)), contains('does not allow this'));
+      expect(publishErrorAdvice(const PublishError.auth('no rights', notAllowed: true)), isNot(contains('sign-in works')), reason: 'a bare 403 does not prove that');
     });
   });
 

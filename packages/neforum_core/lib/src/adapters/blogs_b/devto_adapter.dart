@@ -405,6 +405,6 @@ PublishError devtoError(HttpFailure f, {required String context}) {
         raw: base.raw, statusCode: status, retryAfter: f.response.retryAfter ?? const Duration(seconds: 30)),
     _ => message == null || status >= 500
         ? base
-        : PublishError(kind: base.kind, message: '${base.message}$detail', raw: base.raw, statusCode: status, retryable: base.retryable),
+        : PublishError(kind: base.kind, notAllowed: base.notAllowed, message: '${base.message}$detail', raw: base.raw, statusCode: status, retryable: base.retryable),
   };
 }

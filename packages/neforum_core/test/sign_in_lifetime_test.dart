@@ -2,6 +2,7 @@
 
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -13,6 +14,7 @@ import 'package:neforum_core/src/adapters/bluesky/bluesky_adapter.dart';
 import 'package:neforum_core/src/adapters/chat/matrix_adapter.dart';
 import 'package:neforum_core/src/adapters/chat/telegram_api.dart';
 import 'package:neforum_core/src/adapters/facebook/facebook_adapter.dart';
+import 'package:neforum_core/src/adapters/instagram/instagram_adapter.dart';
 import 'package:neforum_core/src/adapters/lemmy/lemmy_adapter.dart';
 import 'package:neforum_core/src/adapters/linkedin/linkedin_adapter.dart';
 import 'package:neforum_core/src/adapters/mastodon/mastodon_adapter.dart';
@@ -24,15 +26,18 @@ import 'package:neforum_core/src/adapters/x/x_adapter.dart';
 import 'package:neforum_core/src/auth/jwt.dart';
 import 'package:test/test.dart';
 
+import 'support/test_context.dart' show fakeImage;
+
 final _now = DateTime.utc(2026, 11, 6, 12);
 String _iso(DateTime t) => t.toUtc().toIso8601String();
 
 ConnectedAccount _acct(String platform, PlatformTier tier, {Map<String, dynamic> config = const {}, String? id}) =>
     ConnectedAccount(id: id ?? 'acc-$platform', platformId: platform, tier: tier, displayName: platform, createdAt: _now, config: config);
 
-/// An [AdapterContext] over [handler], counting nothing else.
+/// An [AdapterContext] over [handler], counting nothing else. [log] gets the
+/// adapter's lines and the HTTP client's.
 AdapterContext _ctx(Future<http.Response> Function(http.Request r) handler, {Logger? log}) =>
-    AdapterContext(http: NeforumHttp(client: MockClient(handler), maxRetries: 0), clock: () => _now, log: log);
+    AdapterContext(http: NeforumHttp(client: MockClient(handler), maxRetries: 0, log: log), clock: () => _now, log: log);
 
 final _noNetwork = _ctx((r) async => fail('no network expected: ${r.url.host}'));
 
@@ -51,10 +56,33 @@ void main() {
       expect((tiktok.source, tiktok.expiresAt, tiktok.state), (SignInDateSource.unknown, end, SignInState.renewsUntil));
     });
 
-    test('a window with no stamp estimates from the access token, source unknown, about', () {
+    test('a window with no stamp estimates from when the access token was made, source unknown, about', () {
       final access = _now.add(const Duration(hours: 1));
       final x = deriveSignInLifetime(SignInPolicies.xOAuth2, {OAuthTokens.keyRefreshToken: 'r', OAuthTokens.keyExpiresAt: _iso(access)}, now: _now);
-      expect((x.source, x.about, x.expiresAt), (SignInDateSource.unknown, true, access.add(const Duration(days: 183))));
+      expect((x.source, x.about, x.expiresAt), (SignInDateSource.unknown, true, access.subtract(const Duration(hours: 2)).add(const Duration(days: 183))));
+    });
+
+    test('a long-lived access token does not push the date out by its own life: Pixelfed and Pinterest', () {
+      final issued = _now.subtract(const Duration(days: 10));
+      final pixelfed = deriveSignInLifetime(SignInPolicies.pixelfedPolicy, {
+        OAuthTokens.keyAccessToken: 'a',
+        OAuthTokens.keyRefreshToken: 'r',
+        OAuthTokens.keyExpiresAt: _iso(issued.add(const Duration(days: 365))),
+      }, now: _now);
+      expect((pixelfed.expiresAt, pixelfed.source, pixelfed.about, pixelfed.earlyRevocationPossible), (issued.add(const Duration(days: 400)), SignInDateSource.unknown, true, true));
+      final pinterest = deriveSignInLifetime(SignInPolicies.pinterest, {
+        OAuthTokens.keyAccessToken: 'a',
+        OAuthTokens.keyRefreshToken: 'r',
+        OAuthTokens.keyExpiresAt: _iso(issued.add(const Duration(days: 30))),
+      }, now: _now);
+      expect((pinterest.expiresAt, pinterest.source, pinterest.about), (issued.add(const Duration(days: 60)), SignInDateSource.unknown, true));
+    });
+
+    test('a server with a shorter refresh window still never shows a date before the token ends', () {
+      final accessEnd = _now.add(const Duration(days: 300));
+      const short = SignInPolicy(limit: SignInLimit.date, renewal: SignInRenewal.onUse, disuseWindow: Duration(days: 30), accessLife: Duration(days: 365));
+      final life = deriveSignInLifetime(short, {OAuthTokens.keyRefreshToken: 'r', OAuthTokens.keyExpiresAt: _iso(accessEnd)}, now: _now);
+      expect(life.expiresAt, accessEnd);
     });
 
     test('an unknown source name reads as unknown: a newer value cannot break an older device', () {
@@ -87,13 +115,35 @@ void main() {
       expect((x.state, x.about), (SignInState.ended, true));
     });
 
-    test('M12: a pasted Instagram token: a date within 60 days once stamped, a rule before that', () {
-      final stamped = deriveSignInLifetime(SignInPolicies.instagram, {OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.lastRenewedAt: _iso(_now)}, now: _now);
-      expect((stamped.state, stamped.expiresAt, stamped.about), (SignInState.renewsWhenUsed, _now.add(const Duration(days: 60)), true));
-      final old = deriveSignInLifetime(SignInPolicies.instagram, {OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.refreshedAt: _iso(_now)}, now: _now);
-      expect((old.expiresAt, old.source), (_now.add(const Duration(days: 60)), SignInDateSource.unknown), reason: 'stored by 1.3.5');
-      final bare = deriveSignInLifetime(SignInPolicies.instagram, {OAuthTokens.keyAccessToken: 'a'}, now: _now);
-      expect((bare.state, bare.expiresAt, bare.renewsItself, bare.disuseWindow), (SignInState.noDate, null, true, const Duration(days: 60)));
+    test('M12: a pasted token has no date until its first renewal: connecting says nothing about its age', () {
+      for (final (label, secrets) in [
+        ('as stamped at connect', stampNewSignIn({OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.refreshedAt: _iso(_now)}, now: _now)),
+        ('as stored by 1.3.5', {OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.refreshedAt: _iso(_now)}),
+        ('with nothing else', {OAuthTokens.keyAccessToken: 'a'}),
+      ]) {
+        final life = deriveSignInLifetime(SignInPolicies.instagram, secrets, now: _now);
+        expect((life.state, life.expiresAt, life.renewsItself, life.disuseWindow), (SignInState.noDate, null, true, const Duration(days: 60)), reason: label);
+      }
+    });
+
+    test('M12: the real connect path of a pasted Instagram token, then its first renewal gives the date', () async {
+      final ctx = _ctx((r) async {
+        if (r.url.path.endsWith('/refresh_access_token')) return http.Response(jsonEncode({'access_token': 'new', 'token_type': 'bearer', 'expires_in': 5184000}), 200);
+        return http.Response(jsonEncode({'user_id': '17', 'username': 'robin', 'account_type': 'BUSINESS'}), 200);
+      });
+      final adapter = InstagramAdapter();
+      final connected = await adapter.connect(PlatformTier.byokApi, {'access_token': 'pasted'}, ctx);
+      final stored = stampNewSignIn(connected.secrets, now: _now);
+      expect(deriveSignInLifetime(SignInPolicies.instagram, stored, now: _now).expiresAt, isNull);
+      final later = _now.add(const Duration(days: 2));
+      final renewed = await adapter.refreshSecrets(connected.account, stored, AdapterContext(http: ctx.http, clock: () => later));
+      final life = deriveSignInLifetime(SignInPolicies.instagram, stampSignInRenewal(stored, renewed!, now: later), now: later);
+      expect((life.expiresAt, life.state, life.source), (later.add(const Duration(days: 60)), SignInState.renewsWhenUsed, SignInDateSource.serverReported));
+    });
+
+    test('M12: a Threads token whose age Meta did not report has no date either', () {
+      final life = deriveSignInLifetime(SignInPolicies.threads, {OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.tokenIssuedAt: _iso(_now)}, now: _now);
+      expect((life.state, life.expiresAt), (SignInState.noDate, null));
     });
 
     test('a date from the server beats a policy of no limit', () {
@@ -277,7 +327,7 @@ void main() {
 
     test('the card can no longer say it renews for ever: an old account gets the window', () {
       final life = deriveSignInLifetime(SignInPolicies.deviantArtPolicy, {OAuthTokens.keyRefreshToken: 'r', OAuthTokens.keyExpiresAt: _iso(_now)}, now: _now);
-      expect((life.expiresAt, life.about), (_now.add(const Duration(days: 90)), true));
+      expect((life.expiresAt, life.about), (_now.subtract(const Duration(hours: 1)).add(const Duration(days: 90)), true));
     });
   });
 
@@ -329,9 +379,18 @@ void main() {
       );
     });
 
-    test('rotation is declared, so two devices take turns', () {
+    test('rotation is declared, and the early window is told apart from a token with no way to renew', () {
       expect(PixelfedAdapter().rotatesRefreshTokensFor(account), isTrue);
+      final adapter = PixelfedAdapter();
+      expect(adapter.renewsEarly(account, tokens(const Duration(days: 29)), _now), isTrue);
+      expect(adapter.renewsEarly(account, tokens(const Duration(days: 31)), _now), isFalse);
+      expect(adapter.renewsEarly(account, tokens(const Duration(days: -1)), _now), isFalse, reason: 'expired is not early');
+      expect(adapter.renewsEarly(account, {...tokens(const Duration(days: 29))}..remove(OAuthTokens.keyRefreshToken), _now), isFalse);
+      expect(adapter.renewsEarly(_acct('pixelfed', PlatformTier.handoff), tokens(const Duration(days: 29)), _now), isFalse);
+      expect(MastodonAdapter().renewsEarly(_acct('mastodon', PlatformTier.openApi), tokens(const Duration(days: 29)), _now), isFalse);
     });
+
+    // Two devices taking turns on an early renewal: sync_test.dart.
 
     test('plain Mastodon does not rotate and does not renew early', () async {
       expect(MastodonAdapter().rotatesRefreshTokensFor(_acct('mastodon', PlatformTier.openApi)), isFalse);
@@ -513,12 +572,14 @@ void main() {
       expect(read!.isValid, isFalse);
     });
 
-    test('M17: a partner refresh token gets its fixed year once, and a renewal does not move it', () async {
+    test('M17: a partner account from before 1.4 gets no year at a renewal: its grant date is unknown; a stored end does not move', () async {
       final keys = {OAuthTokens.keyAccessToken: 'a', OAuthTokens.keyRefreshToken: 'r', 'client_secret': 's', OAuthTokens.keyExpiresAt: _iso(_now.subtract(const Duration(hours: 1)))};
       final ctx = _ctx((r) async => http.Response(jsonEncode({'access_token': 'new', 'refresh_token': 'r', 'expires_in': 5184000, 'refresh_token_expires_in': 525600}), 200));
       final first = await LinkedInAdapter().refreshSecrets(li, keys, ctx);
-      expect(DateTime.parse(first![StoredSecretKeys.refreshExpiresAt]!), _now.add(const Duration(days: 365)));
-      expect(first[StoredSecretKeys.refreshExpiresSource], 'computed');
+      expect(first!.containsKey(StoredSecretKeys.refreshExpiresAt), isFalse, reason: 'now + 1 year could be late');
+      expect(first.containsKey(StoredSecretKeys.refreshExpiresSource), isFalse);
+      final life = deriveSignInLifetime(SignInPolicies.linkedIn, first, now: _now);
+      expect((life.expiresAt, life.state, life.source), (null, SignInState.renews, SignInDateSource.unknown));
       final fixed = _iso(_now.add(const Duration(days: 100)));
       final second = await LinkedInAdapter().refreshSecrets(li, {...keys, StoredSecretKeys.refreshExpiresAt: fixed}, ctx);
       expect(second![StoredSecretKeys.refreshExpiresAt], fixed);
@@ -705,6 +766,39 @@ void main() {
       expect(reads, 3, reason: 'Check now');
     });
 
+    test('two posts that finish together ask the server once, and the second keeps the first one\'s date', () async {
+      final a = _acct('linkedin', PlatformTier.byokApi, config: {'clientId': 'c'});
+      await accounts.upsert(a);
+      await keychain.write(a.id, {OAuthTokens.keyAccessToken: 'x', 'client_secret': 's'});
+      var reads = 0;
+      final end = _now.add(const Duration(days: 20));
+      final ctx = _ctx((r) async {
+        reads++;
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+        return http.Response(jsonEncode({'active': true, 'expires_at': end.millisecondsSinceEpoch ~/ 1000}), 200);
+      });
+      await Future.wait([
+        tracker.publishFinished(a, worked: true, refused: false, ctx: ctx),
+        tracker.publishFinished(a, worked: true, refused: false, ctx: ctx),
+        tracker.readFromServer(a, ctx),
+      ]);
+      expect(reads, 1);
+      expect((await store.get(a.id))!.expiresAt, end);
+      clock = _now.add(const Duration(hours: 25));
+      await tracker.readFromServer(a, ctx);
+      expect(reads, 2, reason: 'the next day');
+    });
+
+    test('a day with its read needs no keychain', () async {
+      final a = _acct('linkedin', PlatformTier.byokApi, config: {'clientId': 'c'});
+      await accounts.upsert(a);
+      var keychainReads = 0;
+      final t = SignInStatusTracker(store: store, accounts: accounts, registry: builtinRegistry(), secrets: _HangingStore(() => keychainReads++), clock: () => clock);
+      await t.readFromServer(a, _noNetworkUnlessLinkedIn(), secrets: {OAuthTokens.keyAccessToken: 'x', 'client_secret': 's'});
+      await t.publishFinished(a, worked: true, refused: false, ctx: _noNetworkUnlessLinkedIn());
+      expect(keychainReads, 0);
+    });
+
     test('a platform that says the token is dead is noted as a failure', () async {
       final a = _acct('linkedin', PlatformTier.byokApi, config: {'clientId': 'c'});
       await accounts.upsert(a);
@@ -771,26 +865,38 @@ void main() {
       test('no secret value reaches the status file or the log, on every adapter and path', () async {
         final file = <String>[];
         final captured = SignInStatusStore(read: () async => file.isEmpty ? null : jsonDecode(file.last), write: (d) async => file.add(jsonEncode(d)));
-        final t = SignInStatusTracker(
-          store: captured,
-          accounts: accounts,
-          registry: builtinRegistry(),
-          secrets: keychain,
-          clock: () => clock,
-          log: Logger('guard', sink: (level, area, message, [error]) => logs.add('$message $error')),
-        );
+        // One log for all of it: the tracker's, each adapter's and the HTTP
+        // client's lines all land here.
+        final guardLog = Logger('guard', sink: (level, area, message, [error]) => logs.add('$area $message $error'));
+        final t = SignInStatusTracker(store: captured, accounts: accounts, registry: builtinRegistry(), secrets: keychain, clock: () => clock, log: guardLog);
         final d = SignInStatusSecretStore(keychain, t);
+        final answers = <Future<http.Response> Function(http.Request)>[
+          // An error quoting what it was sent, as a bad proxy does.
+          (r) async => http.Response('{"echo":"${r.url}${r.body}","error":"${r.url}","message":"${r.body}"}', 500),
+          (r) async => http.Response('{"echo":"${r.url}${r.body}","error":"${r.url}","message":"${r.body}"}', 401),
+          // No answer at all: the exception's text holds the address.
+          (r) async => throw http.ClientException('failed', r.url),
+        ];
         for (final adapter in builtinAdapters()) {
           for (final spec in adapter.connectSpecs) {
-            final a = ConnectedAccount(id: 'g-${adapter.id}-${spec.tier.name}', platformId: adapter.id, tier: spec.tier, displayName: 'g', createdAt: _now, config: const {'clientId': 'c', 'app_id': '555', 'appId': '555'});
+            final a = ConnectedAccount(id: 'g-${adapter.id}-${spec.tier.name}', platformId: adapter.id, tier: spec.tier, displayName: 'g', createdAt: _now, config: const {'clientId': 'c', 'clientKey': 'c', 'app_id': '555', 'appId': '555', 'instance': 'https://guard.example', 'tokenEndpoint': 'https://guard.example/token'});
             await accounts.upsert(a);
             await d.write(a.id, all);
-            // The network answers with an error quoting what it was sent, as a
-            // bad proxy does, then with nothing usable.
-            await t.readFromServer(a, _ctx((r) async => http.Response('{"echo":"${r.url}${r.body}"}', 500)), force: true);
-            await t.readFromServer(a, _ctx((r) async => throw http.ClientException('failed', r.url)), force: true);
-            await t.publishFinished(a, worked: true, refused: false, ctx: _ctx((r) async => http.Response('{}', 200)));
-            await t.publishFinished(a, worked: false, refused: true, ctx: _ctx((r) async => http.Response('{}', 200)));
+            for (final answer in answers) {
+              final ctx = _ctx(answer, log: guardLog.child(adapter.id));
+              await t.readFromServer(a, ctx, force: true);
+              // Renewing: a token that ended, then one close to its end.
+              for (final left in const [Duration(days: -1), Duration(days: 1)]) {
+                try {
+                  await adapter.refreshSecrets(a, {...all, OAuthTokens.keyExpiresAt: _iso(_now.add(left))}, ctx);
+                } on Exception {
+                  // Refused or unreachable. Only what reached the log counts here.
+                }
+              }
+            }
+            final quiet = _ctx((r) async => http.Response('{}', 200), log: guardLog.child(adapter.id));
+            await t.publishFinished(a, worked: true, refused: false, ctx: quiet);
+            await t.publishFinished(a, worked: false, refused: true, ctx: quiet);
             await d.delete(a.id);
             await d.write(a.id, {...all}..remove(StoredSecretKeys.appPassword));
           }
@@ -798,7 +904,138 @@ void main() {
         expect(file, isNotEmpty);
         expectClean(file.join('\n'), 'the status file');
         expectClean(logs.join('\n'), 'the log');
-        expect(logs.where((l) => l.contains(' ends ')), isNotEmpty, reason: 'the trace is there');
+        // The log really saw each layer, or the check above proves nothing.
+        expect(logs.where((l) => l.contains(' ends ')), isNotEmpty, reason: 'the tracker');
+        for (final (name, line) in [
+          ('the HTTP client', 'graph.facebook.com/'),
+          ('the HTTP client', 'introspectToken'),
+          ('the Facebook adapter', 'Facebook debug_token failed'),
+          ('the Threads API', 'Threads debug_token failed'),
+          ('the LinkedIn adapter', 'LinkedIn token introspection failed'),
+          ('a renewal', 'early Pixelfed renewal failed'),
+        ]) {
+          expect(logs.where((l) => l.contains(line)), isNotEmpty, reason: '$name: "$line" reached the guard');
+        }
+      });
+
+      test('a failed renewal or post through a token in the address never quotes it', () async {
+        // Meta takes tokens in the query, and a transport exception's text quotes
+        // the address. What fails here lands in the post's stored error.
+        final accounts = InMemoryAccountRepository();
+        final posts = InMemoryPostRepository();
+        final secrets = InMemorySecretStore();
+        final account = _acct('tiktok', PlatformTier.byokApi, config: {'clientKey': 'ck'});
+        await accounts.upsert(account);
+        await secrets.write(account.id, {OAuthTokens.keyAccessToken: 'SECRETaccess1'});
+        await posts.upsert(Post(id: 'p', text: 'hello', status: PostStatus.scheduled, targets: [PostTarget(accountId: account.id)], createdAt: _now, updatedAt: _now));
+        await PublishService(
+          registry: AdapterRegistry([_RenewalThrows()]),
+          accounts: accounts,
+          posts: posts,
+          secrets: secrets,
+          quota: QuotaTracker(InMemoryQuotaRepository()),
+          http: NeforumHttp(client: MockClient((r) async => http.Response('{}', 200)), maxRetries: 0),
+          clock: () => _now,
+        ).publish('p');
+        final error = (await posts.get('p'))!.targets.single.result!.error!;
+        expect(error.kind, PublishErrorKind.network);
+        expectClean('${error.message} ${error.raw}', 'the stored error');
+        expect(jsonEncode((await posts.get('p'))!.toJson()), isNot(contains('SECRETaccess1')));
+      });
+
+      test('Meta transport failures: the post error quotes no token', () async {
+        // Quotes all it was sent: most of these calls carry the token in the body.
+        Never lost(http.Request r) => throw http.ClientException('failed: ${r.url} ${r.body}', r.url);
+        const keys = {OAuthTokens.keyAccessToken: 'SECRETaccess1'};
+        const text = PostVariant(text: 'hello');
+        final threadsAccount = _acct('threads', PlatformTier.byokApi, config: {ThreadsAdapter.configUserId: '1'});
+        final facebookAccount = _acct('facebook', PlatformTier.byokApi, config: {'app_id': '5551234', 'page_id': '777'});
+
+        // The container is made, then the status check is lost: that one has the
+        // token in its address, so the exception's plain text holds it.
+        var sawToken = false;
+        final threads = await ThreadsAdapter().publish(text, threadsAccount, keys, _ctx((r) async {
+          if (r.method == 'POST') return http.Response(jsonEncode({'id': 'c1'}), 200);
+          sawToken = r.url.query.contains('SECRETaccess1');
+          throw http.ClientException('failed', r.url);
+        }));
+        expect((threads.success, sawToken), (false, true));
+        expect(threads.error!.message, contains('Could not reach Threads'));
+        expectClean('${threads.error!.message} ${threads.error!.raw}', 'Threads');
+
+        final feed = await FacebookAdapter().publish(text, facebookAccount, keys, _ctx((r) async => lost(r)));
+        expect(feed.success, isFalse);
+        expect(feed.error!.message, contains('Could not reach Facebook'));
+        expectClean('${feed.error!.message} ${feed.error!.raw}', 'Facebook, the post');
+
+        // The Page post went live, then the story is lost: a separate way out.
+        final story = await FacebookAdapter().publish(
+          PostVariant(text: 'hello', storyMedia: [fakeImage(width: 1080, height: 1920)], extra: const {kPlacementKey: 'feedAndStory'}),
+          facebookAccount,
+          keys,
+          AdapterContext(
+            http: NeforumHttp(client: MockClient((r) async => r.url.path.endsWith('/feed') ? http.Response(jsonEncode({'id': 'p1'}), 200) : lost(r)), maxRetries: 0),
+            clock: () => _now,
+            readMedia: (_) async => Uint8List(1),
+          ),
+        );
+        expect(story.remoteId, 'p1');
+        expect(story.error!.message, contains('Could not reach Facebook'));
+        expectClean('${story.error!.message} ${story.error!.raw}', 'Facebook, the story');
+
+        // Taking back a scheduled post: DELETE has the token in its address.
+        Object? thrown;
+        try {
+          await FacebookAdapter().cancelScheduled(PublishResult.ok(remoteId: 'p1'), facebookAccount, keys, _ctx((r) async => throw http.ClientException('failed', r.url)));
+        } on AdapterException catch (e) {
+          thrown = e;
+          expect(e.error.message, contains('Could not reach Facebook'));
+          expectClean('${e.error.message} ${e.error.raw}', 'Facebook, the delete');
+        }
+        expect(thrown, isNotNull);
+      });
+
+      test('an exception that escapes an adapter or a renewal: the stored error holds its type, not its text', () async {
+        Future<PublishError> stored(TikTokAdapter adapter) async {
+          final accounts = InMemoryAccountRepository();
+          final posts = InMemoryPostRepository();
+          final secrets = InMemorySecretStore();
+          final account = _acct('tiktok', PlatformTier.byokApi, config: {'clientKey': 'ck'});
+          await accounts.upsert(account);
+          await secrets.write(account.id, {OAuthTokens.keyAccessToken: 'SECRETaccess1'});
+          await posts.upsert(Post(id: 'p', text: 'hello', status: PostStatus.scheduled, targets: [PostTarget(accountId: account.id)], createdAt: _now, updatedAt: _now));
+          await PublishService(
+            registry: AdapterRegistry([adapter]),
+            accounts: accounts,
+            posts: posts,
+            secrets: secrets,
+            quota: QuotaTracker(InMemoryQuotaRepository()),
+            http: NeforumHttp(client: MockClient((r) async => http.Response('{}', 200)), maxRetries: 0),
+            clock: () => _now,
+          ).publish('p');
+          return (await posts.get('p'))!.targets.single.result!.error!;
+        }
+
+        final renewal = await stored(_RenewalThrows(Exception('refused for access_token=SECRETaccess1')));
+        expect(renewal.message, contains('Could not refresh credentials'));
+        expectClean('${renewal.message} ${renewal.raw}', 'a renewal that is not a transport failure');
+        final posting = await stored(_PublishThrows());
+        expect(posting.kind, PublishErrorKind.network);
+        expectClean('${posting.message} ${posting.raw}', 'a post');
+      });
+
+      test('the Meta adapters, which put tokens in addresses, log no exception text', () {
+        final logsAnException = RegExp(r'[lL]og\??\.\w+\([^\n;]*(\$e\b|\$f\b|, e\))');
+        final offenders = <String>[];
+        for (final dir in ['threads', 'facebook', 'instagram']) {
+          for (final f in Directory('lib/src/adapters/$dir').listSync(recursive: true).whereType<File>().where((f) => f.path.endsWith('.dart'))) {
+            for (final line in f.readAsLinesSync()) {
+              // A media host's own address, not a Meta call.
+              if (logsAnException.hasMatch(line) && !line.contains('Could not delete')) offenders.add('${f.path}: $line');
+            }
+          }
+        }
+        expect(offenders, isEmpty);
       });
 
       test('the guard would catch one', () {
@@ -885,7 +1122,7 @@ class _HangingStore extends SecretStore {
 class _CountingCoordinator implements SecretsCoordinator {
   int renewals = 0;
   @override
-  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh) async {
+  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh, {bool Function(Map<String, String> secrets)? renewsEarly}) async {
     renewals++;
     return null;
   }
@@ -899,6 +1136,28 @@ class _TikTokNoChecks extends TikTokAdapter {
   @override
   Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
       error == null ? PublishResult.ok(remoteId: 'v') : PublishResult.failure(error!);
+}
+
+/// A renewal whose transport failure quotes an address with a token in it.
+class _RenewalThrows extends TikTokAdapter {
+  _RenewalThrows([Object? thrown]) : thrown = thrown ?? http.ClientException('failed', Uri.parse('https://graph.example/refresh?access_token=SECRETaccess1'));
+  final Object thrown;
+  @override
+  Future<Map<String, String>?> refreshSecrets(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => throw thrown;
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+}
+
+/// A post whose transport failure escapes the adapter, quoting an address with
+/// a token in it.
+class _PublishThrows extends TikTokAdapter {
+  @override
+  Future<Map<String, String>?> refreshSecrets(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => null;
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
+      throw http.ClientException('failed', Uri.parse('https://graph.example/post?access_token=SECRETaccess1'));
 }
 
 class _RecordingOutcomes implements SignInOutcomes {

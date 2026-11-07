@@ -125,6 +125,7 @@ class SignInPolicy {
     required this.renewal,
     this.sourceUrl,
     this.disuseWindow,
+    this.accessLife,
     this.hardDeadline,
     this.earlyRevocationPossible = false,
     this.unverified = false,
@@ -145,6 +146,13 @@ class SignInPolicy {
   /// With no renewal for this long the sign-in ends. Gives
   /// `expiresAt = last_renewed_at + disuseWindow`, shown as "about".
   final Duration? disuseWindow;
+
+  /// How long a new access token lasts. A sign-in stored before 1.4 has no
+  /// record of its last renewal, so that moment is worked out from the token's
+  /// end: the end minus this. Required with [disuseWindow] on a refresh token:
+  /// Pixelfed's token lasts 365 days, so anchoring on its end alone shows a date
+  /// a year late.
+  final Duration? accessLife;
 
   /// A date the vendor has announced for the end of this way of signing in.
   final DateTime? hardDeadline;
@@ -320,11 +328,11 @@ SignInLifetime deriveSignInLifetime(SignInPolicy policy, Map<String, String> sec
       );
 
   /// `last renewal + window`, never before the access token itself ends. With
-  /// no stamp (stored by 1.3.5) the access token's end stands in: it is at most
-  /// one access lifetime after the real renewal, and its origin stays unknown.
+  /// no stamp (stored by 1.3.5) the renewal is worked out from the access
+  /// token's end and [SignInPolicy.accessLife], and its origin stays unknown.
   SignInLifetime? fromDisuse({required bool renewsItself}) {
     final window = policy.disuseWindow;
-    final anchor = lastRenewed ?? at(SignInSecretKeys.refreshedAt) ?? at(SignInSecretKeys.tokenIssuedAt) ?? access;
+    final anchor = lastRenewed ?? at(SignInSecretKeys.refreshedAt) ?? at(SignInSecretKeys.tokenIssuedAt) ?? access?.subtract(policy.accessLife ?? Duration.zero);
     if (window == null || anchor == null) return null;
     var end = anchor.add(window);
     if (access != null && access.isAfter(end)) end = access;
@@ -350,7 +358,10 @@ SignInLifetime deriveSignInLifetime(SignInPolicy policy, Map<String, String> sec
       source = refreshSource;
     }
     final selfRenewing = policy.tokenRenewsItself || has(SignInSecretKeys.tokenIssuedAt) || has(SignInSecretKeys.refreshedAt);
-    if (end == null) return (selfRenewing ? fromDisuse(renewsItself: true) : null) ?? make(SignInState.noDate, renewsItself: selfRenewing);
+    // A token that renews itself gets its date at its first renewal. Without
+    // one it is a pasted token, and the platform does not say how old that is:
+    // the moment it was connected says nothing about when it ends.
+    if (end == null) return make(SignInState.noDate, renewsItself: selfRenewing);
     if (!now.isBefore(end)) return make(SignInState.ended, end: end, source: source, about: source == SignInDateSource.computed);
     return make(selfRenewing ? SignInState.renewsWhenUsed : SignInState.endsOn, end: end, source: source, renewsItself: selfRenewing, about: source == SignInDateSource.computed);
   }
@@ -527,7 +538,7 @@ class SignInStatus {
   /// [expiresAt] is less than [kSignInEndWarning] from [now] and has not passed.
   bool endsSoon(DateTime now) => expiresAt != null && now.isBefore(expiresAt!) && expiresAt!.difference(now) < kSignInEndWarning;
 
-  SignInStatus copyWith({DateTime? lastConfirmedAt, DateTime? lastAuthFailure, bool clearLastAuthFailure = false}) => SignInStatus(
+  SignInStatus copyWith({DateTime? lastConfirmedAt, DateTime? lastAuthFailure, bool clearLastAuthFailure = false, DateTime? serverReadAt}) => SignInStatus(
         accountId: accountId,
         limit: limit,
         source: source,
@@ -544,7 +555,7 @@ class SignInStatus {
         usesCredential: usesCredential,
         hasConnection: hasConnection,
         serverRead: serverRead,
-        serverReadAt: serverReadAt,
+        serverReadAt: serverReadAt ?? this.serverReadAt,
         note: note,
       );
 

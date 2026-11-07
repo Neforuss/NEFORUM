@@ -26,6 +26,9 @@ abstract final class SignInPolicies {
   /// Pixelfed's default refresh token life (`OAUTH_REFRESH_DAYS`).
   static const Duration pixelfedRefreshLife = Duration(days: 400);
 
+  /// Pixelfed's default access token life (`OAUTH_TOKEN_DAYS`).
+  static const Duration pixelfedAccessLife = Duration(days: 365);
+
   static SignInPolicy _api(ConnectedAccount account, SignInPolicy policy) => account.tier == PlatformTier.handoff ? SignInPolicy.noConnection : policy;
 
   static bool _authMode(ConnectedAccount account, String mode) => account.config['authMode'] == mode;
@@ -36,6 +39,7 @@ abstract final class SignInPolicies {
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
     disuseWindow: _sixMonths,
+    accessLife: Duration(hours: 2),
     earlyRevocationPossible: true,
     unverified: true,
     sourceUrl: 'https://docs.x.com/fundamentals/authentication/oauth-2-0/oauth-1-0a-token-exchange',
@@ -93,6 +97,7 @@ abstract final class SignInPolicies {
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
     disuseWindow: Duration(days: 42),
+    accessLife: Duration(minutes: 42),
     earlyRevocationPossible: true,
     unverified: true,
     sourceUrl: 'https://github.com/tumblr/docs/issues/134',
@@ -121,6 +126,7 @@ abstract final class SignInPolicies {
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
     disuseWindow: pinterestRefreshLife,
+    accessLife: Duration(days: 30),
     earlyRevocationPossible: true,
     sourceUrl: 'https://developers.pinterest.com/docs/getting-started/set-up-authentication-and-authorization/',
   );
@@ -128,6 +134,7 @@ abstract final class SignInPolicies {
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
     disuseWindow: _sixMonths,
+    accessLife: Duration(hours: 1),
     earlyRevocationPossible: true,
     sourceUrl: 'https://developers.google.com/identity/protocols/oauth2',
     note: 'If your Google app is still in Testing, Google ends the sign-in every 7 days.',
@@ -194,6 +201,7 @@ abstract final class SignInPolicies {
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
     disuseWindow: pixelfedRefreshLife,
+    accessLife: pixelfedAccessLife,
     earlyRevocationPossible: true,
     unverified: true,
     sourceUrl: 'https://raw.githubusercontent.com/pixelfed/pixelfed/dev/config/instance.php',
@@ -351,6 +359,7 @@ abstract final class SignInPolicies {
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
     disuseWindow: deviantArtRefreshLife,
+    accessLife: Duration(hours: 1),
     earlyRevocationPossible: true,
     unverified: true,
     sourceUrl: 'https://deviantart.readme.io/docs/authentication',

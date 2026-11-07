@@ -419,6 +419,7 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
       // The draft stays in Sta.sh; a retry submits the file again.
       return PublishResult.failure(PublishError(
         kind: err.kind,
+        notAllowed: err.notAllowed,
         message: '${err.message}. The image waits in your Sta.sh (item $itemId); publish it there, or retry.',
         retryable: err.retryable,
         statusCode: err.statusCode,

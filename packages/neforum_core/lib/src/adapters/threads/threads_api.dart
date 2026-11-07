@@ -212,7 +212,7 @@ class ThreadsApi {
       if (!res.ok) return null;
       return res.jsonMap['permalink'] as String?;
     } on Exception catch (e) {
-      _log.debug('Could not read Threads permalink: $e');
+      _log.debug('Could not read Threads permalink (${e.runtimeType})');
       return null;
     }
   }
@@ -385,7 +385,7 @@ PublishError threadsErrorFrom(HttpFailure f, {String? context}) {
     case ThreadsErrorCodes.permissionDenied:
       return PublishError.auth(
           '${prefix}Threads refused the permission ($metaMsg). Reconnect and allow threads_content_publish',
-          raw: raw, statusCode: status);
+          raw: raw, statusCode: status, notAllowed: true);
     case ThreadsErrorCodes.appRateLimit:
     case ThreadsErrorCodes.userRateLimit:
     case ThreadsErrorCodes.pageRateLimit:
@@ -405,16 +405,17 @@ PublishError threadsErrorFrom(HttpFailure f, {String? context}) {
   }
   if (code != null && code >= 200 && code < 300) {
     return PublishError.auth('${prefix}Missing Threads permission ($metaMsg); reconnect the account',
-        raw: raw, statusCode: status);
+        raw: raw, statusCode: status, notAllowed: true);
   }
   if (status == 429) {
     return PublishError.quota('${prefix}Threads rate limit reached', raw: raw, statusCode: status, retryAfter: f.response.retryAfter);
   }
   if (type == 'OAuthException' && (status == 401 || status == 403)) {
-    return PublishError.auth(msg, raw: raw, statusCode: status);
+    return PublishError.auth(msg, raw: raw, statusCode: status, notAllowed: base.notAllowed);
   }
   return PublishError(
     kind: base.kind,
+    notAllowed: base.notAllowed,
     message: msg,
     retryable: base.retryable,
     statusCode: status,

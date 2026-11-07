@@ -179,7 +179,7 @@ PublishError mapTikTokError({
           raw: raw, statusCode: status);
     case 'scope_not_authorized':
       return PublishError.auth('TikTok did not grant the video.publish / video.upload permission; reconnect and tick every permission',
-          raw: raw, statusCode: status);
+          raw: raw, statusCode: status, notAllowed: true);
     case 'rate_limit_exceeded':
       return PublishError.quota('TikTok rate limit hit ($context)',
           raw: raw, statusCode: status, retryAfter: retryAfter ?? const Duration(minutes: 1));

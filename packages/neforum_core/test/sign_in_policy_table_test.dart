@@ -209,6 +209,21 @@ void main() {
       }
     });
 
+    test('a VERIFIED row with an open clause says what would settle it, and Still open lists it', () {
+      final open = RegExp('conflict|not stated|not known|unread|may differ|still says');
+      final rows = [..._docRows(doc, '## All 48 networks'), ..._docRows(doc, '## Where one network has more than one way')];
+      final clauses = rows.where((c) => c[_h.status].startsWith('VERIFIED') && open.hasMatch(c[_h.status])).toList();
+      expect(clauses.map((c) => c[_h.name]), containsAll(['Pinterest', 'Threads', 'YouTube', 'Facebook', 'Misskey', 'Bluesky']), reason: 'the scan finds them');
+      for (final c in clauses) {
+        expect(c[_h.status], contains('Settled by'), reason: c[_h.name]);
+      }
+      final lines = doc.split(RegExp(r'\r?\n'));
+      final still = lines.sublist(lines.indexOf('## Still open')).join('\n');
+      for (final question in ["Pinterest's old renewal key", 'private profiles', 'Google app in Testing', "Misskey's forks"]) {
+        expect(still, contains(question), reason: 'Still open lists it');
+      }
+    });
+
     test('says "no published limit", never "never expires", and uses plain words', () {
       expect(doc, isNot(contains('—')), reason: 'no em dashes');
       for (final line in doc.split('\n').where((l) => l.startsWith('|'))) {
@@ -234,6 +249,15 @@ void main() {
         });
       });
     }
+  });
+
+  test('a window on a refresh token comes with the access token\'s life: without it an old sign-in\'s date is late by that much', () {
+    for (final r in [..._table.where((r) => r.limit != null), ..._variants.values]) {
+      final p = adapters[r.id]!.signInPolicyFor(r.account);
+      if (p.disuseWindow != null && !p.tokenRenewsItself) expect(p.accessLife, isNotNull, reason: r.id);
+    }
+    expect(SignInPolicies.pixelfedPolicy.accessLife, const Duration(days: 365));
+    expect(SignInPolicies.pinterest.accessLife, const Duration(days: 30));
   });
 
   test('X keys carry the vendor\'s deadline; Tumblr and Flickr keys do not', () {

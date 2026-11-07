@@ -167,18 +167,23 @@ class PixelfedAdapter extends MastodonAdapter {
   /// once the access token is dead left just days 365 to 400 to post in.
   static const Duration earlyRenewal = Duration(days: 30);
 
-  /// As the Mastodon adapter, and also early: any post within [earlyRenewal]
-  /// of the access token's end. A token that still works keeps posting if the
-  /// early renewal fails.
+  /// Any post within [earlyRenewal] of the access token's end, once it can be
+  /// renewed.
+  @override
+  bool renewsEarly(ConnectedAccount account, Map<String, String> secrets, DateTime now) {
+    if (account.tier == PlatformTier.handoff) return false;
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    return tokens != null && !tokens.isExpired(now: now) && tokens.isExpired(now: now, leeway: earlyRenewal) && (tokens.refreshToken ?? '').isNotEmpty;
+  }
+
+  /// As the Mastodon adapter, and also early ([renewsEarly]). A token that still
+  /// works keeps posting if the early renewal fails.
   @override
   Future<Map<String, String>?> refreshSecrets(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     if (account.tier == PlatformTier.handoff) return null;
-    final tokens = OAuthTokens.fromSecrets(secrets);
-    final now = ctx.now();
-    final early = tokens != null && !tokens.isExpired(now: now) && tokens.isExpired(now: now, leeway: earlyRenewal) && (tokens.refreshToken ?? '').isNotEmpty;
-    if (!early) return super.refreshSecrets(account, secrets, ctx);
+    if (!renewsEarly(account, secrets, ctx.now())) return super.refreshSecrets(account, secrets, ctx);
     try {
-      return await renewToken(account, secrets, tokens, ctx);
+      return await renewToken(account, secrets, OAuthTokens.fromSecrets(secrets)!, ctx);
     } on AdapterException catch (e) {
       ctx.log.warn('The early Pixelfed renewal failed; the current token still works: ${e.error.kind.name}');
       return null;

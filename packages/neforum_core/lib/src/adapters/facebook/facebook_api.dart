@@ -109,7 +109,7 @@ PublishError mapGraphFailure(HttpFailure f, {String? context}) {
   }
   // Missing permission (pages_manage_posts not granted, Page role lost).
   if (code == 10 || (code >= 200 && code <= 299)) {
-    return PublishError.auth('$msg. Reconnect and grant all requested Page permissions.', raw: raw, statusCode: status);
+    return PublishError.auth('$msg. Reconnect and grant all requested Page permissions.', raw: raw, statusCode: status, notAllowed: true);
   }
   // Throttling: app (4), user (17), Pages BUC (32 / 80001), custom (613),
   // application limit (341), "posting too fast" (1390008).
@@ -137,6 +137,7 @@ PublishError mapGraphFailure(HttpFailure f, {String? context}) {
   }
   return PublishError(
     kind: base.kind,
+    notAllowed: base.notAllowed,
     message: msg,
     raw: raw,
     statusCode: status,

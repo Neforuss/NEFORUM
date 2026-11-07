@@ -617,7 +617,7 @@ class PublishService {
           // reconnect made on another device (another app, its keys): the
           // keys it hands over are renewed with the account as stored now,
           // never the one this attempt loaded before that sync.
-          ? await coordinator.renew(account, secretMap, (s) async => renew(await accounts.get(account.id) ?? account, s))
+          ? await coordinator.renew(account, secretMap, (s) async => renew(await accounts.get(account.id) ?? account, s), renewsEarly: (s) => adapter.renewsEarly(account, s, _now()))
           : await renew(account, secretMap);
       if (refreshed == null) return (secretMap, null);
       // 1.3.5: the keys stored here changed while the network answered.
@@ -664,9 +664,10 @@ class PublishService {
       return (null, err);
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        return (null, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: $e'));
+        // The type only: a token can sit in the address the exception quotes.
+        return (null, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in (${e.runtimeType})'));
       }
-      return (null, PublishError.auth('Could not refresh credentials: $e'));
+      return (null, PublishError.auth('Could not refresh credentials (${e.runtimeType})'));
     }
   }
 
@@ -950,6 +951,7 @@ class PublishService {
     PublishResult stopped(PublishError e) => PublishResult.partialFailure(
           PublishError(
             kind: e.kind,
+            notAllowed: e.notAllowed,
             message: 'Post ${ids.length + 2} of $total failed: ${e.message}. '
                 'The first ${ids.length + 1} post(s) are live; Retry posts the rest.',
             statusCode: e.statusCode,
@@ -1133,7 +1135,7 @@ class PublishService {
   /// Maps an exception that escaped an adapter onto a sensible error kind.
   static PublishError _classifyUnexpected(Object e, String platform) {
     if (NeforumHttp.isTransportError(e)) {
-      return PublishError.network('Could not reach $platform: $e');
+      return PublishError.network('Could not reach $platform (${e.runtimeType})');
     }
     final text = e.toString();
     // dart:io is off limits here (web builds), so recognise file errors by name.

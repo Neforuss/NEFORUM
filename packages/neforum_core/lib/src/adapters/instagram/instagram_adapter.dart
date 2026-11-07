@@ -438,6 +438,7 @@ class InstagramAdapter extends PlatformAdapter {
         return PublishResult.partialFailure(
           PublishError(
             kind: error.kind,
+            notAllowed: error.notAllowed,
             message: '${_cap(label)} failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on Instagram '
                 '(${ids.join(', ')}); post the rest by hand.',
             statusCode: error.statusCode,

@@ -306,12 +306,13 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
 
   // ------------------------------------------------------------- refresh
 
-  /// Partner (MDP) apps get a refresh token that lasts one year, fixed: a
-  /// renewal does not extend it, so an end already stored stays. The date is
-  /// worked out from that sentence: the page's sample `refresh_token_expires_in`
-  /// (525600) does not fit a year in seconds, so it is not trusted.
+  /// Partner (MDP) apps get a refresh token that lasts one year from the grant,
+  /// fixed. So this runs at connect, the one moment the grant date is known. The
+  /// date is worked out from that sentence: the page's sample
+  /// `refresh_token_expires_in` (525600) does not fit a year in seconds, so it is
+  /// not trusted.
   static Map<String, String> _withPartnerRefreshEnd(Map<String, String> secrets, DateTime now) {
-    if ((secrets[OAuthTokens.keyRefreshToken] ?? '').isEmpty || (secrets[SignInSecretKeys.refreshExpiresAt] ?? '').isNotEmpty) return secrets;
+    if ((secrets[OAuthTokens.keyRefreshToken] ?? '').isEmpty) return secrets;
     return {
       ...secrets,
       SignInSecretKeys.refreshExpiresAt: now.add(const Duration(days: 365)).toUtc().toIso8601String(),
@@ -361,8 +362,11 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
       throw const AdapterException(PublishError.auth(_expiredMessage));
     }
     try {
+      // A renewal does not extend the year, and an end already stored stays. An
+      // account from before 1.4 has none: its grant date is unknown, so it gets
+      // no date rather than one that could be late.
       final fresh = await _oauthClient(clientId, clientSecret).refresh(ctx.http, refreshToken: refresh, now: ctx.now());
-      return _withPartnerRefreshEnd(fresh.toSecrets(secrets), ctx.now());
+      return fresh.toSecrets(secrets);
     } on OAuthException catch (e) {
       throw AdapterException(e.isGrantRejected ? PublishError.auth(_expiredMessage, raw: e.toString()) : e.toRefreshError('LinkedIn'));
     }

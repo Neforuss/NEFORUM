@@ -333,6 +333,7 @@ class XApi {
           'regenerate the Access Token and Secret after switching to "Read and write": old tokens keep the old permission.',
           raw: raw,
           statusCode: status,
+          notAllowed: true,
         );
       }
       return PublishError.platform('X refused the request: $detail', raw: raw, statusCode: status);

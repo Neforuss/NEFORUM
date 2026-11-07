@@ -181,6 +181,7 @@ class DeviantArtApi {
     }
     return PublishError(
       kind: base.kind,
+      notAllowed: base.notAllowed,
       message: '$prefix$text',
       retryable: base.retryable,
       statusCode: base.statusCode,

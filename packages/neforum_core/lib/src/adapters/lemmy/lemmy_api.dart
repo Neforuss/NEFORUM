@@ -104,6 +104,10 @@ const Set<String> _authCodes = {
   'registration_denied',
 };
 
+/// Of [_authCodes], the ones where the login works but the instance will not let
+/// this account post yet. A reconnect does not change those.
+const Set<String> _accountStateCodes = {'email_not_verified', 'registration_application_is_pending', 'registration_denied'};
+
 /// Codes that mean "this post (or its target) is not acceptable".
 const Set<String> _validationCodes = {
   'invalid_post_title',
@@ -170,7 +174,7 @@ PublishError lemmyPublishError(HttpFailure f, {required String context}) {
     return PublishError.quota(msg('rate limited'), raw: raw, statusCode: r.statusCode, retryAfter: r.retryAfter);
   }
   if (code != null && _authCodes.contains(code)) {
-    return PublishError.auth(msg(code), raw: raw, statusCode: r.statusCode);
+    return PublishError.auth(msg(code), raw: raw, statusCode: r.statusCode, notAllowed: _accountStateCodes.contains(code) ? true : null);
   }
   if (code != null && _accountCodes.contains(code)) {
     return PublishError.platform(msg(code), raw: raw, statusCode: r.statusCode);
@@ -188,6 +192,7 @@ PublishError lemmyPublishError(HttpFailure f, {required String context}) {
     // Unknown Lemmy code on a 400: the request was refused as such.
     return PublishError(
       kind: r.statusCode == 400 ? PublishErrorKind.validation : base.kind,
+      notAllowed: base.notAllowed,
       message: msg(code),
       raw: raw,
       statusCode: r.statusCode,
@@ -195,7 +200,7 @@ PublishError lemmyPublishError(HttpFailure f, {required String context}) {
     );
   }
   if (detail != null && r.statusCode < 500) {
-    return PublishError(kind: base.kind, message: '$context: $detail', raw: raw, statusCode: r.statusCode, retryable: base.retryable);
+    return PublishError(kind: base.kind, notAllowed: base.notAllowed, message: '$context: $detail', raw: raw, statusCode: r.statusCode, retryable: base.retryable);
   }
   return base;
 }

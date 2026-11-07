@@ -252,7 +252,7 @@ PublishError micropubError(HttpFailure f, {required String context}) {
       return PublishError.validation('$context: your site rejected the post$detail', raw: raw, statusCode: status);
   }
   if (desc != null && status < 500) {
-    return PublishError(kind: base.kind, message: '${base.message}$detail', raw: raw, statusCode: status, retryable: base.retryable);
+    return PublishError(kind: base.kind, notAllowed: base.notAllowed, message: '${base.message}$detail', raw: raw, statusCode: status, retryable: base.retryable);
   }
   return base;
 }

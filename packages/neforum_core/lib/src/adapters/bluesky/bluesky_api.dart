@@ -142,6 +142,7 @@ PublishError mapBlueskyFailure(HttpFailure f, {required DateTime now, String con
   final base = f.toPublishError(context: context);
   return PublishError(
     kind: base.kind,
+    notAllowed: base.notAllowed,
     message: detail.isEmpty ? base.message : '$context: $text (HTTP ${r.statusCode})',
     retryable: base.retryable,
     statusCode: base.statusCode,

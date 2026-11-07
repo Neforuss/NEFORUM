@@ -326,7 +326,7 @@ class TumblrApi {
             raw: raw, statusCode: status);
       case 403:
         return PublishError.auth('Tumblr refused: you may not post to this blog with this sign-in$suffix',
-            raw: raw, statusCode: status);
+            raw: raw, statusCode: status, notAllowed: true);
       case 404:
         return PublishError.configuration(
             'Tumblr could not find this blog (renamed or deleted?); reconnect Tumblr and pick the blog again$suffix');
@@ -347,6 +347,7 @@ class TumblrApi {
         ? base
         : PublishError(
             kind: base.kind,
+            notAllowed: base.notAllowed,
             message: '${base.message}$suffix',
             retryable: base.retryable,
             retryAfter: base.retryAfter,

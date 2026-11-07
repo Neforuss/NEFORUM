@@ -276,6 +276,7 @@ class RedditApi {
         'or your Reddit app is not approved for API access. Reconnect the account; if that fails, use hand-off.',
         raw: raw,
         statusCode: status,
+        notAllowed: true,
       );
     }
     if (status == 429) {
@@ -294,6 +295,7 @@ class RedditApi {
 
   static PublishError _withStatus(PublishError e, int status) => PublishError(
         kind: e.kind,
+        notAllowed: e.notAllowed,
         message: e.message,
         retryable: e.retryable,
         statusCode: status,

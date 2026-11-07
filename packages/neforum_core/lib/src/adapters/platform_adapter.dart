@@ -81,6 +81,12 @@ abstract class PlatformAdapter {
   /// another's. Ask this, not the getter, when an account is at hand.
   bool rotatesRefreshTokensFor(ConnectedAccount account) => rotatesRefreshTokens;
 
+  /// [secrets] have not expired, but a post at [now] renews them anyway. On a
+  /// network with rotating tokens the renewal then retires keys the other
+  /// devices still hold, so the sync coordinator has to know, and take turns as
+  /// it does for expired keys.
+  bool renewsEarly(ConnectedAccount account, Map<String, String> secrets, DateTime now) => false;
+
   /// The photos this platform takes through [account] for [variant], as rules a photo can be
   /// changed to meet (shape, file type, size, pixels). The app makes a fitted
   /// copy of a photo that breaks them, for this platform only, instead of
