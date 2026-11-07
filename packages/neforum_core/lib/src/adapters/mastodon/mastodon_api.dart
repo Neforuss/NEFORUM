@@ -368,6 +368,7 @@ class MastodonApi {
           '$prefix$detail. The app may lack permission or the account is restricted; try reconnecting.',
           raw: raw,
           statusCode: 403,
+          notAllowed: true,
         );
       case 429:
         return PublishError.quota(
@@ -407,6 +408,7 @@ class MastodonApi {
             ? base
             : PublishError(
                 kind: base.kind,
+                notAllowed: base.notAllowed,
                 message: '$prefix$text',
                 retryable: base.retryable,
                 statusCode: base.statusCode,

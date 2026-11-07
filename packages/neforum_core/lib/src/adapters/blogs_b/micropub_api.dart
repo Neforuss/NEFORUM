@@ -245,14 +245,14 @@ PublishError micropubError(HttpFailure f, {required String context}) {
           raw: raw, statusCode: status);
     case 'insufficient_scope':
       return PublishError.auth('$context: the token lacks the needed permission (scope "create"/"media"); reconnect$detail',
-          raw: raw, statusCode: status);
+          raw: raw, statusCode: status, notAllowed: true);
     case 'forbidden':
-      return PublishError.auth('$context: your site says this account may not post here$detail', raw: raw, statusCode: status);
+      return PublishError.auth('$context: your site says this account may not post here$detail', raw: raw, statusCode: status, notAllowed: true);
     case 'invalid_request':
       return PublishError.validation('$context: your site rejected the post$detail', raw: raw, statusCode: status);
   }
   if (desc != null && status < 500) {
-    return PublishError(kind: base.kind, message: '${base.message}$detail', raw: raw, statusCode: status, retryable: base.retryable);
+    return PublishError(kind: base.kind, notAllowed: base.notAllowed, message: '${base.message}$detail', raw: raw, statusCode: status, retryable: base.retryable);
   }
   return base;
 }

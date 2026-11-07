@@ -102,6 +102,9 @@ class DevtoAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.devTo(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   static const ConnectField _instanceField = ConnectField(
@@ -397,12 +400,12 @@ PublishError devtoError(HttpFailure f, {required String context}) {
   return switch (status) {
     401 => PublishError.auth('$context: DEV rejected the API key; reconnect the account$detail',
         raw: base.raw, statusCode: status),
-    403 => PublishError.auth('$context: this API key may not do that$detail', raw: base.raw, statusCode: status),
+    403 => PublishError.auth('$context: this API key may not do that$detail', raw: base.raw, statusCode: status, notAllowed: true),
     422 => PublishError.validation('$context: DEV refused the article$detail', raw: base.raw, statusCode: status),
     429 => PublishError.quota('$context: DEV rate limit reached$detail',
         raw: base.raw, statusCode: status, retryAfter: f.response.retryAfter ?? const Duration(seconds: 30)),
     _ => message == null || status >= 500
         ? base
-        : PublishError(kind: base.kind, message: '${base.message}$detail', raw: base.raw, statusCode: status, retryable: base.retryable),
+        : PublishError(kind: base.kind, notAllowed: base.notAllowed, message: '${base.message}$detail', raw: base.raw, statusCode: status, retryable: base.retryable),
   };
 }

@@ -158,7 +158,7 @@ void main() {
         'grant_type': 'authorization_code',
         'code': 'the-code',
         'redirect_uri': 'http://localhost:52771/callback',
-        // Apps created before 2025-09-25 otherwise get a legacy 365-day token.
+        // Pinterest's 60-day refresh token, renewable.
         'continuous_refresh': 'true',
       });
 

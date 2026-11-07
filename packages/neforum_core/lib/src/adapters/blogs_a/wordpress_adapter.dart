@@ -98,6 +98,9 @@ class WordPressAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.wordPress(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   static const ConnectField _siteField = ConnectField(

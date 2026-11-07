@@ -43,7 +43,57 @@ class _RejectingAdapter extends DemoAdapter {
       throw const ConnectException('This token was made for a different Meta app.');
 }
 
+/// A sign-in with a known end, as a real adapter returns it.
+class _DatedAdapter extends DemoAdapter {
+  _DatedAdapter(super.inner, this.end);
+  final DateTime end;
+
+  @override
+  Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async => ConnectResult(
+        account: ConnectedAccount(id: 'dated', platformId: descriptor.id, tier: tier, displayName: 'Robin', createdAt: DateTime.utc(2026, 11, 6)),
+        secrets: {OAuthTokens.keyAccessToken: 'QZXCVBNMLKJH', OAuthTokens.keyExpiresAt: end.toUtc().toIso8601String()},
+      );
+}
+
 void main() {
+  testWidgets('connecting stamps the sign-in and its date is readable at once, with no keychain read', (tester) async {
+    tester.view.physicalSize = const Size(900, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage())))!;
+    final end = DateTime.now().toUtc().add(const Duration(days: 60));
+    final registry = AdapterRegistry([_DatedAdapter(builtinRegistry().require('linkedin'), end)]);
+    await tester.pumpWidget(ProviderScope(
+      overrides: [servicesProvider.overrideWithValue(services), registryProvider.overrideWithValue(registry)],
+      child: MaterialApp(
+        theme: buildTheme(Brightness.light, AccentChoice.neforum),
+        home: Scaffold(
+          body: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: ConnectForm(platformId: 'linkedin', tier: PlatformTier.byokApi, onConnected: (_) {}),
+          ),
+        ),
+      ),
+    ));
+    await tester.pump();
+    final fields = find.byType(TextFormField);
+    for (var i = 0; i < fields.evaluate().length; i++) {
+      await tester.enterText(fields.at(i), 'value$i');
+    }
+    await tester.pump();
+    await tester.tap(find.text('Sign in with LinkedIn'));
+    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+    await tester.pump();
+
+    final stored = (await tester.runAsync(() => services.secrets.read('dated')))!;
+    expect(stored[StoredSecretKeys.lastRenewedAt], isNotNull);
+    expect(stored[StoredSecretKeys.expiresAtSource], 'serverReported');
+    final status = (await tester.runAsync(() => services.signInStatusStore.get('dated')))!;
+    expect((status.expiresAt, status.source, status.earlyRevocationPossible), (end, SignInDateSource.serverReported, true));
+    expect(status.toJson().toString(), isNot(contains('QZXCVBNMLKJH')));
+  });
+
   testWidgets('Facebook: redirect folded, stale error cleared on edit', (tester) async {
     tester.view.physicalSize = const Size(900, 2400);
     tester.view.devicePixelRatio = 1;

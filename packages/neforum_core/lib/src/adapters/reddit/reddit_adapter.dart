@@ -68,6 +68,9 @@ class RedditAdapter extends PlatformAdapter {
   }
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.redditFor(account);
+
+  @override
   PlatformDescriptor get descriptor => redditDescriptor;
 
   static const String _apiIntro = '''
@@ -224,8 +227,9 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     );
   }
 
-  /// Access tokens last one hour. Reddit's refresh response carries no new
-  /// refresh token, so the stored one is kept (toSecrets merges).
+  /// Access tokens last one hour. Whether a refresh also returns a new refresh
+  /// token is not settled (Reddit's 2021 posts could not be read); either way
+  /// this works: toSecrets keeps the stored one or stores the new one.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {

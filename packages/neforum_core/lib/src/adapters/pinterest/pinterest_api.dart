@@ -263,7 +263,8 @@ class PinterestApi {
         return PublishError.auth(
             '$context: NEFORUM lacks a Pinterest permission ($detail). Reconnect Pinterest and allow every permission.',
             raw: raw,
-            statusCode: status);
+            statusCode: status,
+            notAllowed: true);
       }
       return PublishError.platform('$context: Pinterest refused the request ($detail)', raw: raw, statusCode: status);
     }

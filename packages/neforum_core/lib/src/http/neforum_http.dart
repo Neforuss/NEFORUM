@@ -82,8 +82,11 @@ class HttpFailure implements Exception {
     final where = '${url.host}${url.path}';
     switch (statusCode) {
       case 401:
-      case 403:
         return PublishError.auth('${prefix}HTTP $statusCode from $where', raw: snippet, statusCode: statusCode);
+      // Forbidden: the server knows who is asking and refuses this request. That is
+      // not an ended sign-in, and a reconnect is not what fixes it.
+      case 403:
+        return PublishError.auth('${prefix}HTTP $statusCode from $where', raw: snippet, statusCode: statusCode, notAllowed: true);
       case 429:
         return PublishError.quota('${prefix}rate limited by $where',
             raw: snippet, statusCode: statusCode, retryAfter: response.retryAfter);
@@ -539,8 +542,14 @@ class NeforumHttp {
   static String transportDetails(Object e) => switch (e) {
         ConnectionFailed(:final details) => details,
         RequestTimedOut(:final details) => details,
-        _ => '$e',
+        _ => _withoutPaths('$e'),
       };
+
+  /// An exception that did not pass through this class may quote a whole
+  /// address, and some APIs carry a token in the path or the query.
+  static String _withoutPaths(String text) => text
+      .replaceAll(RegExp(r'uri=\S+'), 'uri=(address removed)')
+      .replaceAllMapped(RegExp(r'(https?://[^/\s?#]+)[^\s]*'), (m) => m[1]!);
 
   static bool _retryable(int status) => status == 429 || status == 502 || status == 503 || status == 504;
 

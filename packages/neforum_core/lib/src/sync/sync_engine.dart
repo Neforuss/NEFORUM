@@ -1145,9 +1145,10 @@ class SyncEngine implements SecretsCoordinator {
   // -------------------------------------------------------------------------
 
   @override
-  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh) async {
+  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh, {bool Function(Map<String, String> secrets)? renewsEarly}) async {
     final store = secrets;
-    if (store == null || !_expired(current)) {
+    bool due(Map<String, String> s) => _expired(s) || (renewsEarly?.call(s) ?? false);
+    if (store == null || !due(current)) {
       final fresh = await refresh(current);
       if (fresh != null) unawaited(_pushSoon());
       return fresh;
@@ -1157,10 +1158,16 @@ class SyncEngine implements SecretsCoordinator {
     try {
       var latest = current;
       try {
-        latest = await _awaitTurn(account, current, store);
+        latest = await _awaitTurn(account, current, store, due);
       } on _AlreadyRenewed catch (done) {
         return _differs(done.secrets, current);
       } on Object catch (e) {
+        // Keys that still work can wait for the file: renewing them now could
+        // sign the other devices out, for nothing this post needs.
+        if (!_expired(current)) {
+          _log.warn('Not renewing ${account.displayName} early without the sync file (${e.runtimeType})');
+          return null;
+        }
         // The file is out of reach: renew alone rather than not at all.
         _log.warn('Renewing ${account.displayName} without the sync file: $e');
         return await refresh(current);
@@ -1180,7 +1187,7 @@ class SyncEngine implements SecretsCoordinator {
           throw e;
         }
         if (_differs(again, latest) != null) {
-          if (!_expired(again)) {
+          if (!due(again)) {
             return _differs(again, current);
           }
           fresh = await refresh(again);
@@ -1248,12 +1255,12 @@ class SyncEngine implements SecretsCoordinator {
   /// Syncs, then waits while another device holds the account's lease, then
   /// takes it. Returns the keys to renew; throws [_AlreadyRenewed] when
   /// another device's renewal arrived meanwhile.
-  Future<Map<String, String>> _awaitTurn(ConnectedAccount account, Map<String, String> current, SecretStore store) async {
+  Future<Map<String, String>> _awaitTurn(ConnectedAccount account, Map<String, String> current, SecretStore store, bool Function(Map<String, String>) due) async {
     final deadline = _now().add(renewalWait);
     while (true) {
       final pass = await _locked(_syncLoop);
       final latest = await store.read(account.id) ?? current;
-      if (!_expired(latest)) throw _AlreadyRenewed(latest);
+      if (!due(latest)) throw _AlreadyRenewed(latest);
       final lease = pass.remote.doc.leases[account.id];
       final now = _now();
       if (lease != null && lease.by != deviceId && lease.liveAt(now) && now.isBefore(deadline)) {
@@ -1312,6 +1319,9 @@ class SyncEngine implements SecretsCoordinator {
   static String _networkName(ConnectedAccount a) => switch (a.platformId) {
         'x' => 'X',
         'tumblr' => 'Tumblr',
+        'tiktok' => 'TikTok',
+        'deviantart' => 'DeviantArt',
+        'pixelfed' => 'Pixelfed',
         _ => a.platformId,
       };
 }

@@ -80,6 +80,9 @@ class WriteFreelyAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.writeFreely(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   static const ConnectField _instanceField = ConnectField(
@@ -468,7 +471,7 @@ PublishError mapWriteFreelyFailure(HttpFailure f, String what) {
     401 => PublishError.auth('$what: the access token is no longer valid$suffix. Reconnect the account.',
         raw: raw, statusCode: 401),
     // "You don't have permission to add to this collection." / "Account is silenced."
-    403 => PublishError.auth('$what: this account is not allowed to do that$suffix', raw: raw, statusCode: 403),
+    403 => PublishError.auth('$what: this account is not allowed to do that$suffix', raw: raw, statusCode: 403, notAllowed: true),
     429 => PublishError.quota(
         '$what: posting limit reached$suffix. Free Write.as accounts can only publish a few posts per day.',
         raw: raw,

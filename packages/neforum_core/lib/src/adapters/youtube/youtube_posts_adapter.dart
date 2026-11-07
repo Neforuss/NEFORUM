@@ -88,6 +88,9 @@ class YouTubePostsAdapter extends HandoffOnlyAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override

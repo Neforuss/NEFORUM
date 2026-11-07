@@ -73,7 +73,7 @@ PublishError hashnodePublishError(HashnodeError e, {required String context}) {
   }
   if (e.code == 'FORBIDDEN' || e.statusCode == 403) {
     return PublishError.auth('$context: this token may not post to the publication (${e.message})',
-        raw: e.raw, statusCode: e.statusCode);
+        raw: e.raw, statusCode: e.statusCode, notAllowed: true);
   }
   if (e.code == 'NOT_FOUND') {
     return PublishError(

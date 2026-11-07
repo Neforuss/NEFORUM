@@ -19,6 +19,8 @@ void main(List<String> args) {
     ..writeln('- **Your keys** (official API with your own developer app): posts automatically within the platform\'s quota. You create a free (or, for X, pay-per-use) developer app once.')
     ..writeln('- **Hand-off**: NEFORUM prepares the post, copies the text and opens the platform\'s app or website; you tap Post. Works with any personal account, even where the API is closed to normal users.')
     ..writeln()
+    ..writeln('How long each connection lasts, and when you have to step in, is in [How long each sign-in lasts](sign-in-lifetimes.md).')
+    ..writeln()
     ..writeln('Generated from the code on $date.')
     ..writeln()
     ..writeln('| Platform | Ways to post | Personal account OK | Text limit | Media | Quotas tracked | Server-side scheduling | Setup guide |')

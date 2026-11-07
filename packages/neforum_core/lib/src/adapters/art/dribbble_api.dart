@@ -120,7 +120,8 @@ class DribbbleApi {
             '${prefix}Dribbble does not let this account upload shots yet ($text). Shots need an approved Designer '
             'account (a player) or a team.',
             raw: raw,
-            statusCode: 403);
+            statusCode: 403,
+            notAllowed: true);
       case 429:
         return PublishError.quota('${prefix}Dribbble allows 60 requests a minute and 1,440 a day; NEFORUM tries again later',
             raw: raw, statusCode: 429, retryAfter: f.response.retryAfter);
@@ -130,6 +131,7 @@ class DribbbleApi {
       default:
         return PublishError(
           kind: base.kind,
+          notAllowed: base.notAllowed,
           message: '$prefix$text',
           retryable: base.retryable,
           statusCode: base.statusCode,

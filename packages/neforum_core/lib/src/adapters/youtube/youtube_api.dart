@@ -160,7 +160,8 @@ PublishError mapYouTubeError(NeforumResponse res, {required String context, requ
         '$context: Google did not grant NEFORUM the YouTube permission this needs; reconnect and tick every '
         'YouTube box',
         raw: raw,
-        statusCode: status);
+        statusCode: status,
+        notAllowed: true);
   }
   if (status == 401 || reason == 'authError' || reason == 'UNAUTHENTICATED') {
     return PublishError.auth('Your YouTube sign-in is no longer valid; reconnect the account',
@@ -179,6 +180,7 @@ PublishError mapYouTubeError(NeforumResponse res, {required String context, requ
   final base = HttpFailure(res).toPublishError(context: context);
   return PublishError(
       kind: base.kind,
+      notAllowed: base.notAllowed,
       message: msg,
       retryable: base.retryable,
       statusCode: status,

@@ -86,6 +86,9 @@ class FlickrAdapter extends PlatformAdapter {
   static const String uploadUrl = 'https://www.flickr.com/photos/upload/';
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.flickr(account);
+
+  @override
   PlatformDescriptor get descriptor => flickrDescriptor;
 
   // ------------------------------------------------------------- connect
@@ -133,7 +136,7 @@ class FlickrAdapter extends PlatformAdapter {
 2. When Flickr has issued it, copy the **Key** and **Secret** into the fields below and click Connect.
 3. Flickr asks in the browser whether NEFORUM may upload to your account. Click **OK, I'll authorize it**.
 
-NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
+NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the sign-in.''';
 
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
@@ -226,7 +229,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
     return 'Flickr sign-in failed: ${e.message}.';
   }
 
-  /// OAuth 1.0a tokens never expire and never change.
+  /// OAuth 1.0a tokens are not renewed. Flickr's API pages give them no end date.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -317,6 +320,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
         // Earlier files are on Flickr: a retry would upload them again.
         return PublishResult.failure(PublishError(
           kind: error.kind,
+          notAllowed: error.notAllowed,
           message: 'File ${i + 1} of ${files.length} failed: ${error.message}. The files already uploaded '
               '(${ids.join(', ')}) stay on Flickr; upload the rest yourself.',
           statusCode: error.statusCode,

@@ -95,15 +95,15 @@ Tumblr's daily limits reset once per calendar day on Tumblr's server clock. Tumb
 
 ### Staying signed in
 
-A Tumblr sign-in lasts only 42 minutes. NEFORUM renews it automatically, and Tumblr hands out a new renewal key each time. If NEFORUM is not used for **42 days**, the renewal key expires and you need to click **Reconnect** once. The same happens if you remove the app's access on Tumblr. Accounts connected with OAuth 1.0a keys are never renewed and don't expire.
+A Tumblr sign-in lasts only 42 minutes. NEFORUM renews it when it posts, and Tumblr hands out a new renewal key each time. If NEFORUM is not used for **42 days**, the renewal key expires and you need to click **Reconnect** once. The same happens if you remove the app's access on Tumblr. The 42 days come from a reply on Tumblr's GitHub, not its API document. Accounts connected with OAuth 1.0a keys are never renewed, and Tumblr publishes no limit on them.
 
 Your Secret Key is stored only in this device's secure storage, next to the sign-in. NEFORUM never sends it anywhere except to Tumblr.
 
 ### Why OAuth 1.0a keys
 
-The browser sign-in uses OAuth 2. NEFORUM renews it every 42 minutes, and Tumblr hands out a new renewal key each time and cancels the old one. When the same blog is on two devices (copied with **Settings → Move to another device**, or synced), the first device to renew cancels the other one's sign-in, and that device has to reconnect.
+The browser sign-in uses OAuth 2. NEFORUM renews it when a post goes out, and Tumblr hands out a new renewal key each time. In practice the old one stops working (observed behaviour: Tumblr's API document does not say so). When the same blog is on two devices (copied with **Settings → Move to another device**, or synced), the first device to renew cancels the other one's sign-in, and that device has to reconnect.
 
-Tumblr's API also accepts OAuth 1.0a: every route NEFORUM uses (listing your blogs, creating posts with photos and videos, queueing and deleting scheduled posts) requires "a signed request that meets the OAuth 1.0a Protocol" or OAuth 2. An OAuth 1.0a token and token secret are not renewed and don't change, so every device can use the same keys. Tumblr's API console shows them for your own app (as of October 2026).
+Tumblr's API also accepts OAuth 1.0a: every route NEFORUM uses (listing your blogs, creating posts with photos and videos, queueing and deleting scheduled posts) requires "a signed request that meets the OAuth 1.0a Protocol" or OAuth 2. An OAuth 1.0a token and token secret are not renewed and don't change, so every device can use the same keys. Tumblr's document gives them no lifetime, so treat that as no published limit, not as a promise. Tumblr's API console shows them for your own app (as of October 2026).
 
 Good to know:
 

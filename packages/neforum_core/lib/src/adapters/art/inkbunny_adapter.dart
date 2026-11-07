@@ -78,6 +78,9 @@ class InkbunnyAdapter extends PlatformAdapter {
   static const extraScraps = 'inkbunnyScraps';
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.inkbunny(account);
+
+  @override
   PlatformDescriptor get descriptor => inkbunnyDescriptor;
 
   // ------------------------------------------------------------- connect
@@ -163,8 +166,9 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
     );
   }
 
-  /// The session id lasts until it is signed out; a missing one means
-  /// reconnecting.
+  /// Nothing to renew: Inkbunny's wiki says a session stays valid "for several
+  /// days after" its last use, and the password is not kept. A session that
+  /// ended surfaces when a post is refused; a missing one means reconnecting.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -266,6 +270,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
       // would upload them again.
       return PublishResult.failure(PublishError(
         kind: err.kind,
+        notAllowed: err.notAllowed,
         message: '${err.message}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
             'on inkbunny.net (${InkbunnyApi.submissionUrl(submissionId)}).',
         statusCode: err.statusCode,

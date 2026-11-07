@@ -7,6 +7,8 @@ import '../../model/post_variant.dart';
 import '../../model/validation.dart';
 import '../handoff_only/handoff_common.dart';
 
+export '../../model/sign_in_lifetime.dart' show SignInPolicy;
+
 /// Images (or videos) NEFORUM hands to an art site that publishes no
 /// per-post limit.
 const int unlistedMediaLimit = 100;

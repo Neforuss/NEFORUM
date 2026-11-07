@@ -11,20 +11,22 @@ import '../publish/publish_journal.dart';
 import '../util/logger.dart';
 import 'repositories.dart';
 import 'secret_store.dart';
+import 'sign_in_status_store.dart';
 
 /// JSON-file persistence: one small file per store in [directory], written
 /// atomically (temp file + rename). Used by the CLI and, on desktop/mobile,
 /// by the app for everything except secrets (which go to the OS keychain).
 ///
 /// Files: `accounts.json`, `posts.json`, `quota.json`, `secrets.json`,
-/// `publish-journal.json`.
+/// `publish-journal.json`, `sign-in-status.json`.
 class JsonFileStore {
   JsonFileStore(this.directory)
       : accounts = JsonAccountRepository(JsonFile(p.join(directory, 'accounts.json'))),
         posts = JsonPostRepository(JsonFile(p.join(directory, 'posts.json'))),
         quota = JsonQuotaRepository(JsonFile(p.join(directory, 'quota.json'))),
         secrets = JsonSecretStore(JsonFile(p.join(directory, 'secrets.json'))),
-        publishJournal = openPublishJournal(directory);
+        publishJournal = openPublishJournal(directory),
+        signInStatus = openSignInStatus(directory);
 
   final String directory;
   final JsonAccountRepository accounts;
@@ -35,6 +37,16 @@ class JsonFileStore {
   /// The publish runs of this process and of every other isolate that
   /// opened the same directory.
   final PublishJournal publishJournal;
+
+  /// What this device last worked out about each account's sign-in.
+  final SignInStatusStore signInStatus;
+
+  /// The sign-in status in [directory]. Device-only: never synced or exported.
+  /// Every read goes to the file, since background isolates write it too.
+  static SignInStatusStore openSignInStatus(String directory) {
+    final file = JsonFile(p.join(directory, 'sign-in-status.json'), writeAttempts: 3);
+    return SignInStatusStore(read: file.read, write: file.write);
+  }
 
   /// The publish journal in [directory] as one process sees it. Every call
   /// is another owner; [owner] and [clock] let tests stand in for another
@@ -49,6 +61,7 @@ class JsonFileStore {
   void dispose() {
     accounts.dispose();
     posts.dispose();
+    signInStatus.dispose();
   }
 }
 

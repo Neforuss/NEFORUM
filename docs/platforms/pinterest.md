@@ -95,8 +95,8 @@ Advanced settings for each post (in the post's per-platform options):
 
 ### Staying signed in
 
-- A Pinterest sign-in lasts **30 days**. NEFORUM renews it automatically when it is close to expiring, using Pinterest's refresh token.
-- The refresh token itself lapses after **60 days without use**. Every renewal starts a new 60 days. If you do not use NEFORUM for Pinterest for two months, you have to reconnect. (NEFORUM asks for this "continuous" refresh token also for developer apps created before 25 September 2025, which would otherwise get the legacy one-year token.)
+- A Pinterest sign-in lasts **30 days**. NEFORUM renews it with Pinterest's refresh token when a post goes out and the last renewal is at least 7 days old.
+- The refresh token itself lapses **60 days after the last renewal**, and every renewal starts a new 60 days. If you do not post to Pinterest for two months, you have to reconnect. Accounts shows the date.
 - If Pinterest is briefly unavailable or rate limits the renewal, NEFORUM tries again later instead of asking you to reconnect.
 
 ### Hand-off

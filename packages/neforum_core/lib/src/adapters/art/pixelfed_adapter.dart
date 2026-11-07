@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:http/http.dart' as http;
 
+import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
@@ -15,6 +16,7 @@ import '../connect_spec.dart';
 import '../mastodon/mastodon_adapter.dart';
 import '../mastodon/mastodon_api.dart';
 import '../mastodon/mastodon_instance.dart';
+import '../platform_adapter.dart';
 import 'art_api_common.dart';
 
 /// Pixelfed's own defaults (config/pixelfed.php), used until the server
@@ -150,6 +152,46 @@ const pixelfedConnectSpecs = [
 /// first line, and mature or adult work is marked sensitive.
 class PixelfedAdapter extends MastodonAdapter {
   PixelfedAdapter({super.mediaPollInterval, super.maxMediaPolls, super.clock});
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.pixelfed(account);
+
+  /// Laravel Passport revokes a refresh token once it is used
+  /// (`$revokeRefreshTokenAfterUse = true`), so two devices can end each
+  /// other's sign-in.
+  @override
+  bool rotatesRefreshTokensFor(ConnectedAccount account) => account.tier != PlatformTier.handoff;
+
+  /// How long before the access token ends a post renews it. On defaults the
+  /// refresh token outlives the access token by only 35 days, so renewing only
+  /// once the access token is dead left just days 365 to 400 to post in.
+  static const Duration earlyRenewal = Duration(days: 30);
+
+  /// Any post within [earlyRenewal] of the access token's end, once it can be
+  /// renewed.
+  @override
+  bool renewsEarly(ConnectedAccount account, Map<String, String> secrets, DateTime now) {
+    if (account.tier == PlatformTier.handoff) return false;
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    return tokens != null && !tokens.isExpired(now: now) && tokens.isExpired(now: now, leeway: earlyRenewal) && (tokens.refreshToken ?? '').isNotEmpty;
+  }
+
+  /// As the Mastodon adapter, and also early ([renewsEarly]). A token that still
+  /// works keeps posting if the early renewal fails.
+  @override
+  Future<Map<String, String>?> refreshSecrets(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (account.tier == PlatformTier.handoff) return null;
+    if (!renewsEarly(account, secrets, ctx.now())) return super.refreshSecrets(account, secrets, ctx);
+    try {
+      return await renewToken(account, secrets, OAuthTokens.fromSecrets(secrets)!, ctx);
+    } on AdapterException catch (e) {
+      ctx.log.warn('The early Pixelfed renewal failed; the current token still works: ${e.error.kind.name}');
+      return null;
+    } on Exception catch (e) {
+      ctx.log.warn('The early Pixelfed renewal failed; the current token still works (${e.runtimeType})');
+      return null;
+    }
+  }
 
   @override
   PlatformDescriptor get descriptor => pixelfedDescriptor;

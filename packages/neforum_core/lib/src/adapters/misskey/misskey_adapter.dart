@@ -132,6 +132,9 @@ class MisskeyAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.misskey(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   static const ConnectField _instanceField = ConnectField(

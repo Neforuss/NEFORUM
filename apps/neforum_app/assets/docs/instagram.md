@@ -108,7 +108,7 @@ Use these instead of steps 14 to 17 if you prefer not to copy a token.
 
 "Access tokens from the App Dashboard are long-lived and are valid for 60 days" (get-started guide). Instagram does not tell NEFORUM how old a pasted token is, so NEFORUM renews it with `GET /refresh_access_token?grant_type=ig_refresh_token` the first time it publishes after the token is a day old (Meta only refreshes tokens that are at least 24 hours old and not expired). From then on it knows the expiry date and renews about once a week. No app secret is needed for any of this.
 
-With browser sign-in, NEFORUM exchanges the code (valid for 1 hour, usable once) for a short-lived token (`POST https://api.instagram.com/oauth/access_token`), swaps that for a 60-day token (`GET /access_token?grant_type=ig_exchange_token`, needs the app secret) and renews it automatically about once a week. Your app secret is used only while connecting and is not stored. "Tokens that have not been refreshed in 60 days will expire and can no longer be refreshed": if NEFORUM does not post for 60 days, connect again.
+With browser sign-in, NEFORUM exchanges the code (valid for 1 hour, usable once) for a short-lived token (`POST https://api.instagram.com/oauth/access_token`), swaps that for a 60-day token (`GET /access_token?grant_type=ig_exchange_token`, needs the app secret) and renews it when it posts, about once a week. Your app secret is used only while connecting and is not stored. "Tokens that have not been refreshed in 60 days will expire and can no longer be refreshed": the 60 days run from the last renewal, so with a weekly renewal the token ends about 53 to 60 days after your last post. Then connect again. Until NEFORUM first renews a pasted token, it knows only that it ends within 60 days.
 
 ### Hand-off
 
@@ -179,7 +179,7 @@ NEFORUM checks these before posting. All numbers are from the IG User Media refe
 | Errors 4, 17, 80002 | Rate limit ("Calls within 24 hours = 4800 * Number of Impressions"). A brand-new account with almost no views can be throttled after a few posts. NEFORUM waits and retries later. |
 | Error 24 / 2207008 right after creating the post | Normal for a few seconds; NEFORUM retries as the error-code reference recommends (1–2 retries over 30 seconds to 2 minutes). |
 | Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu). As of October 2026 the only required item was a **Privacy policy URL**; an app icon and a data deletion URL were optional. You can enter NEFORUM's, `https://neforus.com/neforum/privacy/`, or your own: see [A privacy policy URL for your Meta app](../meta-privacy-policy.md). |
-| Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. Reconnect. |
+| Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. An admin must first restore the app in the App Dashboard, then reconnect. Permissions removed for disuse need approving again. |
 
 ## Where Meta's documentation disagrees
 

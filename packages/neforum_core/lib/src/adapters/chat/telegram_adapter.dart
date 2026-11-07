@@ -111,6 +111,9 @@ class TelegramAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.telegram(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override

@@ -74,6 +74,37 @@ class FacebookAdapter extends PlatformAdapter {
   static const Duration _videoTimeout = Duration(minutes: 30);
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.facebookFor(account);
+
+  /// `GET /debug_token` with the app's own access token. Only `expires_at` is
+  /// read as an end: what `data_access_expires_at` means for a Page token whose
+  /// permissions Meta lists as exempt from that clock is not documented, so it
+  /// raises no date. 0 is not defined by Meta and gives no date.
+  @override
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final token = OAuthTokens.fromSecrets(secrets)?.accessToken;
+    final appSecret = secrets[secAppSecret] ?? '';
+    final appId = account.configString(cfgAppId);
+    if (account.tier != PlatformTier.byokApi || token == null || appSecret.isEmpty || appId.isEmpty) return null;
+    try {
+      final res = await ctx.http.get(graphUri('debug_token', {'input_token': token, 'access_token': '$appId|$appSecret'}), throwOnError: false);
+      final data = res.jsonMap['data'];
+      if (!res.ok || data is! Map) return null;
+      final exp = data['expires_at'];
+      final secs = exp is int ? exp : int.tryParse('${exp ?? ''}');
+      return SignInServerRead(
+        readAt: ctx.now(),
+        expiresAt: secs == null || secs <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true),
+        isValid: data['is_valid'] != false,
+      );
+    } on Exception catch (e) {
+      // The type only: the error's text can quote the address, token included.
+      ctx.log.debug('Facebook debug_token failed (${e.runtimeType})');
+      return null;
+    }
+  }
+
+  @override
   PlatformDescriptor get descriptor => facebookDescriptor;
 
   @override
@@ -154,11 +185,9 @@ class FacebookAdapter extends PlatformAdapter {
       final page = _choosePage(pages, input['page']);
       final others = pages.map((p) => p.toSummary()).toList();
 
-      final secrets = OAuthTokens(accessToken: page.accessToken).toSecrets({
-        secAppSecret: appSecret,
-        secUserToken: userTokens.accessToken,
-        if (userTokens.expiresAt != null) secUserTokenExpiresAt: userTokens.expiresAt!.toUtc().toIso8601String(),
-      });
+      // The 60-day user token only served to list the Pages above: it is not
+      // kept, so its date can never be mistaken for the Page token's end.
+      final secrets = OAuthTokens(accessToken: page.accessToken).toSecrets({secAppSecret: appSecret});
       return ConnectResult(
         account: ConnectedAccount(
           id: 'facebook-${page.id}',
@@ -311,7 +340,7 @@ class FacebookAdapter extends PlatformAdapter {
       res = await ctx.http.get(graphUri('me/permissions', withToken(const {}, userToken, appSecret)),
           throwOnError: false);
     } on Exception catch (e) {
-      ctx.log.debug('Could not read the granted Facebook permissions: $e');
+      ctx.log.debug('Could not read the granted Facebook permissions (${e.runtimeType})');
       return;
     }
     final data = res.jsonMap['data'];
@@ -444,7 +473,7 @@ class FacebookAdapter extends PlatformAdapter {
         final id = optString(info, 'app_id');
         if (id != null) return FacebookTokenApp(id, optString(info, 'application'));
       } on Exception catch (e) {
-        ctx.log.debug('Facebook debug_token failed: $e');
+        ctx.log.debug('Facebook debug_token failed (${e.runtimeType})');
       }
     }
     return null;
@@ -472,11 +501,12 @@ class FacebookAdapter extends PlatformAdapter {
   // refresh
   // ---------------------------------------------------------------------
 
-  /// Page tokens derived from a long-lived user token do not expire (Meta:
-  /// "Long-lived Page access token do not have an expiration date") and
-  /// there is no refresh grant, so there is nothing to refresh. They are
-  /// invalidated by password changes, role loss or app removal, which surface
-  /// as `auth` errors at publish time.
+  /// Page tokens derived from a long-lived user token have no end date (Meta:
+  /// "Long-lived Page access token do not have an expiration date") and there
+  /// is no refresh grant, so there is nothing to refresh. Meta can still end
+  /// them: a password change, a removed app, a Meta app left Inactive after 90
+  /// days, a permission unused for 90 days. Those surface as `auth` errors at
+  /// publish time.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -662,6 +692,7 @@ class FacebookAdapter extends PlatformAdapter {
           return PublishResult.partialFailure(
             PublishError(
               kind: error.kind,
+              notAllowed: error.notAllowed,
               message: 'Publishing $label failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on '
                   'Facebook (${ids.join(', ')}); post the rest by hand.',
               statusCode: error.statusCode,

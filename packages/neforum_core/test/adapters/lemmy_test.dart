@@ -176,7 +176,7 @@ void main() {
         'GET /api/v3/community',
       ]);
       expect(calls[0].url.host, 'lemmy.example');
-      expect(bodyOf(calls[0]), {'username_or_email': 'alice', 'password': 'hunter2', 'totp_2fa_token': '123456'});
+      expect(bodyOf(calls[0]), {'username_or_email': 'alice', 'password': 'hunter2', 'totp_2fa_token': '123456', 'stay_logged_in': true});
       expect(calls[0].headers.containsKey('Authorization'), isFalse);
       expect(calls[1].headers['Authorization'], 'Bearer JWT123');
       expect(calls[2].url.queryParameters, {'name': 'technology@lemmy.world'});

@@ -36,6 +36,7 @@ class PublishError {
     this.raw,
     this.retryAfter,
     this.uploadInterrupted,
+    this.notAllowed,
   });
 
   factory PublishError.fromJson(Map<String, dynamic> json) => PublishError(
@@ -48,10 +49,11 @@ class PublishError {
             ? null
             : Duration(seconds: json['retryAfterSeconds'] as int),
         uploadInterrupted: json['uploadInterrupted'] as bool?,
+        notAllowed: json['notAllowed'] as bool?,
       );
 
-  const PublishError.auth(String message, {String? raw, int? statusCode})
-      : this(kind: PublishErrorKind.auth, message: message, raw: raw, statusCode: statusCode);
+  const PublishError.auth(String message, {String? raw, int? statusCode, bool? notAllowed})
+      : this(kind: PublishErrorKind.auth, message: message, raw: raw, statusCode: statusCode, notAllowed: notAllowed);
 
   const PublishError.quota(String message, {String? raw, int? statusCode, Duration? retryAfter})
       : this(
@@ -108,6 +110,12 @@ class PublishError {
 
   /// [message] without its full stop, to go in the middle of a sentence.
   String get _clause => message.endsWith('.') ? message.substring(0, message.length - 1) : message;
+  /// An `auth` error that means "not allowed" rather than "expired": the
+  /// sign-in works, but the network refuses this account or this action (a bot
+  /// without rights, a firewall, a missing permission). A nullable field and
+  /// not a new [PublishErrorKind]: a device on 1.3.5 reads synced posts with
+  /// `values.byName`, which throws on a kind it does not know.
+  final bool? notAllowed;
 
   /// Wraps an error that happened after some parts of a thread were already
   /// posted. Never retryable: a retry would post the earlier parts again.
@@ -121,6 +129,7 @@ class PublishError {
       statusCode: statusCode,
       raw: raw,
       uploadInterrupted: uploadInterrupted,
+      notAllowed: notAllowed,
     );
   }
 
@@ -136,6 +145,7 @@ class PublishError {
       statusCode: statusCode,
       raw: raw,
       uploadInterrupted: uploadInterrupted,
+      notAllowed: notAllowed,
     );
   }
 
@@ -153,6 +163,7 @@ class PublishError {
         if (raw != null) 'raw': raw,
         if (retryAfter != null) 'retryAfterSeconds': retryAfter!.inSeconds,
         if (uploadInterrupted != null) 'uploadInterrupted': uploadInterrupted,
+        if (notAllowed == true) 'notAllowed': true,
       };
 
   @override

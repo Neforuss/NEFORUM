@@ -35,7 +35,7 @@ class MatrixApiError implements Exception {
             'Reconnect the account.', raw: snippet, statusCode: statusCode);
       case 'M_FORBIDDEN':
         return PublishError.auth('$where: not allowed ($message). Check that the account may post in this room.',
-            raw: snippet, statusCode: statusCode);
+            raw: snippet, statusCode: statusCode, notAllowed: true);
       case 'M_LIMIT_EXCEEDED':
         return PublishError.quota('$where: rate limited by the homeserver',
             raw: snippet, statusCode: statusCode, retryAfter: retryAfter);
@@ -52,7 +52,7 @@ class MatrixApiError implements Exception {
       return PublishError.quota('$where: rate limited', raw: snippet, statusCode: statusCode, retryAfter: retryAfter);
     }
     if (statusCode == 401 || statusCode == 403) {
-      return PublishError.auth('$where: $message', raw: snippet, statusCode: statusCode);
+      return PublishError.auth('$where: $message', raw: snippet, statusCode: statusCode, notAllowed: statusCode == 403 ? true : null);
     }
     if (statusCode == 413) return PublishError.validation('$where: too large', raw: snippet, statusCode: statusCode);
     if (statusCode >= 500) {

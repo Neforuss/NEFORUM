@@ -112,6 +112,7 @@ class _CopyAllSetupsButtonState extends ConsumerState<_CopyAllSetupsButton> {
         travel: currentKeysTravel(ref),
         deviceLabel: ref.read(connectionDeviceLabelProvider),
         readTimeout: _CopyAllSetupsButton.readTimeout,
+        statuses: await ref.read(servicesProvider).signInStatusStore.all(),
       );
       await Clipboard.setData(ClipboardData(text: result.text));
       if (!mounted) return;

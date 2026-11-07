@@ -45,6 +45,14 @@ class TikTokAdapter extends PlatformAdapter {
   static const privacyLevels = {'PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'};
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.tikTokFor(account);
+
+  /// TikTok documents a new refresh token on every renewal, with the old one
+  /// stopped (pages updated 2026-11-05).
+  @override
+  bool rotatesRefreshTokensFor(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
+  @override
   PlatformDescriptor get descriptor => tiktokDescriptor;
 
   @override

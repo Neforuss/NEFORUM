@@ -146,6 +146,7 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
 
 /// The advice line under a failed target's message.
 String targetErrorAdvice(PublishError? e) => switch (e?.kind) {
+      PublishErrorKind.auth when e?.notAllowed == true => 'The network does not allow this. That does not mean the sign-in ended. The message above says what to change, if the network gave a reason. Then retry.',
       PublishErrorKind.network when e?.uploadInterrupted == true && (e!.retryable || e.isPartialThread) =>
         'A slow or busy connection usually causes this. Retry when nothing else is uploading, or use a smaller file.',
       // The whole request went out and no answer came back.

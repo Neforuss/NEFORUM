@@ -36,6 +36,8 @@ class AppServices {
     required this.handoff,
     required this.browserBridge,
     required this.publishJournal,
+    required this.signInStatusStore,
+    required this.signInStatus,
     required this.demo,
     required this._settings,
   }) : quota = QuotaTracker(quotaRepo);
@@ -47,6 +49,13 @@ class AppServices {
   /// The publish runs of this process and of the background isolates that
   /// share its data folder (see [recoverInterruptedPublishing]).
   final PublishJournal publishJournal;
+
+  /// What this device last worked out about each sign-in, readable with no
+  /// keychain prompt. Device-only: never synced, never exported.
+  final SignInStatusStore signInStatusStore;
+
+  /// Keeps [signInStatusStore] current: [secrets] tells it about every write.
+  final SignInStatusTracker signInStatus;
   final QuotaRepository quotaRepo;
   final SecretStore secrets;
   final AdapterRegistry registry;
@@ -86,16 +95,18 @@ class AppServices {
     late final AccountRepository accounts;
     late final PostRepository posts;
     late final QuotaRepository quota;
-    late final SecretStore secrets;
+    late final SecretStore keychain;
     late final PublishJournal journal;
+    late final SignInStatusStore signInStore;
     final AdapterRegistry registry;
 
     if (demo) {
       accounts = InMemoryAccountRepository();
       posts = _NotificationCancellingPostRepository(InMemoryPostRepository());
       quota = InMemoryQuotaRepository();
-      secrets = InMemorySecretStore();
+      keychain = InMemorySecretStore();
       journal = PublishJournal.inMemory();
+      signInStore = SignInStatusStore.inMemory();
       registry = demoRegistry(real);
       await seedDemo(registry: registry, accounts: accounts, posts: posts, quota: quota, media: MediaLibrary(st));
     } else {
@@ -103,10 +114,16 @@ class AppServices {
       accounts = store.accounts;
       posts = _NotificationCancellingPostRepository(store.posts);
       quota = store.quota;
-      secrets = SecureSecretStore();
+      keychain = SecureSecretStore();
       journal = store.publishJournal;
+      signInStore = store.signInStatus;
       registry = real;
     }
+
+    // Every write of an account's keys, whoever makes it (a renewal, a connect,
+    // a sync, a restored backup), updates its status.
+    final signIn = SignInStatusTracker(store: signInStore, accounts: accounts, registry: registry, secrets: keychain);
+    final SecretStore secrets = SignInStatusSecretStore(keychain, signIn);
 
     late final AppServices services;
     final handoff = AppHandoffLauncher(onSkip: (postId, accountId) => services._skipped.add('$postId|$accountId'));
@@ -131,6 +148,8 @@ class AppServices {
       // unpair the extension.
       browserBridge: browserBridge ?? BrowserBridge.create(secrets: demo && Env.isDesktop ? SecureSecretStore() : secrets),
       publishJournal: journal,
+      signInStatusStore: signInStore,
+      signInStatus: signIn,
       demo: demo,
       settings: settings,
     );
@@ -216,6 +235,7 @@ class AppServices {
         options: _settings.publishOptions,
         secretsCoordinator: cloudSync.active ? cloudSync : null,
         journal: publishJournal,
+        signInOutcomes: signInStatus,
         readMedia: media.read,
       );
 
@@ -469,6 +489,8 @@ class AppServices {
     await step('retention', applyRetention);
     await step('unused media', deleteUnreferencedMedia);
     await step('share-sheet copies', deleteExpiredShareExports);
+    // Not awaited: this waits on the keychain, and starting up never does.
+    unawaited(step('sign-in dates', signInStatus.seedMissing));
   }
 
   /// Names of the files every post, the composer draft on disk and

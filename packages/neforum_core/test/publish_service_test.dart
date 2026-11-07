@@ -10,6 +10,9 @@ import 'support/test_context.dart';
 
 /// A platform that records what it was asked to do.
 class _FakeAdapter extends PlatformAdapter {
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
   _FakeAdapter({this.scheduling = true, this.maxLength = 500});
 
   final bool scheduling;

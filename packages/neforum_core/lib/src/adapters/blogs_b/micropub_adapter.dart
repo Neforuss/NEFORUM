@@ -110,6 +110,9 @@ class MicropubAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.micropub(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override
@@ -342,7 +345,11 @@ class MicropubAdapter extends PlatformAdapter {
     );
     try {
       final fresh = await client.refresh(ctx.http, refreshToken: refresh, now: ctx.now());
-      return fresh.toSecrets(secrets);
+      final out = fresh.toSecrets(secrets);
+      // No expires_in: the new token has no known end. The old date would read
+      // as expired for ever.
+      if (fresh.expiresAt == null) out.remove(OAuthTokens.keyExpiresAt);
+      return out;
     } on OAuthException catch (e) {
       throw AdapterException(e.toRefreshError('Your site'));
     } on Exception catch (e) {

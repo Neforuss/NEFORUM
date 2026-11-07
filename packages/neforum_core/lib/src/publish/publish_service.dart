@@ -23,6 +23,7 @@ import '../model/validation.dart';
 import '../quota/quota_tracker.dart';
 import '../storage/repositories.dart';
 import '../storage/secret_store.dart';
+import '../storage/sign_in_status_store.dart';
 import '../sync/secrets_coordinator.dart';
 import '../text/variant_resolver.dart';
 import '../util/logger.dart';
@@ -158,6 +159,7 @@ class PublishService {
     this.options = const PublishOptions(),
     this.secretsCoordinator,
     this.journal,
+    this.signInOutcomes,
     Clock? clock,
     Logger? log,
     Future<Uint8List> Function(MediaAttachment media)? readMedia,
@@ -191,6 +193,10 @@ class PublishService {
   /// this process abandons can be recovered and one it still executes is
   /// left alone (see [PublishJournal]).
   final PublishJournal? journal;
+
+  /// Told how each post went, so a sign-in's last confirmed time and its daily
+  /// server read stay current without a keychain read per card.
+  final SignInOutcomes? signInOutcomes;
   final Clock _now;
   final Logger _log;
   final Future<Uint8List> Function(MediaAttachment media)? _readMedia;
@@ -597,6 +603,13 @@ class PublishService {
   Future<(Map<String, String>?, PublishError?)> _freshSecrets(
       ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {bool again = true}) async {
     final secretMap = await secrets.read(account.id) ?? const <String, String>{};
+    // A renewal carries when it happened and where its dates came from, inside
+    // the same map, so they travel with the keys in one sync record.
+    Future<Map<String, String>?> renew(ConnectedAccount a, Map<String, String> s) async {
+      final fresh = await adapter.refreshSecrets(a, s, ctx);
+      return fresh == null ? null : stampSignInRenewal(s, fresh, now: _now());
+    }
+
     try {
       final coordinator = secretsCoordinator;
       final refreshed = coordinator != null && adapter.rotatesRefreshTokensFor(account)
@@ -604,8 +617,8 @@ class PublishService {
           // reconnect made on another device (another app, its keys): the
           // keys it hands over are renewed with the account as stored now,
           // never the one this attempt loaded before that sync.
-          ? await coordinator.renew(account, secretMap, (s) async => adapter.refreshSecrets(await accounts.get(account.id) ?? account, s, ctx))
-          : await adapter.refreshSecrets(account, secretMap, ctx);
+          ? await coordinator.renew(account, secretMap, (s) async => renew(await accounts.get(account.id) ?? account, s), renewsEarly: (s) => adapter.renewsEarly(account, s, _now()))
+          : await renew(account, secretMap);
       if (refreshed == null) return (secretMap, null);
       // 1.3.5: the keys stored here changed while the network answered.
       // * The coordinator's renew() stores its renewal itself, after the same
@@ -653,8 +666,24 @@ class PublishService {
       if (NeforumHttp.isTransportError(e)) {
         return (null, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
-      return (null, PublishError.auth('Could not refresh credentials: $e'));
+      return (null, PublishError.auth('Could not refresh credentials (${e.runtimeType})'));
     }
+  }
+
+  /// Tells [signInOutcomes] how [t] went. Not awaited: a post never waits for
+  /// this, and nothing here can change what it did.
+  void _noteSignIn(PostTarget t) {
+    final outcomes = signInOutcomes;
+    final r = t.result;
+    if (outcomes == null || r == null || r.handedOff) return;
+    final worked = r.success;
+    final refused = !r.success && refusesSignIn(r.error);
+    if (!worked && !refused) return;
+    unawaited(_bestEffort(_log, 'note how the sign-in did', () async {
+      final account = await accounts.get(t.accountId);
+      if (account == null || account.tier == PlatformTier.handoff) return;
+      await outcomes.publishFinished(account, worked: worked, refused: refused, ctx: context(log: _log.child(account.platformId)));
+    }));
   }
 
   Future<PostTarget> _publishTarget(
@@ -667,6 +696,7 @@ class PublishService {
   }) async {
     final updated = await _publishTargetOnce(post, target,
         interactive: interactive, onProgress: onProgress, forceHandoff: forceHandoff, cancellation: cancellation);
+    _noteSignIn(updated);
     final earlier = target.canResume ? target.result : null;
     final r = updated.result;
     if (earlier == null || r == null || r.success || r.allRemoteIds.isNotEmpty) return updated;
@@ -850,6 +880,7 @@ class PublishService {
             message: cause.message,
             statusCode: cause.statusCode,
             raw: cause.raw,
+            notAllowed: cause.notAllowed,
           ),
           remoteId: result.remoteId,
           remoteUrl: result.remoteUrl,
@@ -919,6 +950,7 @@ class PublishService {
     PublishResult stopped(PublishError e) => PublishResult.partialFailure(
           PublishError(
             kind: e.kind,
+            notAllowed: e.notAllowed,
             message: 'Post ${ids.length + 2} of $total failed: ${e.message}. '
                 'The first ${ids.length + 1} post(s) are live; Retry posts the rest.',
             statusCode: e.statusCode,
@@ -998,7 +1030,8 @@ class PublishService {
   }
 
   PostTarget _fail(PostTarget t, PublishError error, {ConnectedAccount? account}) {
-    if (account != null && error.kind == PublishErrorKind.auth) {
+    // "Not allowed" is not a broken sign-in: the card does not ask for a reconnect.
+    if (account != null && refusesSignIn(error)) {
       // Fire and forget; the account list shows the warning.
       unawaited(_bestEffort(_log, 'save the account warning', () => _setLastError(account.id, error.message)));
     }

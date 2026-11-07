@@ -147,6 +147,19 @@ class ThreadsAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.threadsFor(account);
+
+  /// Threads' own `debug_token`, with the token as its own caller.
+  @override
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final token = OAuthTokens.fromSecrets(secrets)?.accessToken;
+    if (account.tier != PlatformTier.byokApi || token == null) return null;
+    final info = await ThreadsApi.debugToken(ctx.http, token, log: ctx.log);
+    if (info == null) return null;
+    return SignInServerRead(readAt: ctx.now(), expiresAt: info.expiresAt, dataAccessExpiresAt: info.dataAccessExpiresAt, isValid: info.isValid);
+  }
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override
@@ -471,7 +484,9 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
       ctx.log.warn('Threads token refresh failed; using the current token: ${e.error.message}');
       return null;
     } on Exception catch (e) {
-      ctx.log.warn('Threads token refresh failed; using the current token: $e');
+      // The type only: this request carries the token in its address, and the
+      // exception's text quotes the address.
+      ctx.log.warn('Threads token refresh failed; using the current token (${e.runtimeType})');
       return null;
     }
   }

@@ -53,6 +53,9 @@ class YouTubeAdapter extends PlatformAdapter {
   static const privacyStatuses = {'public', 'unlisted', 'private'};
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.youTubeFor(account);
+
+  @override
   PlatformDescriptor get descriptor => youtubeDescriptor;
 
   @override

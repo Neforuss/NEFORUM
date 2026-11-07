@@ -92,6 +92,9 @@ class HashnodeAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.hashnode(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override
@@ -111,7 +114,7 @@ class HashnodeAdapter extends PlatformAdapter {
               label: 'Personal Access Token',
               kind: FieldKind.password,
               secret: true,
-              help: 'From Account settings > Developer. It does not expire until you revoke it.',
+              help: 'From Account settings > Developer. Hashnode publishes no end date for it.',
             ),
             ConnectField(
               key: 'publication',

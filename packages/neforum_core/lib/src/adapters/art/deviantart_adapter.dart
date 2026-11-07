@@ -104,13 +104,18 @@ class DeviantArtAdapter extends PlatformAdapter {
   static const String uploadUrl = 'https://www.deviantart.com/studio?new=1';
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.deviantArt(account);
+
+  @override
   PlatformDescriptor get descriptor => deviantArtDescriptor;
 
   @override
   PlatformDescriptor descriptorForAccount(ConnectedAccount account) =>
       account.tier == PlatformTier.handoff ? _handoffDescriptor : deviantArtDescriptor;
 
-  /// DeviantArt replaces the refresh token on every renewal.
+  /// Treated as replacing the refresh token on every renewal: the safe reading,
+  /// since DeviantArt's documents do not settle it (their example shows the same
+  /// value coming back).
   @override
   bool rotatesRefreshTokensFor(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
 
@@ -237,7 +242,7 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
           if (user.id != null) cfgUserId: user.id,
         },
       ),
-      secrets: tokens.toSecrets({if (clientSecret.isNotEmpty) secretClientSecret: clientSecret}),
+      secrets: _withRefreshEnd(tokens.toSecrets({if (clientSecret.isNotEmpty) secretClientSecret: clientSecret}), ctx.now()),
     );
   }
 
@@ -289,6 +294,14 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
 
   // ------------------------------------------------------------- refresh
 
+  /// DeviantArt: "The refresh_token will expire after 3 months." It reports no
+  /// date, so NEFORUM writes one, marked as worked out.
+  static Map<String, String> _withRefreshEnd(Map<String, String> secrets, DateTime now) => {
+        ...secrets,
+        SignInSecretKeys.refreshExpiresAt: now.add(SignInPolicies.deviantArtRefreshLife).toUtc().toIso8601String(),
+        SignInSecretKeys.refreshExpiresSource: SignInDateSource.computed.name,
+      };
+
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -305,7 +318,7 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
     try {
       final fresh = await _oauthClient(clientId, secrets[secretClientSecret] ?? '')
           .refresh(ctx.http, refreshToken: refresh, now: now);
-      return fresh.toSecrets(secrets);
+      return _withRefreshEnd(fresh.toSecrets(secrets), now);
     } on OAuthException catch (e) {
       final err = e.toRefreshError('DeviantArt');
       if (err.kind == PublishErrorKind.auth) {
@@ -408,6 +421,7 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
       // The draft stays in Sta.sh; a retry submits the file again.
       return PublishResult.failure(PublishError(
         kind: err.kind,
+        notAllowed: err.notAllowed,
         message: '${err.message}. The image waits in your Sta.sh (item $itemId); publish it there, or retry.',
         retryable: err.retryable,
         statusCode: err.statusCode,

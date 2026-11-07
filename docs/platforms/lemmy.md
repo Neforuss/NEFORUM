@@ -42,7 +42,7 @@ Lemmy has no OAuth login for apps, so NEFORUM logs in the same way the website d
 - It reads `GET /api/v3/site` for your profile name, avatar, the Lemmy version and the instance's list of languages.
 - It looks up the default community with `GET /api/v3/community?name=...`. If your instance has never seen that community, NEFORUM asks it to fetch it (`resolve_object`).
 
-The token does not expire. It stops working when you log out of that session, change your password, or remove the account in NEFORUM (which logs it out with `POST /api/v3/user/logout`). If that happens, connect again.
+The token has no end date on Lemmy 0.19. On Lemmy 1.0 a login ends after one week unless it asks to stay, and NEFORUM asks. An account connected before NEFORUM 1.4 on a 1.0 server keeps its one-week date, which **Accounts** shows: connect it again. The token stops working when you log out of that session, change your password, or remove the account in NEFORUM (which logs it out with `POST /api/v3/user/logout`). If that happens, connect again.
 
 ## What gets posted
 

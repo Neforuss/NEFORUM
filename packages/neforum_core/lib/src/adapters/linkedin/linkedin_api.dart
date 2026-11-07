@@ -222,6 +222,7 @@ class LinkedInApi {
         '"Share on LinkedIn" product (w_member_social) and reconnect LinkedIn.',
         raw: raw,
         statusCode: status,
+        notAllowed: true,
       );
     }
     if (status == 429 || code == 'TOO_MANY_REQUESTS') {
@@ -264,6 +265,7 @@ class LinkedInApi {
         ? base
         : PublishError(
             kind: base.kind,
+            notAllowed: base.notAllowed,
             message: '${base.message}$suffix',
             retryable: base.retryable,
             statusCode: base.statusCode,

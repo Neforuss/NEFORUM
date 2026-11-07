@@ -104,6 +104,10 @@ const Set<String> _authCodes = {
   'registration_denied',
 };
 
+/// Of [_authCodes], the ones where the login works but the instance will not let
+/// this account post yet. A reconnect does not change those.
+const Set<String> _accountStateCodes = {'email_not_verified', 'registration_application_is_pending', 'registration_denied'};
+
 /// Codes that mean "this post (or its target) is not acceptable".
 const Set<String> _validationCodes = {
   'invalid_post_title',
@@ -170,7 +174,7 @@ PublishError lemmyPublishError(HttpFailure f, {required String context}) {
     return PublishError.quota(msg('rate limited'), raw: raw, statusCode: r.statusCode, retryAfter: r.retryAfter);
   }
   if (code != null && _authCodes.contains(code)) {
-    return PublishError.auth(msg(code), raw: raw, statusCode: r.statusCode);
+    return PublishError.auth(msg(code), raw: raw, statusCode: r.statusCode, notAllowed: _accountStateCodes.contains(code) ? true : null);
   }
   if (code != null && _accountCodes.contains(code)) {
     return PublishError.platform(msg(code), raw: raw, statusCode: r.statusCode);
@@ -188,6 +192,7 @@ PublishError lemmyPublishError(HttpFailure f, {required String context}) {
     // Unknown Lemmy code on a 400: the request was refused as such.
     return PublishError(
       kind: r.statusCode == 400 ? PublishErrorKind.validation : base.kind,
+      notAllowed: base.notAllowed,
       message: msg(code),
       raw: raw,
       statusCode: r.statusCode,
@@ -195,7 +200,7 @@ PublishError lemmyPublishError(HttpFailure f, {required String context}) {
     );
   }
   if (detail != null && r.statusCode < 500) {
-    return PublishError(kind: base.kind, message: '$context: $detail', raw: raw, statusCode: r.statusCode, retryable: base.retryable);
+    return PublishError(kind: base.kind, notAllowed: base.notAllowed, message: '$context: $detail', raw: raw, statusCode: r.statusCode, retryable: base.retryable);
   }
   return base;
 }
@@ -240,10 +245,16 @@ class LemmyApi {
 
   /// `POST /api/v3/user/login`. Returns the raw response map (`jwt` may be
   /// null while the account awaits approval or email verification).
+  ///
+  /// `stay_logged_in`: without it Lemmy 1.0 ends the login after one week, and
+  /// NEFORUM does not keep the password. Lemmy 0.19's `Login` struct has no such
+  /// field and no `deny_unknown_fields` (`crates/api_common/src/person.rs` at
+  /// tag 0.19.21, read 2026-11-06), so serde ignores it there.
   Future<Map<String, dynamic>> login(String usernameOrEmail, String password, {String? totp}) => post('user/login', {
         'username_or_email': usernameOrEmail,
         'password': password,
         if (totp != null && totp.isNotEmpty) 'totp_2fa_token': totp,
+        'stay_logged_in': true,
       });
 
   /// `GET /api/v3/community?name=...` -> `community_view.community`.
