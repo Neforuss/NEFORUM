@@ -275,6 +275,7 @@ class PlatformDescriptor {
     required this.media,
     required this.accountRequirements,
     required this.apiCostSummary,
+    this.shortName,
     this.iconKey,
     this.homepage,
     this.defaultQuotas = const [],
@@ -290,6 +291,13 @@ class PlatformDescriptor {
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
   final String id;
   final String name;
+
+  /// A shorter form of [name] for tight places, such as the account grid on
+  /// phones. `null` when [name] is short already.
+  final String? shortName;
+
+  /// [shortName] when there is one, otherwise [name].
+  String get compactName => shortName ?? name;
 
   /// Icon name resolved by the UI layer.
   final String? iconKey;

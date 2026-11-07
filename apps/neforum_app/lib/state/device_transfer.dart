@@ -82,6 +82,7 @@ const Map<String, String> kDeviceOnlySettings = {
   'uiZoom': 'How big this screen draws everything.',
   'mobileTextScale': "This phone's or tablet's text size.",
   'collapsedSettingsSections': 'Which Settings sections are folded away in this window.',
+  'targetPickerFolded': "Whether this phone's composer shows the account grid or its one-line summary.",
   'automaticHandoffPosting': 'Lets the browser extension on this computer press Post by itself: switched on per computer, never by another device.',
   'automaticHandoffExcludedPlatforms': 'Goes with automaticHandoffPosting on this computer.',
   'backgroundImagePath': "A picture file in this device's data folder.",

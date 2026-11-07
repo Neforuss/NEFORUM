@@ -95,6 +95,9 @@ Rules:
   naturally paired.
 - Expanded (`context.isExpanded`): sidebar, 40px gutters, side-by-side panes
   (composer left, previews right), max content width 1240.
+- Choosing accounts on a phone is `AccountSelectionGrid`: every account by
+  name, with nothing that scrolls sideways. Wider windows keep `AccountChip`.
+  A long platform name needs a `shortName` on its `PlatformDescriptor`.
 - Text never runs wider than ~75 characters; forms max `Breakpoints.readable`.
 - Must work at 360×640 with no horizontal overflow and at 2560 wide without
   looking empty.

@@ -47,6 +47,7 @@ class GoogleBusinessAdapter extends HandoffOnlyAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'google_business',
     name: 'Google Business Profile',
+    shortName: 'Google Business',
     iconKey: 'google_business',
     homepage: 'https://business.google.com/',
     tiers: {PlatformTier.handoff},

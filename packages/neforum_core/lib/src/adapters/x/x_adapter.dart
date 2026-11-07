@@ -71,6 +71,7 @@ class XAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'x',
     name: 'X (Twitter)',
+    shortName: 'X',
     iconKey: 'x',
     homepage: 'https://x.com',
     tiers: {PlatformTier.byokApi, PlatformTier.handoff},

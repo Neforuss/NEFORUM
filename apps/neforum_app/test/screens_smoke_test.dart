@@ -57,7 +57,7 @@ Future<void> _loadFonts() async {
 }
 
 const _routes = ['/compose', '/queue', '/activity', '/activity/post/demo-post-2', '/accounts', '/accounts/add', '/settings'];
-const _sizes = {'phone': Size(360, 740), 'tablet': Size(900, 700), 'desktop': Size(1440, 900), 'wide': Size(2200, 1200)};
+const _sizes = {'small phone': Size(360, 640), 'phone': Size(360, 740), 'tablet': Size(900, 700), 'desktop': Size(1440, 900), 'wide': Size(2200, 1200)};
 
 void main() {
   setUpAll(_loadFonts);
