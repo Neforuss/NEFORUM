@@ -11,6 +11,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/char_ring.dart';
 import '../../widgets/media_thumb.dart';
+import 'emoji_insert.dart';
 
 /// Platform-specific knobs adapters read from `PostOverrides.extra`.
 class _Extra {
@@ -221,6 +222,8 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
               Text(p.account.handle ?? p.account.displayName, style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
             ]),
           ),
+          const EmojiButton(),
+          const SizedBox(width: Space.xs),
           TierBadge(p.account.tier),
         ]),
       ),
@@ -235,22 +238,34 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
             ),
             const SizedBox(height: Space.lg),
             if (rules.titleSupported) ...[
-              TextField(controller: _title, decoration: InputDecoration(labelText: 'Title', counterText: rules.titleMax == null ? null : '${_title.text.length}/${rules.titleMax}'), onChanged: (_) => setState(() {})),
+              EmojiTargetField(
+                controller: _title,
+                onChanged: (_) => setState(() {}),
+                child: TextField(controller: _title, decoration: InputDecoration(labelText: 'Title', counterText: rules.titleMax == null ? null : '${_title.text.length}/${rules.titleMax}'), onChanged: (_) => setState(() {})),
+              ),
               const SizedBox(height: Space.md),
             ],
             Stack(children: [
-              TextField(
+              EmojiTargetField(
                 controller: _text,
-                minLines: 5,
-                maxLines: 12,
                 onChanged: (_) => setState(() {}),
-                decoration: const InputDecoration(labelText: 'Text', alignLabelWithHint: true, contentPadding: EdgeInsets.fromLTRB(Space.lg, Space.lg, Space.x4, Space.lg)),
+                isDefault: true,
+                child: TextField(
+                  controller: _text,
+                  minLines: 5,
+                  maxLines: 12,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(labelText: 'Text', alignLabelWithHint: true, contentPadding: EdgeInsets.fromLTRB(Space.lg, Space.lg, Space.x4, Space.lg)),
+                ),
               ),
               Positioned(right: 10, bottom: 10, child: CharRing(used: used, max: rules.maxLength, size: 22)),
             ]),
             if (rules.supportsContentWarning) ...[
               const SizedBox(height: Space.md),
-              TextField(controller: _cw, decoration: const InputDecoration(labelText: 'Content warning', prefixIcon: Icon(Icons.warning_amber_rounded))),
+              EmojiTargetField(
+                controller: _cw,
+                child: TextField(controller: _cw, decoration: const InputDecoration(labelText: 'Content warning', prefixIcon: Icon(Icons.warning_amber_rounded))),
+              ),
             ],
             if (c.media.isNotEmpty && d.media.supportsAnyMedia) ...[
               const SizedBox(height: Space.lg),

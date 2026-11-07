@@ -12,6 +12,7 @@ import '../theme/tokens.dart';
 import 'aligned_text.dart';
 import 'caption_fonts.dart';
 import 'card_design.dart';
+import 'emoji_text.dart';
 import 'photo_composite.dart';
 import 'render_parameters.dart';
 import 'text_card_background.dart';
@@ -99,7 +100,7 @@ enum TextCardFont {
 
   TextStyle style({required double fontSize, double? height, Color? color}) => TextStyle(
         fontFamily: family,
-        fontFamilyFallback: fallback,
+        fontFamilyFallback: [...fallback, ...kCaptionFontFallbacks],
         fontWeight: weight,
         fontVariations: variations,
         fontSize: fontSize,
@@ -483,10 +484,7 @@ class TextCardPainter extends CustomPainter {
     final handleOnTop = corner.isTop && handle.isNotEmpty;
     final handleColor = s.handleColor == null ? fg.withValues(alpha: 0.62) : Color(s.handleColor!);
     TextPainter handleLaidOut(double room) => TextPainter(
-          text: TextSpan(
-            text: handle,
-            style: TextStyle(fontFamily: Fonts.body, fontWeight: FontWeight.w500, fontSize: 26 * u * s.handleSize, color: handleColor, height: 1.1),
-          ),
+          text: emojiSpan(handle, TextStyle(fontFamily: Fonts.body, fontWeight: FontWeight.w500, fontSize: 26 * u * s.handleSize, color: handleColor, height: 1.1)),
           textDirection: TextDirection.ltr,
           maxLines: 1,
           ellipsis: '…',
@@ -786,6 +784,7 @@ Future<Uint8List> renderTextCardJpeg(
     TextCardStyle style = TextCardStyle.classic}) async {
   final width = size.width.round();
   final height = size.height.round();
+  await EmojiSupport.prepare('$text ${byline == null ? '' : style.bylineFor(byline)}');
   // A preview's engine image is never drawn here: only the photo's pixels.
   final photo = backdrop?.pixels;
   final words = await rasterizeWordsLayer(width, height, (canvas) {

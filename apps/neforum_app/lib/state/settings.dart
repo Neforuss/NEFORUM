@@ -192,6 +192,8 @@ class AppSettings {
     this.updateLatestRelease = const {},
     this.updateDismissedVersion,
     this.fontDownloads = FontDownloadMode.ask, // 1.4: fonts
+    this.emojiRecents = const [], // 1.4: emoji
+    this.emojiSkinTone = 0, // 1.4: emoji
     this.textCardEveryNetwork = false, // 1.3: cards
     // 1.3.1: sidebar
     this.navigationChromeOpacity = 0,
@@ -272,6 +274,8 @@ class AppSettings {
         updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
         fontDownloads: FontDownloadMode.values.asNameMap()[j['fontDownloads']] ?? FontDownloadMode.ask, // 1.4: fonts
+        emojiRecents: [for (final e in j['emojiRecents'] as List? ?? const []) if (e is String) e], // 1.4: emoji
+        emojiSkinTone: ((j['emojiSkinTone'] as num?)?.toInt() ?? 0).clamp(0, 5), // 1.4: emoji
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
@@ -489,6 +493,12 @@ class AppSettings {
   /// agreeing to contact a third party is per device.
   final FontDownloadMode fontDownloads;
 
+  /// 1.4: the emoji picked last on this device, newest first.
+  final List<String> emojiRecents;
+
+  /// 1.4: the skin tone the emoji sheet shows: 0 for the default, 1 to 5.
+  final int emojiSkinTone;
+
   /// 1.3: cards. New text-only posts start with the same text card on every
   /// network that takes images, not only on those that need one. Each post
   /// can change it.
@@ -610,6 +620,8 @@ class AppSettings {
     Map<String, dynamic>? updateLatestRelease,
     String? updateDismissedVersion,
     FontDownloadMode? fontDownloads, // 1.4: fonts
+    List<String>? emojiRecents, // 1.4: emoji
+    int? emojiSkinTone, // 1.4: emoji
     bool? textCardEveryNetwork, // 1.3: cards
     // 1.3.1: sidebar
     double? navigationChromeOpacity,
@@ -687,6 +699,8 @@ class AppSettings {
         updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
         fontDownloads: fontDownloads ?? this.fontDownloads, // 1.4: fonts
+        emojiRecents: emojiRecents ?? this.emojiRecents, // 1.4: emoji
+        emojiSkinTone: emojiSkinTone ?? this.emojiSkinTone, // 1.4: emoji
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
@@ -765,6 +779,8 @@ class AppSettings {
         if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
         'fontDownloads': fontDownloads.name, // 1.4: fonts
+        if (emojiRecents.isNotEmpty) 'emojiRecents': emojiRecents, // 1.4: emoji
+        if (emojiSkinTone != 0) 'emojiSkinTone': emojiSkinTone, // 1.4: emoji
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,

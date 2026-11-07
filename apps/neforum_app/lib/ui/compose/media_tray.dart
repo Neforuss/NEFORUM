@@ -15,6 +15,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
+import 'emoji_insert.dart';
 import 'track_details_sheet.dart';
 
 /// Opens the platform picker and attaches the chosen photos, videos or sound
@@ -433,21 +434,27 @@ class _AltDialogState extends State<_AltDialog> {
         style: context.text.bodySmall,
       ),
       const SizedBox(height: Space.lg),
-      TextField(
+      EmojiTargetField(
         controller: _c,
-        autofocus: true,
-        minLines: 4,
-        maxLines: 8,
-        maxLength: _max,
-        buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
         onChanged: (_) => setState(() {}),
-        decoration: const InputDecoration(hintText: 'e.g. A wooden workbench with a vintage lathe under warm light'),
+        isDefault: true,
+        child: TextField(
+          controller: _c,
+          autofocus: true,
+          minLines: 4,
+          maxLines: 8,
+          maxLength: _max,
+          buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(hintText: 'e.g. A wooden workbench with a vintage lathe under warm light'),
+        ),
       ),
       const SizedBox(height: Space.xs),
-      Align(
-        alignment: Alignment.centerRight,
-        child: Text('$len / $_max', style: monoStyle(context, size: 11.5, color: len > _max * 0.9 ? nf.warning : nf.textFaint)),
-      ),
+      Row(children: [
+        const EmojiButton(size: 32),
+        const Spacer(),
+        Text('$len / $_max', style: monoStyle(context, size: 11.5, color: len > _max * 0.9 ? nf.warning : nf.textFaint)),
+      ]),
     ]);
     return AlertDialog(
       contentPadding: const EdgeInsets.fromLTRB(Space.xxl, Space.xxl, Space.xxl, Space.md),

@@ -105,7 +105,7 @@ Good to know:
 
 ### What gets posted
 
-- **Text:** up to 280 characters, counted the way X counts them. Most Latin, Greek and Cyrillic characters count as 1. Chinese, Japanese and Korean characters and every emoji count as 2. Every link counts as 23, however long it is. Longer text is split into a numbered **thread**: each part is posted as a reply to the one before it.
+- **Text:** up to 280 characters, counted the way X counts them. Most Latin, Greek and Cyrillic characters count as 1. Chinese, Japanese and Korean characters and every emoji count as 2, however many code points make the emoji. Every link counts as 23, however long it is. Longer text is split into a numbered **thread**: each part is posted as a reply to the one before it.
 - **Long posts:** posts over 280 characters only work if the posting account has X Premium. NEFORUM can't tell whether you have Premium, so it always splits long text into a thread.
 - **Media:** up to 4 photos (JPEG, PNG, WEBP or static GIF, 5 MB each), *or* 1 animated GIF (15 MB), *or* 1 video (MP4/MOV, up to 20 minutes and 8 GB, longer with Premium). You can't mix photos and video in one post. Media is attached to the first post of a thread.
 - **Alt text:** sent for every photo or GIF that has it, up to 1000 characters.

@@ -1,8 +1,10 @@
 import 'dart:convert';
 
 import 'package:characters/characters.dart';
+import 'package:unorm_dart/unorm_dart.dart' show nfc;
 
 import '../model/platform_descriptor.dart';
+import 'emoji_clusters.dart';
 import 'url_detector.dart';
 
 /// Counts text the way each platform does.
@@ -31,26 +33,29 @@ class TextCounter {
 
   static int utf8Bytes(String text) => utf8.encode(text).length;
 
-  /// twitter-text v3 weighted length (scaled back to "characters").
-  /// Latin, Latin-1, Latin Extended, Greek, Cyrillic, ... (U+0000–U+10FF)
-  /// and the general-punctuation ranges weigh 1; everything else weighs 2;
-  /// every emoji grapheme weighs 2; every URL weighs [urlWeight].
+  /// twitter-text v3 weighted length (scaled back to "characters"), counted
+  /// after NFC as X does. Latin, Latin-1, Latin Extended, Greek, Cyrillic, ...
+  /// (U+0000–U+10FF) and the general-punctuation ranges weigh 1; everything else
+  /// weighs 2; an emoji weighs 2 however many code points make it; every URL
+  /// weighs [urlWeight]. Checked against twitter-text's own conformance file
+  /// (test/text_counter_conformance_test.dart).
   static int weightedX(String text, {int urlWeight = 23}) {
+    final normalized = nfc(text);
     var weighted = 0;
     var cursor = 0;
-    for (final url in UrlDetector.find(text)) {
-      weighted += _weightedSegment(text.substring(cursor, url.start));
+    for (final url in UrlDetector.find(normalized)) {
+      weighted += _weightedSegment(normalized.substring(cursor, url.start));
       weighted += urlWeight * 100;
       cursor = url.end;
     }
-    weighted += _weightedSegment(text.substring(cursor));
+    weighted += _weightedSegment(normalized.substring(cursor));
     return (weighted + 99) ~/ 100;
   }
 
   static int _weightedSegment(String segment) {
     var w = 0;
     for (final cluster in segment.characters) {
-      if (_isEmojiCluster(cluster)) {
+      if (EmojiClusters.isSequence(cluster)) {
         w += 200;
         continue;
       }
@@ -61,30 +66,14 @@ class TextCounter {
     return w;
   }
 
+  /// One code point on its own: an emoji needs no case of its own, since every
+  /// one above the ranges below already weighs 2.
   static int _runeWeight(int r) {
     if (r <= 0x10FF) return 100;
     if (r >= 0x2000 && r <= 0x200D) return 100;
     if (r >= 0x2010 && r <= 0x201F) return 100;
     if (r >= 0x2032 && r <= 0x2037) return 100;
     return 200;
-  }
-
-  static bool _isEmojiCluster(String cluster) {
-    final runes = cluster.runes.toList();
-    if (runes.length == 1) {
-      final r = runes.single;
-      return (r >= 0x1F000 && r <= 0x1FAFF) || (r >= 0x2600 && r <= 0x27BF) || r == 0x2B50 || r == 0x2B55 || r == 0x3030 || r == 0x303D;
-    }
-    // Multi-code-point clusters with emoji markers: ZWJ sequences, VS16,
-    // skin tones, keycaps, flags (regional indicators), tag sequences.
-    return runes.any((r) =>
-        r == 0x200D ||
-        r == 0xFE0F ||
-        r == 0x20E3 ||
-        (r >= 0x1F3FB && r <= 0x1F3FF) ||
-        (r >= 0x1F1E6 && r <= 0x1F1FF) ||
-        (r >= 0xE0020 && r <= 0xE007F) ||
-        (r >= 0x1F000 && r <= 0x1FAFF));
   }
 
   /// Mastodon-style: one per code point, URLs count as [urlWeight],

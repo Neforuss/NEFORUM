@@ -9,6 +9,7 @@ import 'package:neforum_core/neforum_core.dart' show PhotoFitMode;
 import 'aligned_text.dart';
 import 'caption_fonts.dart';
 import 'caption_style.dart';
+import 'emoji_text.dart';
 import 'photo_composite.dart';
 import 'photo_pixels.dart';
 import 'text_card.dart';
@@ -36,7 +37,8 @@ class CaptionOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final words = text.trim();
+    // Words that are only emoji this device cannot draw leave no empty label.
+    final words = EmojiSupport.withoutMissing(text).trim();
     if (words.isEmpty) return;
     final u = size.width / 1080;
     final margin = 56 * u;
@@ -228,6 +230,7 @@ Future<({Uint8List bytes, int width, int height})?> renderCaptionedPhoto(Uint8Li
   final block = style.placement == CaptionPlacement.blockAbove && frameAspect != null;
   final size = block ? captionFrameSize(frameAspect) : Size(px.width.toDouble(), px.height.toDouble());
   final width = size.width.round(), height = size.height.round();
+  await EmojiSupport.prepare(text, usage: 'the caption on the photo');
   Rect? content;
   final words = await rasterizeWordsLayer(width, height, (canvas) {
     if (block) {
@@ -369,6 +372,7 @@ class CaptionBlockOverlay {
 Future<CaptionBlockOverlay> renderCaptionBlockOverlay(
     {required String text, required CaptionStyle style, required String platformId, required double frameAspect}) async {
   final size = captionFrameSize(frameAspect);
+  await EmojiSupport.prepare(text, usage: 'the caption on the video');
   final layout = CaptionBlockLayout.measure(
     text: text,
     style: style,

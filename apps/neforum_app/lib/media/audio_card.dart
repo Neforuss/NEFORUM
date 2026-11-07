@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' show AudioTags, PhotoFitMode;
 
 import '../brand/neforum_logo.dart';
 import '../theme/tokens.dart';
+import 'emoji_text.dart';
 import 'photo_composite.dart';
 import 'photo_fitter.dart';
 
@@ -69,7 +70,7 @@ class AudioCardPainter extends CustomPainter {
 
   static TextPainter _text(String s, double size, FontWeight weight, Color color, double width, {int maxLines = 1, String family = Fonts.body}) =>
       TextPainter(
-        text: TextSpan(text: s, style: TextStyle(fontFamily: family, fontSize: size, fontWeight: weight, color: color, height: 1.15)),
+        text: emojiSpan(s, TextStyle(fontFamily: family, fontSize: size, fontWeight: weight, color: color, height: 1.15)),
         textDirection: TextDirection.ltr,
         maxLines: maxLines,
         ellipsis: '…',
@@ -99,6 +100,7 @@ Future<Uint8List> renderAudioCardPng(
     final fitted = await framePhotoPng(cover, width: width, height: height, mode: fit);
     if (fitted != null) return fitted;
   }
+  await EmojiSupport.prepare('$title ${subtitle ?? ''} ${details ?? ''}', usage: 'the picture of the sound');
   final rgba = await rasterizeWordsLayer(width, height, (canvas) {
     AudioCardPainter(title: title, subtitle: subtitle, details: details).paint(canvas, Size(width.toDouble(), height.toDouble()));
   });

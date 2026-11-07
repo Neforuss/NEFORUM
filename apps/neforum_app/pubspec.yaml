@@ -47,6 +47,8 @@ dependencies:
 
   # Utilities
   collection: ^1.19.0
+  # Emoji data for the emoji sheet: pure Dart, MIT, Emoji 17.0 (ui/compose/emoji_sheet.dart).
+  unicode_emojis: 0.6.0
   crypto: ^3.0.7
   cross_file: any
   http: ^1.6.0

@@ -158,6 +158,8 @@ AppSettings populatedSettings() => AppSettings(
       backgroundDim: 0.6,
       updateCheck: UpdateCheckMode.off,
       fontDownloads: FontDownloadMode.on,
+      emojiRecents: const ['\u{1F600}'],
+      emojiSkinTone: 3,
       updateCheckedAt: DateTime.utc(2026, 10, 30),
       updateLatestRelease: const {'version': '9.9.9'},
       updateDismissedVersion: '9.9.8',
