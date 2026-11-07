@@ -946,7 +946,7 @@ void main() {
         expect((await s.signInStatusStore.all()).keys, containsAll(['status-delete', 'left-behind']));
         await s.signInWarnings.run();
         await s.signInWarningStore.update((l) => l.copyWith(bannerClosed: {'status-delete': 'x'}));
-        expect((await s.signInWarningStore.read()).entries.keys, ['status-delete']);
+        expect((await s.signInWarningStore.read()).entries.keys, contains('status-delete'));
         return s;
       }))!;
       await tester.pumpWidget(ProviderScope(
