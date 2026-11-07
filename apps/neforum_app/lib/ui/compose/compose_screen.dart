@@ -156,6 +156,10 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       }
     } on HeldCopiesException catch (e) {
       if (mounted) await showHeldCopiesDialog(context, e);
+    } on SchedulePassedException {
+      if (mounted) {
+        showToast(context, 'That time has passed. Pick a new one.', icon: Icons.schedule_rounded, actionLabel: 'Pick a time', onAction: _schedule);
+      }
     } on Object catch (e) {
       if (mounted) showToast(context, 'Could not publish: $e', icon: Icons.error_outline_rounded);
     } finally {

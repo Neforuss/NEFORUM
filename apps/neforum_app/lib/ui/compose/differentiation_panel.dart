@@ -48,35 +48,38 @@ class DifferentiationPanel extends ConsumerWidget {
     final own = previews.where((p) => c.overrides[p.account.id]?.text != null).length;
 
     if (!c.differentiate) {
+      final words = Row(children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(color: nf.accentSoft, borderRadius: Radii.rMd),
+          child: Icon(Icons.call_split_rounded, color: nf.accent),
+        ),
+        const SizedBox(width: Space.md),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('DIFFERENTIATION', style: context.text.labelSmall?.copyWith(color: nf.accent, letterSpacing: 1.4)),
+            const SizedBox(height: 2),
+            Text(
+              own > 0
+                  ? '$own ${own == 1 ? 'network has its own version' : 'networks have their own version'}. Open to see them side by side.'
+                  : 'What works on X rarely works on LinkedIn or Instagram. Give each network its own version.',
+              style: context.text.bodySmall,
+            ),
+          ]),
+        ),
+      ]);
+      final open = FilledButton.tonalIcon(
+        onPressed: () => notifier.setDifferentiate(true),
+        icon: const Icon(Icons.call_split_rounded, size: 18),
+        label: const Text('Differentiate'),
+      );
       return NfCard(
         padding: const EdgeInsets.all(Space.lg),
-        child: Row(children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(color: nf.accentSoft, borderRadius: Radii.rMd),
-            child: Icon(Icons.call_split_rounded, color: nf.accent),
-          ),
-          const SizedBox(width: Space.md),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('DIFFERENTIATION', style: context.text.labelSmall?.copyWith(color: nf.accent, letterSpacing: 1.4)),
-              const SizedBox(height: 2),
-              Text(
-                own > 0
-                    ? '$own ${own == 1 ? 'network has its own version' : 'networks have their own version'}. Open to see them side by side.'
-                    : 'What works on X rarely works on LinkedIn or Instagram. Give each network its own version.',
-                style: context.text.bodySmall,
-              ),
-            ]),
-          ),
-          const SizedBox(width: Space.md),
-          FilledButton.tonalIcon(
-            onPressed: () => notifier.setDifferentiate(true),
-            icon: const Icon(Icons.call_split_rounded, size: 18),
-            label: const Text('Differentiate'),
-          ),
-        ]),
+        // A phone has no room for the button beside the words.
+        child: context.isCompact
+            ? Column(crossAxisAlignment: CrossAxisAlignment.end, children: [words, const SizedBox(height: Space.sm), open])
+            : Row(children: [Expanded(child: words), const SizedBox(width: Space.md), open]),
       );
     }
 

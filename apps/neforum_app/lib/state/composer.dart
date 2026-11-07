@@ -1189,6 +1189,15 @@ Post rescheduledPost(Post post, DateTime when, DateTime now) {
   return next.withScheduleFromTargets();
 }
 
+/// The post's time, or a network's, is past or under a minute ahead: scheduling
+/// it would send it at once. Nothing was saved.
+class SchedulePassedException implements Exception {
+  const SchedulePassedException();
+
+  @override
+  String toString() => 'SchedulePassedException';
+}
+
 /// A platform still holds a copy of a scheduled post that NEFORUM could not
 /// take back (offline, expired sign-in). The copy will still go out there.
 class HeldCopiesException implements Exception {
@@ -1318,7 +1327,21 @@ class PostActions {
   }
 
   /// Schedules the composer's post at its [ComposerState.scheduledAt].
+  ///
+  /// Throws [SchedulePassedException], and saves nothing, when a network still
+  /// to go has a time that has passed: the scheduler would send it at once. A
+  /// composer can hold such a time for as long as its draft stays open.
   Future<Post> schedule() async {
+    final s = ref.read(servicesProvider);
+    final c = ref.read(composerProvider);
+    final editing = c.editingPostId;
+    final existing = editing == null ? null : await s.posts.get(editing);
+    final now = DateTime.now();
+    for (final id in c.selected) {
+      if (existing?.targetFor(id)?.isDone ?? false) continue;
+      final at = c.overrides[id]?.scheduledAt ?? c.scheduledAt;
+      if (at != null && !scheduleTimeAccepted(at, now)) throw const SchedulePassedException();
+    }
     final p = await _save(PostStatus.scheduled);
     await ref.read(schedulerProvider).planReminders(p);
     _delegate(p);
