@@ -64,6 +64,7 @@ class MicropubAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'micropub',
     name: 'Micropub (IndieWeb / Micro.blog)',
+    shortName: 'Micropub',
     iconKey: 'micropub',
     homepage: 'https://micropub.spec.indieweb.org/',
     family: 'indieweb',

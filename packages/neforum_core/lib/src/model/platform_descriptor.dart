@@ -285,11 +285,20 @@ class PlatformDescriptor {
     this.family,
     this.polls,
     this.categories = const {},
+    this.shortName,
   });
 
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
   final String id;
   final String name;
+
+  /// A shorter [name] for very small labels, such as an account tile in the
+  /// phone composer: `X`, `Write.as`. `null` when [name] is already short.
+  /// The full name stays wherever there is room for it.
+  final String? shortName;
+
+  /// [shortName] when there is one, otherwise [name].
+  String get compactName => shortName ?? name;
 
   /// Icon name resolved by the UI layer.
   final String? iconKey;

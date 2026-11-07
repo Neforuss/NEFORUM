@@ -49,6 +49,7 @@ class DevtoAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'devto',
     name: 'DEV Community',
+    shortName: 'DEV',
     iconKey: 'devto',
     homepage: 'https://dev.to',
     family: 'forem',

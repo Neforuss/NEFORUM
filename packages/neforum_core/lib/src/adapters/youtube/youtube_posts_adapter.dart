@@ -48,6 +48,7 @@ class YouTubePostsAdapter extends HandoffOnlyAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'youtube_posts',
     name: 'YouTube Posts',
+    shortName: 'YT Posts',
     iconKey: 'youtube',
     homepage: 'https://www.youtube.com/',
     tiers: {PlatformTier.handoff},

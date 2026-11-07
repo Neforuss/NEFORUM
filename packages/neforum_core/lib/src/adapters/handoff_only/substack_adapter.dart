@@ -27,6 +27,7 @@ class SubstackAdapter extends HandoffOnlyAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'substack',
     name: 'Substack Notes',
+    shortName: 'Substack',
     iconKey: 'substack',
     homepage: 'https://substack.com/',
     tiers: {PlatformTier.handoff},

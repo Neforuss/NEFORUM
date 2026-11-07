@@ -14,6 +14,19 @@ void main() {
     expect(builtinRegistry().all.length, adapters.length);
   });
 
+  test('compact names tell every network apart', () {
+    final names = adapters.map((a) => a.descriptor.compactName).toList();
+    expect(names.toSet().length, names.length, reason: 'two networks read the same in $names');
+    expect(adapters.singleWhere((a) => a.id == 'x').descriptor.compactName, 'X');
+    expect(adapters.singleWhere((a) => a.id == 'mastodon').descriptor.compactName, 'Mastodon', reason: 'no short name: the name itself');
+    for (final a in adapters) {
+      final short = a.descriptor.shortName;
+      if (short == null) continue;
+      expect(short.trim(), isNotEmpty, reason: a.id);
+      expect(short.length, lessThan(a.descriptor.name.length), reason: '${a.id}: a short name is shorter');
+    }
+  });
+
   for (final a in adapters) {
     group(a.id, () {
       final d = a.descriptor;

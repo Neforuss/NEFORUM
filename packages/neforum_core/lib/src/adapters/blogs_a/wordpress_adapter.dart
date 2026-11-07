@@ -53,6 +53,7 @@ class WordPressAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'wordpress',
     name: 'WordPress',
+    shortName: 'WP',
     iconKey: 'wordpress',
     homepage: 'https://wordpress.org',
     family: 'wordpress',

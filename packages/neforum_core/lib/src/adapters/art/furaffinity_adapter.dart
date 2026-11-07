@@ -21,6 +21,7 @@ class FurAffinityAdapter extends ArtHandoffAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'furaffinity',
     name: 'Fur Affinity',
+    shortName: 'Fur Aff.',
     iconKey: 'furaffinity',
     homepage: 'https://www.furaffinity.net/',
     tiers: {PlatformTier.handoff},

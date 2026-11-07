@@ -67,6 +67,10 @@ Rules:
   `targetStatusStyle`, `TierBadge`).
 - Platform identity is always `PlatformTile` / `PlatformGlyph` /
   `AccountAvatar` / `PlatformStack`.
+- Choosing accounts: `AccountChip` in a wrap on wider windows,
+  `AccountTileGrid` on phones (every account on screen, no sideways scrolling,
+  states readable without colour, folds to `AccountFoldSummary`). A label too
+  long for a tile takes `PlatformDescriptor.shortName`.
 - Page structure: `PageBody(children: [PageHeader(...), ...sections])`.
   Section titles: `SectionHeader`. Empty lists: `EmptyState`.
   Toasts: `showToast`. Destructive confirmation: `confirmDialog`.

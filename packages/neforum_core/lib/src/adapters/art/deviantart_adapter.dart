@@ -46,6 +46,7 @@ const _imageTypes = {'image/jpeg', 'image/png', 'image/gif'};
 const PlatformDescriptor deviantArtDescriptor = PlatformDescriptor(
   id: 'deviantart',
   name: 'DeviantArt',
+  shortName: 'Deviant',
   iconKey: 'deviantart',
   homepage: 'https://www.deviantart.com',
   tiers: {PlatformTier.byokApi, PlatformTier.handoff},
@@ -69,6 +70,7 @@ const PlatformDescriptor deviantArtDescriptor = PlatformDescriptor(
 const PlatformDescriptor _handoffDescriptor = PlatformDescriptor(
   id: 'deviantart',
   name: 'DeviantArt',
+  shortName: 'Deviant',
   iconKey: 'deviantart',
   homepage: 'https://www.deviantart.com',
   tiers: {PlatformTier.byokApi, PlatformTier.handoff},

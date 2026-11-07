@@ -173,6 +173,7 @@ class AppSettings {
     this.interfaceDensity = InterfaceDensity.comfortable,
     this.mobileTextScale = 1,
     this.collapsedSettingsSections = const [],
+    this.composerTargetsFolded = false,
     this.automaticHandoffPosting = false,
     this.automaticHandoffExcludedPlatforms = kAutomationRestrictedPlatforms,
     this.advanceHandoffOnReturn = true,
@@ -250,6 +251,7 @@ class AppSettings {
         interfaceDensity: InterfaceDensity.values.asNameMap()[j['interfaceDensity']] ?? InterfaceDensity.comfortable,
         mobileTextScale: validTextScale(j['mobileTextScale']),
         collapsedSettingsSections: (j['collapsedSettingsSections'] as List? ?? const []).cast<String>(),
+        composerTargetsFolded: j['composerTargetsFolded'] as bool? ?? false,
         automaticHandoffPosting: j['automaticHandoffPosting'] as bool? ?? false,
         automaticHandoffExcludedPlatforms:
             (j['automaticHandoffExcludedPlatforms'] as List? ?? kAutomationRestrictedPlatforms).cast<String>(),
@@ -417,6 +419,10 @@ class AppSettings {
   /// Settings sections the user folded away. Device-only.
   final List<String> collapsedSettingsSections;
 
+  /// Phone composer: the user folded the account tiles into their one-line
+  /// summary. Device-only.
+  final bool composerTargetsFolded;
+
   /// Desktop only: the browser extension fills in hand-offs and presses the
   /// network's Post button itself, also for scheduled posts while NEFORUM
   /// runs. Device-only.
@@ -577,6 +583,7 @@ class AppSettings {
     InterfaceDensity? interfaceDensity,
     double? mobileTextScale,
     List<String>? collapsedSettingsSections,
+    bool? composerTargetsFolded,
     bool? automaticHandoffPosting,
     List<String>? automaticHandoffExcludedPlatforms,
     bool? advanceHandoffOnReturn,
@@ -653,6 +660,7 @@ class AppSettings {
         interfaceDensity: interfaceDensity ?? this.interfaceDensity,
         mobileTextScale: mobileTextScale ?? this.mobileTextScale,
         collapsedSettingsSections: collapsedSettingsSections ?? this.collapsedSettingsSections,
+        composerTargetsFolded: composerTargetsFolded ?? this.composerTargetsFolded,
         automaticHandoffPosting: automaticHandoffPosting ?? this.automaticHandoffPosting,
         automaticHandoffExcludedPlatforms: automaticHandoffExcludedPlatforms ?? this.automaticHandoffExcludedPlatforms,
         advanceHandoffOnReturn: advanceHandoffOnReturn ?? this.advanceHandoffOnReturn,
@@ -729,6 +737,7 @@ class AppSettings {
         'interfaceDensity': interfaceDensity.name,
         if (mobileTextScale != 1) 'mobileTextScale': mobileTextScale,
         if (collapsedSettingsSections.isNotEmpty) 'collapsedSettingsSections': collapsedSettingsSections,
+        if (composerTargetsFolded) 'composerTargetsFolded': composerTargetsFolded,
         'automaticHandoffPosting': automaticHandoffPosting,
         'automaticHandoffExcludedPlatforms': automaticHandoffExcludedPlatforms,
         'advanceHandoffOnReturn': advanceHandoffOnReturn,

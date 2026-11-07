@@ -174,7 +174,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       busy: _busy,
     );
 
-    final write = _WriteColumn(focusNode: _focus, editing: widget.editPostId != null, scrollableTargets: compact);
+    final write = _WriteColumn(focusNode: _focus, editing: widget.editPostId != null, keyboardOpen: _keyboardOpen);
 
     final Widget body;
     if (expanded) {
@@ -273,10 +273,10 @@ class _DragDownHidesKeyboard extends StatelessWidget {
 }
 
 class _WriteColumn extends ConsumerWidget {
-  const _WriteColumn({required this.focusNode, required this.editing, required this.scrollableTargets});
+  const _WriteColumn({required this.focusNode, required this.editing, required this.keyboardOpen});
   final FocusNode focusNode;
   final bool editing;
-  final bool scrollableTargets;
+  final bool keyboardOpen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -323,7 +323,7 @@ class _WriteColumn extends ConsumerWidget {
                 ),
             ]),
           ),
-        TargetPicker(scrollable: scrollableTargets),
+        TargetPicker(tileGrid: compact, keyboardOpen: keyboardOpen),
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
         const ThreadPartEditors(),
