@@ -350,7 +350,7 @@ class NeforumHttp {
         // the cancellation it is, never as a network error to retry.
         if (signal != null && signal.isCancelled) throw const OperationCancelledException();
         if (!isTransportError(e)) rethrow;
-        final cause = _withoutAddress('$e', url);
+        final cause = _safeDetails('$e');
         final trace = upload
             ? UploadTrace(sentBytes: meter.sent, totalBytes: meter.total, attempts: attempt, elapsed: clock.elapsed)
             : null;
@@ -376,13 +376,6 @@ class NeforumHttp {
       return RequestTimedOut('$what$tried.', e.duration, trace == null ? cause : '$cause\n${trace.summary}', trace: trace);
     }
     return trace == null ? ConnectionFailed(url, cause) : UploadInterrupted(url, cause, trace);
-  }
-
-  /// [text] without [url]: `ClientException.toString` prints the whole address,
-  /// and some APIs carry a token in the path or the query.
-  static String _withoutAddress(String text, Uri url) {
-    final origin = '${url.scheme}://${url.host}';
-    return text.replaceAll(url.toString(), origin).replaceAll(RegExp(r'uri=\S+'), 'uri=$origin');
   }
 
   /// [future], or [OperationCancelledException] as soon as [signal] fires,
@@ -542,14 +535,20 @@ class NeforumHttp {
   static String transportDetails(Object e) => switch (e) {
         ConnectionFailed(:final details) => details,
         RequestTimedOut(:final details) => details,
-        _ => _withoutPaths('$e'),
+        _ => _safeDetails('$e'),
       };
 
-  /// An exception that did not pass through this class may quote a whole
-  /// address, and some APIs carry a token in the path or the query.
-  static String _withoutPaths(String text) => text
-      .replaceAllMapped(RegExp(r'(https?://[^/\s?#]+)[^\s]*'), (m) => m[1]!)
-      .replaceAll(RegExp(r'uri=(?!https?://)\S+'), 'uri=(address removed)');
+  /// [text] fit to store and log: every address cut down to its origin, because
+  /// some APIs carry a token in the path or the query. If what is left looks like
+  /// quoted request data rather than the system's own words, none of it is kept,
+  /// because a body can hold a token too.
+  static String _safeDetails(String text) {
+    final cut = text
+        .replaceAllMapped(RegExp(r'(https?://[^/\s?#]+)[^\s]*'), (m) => m[1]!)
+        .replaceAll(RegExp(r'uri=(?!https?://)\S+'), 'uri=(address removed)');
+    final words = cut.replaceAll(RegExp(r'\b(address|port|errno|uri)\s*=\s*\S*'), '');
+    return RegExp(r'["{}&]|\S=\S').hasMatch(words) ? 'The system message was left out because it quoted what was sent.' : cut;
+  }
 
   static bool _retryable(int status) => status == 429 || status == 502 || status == 503 || status == 504;
 
