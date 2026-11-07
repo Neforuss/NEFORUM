@@ -306,6 +306,16 @@ class InstagramAdapter extends PlatformAdapter {
         SignInSecretKeys.expiresAtSource: (reported == null ? SignInDateSource.computed : SignInDateSource.serverReported).name,
       };
 
+  /// A token renews itself: asked by how old it is, not by its end. Meta refuses
+  /// one under 24 hours old.
+  @override
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final at = DateTime.tryParse(secrets[keyRefreshedAt] ?? '');
+    final now = ctx.now();
+    if (at != null && now.difference(at) < minRefreshAge) return null;
+    return refreshSecrets(account, {...secrets, keyRefreshedAt: now.subtract(refreshEvery).toUtc().toIso8601String()}, ctx);
+  }
+
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {

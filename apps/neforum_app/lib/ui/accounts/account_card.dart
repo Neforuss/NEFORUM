@@ -15,6 +15,7 @@ import '../../widgets/surfaces.dart';
 import '../router.dart';
 import 'connection_section.dart';
 import 'guide_sheet.dart';
+import 'sign_in_parts.dart';
 
 /// One connected account with its status, quotas and controls, and (1.3.5)
 /// its connection setup in a section that opens on a tap.
@@ -60,6 +61,7 @@ class AccountCard extends ConsumerWidget {
             _Menu(account: a),
           ]),
         ),
+        AccountSignInLine(account: a),
         if (a.lastError != null)
           Container(
             margin: const EdgeInsets.symmetric(horizontal: Space.lg),

@@ -6,11 +6,13 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../platform/env.dart';
 import '../../state/providers.dart';
+import '../../state/sign_in_schedule.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
+import '../accounts/sign_in_parts.dart';
 import '../activity/time_format.dart';
 import '../compose/open_in_composer.dart';
 import '../router.dart';
@@ -238,6 +240,8 @@ class _AgendaRow extends ConsumerWidget {
     final t = post.scheduledAt!;
     final format = TimeFormatting.of(context, ref);
     final soon = t.difference(DateTime.now()).inMinutes < 60;
+    final notes = ref.watch(signInPostNotesProvider(post));
+    final footer = notes.isEmpty ? null : SignInScheduleNotesView(notes: notes);
     if (context.isCompact) {
       // Phones: no separate time column; the card shows the time.
       return Padding(
@@ -246,6 +250,7 @@ class _AgendaRow extends ConsumerWidget {
           post: post,
           onTap: () => _editPost(context, ref, post),
           actions: postMenuActions(context, ref, post),
+          footer: footer,
         ),
       );
     }
@@ -291,6 +296,7 @@ class _AgendaRow extends ConsumerWidget {
               showTime: false,
               onTap: () => _editPost(context, ref, post),
               actions: postMenuActions(context, ref, post),
+              footer: footer,
             ),
           ),
         ),

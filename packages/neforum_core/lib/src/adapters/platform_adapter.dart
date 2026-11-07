@@ -1,3 +1,4 @@
+import '../auth/oauth2_pkce.dart';
 import '../handoff/handoff_plan.dart';
 import '../model/account.dart';
 import '../model/photo_fit.dart';
@@ -69,6 +70,29 @@ abstract class PlatformAdapter {
   /// and must not count as use of a paid API: X stays null because its
   /// pay-per-use pricing of a read is unknown.
   Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => null;
+
+  /// [readSignIn] can answer for [account]. Asked before a keychain read, so
+  /// opening the sign-ins page reads no keys for a platform with nothing to say.
+  bool readsSignIn(ConnectedAccount account) => false;
+
+  /// Renews now, at the person's request, even though nothing is due yet. Null
+  /// when this sign-in has nothing to renew it with, or it was renewed too
+  /// recently. Throws as [refreshSecrets] does.
+  ///
+  /// [refreshSecrets] renews only what is due, and asks by the token's end, so
+  /// it is called with that end moved to the past. A network that answers with
+  /// no end keeps the end it really had: the moved one must never be stored.
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final tokens = OAuthTokens.fromSecrets(secrets);
+    if ((tokens?.refreshToken ?? '').isEmpty) return null;
+    final past = DateTime.utc(1970).toIso8601String();
+    final fresh = await refreshSecrets(account, {...secrets, OAuthTokens.keyExpiresAt: past}, ctx);
+    if (fresh == null || fresh[OAuthTokens.keyExpiresAt] != past) return fresh;
+    final kept = {...fresh}..remove(OAuthTokens.keyExpiresAt);
+    final was = secrets[OAuthTokens.keyExpiresAt];
+    if (was != null) kept[OAuthTokens.keyExpiresAt] = was;
+    return kept;
+  }
 
   /// The platform hands out a new refresh token on every renewal and kills
   /// the old one (X, Tumblr, TikTok, Pixelfed). An account copied to a second

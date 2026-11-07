@@ -690,7 +690,8 @@ String signInText(SignInLifetime e, String Function(DateTime) when) {
     SignInState.renewsUntil when e.about => 'Renews when NEFORUM posts. Unused, it ends $at.$note',
     SignInState.renewsUntil => 'Renews when NEFORUM posts, until ${when(e.expiresAt!)}$latest, then needs reconnecting.$note',
     SignInState.renewsWhenUsed => 'Renews when NEFORUM posts with it. Unused, it ends $at.$note',
-    SignInState.ended when e.about => 'It probably ended about ${when(e.expiresAt!)}. If a post is refused, reconnect it.$note',
+    SignInState.ended when e.about => 'It probably ended about ${when(e.expiresAt!)}$latest. If a post is refused, reconnect it.$note',
+    SignInState.ended when e.earlyRevocationPossible => 'Ended by ${when(e.expiresAt!)}$latest. Needs reconnecting.$note',
     SignInState.ended => 'Ended on ${when(e.expiresAt!)}. Needs reconnecting.$note',
     _ => 'Ends $at, then needs reconnecting.$note',
   };

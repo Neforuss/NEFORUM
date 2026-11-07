@@ -15,6 +15,7 @@ import '../root.dart';
 import '../router.dart';
 import 'account_card.dart';
 import 'connection_section.dart';
+import 'sign_in_parts.dart';
 import 'tier_explainer.dart';
 
 /// The order the page groups accounts in, by how they publish.
@@ -47,6 +48,7 @@ class AccountsScreen extends ConsumerWidget {
       else if (accounts.isEmpty)
         const _Welcome()
       else ...[
+        const NextSignInRow(),
         for (final tier in _tierOrder)
           if (accounts.any((a) => a.tier == tier)) ...[
             SectionHeader(

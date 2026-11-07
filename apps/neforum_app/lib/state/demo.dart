@@ -23,6 +23,9 @@ class DemoAdapter extends PlatformAdapter {
   SignInPolicy signInPolicyFor(ConnectedAccount account) => inner.signInPolicyFor(account);
 
   @override
+  bool readsSignIn(ConnectedAccount account) => inner.readsSignIn(account);
+
+  @override
   PlatformDescriptor descriptorForAccount(ConnectedAccount account) => inner.descriptorForAccount(account);
 
   @override
@@ -274,5 +277,32 @@ Future<void> seedDemo({
     for (var i = 0; i < 12; i++) {
       await quota.record(QuotaEvent(accountId: thId, ruleId: 'threads.posts_per_day', at: now.subtract(Duration(minutes: i * 90))));
     }
+  }
+}
+
+/// Sign-in dates for the sample accounts, one of each kind, worked out by the
+/// real rules from each platform's real policy. Only dates reach the status
+/// file: the sample "keys" here exist for this function and are never stored.
+Future<void> seedDemoSignIns(SignInStatusStore store, AccountRepository accounts, AdapterRegistry registry) async {
+  final now = DateTime.now();
+  String at(Duration d) => now.add(d).toUtc().toIso8601String();
+  final samples = <String, Map<String, String>>{
+    'linkedin': {'access_token': '-', 'expires_at': at(const Duration(days: 2, hours: 9)), 'expires_at_source': 'serverReported'},
+    'threads': {'access_token': '-', 'token_issued_at': now.subtract(const Duration(days: 49)).toUtc().toIso8601String(), 'expires_at': at(const Duration(days: 11)), 'expires_at_source': 'computed'},
+    'x': {'access_token': '-', 'refresh_token': '-', 'last_renewed_at': now.subtract(const Duration(days: 120)).toUtc().toIso8601String()},
+    'mastodon': {'access_token': '-'},
+    'bluesky': {'access_token': '-', 'app_password': '-'},
+    'reddit': {'access_token': '-', 'refresh_token': '-'},
+    'telegram': {'bot_token': '-'},
+    'nostr': {'private_key': '-'},
+  };
+  for (final a in await accounts.all()) {
+    final adapter = registry.byId(a.platformId);
+    final keys = samples[a.platformId];
+    if (adapter == null || keys == null) continue;
+    final policy = adapter.signInPolicyFor(a);
+    if (!policy.hasConnection) continue;
+    final life = deriveSignInLifetime(policy, keys, now: now);
+    await store.change(a.id, (_) => SignInStatus.fromLifetime(a.id, life, hasConnection: true, lastConfirmedAt: now.subtract(const Duration(days: 2))));
   }
 }

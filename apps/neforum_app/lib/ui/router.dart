@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../state/nav_history.dart';
 import 'accounts/accounts_screen.dart';
 import 'accounts/add_account_screen.dart';
+import 'accounts/sign_ins_screen.dart';
 import 'activity/activity_screen.dart';
 import 'activity/post_detail_screen.dart';
 import 'compose/compose_screen.dart';
@@ -79,6 +80,7 @@ final routerProvider = Provider<GoRouter>((ref) {
                   path: 'add',
                   builder: (context, state) => AddAccountScreen(query: state.uri.queryParameters),
                 ),
+                GoRoute(path: 'sign-ins', builder: (context, state) => const SignInsScreen()),
               ],
             ),
           ]),

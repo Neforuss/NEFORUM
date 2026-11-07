@@ -4,6 +4,7 @@ import 'dart:ui' show Color;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:neforum_core/neforum_core.dart' show SignInWarningNotice, SignInWarningSink;
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:timezone/timezone.dart' as tz;
 
@@ -26,6 +27,8 @@ sealed class NotificationIntent {
         return RunHandoffIntent(parts[1], parts.sublist(2).join(':'));
       case 'publish' when parts.length >= 2:
         return PublishDueIntent(parts[1]);
+      case 'signin':
+        return const OpenSignInsIntent();
     }
     return null;
   }
@@ -47,6 +50,14 @@ class PublishDueIntent extends NotificationIntent {
   const PublishDueIntent(this.postId);
   final String postId;
 }
+
+/// A warning that a sign-in is running out: the sign-ins page.
+class OpenSignInsIntent extends NotificationIntent {
+  const OpenSignInsIntent();
+}
+
+/// What every sign-in warning's payload starts with.
+const String kSignInPayloadPrefix = 'signin:';
 
 /// Action id of the "Publish now" button on due-post reminders.
 const String kPublishAction = 'publish';
@@ -87,6 +98,13 @@ class NotificationService {
     'neforum.results',
     'Publish results',
     description: 'When a post goes out, or fails',
+    importance: Importance.defaultImportance,
+  );
+
+  static const _channelSignIns = AndroidNotificationChannel(
+    'neforum.signins',
+    'Sign-ins running out',
+    description: 'When a connection is about to end and what to do about it',
     importance: Importance.defaultImportance,
   );
 
@@ -146,6 +164,7 @@ class NotificationService {
       final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       await android?.createNotificationChannel(_channelScheduled);
       await android?.createNotificationChannel(_channelResults);
+      await android?.createNotificationChannel(_channelSignIns);
       if (!kIsWeb) {
         final launch = await _plugin.getNotificationAppLaunchDetails();
         if (launch?.didNotificationLaunchApp ?? false) {
@@ -191,11 +210,11 @@ class NotificationService {
         macOS: DarwinNotificationDetails(categoryIdentifier: category),
       );
 
-  /// Shows a notification now.
-  Future<void> show({required String key, required String title, required String body, String? payload}) async {
+  /// Shows a notification now. [signIn]: on the channel of sign-in warnings.
+  Future<void> show({required String key, required String title, required String body, String? payload, bool signIn = false}) async {
     if (!_ready) return;
     try {
-      await _plugin.show(id: _id(key), title: title, body: body, notificationDetails: _details(_channelResults), payload: payload);
+      await _plugin.show(id: _id(key), title: title, body: body, notificationDetails: _details(signIn ? _channelSignIns : _channelResults), payload: payload);
     } on Object catch (e) {
       debugPrint('Notification failed: $e');
     }
@@ -205,10 +224,11 @@ class NotificationService {
   /// special alarm permission is needed; a minute late is fine for a reminder.
   /// With [publishAction] the reminder carries a "Publish now" button
   /// (iOS), which publishes without opening the app.
-  Future<void> schedule({required String key, required DateTime when, required String title, required String body, required String payload, bool publishAction = false}) async {
+  /// [signIn]: on the channel of sign-in warnings.
+  Future<void> schedule({required String key, required DateTime when, required String title, required String body, required String payload, bool publishAction = false, bool signIn = false}) async {
     if (!_ready || kIsWeb) return;
     if (!when.isAfter(DateTime.now())) {
-      return show(key: key, title: title, body: body, payload: payload);
+      return show(key: key, title: title, body: body, payload: payload, signIn: signIn);
     }
     try {
       await _plugin.zonedSchedule(
@@ -216,7 +236,7 @@ class NotificationService {
         title: title,
         body: body,
         scheduledDate: tz.TZDateTime.from(when, tz.local),
-        notificationDetails: _details(_channelScheduled, category: publishAction ? 'neforum.due' : 'neforum.post'),
+        notificationDetails: signIn ? _details(_channelSignIns) : _details(_channelScheduled, category: publishAction ? 'neforum.due' : 'neforum.post'),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         payload: payload,
       );
@@ -235,6 +255,29 @@ class NotificationService {
       // Not every platform can cancel (unpackaged Windows builds).
     }
   }
+
+  /// What waits with the OS. Empty where the OS cannot say.
+  Future<List<({int id, String? payload})>> pending() async {
+    if (!_ready || kIsWeb) return const [];
+    try {
+      return [for (final p in await _plugin.pendingNotificationRequests()) (id: p.id, payload: p.payload)];
+    } on Object {
+      return const [];
+    }
+  }
+
+  /// Cancels the notification with this [id].
+  Future<void> cancelId(int id) async {
+    if (!_ready) return;
+    try {
+      await _plugin.cancel(id: id);
+    } on Object {
+      // Not every platform can cancel.
+    }
+  }
+
+  /// The id [key] goes by.
+  static int idOf(String key) => _id(key);
 
   /// Keys of every notification NEFORUM shows about one post: the
   /// due-time reminder, the publish result and the hand-off request.
@@ -255,5 +298,33 @@ class NotificationService {
       h = ((h ^ c) * 0x01000193) & 0x7FFFFFFF;
     }
     return h;
+  }
+}
+
+/// Sign-in warnings as the OS's notifications.
+class NotificationSignInSink implements SignInWarningSink {
+  const NotificationSignInSink();
+
+  /// A phone's app is rarely running, so its warnings wait with the OS. A
+  /// computer looks on the scheduler's timer, and unpackaged Windows builds
+  /// cannot schedule at all.
+  @override
+  bool get schedulesAhead => Env.isAndroid || Env.isIOS;
+
+  @override
+  Future<void> show(SignInWarningNotice n) => NotificationService.instance.show(key: n.key, title: n.title, body: n.body, payload: n.payload, signIn: true);
+
+  @override
+  Future<int> otherPending() async => (await NotificationService.instance.pending()).where((p) => !(p.payload ?? '').startsWith(kSignInPayloadPrefix)).length;
+
+  @override
+  Future<void> replacePending(List<(SignInWarningNotice, DateTime)> notices) async {
+    final keep = {for (final (n, _) in notices) NotificationService.idOf(n.key)};
+    for (final p in await NotificationService.instance.pending()) {
+      if ((p.payload ?? '').startsWith(kSignInPayloadPrefix) && !keep.contains(p.id)) await NotificationService.instance.cancelId(p.id);
+    }
+    for (final (n, at) in notices) {
+      await NotificationService.instance.schedule(key: n.key, when: at, title: n.title, body: n.body, payload: n.payload, signIn: true);
+    }
   }
 }

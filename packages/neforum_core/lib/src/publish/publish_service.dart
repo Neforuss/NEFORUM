@@ -143,6 +143,16 @@ class PublishOutcomeNotSaved implements Exception {
 /// Fans a [Post] out to its targets: resolves the per-platform variant,
 /// validates, refreshes tokens, checks quota, publishes or hands off, and
 /// records the outcome on the post.
+/// How [PublishService.renewSignInNow] went.
+class SignInRenewNowOutcome {
+  const SignInRenewNowOutcome({required this.renewed, this.error});
+
+  /// Other keys are now stored. False with no [error]: nothing was due or
+  /// possible (renewed too recently, nothing to renew it with).
+  final bool renewed;
+  final PublishError? error;
+}
+
 class PublishService {
   PublishService({
     required this.registry,
@@ -600,13 +610,15 @@ class PublishService {
   ///
   /// [again]: whether keys that a sync brought during the renewal may be
   /// renewed in turn (once).
+  ///
+  /// [renewNow]: renew even though nothing is due ([renewSignInNow]).
   Future<(Map<String, String>?, PublishError?)> _freshSecrets(
-      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {bool again = true}) async {
+      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {bool again = true, bool renewNow = false}) async {
     final secretMap = await secrets.read(account.id) ?? const <String, String>{};
     // A renewal carries when it happened and where its dates came from, inside
     // the same map, so they travel with the keys in one sync record.
     Future<Map<String, String>?> renew(ConnectedAccount a, Map<String, String> s) async {
-      final fresh = await adapter.refreshSecrets(a, s, ctx);
+      final fresh = renewNow ? await adapter.renewSignInNow(a, s, ctx) : await adapter.refreshSecrets(a, s, ctx);
       return fresh == null ? null : stampSignInRenewal(s, fresh, now: _now());
     }
 
@@ -617,7 +629,7 @@ class PublishService {
           // reconnect made on another device (another app, its keys): the
           // keys it hands over are renewed with the account as stored now,
           // never the one this attempt loaded before that sync.
-          ? await coordinator.renew(account, secretMap, (s) async => renew(await accounts.get(account.id) ?? account, s), renewsEarly: (s) => adapter.renewsEarly(account, s, _now()))
+          ? await coordinator.renew(account, secretMap, (s) async => renew(await accounts.get(account.id) ?? account, s), renewsEarly: (s) => renewNow || adapter.renewsEarly(account, s, _now()))
           : await renew(account, secretMap);
       if (refreshed == null) return (secretMap, null);
       // 1.3.5: the keys stored here changed while the network answered.
@@ -668,6 +680,26 @@ class PublishService {
       }
       return (null, PublishError.auth('Could not refresh credentials (${e.runtimeType})'));
     }
+  }
+
+  /// Renews [accountId]'s sign-in now, at the person's request, by the same path
+  /// a post takes: through the sync coordinator on a network that replaces its
+  /// refresh tokens, so another device is not signed out, and stored only if no
+  /// sync brought other keys meanwhile. A refusal counts as a refused sign-in.
+  Future<SignInRenewNowOutcome> renewSignInNow(String accountId) async {
+    final account = await accounts.get(accountId);
+    final adapter = account == null ? null : registry.byId(account.platformId);
+    if (account == null || adapter == null) return const SignInRenewNowOutcome(renewed: false);
+    final ctx = context(log: _log.child(account.platformId));
+    final before = await secrets.read(account.id);
+    final (fresh, error) = await _freshSecrets(account, adapter, ctx, renewNow: true);
+    if (error != null) {
+      if (refusesSignIn(error) && signInOutcomes != null) {
+        await _bestEffort(_log, 'note the refused renewal', () => signInOutcomes!.publishFinished(account, worked: false, refused: true, ctx: ctx));
+      }
+      return SignInRenewNowOutcome(renewed: false, error: error);
+    }
+    return SignInRenewNowOutcome(renewed: fresh != null && before != null && !_sameKeys(fresh, before));
   }
 
   /// Tells [signInOutcomes] how [t] went. Not awaited: a post never waits for

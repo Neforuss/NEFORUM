@@ -56,7 +56,7 @@ Future<void> _loadFonts() async {
   await family('JetBrainsMono', ['assets/fonts/JetBrainsMono-Regular.ttf']);
 }
 
-const _routes = ['/compose', '/queue', '/activity', '/activity/post/demo-post-2', '/accounts', '/accounts/add', '/settings'];
+const _routes = ['/compose', '/queue', '/activity', '/activity/post/demo-post-2', '/accounts', '/accounts/add', '/accounts/sign-ins', '/settings'];
 const _sizes = {'small phone': Size(360, 640), 'phone': Size(360, 740), 'tablet': Size(900, 700), 'desktop': Size(1440, 900), 'wide': Size(2200, 1200)};
 
 void main() {

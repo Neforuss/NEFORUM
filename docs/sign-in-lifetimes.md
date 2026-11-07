@@ -90,6 +90,29 @@ Most networks say how long a sign-in lasts only when it is made or renewed, so N
 
 NEFORUM asks when you connect, after a post, and when the sign-ins page opens, at most once a day per account. It never asks X in the background: X charges per request and does not say whether this read counts.
 
+## When NEFORUM warns you
+
+Accounts > Sign-ins lists every connected account in one of three groups: **You must reconnect**, **Renews when NEFORUM posts** and **No end date known**, soonest first. Each closed account card carries the same date.
+
+A notification goes out on these days before the date, at 10:00 your time, or as soon as NEFORUM can if that has passed. Each goes out once.
+
+| Case | Days before |
+|---|---|
+| You must reconnect | 14, 7, 3, 1, then at the end |
+| Renews when NEFORUM posts | 7, 1, then at the end |
+| A date the vendor announced (X's keys) | 60, 30, 14, 7, 3, 1, then at the end |
+
+Only days still ahead when NEFORUM first learns the date count. If several have passed while the device was off, you get one warning, the nearest. A network refusing a sign-in gets its own warning at once.
+
+- **Phones** hand the warnings to the system ahead of time, the soonest 20, because the app is rarely running. Reminders for your posts come first: all NEFORUM notifications together stay at 60 or fewer. The date of a warning already handed over changes only when NEFORUM next runs.
+- **Computers** check on launch and while NEFORUM runs. A computer that is off warns when it next starts.
+
+A banner shows above every page while anything is 14 days or fewer away, or has ended. Closing it holds until the next day in the table.
+
+A scheduled post that goes out after a date gets a warning in the schedule sheet, the composer and the queue. Nothing stops you scheduling it. If the sign-in has ended by then the post fails for that network, shows in Activity, and you get the refused warning.
+
+**Renew now** renews on request where the network allows it, and takes turns with your other devices on networks that replace their keys at each renewal. **Check now** asks the network for its date, where it has a way to say (see below). NEFORUM asks by itself at most once a day: at connect, after a post, and when the page opens.
+
 ## Still open
 
 Each of these would change a row above. None can be settled from the vendor's public pages.

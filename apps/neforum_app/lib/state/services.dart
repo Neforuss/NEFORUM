@@ -19,6 +19,7 @@ import 'composer_draft.dart' show kComposerDraftFile;
 import 'demo.dart';
 import 'media_host_config.dart';
 import 'settings.dart';
+import 'sign_in_board.dart';
 
 /// Every long-lived object the app needs, created once at startup (and again
 /// when the user toggles demo mode).
@@ -38,6 +39,8 @@ class AppServices {
     required this.publishJournal,
     required this.signInStatusStore,
     required this.signInStatus,
+    required this.signInWarningStore,
+    required this.signInWarnings,
     required this.demo,
     required this._settings,
   }) : quota = QuotaTracker(quotaRepo);
@@ -56,6 +59,12 @@ class AppServices {
 
   /// Keeps [signInStatusStore] current: [secrets] tells it about every write.
   final SignInStatusTracker signInStatus;
+
+  /// Which sign-in warnings this device has given. Device-only.
+  final SignInWarningStore signInWarningStore;
+
+  /// Gives them: on the scheduler's timer, at start and on every status change.
+  final SignInWarningCenter signInWarnings;
   final QuotaRepository quotaRepo;
   final SecretStore secrets;
   final AdapterRegistry registry;
@@ -98,6 +107,7 @@ class AppServices {
     late final SecretStore keychain;
     late final PublishJournal journal;
     late final SignInStatusStore signInStore;
+    late final SignInWarningStore warningStore;
     final AdapterRegistry registry;
 
     if (demo) {
@@ -107,8 +117,10 @@ class AppServices {
       keychain = InMemorySecretStore();
       journal = PublishJournal.inMemory();
       signInStore = SignInStatusStore.inMemory();
+      warningStore = SignInWarningStore.inMemory();
       registry = demoRegistry(real);
       await seedDemo(registry: registry, accounts: accounts, posts: posts, quota: quota, media: MediaLibrary(st));
+      await seedDemoSignIns(signInStore, accounts, registry);
     } else {
       final store = JsonFileStore(st.dataDir ?? '');
       accounts = store.accounts;
@@ -117,6 +129,7 @@ class AppServices {
       keychain = SecureSecretStore();
       journal = store.publishJournal;
       signInStore = store.signInStatus;
+      warningStore = store.signInWarnings;
       registry = real;
     }
 
@@ -124,6 +137,18 @@ class AppServices {
     // a sync, a restored backup), updates its status.
     final signIn = SignInStatusTracker(store: signInStore, accounts: accounts, registry: registry, secrets: keychain);
     final SecretStore secrets = SignInStatusSecretStore(keychain, signIn);
+    final warnings = SignInWarningCenter(
+      statuses: signInStore,
+      store: warningStore,
+      // The demo workspace sends nothing: its accounts are not real.
+      sink: demo ? null : const NotificationSignInSink(),
+      describe: (step, status) async {
+        final account = await accounts.get(step.accountId);
+        if (account == null) return null;
+        final network = registry.byId(account.platformId)?.descriptorForAccount(account).name ?? account.platformId;
+        return signInWarningNoticeFor(step, status, network: network, who: account.handle ?? account.displayName, now: DateTime.now());
+      },
+    );
 
     late final AppServices services;
     final handoff = AppHandoffLauncher(onSkip: (postId, accountId) => services._skipped.add('$postId|$accountId'));
@@ -150,6 +175,8 @@ class AppServices {
       publishJournal: journal,
       signInStatusStore: signInStore,
       signInStatus: signIn,
+      signInWarningStore: warningStore,
+      signInWarnings: warnings,
       demo: demo,
       settings: settings,
     );

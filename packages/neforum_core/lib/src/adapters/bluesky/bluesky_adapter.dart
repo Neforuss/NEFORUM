@@ -120,6 +120,9 @@ class BlueskyAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.bluesky(account);
 
+  @override
+  bool readsSignIn(ConnectedAccount account) => account.tier != PlatformTier.handoff;
+
   /// The session JWT's own `exp`, with no network. It dates the short-lived
   /// token only: the app password signs in again, so the person has no date.
   @override

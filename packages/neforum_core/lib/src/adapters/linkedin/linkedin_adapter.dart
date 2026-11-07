@@ -320,6 +320,9 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
     };
   }
 
+  @override
+  bool readsSignIn(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
   /// `POST /oauth/v2/introspectToken` with the app's client id and secret.
   @override
   Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {

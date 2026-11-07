@@ -20,6 +20,7 @@ import 'media_tray.dart';
 import 'open_in_composer.dart';
 import 'preview_pane.dart';
 import 'publish_progress_sheet.dart';
+import '../accounts/sign_in_parts.dart';
 import 'schedule_sheet.dart';
 import 'target_picker.dart';
 
@@ -336,6 +337,7 @@ class _WriteColumn extends ConsumerWidget {
             ]),
           ),
         TargetPicker(grid: targetGrid, keyboardOpen: keyboardOpen),
+        const ComposerSignInNotes(),
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
         const ThreadPartEditors(),

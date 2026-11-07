@@ -149,6 +149,9 @@ class ThreadsAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.threadsFor(account);
 
+  @override
+  bool readsSignIn(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
   /// Threads' own `debug_token`, with the token as its own caller.
   @override
   Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -454,6 +457,12 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
   }
 
   // ---- refresh -----------------------------------------------------------
+
+  /// A token renews itself: asked by how old it is, not by its end. Meta refuses
+  /// one under 24 hours old.
+  @override
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) =>
+      refreshSecrets(account, secrets, ctx);
 
   @override
   Future<Map<String, String>?> refreshSecrets(

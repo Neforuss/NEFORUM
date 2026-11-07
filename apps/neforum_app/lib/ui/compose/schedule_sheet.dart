@@ -5,11 +5,15 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../platform/env.dart';
 import '../../state/composer.dart';
+import '../../state/account_connection.dart';
 import '../../state/providers.dart';
+import '../../state/sign_in_board.dart';
+import '../../state/sign_in_schedule.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/surfaces.dart';
+import '../accounts/sign_in_parts.dart';
 import '../activity/time_format.dart';
 
 /// Picks a date and time for the post. Returns null when cancelled; a
@@ -168,6 +172,23 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
     final past = each ? accounts.any((a) => !(_times[a.id] ?? _when).isAfter(now)) : !_when.isAfter(now);
     final tz = DateTime.now().timeZoneName;
     final format = TimeFormatting.of(context, ref);
+    // The sign-ins that end before this time: from the status file, as the
+    // time changes, with no keychain read.
+    final signInNotes = signInScheduleNotes(
+      [
+        for (final t in targets)
+          if (registry.byId(t.$1.platformId) case final adapter?)
+            SignInScheduledTarget(
+              account: t.$1,
+              network: t.$2.name,
+              policy: adapter.signInPolicyFor(t.$1),
+              dueAt: each ? (_times[t.$1.id] ?? _when) : _when,
+              held: held.contains(t.$2.name),
+            ),
+      ],
+      ref.watch(signInStatusesProvider).value ?? const {},
+      ref.watch(signInClockProvider)(),
+    );
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
@@ -276,6 +297,10 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
             const SizedBox(height: Space.xs),
             Text('Time zone: $tz', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
             const SizedBox(height: Space.lg),
+            ],
+            if (signInNotes.isNotEmpty) ...[
+              SignInScheduleNotesView(notes: signInNotes, showLink: false),
+              const SizedBox(height: Space.md),
             ],
             if (held.isNotEmpty)
               _Note(

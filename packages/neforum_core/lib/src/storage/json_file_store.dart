@@ -12,13 +12,14 @@ import '../util/logger.dart';
 import 'repositories.dart';
 import 'secret_store.dart';
 import 'sign_in_status_store.dart';
+import 'sign_in_warning_store.dart';
 
 /// JSON-file persistence: one small file per store in [directory], written
 /// atomically (temp file + rename). Used by the CLI and, on desktop/mobile,
 /// by the app for everything except secrets (which go to the OS keychain).
 ///
 /// Files: `accounts.json`, `posts.json`, `quota.json`, `secrets.json`,
-/// `publish-journal.json`, `sign-in-status.json`.
+/// `publish-journal.json`, `sign-in-status.json`, `sign-in-warnings.json`.
 class JsonFileStore {
   JsonFileStore(this.directory)
       : accounts = JsonAccountRepository(JsonFile(p.join(directory, 'accounts.json'))),
@@ -26,7 +27,8 @@ class JsonFileStore {
         quota = JsonQuotaRepository(JsonFile(p.join(directory, 'quota.json'))),
         secrets = JsonSecretStore(JsonFile(p.join(directory, 'secrets.json'))),
         publishJournal = openPublishJournal(directory),
-        signInStatus = openSignInStatus(directory);
+        signInStatus = openSignInStatus(directory),
+        signInWarnings = openSignInWarnings(directory);
 
   final String directory;
   final JsonAccountRepository accounts;
@@ -41,11 +43,20 @@ class JsonFileStore {
   /// What this device last worked out about each account's sign-in.
   final SignInStatusStore signInStatus;
 
+  /// Which sign-in warnings this device has given.
+  final SignInWarningStore signInWarnings;
+
   /// The sign-in status in [directory]. Device-only: never synced or exported.
   /// Every read goes to the file, since background isolates write it too.
   static SignInStatusStore openSignInStatus(String directory) {
     final file = JsonFile(p.join(directory, 'sign-in-status.json'), writeAttempts: 3);
     return SignInStatusStore(read: file.read, write: file.write);
+  }
+
+  /// The warnings given in [directory]. Device-only: never synced or exported.
+  static SignInWarningStore openSignInWarnings(String directory) {
+    final file = JsonFile(p.join(directory, 'sign-in-warnings.json'), writeAttempts: 3);
+    return SignInWarningStore(read: file.read, write: file.write);
   }
 
   /// The publish journal in [directory] as one process sees it. Every call
@@ -62,6 +73,7 @@ class JsonFileStore {
     accounts.dispose();
     posts.dispose();
     signInStatus.dispose();
+    signInWarnings.dispose();
   }
 }
 
