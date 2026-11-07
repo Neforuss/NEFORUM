@@ -70,6 +70,12 @@ class _EmojiPanelState extends ConsumerState<EmojiPanel> {
 
   void _setTone(int tone) => ref.read(settingsProvider.notifier).update((s) => s.copyWith(emojiSkinTone: tone));
 
+  /// A recent emoji may have come from search, or from a device that drew it.
+  bool _drawsRecent(String glyph) {
+    final e = emojiByGlyph(glyph);
+    return e == null || _support.draws(e);
+  }
+
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
@@ -78,7 +84,7 @@ class _EmojiPanelState extends ConsumerState<EmojiPanel> {
     final searching = query.isNotEmpty;
     final List<Emoji> found = searching ? searchEmoji(query) : (_category == null ? const [] : emojiOf(_category!).where(_support.draws).toList());
     final recentsShown = !searching && _category == null;
-    final anyUndrawable = searching && found.any((e) => !_support.draws(e));
+    final anyUndrawable = searching ? found.any((e) => !_support.draws(e)) : recentsShown && _recents.any((g) => !_drawsRecent(g));
     final showFlagsNote = _support.flagsInPieces && (_category == Category.flags || (searching && found.any((e) => e.category == Category.flags)));
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -117,7 +123,11 @@ class _EmojiPanelState extends ConsumerState<EmojiPanel> {
       Divider(height: 1, color: nf.border),
       Expanded(
         child: recentsShown
-            ? _Grid(key: const PageStorageKey('emoji-recent'), glyphs: [for (final g in _recents) (glyph: g, name: emojiByGlyph(g)?.name ?? 'Emoji', drawn: true, id: g)], onPick: widget.onPick)
+            ? _Grid(
+                key: const PageStorageKey('emoji-recent'),
+                glyphs: [for (final g in _recents) (glyph: g, name: emojiByGlyph(g)?.name ?? 'Emoji', drawn: _drawsRecent(g), id: g)],
+                onPick: widget.onPick,
+              )
             : found.isEmpty
                 ? Center(child: Padding(padding: const EdgeInsets.all(Space.lg), child: Text('No emoji found', style: context.text.bodyMedium?.copyWith(color: nf.textFaint))))
                 : _Grid(

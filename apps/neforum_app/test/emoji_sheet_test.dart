@@ -249,6 +249,22 @@ void main() {
       await t.pumpWidget(const SizedBox.shrink());
     });
 
+    testWidgets('a recent emoji this device cannot draw is a plain icon, not a blank box', (t) async {
+      EmojiSupport.debugProbe = windows10;
+      final s = await _pump(t, settings: {
+        'emojiRecents': ['\u{1FAE0}', grin]
+      });
+      final melting = find.byKey(const ValueKey('emoji-\u{1FAE0}'));
+      expect(find.descendant(of: melting, matching: find.byType(Text)), findsNothing);
+      expect(find.descendant(of: melting, matching: find.byIcon(Icons.image_not_supported_outlined)), findsOneWidget);
+      expect(find.descendant(of: find.byKey(const ValueKey('emoji-$grin')), matching: find.byType(Text)), findsOneWidget);
+      expect(find.textContaining('cannot show'), findsOneWidget);
+      await t.tap(melting);
+      await t.pump();
+      expect(s.picks, ['\u{1FAE0}']);
+      await t.pumpWidget(const SizedBox.shrink());
+    });
+
     testWidgets('flags stay, with a note that they look like letters here', (t) async {
       EmojiSupport.debugProbe = windows10;
       await _pump(t);

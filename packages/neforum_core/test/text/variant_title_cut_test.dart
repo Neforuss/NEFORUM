@@ -54,12 +54,26 @@ void main() {
   });
 
   test('a numbered title cut at an emoji stays whole', () {
-    // A long text splits into a series, each post with its number in the title.
-    final d = titled(threads: true, max: 14);
-    final v = resolve('one two three four five six seven eight nine ten', d, title: '12345\u{1F600}\u{1F600}\u{1F600}');
-    final titles = [v.title, ...v.threadParts.map((_) => v.title)];
-    for (final t in titles) {
-      if (t != null) expect(hasLoneSurrogate(t), isFalse, reason: t);
-    }
+    // Two photos on a network of one photo a post make a series, each post with
+    // its number in the title. Room for 7 units before the label: unit 7 falls
+    // inside the first emoji.
+    const d = PlatformDescriptor(
+      id: 'titled',
+      name: 'Titled',
+      tiers: {PlatformTier.openApi},
+      defaultTier: PlatformTier.openApi,
+      text: TextRules(maxLength: 1000, titleSupported: true, titleRequired: true, titleMax: 14),
+      media: MediaRules(maxImages: 1),
+      accountRequirements: '',
+      apiCostSummary: '',
+    );
+    const photos = [
+      MediaAttachment(id: 'a', path: 'a.jpg', mimeType: 'image/jpeg', sizeBytes: 9),
+      MediaAttachment(id: 'b', path: 'b.jpg', mimeType: 'image/jpeg', sizeBytes: 9),
+    ];
+    final post = Post(id: 'p', text: 'words', title: '123456\u{1F600}\u{1F600}\u{1F600}', media: photos, createdAt: testNow, updatedAt: testNow, targets: const [PostTarget(accountId: 'acct-1')]);
+    final v = const VariantResolver().resolve(post, post.targets.single, d, account: fakeAccount(d.id));
+    expect(v.title, '123456… (1/2)');
+    expect(hasLoneSurrogate(v.title!), isFalse);
   });
 }

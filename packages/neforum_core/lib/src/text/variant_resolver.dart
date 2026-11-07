@@ -340,8 +340,6 @@ class VariantResolver {
     return '${n(m.maxImages, 'photo', 'photos')} ${m.allowsMixedImageVideo ? 'and' : 'or'} ${n(m.maxVideos, 'video', 'videos')}';
   }
 
-  /// [title] with the number of post [index] (from 0) of a series of
-  /// [count], shortened to keep within the title limit.
   /// The start of [text], at most [units] UTF-16 units long, ending between two
   /// whole characters: a cut never leaves half an emoji behind.
   static String _cutToUnits(String text, int units) {
@@ -355,6 +353,8 @@ class VariantResolver {
     return kept.toString();
   }
 
+  /// [title] with the number of post [index] (from 0) of a series of
+  /// [count], shortened to keep within the title limit.
   static String _numberedTitle(String title, int index, int count, TextRules t) {
     final label = ' (${index + 1}/$count)';
     final max = t.titleMax;

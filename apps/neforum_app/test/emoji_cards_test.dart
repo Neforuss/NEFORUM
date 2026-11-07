@@ -136,7 +136,7 @@ void main() {
       final runs = span.children!.cast<TextSpan>();
       expect(runs.map((r) => r.text), ['I ', redHeart, ' this ', grin]);
       expect(runs[1].style!.fontFamily, kEmojiFontFamilies.first);
-      expect(runs[1].style!.fontFamilyFallback, [...kEmojiFontFamilies.skip(1), 'Inter']);
+      expect(runs[1].style!.fontFamilyFallback, kEmojiFontFamilies.skip(1), reason: "the words' font has a heart of its own, so it is not in the run");
       expect(runs[1].style!.fontWeight, FontWeight.w400, reason: 'never synthesized bold');
       expect(runs[0].style, isNull, reason: 'the words take the parent style');
     });
@@ -219,6 +219,15 @@ void main() {
       expect(warnings.single, contains('the caption'));
     });
 
+    testWidgets('a caption of nothing but such emoji leaves no empty label on the photo', (t) async {
+      EmojiSupport.debugProbe = (c) => EmojiDraw.missing;
+      await EmojiSupport.prepare('\u{1FAE0}', usage: 'the caption on the photo');
+      void caption(Canvas c, String words) => CaptionOverlayPainter(text: words, font: TextCardFont.original, style: const CaptionStyle()).paint(c, const Size(300, 300));
+      final withIt = (await t.runAsync(() => _rgba(300, 300, (c) => caption(c, '\u{1FAE0}'))))!;
+      final without = (await t.runAsync(() => _rgba(300, 300, (c) => caption(c, ''))))!;
+      expect(withIt, without);
+    });
+
     test('text with no emoji costs no try and no warning', () async {
       var tries = 0;
       EmojiSupport.debugProbe = (c) {
@@ -260,7 +269,16 @@ void main() {
     testWidgets('a keycap draws through the emoji run on classic cards (B2)', (t) async {
       await t.runAsync(_loadFonts);
       final withKeycap = _measure((await t.runAsync(() => _styled('classic Inter', keycap)))!);
-      expect(withKeycap.ink, greaterThan(100));
+      final plain = _measure((await t.runAsync(() => _styled('classic Inter', 'x')))!);
+      expect(withKeycap.coloured - plain.coloured, greaterThan(200), reason: 'in colour, not a one-colour box');
+    }, skip: skip != null);
+
+    testWidgets('an emoji that is really black or grey counts as drawn, not as a stand-in tile', (t) async {
+      await t.runAsync(_loadFonts);
+      // A black heart, a chequered flag, a black flag: a colour font's own glyphs.
+      for (final e in ['\u{1F5A4}', '\u{1F3C1}', '\u{1F3F4}']) {
+        expect((await t.runAsync(() => EmojiSupport.probe(e)))!, EmojiDraw.whole, reason: e.runes.first.toRadixString(16));
+      }
     }, skip: skip != null);
 
     testWidgets('an emoji no font has is reported missing and leaves no tile on the card (B3)', (t) async {
@@ -283,8 +301,16 @@ void main() {
 
     testWidgets('colour survives a card saved the real way', (t) async {
       await t.runAsync(_loadFonts);
-      final picture = await t.runAsync(() => renderTextCardJpeg(text: redHeart, theme: TextCardTheme.light, size: const Size(400, 400), branded: false));
-      expect(picture!.length, greaterThan(1000));
+      final coloured = await t.runAsync(() async {
+        final jpeg = await renderTextCardJpeg(text: redHeart, theme: TextCardTheme.light, size: const Size(400, 400), branded: false);
+        final codec = await ui.instantiateImageCodec(jpeg);
+        final frame = await codec.getNextFrame();
+        final data = await frame.image.toByteData(format: ui.ImageByteFormat.rawStraightRgba);
+        frame.image.dispose();
+        codec.dispose();
+        return _measure(data!.buffer.asUint8List()).coloured;
+      });
+      expect(coloured, greaterThan(200), reason: 'the saved JPEG holds the red heart');
       expect(Fonts.body, 'Inter');
     }, skip: skip != null);
   });

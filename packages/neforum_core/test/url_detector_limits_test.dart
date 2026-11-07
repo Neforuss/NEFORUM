@@ -35,7 +35,7 @@ void main() {
   });
 
   test('a link ends at a direction mark', () {
-    final found = UrlDetector.find('⁦‪http://foobar.example/‬⁩').single;
+    final found = UrlDetector.find('\u2066\u202Ahttp://foobar.example/\u202C\u2069').single;
     expect(found.text, 'http://foobar.example/');
   });
 }

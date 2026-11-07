@@ -38,7 +38,7 @@ class UrlDetector {
   /// A link ends at a space, a delimiter or a text direction mark: an address
   /// never holds one, and right-to-left writers often have them around links.
   static final RegExp _scheme = RegExp(
-    r'''(?<![\w@/])(https?://[^\s<>"'`‎‏‪-‮⁦-⁩]+)''',
+    r'''(?<![\w@/])(https?://[^\s<>"'`\u200E\u200F\u202A-\u202E\u2066-\u2069]+)''',
     caseSensitive: false,
   );
 

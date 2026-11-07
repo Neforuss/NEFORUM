@@ -987,8 +987,6 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
   }
 }
 
-/// Asks for a preset's name; the dialog owns its text field's controller, so
-/// it lives as long as the dialog's closing animation.
 /// The words of a custom block: a field with a controller, so the emoji sheet
 /// can write at its cursor. Follows the design when it changes from outside.
 class _BlockWordsField extends StatefulWidget {
@@ -1040,6 +1038,8 @@ class _BlockWordsFieldState extends State<_BlockWordsField> {
       ]);
 }
 
+/// Asks for a preset's name; the dialog owns its text field's controller, so
+/// it lives as long as the dialog's closing animation.
 class _PresetNameDialog extends StatefulWidget {
   const _PresetNameDialog({required this.initial});
   final String initial;

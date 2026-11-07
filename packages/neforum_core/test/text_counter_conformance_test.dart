@@ -6,11 +6,11 @@ import 'dart:io';
 
 import 'package:characters/characters.dart';
 import 'package:neforum_core/neforum_core.dart';
+import 'package:neforum_core/src/text/emoji_tables.dart';
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
 
 import '../tool/generate_emoji_tables.dart' show emojiTablesFrom;
-import 'package:neforum_core/src/text/emoji_tables.dart';
 
 /// Cases in the old v2 section that NEFORUM rightly answers differently: that
 /// section predates X's rule that every emoji counts 2, the rule X documents and
@@ -29,18 +29,18 @@ void main() {
   group('twitter-text validate.yml', () {
     for (final section in const ['WeightedTweetsWithDiscountedEmojiCounterTest', 'UnicodeDirectionalMarkerCounterTest']) {
       group(section, () {
-        for (final c in tests[section] as YamlList) {
+        for (final c in (tests[section] as YamlList).cast<YamlMap>()) {
           test(c['description'] as String, () {
-            expect(TextCounter.weightedX(c['text'] as String), c['expected']['weightedLength']);
+            expect(TextCounter.weightedX(c['text'] as String), (c['expected'] as YamlMap)['weightedLength']);
           });
         }
       });
     }
 
     group('WeightedTweetsCounterTest (v2 rules)', () {
-      for (final c in tests['WeightedTweetsCounterTest'] as YamlList) {
+      for (final c in (tests['WeightedTweetsCounterTest'] as YamlList).cast<YamlMap>()) {
         final description = c['description'] as String;
-        final want = c['expected']['weightedLength'] as int;
+        final want = (c['expected'] as YamlMap)['weightedLength'] as int;
         final why = kV2NotApplicable[description];
         if (why != null) {
           test('not applicable: $description', () {
@@ -52,7 +52,7 @@ void main() {
       }
 
       test('every not-applicable name is a case in the file', () {
-        final names = {for (final c in tests['WeightedTweetsCounterTest'] as YamlList) c['description']};
+        final names = {for (final c in (tests['WeightedTweetsCounterTest'] as YamlList).cast<YamlMap>()) c['description']};
         expect(names, containsAll(kV2NotApplicable.keys));
       });
     });

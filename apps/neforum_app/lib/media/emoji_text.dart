@@ -20,15 +20,13 @@ import 'caption_fonts.dart' show captionFontsRevision;
 /// engine skips the ones a device does not have.
 const List<String> kEmojiFontFamilies = ['Segoe UI Emoji', 'Apple Color Emoji', 'Noto Color Emoji'];
 
-/// [base], for an emoji: the emoji font first, then what [base] would use. The
-/// emoji font has one weight and no italics, so nothing is synthesized on it.
+/// [base], for an emoji: the emoji fonts and none of [base]'s. Where a system does
+/// not find its emoji font by name (Android has no name for it), [base]'s Inter
+/// would still win a heart; with Inter out, the engine's own emoji fallback picks.
+/// The emoji font has one weight and no italics, so nothing is synthesized on it.
 TextStyle emojiStyleOf(TextStyle base) => base.copyWith(
       fontFamily: kEmojiFontFamilies.first,
-      fontFamilyFallback: [
-        ...kEmojiFontFamilies.skip(1),
-        if (base.fontFamily != null) base.fontFamily!,
-        ...?base.fontFamilyFallback,
-      ],
+      fontFamilyFallback: kEmojiFontFamilies.skip(1).toList(),
       fontWeight: FontWeight.w400,
       fontStyle: FontStyle.normal,
       fontVariations: const [],
@@ -192,6 +190,11 @@ class EmojiSupport {
 
   static const double _size = 48;
 
+  /// The text colour of a try. A one-colour glyph takes it; a colour font's glyph
+  /// keeps its own colours, even one that is all black (a black heart, a racing
+  /// flag). So "drawn in its own colours" tells them apart where "has hue" cannot.
+  static const Color _probeColour = Color(0xFFFF00FF);
+
   static Future<_Drawn> _draw(String text) async {
     const width = 240, height = 96;
     final recorder = ui.PictureRecorder();
@@ -199,7 +202,7 @@ class EmojiSupport {
     final painter = TextPainter(
       text: TextSpan(
         text: text,
-        style: TextStyle(fontFamily: kEmojiFontFamilies.first, fontFamilyFallback: kEmojiFontFamilies.skip(1).toList(), fontSize: _size, height: 1.2, color: const Color(0xFF000000)),
+        style: TextStyle(fontFamily: kEmojiFontFamilies.first, fontFamilyFallback: kEmojiFontFamilies.skip(1).toList(), fontSize: _size, height: 1.2, color: _probeColour),
       ),
       textDirection: TextDirection.ltr,
       maxLines: 1,
@@ -218,23 +221,24 @@ class EmojiSupport {
   /// A code point no font has, and whose picture is therefore the "no glyph" one.
   static Future<_Drawn> get _noGlyphDrawn => _noGlyph ??= _draw('\u{1FFFD}');
 
-  static Future<bool> get _deviceHasColour => _hasColour ??= _draw('\u{1F600}').then((d) => d.coloured > 40);
-
-  static bool _isFlag(String cluster) {
-    final first = cluster.runes.first;
-    return (first >= 0x1F1E6 && first <= 0x1F1FF) || cluster.runes.any((r) => r >= 0xE0020 && r <= 0xE007F);
-  }
+  static Future<bool> get _deviceHasColour => _hasColour ??= _draw('\u{1F600}').then((d) => d.ownColour > 40);
 
   static Future<EmojiDraw> _classify(String cluster) async {
     final drawn = await _draw(cluster);
     final blank = await _noGlyphDrawn;
     if (drawn.ink == 0 || listEquals(drawn.pixels, blank.pixels)) return EmojiDraw.missing;
-    final colour = drawn.coloured > 40;
-    if (_isFlag(cluster)) return colour && drawn.width <= _size * 1.7 ? EmojiDraw.whole : EmojiDraw.parts;
-    // A real picture in the emoji planes is always in colour where the device
-    // has a colour font; a one-colour one is a fallback font's stand-in tile.
-    if (!colour && cluster.runes.first >= 0x1F000 && await _deviceHasColour) return EmojiDraw.missing;
+    final colour = drawn.ownColour > 40;
     final runes = cluster.runes.toList();
+    // A flag a font does not have: two letters, or, for England, Scotland and
+    // Wales, the plain black flag they start from.
+    if (runes.first >= 0x1F1E6 && runes.first <= 0x1F1FF) return colour && drawn.width <= _size * 1.7 ? EmojiDraw.whole : EmojiDraw.parts;
+    if (runes.any((r) => r >= 0xE0020 && r <= 0xE007F)) {
+      final plain = await _draw(String.fromCharCode(runes.first));
+      return colour && !listEquals(drawn.pixels, plain.pixels) ? EmojiDraw.whole : EmojiDraw.parts;
+    }
+    // A real picture in the emoji planes keeps its own colours where the device
+    // has a colour font; a one-colour one is a fallback font's stand-in tile.
+    if (!colour && runes.first >= 0x1F000 && await _deviceHasColour) return EmojiDraw.missing;
     if (drawn.width <= _size * 1.7) return EmojiDraw.whole;
     // Joined emoji that came apart: a part with no glyph would be a tile.
     for (final r in runes) {
@@ -259,14 +263,12 @@ class _Drawn {
     return n;
   }
 
-  int get coloured {
+  /// Inked pixels that are not the text colour, [EmojiSupport._probeColour].
+  int get ownColour {
     var n = 0;
     for (var i = 0; i < pixels.length; i += 4) {
       if (pixels[i + 3] <= 40) continue;
-      final r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
-      final hi = r > g ? (r > b ? r : b) : (g > b ? g : b);
-      final lo = r < g ? (r < b ? r : b) : (g < b ? g : b);
-      if (hi - lo > 40) n++;
+      if (pixels[i] < 215 || pixels[i + 1] > 40 || pixels[i + 2] < 215) n++;
     }
     return n;
   }

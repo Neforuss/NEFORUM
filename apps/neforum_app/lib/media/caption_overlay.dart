@@ -37,7 +37,8 @@ class CaptionOverlayPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final words = text.trim();
+    // Words that are only emoji this device cannot draw leave no empty label.
+    final words = EmojiSupport.withoutMissing(text).trim();
     if (words.isEmpty) return;
     final u = size.width / 1080;
     final margin = 56 * u;
