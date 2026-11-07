@@ -1379,12 +1379,14 @@ class PostActions {
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
+    Post? before;
     try {
+      before = await ref.read(servicesProvider).posts.get(postId);
       return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
       await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
-      await _announceStoppedRun(postId, accountIds);
+      if (before != null) await _announceStoppedRun(before);
       rethrow;
     } finally {
       active.end(postId, signal);
@@ -1480,14 +1482,16 @@ class PostActions {
 
   /// A run that stopped with an error instead of an outcome: told about like
   /// any other when nobody is watching the sheet. Best effort.
-  Future<void> _announceStoppedRun(String postId, Set<String>? accountIds) async {
+  /// Only the networks the stopped run changed: a run refused before it
+  /// started says nothing new about the others.
+  Future<void> _announceStoppedRun(Post before) async {
     try {
       final s = ref.read(servicesProvider);
-      final post = await s.posts.get(postId);
+      final post = await s.posts.get(before.id);
       if (post == null || post.status == PostStatus.publishing) return;
-      await announcePublishResult(s, post, delivery: _tappedDelivery(), onlyAccountIds: accountIds);
+      await announcePublishResult(s, post, delivery: _tappedDelivery(), onlyAccountIds: targetsChangedByRun(before, post));
     } on Object catch (e) {
-      debugPrint('Could not announce the stopped run of $postId: $e');
+      debugPrint('Could not announce the stopped run of ${before.id}: $e');
     }
   }
 

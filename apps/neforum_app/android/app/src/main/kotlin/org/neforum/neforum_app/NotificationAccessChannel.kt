@@ -3,6 +3,7 @@ package org.neforum.neforum_app
 import android.Manifest
 import android.app.Activity
 import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -31,7 +32,7 @@ class NotificationAccessChannel(private val activity: Activity) {
     }
 
     private fun read(): Map<String, Any> {
-        val manager = activity.getSystemService(NotificationManager::class.java)
+        val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val rationale = Build.VERSION.SDK_INT >= 33 &&
             activity.shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)
         val resultsOff = Build.VERSION.SDK_INT >= 26 &&
