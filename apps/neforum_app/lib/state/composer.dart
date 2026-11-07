@@ -1376,18 +1376,21 @@ class PostActions {
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
+    final figures = ref.read(publishProgressProvider.notifier);
+    final tracker = figures.begin(postId);
     try {
-      return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
+      return await _publishExisting(postId, signal, tracker, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
       await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
       rethrow;
     } finally {
       active.end(postId, signal);
+      figures.end(postId, tracker);
     }
   }
 
-  Future<Post> _publishExisting(String postId, CancellationSignal signal,
+  Future<Post> _publishExisting(String postId, CancellationSignal signal, PublishProgressTracker tracker,
       {Set<String>? accountIds, required bool retryFailed, bool dueTargetsOnly = false}) async {
     final s = ref.read(servicesProvider);
     // A background isolate may have posted some of it meanwhile: the run
@@ -1422,7 +1425,9 @@ class PostActions {
           interactive: true,
           onlyAccountIds: accountIds,
           retryFailed: retryFailed,
-          onProgress: run.progress,
+          onPlan: tracker.plan,
+          onEvent: tracker.event,
+          onOutcome: tracker.outcome,
           cancellation: signal,
           dueTargetsOnly: dueTargetsOnly,
         );

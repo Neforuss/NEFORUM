@@ -13,6 +13,7 @@ import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
+import '../../widgets/publish_progress.dart';
 import '../../widgets/surfaces.dart';
 import '../compose/rich_text.dart';
 import '../queue/post_menu.dart';
@@ -87,6 +88,7 @@ class PostDetailScreen extends ConsumerWidget {
           const SizedBox(width: Space.md),
           Expanded(child: Text(timeLine, style: context.text.bodyMedium?.copyWith(color: nf.textMuted))),
         ]),
+        PublishRunStatus(post: post, padding: const EdgeInsets.only(top: Space.md)),
         const SizedBox(height: Space.lg),
         NfCard(
           padding: const EdgeInsets.all(Space.xl),
@@ -230,8 +232,15 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
     final t = widget.target;
     final a = ref.watch(accountByIdProvider(t.accountId));
     final d = a == null ? null : ref.watch(registryProvider).descriptor(a.platformId);
-    final (label, tone, icon) = targetStatusStyle(t.status);
-    final err = t.result?.error;
+    // This process is posting to it right now: what it is doing, with the same
+    // figures the sheet shows.
+    final live = ref.watch(publishProgressOfProvider(widget.post.id));
+    TargetProgress? running;
+    for (final r in live?.targets ?? const <TargetProgress>[]) {
+      if (r.accountId == t.accountId && !r.finished) running = r;
+    }
+    final (label, tone, icon) = targetStatusStyle(running?.stage != null ? TargetStatus.publishing : t.status);
+    final err = running == null ? t.result?.error : null;
     final url = t.result?.remoteUrl;
     final actions = ref.read(postActionsProvider);
     final format = TimeFormatting.of(context, ref);
@@ -277,7 +286,11 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
                 StatusPill(label, tone: tone, icon: icon, dense: true),
               ]),
               Text(a?.handle ?? a?.displayName ?? '', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
-              if (timeLabel != null && timeAt != null) Text('$timeLabel ${format.moment(timeAt)}', style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+              if (timeLabel != null && timeAt != null && running == null) Text('$timeLabel ${format.moment(timeAt)}', style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+              if (running != null) ...[
+                const SizedBox(height: Space.xs),
+                TargetProgressLine(running, reportedAt: live?.at),
+              ],
               // Automatic posting filled the page in without a confirmed post.
               if (t.status == TargetStatus.awaitingHandoff && t.handoffNote != null) ...[
                 const SizedBox(height: Space.xs + 2),

@@ -67,12 +67,21 @@ class DemoAdapter extends PlatformAdapter {
   Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     final steps = variant.media.length;
     for (var i = 0; i < steps; i++) {
-      ctx.progress('Uploading ${i + 1} of $steps');
-      await Future<void>.delayed(const Duration(milliseconds: 380));
+      // The demo sends nothing, so it reports its file in steps, the way an upload
+      // answered per chunk does.
+      final m = variant.media[i];
+      final size = m.sizeBytes > 0 ? m.sizeBytes : 1;
+      ctx.uploading(m, 'Uploading ${i + 1} of $steps');
+      for (var part = 1; part <= 4; part++) {
+        await Future<void>.delayed(const Duration(milliseconds: 95));
+        ctx.uploadOffset(size * part ~/ 4, size);
+      }
     }
     final at = variant.scheduledAt;
-    ctx.progress(at != null ? 'Handing the schedule to ${descriptor.name}' : (variant.isThread ? 'Posting ${variant.threadParts.length}-part thread' : 'Posting'));
-    await Future<void>.delayed(Duration(milliseconds: 500 + (descriptor.id.hashCode % 7) * 120));
+    await ctx.creating(
+      at != null ? 'Handing the schedule to ${descriptor.name}' : (variant.isThread ? 'Posting ${variant.threadParts.length}-part thread' : 'Posting'),
+      () => Future<void>.delayed(Duration(milliseconds: 500 + (descriptor.id.hashCode % 7) * 120)),
+    );
     final id = 'demo${DateTime.now().millisecondsSinceEpoch}';
     if (at != null) return PublishResult.scheduled(remoteId: id, scheduledFor: at, remoteUrl: descriptor.homepage);
     // Post + Story: one id per story frame besides the feed post.
