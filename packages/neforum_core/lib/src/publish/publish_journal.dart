@@ -15,6 +15,7 @@ class PublishJournalEntry {
     required this.heartbeatAt,
     this.inFlightCreate,
     this.createdUnsaved = const {},
+    this.process,
   });
 
   factory PublishJournalEntry.fromJson(String postId, Map<String, dynamic> json) => PublishJournalEntry(
@@ -24,6 +25,7 @@ class PublishJournalEntry {
         heartbeatAt: DateTime.parse(json['heartbeatAt'] as String),
         inFlightCreate: _accountIn(json['inFlightCreate']),
         createdUnsaved: {...?(json['createdUnsaved'] as List?)?.whereType<String>()},
+        process: json['process'] as String?,
       );
 
   static String? _accountIn(Object? value) {
@@ -50,6 +52,10 @@ class PublishJournalEntry {
   /// the run went on.
   final Set<String> createdUnsaved;
 
+  /// The [PublishJournal.process] that wrote this entry. Null from a version that
+  /// did not note it, or a platform where it says nothing.
+  final String? process;
+
   /// The accounts whose post may be live although the saved state does not say so.
   Set<String> get outcomeUnknownAccounts => {?inFlightCreate, ...createdUnsaved};
 
@@ -59,6 +65,7 @@ class PublishJournalEntry {
         'heartbeatAt': heartbeatAt.toUtc().toIso8601String(),
         if (inFlightCreate != null) 'inFlightCreate': {'accountId': inFlightCreate},
         if (createdUnsaved.isNotEmpty) 'createdUnsaved': createdUnsaved.toList(),
+        if (process != null) 'process': process,
       };
 }
 
@@ -75,7 +82,9 @@ class PublishJournalEntry {
 /// [PublishService.publish] records an entry when its run starts, refreshes
 /// it every [heartbeatInterval] and releases it once the outcome is saved.
 /// An entry whose heartbeat is older than [abandonedAfter] belongs to a run
-/// that ended without saving its outcome.
+/// that ended without saving its outcome. On a phone every isolate lives in one
+/// process, so an entry a previous process wrote ([process]) is abandoned at once:
+/// nothing that could still be running wrote it.
 ///
 /// Unreadable data counts as no entries: a run that is not on record is never
 /// recovered, which is the safe side, since nothing is then posted twice.
@@ -85,6 +94,7 @@ class PublishJournal {
     required Future<void> Function(Object data) write,
     String? owner,
     Clock? clock,
+    this.process,
     this.heartbeatInterval = const Duration(minutes: 1),
     this.abandonedAfter = const Duration(minutes: 10),
   })  : owner = owner ?? const Uuid().v4(),
@@ -93,13 +103,18 @@ class PublishJournal {
         _now = clock ?? systemClock;
 
   /// A journal kept in memory only (the demo workspace, tests).
-  factory PublishJournal.inMemory({String? owner, Clock? clock, Duration heartbeatInterval = const Duration(minutes: 1)}) {
+  factory PublishJournal.inMemory({String? owner, Clock? clock, String? process, Duration heartbeatInterval = const Duration(minutes: 1)}) {
     Object? data;
-    return PublishJournal(read: () async => data, write: (d) async => data = d, owner: owner, clock: clock, heartbeatInterval: heartbeatInterval);
+    return PublishJournal(read: () async => data, write: (d) async => data = d, owner: owner, clock: clock, process: process, heartbeatInterval: heartbeatInterval);
   }
 
   /// Identifies the runs of this process. Every isolate has its own.
   final String owner;
+
+  /// Names this OS process, for every isolate in it, where one process is all there
+  /// can be (Android, iOS). Null where another live process may share the folder (a
+  /// computer), and then only heartbeats tell.
+  final String? process;
 
   /// How often a run in progress refreshes its entry.
   final Duration heartbeatInterval;
@@ -149,6 +164,7 @@ class PublishJournal {
           heartbeatAt: now,
           inFlightCreate: previous?.inFlightCreate,
           createdUnsaved: previous?.createdUnsaved ?? const {},
+          process: process,
         );
         return true;
       });
@@ -178,6 +194,7 @@ class PublishJournal {
           heartbeatAt: e.heartbeatAt,
           inFlightCreate: inFlight,
           createdUnsaved: after,
+          process: e.process,
         );
         return true;
       });
@@ -202,8 +219,14 @@ class PublishJournal {
     });
   }
 
-  /// Whether [entry]'s run has shown no sign of life for [abandonedAfter].
-  bool isAbandoned(PublishJournalEntry entry, {DateTime? now}) => (now ?? _now()).difference(entry.heartbeatAt) > abandonedAfter;
+  /// Whether [entry]'s run is over: a previous process wrote it, or it has shown no
+  /// sign of life for [abandonedAfter].
+  bool isAbandoned(PublishJournalEntry entry, {DateTime? now}) {
+    final mine = process;
+    final theirs = entry.process;
+    if (mine != null && theirs != null && mine != theirs) return true;
+    return (now ?? _now()).difference(entry.heartbeatAt) > abandonedAfter;
+  }
 
   /// Applies [change] to the entries as stored, one change at a time; the
   /// file is written only when [change] returns true.

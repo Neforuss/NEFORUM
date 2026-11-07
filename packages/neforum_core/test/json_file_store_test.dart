@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:neforum_core/neforum_core.dart';
@@ -130,6 +131,51 @@ void main() {
     expect(await ui.entries(), isEmpty, reason: 'a damaged journal recovers nothing');
     await ui.record('p3');
     expect((await background.entries()).keys, ['p3']);
+  });
+
+  group('the publish journal across processes', () {
+    final t0 = DateTime.utc(2026, 11, 7, 12);
+    PublishJournal open({required String? process, DateTime? at}) =>
+        JsonFileStore.openPublishJournal(dir.path, process: process, clock: () => at ?? t0);
+
+    test('an entry from another process is abandoned at once', () async {
+      await open(process: 'old').record('p1');
+      final entry = (await open(process: 'new').entries())['p1']!;
+      expect(entry.process, 'old');
+      expect(open(process: 'new').isAbandoned(entry), isTrue, reason: 'its heartbeat is this moment, and nothing can be running it');
+    });
+
+    test('another isolate of this process with a fresh beat is not, until it falls silent', () async {
+      await open(process: 'same').record('p1');
+      final entry = (await open(process: 'same').entries())['p1']!;
+      final other = open(process: 'same');
+      expect(other.owner, isNot(entry.owner));
+      expect(other.isAbandoned(entry), isFalse);
+      expect(other.isAbandoned(entry, now: t0.add(const Duration(minutes: 10))), isFalse);
+      expect(other.isAbandoned(entry, now: t0.add(const Duration(minutes: 10, seconds: 1))), isTrue);
+    });
+
+    test('a computer names no process: only heartbeats tell, since a second live NEFORUM may share the folder', () async {
+      await open(process: 'old').record('p1');
+      await open(process: null).record('p2');
+      final entries = await open(process: null).entries();
+      expect(open(process: null).isAbandoned(entries['p1']!), isFalse);
+      expect(open(process: 'new').isAbandoned(entries['p2']!), isFalse, reason: 'that entry names no process, so it proves nothing');
+    });
+
+    test('an entry from 1.3.5 has no process and reads as before; the marks keep the process', () async {
+      await File(p.join(dir.path, 'publish-journal.json'))
+          .writeAsString(jsonEncode({'p1': {'owner': 'x', 'startedAt': t0.toIso8601String(), 'heartbeatAt': t0.toIso8601String()}}));
+      expect((await open(process: 'new').entries())['p1']!.process, isNull);
+
+      final mine = open(process: 'me');
+      await mine.record('p2');
+      await mine.beginCreate('p2', 'a');
+      await mine.endCreate('p2', 'a', mayBeLive: true);
+      final after = (await mine.entries())['p2']!;
+      expect(after.process, 'me');
+      expect(after.createdUnsaved, {'a'});
+    });
   });
 
   test('posts come back with local times, the same moments that were saved', () async {
