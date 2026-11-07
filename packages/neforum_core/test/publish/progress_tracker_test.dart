@@ -376,6 +376,22 @@ void main() {
       expect(updates, 9, reason: 'so does an outcome');
     });
 
+    test('a change the interval held back still goes out once the interval is up', () async {
+      // The compiled slow-link probe: the connection took a 3 MiB body in under
+      // 200 ms, the last piece was held back, and the screens showed 0% and no
+      // bytes for the 24 s the server took to answer.
+      final shape = ProgressShape(family: ProgressFamily.direct, slots: [const ProgressSlot('a', 1000)]);
+      final seen = <int?>[];
+      final run = PublishProgressTracker(postId: 'p', interval: const Duration(milliseconds: 50), onChange: (p) => seen.add(p.targets.single.position))
+        ..plan(plan([member('x', shape)]));
+      run.event('x', bytes(100, 1000));
+      run.event('x', bytes(1000, 1000));
+      expect(seen.last, 100, reason: 'inside the interval: held back');
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      expect(seen.last, 1000, reason: 'published without waiting for another event');
+      expect(seen.where((p) => p == 1000), hasLength(1));
+    });
+
     test('a look before the plan reads 0 and does not stick', () {
       final run = PublishProgressTracker(postId: 'p', clock: () => now);
       expect(run.current.permille, 0);

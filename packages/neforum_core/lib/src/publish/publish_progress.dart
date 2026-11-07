@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:meta/meta.dart';
@@ -740,8 +741,22 @@ class PublishProgressTracker {
     if (listener == null) return;
     final now = _now();
     final last = _lastPublished;
-    if (!force && last != null && now.difference(last) < interval) return;
+    if (!force && last != null && now.difference(last) < interval) {
+      // Held back, not dropped: the last piece of a body can be the last event for
+      // as long as the server takes to answer, and the screens would show the
+      // figure from before it all that time.
+      _trailing ??= Timer(interval - now.difference(last), () {
+        _trailing = null;
+        _publish(force: true);
+      });
+      return;
+    }
+    _trailing?.cancel();
+    _trailing = null;
     _lastPublished = now;
     listener(current);
   }
+
+  /// The publish of a change [interval] held back.
+  Timer? _trailing;
 }
