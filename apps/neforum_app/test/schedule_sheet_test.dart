@@ -2,10 +2,12 @@
 // instant kept through a reopen, clock changes, and a time gone stale. The real
 // composer screen on a phone-sized window, with a fixed clock and a seeded draw.
 
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_app/platform/storage.dart';
@@ -56,6 +58,30 @@ class _MemoryStorage implements AppStorage {
   Widget image(String path, {BoxFit fit = BoxFit.cover, double? width, double? height, int? cacheWidth}) =>
       SizedBox(width: width, height: height, child: const ColoredBox(color: Color(0xFF777777)));
 }
+
+/// The app's own fonts, for layouts sized for them: the test font's square
+/// letters are twice as wide as real ones, which overflows the header of
+/// Flutter's date range picker and the composer's action bar.
+Future<void> _loadFonts() async {
+  Future<void> family(String name, List<String> files) async {
+    final loader = FontLoader(name);
+    for (final f in files) {
+      loader.addFont(Future.value(ByteData.view(File('assets/fonts/$f').readAsBytesSync().buffer)));
+    }
+    await loader.load();
+  }
+
+  await family('Inter', ['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf', 'Inter-Bold.ttf']);
+  await family('Bricolage', ['BricolageGrotesque-SemiBold.ttf', 'BricolageGrotesque-Bold.ttf']);
+}
+
+/// A zone whose clocks go back an hour 30 minutes after [first], so [first] has
+/// a twin an hour on. A table, not this machine's zone: on a machine with its
+/// own change near that date, the two would cancel out.
+LocalZone _fallsBackAfter(DateTime first) => LocalZone(wallClockOf: (ms) {
+      final change = first.millisecondsSinceEpoch + const Duration(minutes: 30).inMilliseconds;
+      return DateTime.fromMillisecondsSinceEpoch(ms < change ? ms : ms - const Duration(hours: 1).inMilliseconds, isUtc: true);
+    });
 
 const _seed = 20261106;
 const _phone = Size(360, 640);
@@ -114,12 +140,15 @@ void main() {
   /// Opens the sheet the way the composer's button does.
   Future<void> openSheet(WidgetTester tester, _Harness h) async {
     final bar = find.byType(ComposerActionBar);
-    final schedule = find.descendant(of: bar, matching: find.byTooltip('Schedule'));
-    if (schedule.evaluate().isNotEmpty) {
-      await tester.tap(schedule);
-    } else {
-      await tester.tap(find.descendant(of: bar, matching: find.byType(InputChip)));
-    }
+    // A chip once a time is set, else an icon on a phone or a labelled button on
+    // a wide window. Once a time is set, "Schedule" is the button that posts.
+    final chip = find.descendant(of: bar, matching: find.byType(InputChip));
+    final icon = find.descendant(of: bar, matching: find.byTooltip('Schedule'));
+    await tester.tap(chip.evaluate().isNotEmpty
+        ? chip
+        : icon.evaluate().isNotEmpty
+            ? icon
+            : find.descendant(of: bar, matching: find.text('Schedule')));
     await tester.pumpAndSettle();
     expect(find.text('Schedule post'), findsOneWidget);
   }
@@ -208,7 +237,8 @@ void main() {
     });
 
     testWidgets('a range is stated in words and every preset draws inside it', (tester) async {
-      final h = await boot(tester, size: const Size(1200, 900));
+      await tester.runAsync(_loadFonts);
+      final h = await boot(tester, size: const Size(1700, 1000));
       compose(h);
       await tester.pump();
       await openSheet(tester, h);
@@ -221,7 +251,7 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.textContaining('Any minute from'), findsOneWidget);
         // Primary label on a wide window: "Schedule for ...".
-        await tester.tap(find.byType(FilledButton));
+        await tester.tap(find.descendant(of: find.byType(ScheduleSheet), matching: find.byType(FilledButton)));
         await tester.pumpAndSettle();
         final at = h.composer.scheduledAt!;
         expect(at.difference(_start) >= kRandomScheduleMinLead, isTrue, reason: e.key);
@@ -233,6 +263,7 @@ void main() {
     });
 
     testWidgets('Custom asks for the days and keeps the draw inside them; backing out changes nothing', (tester) async {
+      await tester.runAsync(_loadFonts);
       final h = await boot(tester);
       compose(h);
       await tester.pump();
@@ -377,7 +408,6 @@ void main() {
       await tester.runAsync(() async {
         await h.services.signInStatusStore.change(
             h.onDevice.id, (_) => SignInStatus(accountId: h.onDevice.id, limit: SignInLimit.date, source: SignInDateSource.serverReported, renewsItself: false, state: SignInState.endsOn, expiresAt: end));
-        await h.container.read(signInStatusesProvider.future);
       });
       await tester.pump();
       await openSheet(tester, h);
@@ -509,7 +539,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Switch to text input mode'));
       await tester.pumpAndSettle();
-      final fields = find.byType(TextField);
+      final fields = find.descendant(of: find.byType(TimePickerDialog), matching: find.byType(TextField));
       await tester.enterText(fields.at(0), '2');
       await tester.enterText(fields.at(1), '30');
       await tester.tap(find.text('OK'));
@@ -523,14 +553,8 @@ void main() {
     });
 
     testWidgets('a wall clock that happens twice says which one this is', (tester) async {
-      final first = DateTime(2030, 3, 10, 1, 30);
-      DateTime wall(int ms) => DateTime.fromMillisecondsSinceEpoch(ms);
-      // Offsets differ across a change a day later: [first] has a twin an hour on.
-      final zone = LocalZone(wallClockOf: (ms) {
-        final change = first.millisecondsSinceEpoch + const Duration(minutes: 30).inMilliseconds;
-        return ms < change ? wall(ms) : wall(ms - const Duration(hours: 1).inMilliseconds);
-      });
-      final h = await boot(tester, zone: zone);
+      final first = DateTime(2030, 3, 5, 1, 30);
+      final h = await boot(tester, zone: _fallsBackAfter(first));
       compose(h);
       await tester.pump();
       h.notifier.setSchedule(first);
@@ -542,11 +566,8 @@ void main() {
   });
 
   group('a wall clock that happens twice, one row per network', () {
-    final first = DateTime(2030, 3, 10, 1, 30);
-    final twin = LocalZone(wallClockOf: (ms) {
-      final change = first.millisecondsSinceEpoch + const Duration(minutes: 30).inMilliseconds;
-      return DateTime.fromMillisecondsSinceEpoch(ms < change ? ms : ms - const Duration(hours: 1).inMilliseconds);
-    });
+    final first = DateTime(2030, 3, 5, 1, 30);
+    final twin = _fallsBackAfter(first);
 
     testWidgets('a draw names its zone', (tester) async {
       final h = await boot(tester, zone: twin, random: _FirstMinute());

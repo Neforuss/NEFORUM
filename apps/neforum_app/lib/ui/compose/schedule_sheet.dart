@@ -113,6 +113,20 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
   /// Time ran out while the sheet stayed open and Schedule was refused.
   bool _refused = false;
 
+  /// Back to the top when the panel changes: the new one starts with its choices,
+  /// and the old one's scroll position would land in the middle of it.
+  final ScrollController _scroll = ScrollController();
+
+  void _toTop() {
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -356,10 +370,13 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
         const SizedBox(width: Space.sm),
         Expanded(child: Text('Pick a random time', style: context.text.titleSmall)),
         TextButton(
-          onPressed: () => setState(() {
-            _randomOpen = false;
-            _refused = false;
-          }),
+          onPressed: () {
+            setState(() {
+              _randomOpen = false;
+              _refused = false;
+            });
+            _toTop();
+          },
           child: const Text('Choose a date'),
         ),
       ]),
@@ -488,10 +505,13 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
 
     final randomCard = NfCard(
       padding: const EdgeInsets.all(Space.md),
-      onTap: () => setState(() {
-        _randomOpen = true;
-        _drawAgain(accounts);
-      }),
+      onTap: () {
+        setState(() {
+          _randomOpen = true;
+          _drawAgain(accounts);
+        });
+        _toTop();
+      },
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text('Pick a random time', style: context.text.labelLarge),
         const SizedBox(height: 2),
@@ -506,6 +526,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
       ),
       Flexible(
         child: SingleChildScrollView(
+          controller: _scroll,
           padding: const EdgeInsets.symmetric(horizontal: Space.xxl),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             if (canEach) ...[

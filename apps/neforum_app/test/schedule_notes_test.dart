@@ -78,7 +78,7 @@ void main() {
   Iterable<ScheduleNoteKind> kinds(List<ScheduleNote> n) => n.map((e) => e.kind);
   String textOf(List<ScheduleNote> n, ScheduleNoteKind k) => n.firstWhere((e) => e.kind == k).text;
 
-  final facebook = account('facebook', config: const {'pageId': 'page-1'});
+  final facebook = account('facebook', config: const {'page_id': 'page-1'});
   final mastodon = account('mastodon', config: const {'instance': 'https://social.example.test'});
   final bluesky = account('bluesky');
   final linkedin = account('linkedin');
