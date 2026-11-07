@@ -31,6 +31,7 @@ import 'cancellation_signal.dart';
 import 'publish_journal.dart';
 import 'publish_pause_signal.dart';
 import 'publish_progress.dart';
+import 'schedule_hold_plan.dart';
 
 /// What happened when the environment tried to execute a [HandoffPlan].
 enum HandoffOutcome {
@@ -658,11 +659,13 @@ class PublishService {
     if (post.status != PostStatus.scheduled) return post;
     for (final target in post.targets) {
       if (onlyAccountIds != null && !onlyAccountIds.contains(target.accountId)) continue;
-      if (target.status != TargetStatus.pending || target.attempts > 0) continue;
+      final account = await accounts.get(target.accountId);
       // Each target's own time when the post has a different time per network.
-      final at = post.dueAtFor(target);
-      if (at == null || !at.isAfter(_now())) continue;
-      final updated = await _delegateTarget(post, target,
+      final plan = holdPlanFor(post, target, account: account, adapter: account == null ? null : registry.byId(account.platformId), resolver: resolver, now: _now());
+      final message = plan.message;
+      if (message != null) _log.child(account!.platformId).info('${account.displayName}: keeping the schedule on this device ($message)');
+      if (!plan.handsOver) continue;
+      final updated = await _delegateTarget(target, account!, plan.variant!,
           onProgress: onProgress == null ? null : (m) => onProgress(target.accountId, m));
       if (updated == null) continue;
       // A held target no longer waits for this device: the post's time moves
@@ -673,27 +676,11 @@ class PublishService {
     return post;
   }
 
-  /// Whether [delegateSchedules] would try this target. Cheap; for the UI.
-  bool canDelegate(ConnectedAccount account) {
-    if (!account.enabled || !account.tier.isAutomatic) return false;
-    final adapter = registry.byId(account.platformId);
-    return adapter != null && adapter.descriptorForAccount(account).serverSideScheduling;
-  }
-
-  Future<PostTarget?> _delegateTarget(Post post, PostTarget target, {void Function(String message)? onProgress}) async {
-    final account = await accounts.get(target.accountId);
-    if (account == null || !canDelegate(account)) return null;
+  /// Hands [variant] to its platform, once [holdPlanFor] said it may go.
+  Future<PostTarget?> _delegateTarget(PostTarget target, ConnectedAccount account, PostVariant variant, {void Function(String message)? onProgress}) async {
     final adapter = registry.byId(account.platformId)!;
     final name = adapter.descriptor.name;
     final log = _log.child(account.platformId);
-    final variant = resolver.resolve(post, target, adapter.descriptorForAccount(account), account: account, delegateSchedule: true);
-    // A thread cannot be held: its replies need the first part's id.
-    if (variant.scheduledAt == null || variant.isThread) return null;
-    final issues = [...variant.issues, ...adapter.validate(variant, account)];
-    if (issues.hasErrors) {
-      log.info('${account.displayName}: keeping the schedule on this device (${issues.errors.first.message})');
-      return null;
-    }
     final ctx = context(onProgress: onProgress, log: log, networkName: name);
     final (secretMap, secretError) = await _freshSecrets(account, adapter, ctx);
     if (secretMap == null) {

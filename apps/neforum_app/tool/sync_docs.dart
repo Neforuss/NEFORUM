@@ -31,7 +31,7 @@ void main() {
       copy(f, f.uri.pathSegments.last);
     }
   }
-  for (final name in ['media-hosts.md', 'platforms.md', 'meta-privacy-policy.md', 'browser-extension.md', 'backup.md', 'sync.md', 'audio.md', 'text-cards.md', 'sign-in-lifetimes.md']) {
+  for (final name in ['media-hosts.md', 'platforms.md', 'meta-privacy-policy.md', 'browser-extension.md', 'backup.md', 'sync.md', 'audio.md', 'text-cards.md', 'sign-in-lifetimes.md', 'scheduling.md']) {
     final f = File('${repoDocs.path}/$name');
     if (f.existsSync()) copy(f, name);
   }
