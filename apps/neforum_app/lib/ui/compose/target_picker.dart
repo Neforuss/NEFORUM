@@ -15,6 +15,7 @@ import '../../widgets/buttons.dart';
 import '../../widgets/surfaces.dart';
 import '../root.dart';
 import '../router.dart';
+import 'account_selection_grid.dart';
 
 /// Turns artwork mode on or off.
 ///
@@ -41,16 +42,22 @@ void setArtworkMode(WidgetRef ref, {required bool on, String? accountId}) {
   notifier.selectAccounts(targets);
 }
 
-/// "Post to" row: one chip per connected account, and the Artwork switch
-/// when an art site is connected.
+/// "Post to": every connected account, as a chip or, on phones, as a cell of
+/// the [AccountSelectionGrid], and the Artwork switch when an art site is
+/// connected.
 class TargetPicker extends ConsumerWidget {
-  const TargetPicker({super.key, this.scrollable = false});
+  const TargetPicker({super.key, this.grid = false, this.keyboardOpen = false});
 
-  /// Single horizontally scrolling row (phones) instead of a wrap.
-  final bool scrollable;
+  /// Phones: a grid of names that folds to a summary, instead of chips.
+  final bool grid;
+
+  /// The on-screen keyboard is showing: the grid folds to leave room for the
+  /// text, unless the user opens it again.
+  final bool keyboardOpen;
 
   /// The Artwork switch, for tests.
   static const artworkSwitchKey = ValueKey('target-picker-artwork');
+
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -79,6 +86,42 @@ class TargetPicker extends ConsumerWidget {
     for (final a in shown) {
       perPlatform[a.platformId] = (perPlatform[a.platformId] ?? 0) + 1;
     }
+    VoidCallback? onTapOf(ConnectedAccount a) => !a.enabled
+        ? null
+        : !artworkMode && art.contains(a.id)
+            ? () => setArtworkMode(ref, on: true, accountId: a.id)
+            : () => notifier.toggleAccount(a.id);
+
+    // The quick choices never mix art sites with the others.
+    final choosable = shown.where((a) => a.enabled && (artworkMode || !art.contains(a.id)));
+    final auto = choosable.where((a) => a.tier != PlatformTier.handoff).map((a) => a.id);
+
+    if (grid) {
+      final ordered = orderedForAccountGrid(shown, (a) => !artworkMode && art.contains(a.id));
+      final handles = <String, String>{
+        for (final platformId in perPlatform.keys) ...accountGridHandles(ordered.where((a) => a.platformId == platformId).toList()),
+      };
+      return _AccountGridSection(
+        keyboardOpen: keyboardOpen,
+        entries: [
+          for (final a in ordered)
+            AccountEntry(
+              account: a,
+              platformName: registry.descriptor(a.platformId)?.name ?? a.platformId,
+              label: registry.descriptor(a.platformId)?.compactName ?? a.platformId,
+              handle: handles[a.id],
+              selected: selected.contains(a.id),
+              artSite: !artworkMode && art.contains(a.id),
+              onTap: onTapOf(a),
+            ),
+        ],
+        selected: selected,
+        onSelect: notifier.selectAccounts,
+        artworkSwitch: art.isNotEmpty || artworkMode ? _ArtworkSwitch(on: artworkMode, full: true, onChanged: (v) => setArtworkMode(ref, on: v)) : null,
+        artworkOptions: artwork == null ? null : _ArtworkOptions(details: artwork, onChanged: notifier.setArtwork, touch: true),
+      );
+    }
+
     final chips = [
       for (final a in shown)
         AccountChip(
@@ -87,17 +130,10 @@ class TargetPicker extends ConsumerWidget {
           showAccountName: (perPlatform[a.platformId] ?? 0) > 1,
           selected: selected.contains(a.id),
           artSite: !artworkMode && art.contains(a.id),
-          onTap: !a.enabled
-              ? null
-              : !artworkMode && art.contains(a.id)
-                  ? () => setArtworkMode(ref, on: true, accountId: a.id)
-                  : () => notifier.toggleAccount(a.id),
+          onTap: onTapOf(a),
         ),
     ];
 
-    // The quick choices never mix art sites with the others.
-    final choosable = shown.where((a) => a.enabled && (artworkMode || !art.contains(a.id)));
-    final auto = choosable.where((a) => a.tier != PlatformTier.handoff).map((a) => a.id);
     // Wraps onto two lines when large text or a narrow phone leaves no room.
     final header = Wrap(crossAxisAlignment: WrapCrossAlignment.center, alignment: WrapAlignment.spaceBetween, runSpacing: Space.xs, children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
@@ -117,18 +153,7 @@ class TargetPicker extends ConsumerWidget {
       // Also when the last art site was removed in artwork mode, to get out of it.
       if (art.isNotEmpty || artworkMode) _ArtworkSwitch(on: artworkMode, onChanged: (v) => setArtworkMode(ref, on: v)),
       const SizedBox(height: Space.sm + 2),
-      if (scrollable)
-        SizedBox(
-          height: 42,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: chips.length,
-            separatorBuilder: (_, _) => const SizedBox(width: Space.sm),
-            itemBuilder: (_, i) => chips[i],
-          ),
-        )
-      else
-        Wrap(spacing: Space.sm, runSpacing: Space.sm, children: chips),
+      Wrap(spacing: Space.sm, runSpacing: Space.sm, children: chips),
       if (artwork != null) ...[
         const SizedBox(height: Space.md),
         _ArtworkOptions(details: artwork, onChanged: notifier.setArtwork),
@@ -137,24 +162,244 @@ class TargetPicker extends ConsumerWidget {
   }
 }
 
+/// The phone form of the picker: a header with the fold control and the quick
+/// choices, then the grid or its summary.
+///
+/// Open or folded is the user's choice, kept on this device. While the
+/// keyboard is showing the grid folds whatever that choice is, and the control
+/// opens it for as long as the keyboard stays. With the grid folded over the
+/// keyboard only the summary stays: the artwork controls step aside as well.
+class _AccountGridSection extends ConsumerStatefulWidget {
+  const _AccountGridSection({
+    required this.entries,
+    required this.keyboardOpen,
+    required this.selected,
+    required this.onSelect,
+    required this.artworkSwitch,
+    required this.artworkOptions,
+  });
+
+  final List<AccountEntry> entries;
+  final bool keyboardOpen;
+
+  /// Everything chosen for the post, shown here or not.
+  final Set<String> selected;
+  final ValueChanged<Iterable<String>> onSelect;
+  final Widget? artworkSwitch;
+  final Widget? artworkOptions;
+
+  @override
+  ConsumerState<_AccountGridSection> createState() => _AccountGridSectionState();
+}
+
+class _AccountGridSectionState extends ConsumerState<_AccountGridSection> {
+  /// Opened by hand while the keyboard is showing.
+  bool _openOverKeyboard = false;
+
+  final _filter = TextEditingController();
+  final _filterFocus = FocusNode();
+
+  /// Shared by the fold control's two forms, so it keeps the focus across them.
+  final _foldFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // Typing in the filter opens the keyboard, which must not fold the field
+    // away; moving on to the text field then folds as usual.
+    _filterFocus.addListener(_rebuild);
+  }
+
+  void _rebuild() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void didUpdateWidget(_AccountGridSection old) {
+    super.didUpdateWidget(old);
+    if (old.keyboardOpen != widget.keyboardOpen) _openOverKeyboard = false;
+  }
+
+  @override
+  void dispose() {
+    _filter.dispose();
+    _filterFocus.dispose();
+    _foldFocus.dispose();
+    super.dispose();
+  }
+
+  void _toggle(bool folded) {
+    if (widget.keyboardOpen && !_filterFocus.hasFocus) {
+      setState(() => _openOverKeyboard = folded);
+    } else {
+      // Folding takes the filter away, and the keyboard goes with it: what
+      // stands then is the user's own choice. Set even when that choice does
+      // not change: it may have been opened by hand over the keyboard.
+      setState(() => _openOverKeyboard = false);
+      ref.read(settingsProvider.notifier).update((s) => s.copyWith(targetPickerFolded: !folded));
+    }
+  }
+
+  /// Fades, but takes its new height within the frame. The text field scrolls
+  /// its caret into view right after the frame in which the keyboard opens: a
+  /// height still changing then would move the caret out of view again.
+  Widget _fade(BuildContext context, Widget child) => AnimatedSwitcher(
+        duration: context.motion(Motion.fast),
+        switchInCurve: Motion.standard,
+        layoutBuilder: (current, _) => current ?? const SizedBox.shrink(),
+        child: child,
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    final userFolded = ref.watch(settingsProvider.select((s) => s.targetPickerFolded));
+    final bool folded;
+    if (!widget.keyboardOpen) {
+      folded = userFolded;
+    } else if (_filterFocus.hasFocus) {
+      folded = userFolded && !_openOverKeyboard;
+    } else {
+      folded = !_openOverKeyboard;
+    }
+    final entries = widget.entries;
+    final count = accountCountLabel(entries);
+    final tight = accountGridIsTight(context);
+
+    // Past [kTargetFilterThreshold] the grid can be narrowed down. The count
+    // and the summary stay about all the accounts.
+    final filterable = entries.length > kTargetFilterThreshold;
+    final query = filterable ? _filter.text.trim().toLowerCase() : '';
+    final filtering = query.isNotEmpty;
+    final shown = filtering ? entries.where((e) => e.matches(query)).toList() : entries;
+
+    // The quick choices never mix art sites with the others. While filtering
+    // they act on the matches and leave the other accounts as they are.
+    final choosable = shown.where((e) => e.counted && !e.disabled);
+    void pick(Iterable<String> ids) {
+      final matched = {for (final e in shown) if (e.counted) e.account.id};
+      widget.onSelect(filtering ? {...widget.selected.difference(matched), ...ids} : ids);
+    }
+
+    // Wraps onto two lines when the choices leave no room.
+    final openHeader = Wrap(key: const ValueKey('target-picker-open'), crossAxisAlignment: WrapCrossAlignment.center, alignment: WrapAlignment.spaceBetween, children: [
+      InkWell(
+        key: kTargetFoldKey,
+        focusNode: _foldFocus,
+        onTap: () => _toggle(false),
+        child: Semantics(
+          button: true,
+          expanded: true,
+          excludeSemantics: true,
+          label: '${count == null ? 'Post to' : 'Post to, $count'}. Fold the accounts',
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: kAccountCellMinHeight, minHeight: kAccountCellMinHeight),
+            child: AccountCountLabel(entries: entries, folded: false, showTitle: !tight),
+          ),
+        ),
+      ),
+      Row(mainAxisSize: MainAxisSize.min, children: [
+        _QuickFilter('All', () => pick(choosable.map((e) => e.account.id)), tight: tight),
+        _QuickFilter('Automatic only', () => pick(choosable.where((e) => e.account.tier != PlatformTier.handoff).map((e) => e.account.id)), tight: tight),
+        // Its label starts at its own edge when tight.
+        if (tight) const SizedBox(width: Space.xs),
+        _QuickFilter('None', () => pick(const []), tight: tight),
+      ]),
+    ]);
+
+    final grid = Column(key: const ValueKey('target-picker-grid'), crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+      if (filterable)
+        Padding(
+          padding: const EdgeInsets.only(bottom: Space.sm),
+          child: _TargetFilter(controller: _filter, focusNode: _filterFocus, matching: filtering ? shown.length : null, onChanged: _rebuild),
+        ),
+      if (filtering && shown.isEmpty)
+        Text('No account matches.', style: context.text.bodySmall?.copyWith(color: context.nf.textMuted))
+      else
+        AccountSelectionGrid(entries: shown),
+    ]);
+
+    final extras = !(folded && widget.keyboardOpen);
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+      _fade(
+        context,
+        folded
+            ? AccountSelectionSummary(
+                key: const ValueKey('target-picker-summary'),
+                entries: entries,
+                focusNode: _foldFocus,
+                overKeyboard: widget.keyboardOpen,
+                onOpen: () => _toggle(true),
+              )
+            : openHeader,
+      ),
+      if (extras) ?widget.artworkSwitch,
+      _fade(context, folded ? const SizedBox.shrink(key: ValueKey('target-picker-no-grid')) : grid),
+      if (extras && widget.artworkOptions != null) ...[
+        const SizedBox(height: Space.md),
+        widget.artworkOptions!,
+      ],
+    ]);
+  }
+}
+
+/// The field that narrows the grid down, past [kTargetFilterThreshold] accounts.
+class _TargetFilter extends StatelessWidget {
+  const _TargetFilter({required this.controller, required this.focusNode, required this.matching, required this.onChanged});
+  final TextEditingController controller;
+  final FocusNode focusNode;
+
+  /// How many accounts match, while there is something to match.
+  final int? matching;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) => TextField(
+        key: kTargetFilterKey,
+        controller: controller,
+        focusNode: focusNode,
+        onChanged: (_) => onChanged(),
+        decoration: InputDecoration(
+          hintText: 'Find an account',
+          prefixIcon: const Icon(Icons.search_rounded, size: 18),
+          helperText: matching == null ? null : 'All, Automatic only and None act on the $matching shown',
+          suffixIcon: matching == null
+              ? null
+              : IconButton(
+                  tooltip: 'Clear',
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  onPressed: () {
+                    controller.clear();
+                    onChanged();
+                  },
+                ),
+        ),
+      );
+}
+
 /// "Artwork" switch with what it means.
 class _ArtworkSwitch extends StatelessWidget {
-  const _ArtworkSwitch({required this.on, required this.onChanged});
+  const _ArtworkSwitch({required this.on, required this.onChanged, this.full = false});
   final bool on;
   final ValueChanged<bool> onChanged;
+
+  /// Phones: the switch at its full size, a whole touch target.
+  final bool full;
 
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
+    final control = Switch(key: TargetPicker.artworkSwitchKey, value: on, onChanged: onChanged);
     return MergeSemantics(
       child: Row(children: [
         Icon(Icons.brush_outlined, size: 16, color: on ? nf.accent : nf.textMuted),
         const SizedBox(width: Space.xs + 2),
         Text('Artwork', style: context.text.labelMedium?.copyWith(color: on ? nf.text : nf.textMuted)),
-        Transform.scale(
-          scale: 0.75,
-          child: Switch(key: TargetPicker.artworkSwitchKey, value: on, onChanged: onChanged),
-        ),
+        if (full) ...[
+          const SizedBox(width: Space.xs),
+          control,
+          const SizedBox(width: Space.xs),
+        ] else
+          Transform.scale(scale: 0.75, child: control),
         Expanded(
           child: Text(
             on ? 'Art sites only receive artwork: add your image, a title and tags.' : 'Post artwork to your art sites.',
@@ -176,41 +421,51 @@ const String adultRatingDescription = 'Explicit. Sites that do not allow it, suc
 
 /// Rating, "Made with AI" and "Ask not to train AI" of an artwork post.
 class _ArtworkOptions extends StatelessWidget {
-  const _ArtworkOptions({required this.details, required this.onChanged});
+  const _ArtworkOptions({required this.details, required this.onChanged, this.touch = false});
   final ArtworkDetails details;
   final ValueChanged<ArtworkDetails> onChanged;
+
+  /// Phones: each control a whole touch target.
+  final bool touch;
 
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
+    final targetSize = touch ? MaterialTapTargetSize.padded : null;
+    // Compact density would take 8 px off the padded target.
+    final density = touch ? VisualDensity.standard : VisualDensity.compact;
     return Wrap(spacing: Space.sm, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
       Row(mainAxisSize: MainAxisSize.min, children: [
         Text('Rating', style: context.text.labelMedium?.copyWith(color: nf.textMuted)),
         const SizedBox(width: Space.sm),
-        SegmentedButton<ArtworkMaturity>(
-          segments: const [
-            ButtonSegment(value: ArtworkMaturity.general, label: Text('General'), tooltip: 'Suitable for everyone'),
-            ButtonSegment(value: ArtworkMaturity.mature, label: Text('Mature'), tooltip: 'Suggestive themes, mild nudity or violence'),
-            ButtonSegment(value: ArtworkMaturity.adult, label: Text('Adult'), tooltip: adultRatingDescription),
-          ],
-          selected: {details.maturity},
-          showSelectedIcon: false,
-          style: const ButtonStyle(visualDensity: VisualDensity.compact, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-          onSelectionChanged: (s) => onChanged(details.copyWith(maturity: s.single)),
+        Flexible(
+          child: SegmentedButton<ArtworkMaturity>(
+            segments: const [
+              ButtonSegment(value: ArtworkMaturity.general, label: Text('General'), tooltip: 'Suitable for everyone'),
+              ButtonSegment(value: ArtworkMaturity.mature, label: Text('Mature'), tooltip: 'Suggestive themes, mild nudity or violence'),
+              ButtonSegment(value: ArtworkMaturity.adult, label: Text('Adult'), tooltip: adultRatingDescription),
+            ],
+            selected: {details.maturity},
+            showSelectedIcon: false,
+            style: ButtonStyle(visualDensity: density, tapTargetSize: targetSize ?? MaterialTapTargetSize.shrinkWrap),
+            onSelectionChanged: (s) => onChanged(details.copyWith(maturity: s.single)),
+          ),
         ),
       ]),
       FilterChip(
         label: const Text('Made with AI'),
         tooltip: 'The work was made with generative AI. Some art sites refuse such work.',
         selected: details.aiGenerated,
-        visualDensity: VisualDensity.compact,
+        visualDensity: density,
+        materialTapTargetSize: targetSize,
         onSelected: (v) => onChanged(details.copyWith(aiGenerated: v)),
       ),
       FilterChip(
         label: const Text('Ask not to train AI'),
         tooltip: 'Sets the NoAI option where a site has one.',
         selected: details.disallowAiTraining,
-        visualDensity: VisualDensity.compact,
+        visualDensity: density,
+        materialTapTargetSize: targetSize,
         onSelected: (v) => onChanged(details.copyWith(disallowAiTraining: v)),
       ),
     ]);
@@ -218,16 +473,19 @@ class _ArtworkOptions extends StatelessWidget {
 }
 
 class _QuickFilter extends StatelessWidget {
-  const _QuickFilter(this.label, this.onTap);
+  const _QuickFilter(this.label, this.onTap, {this.tight = false});
   final String label;
   final VoidCallback onTap;
+
+  /// No room to spare beside the label. The touch target stays whole.
+  final bool tight;
 
   @override
   Widget build(BuildContext context) => TextButton(
         onPressed: onTap,
         style: TextButton.styleFrom(
           foregroundColor: context.nf.textMuted,
-          padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs),
+          padding: EdgeInsets.symmetric(horizontal: tight ? 0 : Space.sm, vertical: Space.xs),
           minimumSize: const Size(0, 30),
           textStyle: context.text.labelMedium,
         ),

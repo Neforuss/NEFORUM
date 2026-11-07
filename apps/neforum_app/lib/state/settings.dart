@@ -174,6 +174,7 @@ class AppSettings {
     this.interfaceDensity = InterfaceDensity.comfortable,
     this.mobileTextScale = 1,
     this.collapsedSettingsSections = const [],
+    this.targetPickerFolded = false,
     this.automaticHandoffPosting = false,
     this.automaticHandoffExcludedPlatforms = kAutomationRestrictedPlatforms,
     this.advanceHandoffOnReturn = true,
@@ -252,6 +253,7 @@ class AppSettings {
         interfaceDensity: InterfaceDensity.values.asNameMap()[j['interfaceDensity']] ?? InterfaceDensity.comfortable,
         mobileTextScale: validTextScale(j['mobileTextScale']),
         collapsedSettingsSections: (j['collapsedSettingsSections'] as List? ?? const []).cast<String>(),
+        targetPickerFolded: j['targetPickerFolded'] as bool? ?? false,
         automaticHandoffPosting: j['automaticHandoffPosting'] as bool? ?? false,
         automaticHandoffExcludedPlatforms:
             (j['automaticHandoffExcludedPlatforms'] as List? ?? kAutomationRestrictedPlatforms).cast<String>(),
@@ -420,6 +422,10 @@ class AppSettings {
   /// Settings sections the user folded away. Device-only.
   final List<String> collapsedSettingsSections;
 
+  /// Phones: the user folded the composer's account grid down to its summary.
+  /// Device-only.
+  final bool targetPickerFolded;
+
   /// Desktop only: the browser extension fills in hand-offs and presses the
   /// network's Post button itself, also for scheduled posts while NEFORUM
   /// runs. Device-only.
@@ -585,6 +591,7 @@ class AppSettings {
     InterfaceDensity? interfaceDensity,
     double? mobileTextScale,
     List<String>? collapsedSettingsSections,
+    bool? targetPickerFolded,
     bool? automaticHandoffPosting,
     List<String>? automaticHandoffExcludedPlatforms,
     bool? advanceHandoffOnReturn,
@@ -662,6 +669,7 @@ class AppSettings {
         interfaceDensity: interfaceDensity ?? this.interfaceDensity,
         mobileTextScale: mobileTextScale ?? this.mobileTextScale,
         collapsedSettingsSections: collapsedSettingsSections ?? this.collapsedSettingsSections,
+        targetPickerFolded: targetPickerFolded ?? this.targetPickerFolded,
         automaticHandoffPosting: automaticHandoffPosting ?? this.automaticHandoffPosting,
         automaticHandoffExcludedPlatforms: automaticHandoffExcludedPlatforms ?? this.automaticHandoffExcludedPlatforms,
         advanceHandoffOnReturn: advanceHandoffOnReturn ?? this.advanceHandoffOnReturn,
@@ -739,6 +747,7 @@ class AppSettings {
         'interfaceDensity': interfaceDensity.name,
         if (mobileTextScale != 1) 'mobileTextScale': mobileTextScale,
         if (collapsedSettingsSections.isNotEmpty) 'collapsedSettingsSections': collapsedSettingsSections,
+        if (targetPickerFolded) 'targetPickerFolded': targetPickerFolded,
         'automaticHandoffPosting': automaticHandoffPosting,
         'automaticHandoffExcludedPlatforms': automaticHandoffExcludedPlatforms,
         'advanceHandoffOnReturn': advanceHandoffOnReturn,

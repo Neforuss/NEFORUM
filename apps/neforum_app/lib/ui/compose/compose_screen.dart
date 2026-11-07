@@ -174,7 +174,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       busy: _busy,
     );
 
-    final write = _WriteColumn(focusNode: _focus, editing: widget.editPostId != null, scrollableTargets: compact);
+    final write = _WriteColumn(focusNode: _focus, editing: widget.editPostId != null, targetGrid: compact, keyboardOpen: Env.isMobile && _keyboardOpen);
 
     final Widget body;
     if (expanded) {
@@ -255,7 +255,7 @@ class _DragDownHidesKeyboard extends StatelessWidget {
   final Widget child;
 
   bool _onScroll(ScrollNotification n) {
-    // Only the column's own scroll view, not the sideways lists in it.
+    // Only the column's own scroll view, not any list inside it.
     if (n.depth != 0 || n.metrics.axis != Axis.vertical) return false;
     final drag = switch (n) {
       ScrollUpdateNotification(:final dragDetails) => dragDetails,
@@ -273,10 +273,11 @@ class _DragDownHidesKeyboard extends StatelessWidget {
 }
 
 class _WriteColumn extends ConsumerWidget {
-  const _WriteColumn({required this.focusNode, required this.editing, required this.scrollableTargets});
+  const _WriteColumn({required this.focusNode, required this.editing, required this.targetGrid, required this.keyboardOpen});
   final FocusNode focusNode;
   final bool editing;
-  final bool scrollableTargets;
+  final bool targetGrid;
+  final bool keyboardOpen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -323,7 +324,7 @@ class _WriteColumn extends ConsumerWidget {
                 ),
             ]),
           ),
-        TargetPicker(scrollable: scrollableTargets),
+        TargetPicker(grid: targetGrid, keyboardOpen: keyboardOpen),
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
         const ThreadPartEditors(),

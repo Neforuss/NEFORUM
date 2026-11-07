@@ -146,6 +146,7 @@ AppSettings populatedSettings() => AppSettings(
       interfaceDensity: InterfaceDensity.compact,
       mobileTextScale: 1.2,
       collapsedSettingsSections: const ['sync'],
+      targetPickerFolded: true,
       automaticHandoffPosting: true,
       automaticHandoffExcludedPlatforms: const ['snapchat'],
       advanceHandoffOnReturn: false,

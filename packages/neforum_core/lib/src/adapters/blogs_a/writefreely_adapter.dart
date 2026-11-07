@@ -39,6 +39,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'writefreely',
     name: 'Write.as / WriteFreely',
+    shortName: 'Write.as',
     iconKey: 'writefreely',
     homepage: 'https://writefreely.org',
     family: 'writefreely',
