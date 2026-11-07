@@ -105,11 +105,10 @@ void main() {
 
     test('each try counts its own bytes', () async {
       final net = NeforumHttp(client: FaultClient((i, r) => null));
-      final e = await net
-          .multipart(url, files: [HttpFilePart(field: 'f', bytes: _big, fileName: 'x', contentType: 'image/jpeg')], retrySafe: true)
-          .then<Object>((_) => fail('should throw'), onError: (Object e) => e) as UploadInterrupted;
+      // Raw bytes, so every try's first piece is a full one.
+      final e = await net.putBytes(url, _big, retrySafe: true).then<Object>((_) => fail('should throw'), onError: (Object e) => e) as UploadInterrupted;
       expect(e.trace.attempts, 3);
-      expect(e.trace.sentBytes, inInclusiveRange(1, 16 * 1024), reason: 'the last try alone, not the three added up');
+      expect(e.trace.sentBytes, 16 * 1024, reason: 'the last try alone, not the three added up');
       expect(e.details, contains('${e.trace.sentBytes} of ${e.trace.totalBytes} bytes'));
     });
 
