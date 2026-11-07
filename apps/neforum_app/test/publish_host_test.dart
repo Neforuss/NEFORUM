@@ -388,6 +388,8 @@ void main() {
       expect(h.keeper.windowState, PublishWindowState.gone);
       h.lifecycle = AppLifecycleState.resumed;
       expect(h.keeper.windowState, PublishWindowState.open, reason: 'the same engine has a new Activity');
+      h.lifecycle = AppLifecycleState.paused;
+      expect(h.keeper.windowState, PublishWindowState.open, reason: 'Home after coming back is not a closed window');
     });
 
     test('a run ending hidden saves first, then releases; visible it does not wait', () async {

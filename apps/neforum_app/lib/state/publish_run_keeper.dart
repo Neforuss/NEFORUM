@@ -78,7 +78,9 @@ class PublishRunKeeper {
 
   PublishWindowState get windowState {
     final state = _lifecycle();
-    return state == AppLifecycleState.resumed || state == AppLifecycleState.inactive ? PublishWindowState.open : _window;
+    if (state != AppLifecycleState.resumed && state != AppLifecycleState.inactive) return _window;
+    // A window on screen is open, and stays so until native says it goes again.
+    return _window = PublishWindowState.open;
   }
 
   void _onSignal(PublishHostSignal signal) {
