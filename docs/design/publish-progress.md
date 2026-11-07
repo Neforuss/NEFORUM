@@ -42,6 +42,30 @@ Targets count by `max(planned bytes, 1 MiB)`, fixed when the run starts. A finis
 
 Per target, upload stage only, from `RateMeter`: nothing until two 10 s windows in a row agree within 25%, and nothing once all is sent. A new attempt, a re-send or a resume from a lower offset starts the measuring over. On unsteady links the row shows bytes and no time. There is never a time left for a whole post, because what remains includes waits nobody can measure. The 25% was tuned on loopback only.
 
+## What the screens show
+
+The words live in `apps/neforum_app/lib/state/publish_progress_view.dart`, which is pure, and `publishProgressProvider` holds the figures of every run this process is executing, by post: the composer's, a retry from a list, the scheduler's. The sheet, Activity and the post's page read the same `PostProgress`, through `PostProgressFigure` and `TargetProgressLine` in `lib/widgets/publish_progress.dart`.
+
+| A network is | Its row says | Bar | Number |
+|---|---|---|---|
+| Not reached yet | Waiting | none | none |
+| Sending bytes | Its label, "Sent 1.2 MB of 5.0 MB", and speed and time left once measured | yes | yes |
+| Sending again after a drop | Connection dropped, sending again | holds | holds |
+| All sent, no answer | Sent 3.0 MB, waiting for Bluesky · 0:12 | holds | none |
+| In a server wait | Its label · 1:12 | holds | only one the network sent |
+| Signing in, reading, posting | Its label · 0:07 | holds | none |
+| Handing off | Waiting for you | none | none |
+| Odysee | Its label · 1:05 | none | none |
+| Finished | Its result at once: Open, the error, or a pill | none | none |
+
+Only rows with no number show the small spinner, and never a row that is queued or waiting for the person. The post's own figure stays on screen during a wait and does not move. Before the plan is known there is no figure, only an indeterminate bar.
+
+The elapsed time is the one thing that moves during a wait, from a one second timer in `TargetProgressLine`. A time left or speed goes away 20 s after the last report, since bytes that stopped have no time left worth stating.
+
+A progress bar's semantic value must parse as a number, or Flutter's debug check throws. Rows in a wait leave their bar out of semantics, so the words are what a screen reader gets.
+
+A run in a background isolate cannot report to this one. `PublishRunStatus` reads the publish journal every 30 s: another owner with a heartbeat from the last two minutes reads "Posting in the background", with no number. No entry (another device's run) or an old heartbeat (it stopped) reads nothing, because saying it is posting would be untrue.
+
 ## A request that can make a post
 
 Every API adapter's post call goes through `AdapterContext.creating`. `test/adapters/creating_coverage_test.dart` lists all 30 by name. `test/adapters/creating_lost_answer_test.dart` runs each real adapter and loses the answer on the request inside `creating`, because a name in a list does not prove the call works: a helper that turns a transport error into its own error inside the callback hides the lost answer from `creating`, and the target comes back for a retry that posts twice.

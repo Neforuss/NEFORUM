@@ -58,7 +58,8 @@ class PublishProgressSheet extends ConsumerWidget {
     final failed = count(TargetStatus.failed);
     final cancelled = count(TargetStatus.cancelled);
     final waiting = count(TargetStatus.awaitingHandoff);
-    final total = live?.total ?? targets.length;
+    // A plan with no member of this run is about to end: the words stay as they were.
+    final total = live == null || live.total == 0 ? targets.length : live.total;
 
     final String headline;
     final String sub;

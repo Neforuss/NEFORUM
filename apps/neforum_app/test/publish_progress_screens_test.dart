@@ -5,6 +5,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -81,8 +82,6 @@ class _Sheet {
   /// All the text on screen.
   String get words => tester.widgetList<Text>(find.byType(Text)).map((t) => t.data ?? '').join(' | ');
 
-  Finder row(String network) => find.ancestor(of: find.text(network), matching: find.byType(Padding)).first;
-  Finder spinnerIn(String network) => find.descendant(of: row(network), matching: find.byType(CircularProgressIndicator));
 
   ProgressEvent bytes(int position, int total, {String slot = 'm', int attempt = 1, String label = 'Uploading image 1 of 1'}) =>
       ProgressEvent(stage: ProgressStage.uploading, label: label, at: now, slot: slot, position: position, slotTotal: total, attempt: attempt);
@@ -133,6 +132,8 @@ Future<_Sheet> _open(WidgetTester tester, List<PlannedTarget> plan, {Size size =
   container.read(publishRunProvider.notifier).start('p1', [for (final t in plan) t.accountId]);
   sheet.tracker = container.read(publishProgressProvider.notifier).begin('p1');
   await tester.tap(find.text('open'));
+  // Two frames: the fade starts on the first, and at opacity 0 it hides semantics.
+  await tester.pump();
   await tester.pump(const Duration(milliseconds: 400));
   sheet.tracker.plan(PublishRunPlan(postId: 'p1', targets: plan));
   await tester.pump();
@@ -374,7 +375,7 @@ void main() {
       final bar = s.postBar;
       final rowFigure = s.rowBar('a');
       expect(find.text('Instagram is processing your Reel · 0:00'), findsOneWidget);
-      expect(s.spinnerIn('Instagram'), findsOneWidget, reason: 'the small indicator beside the time');
+      expect(find.byType(CircularProgressIndicator), findsOneWidget, reason: 'the small indicator beside the time');
       // The only percentage on screen is the post's own held figure.
       expect(find.textContaining('%'), findsOneWidget);
 
@@ -457,7 +458,6 @@ void main() {
       expect(find.text('The server said no.'), findsOneWidget);
       expect(find.text('Failed'), findsOneWidget);
       expect(find.text('Skipped'), findsWidgets);
-      expect(s.spinnerIn('Skipped'), findsNothing);
       expect(find.byType(CircularProgressIndicator), findsOneWidget, reason: 'only the network really being posted to');
       expect(find.text('Posted to 1 of 4'), findsOneWidget);
     });
@@ -499,15 +499,30 @@ void main() {
       final s = await _open(tester, [_bytesTarget('a', 'Mastodon'), _bytesTarget('b', 'Bluesky')]);
       await s.send('a', () => s.bytes(2 * _mib, 4 * _mib));
 
-      expect(find.bySemanticsLabel('Post progress, posted to 0 of 2'), findsOneWidget);
-      expect(tester.getSemantics(find.bySemanticsLabel('Post progress, posted to 0 of 2')).value, '22');
-      expect(find.bySemanticsLabel('Mastodon progress'), findsOneWidget);
-      expect(tester.getSemantics(find.bySemanticsLabel('Mastodon progress')).value, '45');
+      /// What a screen reader gets: every node's label and value.
+      Map<String, String> nodes() {
+        final out = <String, String>{};
+        bool visit(SemanticsNode n) {
+          final d = n.getSemanticsData();
+          if (d.label.isNotEmpty) out[d.label] = d.value;
+          n.visitChildren(visit);
+          return true;
+        }
+
+        visit(tester.getSemantics(find.byType(PostProgressFigure)).owner!.rootSemanticsNode!);
+        return out;
+      }
+
+      // A row reads as one node: its name, its line and its bar.
+      String? valueOf(String words) => nodes().entries.where((e) => e.key.contains(words)).map((e) => e.value).firstOrNull;
+
+      expect(valueOf('Post progress, posted to 0 of 2'), '22', reason: '${nodes()}');
+      expect(valueOf('Mastodon progress'), '45', reason: '${nodes()}');
 
       await s.send('a', () => s.bytes(4 * _mib, 4 * _mib));
       await s.send('a', () => s.wait('Mastodon is processing the file'));
-      expect(find.bySemanticsLabel('Mastodon progress'), findsNothing, reason: 'during a wait the words say it, with no number to read out');
-      expect(find.bySemanticsLabel(RegExp('Mastodon is processing the file')), findsOneWidget);
+      expect(valueOf('Mastodon progress'), isNull, reason: 'during a wait the words say it, with no number to read out');
+      expect(valueOf('Mastodon is processing the file'), isEmpty, reason: '${nodes()}');
       handle.dispose();
     });
 
