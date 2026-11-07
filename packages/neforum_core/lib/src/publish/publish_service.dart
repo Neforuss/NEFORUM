@@ -853,6 +853,17 @@ class PublishService {
       await secrets.write(account.id, refreshed);
       return (refreshed, null);
     } on AdapterException catch (e) {
+      // An early renewal refused with no other device to explain it: the keys
+      // held now have not ended, so they post. If the network has dropped them
+      // too, the post's own refusal says so. Keys the coordinator wants to wait
+      // for the file with come here as a network error, not this.
+      if (e.error.kind == PublishErrorKind.auth) {
+        final held = await _keysThatStillWork(account, adapter, secretMap);
+        if (held != null) {
+          _log.warn('The ${adapter.descriptor.name} early renewal was refused; posting on the token that has not ended');
+          return (held, null);
+        }
+      }
       return (null, e.error);
     } on AuthCancelled {
       return (null, const PublishError(kind: PublishErrorKind.cancelled, message: 'Sign-in cancelled'));
@@ -871,6 +882,18 @@ class PublishService {
       }
       return (null, PublishError.auth('Could not refresh credentials (${e.runtimeType})'));
     }
+  }
+
+  /// The keys stored for [account] now (a sync may have replaced [fallback]) when
+  /// the adapter was renewing them only early, else `null`.
+  Future<Map<String, String>?> _keysThatStillWork(ConnectedAccount account, PlatformAdapter adapter, Map<String, String> fallback) async {
+    Map<String, String> held = fallback;
+    try {
+      held = await secrets.read(account.id) ?? fallback;
+    } on Object catch (e) {
+      _log.warn('Could not re-read the ${adapter.descriptor.name} keys after the refused renewal (${e.runtimeType})');
+    }
+    return adapter.renewsEarly(account, held, _now()) ? held : null;
   }
 
   /// Tells [signInOutcomes] how [t] went. Not awaited: a post never waits for

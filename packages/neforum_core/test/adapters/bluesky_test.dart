@@ -630,6 +630,19 @@ void main() {
           throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)));
     });
 
+    for (final code in ['AccountTakedown', 'AccountDeactivated']) {
+      test('$code on the new session keeps saying not allowed: a new app password would not help', () async {
+        final router = Router()
+          ..on('POST', '/com.atproto.server.refreshSession', (_) => jsonRes({'error': code}, 400))
+          ..on('POST', '/com.atproto.server.createSession', (_) => jsonRes({'error': code, 'message': 'no'}, 401));
+        await expectLater(
+            adapter.refreshSecrets(blueskyAccount(), expired, testContext(handler: router.call)),
+            throwsA(isA<AdapterException>()
+                .having((e) => e.error.notAllowed, 'notAllowed', isTrue)
+                .having((e) => e.error.message, 'message', isNot(contains('app password')))));
+      });
+    }
+
     test('no app password and rejected refresh -> auth', () async {
       final router = Router()..on('POST', '/com.atproto.server.refreshSession', (_) => jsonRes({'error': 'InvalidToken'}, 400));
       final noPw = Map<String, String>.from(expired)..remove('app_password');

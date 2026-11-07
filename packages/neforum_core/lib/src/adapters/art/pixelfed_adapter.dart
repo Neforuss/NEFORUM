@@ -173,11 +173,18 @@ class PixelfedAdapter extends MastodonAdapter {
   bool renewsEarly(ConnectedAccount account, Map<String, String> secrets, DateTime now) {
     if (account.tier == PlatformTier.handoff) return false;
     final tokens = OAuthTokens.fromSecrets(secrets);
-    return tokens != null && !tokens.isExpired(now: now) && tokens.isExpired(now: now, leeway: earlyRenewal) && (tokens.refreshToken ?? '').isNotEmpty;
+    return tokens != null &&
+        !tokens.isExpired(now: now) &&
+        tokens.isExpired(now: now, leeway: earlyRenewal) &&
+        (tokens.refreshToken ?? '').isNotEmpty &&
+        (secrets['client_id'] ?? '').isNotEmpty;
   }
 
-  /// As the Mastodon adapter, and also early ([renewsEarly]). A token that still
-  /// works keeps posting if the early renewal fails.
+  /// As the Mastodon adapter, and also early ([renewsEarly]). A renewal that
+  /// could not run leaves the token posting. A refusal goes up, because the old
+  /// token may be dead too: another device may have spent this refresh token,
+  /// which the coordinator can find out. Where nothing explains it, the publish
+  /// service posts on the token.
   @override
   Future<Map<String, String>?> refreshSecrets(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     if (account.tier == PlatformTier.handoff) return null;
@@ -185,6 +192,7 @@ class PixelfedAdapter extends MastodonAdapter {
     try {
       return await renewToken(account, secrets, OAuthTokens.fromSecrets(secrets)!, ctx);
     } on AdapterException catch (e) {
+      if (e.error.kind == PublishErrorKind.auth) rethrow;
       ctx.log.warn('The early Pixelfed renewal failed; the current token still works: ${e.error.kind.name}');
       return null;
     } on Exception catch (e) {

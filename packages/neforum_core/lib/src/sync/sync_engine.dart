@@ -1161,6 +1161,9 @@ class SyncEngine implements SecretsCoordinator {
         latest = await _awaitTurn(account, current, store, due);
       } on _AlreadyRenewed catch (done) {
         return _differs(done.secrets, current);
+      } on _LeaseStillHeld catch (held) {
+        _log.warn('Not renewing ${account.displayName} early while another device holds the renewal');
+        return _differs(held.secrets, current);
       } on Object catch (e) {
         // Keys that still work can wait for the file: renewing them now could
         // sign the other devices out, for nothing this post needs.
@@ -1184,7 +1187,7 @@ class SyncEngine implements SecretsCoordinator {
           again = await store.read(account.id) ?? latest;
         } on Object catch (syncError) {
           _log.warn('Could not re-read the sync file after the refused renewal: $syncError');
-          throw e;
+          throw _fileMayBeBehind() ? _waitForTheFile(account, e) : e;
         }
         if (_differs(again, latest) != null) {
           if (!due(again)) {
@@ -1192,12 +1195,8 @@ class SyncEngine implements SecretsCoordinator {
           }
           fresh = await refresh(again);
           latest = again;
-        } else if (!backend.atomicWrites && _otherDeviceActive()) {
-          throw AdapterException(PublishError.network(
-              '${_networkName(account)} refused the saved sign-in, probably because another device renewed it moments ago and '
-              'the sync file has not arrived here yet. NEFORUM tries again shortly; if this keeps happening, reconnect the account.',
-              raw: e.error.raw,
-              statusCode: e.error.statusCode));
+        } else if (_fileMayBeBehind()) {
+          throw _waitForTheFile(account, e);
         } else {
           rethrow;
         }
@@ -1254,7 +1253,8 @@ class SyncEngine implements SecretsCoordinator {
 
   /// Syncs, then waits while another device holds the account's lease, then
   /// takes it. Returns the keys to renew; throws [_AlreadyRenewed] when
-  /// another device's renewal arrived meanwhile.
+  /// another device's renewal arrived meanwhile, and [_LeaseStillHeld] when the
+  /// wait ran out on keys that have not ended.
   Future<Map<String, String>> _awaitTurn(ConnectedAccount account, Map<String, String> current, SecretStore store, bool Function(Map<String, String>) due) async {
     final deadline = _now().add(renewalWait);
     while (true) {
@@ -1270,7 +1270,13 @@ class SyncEngine implements SecretsCoordinator {
       }
       final took = await _locked(() => _takeLease(account.id));
       if (took) return latest;
-      if (!_now().isBefore(deadline)) return latest;
+      if (!_now().isBefore(deadline)) {
+        // Past the wait, dead keys renew without the lease: nothing else can
+        // post. Keys that still work post as they are, because renewing them
+        // here could sign out the device that holds the lease.
+        if (!_expired(latest)) throw _LeaseStillHeld(latest);
+        return latest;
+      }
     }
   }
 
@@ -1290,6 +1296,19 @@ class SyncEngine implements SecretsCoordinator {
     }
     return false;
   }
+
+  /// Whether this device's copy of the file can be older than a renewal another
+  /// device has just made: storage without compare and swap (a synced folder
+  /// updates its copies on its own time) and a device seen lately.
+  bool _fileMayBeBehind() => !backend.atomicWrites && _otherDeviceActive();
+
+  /// A refused renewal that is probably [_fileMayBeBehind]: it waits and is
+  /// retried, without asking for a reconnect.
+  AdapterException _waitForTheFile(ConnectedAccount account, AdapterException refused) => AdapterException(PublishError.network(
+      '${_networkName(account)} refused the saved sign-in, probably because another device renewed it moments ago and '
+      'the sync file has not arrived here yet. NEFORUM tries again shortly; if this keeps happening, reconnect the account.',
+      raw: refused.error.raw,
+      statusCode: refused.error.statusCode));
 
   bool _otherDeviceActive() {
     final doc = _cachedDoc;
@@ -1330,6 +1349,11 @@ enum _Claim { mine, take, others }
 
 class _AlreadyRenewed implements Exception {
   _AlreadyRenewed(this.secrets);
+  final Map<String, String> secrets;
+}
+
+class _LeaseStillHeld implements Exception {
+  _LeaseStillHeld(this.secrets);
   final Map<String, String> secrets;
 }
 

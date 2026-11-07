@@ -224,6 +224,34 @@ void main() {
       }
     });
 
+    test('YouTube: the 1 hour its dates work back from is cited to the Google page that states it', () {
+      expect(SignInPolicies.youTube.accessLife, const Duration(hours: 1));
+      final cells = _docRows(doc, '## All 48 networks').firstWhere((c) => c[_h.name] == 'YouTube');
+      expect(cells[_h.lifetime], startsWith('Token 1 hour'));
+      expect(cells[_h.source], contains('(https://docs.cloud.google.com/docs/authentication/token-types)'), reason: 'the OAuth page says only "limited lifetimes"');
+      expect(cells[_h.status], contains('token types page'), reason: 'the row says where the figure comes from');
+    });
+
+    test('a VERIFIED early revocation clause cites the page that states it, and no clause stands with no page', () {
+      const appStates = '(https://developers.facebook.com/documentation/development/create-an-app/app-dashboard/app-states)';
+      const permissions = '(https://developers.facebook.com/documentation/development/permissions)';
+      final rows = _docRows(doc, '## All 48 networks');
+      List<String> row(String name) => rows.firstWhere((c) => c[_h.name] == name);
+      for (final (name, pages) in [
+        ('Facebook', [appStates, permissions]),
+        ('Instagram', [appStates, permissions]),
+        ('Threads', [appStates]),
+        ('LinkedIn', ['(https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens)']),
+        ('WordPress', ['(https://make.wordpress.org/core/2020/11/05/application-passwords-integration-guide/)']),
+      ]) {
+        for (final page in pages) {
+          expect(row(name)[_h.source], contains(page), reason: name);
+        }
+      }
+      // WordPress's pages say nothing of a role change.
+      expect(row('WordPress').join(' '), isNot(contains('role change')));
+    });
+
     test('says "no published limit", never "never expires", and uses plain words', () {
       expect(doc, isNot(contains('—')), reason: 'no em dashes');
       for (final line in doc.split('\n').where((l) => l.startsWith('|'))) {

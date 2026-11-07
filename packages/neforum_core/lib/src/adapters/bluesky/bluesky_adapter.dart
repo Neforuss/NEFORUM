@@ -301,6 +301,7 @@ class BlueskyAdapter extends PlatformAdapter {
       return _sessionSecrets(s, password, secrets);
     } on HttpFailure catch (e) {
       final err = mapBlueskyFailure(e, now: ctx.now());
+      if (err.notAllowed == true) throw AdapterException(err);
       if (e.statusCode == 401 || err.kind == PublishErrorKind.auth) {
         throw AdapterException(PublishError.auth(
             'Bluesky no longer accepts the app password (revoked?). Create a new one and reconnect the account.',
