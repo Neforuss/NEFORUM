@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
@@ -46,7 +47,7 @@ void setArtworkMode(WidgetRef ref, {required bool on, String? accountId}) {
 /// the [AccountSelectionGrid], and the Artwork switch when an art site is
 /// connected.
 class TargetPicker extends ConsumerWidget {
-  const TargetPicker({super.key, this.grid = false, this.keyboardOpen = false});
+  const TargetPicker({super.key, this.grid = false, this.keyboardOpen = false, this.availableHeight});
 
   /// Phones: a grid of names that folds to a summary, instead of chips.
   final bool grid;
@@ -54,6 +55,10 @@ class TargetPicker extends ConsumerWidget {
   /// The on-screen keyboard is showing: the grid folds to leave room for the
   /// text, unless the user opens it again.
   final bool keyboardOpen;
+
+  /// The height from the top of the picker to the action bar, which decides
+  /// the form of the grid. See [accountGridFormFor].
+  final double? availableHeight;
 
   /// The Artwork switch, for tests.
   static const artworkSwitchKey = ValueKey('target-picker-artwork');
@@ -98,11 +103,16 @@ class TargetPicker extends ConsumerWidget {
 
     if (grid) {
       final ordered = orderedForAccountGrid(shown, (a) => !artworkMode && art.contains(a.id));
-      final handles = <String, String>{
-        for (final platformId in perPlatform.keys) ...accountGridHandles(ordered.where((a) => a.platformId == platformId).toList()),
-      };
+      final handles = <String, String>{};
+      final identities = <String, String>{};
+      for (final platformId in perPlatform.keys) {
+        final siblings = ordered.where((a) => a.platformId == platformId).toList();
+        handles.addAll(accountGridHandles(siblings));
+        identities.addAll(accountGridIdentities(siblings));
+      }
       return _AccountGridSection(
         keyboardOpen: keyboardOpen,
+        availableHeight: availableHeight,
         entries: [
           for (final a in ordered)
             AccountEntry(
@@ -110,6 +120,7 @@ class TargetPicker extends ConsumerWidget {
               platformName: registry.descriptor(a.platformId)?.name ?? a.platformId,
               label: registry.descriptor(a.platformId)?.compactName ?? a.platformId,
               handle: handles[a.id],
+              identity: identities[a.id],
               selected: selected.contains(a.id),
               artSite: !artworkMode && art.contains(a.id),
               onTap: onTapOf(a),
@@ -173,6 +184,7 @@ class _AccountGridSection extends ConsumerStatefulWidget {
   const _AccountGridSection({
     required this.entries,
     required this.keyboardOpen,
+    required this.availableHeight,
     required this.selected,
     required this.onSelect,
     required this.artworkSwitch,
@@ -181,6 +193,7 @@ class _AccountGridSection extends ConsumerStatefulWidget {
 
   final List<AccountEntry> entries;
   final bool keyboardOpen;
+  final double? availableHeight;
 
   /// Everything chosen for the post, shown here or not.
   final Set<String> selected;
@@ -263,7 +276,6 @@ class _AccountGridSectionState extends ConsumerState<_AccountGridSection> {
     }
     final entries = widget.entries;
     final count = accountCountLabel(entries);
-    final tight = accountGridIsTight(context);
 
     // Past [kTargetFilterThreshold] the grid can be narrowed down. The count
     // and the summary stay about all the accounts.
@@ -280,65 +292,79 @@ class _AccountGridSectionState extends ConsumerState<_AccountGridSection> {
       widget.onSelect(filtering ? {...widget.selected.difference(matched), ...ids} : ids);
     }
 
-    // Wraps onto two lines when the choices leave no room.
-    final openHeader = Wrap(key: const ValueKey('target-picker-open'), crossAxisAlignment: WrapCrossAlignment.center, alignment: WrapAlignment.spaceBetween, children: [
-      InkWell(
-        key: kTargetFoldKey,
-        focusNode: _foldFocus,
-        onTap: () => _toggle(false),
-        child: Semantics(
-          button: true,
-          expanded: true,
-          excludeSemantics: true,
-          label: '${count == null ? 'Post to' : 'Post to, $count'}. Fold the accounts',
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: kAccountCellMinHeight, minHeight: kAccountCellMinHeight),
-            child: AccountCountLabel(entries: entries, folded: false, showTitle: !tight),
+    return LayoutBuilder(builder: (context, box) {
+      final width = box.maxWidth;
+      final tight = accountGridHeaderIsTight(context, entries, width);
+
+      // From all the accounts, so the cells keep their form while filtering.
+      final form = accountGridFormFor(
+        context,
+        entries: entries,
+        width: width,
+        room: widget.availableHeight,
+        above: accountGridOtherHeight(context, entries, width, artworkSwitch: widget.artworkSwitch != null, filter: filterable),
+      );
+
+      // Wraps onto more lines when the choices leave no room.
+      final openHeader = Wrap(key: const ValueKey('target-picker-open'), crossAxisAlignment: WrapCrossAlignment.center, alignment: WrapAlignment.spaceBetween, children: [
+        InkWell(
+          key: kTargetFoldKey,
+          focusNode: _foldFocus,
+          onTap: () => _toggle(false),
+          child: Semantics(
+            button: true,
+            expanded: true,
+            excludeSemantics: true,
+            label: '${count == null ? 'Post to' : 'Post to, $count'}. Fold the accounts',
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: kAccountCellMinHeight, minHeight: kAccountCellMinHeight),
+              child: AccountCountLabel(entries: entries, folded: false, showTitle: !tight),
+            ),
           ),
         ),
-      ),
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        _QuickFilter('All', () => pick(choosable.map((e) => e.account.id)), tight: tight),
-        _QuickFilter('Automatic only', () => pick(choosable.where((e) => e.account.tier != PlatformTier.handoff).map((e) => e.account.id)), tight: tight),
-        // Its label starts at its own edge when tight.
-        if (tight) const SizedBox(width: Space.xs),
-        _QuickFilter('None', () => pick(const []), tight: tight),
-      ]),
-    ]);
+        Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
+          _QuickFilter('All', () => pick(choosable.map((e) => e.account.id)), tight: tight),
+          _QuickFilter('Automatic only', () => pick(choosable.where((e) => e.account.tier != PlatformTier.handoff).map((e) => e.account.id)), tight: tight),
+          // Its label starts at its own edge when tight.
+          if (tight) const SizedBox(width: Space.xs),
+          _QuickFilter('None', () => pick(const []), tight: tight),
+        ]),
+      ]);
 
-    final grid = Column(key: const ValueKey('target-picker-grid'), crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-      if (filterable)
-        Padding(
-          padding: const EdgeInsets.only(bottom: Space.sm),
-          child: _TargetFilter(controller: _filter, focusNode: _filterFocus, matching: filtering ? shown.length : null, onChanged: _rebuild),
+      final grid = Column(key: const ValueKey('target-picker-grid'), crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        if (filterable)
+          Padding(
+            padding: const EdgeInsets.only(bottom: Space.sm),
+            child: _TargetFilter(controller: _filter, focusNode: _filterFocus, matching: filtering ? shown.length : null, onChanged: _rebuild),
+          ),
+        if (filtering && shown.isEmpty)
+          Text('No account matches.', style: context.text.bodySmall?.copyWith(color: context.nf.textMuted))
+        else
+          AccountSelectionGrid(entries: shown, form: form),
+      ]);
+
+      final extras = !(folded && widget.keyboardOpen);
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
+        _fade(
+          context,
+          folded
+              ? AccountSelectionSummary(
+                  key: const ValueKey('target-picker-summary'),
+                  entries: entries,
+                  focusNode: _foldFocus,
+                  overKeyboard: widget.keyboardOpen,
+                  onOpen: () => _toggle(true),
+                )
+              : openHeader,
         ),
-      if (filtering && shown.isEmpty)
-        Text('No account matches.', style: context.text.bodySmall?.copyWith(color: context.nf.textMuted))
-      else
-        AccountSelectionGrid(entries: shown),
-    ]);
-
-    final extras = !(folded && widget.keyboardOpen);
-    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-      _fade(
-        context,
-        folded
-            ? AccountSelectionSummary(
-                key: const ValueKey('target-picker-summary'),
-                entries: entries,
-                focusNode: _foldFocus,
-                overKeyboard: widget.keyboardOpen,
-                onOpen: () => _toggle(true),
-              )
-            : openHeader,
-      ),
-      if (extras) ?widget.artworkSwitch,
-      _fade(context, folded ? const SizedBox.shrink(key: ValueKey('target-picker-no-grid')) : grid),
-      if (extras && widget.artworkOptions != null) ...[
-        const SizedBox(height: Space.md),
-        widget.artworkOptions!,
-      ],
-    ]);
+        if (extras) ?widget.artworkSwitch,
+        _fade(context, folded ? const SizedBox.shrink(key: ValueKey('target-picker-no-grid')) : grid),
+        if (extras && widget.artworkOptions != null) ...[
+          const SizedBox(height: Space.md),
+          widget.artworkOptions!,
+        ],
+      ]);
+    });
   }
 }
 
@@ -358,6 +384,13 @@ class _TargetFilter extends StatelessWidget {
         controller: controller,
         focusNode: focusNode,
         onChanged: (_) => onChanged(),
+        // A single line would scroll sideways once the words pass its end, and
+        // nothing under the picker does. Enter still adds no second line.
+        minLines: 1,
+        maxLines: 2,
+        keyboardType: TextInputType.text,
+        textInputAction: TextInputAction.search,
+        inputFormatters: [FilteringTextInputFormatter.deny('\n')],
         decoration: InputDecoration(
           hintText: 'Find an account',
           prefixIcon: const Icon(Icons.search_rounded, size: 18),
@@ -435,21 +468,20 @@ class _ArtworkOptions extends StatelessWidget {
     // Compact density would take 8 px off the padded target.
     final density = touch ? VisualDensity.standard : VisualDensity.compact;
     return Wrap(spacing: Space.sm, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
-      Row(mainAxisSize: MainAxisSize.min, children: [
+      // A word in a squeezed segment would break in two, so with no room beside
+      // the label the segments go under it, at their own width.
+      Wrap(spacing: Space.sm, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
         Text('Rating', style: context.text.labelMedium?.copyWith(color: nf.textMuted)),
-        const SizedBox(width: Space.sm),
-        Flexible(
-          child: SegmentedButton<ArtworkMaturity>(
-            segments: const [
-              ButtonSegment(value: ArtworkMaturity.general, label: Text('General'), tooltip: 'Suitable for everyone'),
-              ButtonSegment(value: ArtworkMaturity.mature, label: Text('Mature'), tooltip: 'Suggestive themes, mild nudity or violence'),
-              ButtonSegment(value: ArtworkMaturity.adult, label: Text('Adult'), tooltip: adultRatingDescription),
-            ],
-            selected: {details.maturity},
-            showSelectedIcon: false,
-            style: ButtonStyle(visualDensity: density, tapTargetSize: targetSize ?? MaterialTapTargetSize.shrinkWrap),
-            onSelectionChanged: (s) => onChanged(details.copyWith(maturity: s.single)),
-          ),
+        SegmentedButton<ArtworkMaturity>(
+          segments: const [
+            ButtonSegment(value: ArtworkMaturity.general, label: Text('General'), tooltip: 'Suitable for everyone'),
+            ButtonSegment(value: ArtworkMaturity.mature, label: Text('Mature'), tooltip: 'Suggestive themes, mild nudity or violence'),
+            ButtonSegment(value: ArtworkMaturity.adult, label: Text('Adult'), tooltip: adultRatingDescription),
+          ],
+          selected: {details.maturity},
+          showSelectedIcon: false,
+          style: ButtonStyle(visualDensity: density, tapTargetSize: targetSize ?? MaterialTapTargetSize.shrinkWrap),
+          onSelectionChanged: (s) => onChanged(details.copyWith(maturity: s.single)),
         ),
       ]),
       FilterChip(

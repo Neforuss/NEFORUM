@@ -95,12 +95,16 @@ Rules:
   naturally paired.
 - Expanded (`context.isExpanded`): sidebar, 40px gutters, side-by-side panes
   (composer left, previews right), max content width 1240.
-- Choosing accounts on a phone is `AccountSelectionGrid`: every account by
-  name, with nothing that scrolls sideways. Wider windows keep `AccountChip`.
-  A long platform name needs a `shortName` on its `PlatformDescriptor`.
-  At the largest text the header drops the words "Post to" and the rows drop
-  their gap so all 21 stay on screen at 360 x 640. Past 24 accounts a filter
-  field narrows the grid.
+- Choosing accounts on a phone is `AccountSelectionGrid`, with nothing that
+  scrolls sideways. Wider windows keep `AccountChip`. It shows names while they
+  leave two lines of the text field on screen, and otherwise tiles: the same
+  marks without the word, whatever the text size, so that any 21 accounts are on
+  screen at 360 x 640. The text field shows under them, except where handles or
+  art sites take its room: there it is one scroll down. The name stays in the tile's tooltip and
+  for screen readers, and the fold names what is left out. Two accounts on one
+  network keep a handle on a tile twice as wide. A long platform name needs a `shortName` on its
+  `PlatformDescriptor`. When the header does not fit on a line it drops the
+  words "Post to". Past 24 accounts a filter field narrows the grid.
 - Text never runs wider than ~75 characters; forms max `Breakpoints.readable`.
 - Must work at 360×640 with no horizontal overflow and at 2560 wide without
   looking empty.
