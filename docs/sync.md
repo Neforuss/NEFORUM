@@ -125,7 +125,8 @@ Use a private bucket and a key that can only read and write that bucket.
 | Settings (theme, text cards, photo fitting, posting rules, default targets, how the browser extension posts) | Yes |
 | Media hosts (main and fallback) and their keys | Yes |
 | Photos and videos | No: they stay on the device they were added on |
-| Device settings (start at sign-in, tray, the browser extension being on, automatic posting, zoom and text size, background picture, update checks, Sync itself) | No |
+| Fonts | No: each device keeps its own font files. A text card or caption style that names a font does sync. A device without that font draws the default font, never holds a post back for it, and offers one-tap download if the font came from the font list |
+| Device settings (start at sign-in, tray, the browser extension being on, automatic posting, zoom and text size, background picture, update checks, font downloads, Sync itself) | No |
 | An account's last error | No: another device may have no problem with that account |
 
 NEFORUM syncs when it starts, every five minutes, and a few seconds after you change something. You can also choose **Sync now** at any time.

@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../media/audio_plan.dart';
 import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
+import '../media/font_catalog.dart' show FontDownloadMode;
 import '../media/card_design.dart';
 import '../media/card_design_edits.dart' show designWithHandle;
 import '../media/caption_style.dart';
@@ -979,6 +980,10 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final cardDesign = designOwn == null ? null : designWithHandle(designOwn, c.textCardStyle.handle);
   final cardFontMissing = settings.textCards && cardFont != null && ref.watch(captionFontReadyProvider(cardFont)).value == false;
   final cardFontFamily = cardFont?.family ?? '';
+  // 1.4: fonts. A font from the font list can be fetched from the picker.
+  final cardFontHelp = cardFont?.source != null && settings.fontDownloads != FontDownloadMode.off
+      ? 'Choose More fonts to download $cardFontFamily.'
+      : 'Install or import $cardFontFamily here to use it.';
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -1048,7 +1053,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
         issues.add(ValidationIssue.info(
             'media.text_card_font_missing',
             'The font $cardFontFamily is not on this device, so the card uses ${(c.textCardFont ?? settings.textCardFont).label}. '
-            'Install or import $cardFontFamily here to use it.',
+            '$cardFontHelp',
             field: 'media'));
       }
     } else if (settings.textCards && everyNetwork && !acceptsTextCardImages(d) && variant.media.isEmpty && variant.text.trim().isNotEmpty) {

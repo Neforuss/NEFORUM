@@ -416,7 +416,7 @@ class TextCardPainter extends CustomPainter {
     if (alias == null) return font.style(fontSize: fontSize, height: style.lineSpacing, color: color);
     return TextStyle(
       fontFamily: alias,
-      fontFamilyFallback: [font.family, ...font.fallback, ...kCaptionFontFallbacks],
+      fontFamilyFallback: [...captionFontSubsetAliases(customFont), font.family, ...font.fallback, ...kCaptionFontFallbacks],
       fontWeight: FontWeight.w400,
       fontSize: fontSize,
       height: style.lineSpacing,

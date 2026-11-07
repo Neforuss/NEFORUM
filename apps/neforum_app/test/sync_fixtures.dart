@@ -5,6 +5,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:neforum_app/media/font_catalog.dart';
 import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/platform/update_check.dart';
@@ -155,6 +156,7 @@ AppSettings populatedSettings() => AppSettings(
       backgroundBlur: 12,
       backgroundDim: 0.6,
       updateCheck: UpdateCheckMode.off,
+      fontDownloads: FontDownloadMode.on,
       updateCheckedAt: DateTime.utc(2026, 10, 30),
       updateLatestRelease: const {'version': '9.9.9'},
       updateDismissedVersion: '9.9.8',

@@ -172,6 +172,13 @@ jobs:
           Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
           flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/audio_tags_test.dart
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Font downloads test (profile build, local fake of the font services)
+        working-directory: apps/neforum_app
+        shell: pwsh
+        run: |
+          Get-Process NEFORUM -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+          flutter drive --profile -d windows --driver=test_driver/integration_test.dart --target=integration_test/font_downloads_test.dart
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build Windows
         working-directory: apps/neforum_app
         shell: pwsh
@@ -393,6 +400,8 @@ jobs:
             xvfb-run -a -s "-screen 0 1920x1080x24" flutter test integration_test/desktop_app_test.dart -d linux
             xvfb-run -a -s "-screen 0 1920x1080x24" flutter drive --profile -d linux \
               --driver=test_driver/integration_test.dart --target=integration_test/captions_test.dart
+            xvfb-run -a -s "-screen 0 1920x1080x24" flutter drive --profile -d linux \
+              --driver=test_driver/integration_test.dart --target=integration_test/font_downloads_test.dart
           '
       - name: Package (tarball and AppImage)
         working-directory: apps/neforum_app

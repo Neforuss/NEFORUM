@@ -18,6 +18,7 @@ import '../../widgets/color_swatch_field.dart';
 import '../../widgets/layout.dart' show showToast;
 import 'card_background_sheet.dart';
 import 'card_design_view.dart';
+import 'font_download_sheet.dart';
 import 'font_picker_sheet.dart';
 
 /// Whose design the card designer edits.
@@ -701,6 +702,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
           child: Text('${b.customFont!.family} is not on this device, so ${b.font.label} is drawn instead.',
               style: context.text.bodySmall?.copyWith(color: nf.warning)),
         ),
+      if (b.customFont != null && ref.watch(captionFontReadyProvider(b.customFont)).value == false) MissingFontDownloadButton(font: b.customFont!),
       _slider(context, 'Size', b.size, 12, 320, _px(b.size), (v) => set((x) => x.copyWith(size: v.roundToDouble())), key: const Key('card-block-size')),
       _switch(context, 'Shrink to fit', b.autoFit, (v) => set((x) => x.copyWith(autoFit: v)),
           key: const Key('card-block-autofit'), subtitle: 'Long words get smaller instead of being cut.'),

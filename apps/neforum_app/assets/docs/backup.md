@@ -48,6 +48,7 @@ Want your devices to stay the same all the time instead of moving a file once? U
 | Drafts and scheduled posts | On |
 | Published post history | Off |
 | Photos and videos | Never (drafts arrive without them) |
+| Font files | Never. A style that names a font arrives; the other device draws the default font until it has that font, and offers one-tap download if the font came from the font list |
 
 Settings that belong to one device stay there: starting at sign-in, keeping NEFORUM in the tray, the browser extension and its paired browsers.
 
