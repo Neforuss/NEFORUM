@@ -16,6 +16,7 @@ import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
+import '../platform/publish_host.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
 import 'card_designs.dart';
@@ -26,6 +27,8 @@ import 'notification_state.dart';
 import 'providers.dart';
 import 'publish_result_notices.dart';
 import 'publish_run_keeper.dart';
+import 'publish_run_session.dart';
+import 'publish_run_surface.dart';
 import 'scheduler.dart';
 import 'settings.dart';
 import 'shrunk_videos.dart';
@@ -1416,27 +1419,62 @@ class PostActions {
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
+    // At the tap, while NEFORUM is in front: Android only lets a visible app begin,
+    // and that is when iOS gives time. Before anything is awaited, so a Cancel on
+    // the notification finds the run at once.
     final keeper = ref.read(publishRunKeeperProvider)..begin(postId);
+    final surface = ref.read(publishSurfaceProvider.notifier);
+    PublishRunSession? session;
     final figures = ref.read(publishProgressProvider.notifier);
-    // One tracker: the sheet and Activity read its figures, the keep-alive too.
-    final tracker = figures.begin(postId, onChange: (p) => keeper.progress(postId, p));
+    // One tracker: the sheet and Activity read its figures, and the run's session,
+    // which words them for Android's notification and iOS's Live Activity.
+    final tracker = figures.begin(postId, onChange: (p) => session?.progress(p));
     Post? before;
     try {
+      final networks = await _hostNetworks(postId, accountIds: accountIds, dueTargetsOnly: dueTargetsOnly);
+      session = surface.start(postId, title: publishSurfaceTitle(networks.length), networks: networks);
       before = await ref.read(servicesProvider).posts.get(postId);
-      return await _publishExisting(postId, signal, tracker, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
+      return await _publishExisting(postId, signal, tracker, session, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
       await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
+      await session?.finish(null, error: '$e');
       if (before != null) await _announceStoppedRun(before);
       rethrow;
     } finally {
+      if (session != null) {
+        surface.remove(postId, session);
+        // A run that ended some other way still lets its hold go.
+        if (!session.isEnded) unawaited(session.finish(null, error: 'ended'));
+      }
       active.end(postId, signal);
       figures.end(postId, tracker);
       unawaited(keeper.end(postId));
     }
   }
 
-  Future<Post> _publishExisting(String postId, CancellationSignal signal, PublishProgressTracker tracker,
+  /// The networks a run will post to: names and sizes, never the post's words.
+  Future<List<PublishHostNetwork>> _hostNetworks(String postId, {Set<String>? accountIds, required bool dueTargetsOnly}) async {
+    final s = ref.read(servicesProvider);
+    final out = <PublishHostNetwork>[];
+    try {
+      final post = await s.posts.get(postId);
+      if (post == null) return out;
+      final bytes = post.media.fold<int>(0, (sum, m) => sum + m.sizeBytes);
+      final now = DateTime.now();
+      for (final t in post.targets) {
+        if (t.isDone || (accountIds != null && !accountIds.contains(t.accountId)) || (dueTargetsOnly && !post.isTargetDue(t, now))) continue;
+        final a = await s.accounts.get(t.accountId);
+        final d = a == null ? null : s.registry.descriptor(a.platformId);
+        if (d != null) out.add(PublishHostNetwork(id: t.accountId, name: d.name, bytes: bytes));
+      }
+    } on Object catch (e) {
+      debugPrint('Could not list the networks of $postId: ${e.runtimeType}');
+    }
+    return out;
+  }
+
+  Future<Post> _publishExisting(String postId, CancellationSignal signal, PublishProgressTracker tracker, PublishRunSession session,
       {Set<String>? accountIds, required bool retryFailed, bool dueTargetsOnly = false}) async {
     final s = ref.read(servicesProvider);
     // A background isolate may have posted some of it meanwhile: the run
@@ -1487,9 +1525,14 @@ class PostActions {
           onOutcome: tracker.outcome,
           cancellation: signal,
           dueTargetsOnly: dueTargetsOnly,
+          pause: session.pause,
         );
     final finalPost = await s.applySkips(postId) ?? done;
     run.finish(finalPost);
+    await session.finish(tracker.current, unknown: {
+      for (final t in finalPost.targets)
+        if (t.result?.error?.outcomeUnknown == true) t.accountId,
+    });
     try {
       // Networks still waiting for their own time keep their reminder.
       final next = finalPost.scheduledAt;

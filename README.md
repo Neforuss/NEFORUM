@@ -137,7 +137,7 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **Windows and macOS:** for everything else, NEFORUM keeps running in the tray (menu bar) when you close the window and posts on time. It can start when you sign in.
 - **A sign-in that ends first:** **Sign-ins** in **Accounts** lists every account by when its sign-in ends and who has to act. NEFORUM warns ahead of the date, and warns in the composer and the queue when a scheduled post falls after it. See [how long each sign-in lasts](docs/sign-in-lifetimes.md).
 - **Android:** posts go out in the background within a few minutes of their time.
-- **iPhone and iPad:** iOS does not let apps run on a timer. Networks that hold posts need nothing from the phone. For the rest you get a notification at the scheduled time; its **Publish now** button posts without opening the app.
+- **iPhone and iPad:** iOS does not let apps run on a timer. Networks that hold posts need nothing from the phone. For the rest you get a notification at the scheduled time. For a text post, its **Publish now** button tries to post in the few seconds iOS allows without opening the app. A post with photos or video opens NEFORUM, because it can take longer. If you leave the app mid-post, iOS may pause it: on iOS 16.2 and later the Live Activity says so, and the post continues when you open NEFORUM. A post cannot finish after you swipe the app away.
 - **Hand-off accounts** always get a "time to post" reminder.
 
 ## Sync without a server

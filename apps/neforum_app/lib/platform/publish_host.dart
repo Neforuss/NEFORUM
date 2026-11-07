@@ -5,7 +5,9 @@ import 'package:flutter/services.dart';
 
 import 'env.dart';
 
-/// One network of a run, for the native surface. [bytes] sizes its part of the bar.
+/// One network as a run starts. Names and sizes only: the post's text never goes
+/// over this channel, because iOS and an Android lock screen show what it carries.
+/// [bytes] sizes its part of Android's bar.
 @immutable
 class PublishHostNetwork {
   const PublishHostNetwork({required this.id, required this.name, required this.bytes});
@@ -22,36 +24,53 @@ sealed class PublishHostSignal {
   const PublishHostSignal();
 }
 
-/// The Cancel button on the run's notification.
+/// The Cancel button on Android's notification.
 class PublishHostCancelRequested extends PublishHostSignal {
   const PublishHostCancelRequested(this.postId);
   final String postId;
 }
 
-/// The OS ended the time it allows for background work.
+/// The OS took back the time it gave: Android's limit for the service, or iOS's
+/// continued task expiring. On iOS a person's Stop in the system's own view looks
+/// the same.
 class PublishHostTimedOut extends PublishHostSignal {
   const PublishHostTimedOut();
 }
 
-/// The window is going away while a run goes on.
+/// The window is going away while a run goes on. On Android the Activity ends and
+/// the engine stays; on iOS the app's time is about to end and it will be frozen.
 class PublishHostWindowClosing extends PublishHostSignal {
   const PublishHostWindowClosing();
 }
 
-/// The run's notification was tapped.
+/// Android's run notification was tapped.
 class PublishHostOpenPost extends PublishHostSignal {
   const PublishHostOpenPost(this.postId);
   final String postId;
 }
 
-/// What keeps a publish run alive outside the app, on channel `neforum/publish_host`.
-/// It never holds the post's text. Every call may fail: the caller
-/// ([PublishRunKeeper]) never lets that touch the run.
+/// Keeps a publish run going outside the app and shows it there, on channel
+/// [kPublishHostChannel]: `PublishHost.kt` on Android, `PublishRunKeeper.swift` on
+/// iOS. It never holds the post's text. Nothing here may stop a run: a host that
+/// fails only means no surface, and the caller ([PublishRunKeeper]) never lets a
+/// failure touch the run.
+///
+/// Dart to native:
+/// * `begin {postId, title, networks: [{id, name, bytes}]} -> bool`: true when the
+///   OS took the run on. A second `begin` for the same post refreshes its networks
+///   (Android) or asks for new time after a stop (iOS).
+/// * `update snapshot`: `PublishSurfaceState.toSnapshot`, one per run, each with
+///   its `postId`.
+/// * `end {postId, summary}`.
+/// * `lastExitReason -> int?`: Android only.
+///
+/// Native to Dart: `cancelRequested {postId}`, `timedOut`, `windowClosing`,
+/// `openPost {postId}`.
 abstract class PublishHost {
-  /// Starts or refreshes the keep-alive for [postId]. True when the OS agreed.
+  /// True when the OS took the run on.
   Future<bool> begin({required String postId, required String title, required List<PublishHostNetwork> networks});
 
-  /// [snapshot] is [PublishSurfaceState.toSnapshot].
+  /// [snapshot] is `PublishSurfaceState.toSnapshot`.
   Future<void> update(Map<String, Object?> snapshot);
 
   Future<void> end({required String postId, required String summary});
@@ -61,7 +80,7 @@ abstract class PublishHost {
   void dispose();
 }
 
-/// Desktop, the demo workspace and tests: nothing to keep alive.
+/// Desktop, the demo workspace and tests: nothing to keep alive, so nothing to refuse.
 class NoPublishHost implements PublishHost {
   const NoPublishHost();
 
@@ -77,52 +96,83 @@ class NoPublishHost implements PublishHost {
   void dispose() {}
 }
 
-/// The native side: `PublishHost.kt` on Android.
+/// The Android and iOS side, both behind one channel. A channel nobody answers
+/// (no native side in this engine) is no surface: `begin` says false, the rest do
+/// nothing.
 class ChannelPublishHost implements PublishHost {
-  ChannelPublishHost({@visibleForTesting MethodChannel? channel}) : _channel = channel ?? const MethodChannel(kPublishHostChannel) {
-    _channel.setMethodCallHandler(_handle);
-  }
+  ChannelPublishHost({@visibleForTesting MethodChannel? channel}) : _channel = channel ?? const MethodChannel(kPublishHostChannel);
 
   final MethodChannel _channel;
   final _signals = StreamController<PublishHostSignal>.broadcast();
+  bool _listening = false;
 
-  Future<void> _handle(MethodCall call) async {
+  /// The translation from a native call to a signal, kept apart for tests.
+  @visibleForTesting
+  static PublishHostSignal? signalOf(MethodCall call) {
     final args = call.arguments;
     final postId = args is Map ? args['postId'] : null;
-    switch (call.method) {
-      case 'cancelRequested' when postId is String:
-        _signals.add(PublishHostCancelRequested(postId));
-      case 'timedOut':
-        _signals.add(const PublishHostTimedOut());
-      case 'windowClosing':
-        _signals.add(const PublishHostWindowClosing());
-      case 'openPost' when postId is String:
-        _signals.add(PublishHostOpenPost(postId));
+    return switch (call.method) {
+      'cancelRequested' when postId is String => PublishHostCancelRequested(postId),
+      'timedOut' => const PublishHostTimedOut(),
+      'windowClosing' => const PublishHostWindowClosing(),
+      'openPost' when postId is String => PublishHostOpenPost(postId),
+      _ => null,
+    };
+  }
+
+  /// Only once someone listens or a run begins: an isolate that only ends a run (a
+  /// notification action on iOS) never takes the channel's handler.
+  void _listen() {
+    if (_listening) return;
+    _listening = true;
+    _channel.setMethodCallHandler((call) async {
+      final signal = signalOf(call);
+      if (signal != null && !_signals.isClosed) _signals.add(signal);
+    });
+  }
+
+  @override
+  Future<bool> begin({required String postId, required String title, required List<PublishHostNetwork> networks}) async {
+    _listen();
+    try {
+      return await _channel.invokeMethod<bool>('begin', {
+            'postId': postId,
+            'title': title,
+            'networks': [for (final n in networks) n.toMap()],
+          }) ??
+          false;
+    } on MissingPluginException {
+      return false;
     }
   }
 
   @override
-  Future<bool> begin({required String postId, required String title, required List<PublishHostNetwork> networks}) async =>
-      await _channel.invokeMethod<bool>('begin', {
-        'postId': postId,
-        'title': title,
-        'networks': [for (final n in networks) n.toMap()],
-      }) ??
-      false;
+  Future<void> update(Map<String, Object?> snapshot) async {
+    try {
+      await _channel.invokeMethod<void>('update', snapshot);
+    } on MissingPluginException {
+      // No surface, and the run goes on.
+    }
+  }
 
   @override
-  Future<void> update(Map<String, Object?> snapshot) => _channel.invokeMethod<void>('update', snapshot);
+  Future<void> end({required String postId, required String summary}) async {
+    try {
+      await _channel.invokeMethod<void>('end', {'postId': postId, 'summary': summary});
+    } on MissingPluginException {
+      // Nothing to end.
+    }
+  }
 
   @override
-  Future<void> end({required String postId, required String summary}) => _channel.invokeMethod<void>('end', {'postId': postId, 'summary': summary});
-
-
-  @override
-  Stream<PublishHostSignal> get signals => _signals.stream;
+  Stream<PublishHostSignal> get signals {
+    _listen();
+    return _signals.stream;
+  }
 
   @override
   void dispose() {
-    _channel.setMethodCallHandler(null);
+    if (_listening) _channel.setMethodCallHandler(null);
     unawaited(_signals.close());
   }
 }
@@ -147,9 +197,10 @@ Future<int?> readLastExitReason() async {
   }
 }
 
-/// The host for this device. iOS joins when `PublishRunKeeper.swift` exists.
+/// The host for this device: the channel on Android and iOS, nothing elsewhere or
+/// in the demo.
 PublishHost createPublishHost({required bool demo}) {
-  if (!Env.isAndroid || demo) return const NoPublishHost();
+  if (demo || !(Env.isAndroid || Env.isIOS)) return const NoPublishHost();
   try {
     return ChannelPublishHost();
   } on Object catch (e) {

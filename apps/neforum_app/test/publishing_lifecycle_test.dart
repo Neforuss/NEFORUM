@@ -219,8 +219,9 @@ void main() {
     });
 
     test('every notification about a post is cancelled with it', () {
-      expect(NotificationService.postKeys('p1'), ['due:p1', 'result:p1', 'handoff:p1']);
-      expect(NotificationService.postKeys('p1', accountIds: ['a', 'b:c']), ['due:p1', 'result:p1', 'handoff:p1', 'result:p1:a', 'handoff:p1:a', 'result:p1:b:c', 'handoff:p1:b:c']);
+      expect(NotificationService.postKeys('p1'), ['due:p1', 'result:p1', 'handoff:p1', 'paused:p1']);
+      expect(NotificationService.postKeys('p1', accountIds: ['a', 'b:c']),
+          ['due:p1', 'result:p1', 'handoff:p1', 'paused:p1', 'result:p1:a', 'handoff:p1:a', 'result:p1:b:c', 'handoff:p1:b:c']);
     });
   });
 

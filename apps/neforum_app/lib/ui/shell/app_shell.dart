@@ -21,6 +21,7 @@ import '../../state/notification_state.dart';
 import '../../state/providers.dart';
 import '../../state/publish_run_keeper.dart';
 import '../../state/publish_result_notices.dart';
+import '../../state/publish_run_session.dart';
 import '../../state/scheduler.dart';
 import '../../state/settings.dart' show NavigationChromeStyle;
 import '../../state/update_checks.dart';
@@ -53,6 +54,7 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   StreamSubscription<NotificationIntent>? _intentSub;
+  late final AppLifecycleListener _publishWindow;
 
   /// Back from the OS's settings (or anywhere): what the OS says now.
   late final AppLifecycleListener _lifecycle;
@@ -66,6 +68,8 @@ class _AppShellState extends ConsumerState<AppShell> {
   void initState() {
     super.initState();
     _lifecycle = AppLifecycleListener(onResume: _rereadNotifications);
+    // A run going on outside the app is told when the window comes and goes.
+    _publishWindow = publishWindowListener(ref);
     UiBridge.instance = _ShellUiBridge();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(schedulerProvider).start();
@@ -133,6 +137,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   void dispose() {
     _intentSub?.cancel();
     _lifecycle.dispose();
+    _publishWindow.dispose();
     super.dispose();
   }
 

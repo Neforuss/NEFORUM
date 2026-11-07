@@ -377,10 +377,48 @@ jobs:
           mkdir -p Payload
           cp -R build/ios-unsigned/Build/Products/Release-iphoneos/Runner.app Payload/
           zip -qr "$GITHUB_WORKSPACE/neforum-ios-unsigned.ipa" Payload
+      - name: The Live Activity extension is in the IPA
+        working-directory: apps/neforum_app
+        run: |
+          test -d Payload/Runner.app/PlugIns/NeforumLiveActivity.appex
+          plutil -lint Payload/Runner.app/PlugIns/NeforumLiveActivity.appex/Info.plist
+          plutil -lint Payload/Runner.app/Info.plist
+          test "$(plutil -extract NSExtension.NSExtensionPointIdentifier raw Payload/Runner.app/PlugIns/NeforumLiveActivity.appex/Info.plist)" = com.apple.widgetkit-extension
+          # Runner still starts on iOS 15, which has no ActivityKit.
+          otool -l Payload/Runner.app/Runner | grep -A2 LC_LOAD_WEAK_DYLIB | grep -q ActivityKit
       - uses: actions/upload-artifact@v4
         with:
           name: neforum-ios-unsigned
           path: neforum-ios-unsigned.ipa
+
+  # Proves on a simulator with a Dynamic Island that the activity starts from a real
+  # channel call and that the stale words appear with nothing updating it. No release
+  # waits on this job: a simulator is not a phone, and it may need adjusting per Xcode.
+  ios-live-activity:
+    needs: test
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Start the activity, send the app away, read the island
+        working-directory: apps/neforum_app
+        run: |
+          flutter pub get
+          dart run tool/sync_docs.dart
+          bash tool/ci_live_activity_simulator.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-live-activity-screenshots
+          path: |
+            apps/neforum_app/build/live-activity/*.png
+            apps/neforum_app/build/live-activity/*.txt
+            apps/neforum_app/build/live-activity/*.log
 
   web-preview:
     needs: test

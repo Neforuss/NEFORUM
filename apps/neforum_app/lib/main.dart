@@ -37,8 +37,10 @@ void callbackDispatcher() {
   });
 }
 
-/// "Publish now" on a due-post reminder, pressed while NEFORUM is not open
-/// (iOS runs this in a background isolate for a few seconds).
+/// "Publish now" on a due-post reminder of a text post, pressed while NEFORUM is
+/// not open. iOS runs this in a background isolate for a few seconds. AppDelegate
+/// takes a background assertion before the notification plugin's early completion
+/// handler, and the host's `end` gives it back.
 @pragma('vm:entry-point')
 void notificationBackgroundHandler(NotificationResponse response) {
   final intent = NotificationIntent.parse(response.payload);
@@ -68,6 +70,15 @@ Future<void> _publishInBackground(String postId) async {
     services.dispose();
   } on Object catch (e) {
     debugPrint('Background publish from a notification failed: $e');
+  } finally {
+    // Gives back the assertion AppDelegate took for this action (iOS only).
+    if (Env.isIOS) {
+      try {
+        await ChannelPublishHost().end(postId: postId, summary: 'Finished');
+      } on Object catch (e) {
+        debugPrint('Could not end the background action: ${e.runtimeType}');
+      }
+    }
   }
 }
 

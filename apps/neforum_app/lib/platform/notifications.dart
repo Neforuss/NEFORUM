@@ -154,6 +154,13 @@ List<ResultNotice> collapseResultNotices(List<ResultNotice> notices) {
     ResultNotice(key: summary.key, title: summary.title, body: summary.lines.join('\n'), payload: summary.payload),
   ];
 }
+/// Due-post reminder of a text post: "Publish now" runs in the background.
+const String kDueCategory = 'neforum.due';
+
+/// Due-post reminder of a post with files: "Publish now" opens NEFORUM. A file can
+/// take longer than the seconds a background action gets, and only a tap with the
+/// app in front may ask iOS for more.
+const String kDueOpensAppCategory = 'neforum.due.open';
 
 /// The NEFORUM mark as Android's notification (status bar) icon, made by
 /// tool/generate_icons.dart and kept from resource shrinking by res/raw/keep.xml.
@@ -227,9 +234,9 @@ class NotificationService {
         DarwinNotificationCategory('neforum.post', actions: [
           DarwinNotificationAction.plain('open', 'Open', options: {DarwinNotificationActionOption.foreground}),
         ]),
-        // Due-post reminder: "Publish now" runs in the background, without
-        // opening the app.
-        DarwinNotificationCategory('neforum.due', actions: [
+        // Due-post reminder of a text post: "Publish now" runs in the background,
+        // in the short time iOS gives, without opening the app.
+        DarwinNotificationCategory(kDueCategory, actions: [
           DarwinNotificationAction.plain(kPublishAction, 'Publish now'),
           DarwinNotificationAction.plain('open', 'Open NEFORUM', options: {DarwinNotificationActionOption.foreground}),
         ]),
@@ -238,6 +245,10 @@ class NotificationService {
         ]),
         DarwinNotificationCategory(_categoryFailed, actions: [
           DarwinNotificationAction.plain(kRetryAction, 'Retry', options: {DarwinNotificationActionOption.foreground}),
+        ]),
+        // Due-post reminder of a post with files: "Publish now" opens NEFORUM.
+        DarwinNotificationCategory(kDueOpensAppCategory, actions: [
+          DarwinNotificationAction.plain(kPublishAction, 'Publish now', options: {DarwinNotificationActionOption.foreground}),
         ]),
       ],
     );
@@ -397,7 +408,7 @@ class NotificationService {
           icon: kAndroidNotificationIcon,
           color: const Color(0xFF7D00FF),
         ),
-        iOS: DarwinNotificationDetails(categoryIdentifier: category, interruptionLevel: category == 'neforum.due' ? InterruptionLevel.timeSensitive : null),
+        iOS: DarwinNotificationDetails(categoryIdentifier: category, interruptionLevel: category == kDueCategory || category == kDueOpensAppCategory ? InterruptionLevel.timeSensitive : null),
         macOS: DarwinNotificationDetails(categoryIdentifier: category),
       );
 
@@ -413,9 +424,19 @@ class NotificationService {
 
   /// Schedules a reminder at [when] (wall clock). Inexact on Android so no
   /// special alarm permission is needed; a minute late is fine for a reminder.
-  /// With [publishAction] the reminder carries a "Publish now" button
-  /// (iOS), which publishes without opening the app.
-  Future<void> schedule({required String key, required DateTime when, required String title, required String body, required String payload, bool publishAction = false, bool signIn = false}) async {
+  /// With [publishAction] the reminder carries a "Publish now" button (iOS),
+  /// which tries to publish without opening the app, or with [publishOpensApp]
+  /// opens it first. [signIn]: a sign-in warning, on its own channel.
+  Future<void> schedule({
+    required String key,
+    required DateTime when,
+    required String title,
+    required String body,
+    required String payload,
+    bool publishAction = false,
+    bool publishOpensApp = false,
+    bool signIn = false,
+  }) async {
     if (!_ready || kIsWeb) return;
     if (!when.isAfter(DateTime.now())) {
       return show(key: key, title: title, body: body, payload: payload, signIn: signIn);
@@ -426,7 +447,8 @@ class NotificationService {
         title: title,
         body: body,
         scheduledDate: tz.TZDateTime.from(when, tz.local),
-        notificationDetails: _details(signIn ? _channelSignIns : _channelScheduled, category: publishAction ? 'neforum.due' : 'neforum.post'),
+        notificationDetails: _details(signIn ? _channelSignIns : _channelScheduled,
+            category: !publishAction ? 'neforum.post' : (publishOpensApp ? kDueOpensAppCategory : kDueCategory)),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         payload: payload,
       );
@@ -460,12 +482,14 @@ class NotificationService {
   }
 
   /// Keys of every notification NEFORUM shows about one post: the due-time
-  /// reminder, the result summary and hand-off request, and for each of
-  /// [accountIds] that network's result and hand-off.
+  /// reminder, the result summary, the hand-off request and the note that iOS
+  /// paused the run, and for each of [accountIds] that network's result and
+  /// hand-off.
   static List<String> postKeys(String postId, {Iterable<String> accountIds = const []}) => [
         'due:$postId',
         'result:$postId',
         'handoff:$postId',
+        'paused:$postId',
         for (final id in accountIds) ...['result:$postId:$id', 'handoff:$postId:$id'],
       ];
 

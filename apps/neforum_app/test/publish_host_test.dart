@@ -374,7 +374,7 @@ void main() {
         high = f;
       }
       expect(figures.where((f) => f == 1000).length, lessThanOrEqualTo(1), reason: 'only the last picture');
-      expect(host.snapshots.last['phase'], 'finished');
+      expect(host.snapshots.last['phase'], 'done');
       expect((host.snapshots.last['networks'] as List).map((n) => (n as Map)['state']).toSet(), {'posted'});
     }, timeout: const Timeout(Duration(minutes: 1)));
 
@@ -420,13 +420,13 @@ void main() {
     test('windowClosing holds until the app is back; the surface follows', () {
       final h = Harness(lifecycle: AppLifecycleState.detached);
       h.keeper.begin('p');
-      expect(h.keeper.windowState, PublishWindowState.open);
+      expect(h.keeper.windowState, PublishWindowPresence.open);
       h.host.send(const PublishHostWindowClosing());
-      expect(h.keeper.windowState, PublishWindowState.gone);
+      expect(h.keeper.windowState, PublishWindowPresence.gone);
       h.lifecycle = AppLifecycleState.resumed;
-      expect(h.keeper.windowState, PublishWindowState.open, reason: 'the same engine has a new Activity');
+      expect(h.keeper.windowState, PublishWindowPresence.open, reason: 'the same engine has a new Activity');
       h.lifecycle = AppLifecycleState.paused;
-      expect(h.keeper.windowState, PublishWindowState.open, reason: 'Home after coming back is not a closed window');
+      expect(h.keeper.windowState, PublishWindowPresence.open, reason: 'Home after coming back is not a closed window');
     });
 
     test('a run ending hidden saves first, then releases; visible it does not wait', () async {
@@ -467,6 +467,82 @@ void main() {
     });
   });
 
+  group('one keeper for Android and iOS', () {
+    test('a session\'s host: its begin holds once, Continue asks again, its end lets go', () async {
+      final h = Harness();
+      final kept = KeptPublishHost(h.keeper);
+      expect(await kept.begin(postId: 'p', title: 'Posting to 2 networks', networks: const [PublishHostNetwork(id: 'a', name: 'Mastodon', bytes: 1)]), isTrue);
+      expect(h.keeper.holdsOf('p'), 1);
+      expect(h.host.begun.single.title, 'Posting to 2 networks');
+      await kept.begin(postId: 'p', title: 'Posting to 2 networks', networks: const []);
+      expect(h.keeper.holdsOf('p'), 1, reason: 'Continue asks native for time, it is not a second hold');
+      expect(h.host.begun, hasLength(2));
+      await kept.end(postId: 'p', summary: 'Posted to 2 networks');
+      await settle();
+      expect(h.host.ended.single, (postId: 'p', summary: 'Posted to 2 networks'));
+      await kept.end(postId: 'p', summary: 'again');
+      await settle();
+      expect(h.host.ended, hasLength(1), reason: 'one hold, one release');
+    });
+
+    test('the summary of the first end is the one native hears at the last', () async {
+      final h = Harness();
+      h.keeper.begin('p');
+      final kept = KeptPublishHost(h.keeper);
+      await kept.begin(postId: 'p', title: 't', networks: const []);
+      await kept.end(postId: 'p', summary: 'Posted to 1 of 2, 1 not confirmed');
+      await settle();
+      expect(h.host.ended, isEmpty);
+      await h.keeper.end('p');
+      expect(h.host.ended.single.summary, 'Posted to 1 of 2, 1 not confirmed');
+    });
+
+    test('a session\'s picture goes out as it is, with its run\'s id; one held by nobody goes nowhere', () async {
+      final h = Harness();
+      final kept = KeptPublishHost(h.keeper);
+      await kept.update(const {'postId': 'p', 'headline': 'x'});
+      expect(h.host.snapshots, isEmpty);
+      await kept.begin(postId: 'p', title: 't', networks: const []);
+      await kept.update(const {'postId': 'p', 'phase': 'paused', 'headline': 'Paused', 'activityLabel': 'Paused by iOS. 1 of 2 posted. Open NEFORUM to finish.'});
+      expect(h.host.snapshots.last['activityLabel'], startsWith('Paused by iOS'));
+      expect(h.host.snapshots.last['postId'], 'p');
+    });
+
+    test('each run sends its own picture, oldest first, and the headline counts the others', () {
+      final h = Harness();
+      h.keeper.begin('old');
+      h.host.snapshots.clear();
+      h.keeper.begin('new');
+      expect(h.host.snapshots.map((s) => s['postId']), ['old', 'new']);
+      expect(h.host.snapshots.map((s) => s['headline']).toSet(), {'Posting 2 posts'});
+      h.host.snapshots.clear();
+      h.keeper.progress('new', progress('new'));
+      expect(h.host.snapshots.map((s) => s['postId']), ['new'], reason: 'an unchanged picture is not sent again');
+    });
+
+    test('only what a session acts on reaches it: Cancel and a tap stay with the keeper', () async {
+      final h = Harness();
+      final got = <PublishHostSignal>[];
+      KeptPublishHost(h.keeper).signals.listen(got.add);
+      h.host
+        ..send(const PublishHostCancelRequested('p'))
+        ..send(const PublishHostOpenPost('p'))
+        ..send(const PublishHostWindowClosing())
+        ..send(const PublishHostTimedOut());
+      await settle();
+      expect(got.map((s) => s.runtimeType), [PublishHostWindowClosing, PublishHostTimedOut]);
+    });
+
+    test('on iOS the end of granted time stops nothing here: the session asks the person', () {
+      final host = FakeHost();
+      final cancelled = <String>[];
+      final keeper = PublishRunKeeper(host: host, onCancel: cancelled.add, timeoutCancelsRuns: false, lifecycle: () => AppLifecycleState.resumed);
+      keeper.begin('p');
+      host.send(const PublishHostTimedOut());
+      expect(cancelled, isEmpty);
+    });
+  });
+
   group('the scheduler', () {
     test('a due run holds and releases the keep-alive, with its progress', () async {
       final (services, c, host) = await demo();
@@ -487,7 +563,32 @@ void main() {
       await settle();
       expect(host.begun.first.postId, 'due1');
       expect(host.ended.single.postId, 'due1');
-      expect(host.snapshots.last['phase'], 'finished');
+      expect(host.snapshots.last['phase'], 'done');
+    }, timeout: const Timeout(Duration(minutes: 1)));
+
+    test('on iOS a run the scheduler starts by itself asks for no time: iOS keeps that for a tap', () async {
+      final (services, c, host) = await demo();
+      addTearDown(c.dispose);
+      final masto = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon').id;
+      final at = DateTime.now();
+      await services.posts.upsert(Post(
+        id: 'due2',
+        text: 'Due now',
+        createdAt: at,
+        updatedAt: at,
+        status: PostStatus.scheduled,
+        scheduledAt: at.subtract(const Duration(minutes: 1)),
+        targets: [PostTarget(accountId: masto)],
+      ));
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      try {
+        final out = await c.read(schedulerProvider).runDue();
+        expect(out.single.status, PostStatus.published);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+      await settle();
+      expect(host.calls, isEmpty);
     }, timeout: const Timeout(Duration(minutes: 1)));
   });
 
@@ -544,12 +645,16 @@ void main() {
       expect(got, hasLength(4));
     });
 
-    test('createPublishHost: Android has the channel; a computer and the demo have nothing to keep alive', () {
+    test('createPublishHost: Android and iOS have the channel; a computer and the demo have nothing to keep alive', () {
       addTearDown(() => debugDefaultTargetPlatformOverride = null);
       debugDefaultTargetPlatformOverride = TargetPlatform.android;
       final android = createPublishHost(demo: false);
       addTearDown(android.dispose);
       expect(android, isA<ChannelPublishHost>());
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      final ios = createPublishHost(demo: false);
+      addTearDown(ios.dispose);
+      expect(ios, isA<ChannelPublishHost>());
       expect(createPublishHost(demo: true), isA<NoPublishHost>());
       debugDefaultTargetPlatformOverride = TargetPlatform.windows;
       expect(createPublishHost(demo: false), isA<NoPublishHost>());

@@ -457,6 +457,7 @@ void main() {
         'due:${draft.id}',
         'result:${draft.id}',
         'handoff:${draft.id}',
+        'paused:${draft.id}',
         for (final a in accounts) ...['result:${draft.id}:$a', 'handoff:${draft.id}:$a'],
       ]));
     });

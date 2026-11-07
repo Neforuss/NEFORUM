@@ -119,10 +119,16 @@
 		<string>fetch</string>
 		<string>processing</string>
 	</array>
+	<!-- org.neforum.neforumApp.*: iOS 26's continued task, one identifier per run,
+	     made at runtime in PublishRunKeeper.swift. -->
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>org.neforum.publish_due</string>
+		<string>org.neforum.neforumApp.*</string>
 	</array>
+	<!-- Live Activities are local only: no push, so self-signed builds can have them. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>

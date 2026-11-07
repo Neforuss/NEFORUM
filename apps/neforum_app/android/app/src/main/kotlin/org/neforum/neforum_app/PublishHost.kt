@@ -110,7 +110,7 @@ object PublishHost {
             "begin" -> begin(call, result)
             "update" -> {
                 val snapshot = call.arguments as? Map<*, *>
-                if (snapshot != null && runActive) update(snapshot)
+                if (snapshot != null && runActive && isShown(snapshot)) update(snapshot)
                 result.success(null)
             }
             "end" -> {
@@ -163,6 +163,16 @@ object PublishHost {
         val waiting = waitingForStart.toList()
         waitingForStart.clear()
         waiting.forEach { it.success(ok) }
+    }
+
+    /**
+     * Dart sends one snapshot per run, each with its postId (iOS gives each run its
+     * own Live Activity). The one notification shows the oldest run; its headline
+     * already counts the others.
+     */
+    private fun isShown(snapshot: Map<*, *>): Boolean {
+        val postId = snapshot["postId"] as? String ?: return true
+        return postId == firstPost()
     }
 
     private fun update(snapshot: Map<*, *>) {

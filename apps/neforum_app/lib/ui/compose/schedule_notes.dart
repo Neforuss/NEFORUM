@@ -327,7 +327,8 @@ class _SignInEnd {
 /// [closeKeepsRunning]: closing the window leaves NEFORUM in the tray, so the
 /// line can say so. Off in Settings, closing it quits, and the post waits.
 String _deviceLine(ScheduleDevice device, {required bool closeKeepsRunning}) => switch (device) {
-      ScheduleDevice.ios => 'at the scheduled time you get a notification with a Publish now button (iOS does not let apps post on a timer).',
+      ScheduleDevice.ios =>
+        'at the scheduled time you get a notification with a Publish now button (iOS does not let apps post on a timer). Posts with photos or video open NEFORUM to finish.',
       ScheduleDevice.android => 'goes out in the background, usually within a few minutes of its time. Android can delay it while the phone is idle.',
       ScheduleDevice.desktop => closeKeepsRunning
           ? 'keep NEFORUM running (it stays in the tray when you close the window) and it goes out on time.'
