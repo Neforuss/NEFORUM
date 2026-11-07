@@ -18,10 +18,17 @@ class _Sink implements SignInWarningSink {
   final shown = <(DateTime, SignInWarningNotice)>[];
   final scheduled = <String, SignInWarningNotice>{};
   final cancelled = <String>[];
+
+  /// Every request to the OS to plan a notification, repeats included.
+  int asked = 0;
   @override
   Future<void> show(SignInWarningNotice notice) async => shown.add((clock(), notice));
   @override
-  Future<void> schedule(SignInWarningNotice notice) async => scheduled[notice.key] = notice;
+  Future<void> schedule(SignInWarningNotice notice) async {
+    asked++;
+    scheduled[notice.key] = notice;
+  }
+
   @override
   Future<void> cancel(String key) async {
     cancelled.add(key);
@@ -36,9 +43,13 @@ class _Sink implements SignInWarningSink {
 /// new store over the same data is a restart.
 class _Disk {
   String? text;
+  int writes = 0;
   SignInWarningStore open() => SignInWarningStore(
         read: () async => text == null ? null : jsonDecode(text!),
-        write: (d) async => text = jsonEncode(d),
+        write: (d) async {
+          writes++;
+          text = jsonEncode(d);
+        },
       );
 }
 
@@ -338,6 +349,57 @@ void main() {
       await w.service.run();
       expect(w.sink.cancelled.toSet(), old);
       expect(w.sink.scheduled.keys.where(old.contains), isEmpty);
+      expect(w.sink.scheduled, hasLength(3));
+    });
+
+    test('a run that changes nothing asks the OS for nothing and writes nothing', () async {
+      final w = _World(DateTime(2027, 1, 2, 9), schedulesAhead: true);
+      await w.add(_status('a', DateTime(2027, 3, 20, 15)));
+      await w.service.run();
+      expect(w.sink.asked, 5);
+      final writes = w.disk.writes;
+      // The scheduler's timer, then a restart: both read the plan back from the file.
+      await w.service.run();
+      w.open();
+      await w.service.run();
+      expect(w.sink.asked, 5);
+      expect(w.disk.writes, writes);
+    });
+
+    test('a date that moves by seconds across midnight leaves one notification per threshold', () async {
+      final w = _World(DateTime(2027, 1, 2, 9), schedulesAhead: true);
+      await w.add(_status('a', DateTime(2027, 3, 20, 23, 59, 50)));
+      await w.service.run();
+      final old = w.sink.scheduled.keys.toSet();
+      expect(old, hasLength(5));
+      await w.statuses.change('a', (_) => _status('a', DateTime(2027, 3, 21, 0, 0, 10)));
+      await w.service.run();
+      expect(w.sink.cancelled.toSet(), old);
+      expect(w.sink.scheduled, hasLength(5));
+      expect(w.sink.scheduled.keys.where(old.contains), isEmpty);
+      expect(w.firedDays, isEmpty);
+    });
+
+    test('that same move does not repeat what the OS already showed', () async {
+      final w = _World(DateTime(2027, 1, 2, 9), schedulesAhead: true);
+      await w.add(_status('a', DateTime(2027, 3, 20, 23, 59, 50)));
+      await w.service.run();
+      // The OS showed day 14 at 10:00 on 6 March. The app opens a day later, with the new date.
+      w.now = DateTime(2027, 3, 7, 11);
+      await w.statuses.change('a', (_) => _status('a', DateTime(2027, 3, 21, 0, 0, 10)));
+      await w.service.run();
+      expect(w.firedDays, isEmpty);
+    });
+
+    test('a sign-in that starts renewing itself takes back the thresholds it no longer has', () async {
+      final end = DateTime(2027, 3, 20, 15);
+      final w = _World(DateTime(2027, 1, 2, 9), schedulesAhead: true);
+      await w.add(_status('a', end));
+      await w.service.run();
+      expect(w.sink.scheduled, hasLength(5));
+      await w.statuses.change('a', (_) => _status('a', end, renews: true));
+      await w.service.run();
+      expect(w.sink.cancelled.toSet(), {signInWarningKey('a', end, 14), signInWarningKey('a', end, 3)});
       expect(w.sink.scheduled, hasLength(3));
     });
 

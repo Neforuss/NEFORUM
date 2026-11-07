@@ -179,6 +179,19 @@ String? signInSourceWords(SignInRow r) {
 /// What a row says when the policy is unverified.
 String signInUnverifiedWords(String network) => "Not confirmed: $network's own documentation does not settle this.";
 
+/// What "Check now" found, in words. [after] is the status once it ran, null if
+/// it failed. A read older than [asked] is an earlier one: this one got nothing.
+/// Bluesky and Lemmy read their own token with no request, so only a platform's
+/// refusal is worded as something it said.
+String signInCheckWords(String network, DateTime asked, SignInStatus? after) {
+  final read = after?.serverRead;
+  if (after == null || read == null || read.readAt.isBefore(asked.subtract(const Duration(minutes: 1)))) return 'Could not check $network. Nothing changed.';
+  if (!read.isValid) return '$network says this sign-in no longer works. Reconnect it.';
+  final end = after.expiresAt;
+  if (end == null) return 'Checked $network: no end date known.';
+  return '$network sign-in: ends ${signInEndWords(after, end, signInDay)}.';
+}
+
 /// One line of the banner when it covers one sign-in. No bare date: it goes
 /// through [signInEndWords].
 String signInBannerLine(SignInBannerItem i, String network) {

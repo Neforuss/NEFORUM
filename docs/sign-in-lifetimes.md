@@ -92,7 +92,7 @@ NEFORUM asks when you connect, after a post, and when the sign-ins page opens, a
 
 ## What NEFORUM warns you about
 
-The **Sign-ins** page in Accounts lists every connected account under three headings: **You must reconnect**, **Renews when NEFORUM posts** and **No end date known**. Each date also shows on the account's closed card. Where a network can renew now, the page offers **Renew now**. Where it can report its own date, **Check now** asks it.
+The **Sign-ins** page in Accounts lists every connected account under three headings: **You must reconnect**, **Renews when NEFORUM posts** and **No end date known**. Each date also shows on the account's closed card. Where a network can renew now, the page offers **Renew now**. Where the network or its token can report a date, **Check now** reads it.
 
 A notification goes out at 10:00 on these days before the date, and when the date comes:
 
@@ -106,7 +106,7 @@ A notification goes out at 10:00 on these days before the date, and when the dat
 - Phones ask the system ahead of time. They keep at most 20 of these waiting, and post reminders go first when the system's room runs short. Computers check while NEFORUM runs, on its timer and when it starts.
 - A banner above every section shows anything at 14 days or fewer, ended or refused. Closing it holds until the next of those days.
 - A refused sign-in raises one notification until it works again, whether or not **Tell me how each post went** is on.
-- Scheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that holds the post itself still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so.
+- Scheduling or rescheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that holds the post itself still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so.
 
 ## Still open
 

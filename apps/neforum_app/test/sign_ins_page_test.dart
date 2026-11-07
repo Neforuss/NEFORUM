@@ -16,6 +16,7 @@ import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/demo.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
+import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/state/sign_in_notifications.dart';
 import 'package:neforum_app/state/sign_in_risks.dart';
 import 'package:neforum_app/state/sign_in_view.dart';
@@ -375,19 +376,39 @@ void main() {
       await _end(t);
     });
 
-    testWidgets('Check now asks the platform and says what it answered, in words', (t) async {
-      final a = _acct('linkedin', PlatformTier.byokApi, handle: '@robin');
+    test('Check now says what it found, in words', () {
+      final a = _acct('linkedin', PlatformTier.byokApi);
       final end = _now.add(const Duration(days: 40));
-      final (c, s) = await _boot(t, fleet: [(a, _status(a, _access(const Duration(days: 20))))], size: const Size(1100, 1200));
-      expect(c.read(signInClockProvider)(), _now);
-      await t.runAsync(() => s.secrets.write(a.id, _access(const Duration(days: 20))));
-      // A demo adapter has no read: the point here is the wording of a real answer.
-      final read = SignInServerRead(readAt: DateTime.now(), expiresAt: end);
-      await t.runAsync(() => s.signInStatusStore.change(a.id, (_) => SignInStatus.fromLifetime(a.id, deriveSignInLifetime(_real.require('linkedin').signInPolicyFor(a), _access(const Duration(days: 20)), now: _now, serverRead: read), hasConnection: true, serverRead: read)));
+      SignInStatus after(SignInServerRead read) => SignInStatus.fromLifetime(
+            a.id,
+            deriveSignInLifetime(_real.require('linkedin').signInPolicyFor(a), _access(const Duration(days: 20)), now: _now, serverRead: read),
+            hasConnection: true,
+            serverRead: read,
+          );
+      expect(signInCheckWords('LinkedIn', _now, null), 'Could not check LinkedIn. Nothing changed.');
+      // A read from before the button was pressed is not an answer to it.
+      expect(signInCheckWords('LinkedIn', _now, after(SignInServerRead(readAt: _now.subtract(const Duration(days: 2)), expiresAt: end))), startsWith('Could not check'));
+      expect(signInCheckWords('LinkedIn', _now, after(SignInServerRead(readAt: _now, expiresAt: end))), allOf(contains('LinkedIn sign-in: ends'), contains('at the latest')));
+      expect(signInCheckWords('LinkedIn', _now, after(SignInServerRead(readAt: _now, isValid: false))), contains('no longer works'));
+
+      // Bluesky reads its own token with no request, so Bluesky "said" nothing.
+      final sky = _acct('bluesky', PlatformTier.openApi);
+      final read = SignInServerRead(readAt: _now, accessExpiresAt: _now.add(const Duration(hours: 2)));
+      final status = SignInStatus.fromLifetime(
+        sky.id,
+        deriveSignInLifetime(_real.require('bluesky').signInPolicyFor(sky), const {OAuthTokens.keyAccessToken: 't', SignInSecretKeys.appPassword: 'p'}, now: _now, serverRead: read),
+        hasConnection: true,
+        serverRead: read,
+      );
+      expect(signInCheckWords('Bluesky', _now, status), 'Checked Bluesky: no end date known.');
+    });
+
+    testWidgets('Check now in the demo says nothing was checked', (t) async {
+      final a = _acct('linkedin', PlatformTier.byokApi);
+      await _boot(t, fleet: [(a, _status(a, _access(const Duration(days: 20))))], size: const Size(1100, 1200));
+      await t.tap(find.descendant(of: _row(a), matching: find.text('Check now')));
       await _settle(t);
-      final after = (await t.runAsync(() => s.signInStatusStore.get(a.id)))!;
-      expect(after.expiresAt!.toUtc(), end.toUtc());
-      expect(signInEndWords(after, end, signInDay), contains('at the latest'));
+      expect(find.text('This is the demo: nothing was checked.'), findsOneWidget);
       await _end(t);
     });
   });
@@ -675,6 +696,79 @@ void main() {
       expect(find.text('LinkedIn may miss this post'), findsNothing);
       expect((await t.runAsync(() => s.posts.all()))!, hasLength(1));
       await _end(t);
+    });
+
+    group('rescheduling a saved post', () {
+      const settings = AppSettings(delegateSchedules: true);
+      final done = _acct('mastodon', PlatformTier.openApi);
+      final holds = _acct('mastodon', PlatformTier.openApi, id: 'holds');
+      final statuses = {link.id: ending, done.id: ending, holds.id: _status(holds, _access(const Duration(days: 10)))};
+      List<SignInRisk> risks(Post p, DateTime when, List<ConnectedAccount> accounts) =>
+          signInRisksOfReschedule(p, when, accounts: accounts, statuses: statuses, registry: _real, settings: settings, now: _now);
+
+      test('warns for the new time, and only for networks still to go', () {
+        final post = scheduled(before, link).copyWith(targets: [
+          PostTarget(accountId: link.id),
+          PostTarget(accountId: done.id, status: TargetStatus.published),
+        ]);
+        expect(risks(post, before, [link, done]), isEmpty);
+        expect([for (final r in risks(post, after, [link, done])) (r.accountId, r.kind)], [(link.id, SignInRiskKind.endsFirst)]);
+      });
+
+      test('moves each network by the same amount, as the reschedule itself does', () {
+        final other = _acct('wordpress', PlatformTier.openApi);
+        final post = scheduled(_now.add(const Duration(days: 1)), link).copyWith(targets: [
+          PostTarget(accountId: link.id, overrides: PostOverrides(scheduledAt: _now.add(const Duration(days: 6)))),
+          PostTarget(accountId: other.id, overrides: PostOverrides(scheduledAt: _now.add(const Duration(days: 1)))),
+        ]);
+        // Three days on, the next network goes on day 4, and LinkedIn's day 6 becomes day 9: still in time.
+        expect(risks(post, _now.add(const Duration(days: 4)), [link, other]), isEmpty);
+        // Five days on, day 11: past the end, though the post's own time is not.
+        expect([for (final r in risks(post, _now.add(const Duration(days: 6)), [link, other])) r.accountId], [link.id]);
+      });
+
+      test('what the platform would hold still goes out; a thread it cannot hold does not', () {
+        final post = scheduled(after, holds);
+        final held = risks(post, after, [holds]).single;
+        expect(held.kind, SignInRiskKind.heldEndsFirst);
+        expect(held.mayMiss, isFalse);
+        final thread = post.copyWith(additionalParts: const ['Part two']);
+        expect(risks(thread, after, [holds]).single.kind, SignInRiskKind.endsFirst);
+      });
+
+      testWidgets('warns in the sheet and asks first: Go back moves nothing', (t) async {
+        final at = DateTime.now();
+        final near = SignInStatus.fromLifetime(link.id, deriveSignInLifetime(_real.require('linkedin').signInPolicyFor(link), {OAuthTokens.keyAccessToken: 't', OAuthTokens.keyExpiresAt: _iso(at.add(const Duration(days: 3)))}, now: at), hasConnection: true);
+        final (c, s) = await _boot(t, fleet: [(link, near)], route: '/compose', size: const Size(1100, 1400), now: at);
+        final post = scheduled(at.add(const Duration(days: 6)), link);
+        await t.runAsync(() => s.posts.upsert(post));
+        c.read(routerProvider).go('/queue');
+        await _settle(t);
+
+        Future<void> openAndConfirm() async {
+          await t.tap(find.byTooltip('Actions'));
+          await _settle(t);
+          await t.tap(find.text('Reschedule'));
+          await _settle(t);
+          // On the post in the queue, and in the sheet.
+          expect(find.byKey(const ValueKey('sign-in-risks')), findsNWidgets(2));
+          await t.tap(find.textContaining('Schedule for '));
+          await _settle(t);
+          expect(find.text('LinkedIn may miss this post'), findsOneWidget);
+        }
+
+        await openAndConfirm();
+        await t.tap(find.text('Go back'));
+        await _settle(t);
+        expect((await t.runAsync(() => s.posts.get(post.id)))!.updatedAt, post.updatedAt, reason: 'nothing moved');
+
+        await openAndConfirm();
+        await t.tap(find.text('Schedule anyway'));
+        await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+        await _settle(t);
+        expect((await t.runAsync(() => s.posts.get(post.id)))!.updatedAt, isNot(post.updatedAt));
+        await _end(t);
+      });
     });
 
     testWidgets('the schedule sheet warns for the time being picked', (t) async {

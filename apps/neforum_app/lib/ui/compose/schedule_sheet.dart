@@ -174,18 +174,21 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
     final format = TimeFormatting.of(context, ref);
     // A sign-in that ends before the time picked says so before Schedule.
     final statuses = ref.watch(signInStatusesProvider).value ?? const {};
-    final risks = [
-      for (final t in targets)
-        ?signInRiskFor(
-          accountId: t.$1.id,
-          account: t.$1,
-          network: t.$2.name,
-          status: statuses[t.$1.id],
-          due: each ? (_times[t.$1.id] ?? _when) : _when,
-          now: ref.watch(signInClockProvider)(),
-          willHold: signInWillHold(settings, t.$1, t.$2, isThread: t.$3),
-        ),
-    ];
+    final signInNow = ref.watch(signInClockProvider)();
+    final risks = widget.post != null
+        ? signInRisksOfReschedule(widget.post!, _when, accounts: ref.watch(accountListProvider), statuses: statuses, registry: registry, settings: settings, now: signInNow)
+        : [
+            for (final t in targets)
+              ?signInRiskFor(
+                accountId: t.$1.id,
+                account: t.$1,
+                network: t.$2.name,
+                status: statuses[t.$1.id],
+                due: each ? (_times[t.$1.id] ?? _when) : _when,
+                now: signInNow,
+                willHold: signInWillHold(settings, t.$1, t.$2, isThread: t.$3),
+              ),
+          ];
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(

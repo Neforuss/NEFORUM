@@ -11,7 +11,7 @@ import 'sign_in_view.dart';
 // Whether a post can reach a network at its time, by the sign-in model (D14):
 // the status file, never `signInExpiry` and never a keychain read per target.
 // Every way a post could silently miss a network is one case here, and each
-// has a line in `sign_in_schedule_warnings_test.dart`.
+// has a line in `sign_ins_page_test.dart`.
 
 /// Why a post might not reach one network.
 enum SignInRiskKind {
@@ -112,23 +112,49 @@ bool signInWillHold(AppSettings settings, ConnectedAccount account, PlatformDesc
     settings.delegateSchedules && account.enabled && account.tier.isAutomatic && descriptor.serverSideScheduling && !isThread;
 
 /// The risks of a saved post at [now], for the queue. Finished targets have none.
+/// With [handsOver], what scheduling it under those settings would hand to a
+/// platform counts as held.
 List<SignInRisk> signInRisksOfPost(
   Post post, {
   required List<ConnectedAccount> accounts,
   required Map<String, SignInStatus> statuses,
   required AdapterRegistry registry,
   required DateTime now,
+  AppSettings? handsOver,
 }) {
   final out = <SignInRisk>[];
   for (final t in post.targets) {
     if (t.isDone || t.status == TargetStatus.cancelled || t.status == TargetStatus.awaitingHandoff || t.status == TargetStatus.publishing) continue;
     final a = accounts.where((x) => x.id == t.accountId).firstOrNull;
     final name = a == null ? 'An account' : (registry.descriptor(a.platformId)?.name ?? a.displayName);
-    final r = signInRiskFor(accountId: t.accountId, account: a, network: name, status: statuses[t.accountId], due: post.dueAtFor(t), now: now, heldNow: t.isHeldByPlatform);
+    final descriptor = a == null ? null : registry.byId(a.platformId)?.descriptorForAccount(a);
+    final r = signInRiskFor(
+      accountId: t.accountId,
+      account: a,
+      network: name,
+      status: statuses[t.accountId],
+      due: post.dueAtFor(t),
+      now: now,
+      heldNow: t.isHeldByPlatform,
+      willHold: handsOver != null && a != null && descriptor != null && signInWillHold(handsOver, a, descriptor, isThread: post.isThread),
+    );
     if (r != null) out.add(r);
   }
   return out;
 }
+
+/// The risks of saved [post] if it moves to [when]: what Reschedule warns and
+/// asks about. Networks still to go keep their gaps, as [rescheduledPost] does.
+List<SignInRisk> signInRisksOfReschedule(
+  Post post,
+  DateTime when, {
+  required List<ConnectedAccount> accounts,
+  required Map<String, SignInStatus> statuses,
+  required AdapterRegistry registry,
+  required AppSettings settings,
+  required DateTime now,
+}) =>
+    signInRisksOfPost(rescheduledPost(post, when, now), accounts: accounts, statuses: statuses, registry: registry, now: now, handsOver: settings);
 
 /// The risks of what the composer holds, at its schedule or right now.
 final composerSignInRisksProvider = Provider<List<SignInRisk>>((ref) {

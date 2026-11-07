@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:meta/meta.dart';
 
@@ -247,10 +248,24 @@ SignInWarningStep advanceSignInWarnings(
         },
       );
     }
-    // A date that moved within its day keeps what was said, at the new moment.
+    // A date that moved within a day keeps what was said. What the OS was asked
+    // for under the old date's day, at the end's old moment, or for a threshold
+    // this case no longer has, is taken back; if its moment went by, the OS
+    // showed it and it is done with.
     final planned = {...entry.planned};
     final fired = {...entry.fired};
-    if (entry.expiresAt != end && planned.containsKey(0)) planned.remove(0);
+    final moved = !entry.expiresAt.isAtSameMomentAs(end);
+    for (final e in entry.planned.entries) {
+      final oldKey = signInWarningKey(id, entry.expiresAt, e.key);
+      final sameKey = days.contains(e.key) && oldKey == signInWarningKey(id, end, e.key);
+      if (sameKey && !(moved && e.key == 0)) continue;
+      planned.remove(e.key);
+      if (!e.value.isAfter(now)) {
+        fired.add(e.key);
+      } else if (!sameKey) {
+        cancel.add(oldKey);
+      }
+    }
 
     final due = [
       for (final d in days)
@@ -298,7 +313,9 @@ SignInWarningStep advanceSignInWarnings(
     for (final n in keep) {
       final id = n.status.accountId;
       final e = entries[id]!;
-      if (e.planned[n.daysBefore] != n.at) {
+      // By the moment: a time read back from the file is UTC, and `!=` would call
+      // it different from the same local time and ask the OS again on every run.
+      if (!(e.planned[n.daysBefore]?.isAtSameMomentAs(n.at) ?? false)) {
         schedule.add(n);
         entries[id] = e.copyWith(planned: {...e.planned, n.daysBefore: n.at});
       }
@@ -438,7 +455,11 @@ class SignInWarningStore {
   Future<SignInWarningLedger> update(SignInWarningLedger Function(SignInWarningLedger) change) {
     late SignInWarningLedger out;
     Future<void> apply() async {
-      out = change(await read());
+      final before = await read();
+      out = change(before);
+      // The scheduler's timer runs every 30 seconds and nearly always changes
+      // nothing: no write to the disk, and no rebuild of the banner.
+      if (jsonEncode(out.toJson()) == jsonEncode(before.toJson())) return;
       await _write(out.toJson());
       if (!_changes.isClosed) _changes.add(null);
     }

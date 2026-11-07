@@ -89,6 +89,10 @@ class _SignInsScreenState extends ConsumerState<SignInsScreen> {
 
   Future<void> _check(SignInRow r) => _during(r.account.id, () async {
         final s = ref.read(servicesProvider);
+        if (s.demo) {
+          showToast(context, 'This is the demo: nothing was checked.', icon: Icons.info_outline_rounded);
+          return;
+        }
         final asked = ref.read(signInClockProvider)();
         SignInStatus? after;
         try {
@@ -97,20 +101,7 @@ class _SignInsScreenState extends ConsumerState<SignInsScreen> {
           after = null;
         }
         if (!mounted) return;
-        final read = after?.serverRead;
-        final answered = read != null && !read.readAt.isBefore(asked.subtract(const Duration(minutes: 1)));
-        final end = after?.expiresAt;
-        final String text;
-        if (after == null || !answered) {
-          text = '${r.network} did not answer. Nothing changed.';
-        } else if (!read.isValid) {
-          text = '${r.network} says this sign-in no longer works. Reconnect it.';
-        } else if (end == null) {
-          text = '${r.network} says this sign-in works, and gives no end date.';
-        } else {
-          text = '${r.network} sign-in: ends ${signInEndWords(after, end, signInDay)}.';
-        }
-        showToast(context, text, icon: Icons.fact_check_outlined);
+        showToast(context, signInCheckWords(r.network, asked, after), icon: Icons.fact_check_outlined);
       });
 
   @override

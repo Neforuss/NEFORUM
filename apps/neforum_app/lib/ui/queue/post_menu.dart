@@ -3,10 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../state/account_connection.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/sign_in_risks.dart';
+import '../../state/sign_in_view.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
+import '../accounts/sign_in_risk_notes.dart';
 import '../activity/time_format.dart';
 import '../compose/open_in_composer.dart';
 import '../compose/schedule_sheet.dart';
@@ -35,6 +39,17 @@ List<PostMenuAction> postMenuActions(BuildContext context, WidgetRef ref, Post p
           final done = await guardHeldCopies(context, () => actions.unschedule(p));
           if (done != null && context.mounted) showToast(context, 'Moved to drafts', icon: Icons.inventory_2_outlined);
         } else {
+          // Nothing moves to where it misses a network without the person being told.
+          final risks = signInRisksOfReschedule(
+            p,
+            when,
+            accounts: ref.read(accountListProvider),
+            statuses: ref.read(signInStatusesProvider).value ?? const {},
+            registry: ref.read(registryProvider),
+            settings: ref.read(settingsProvider),
+            now: ref.read(signInClockProvider)(),
+          );
+          if (!await confirmSignInRisks(context, risks) || !context.mounted) return;
           final done = await guardHeldCopies(context, () => actions.reschedule(p, when));
           if (done != null && context.mounted) {
             final format = TimeFormatting.from(ref.read(settingsProvider), context);
