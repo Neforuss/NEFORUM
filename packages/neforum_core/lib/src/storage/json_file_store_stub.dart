@@ -8,7 +8,7 @@ import 'sign_in_status_store.dart';
 /// Web stand-in: no file system. Everything lives in memory for the session;
 /// the web build is a preview, not a supported target for persistent use.
 class JsonFileStore {
-  JsonFileStore(this.directory)
+  JsonFileStore(this.directory, {String? process})
       : accounts = InMemoryAccountRepository(),
         posts = InMemoryPostRepository(),
         quota = InMemoryQuotaRepository(),
@@ -30,7 +30,7 @@ class JsonFileStore {
 
   static SignInWarningStore openSignInWarnings(String directory) => SignInWarningStore.inMemory();
 
-  static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock}) => PublishJournal.inMemory(owner: owner, clock: clock);
+  static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock, String? process}) => PublishJournal.inMemory(owner: owner, clock: clock, process: process);
 
   void dispose() {}
 }

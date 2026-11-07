@@ -21,12 +21,12 @@ import 'sign_in_status_store.dart';
 /// Files: `accounts.json`, `posts.json`, `quota.json`, `secrets.json`,
 /// `publish-journal.json`, `sign-in-status.json`, `sign-in-warnings.json`.
 class JsonFileStore {
-  JsonFileStore(this.directory)
+  JsonFileStore(this.directory, {String? process})
       : accounts = JsonAccountRepository(JsonFile(p.join(directory, 'accounts.json'))),
         posts = JsonPostRepository(JsonFile(p.join(directory, 'posts.json'))),
         quota = JsonQuotaRepository(JsonFile(p.join(directory, 'quota.json'))),
         secrets = JsonSecretStore(JsonFile(p.join(directory, 'secrets.json'))),
-        publishJournal = openPublishJournal(directory),
+        publishJournal = openPublishJournal(directory, process: process),
         signInStatus = openSignInStatus(directory),
         signInWarnings = openSignInWarnings(directory);
 
@@ -62,12 +62,12 @@ class JsonFileStore {
 
   /// The publish journal in [directory] as one process sees it. Every call
   /// is another owner; [owner] and [clock] let tests stand in for another
-  /// process. Every read goes to the file, since other isolates write it
+  /// isolate. [process]: see [PublishJournal.process]. Every read goes to the file, since other isolates write it
   /// too. A write that keeps failing gives up after a few tries: a run that
   /// is not on record is never recovered, which costs nothing else.
-  static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock}) {
+  static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock, String? process}) {
     final file = JsonFile(p.join(directory, 'publish-journal.json'), writeAttempts: 3);
-    return PublishJournal(read: file.read, write: file.write, owner: owner, clock: clock);
+    return PublishJournal(read: file.read, write: file.write, owner: owner, clock: clock, process: process);
   }
 
   void dispose() {

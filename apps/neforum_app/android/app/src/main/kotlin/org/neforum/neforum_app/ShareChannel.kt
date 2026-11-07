@@ -21,7 +21,11 @@ import java.io.File
  */
 class ShareChannel(private val activity: Activity) {
     fun register(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "neforum/share").setMethodCallHandler { call, result -> handle(call, result) }
+        MethodChannel(messenger, NAME).setMethodCallHandler { call, result -> handle(call, result) }
+    }
+
+    companion object {
+        const val NAME = "neforum/share"
     }
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {

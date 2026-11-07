@@ -81,6 +81,10 @@ class NotificationService {
   /// Taps on notifications, already parsed.
   Stream<NotificationIntent> get intents => _intents.stream;
 
+  /// Opens [postId], as a tap on a notification of this plugin would. The native
+  /// progress notification comes through here.
+  void openPost(String postId) => _intents.add(OpenPostIntent(postId));
+
   /// The notification that launched the app, if any.
   NotificationIntent? launchIntent;
 

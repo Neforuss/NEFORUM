@@ -309,6 +309,12 @@ class ActivePublishingNotifier extends Notifier<Map<String, CancellationSignal>>
 
 final activePublishingProvider = NotifierProvider<ActivePublishingNotifier, Map<String, CancellationSignal>>(ActivePublishingNotifier.new);
 
+/// Asks the run publishing [postId] in this process to stop.
+void cancelPublishRun(Ref ref, String postId) {
+  ref.read(activePublishingProvider.notifier).cancel(postId);
+  if (ref.read(publishRunProvider)?.postId == postId) ref.read(publishRunProvider.notifier).cancel();
+}
+
 /// Bumps whenever something outside the repositories changed (e.g. a media
 /// host was reconfigured) so dependent widgets can refresh.
 class RefreshTick extends Notifier<int> {
