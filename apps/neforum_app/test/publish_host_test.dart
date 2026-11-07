@@ -377,6 +377,43 @@ void main() {
       expect(host.snapshots.last['phase'], 'finished');
       expect((host.snapshots.last['networks'] as List).map((n) => (n as Map)['state']).toSet(), {'posted'});
     }, timeout: const Timeout(Duration(minutes: 1)));
+
+    // The merge of U1-UI and U2A once gave each run two trackers, and only native's
+    // heard the run: the sheet's figure never moved.
+    test('the screens and native hear one tracker, from the composer and from the scheduler', () async {
+      final (services, c, host) = await demo();
+      addTearDown(c.dispose);
+      final masto = c.read(accountListProvider).firstWhere((a) => a.platformId == 'mastodon').id;
+      final screens = <int>[];
+      c.listen<Map<String, PostProgress>>(publishProgressProvider, (_, runs) {
+        final p = runs['tap'] ?? runs['due2'];
+        if (p != null) screens.add(p.permille);
+      });
+      final at = DateTime.now();
+      await services.posts.upsert(Post(id: 'tap', text: 'Tapped', createdAt: at, updatedAt: at, status: PostStatus.draft, targets: [PostTarget(accountId: masto)]));
+      await c.read(postActionsProvider).publishExisting('tap');
+      await settle();
+      expect(screens, isNotEmpty, reason: 'the sheet hears the composer run');
+      expect(screens.last, 1000);
+      final native = host.snapshots.map((s) => s['postPermille']).whereType<int>().toList();
+      expect(native, contains(screens.last), reason: 'native hears the same figures');
+
+      screens.clear();
+      host.snapshots.clear();
+      await services.posts.upsert(Post(
+        id: 'due2',
+        text: 'Due',
+        createdAt: at,
+        updatedAt: at,
+        status: PostStatus.scheduled,
+        scheduledAt: at.subtract(const Duration(minutes: 1)),
+        targets: [PostTarget(accountId: masto)],
+      ));
+      await c.read(schedulerProvider).runDue();
+      await settle();
+      expect(screens, isNotEmpty, reason: 'the screens hear the scheduler run');
+      expect(host.snapshots.map((s) => s['postPermille']).whereType<int>(), contains(screens.last));
+    }, timeout: const Timeout(Duration(minutes: 1)));
   });
 
   group('the window', () {

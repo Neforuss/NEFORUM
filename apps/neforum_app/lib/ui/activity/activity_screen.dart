@@ -16,6 +16,7 @@ import '../../widgets/surfaces.dart';
 import '../compose/open_in_composer.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
+import '../shell/notification_prompt.dart';
 import 'target_chip.dart';
 
 enum _Filter { all, attention, failed, published }
@@ -81,6 +82,7 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
         eyebrow: 'Activity',
         title: "Everything you've posted",
         actions: [
+          const NotificationsOffPill(),
           if (failedPosts.isNotEmpty)
             PopupMenuButton<int>(
               tooltip: 'More',

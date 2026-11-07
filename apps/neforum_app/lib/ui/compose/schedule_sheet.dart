@@ -16,6 +16,7 @@ import '../../widgets/account_avatar.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/surfaces.dart';
 import '../activity/time_format.dart';
+import '../shell/notification_prompt.dart';
 import 'schedule_notes.dart';
 
 /// What the schedule sheet takes from the device. Replaced in tests: the clock,
@@ -524,6 +525,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.xxl, Space.sm),
         child: Text('Schedule post', style: context.text.headlineSmall),
       ),
+      const NotificationHintLine(scheduling: true),
       Flexible(
         child: SingleChildScrollView(
           controller: _scroll,

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
+import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
@@ -21,7 +22,9 @@ import 'card_designs.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
+import 'notification_state.dart';
 import 'providers.dart';
+import 'publish_result_notices.dart';
 import 'publish_run_keeper.dart';
 import 'scheduler.dart';
 import 'settings.dart';
@@ -1413,14 +1416,18 @@ class PostActions {
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
-    final figures = ref.read(publishProgressProvider.notifier);
-    final tracker = figures.begin(postId);
     final keeper = ref.read(publishRunKeeperProvider)..begin(postId);
+    final figures = ref.read(publishProgressProvider.notifier);
+    // One tracker: the sheet and Activity read its figures, the keep-alive too.
+    final tracker = figures.begin(postId, onChange: (p) => keeper.progress(postId, p));
+    Post? before;
     try {
+      before = await ref.read(servicesProvider).posts.get(postId);
       return await _publishExisting(postId, signal, tracker, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
       await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
+      if (before != null) await _announceStoppedRun(before);
       rethrow;
     } finally {
       active.end(postId, signal);
@@ -1454,6 +1461,8 @@ class PostActions {
     final now = DateTime.now();
     final starting = accountIds ?? {for (final t in due.targets) if (!dueTargetsOnly || due.isTargetDue(t, now)) t.accountId};
     run.start(postId, starting);
+    // What the last run said about these networks is out of date now.
+    await NotificationService.instance.cancelResults(postId, starting);
     // 1.3: video. Videos too big for a network get their smaller copy now,
     // with its progress on that network's row.
     final keeper = ref.read(publishRunKeeperProvider);
@@ -1465,7 +1474,6 @@ class PostActions {
         cancellation: signal,
         onlyAccountIds: starting);
     await s.posts.upsert(post);
-    final tracker = keeper.tracker(postId);
     final done = await s.publisher().publish(
           postId,
           interactive: true,
@@ -1490,8 +1498,10 @@ class PostActions {
       } else {
         await ref.read(schedulerProvider).cancelReminders(finalPost);
       }
-      await _notifyResult(finalPost);
-      await _discardIfComplete(postId);
+      // In this order: deleting a post removes its notifications.
+      final discarded = await _discardIfComplete(postId);
+      await announcePublishResult(s, finalPost, discarded: discarded, delivery: _tappedDelivery(), onlyAccountIds: starting);
+      await ref.read(notificationAccessProvider.notifier).refresh();
     } on Object catch (e) {
       // The post went out; tidying up afterwards must not look like a failure.
       debugPrint('After publishing $postId: $e');
@@ -1510,26 +1520,30 @@ class PostActions {
   }
 
   /// Deletes [postId] once every network has it, when the setting keeps
-  /// nothing after posting.
-  Future<void> _discardIfComplete(String postId) async {
-    if (await ref.read(servicesProvider).discardIfComplete(postId, inUse: _composerReferences())) {
-      ref.read(schedulerProvider).updateTrayStatus();
-    }
+  /// nothing after posting. True when it was deleted.
+  Future<bool> _discardIfComplete(String postId) async {
+    final discarded = await ref.read(servicesProvider).discardIfComplete(postId, inUse: _composerReferences());
+    if (discarded) ref.read(schedulerProvider).updateTrayStatus();
+    return discarded;
   }
 
-  Future<void> _notifyResult(Post p) async {
-    final settings = ref.read(settingsProvider);
-    if (!settings.notifyOnPublish) return;
-    final ok = p.targets.where((t) => t.status == TargetStatus.published || t.status == TargetStatus.handedOff).length;
-    final failed = p.targets.where((t) => t.status == TargetStatus.failed).length;
-    final waiting = p.targets.where((t) => t.status == TargetStatus.awaitingHandoff).length;
-    if (failed == 0 && waiting == 0) return; // the in-app result sheet is enough
-    await NotificationService.instance.show(
-      key: 'result:${p.id}',
-      title: failed > 0 ? 'Posted to $ok, $failed failed' : 'Posted to $ok · $waiting waiting for you',
-      body: _short(p.text),
-      payload: 'post:${p.id}',
-    );
+  /// Who is watching as a run started from the app ends.
+  RunEndDelivery _tappedDelivery() =>
+      tappedRunDelivery(sheetOpen: ref.read(publishSheetOpenProvider) > 0, lifecycle: WidgetsBinding.instance.lifecycleState);
+
+  /// A run that stopped with an error instead of an outcome: told about like
+  /// any other when nobody is watching the sheet. Best effort.
+  /// Only the networks the stopped run changed: a run refused before it
+  /// started says nothing new about the others.
+  Future<void> _announceStoppedRun(Post before) async {
+    try {
+      final s = ref.read(servicesProvider);
+      final post = await s.posts.get(before.id);
+      if (post == null || post.status == PostStatus.publishing) return;
+      await announcePublishResult(s, post, delivery: _tappedDelivery(), onlyAccountIds: targetsChangedByRun(before, post));
+    } on Object catch (e) {
+      debugPrint('Could not announce the stopped run of ${before.id}: $e');
+    }
   }
 
   /// Hand-off for one target, triggered from a list or a notification.
@@ -1538,12 +1552,14 @@ class PostActions {
     final s = ref.read(servicesProvider);
     final p = await s.publisher().runHandoff(postId, accountId);
     final done = await s.applySkips(postId) ?? p;
+    if (done.targetFor(accountId)?.status != TargetStatus.awaitingHandoff) await NotificationService.instance.cancel('handoff:$postId:$accountId');
     await _discardIfComplete(postId);
     return done;
   }
 
   Future<Post> markHandedOff(String postId, String accountId, {bool done = true}) async {
     final p = await ref.read(servicesProvider).publisher().confirmHandoff(postId, accountId, completed: done);
+    await NotificationService.instance.cancel('handoff:$postId:$accountId');
     if (done) await _discardIfComplete(postId);
     return p;
   }
@@ -1619,6 +1635,5 @@ class PostActions {
     return next;
   }
 
-  static String _short(String s) => s.length > 80 ? '${s.substring(0, 80)}…' : s;
 }
 final postActionsProvider = Provider<PostActions>(PostActions.new);

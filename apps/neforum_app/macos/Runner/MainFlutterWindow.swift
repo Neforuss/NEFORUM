@@ -1,7 +1,11 @@
 import Cocoa
 import FlutterMacOS
+import UserNotifications
 
 class MainFlutterWindow: NSWindow {
+  /// "neforum/notification_access" (lib/platform/notification_access.dart).
+  private var notificationAccessChannel: FlutterMethodChannel?
+
   /// "neforum/clipboard": puts a photo on the pasteboard for pasting into a
   /// web composer (lib/platform/clipboard_media.dart).
   private var clipboardChannel: FlutterMethodChannel?
@@ -56,7 +60,34 @@ class MainFlutterWindow: NSWindow {
     }
     bookmarksChannel = bookmarks
 
+    let notificationAccess = FlutterMethodChannel(
+      name: "neforum/notification_access", binaryMessenger: flutterViewController.engine.binaryMessenger)
+    notificationAccess.setMethodCallHandler { call, result in
+      guard call.method == "read" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      MainFlutterWindow.readNotificationStatus(result)
+    }
+    notificationAccessChannel = notificationAccess
+
     super.awakeFromNib()
+  }
+
+  /// The raw authorization status: the notification plugin's checkPermissions
+  /// cannot tell notDetermined from denied.
+  private static func readNotificationStatus(_ result: @escaping FlutterResult) {
+    UNUserNotificationCenter.current().getNotificationSettings { settings in
+      let status: String
+      switch settings.authorizationStatus {
+      case .notDetermined: status = "notDetermined"
+      case .denied: status = "denied"
+      case .authorized: status = "authorized"
+      case .provisional: status = "provisional"
+      @unknown default: status = "unknown"
+      }
+      DispatchQueue.main.async { result(["status": status]) }
+    }
   }
 
   /// A security-scoped bookmark of the folder at `path`, base64.

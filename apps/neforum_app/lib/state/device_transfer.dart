@@ -95,6 +95,10 @@ const Map<String, String> kDeviceOnlySettings = {
   'fontDownloads': 'Agreeing to contact the font services is per device, like the update check; a font style that syncs never turns it on.',
   'emojiRecents': "The emoji picked last on this device; not worth a sync, and nobody else's business.",
   'emojiSkinTone': 'The skin tone the emoji sheet shows on this device.',
+  'notificationPromptAt': "When this device showed the explanation about notifications; each device's OS asks for itself.",
+  'notificationOsAskedAt': "When this device's OS last asked about notifications.",
+  'notificationHintShownAt': 'When the quiet line about notifications was shown on this device.',
+  'notificationBannerClosedAt': 'When the banner about notifications was closed on this device.',
   // Not settings records, but not device-only either: the media hosts travel
   // as one record with their keys (mediaHosts:all), so a host never arrives
   // without the keys it needs.

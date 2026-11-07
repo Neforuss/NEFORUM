@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart' show AppLifecycleState, WidgetsBinding;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:neforum_core/neforum_core.dart' show Clock, PostProgress, PublishProgressTracker, PublishRunPlan, systemClock;
+import 'package:neforum_core/neforum_core.dart' show Clock, PostProgress, PublishRunPlan, systemClock;
 
 import '../platform/notifications.dart';
 import '../platform/publish_host.dart';
@@ -138,9 +138,8 @@ class PublishRunKeeper {
     unawaited(_begin(postId, networks));
   }
 
-  /// A tracker for [postId]'s run that feeds this keeper.
-  PublishProgressTracker tracker(String postId) => PublishProgressTracker(postId: postId, onChange: (p) => progress(postId, p), clock: _now);
-
+  /// A new figure of [postId]'s run: pass it as the `onChange` of the run's one
+  /// tracker (`PublishProgressNotifier.begin`), so the screens and native agree.
   void progress(String postId, PostProgress progress) {
     final run = _runs[postId];
     if (run == null) return;

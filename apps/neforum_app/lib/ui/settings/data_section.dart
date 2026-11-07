@@ -15,6 +15,7 @@ import '../../state/composer_draft.dart';
 import '../../state/font_downloads.dart';
 import '../../state/media_host_config.dart';
 import '../../state/providers.dart';
+import '../../state/publish_result_notices.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
@@ -107,6 +108,8 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
     if (!s.demo) await s.browserBridge.forgetAll();
     // Downloaded fonts, their saved list and previews, and the yes to fetching them.
     await ref.read(fontDownloadsProvider.notifier).deleteAll();
+    // What finished while nobody was watching names networks.
+    await UnseenResults(s.storage).deleteAll();
     if (mounted) {
       showToast(
         context,

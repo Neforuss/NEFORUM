@@ -60,6 +60,8 @@ class MainActivity : FlutterActivity() {
             // dead one. A hidden run hands nothing off, and a sync still reaches its file.
             MethodChannel(messenger, ShareChannel.NAME).setMethodCallHandler(null)
             MethodChannel(messenger, ClipboardChannel.NAME).setMethodCallHandler(null)
+            // It reads through the Activity: with none, Dart treats access as unread.
+            MethodChannel(messenger, NotificationAccessChannel.NAME).setMethodCallHandler(null)
             val resolver = applicationContext.contentResolver
             val main = Handler(Looper.getMainLooper())
             // Its own thread: this Activity's would keep the dead Activity alive.
@@ -89,6 +91,7 @@ class MainActivity : FlutterActivity() {
         // Hand-offs: sharing straight into an app, and photos on the clipboard.
         ShareChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
         ClipboardChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
+        NotificationAccessChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
         // A kept engine has its compositor still, perhaps in the middle of an export.
         // It uses no Activity, and a new one would lose that export's cancel path.
         if (!PublishHost.isKnown(flutterEngine)) {

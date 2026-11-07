@@ -19,6 +19,7 @@ import 'cloud_sync.dart';
 import 'composer_draft.dart' show kComposerDraftFile;
 import 'demo.dart';
 import 'media_host_config.dart';
+import 'publish_result_notices.dart';
 import 'settings.dart';
 import 'sign_in_notifications.dart';
 
@@ -399,7 +400,16 @@ class AppServices {
   ///
   /// A settled post keeps its last change time, so a newer real result
   /// still wins a sync merge.
-  Future<int> recoverInterruptedPublishing({DateTime? now, Set<String> exclude = const {}, bool atStartup = false, void Function(Post settled)? onSettled}) async {
+  ///
+  /// Each settled post goes to [onSettled] and, unless [announce] is false,
+  /// gets [announceInterrupted].
+  Future<int> recoverInterruptedPublishing({
+    DateTime? now,
+    Set<String> exclude = const {},
+    bool atStartup = false,
+    void Function(Post settled)? onSettled,
+    bool announce = true,
+  }) async {
     await posts.reload();
     var recovered = 0;
     for (final outcome in _unsavedOutcomes.values.toList()) {
@@ -413,6 +423,7 @@ class AppServices {
       await posts.upsert(settledPost);
       recovered++;
       onSettled?.call(settledPost);
+      if (announce) await announceInterrupted(settledPost);
     }
 
     final settled = <String>[];
@@ -432,6 +443,24 @@ class AppServices {
       }
     }
     return recovered;
+  }
+
+  /// Says that a run a closed NEFORUM left unfinished was settled. Best effort:
+  /// the post already shows Retry in Activity. [show] replaces the OS
+  /// notification (the background task's tests).
+  Future<void> announceInterrupted(Post settled, {ShowNotification? show}) async {
+    if (demo || !_settings.notifyOnPublish) return;
+    try {
+      final notice = publishInterruptedNotice(settled, fallbackMessage: interruptionMessage);
+      if (show != null) {
+        await show(key: notice.key, title: notice.title, body: notice.body, payload: notice.payload);
+      } else {
+        await NotificationService.instance.showResults([notice]);
+      }
+      await UnseenResults(storage).add(UnseenResult(postId: settled.id, at: DateTime.now(), title: notice.title, lines: [notice.body]));
+    } on Object catch (e) {
+      debugPrint('Could not announce the interrupted run of ${settled.id}: $e');
+    }
   }
 
   /// Settles post [postId] after its run in this process stopped with
@@ -579,8 +608,15 @@ class _NotificationCancellingPostRepository implements PostRepository {
 
   @override
   Future<void> delete(String id) async {
+    // Read first: each network has its own notification.
+    Post? post;
+    try {
+      post = await _posts.get(id);
+    } on Object catch (e) {
+      debugPrint('Could not read post $id before deleting it: $e');
+    }
     await _posts.delete(id);
-    await NotificationService.instance.cancelPostNotifications(id);
+    await NotificationService.instance.cancelPostNotifications(id, accountIds: post?.targets.map((t) => t.accountId) ?? const []);
   }
 
   @override

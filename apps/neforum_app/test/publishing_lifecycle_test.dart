@@ -15,7 +15,7 @@ import 'package:neforum_app/platform/storage_maintenance.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/composer_draft.dart';
 import 'package:neforum_app/state/providers.dart';
-import 'package:neforum_app/state/scheduler.dart';
+import 'package:neforum_app/state/publish_result_notices.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/theme/app_theme.dart';
@@ -161,16 +161,16 @@ void main() {
 
     test('notifications count only networks that got the post and never call a post nobody got live', () {
       final skipped = _post('n', targets: [TargetStatus.skipped, TargetStatus.skipped]);
-      final notice = publishResultNotice(skipped, discarded: false, notifyOnPublish: true)!;
+      final notice = publishResultNotices(skipped, discarded: false, notifyOnPublish: true).single;
       expect(notice.title, 'Not posted');
       expect(notice.body, contains('switched off'));
       expect(notice.body, isNot(contains('live')));
       expect(notice.payload, 'post:n', reason: 'the post is still there to open');
 
-      final mixed = publishResultNotice(_post('m', targets: [TargetStatus.published, TargetStatus.handedOff, TargetStatus.skipped]), discarded: true, notifyOnPublish: true)!;
-      expect(mixed.title, 'Posted to 2 networks');
-      expect(mixed.payload, isNull, reason: 'deleted: nothing to open');
-      expect(publishResultNotice(skipped, discarded: false, notifyOnPublish: false), isNull);
+      final mixed = publishResultNotices(_post('m', targets: [TargetStatus.published, TargetStatus.handedOff, TargetStatus.skipped]), discarded: true, notifyOnPublish: true);
+      expect(mixed.last.title, 'Posted to 2 of 3');
+      expect(mixed.last.payload, isNull, reason: 'deleted: nothing to open');
+      expect(publishResultNotices(skipped, discarded: false, notifyOnPublish: false), isEmpty);
     });
 
     test('deleted right away, after 7 or 30 days, or never', () {
@@ -220,6 +220,7 @@ void main() {
 
     test('every notification about a post is cancelled with it', () {
       expect(NotificationService.postKeys('p1'), ['due:p1', 'result:p1', 'handoff:p1']);
+      expect(NotificationService.postKeys('p1', accountIds: ['a', 'b:c']), ['due:p1', 'result:p1', 'handoff:p1', 'result:p1:a', 'handoff:p1:a', 'result:p1:b:c', 'handoff:p1:b:c']);
     });
   });
 

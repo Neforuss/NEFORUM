@@ -44,6 +44,42 @@ import workmanager_apple
     SyncFolderPlugin.register(in: engineBridge.pluginRegistry)
     ClipboardPlugin.register(in: engineBridge.pluginRegistry)
     VideoCompositorPlugin.register(in: engineBridge.pluginRegistry)
+    NotificationAccessPlugin.register(in: engineBridge.pluginRegistry)
+  }
+}
+
+/// "neforum/notification_access" on iOS (lib/platform/notification_access.dart):
+/// the raw authorization status. The notification plugin's checkPermissions
+/// cannot tell notDetermined from denied, and iOS shows its prompt only once.
+class NotificationAccessPlugin: NSObject, FlutterPlugin {
+  static func register(in registry: FlutterPluginRegistry) {
+    if let registrar = registry.registrar(forPlugin: "NeforumNotificationAccess") {
+      register(with: registrar)
+    }
+  }
+
+  static func register(with registrar: FlutterPluginRegistrar) {
+    let channel = FlutterMethodChannel(name: "neforum/notification_access", binaryMessenger: registrar.messenger())
+    registrar.addMethodCallDelegate(NotificationAccessPlugin(), channel: channel)
+  }
+
+  func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "read" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    UNUserNotificationCenter.current().getNotificationSettings { settings in
+      let status: String
+      switch settings.authorizationStatus {
+      case .notDetermined: status = "notDetermined"
+      case .denied: status = "denied"
+      case .authorized: status = "authorized"
+      case .provisional: status = "provisional"
+      case .ephemeral: status = "ephemeral"
+      @unknown default: status = "unknown"
+      }
+      DispatchQueue.main.async { result(["status": status]) }
+    }
   }
 }
 

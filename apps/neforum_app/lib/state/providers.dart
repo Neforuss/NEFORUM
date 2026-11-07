@@ -153,14 +153,16 @@ class PublishProgressNotifier extends Notifier<Map<String, PostProgress>> {
   Map<String, PostProgress> build() => const {};
 
   /// A run of [postId] starts. It has no figure until the tracker hears its plan,
-  /// so a run before it does not show through.
-  PublishProgressTracker begin(String postId) {
+  /// so a run before it does not show through. [onChange] also hears every figure
+  /// (the keep-alive's notification), so one tracker serves both.
+  PublishProgressTracker begin(String postId, {void Function(PostProgress progress)? onChange}) {
     late final PublishProgressTracker tracker;
     tracker = PublishProgressTracker(
       postId: postId,
       clock: ref.read(publishClockProvider),
       onChange: (p) {
         if (identical(_trackers[postId], tracker)) state = {...state, postId: p};
+        onChange?.call(p);
       },
     );
     _trackers[postId] = tracker;
