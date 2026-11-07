@@ -253,6 +253,156 @@ void main() {
       await w.service.run();
       expect(w.firedDays, isEmpty);
     });
+
+    test('switched off and back on the same day, what was said stays said', () async {
+      final end = DateTime(2027, 3, 20, 15);
+      final w = _World(DateTime(2027, 3, 13, 11));
+      await w.add(_status('a', end));
+      await w.service.run();
+      expect(w.firedDays, [7]);
+      await w.accounts.upsert(_account('a', enabled: false));
+      await w.service.run();
+      await w.accounts.upsert(_account('a'));
+      await w.service.run();
+      expect(w.firedDays, [7]);
+    });
+
+    test('a threshold that passed while it was switched off is said when it comes back', () async {
+      final end = DateTime(2027, 3, 20, 15);
+      final w = _World(DateTime(2027, 3, 13, 11));
+      await w.add(_status('a', end));
+      await w.service.run();
+      await w.accounts.upsert(_account('a', enabled: false));
+      await w.service.run();
+      w.now = DateTime(2027, 3, 19, 11);
+      await w.service.run();
+      expect(w.firedDays, [7]);
+      await w.accounts.upsert(_account('a'));
+      await w.service.run();
+      expect(w.firedDays, [7, 1]);
+    });
+
+    test('a reconnect that removes the status for a moment repeats nothing', () async {
+      final end = DateTime(2027, 1, 31, 12);
+      final w = _World(DateTime(2027, 1, 24, 11));
+      await w.add(_status('a', end, deadline: true));
+      await w.service.run();
+      expect(w.firedDays, [7]);
+      await w.statuses.remove('a');
+      await w.service.run();
+      await w.statuses.change('a', (_) => _status('a', end, deadline: true));
+      await w.service.run();
+      expect(w.firedDays, [7]);
+    });
+
+    test('a phone asks the OS again when the account comes back, and what the OS showed stays said', () async {
+      final end = DateTime(2027, 3, 20, 15);
+      final w = _World(DateTime(2027, 3, 1, 9), schedulesAhead: true);
+      await w.add(_status('a', end));
+      await w.service.run();
+      expect(w.sink.scheduled, hasLength(5));
+      await w.accounts.upsert(_account('a', enabled: false));
+      w.now = DateTime(2027, 3, 6, 11);
+      await w.service.run();
+      final fourteen = signInWarningKey('a', end, 14);
+      expect(w.sink.scheduled.keys, [fourteen], reason: 'its moment went by, so the OS showed it; the rest are taken back');
+      await w.accounts.upsert(_account('a'));
+      await w.service.run();
+      expect(w.firedDays, isEmpty, reason: 'the 14 day one was shown by the OS');
+      expect((await w.service.store.read()).entries['a']!.planned.keys, unorderedEquals([7, 3, 1, 0]));
+      expect(w.sink.scheduled, hasLength(5));
+    });
+
+    test('an entry for an account long gone is forgotten a month after its end', () async {
+      final end = DateTime(2027, 3, 20, 15);
+      final w = _World(DateTime(2027, 3, 13, 11));
+      await w.add(_status('a', end));
+      await w.service.run();
+      await w.accounts.delete('a');
+      await w.service.run();
+      expect((await w.service.store.read()).entries.keys, ['a']);
+      w.now = DateTime(2027, 4, 21, 11);
+      await w.service.run();
+      expect((await w.service.store.read()).entries, isEmpty);
+    });
+  });
+
+  group('a file that cannot be read loses nothing', () {
+    test('an unreadable status file changes nothing: no repeat and nothing cancelled', () async {
+      final end = DateTime(2027, 3, 20, 15);
+      var busy = false;
+      Object? data;
+      final statuses = SignInStatusStore(
+        read: () async {
+          if (busy) throw StateError('locked');
+          return data;
+        },
+        write: (d) async => data = d,
+      );
+      final accounts = InMemoryAccountRepository();
+      await accounts.upsert(_account('a'));
+      await statuses.change('a', (_) => _status('a', end));
+      final now = DateTime(2027, 3, 13, 11);
+      final sink = _Sink(() => now);
+      final disk = _Disk();
+      final service = SignInWarningService(store: disk.open(), statuses: statuses, accounts: accounts, sink: sink, schedulesAhead: true, clock: () => now);
+      await service.run();
+      final before = disk.text;
+      final shown = sink.shown.length;
+      final planned = sink.scheduled.length;
+      expect(planned, greaterThan(0));
+      busy = true;
+      await service.run();
+      expect(disk.text, before);
+      expect(sink.cancelled, isEmpty);
+      busy = false;
+      await service.run();
+      expect(sink.shown, hasLength(shown));
+      expect(sink.scheduled, hasLength(planned));
+    });
+
+    test('a busy warnings file is never overwritten as if nothing had been said', () async {
+      final end = DateTime(2027, 3, 20, 15);
+      final disk = _Disk();
+      var busy = false;
+      final store = SignInWarningStore(
+        read: () async {
+          if (busy) throw StateError('locked');
+          return disk.text == null ? null : jsonDecode(disk.text!);
+        },
+        write: (d) async {
+          disk.writes++;
+          disk.text = jsonEncode(d);
+        },
+      );
+      final w = _World(DateTime(2027, 3, 13, 11));
+      await w.add(_status('a', end));
+      final service = SignInWarningService(store: store, statuses: w.statuses, accounts: w.accounts, sink: w.sink, schedulesAhead: false, clock: () => w.now);
+      await service.run();
+      expect(w.firedDays, [7]);
+      final saved = disk.text;
+      busy = true;
+      await service.run();
+      expect(disk.text, saved);
+      expect(w.firedDays, [7]);
+      busy = false;
+      await service.run();
+      expect(w.firedDays, [7]);
+    });
+
+    test('a file of damaged JSON still counts as nothing said, and is replaced', () async {
+      var writes = 0;
+      final store = SignInWarningStore(read: () async => jsonDecode('{not json'), write: (_) async => writes++);
+      await store.update((l) => l.copyWith(bannerClosed: {'a': 'x'}));
+      expect(writes, 1);
+    });
+
+    test('Delete everything clears a warnings file that cannot be read', () async {
+      Object? written;
+      final store = SignInWarningStore(read: () async => throw StateError('locked'), write: (d) async => written = d);
+      await store.clear();
+      expect(written, const SignInWarningLedger().toJson());
+    });
   });
 
   group('a refused sign-in', () {
@@ -637,6 +787,52 @@ void main() {
     });
   });
 
+  group('opening the sign-ins page', () {
+    final now = DateTime.utc(2027, 3, 13, 11);
+    final fb = ConnectedAccount(id: 'th', platformId: 'threads', tier: PlatformTier.byokApi, displayName: 'th', createdAt: DateTime.utc(2026));
+    final x = ConnectedAccount(id: 'x', platformId: 'x', tier: PlatformTier.byokApi, displayName: 'x', createdAt: DateTime.utc(2026), config: const {'authMode': 'oauth2'});
+    final masto = ConnectedAccount(id: 'm', platformId: 'mastodon', tier: PlatformTier.openApi, displayName: 'm', createdAt: DateTime.utc(2026));
+
+    Future<(SignInStatusTracker, _CountingSecrets, List<Uri>, AdapterContext)> open() async {
+      final accounts = InMemoryAccountRepository();
+      final keychain = _CountingSecrets();
+      for (final a in [fb, x, masto]) {
+        await accounts.upsert(a);
+        await keychain.write(a.id, {OAuthTokens.keyAccessToken: 'tok'});
+      }
+      final asked = <Uri>[];
+      final client = MockClient((req) async {
+        asked.add(req.url);
+        return http.Response(jsonEncode({'data': {'is_valid': true, 'expires_at': now.add(const Duration(days: 40)).millisecondsSinceEpoch ~/ 1000}}), 200, headers: {'content-type': 'application/json'});
+      });
+      final tracker = SignInStatusTracker(store: SignInStatusStore.inMemory(), accounts: accounts, registry: builtinRegistry(), secrets: keychain, clock: () => now);
+      for (final a in [fb, x, masto]) {
+        await tracker.store.change(a.id, (_) => _status(a.id, null));
+      }
+      return (tracker, keychain, asked, AdapterContext(http: NeforumHttp(client: client), clock: () => now));
+    }
+
+    test('asks the keychain and the server only for a network that can answer, at most once a day', () async {
+      final (tracker, keychain, asked, ctx) = await open();
+      await tracker.refreshForPage([fb, x, masto], ctx);
+      expect(keychain.reads, ['th'], reason: 'the rest cost no keychain prompt');
+      expect(asked, hasLength(1));
+      expect(asked.single.host, contains('threads'));
+      await tracker.refreshForPage([fb, x, masto], ctx);
+      expect(keychain.reads, ['th']);
+      expect(asked, hasLength(1));
+    });
+
+    test('fills in an account with no status yet, and one failure costs the others nothing', () async {
+      final (tracker, keychain, asked, ctx) = await open();
+      await tracker.store.remove(masto.id);
+      keychain.failing.add(fb.id);
+      await tracker.refreshForPage([fb, x, masto], ctx);
+      expect((await tracker.store.get(masto.id))?.accountId, masto.id);
+      expect(asked, isEmpty);
+    });
+  });
+
   test('a damaged warnings file counts as nothing said yet', () async {
     final store = SignInWarningStore(read: () async => {'entries': {'a': {'expiresAt': 3}}, 'refused': {'b': 4}}, write: (_) async {});
     final l = await store.read();
@@ -645,6 +841,18 @@ void main() {
     final bad = SignInWarningStore(read: () async => throw StateError('locked'), write: (_) async {});
     expect((await bad.read()).entries, isEmpty);
   });
+}
+
+/// Remembers each read: a read of the keychain can raise a prompt.
+class _CountingSecrets extends InMemorySecretStore {
+  final reads = <String>[];
+  final failing = <String>{};
+  @override
+  Future<Map<String, String>?> read(String accountId) {
+    reads.add(accountId);
+    if (failing.contains(accountId)) throw StateError('keychain');
+    return super.read(accountId);
+  }
 }
 
 /// A refresh path whose answer names no end.

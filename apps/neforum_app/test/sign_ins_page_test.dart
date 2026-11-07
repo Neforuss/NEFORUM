@@ -543,7 +543,7 @@ void main() {
         final x = _acct('x', PlatformTier.byokApi, config: const {'authMode': 'oauth1'});
         return risk(x, _status(x, const {'oauth_token': 't'}), DateTime.utc(2026, 12, 2));
       }, null),
-      'will be held, ends first': (() => risk(link, ending, after, willHold: true), SignInRiskKind.heldEndsFirst),
+      'will be asked to hold, ends first': (() => risk(link, ending, after, willHold: true), SignInRiskKind.handOverEndsFirst),
       'will be held, already ended: the hand-over fails, so it is a miss': (() => risk(link, _status(link, _access(const Duration(days: -1))), after, willHold: true), SignInRiskKind.ended),
       'already held, ends first': (() => risk(link, ending, after, heldNow: true), SignInRiskKind.heldEndsFirst),
       'already held, sign-in ended since': (() => risk(link, _status(link, _access(const Duration(days: -1))), after, heldNow: true), SignInRiskKind.heldEndsFirst),
@@ -604,11 +604,16 @@ void main() {
       expect([for (final r in risks) r.kind], [SignInRiskKind.accountRemoved]);
     });
 
-    test('every warning is true to the held case: it says the post still goes out', () {
-      expect(risk(link, ending, after, willHold: true)!.text, contains('still goes out'));
-      expect(risk(link, ending, after, willHold: true)!.mayMiss, isFalse);
+    test('every warning is true to the held case: only a copy the platform has "still goes out"', () {
+      expect(risk(link, ending, after, heldNow: true)!.text, contains('still goes out'));
+      expect(risk(link, ending, after, heldNow: true)!.mayMiss, isFalse);
       expect(risk(link, ending, after)!.text, contains('misses this post'));
       expect(risk(link, ending, after)!.mayMiss, isTrue);
+      // The platform has not agreed yet, and can say no.
+      final asked = risk(link, ending, after, willHold: true)!;
+      expect(asked.text, isNot(contains('still goes out')));
+      expect(asked.text, contains('If it does not, this post misses'));
+      expect(asked.mayMiss, isTrue, reason: 'Schedule asks first');
     });
 
     Post scheduled(DateTime at, ConnectedAccount a) => Post(
@@ -727,13 +732,20 @@ void main() {
         expect([for (final r in risks(post, _now.add(const Duration(days: 6)), [link, other])) r.accountId], [link.id]);
       });
 
-      test('what the platform would hold still goes out; a thread it cannot hold does not', () {
+      test('what the platform would be asked to hold says it can say no; a thread it cannot hold is a plain miss', () {
         final post = scheduled(after, holds);
-        final held = risks(post, after, [holds]).single;
-        expect(held.kind, SignInRiskKind.heldEndsFirst);
-        expect(held.mayMiss, isFalse);
+        final asked = risks(post, after, [holds]).single;
+        expect(asked.kind, SignInRiskKind.handOverEndsFirst);
+        expect(asked.mayMiss, isTrue);
         final thread = post.copyWith(additionalParts: const ['Part two']);
         expect(risks(thread, after, [holds]).single.kind, SignInRiskKind.endsFirst);
+      });
+
+      test('a platform that said no: the queue says the post misses it, for as long as it holds', () {
+        // The hand-over stays a background job: this is the post it leaves behind.
+        final left = signInRisksOfPost(scheduled(after, holds), accounts: [holds], statuses: {holds.id: _status(holds, _access(const Duration(days: 10)))}, registry: _real, now: _now);
+        expect(left.single.kind, SignInRiskKind.endsFirst);
+        expect(left.single.text, contains('misses this post'));
       });
 
       testWidgets('warns in the sheet and asks first: Go back moves nothing', (t) async {

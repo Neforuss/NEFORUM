@@ -944,6 +944,9 @@ void main() {
         await s.secrets.write(account.id, {OAuthTokens.keyAccessToken: 'QZXCVBNMLKJHGFDSQ', OAuthTokens.keyExpiresAt: _iso(DateTime.now().add(const Duration(days: 9)))});
         await s.signInStatusStore.change('left-behind', (_) => const SignInStatus(accountId: 'left-behind', limit: SignInLimit.none, source: SignInDateSource.unknown, renewsItself: false, state: SignInState.noDate));
         expect((await s.signInStatusStore.all()).keys, containsAll(['status-delete', 'left-behind']));
+        await s.signInWarnings.run();
+        await s.signInWarningStore.update((l) => l.copyWith(bannerClosed: {'status-delete': 'x'}));
+        expect((await s.signInWarningStore.read()).entries.keys, ['status-delete']);
         return s;
       }))!;
       await tester.pumpWidget(ProviderScope(
@@ -959,6 +962,9 @@ void main() {
         await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
       }
       expect(await tester.runAsync(() => s.signInStatusStore.all()), isEmpty);
+      final ledger = (await tester.runAsync(() => s.signInWarningStore.read()))!;
+      expect(ledger.entries, isEmpty, reason: 'what was said about a sign-in goes too');
+      expect(ledger.bannerClosed, isEmpty);
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 5));
     });

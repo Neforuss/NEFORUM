@@ -106,7 +106,7 @@ A notification goes out at 10:00 on these days before the date, and when the dat
 - Phones ask the system ahead of time. They keep at most 20 of these waiting, and post reminders go first when the system's room runs short. Computers check while NEFORUM runs, on its timer and when it starts.
 - A banner above every section shows anything at 14 days or fewer, ended or refused. Closing it holds until the next of those days.
 - A refused sign-in raises one notification until it works again, whether or not **Tell me how each post went** is on.
-- Scheduling or rescheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that holds the post itself still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so.
+- Scheduling or rescheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that already holds the post still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so. A network that is only about to be asked can say no, so that warning asks first too, and if it does say no the queue says the post misses it.
 
 ## Still open
 

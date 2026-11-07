@@ -42,12 +42,7 @@ class _SignInsScreenState extends ConsumerState<SignInsScreen> {
     if (!mounted) return;
     final s = ref.read(servicesProvider);
     if (s.demo) return;
-    unawaited(s.signInStatus.seedMissing().catchError((Object _) {}));
-    for (final a in ref.read(accountListProvider)) {
-      if (s.registry.byId(a.platformId)?.canReadSignIn(a) ?? false) {
-        unawaited(s.signInStatus.readFromServer(a, s.connectContext()).then((_) {}, onError: (Object _) {}));
-      }
-    }
+    unawaited(s.signInStatus.refreshForPage(ref.read(accountListProvider), s.connectContext()));
   }
 
   Future<void> _during(String id, Future<void> Function() job) async {

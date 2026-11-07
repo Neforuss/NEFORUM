@@ -34,6 +34,11 @@ enum SignInRiskKind {
   /// longer change or take it back after the date.
   heldEndsFirst,
 
+  /// Scheduling asks the platform to hold the post. It can say no (a time too
+  /// close or too far out, a video it will not hold, no connection), and then
+  /// the post stays on this device and misses the network.
+  handOverEndsFirst,
+
   /// It ends after idle time on no knowable date, and the post is far enough
   /// off that it may have.
   idle,
@@ -55,7 +60,8 @@ class SignInRisk {
   final SignInRiskKind kind;
   final String text;
 
-  /// The post can miss the network. A held post goes out regardless.
+  /// The post can miss the network. Only what the platform already holds goes
+  /// out regardless.
   bool get mayMiss => kind != SignInRiskKind.heldEndsFirst;
 }
 
@@ -85,11 +91,15 @@ SignInRisk? signInRiskFor({
   final over = s.lastAuthFailure != null || s.hasEnded(now);
   final endsFirst = end != null && !at.isBefore(end);
 
-  // What the platform already holds goes out without NEFORUM. A sign-in that
-  // has already ended can no longer hand it over, so that one stays a miss.
-  if (heldNow && (over || endsFirst) || (willHold && !over && endsFirst)) {
+  // What the platform already holds goes out without NEFORUM.
+  if (heldNow && (over || endsFirst)) {
     final ending = over ? 'its sign-in has ended' : 'its sign-in ends $words';
     return risk(SignInRiskKind.heldEndsFirst, '$network holds this post, so it still goes out. But $ending, and NEFORUM cannot change or take back the post until you reconnect.');
+  }
+  // What it is about to be asked to hold is not held yet, and it can say no. A
+  // sign-in that has already ended cannot hand it over at all: that one is below.
+  if (willHold && !over && endsFirst) {
+    return risk(SignInRiskKind.handOverEndsFirst, "NEFORUM will ask $network to hold this post. If it agrees, the post goes out, but NEFORUM cannot change or take it back after the sign-in ends $words. If it does not, this post misses $network unless you reconnect.");
   }
   if (s.lastAuthFailure != null) return risk(SignInRiskKind.refused, '$network refused its sign-in. Reconnect it, or it misses this post.');
   if (s.hasEnded(now)) {

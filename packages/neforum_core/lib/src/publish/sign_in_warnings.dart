@@ -21,6 +21,10 @@ const int kMaxPendingSignInNotifications = 20;
 /// keeps 64 per app and silently drops the rest. Post reminders go first.
 const int kMaxPendingNotifications = 60;
 
+/// How long past its end date this device remembers what it said about an
+/// account that has gone quiet. After that nothing could fire for that date.
+const Duration kSignInWarningKeptAfterEnd = Duration(days: 30);
+
 /// How a sign-in ends, which decides how often NEFORUM warns.
 enum SignInWarningCase {
   /// Nothing NEFORUM holds can extend it.
@@ -228,10 +232,7 @@ SignInWarningStep advanceSignInWarnings(
 
     final end = status.expiresAt;
     var entry = ledger.entries[id];
-    if (end == null) {
-      if (entry != null) dropPlanned(id, entry);
-      continue;
-    }
+    if (end == null) continue;
     if (entry != null && entry.expiresAt.difference(end).abs() >= const Duration(days: 1)) {
       dropPlanned(id, entry);
       entry = null;
@@ -292,9 +293,25 @@ SignInWarningStep advanceSignInWarnings(
     }
   }
 
-  // Accounts that are gone, switched off or now have no connection.
+  // Accounts that are gone, switched off, or now have no connection or no date:
+  // nothing waits in the OS for them. What was said stays said, so switching one
+  // off and on, or a reconnect that clears its status for a moment, repeats
+  // nothing. What the OS was asked for and has shown by now counts as said.
   for (final e in ledger.entries.entries) {
-    if (!byAccount.containsKey(e.key)) dropPlanned(e.key, e.value);
+    if (entries.containsKey(e.key)) continue;
+    final old = e.value;
+    if (!now.isBefore(old.expiresAt.add(kSignInWarningKeptAfterEnd))) continue;
+    entries[e.key] = old.copyWith(
+      fired: {
+        ...old.fired,
+        for (final p in old.planned.entries)
+          if (!p.value.isAfter(now)) p.key,
+      },
+      planned: const {},
+    );
+    for (final p in old.planned.entries) {
+      if (p.value.isAfter(now)) cancel.add(signInWarningKey(e.key, old.expiresAt, p.key));
+    }
   }
 
   final schedule = <SignInWarningNotice>[];
@@ -440,38 +457,60 @@ class SignInWarningStore {
   /// Fires after every stored change by this process.
   Stream<void> get changes => _changes.stream;
 
-  /// What is stored. Unreadable data counts as nothing said yet.
+  /// What is stored, for showing. Data that cannot be read counts as nothing said yet.
   Future<SignInWarningLedger> read() async {
     try {
-      final data = await _read();
-      if (data is Map) return SignInWarningLedger.fromJson(Map<String, dynamic>.from(data));
+      return await _load();
     } on Object {
-      // Falls through to an empty ledger.
+      return const SignInWarningLedger();
     }
-    return const SignInWarningLedger();
   }
 
-  /// Applies [change] to what is stored, one at a time.
+  /// What is stored. Damaged data counts as nothing said; a file that cannot be
+  /// read right now throws, since that says nothing about what is in it.
+  Future<SignInWarningLedger> _load() async {
+    final Object? data;
+    try {
+      data = await _read();
+    } on FormatException {
+      return const SignInWarningLedger();
+    }
+    if (data is! Map) return const SignInWarningLedger();
+    try {
+      return SignInWarningLedger.fromJson(Map<String, dynamic>.from(data));
+    } on Object {
+      return const SignInWarningLedger();
+    }
+  }
+
+  Future<void> _serial(Future<void> Function() step) {
+    final previous = _tail;
+    final next = previous == null ? step() : previous.then((_) => step());
+    _tail = next.catchError((Object _) {});
+    return next;
+  }
+
+  /// Applies [change] to what is stored, one at a time. Throws, having stored
+  /// nothing, when the file cannot be read: writing over it would forget what
+  /// was said, and the warnings would repeat.
   Future<SignInWarningLedger> update(SignInWarningLedger Function(SignInWarningLedger) change) {
     late SignInWarningLedger out;
-    Future<void> apply() async {
-      final before = await read();
+    return _serial(() async {
+      final before = await _load();
       out = change(before);
       // The scheduler's timer runs every 30 seconds and nearly always changes
       // nothing: no write to the disk, and no rebuild of the banner.
       if (jsonEncode(out.toJson()) == jsonEncode(before.toJson())) return;
       await _write(out.toJson());
       if (!_changes.isClosed) _changes.add(null);
-    }
-
-    final previous = _tail;
-    final next = previous == null ? apply() : previous.then((_) => apply());
-    _tail = next.catchError((Object _) {});
-    return next.then((_) => out);
+    }).then((_) => out);
   }
 
-  /// Forgets everything (Delete everything).
-  Future<void> clear() => update((_) => const SignInWarningLedger()).then((_) {});
+  /// Forgets everything (Delete everything), readable or not.
+  Future<void> clear() => _serial(() async {
+        await _write(const SignInWarningLedger().toJson());
+        if (!_changes.isClosed) _changes.add(null);
+      });
 
   void dispose() => unawaited(_changes.close());
 }
@@ -539,7 +578,12 @@ class SignInWarningService {
 
   Future<void> _pass() async {
     try {
-      final byId = await statuses.all();
+      // A busy file says nothing about the accounts in it: the next pass decides.
+      final byId = await statuses.allIfReadable();
+      if (byId == null) {
+        _log.debug('The sign-in status file could not be read; the warnings wait for the next pass');
+        return;
+      }
       final wanted = <SignInStatus>[];
       for (final a in await accounts.all()) {
         final s = byId[a.id];
