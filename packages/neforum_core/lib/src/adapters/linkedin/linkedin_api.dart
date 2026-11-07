@@ -126,11 +126,11 @@ class LinkedInApi {
       final first = (part['firstByte'] as num?)?.toInt() ?? 0;
       final last = (part['lastByte'] as num?)?.toInt() ?? bytes.length - 1;
       final end = (last + 1).clamp(first, bytes.length);
-      if (instructions.length > 1) ctx.progress('Uploading video part ${i + 1} of ${instructions.length}');
+      if (instructions.length > 1) ctx.uploading(media, 'Uploading video part ${i + 1} of ${instructions.length}');
       final res = await _guard(
         'Uploading the video',
         () => ctx.http.putBytes(Uri.parse(url), Uint8List.sublistView(bytes, first, end),
-            headers: {'Content-Type': 'application/octet-stream'}),
+            headers: {'Content-Type': 'application/octet-stream'}, bodyOffset: first, bodyWhole: bytes.length),
       );
       final etag = res.headers['etag'];
       if (etag == null || etag.isEmpty) {
@@ -171,8 +171,8 @@ class LinkedInApi {
         final why = res.jsonMap['processingFailureReason'] as String? ?? 'unknown reason';
         throw AdapterException(PublishError.validation('LinkedIn could not process the video ($why)', raw: res.body));
       }
-      if (i == 0) ctx.progress('Waiting for LinkedIn to process the video');
-      await Future<void>.delayed(videoPollInterval);
+      if (i == 0) ctx.serverWait('Waiting for LinkedIn to process the video');
+      await ctx.wait(videoPollInterval);
     }
     ctx.log.warn('Video $urn still processing after $videoPollAttempts checks; posting anyway');
   }

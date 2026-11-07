@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import '../http/neforum_http.dart';
 import '../model/media.dart';
 import '../model/publish_result.dart';
 
@@ -53,10 +54,14 @@ abstract class MediaHost {
   /// Largest file this host accepts, or `null` if unknown/unbounded.
   int? get maxBytes;
 
+  /// [via]: the publish run's own client view. Sending through it lets Cancel abort
+  /// the upload and lets the run count its bytes. Without it the host uses the
+  /// client it was built with.
   Future<HostedMedia> upload(
     MediaAttachment media,
     Uint8List bytes, {
     Duration? ttl,
+    NeforumHttp? via,
   });
 
   Future<void> delete(HostedMedia hosted);

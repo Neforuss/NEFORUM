@@ -251,8 +251,9 @@ class MastodonApi {
   /// Polls `GET /api/v1/media/:id`: 200 = ready, 206 = still processing,
   /// 422 = processing failed.
   Future<void> _waitForProcessing(String id, MediaAttachment media) async {
+    ctx.serverWait('${base.host} is processing ${media.fileName ?? 'the file'}');
     for (var i = 0; i < maxPolls; i++) {
-      await Future<void>.delayed(pollInterval);
+      await ctx.wait(pollInterval);
       final res = await ctx.http.get(url('/api/v1/media/$id'), headers: _auth, throwOnError: false);
       if (res.statusCode == 200) return;
       if (res.statusCode == 206) continue;

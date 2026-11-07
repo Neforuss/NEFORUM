@@ -518,8 +518,7 @@ class LemmyAdapter extends PlatformAdapter {
           if (lang != null) 'language_id': lang,
         };
 
-    ctx.progress('Creating the post');
-    final res = await guardLemmy('Lemmy post', () async {
+    final res = await guardLemmy('Lemmy post', () => ctx.creating('Creating the post', () async {
       try {
         return await api.post('post', request(languageId));
       } on HttpFailure catch (f) {
@@ -527,7 +526,7 @@ class LemmyAdapter extends PlatformAdapter {
         ctx.log.info('Community does not allow language $languageId; posting without a language');
         return api.post('post', request(null));
       }
-    });
+    }));
     final pv = res['post_view'];
     final post = pv is Map ? pv['post'] : null;
     final postId = post is Map && post['id'] is num ? (post['id'] as num).toInt() : null;
@@ -558,7 +557,7 @@ class LemmyAdapter extends PlatformAdapter {
   }
 
   Future<Uri> _upload(LemmyApi api, MediaAttachment m, AdapterContext ctx) async {
-    ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} 1 of 1');
+    ctx.uploading(m, 'Uploading ${m.isVideo ? 'video' : 'image'} 1 of 1');
     final bytes = await ctx.readMedia(m);
     return guardLemmy('Lemmy image upload', () => api.uploadImage(
           bytes: bytes,

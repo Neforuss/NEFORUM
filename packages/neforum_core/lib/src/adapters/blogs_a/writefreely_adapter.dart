@@ -345,10 +345,11 @@ class WriteFreelyAdapter extends PlatformAdapter {
       if (!anonymous) 'slug': ?slug,
     };
     final url = anonymous ? joinPath(instance, '/api/posts') : joinPath(instance, '/api/collections/$alias/posts');
-    ctx.progress('Publishing the post');
     final NeforumResponse r;
     try {
-      r = await ctx.http.postJson(url, payload, headers: _authHeaders(anonymous ? null : token));
+      r = await ctx.creating('Publishing the post', () => ctx.http.postJson(url, payload, headers: _authHeaders(anonymous ? null : token)));
+    } on AdapterException {
+      rethrow;
     } on HttpFailure catch (f) {
       throw AdapterException(mapWriteFreelyFailure(f, 'WriteFreely post'));
     } on Exception catch (e) {
@@ -380,11 +381,11 @@ class WriteFreelyAdapter extends PlatformAdapter {
           'WriteFreely cannot store images. Configure a public media host in NEFORUM settings '
           '(or turn on Snap.as for a Write.as account), or remove the images.'));
     }
-    ctx.progress('Uploading image ${index + 1} of $total to ${useSnap ? 'Snap.as' : host!.name}');
+    ctx.uploading(m, 'Uploading image ${index + 1} of $total to ${useSnap ? 'Snap.as' : host!.name}');
     final bytes = await readBlogMedia(ctx, m);
     if (useSnap) return _snapAs(m, bytes, token, index, total, ctx);
     try {
-      return (await host!.upload(m, bytes)).url.toString();
+      return (await host!.upload(m, bytes, via: ctx.http)).url.toString();
     } on Object catch (e) {
       throw AdapterException(PublishError.network('Upload to ${host!.name} failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }

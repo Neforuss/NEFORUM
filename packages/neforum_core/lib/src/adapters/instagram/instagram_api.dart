@@ -166,8 +166,8 @@ class InstagramApi {
     for (var i = 0; i < pollSchedule.length; i++) {
       final delay = pollSchedule[i];
       if (delay > Duration.zero) {
-        ctx.progress('Instagram is processing ${label ?? 'your media'}…');
-        await sleep(delay);
+        ctx.serverWait('Instagram is processing ${label ?? 'your media'}…');
+        await ctx.wait(delay, via: sleep);
       }
       final NeforumResponse res;
       try {
@@ -204,9 +204,9 @@ class InstagramApi {
   }
 
   /// POST /{ig-user-id}/media_publish → published media id.
-  Future<String> publish(String igUserId, String token, String containerId) async {
+  Future<String> publish(String igUserId, String token, String containerId, {String label = 'Publishing to Instagram…'}) async {
     final res = await _guard('publishing the post',
-        () => ctx.http.postForm(graph('$igUserId/media_publish'), {'creation_id': containerId}, headers: _auth(token)));
+        () => ctx.creating(label, () => ctx.http.postForm(graph('$igUserId/media_publish'), {'creation_id': containerId}, headers: _auth(token))));
     final id = _string(res.jsonMap['id']);
     if (id == null) throw const AdapterException(PublishError.platform('Instagram returned no media id'));
     return id;

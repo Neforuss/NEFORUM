@@ -164,10 +164,10 @@ class S3CompatibleMediaHost implements MediaHost, DescribesVerify {
   }
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     checkSize(this, media, bytes.length);
     final key = '$pathPrefix${randomObjectName(media, _newId)}';
-    await _put(key, bytes, media.mimeType);
+    await _put(key, bytes, media.mimeType, via ?? _http);
     final public = publicUrlFor(key);
     if (public != null) {
       return HostedMedia(hostId: id, url: public, deleteHandle: key);
@@ -212,7 +212,7 @@ class S3CompatibleMediaHost implements MediaHost, DescribesVerify {
           '(Meta does not document whether Instagram and Threads accept signed links.)'
       : 'Upload works: a tiny test file was uploaded, opened through its public link and deleted again.';
 
-  Future<void> _put(String key, Uint8List bytes, String contentType) async {
+  Future<void> _put(String key, Uint8List bytes, String contentType, NeforumHttp http) async {
     final uri = objectUri(key);
     _log.debug('PUT $uri (${bytes.length} bytes)');
     // Signed per attempt: the retry may come seconds later.
@@ -224,8 +224,8 @@ class S3CompatibleMediaHost implements MediaHost, DescribesVerify {
         headers: {'content-type': contentType},
         payloadHash: sha256Hex(bytes),
       );
-      return _http.putBytes(uri, bytes, headers: {'Content-Type': contentType, ...signed.headers}, throwOnError: false);
-    }, delay: _retryDelay, log: _log);
+      return http.putBytes(uri, bytes, headers: {'Content-Type': contentType, ...signed.headers}, throwOnError: false);
+    }, delay: _retryDelay, log: _log, cancellation: http.cancellation);
     if (!r.ok) throw _error(r, 'upload the file', action: 'store the file');
   }
 

@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
+import '../../http/neforum_http.dart';
 import '../../media_hosts/media_host.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
@@ -313,12 +314,15 @@ class TikTokAdapter extends PlatformAdapter {
 
     for (var i = 0; i < plan.totalChunkCount; i++) {
       final (start, end) = plan.range(i);
-      ctx.progress(plan.totalChunkCount == 1
-          ? 'Uploading video to TikTok'
-          : 'Uploading video chunk ${i + 1} of ${plan.totalChunkCount}');
-      final res = await ctx.http.putBytes(uploadUrl, Uint8List.sublistView(bytes, start, end),
+      final label = plan.totalChunkCount == 1 ? 'Uploading video to TikTok' : 'Uploading video chunk ${i + 1} of ${plan.totalChunkCount}';
+      ctx.uploading(video, label);
+      Future<NeforumResponse> put() => ctx.http.putBytes(uploadUrl, Uint8List.sublistView(bytes, start, end),
           headers: {'Content-Type': video.mimeType, 'Content-Range': 'bytes $start-${end - 1}/${plan.videoSize}'},
-          throwOnError: false);
+          throwOnError: false,
+          bodyOffset: start,
+          bodyWhole: plan.videoSize);
+      // TikTok makes the post once the last chunk is in.
+      final res = i == plan.totalChunkCount - 1 ? await ctx.creating(label, put, uploads: true, countsAsPosted: false) : await put();
       if (res.statusCode != 201 && res.statusCode != 206) {
         throw AdapterException(chunkUploadError(res, i, plan.totalChunkCount));
       }
@@ -335,32 +339,36 @@ class TikTokAdapter extends PlatformAdapter {
     var cleanup = true;
     try {
       for (var i = 0; i < images.length; i++) {
-        ctx.progress('Uploading image ${i + 1} of ${images.length} to ${host.name}');
-        final h = await host.upload(images[i], await ctx.readMedia(images[i]), ttl: const Duration(hours: 2));
+        ctx.uploading(images[i], 'Uploading image ${i + 1} of ${images.length} to ${host.name}');
+        final h = await host.upload(images[i], await ctx.readMedia(images[i]), ttl: const Duration(hours: 2), via: ctx.http);
         hosted.add(h);
         if (h.url.scheme != 'https') {
           throw const AdapterException(PublishError.configuration('TikTok only fetches photos over HTTPS'));
         }
       }
       final cover = variant.extraAs<int>('photoCoverIndex') ?? 0;
-      final init = await tiktokCall(
-        ctx,
-        'POST',
-        TikTokEndpoints.contentInit,
-        token,
-        body: {
-          'post_info': _photoPostInfo(variant, creator),
-          'source_info': {
-            'source': 'PULL_FROM_URL',
-            'photo_cover_index': cover.clamp(0, images.length - 1),
-            'photo_images': [for (final h in hosted) h.url.toString()],
-          },
-          'post_mode': creator == null ? 'MEDIA_UPLOAD' : 'DIRECT_POST',
-          'media_type': 'PHOTO',
-          if (variant.extraAs<bool>('isAigc') == true) 'is_aigc': true,
-        },
-        context: 'TikTok photo init',
-      );
+      // TikTok fetches the photos and makes the post from this one request.
+      final init = await ctx.creating(
+          'Sending the photos to TikTok',
+          () => tiktokCall(
+                ctx,
+                'POST',
+                TikTokEndpoints.contentInit,
+                token,
+                body: {
+                  'post_info': _photoPostInfo(variant, creator),
+                  'source_info': {
+                    'source': 'PULL_FROM_URL',
+                    'photo_cover_index': cover.clamp(0, images.length - 1),
+                    'photo_images': [for (final h in hosted) h.url.toString()],
+                  },
+                  'post_mode': creator == null ? 'MEDIA_UPLOAD' : 'DIRECT_POST',
+                  'media_type': 'PHOTO',
+                  if (variant.extraAs<bool>('isAigc') == true) 'is_aigc': true,
+                },
+                context: 'TikTok photo init',
+              ),
+          countsAsPosted: false);
       final publishId = init['publish_id'] as String?;
       if (publishId == null) throw const AdapterException(PublishError.platform('TikTok returned no publish_id'));
       final status = await _poll(publishId, token, ctx);
@@ -431,10 +439,14 @@ class TikTokAdapter extends PlatformAdapter {
 
   // ------------------------------------------------------------ polling
 
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, variant.media.any((m) => m.isVideo) ? ProgressFamily.waitNoNumber : ProgressFamily.pullFromUrl, steps: 1);
+
   Future<_Status> _poll(String publishId, String token, AdapterContext ctx) async {
-    ctx.progress('Waiting for TikTok to process the post');
+    ctx.serverWait('Waiting for TikTok to process the post');
     for (var i = 0; i < maxPolls; i++) {
-      await Future<void>.delayed(pollInterval);
+      await ctx.wait(pollInterval);
       final data = await tiktokCall(ctx, 'POST', TikTokEndpoints.statusFetch, token,
           body: {'publish_id': publishId}, context: 'TikTok status');
       final status = data['status'] as String? ?? '';

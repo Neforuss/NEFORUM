@@ -466,8 +466,8 @@ class WordPressAdapter extends PlatformAdapter {
       if (featured != null) 'featured_media': featured.$2,
       if (at != null) 'date_gmt': isoSecondsUtc(at),
     };
-    ctx.progress(status == 'future' ? 'Scheduling the post' : 'Publishing the post');
-    final r = await guardWordPress('WordPress post', () => api.postJson('wp/v2/posts', body));
+    final r = await guardWordPress(
+        'WordPress post', () => ctx.creating(status == 'future' ? 'Scheduling the post' : 'Publishing the post', () => api.postJson('wp/v2/posts', body)));
     final post = r.jsonMap;
     final postId = blogInt(post['id']);
     if (postId == null) {
@@ -530,7 +530,7 @@ class WordPressAdapter extends PlatformAdapter {
   Future<(MediaAttachment, int, String)> _upload(
       WordPressApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
     final label = m.noun;
-    ctx.progress('Uploading $label ${index + 1} of $total');
+    ctx.uploading(m, 'Uploading $label ${index + 1} of $total');
     final bytes = await readBlogMedia(ctx, m);
     final what = 'WordPress upload ${index + 1}/$total';
     final r = await guardWordPress(what,

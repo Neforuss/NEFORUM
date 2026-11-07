@@ -511,16 +511,19 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
       'lifecycleState': 'PUBLISHED',
       'isReshareDisabledByAuthor': variant.extraAs<bool>('linkedinDisableReshare') ?? false,
     };
-    ctx.progress('Publishing to LinkedIn');
-    final urn = await api.createPost(body);
+    final urn = await ctx.creating('Publishing to LinkedIn', () => api.createPost(body));
     return PublishResult.ok(remoteId: urn, remoteUrl: postUrl(urn), publishedAt: ctx.now());
   }
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, variant.media.any((m) => m.isVideo) ? ProgressFamily.waitNoNumber : ProgressFamily.direct);
 
   Future<Map<String, Object?>?> _content(PostVariant v, String author, LinkedInApi api, AdapterContext ctx) async {
     final videos = v.media.where((m) => m.isVideo).toList();
     final images = v.media.where((m) => m.isImage).toList();
     if (videos.isNotEmpty) {
-      ctx.progress('Uploading video');
+      ctx.uploading(videos.first, 'Uploading video');
       final urn = await api.uploadVideo(videos.first, author);
       final title = v.title?.trim();
       return {
@@ -530,7 +533,7 @@ LinkedIn sign-ins expire after **60 days**; NEFORUM will ask you to reconnect th
     if (images.isNotEmpty) {
       final uploaded = <Map<String, Object?>>[];
       for (var i = 0; i < images.length; i++) {
-        ctx.progress('Uploading image ${i + 1} of ${images.length}');
+        ctx.uploading(images[i], 'Uploading image ${i + 1} of ${images.length}');
         final urn = await api.uploadImage(images[i], author);
         final alt = images[i].altText?.trim();
         uploaded.add({'id': urn, if (alt != null && alt.isNotEmpty) 'altText': alt});

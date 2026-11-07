@@ -693,6 +693,7 @@ class FacebookAdapter extends PlatformAdapter {
             PublishError(
               kind: error.kind,
               notAllowed: error.notAllowed,
+              outcomeUnknown: error.outcomeUnknown,
               message: 'Publishing $label failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on '
                   'Facebook (${ids.join(', ')}); post the rest by hand.',
               statusCode: error.statusCode,
@@ -726,6 +727,27 @@ class FacebookAdapter extends PlatformAdapter {
     }
   }
 
+  static const String _feedPlacement = 'feed';
+  static const String _storyPlacement = 'story';
+
+  /// One file can go up twice, for the feed and for the story, so the plan keys
+  /// its files by placement. Feed post and story frames go out in turn.
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) {
+    final placement = variant.placement;
+    final frames = placement.includesStory ? variant.storyFrames : const <MediaAttachment>[];
+    return ProgressShape(
+      family: ProgressFamily.direct,
+      slots: [
+        if (placement.includesFeed)
+          for (final m in variant.media) ProgressSlot.of(m, placement: _feedPlacement),
+        for (final m in frames) ProgressSlot.of(m, placement: _storyPlacement),
+      ],
+      steps: (placement.includesFeed ? 1 : 0) + frames.length,
+      interleaved: frames.isNotEmpty,
+    );
+  }
+
   /// The Page post: a video, one or several photos, or text with a link.
   Future<_Posted> _publishPagePost(_PageCall call, PostVariant variant, Map<String, String> schedule) async {
     final text = variant.isThread ? variant.threadParts.join('\n\n') : variant.text;
@@ -753,7 +775,7 @@ class FacebookAdapter extends PlatformAdapter {
   Future<String> _publishStory(_PageCall call, MediaAttachment m, String label) async {
     final bytes = await _read(call.ctx, m);
     if (m.isVideo) {
-      call.ctx.progress('Uploading $label (${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB)');
+      call.ctx.uploading(m, 'Uploading $label (${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB)', placement: _storyPlacement);
       final start = await call.form('video_stories', {'upload_phase': 'start'});
       final videoId = requireString(start, 'video_id', 'a video id');
       final uploadUrl = Uri.tryParse(requireString(start, 'upload_url', 'an upload address'));
@@ -767,15 +789,13 @@ class FacebookAdapter extends PlatformAdapter {
       if (sent.jsonMap['success'] == false) {
         throw AdapterException(PublishError.platform('Facebook did not take the story video', raw: sent.body));
       }
-      call.ctx.progress('Publishing $label');
-      final done = await call.form('video_stories', {'upload_phase': 'finish', 'video_id': videoId});
+      final done = await call.ctx.creating('Publishing $label', () => call.form('video_stories', {'upload_phase': 'finish', 'video_id': videoId}));
       return _storyPostId(done, videoId);
     }
-    call.ctx.progress('Uploading $label');
+    call.ctx.uploading(m, 'Uploading $label', placement: _storyPlacement);
     final photo = await call.upload('photos', {'published': 'false'}, m, bytes);
     final photoId = requireString(photo, 'id', 'a photo id');
-    call.ctx.progress('Publishing $label');
-    final done = await call.form('photo_stories', {'photo_id': photoId});
+    final done = await call.ctx.creating('Publishing $label', () => call.form('photo_stories', {'photo_id': photoId}));
     return _storyPostId(done, photoId);
   }
 
@@ -800,12 +820,11 @@ class FacebookAdapter extends PlatformAdapter {
       };
 
   Future<_Posted> _publishFeed(_PageCall call, String text, String? link, Map<String, String> schedule) async {
-    call.ctx.progress('Posting to Facebook');
-    final json = await call.form('feed', {
-      if (text.trim().isNotEmpty) 'message': text,
-      if (link != null && link.trim().isNotEmpty) 'link': link.trim(),
-      ...schedule,
-    });
+    final json = await call.ctx.creating('Posting to Facebook', () => call.form('feed', {
+          if (text.trim().isNotEmpty) 'message': text,
+          if (link != null && link.trim().isNotEmpty) 'link': link.trim(),
+          ...schedule,
+        }));
     return _Posted.post(requireString(json, 'id', 'a post id'));
   }
 
@@ -813,12 +832,17 @@ class FacebookAdapter extends PlatformAdapter {
   /// post is deleted by), else the photo id, which is deletable too.
   Future<_Posted> _publishSinglePhoto(
       _PageCall call, MediaAttachment image, String caption, Map<String, String> schedule) async {
-    call.ctx.progress('Uploading image 1 of 1');
-    final json = await call.upload('photos', {
-      if (caption.trim().isNotEmpty) 'caption': caption,
-      ..._altText(image),
-      ...schedule,
-    }, image, await _read(call.ctx, image));
+    call.ctx.uploading(image, 'Uploading image 1 of 1', placement: _feedPlacement);
+    final bytes = await _read(call.ctx, image);
+    // This upload is the post: a photo is published as it arrives.
+    final json = await call.ctx.creating(
+        'Uploading image 1 of 1',
+        () => call.upload('photos', {
+              if (caption.trim().isNotEmpty) 'caption': caption,
+              ..._altText(image),
+              ...schedule,
+            }, image, bytes),
+        uploads: true);
     final postId = optString(json, 'post_id');
     if (postId != null) return _Posted.post(postId);
     final photoId = requireString(json, 'id', 'a photo id');
@@ -830,7 +854,7 @@ class FacebookAdapter extends PlatformAdapter {
     final scheduled = schedule.isNotEmpty;
     final ids = <String>[];
     for (var i = 0; i < images.length; i++) {
-      call.ctx.progress('Uploading image ${i + 1} of ${images.length}');
+      call.ctx.uploading(images[i], 'Uploading image ${i + 1} of ${images.length}', placement: _feedPlacement);
       final json = await call.upload('photos', {
         'published': 'false',
         // Page photos reference: "If the photo is used in a scheduled post,
@@ -840,28 +864,32 @@ class FacebookAdapter extends PlatformAdapter {
       }, images[i], await _read(call.ctx, images[i]));
       ids.add(requireString(json, 'id', 'a photo id'));
     }
-    call.ctx.progress('Creating the Facebook post');
     // Scheduled multi-photo posts need published, scheduled_publish_time and
     // unpublished_content_type together (Page photos reference).
-    final json = await call.form('feed', {
-      if (message.trim().isNotEmpty) 'message': message,
-      for (var i = 0; i < ids.length; i++) 'attached_media[$i]': '{"media_fbid":"${ids[i]}"}',
-      ...schedule,
-      if (scheduled) 'unpublished_content_type': 'SCHEDULED',
-    });
+    final json = await call.ctx.creating('Creating the Facebook post', () => call.form('feed', {
+          if (message.trim().isNotEmpty) 'message': message,
+          for (var i = 0; i < ids.length; i++) 'attached_media[$i]': '{"media_fbid":"${ids[i]}"}',
+          ...schedule,
+          if (scheduled) 'unpublished_content_type': 'SCHEDULED',
+        }));
     return _Posted.post(requireString(json, 'id', 'a post id'));
   }
 
   Future<_Posted> _publishVideo(_PageCall call, MediaAttachment video, PostVariant variant, String description,
       Map<String, String> schedule) async {
     final bytes = await _read(call.ctx, video);
-    call.ctx.progress('Uploading video (${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB)');
+    final label = 'Uploading video (${(bytes.length / (1024 * 1024)).toStringAsFixed(1)} MB)';
+    call.ctx.uploading(video, label, placement: _feedPlacement);
     final title = (variant.extraAs<String>('videoTitle') ?? variant.title ?? '').trim();
-    final json = await call.upload('videos', {
-      if (description.trim().isNotEmpty) 'description': description,
-      if (title.isNotEmpty) 'title': title,
-      ...schedule,
-    }, video, bytes, timeout: _videoTimeout);
+    // This upload is the post.
+    final json = await call.ctx.creating(
+        label,
+        () => call.upload('videos', {
+              if (description.trim().isNotEmpty) 'description': description,
+              if (title.isNotEmpty) 'title': title,
+              ...schedule,
+            }, video, bytes, timeout: _videoTimeout),
+        uploads: true);
     final id = requireString(json, 'id', 'a video id');
     return _Posted(id, 'https://www.facebook.com/${call.pageId}/videos/$id');
   }

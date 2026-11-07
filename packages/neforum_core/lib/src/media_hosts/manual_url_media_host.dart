@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../http/neforum_http.dart';
 import '../model/media.dart';
 import 'media_host.dart';
 import 'media_host_support.dart';
@@ -56,7 +57,7 @@ class ManualUrlMediaHost implements MediaHost, DescribesVerify {
   }
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     final raw = urls[media.id]?.trim() ?? templateUrlFor(media);
     final url = raw == null ? null : Uri.tryParse(raw);
     if (url == null || url.scheme != 'https' || url.host.isEmpty) {

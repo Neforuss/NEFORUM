@@ -407,15 +407,15 @@ class TelegramAdapter extends PlatformAdapter {
     }
 
     for (var i = nextPart; i < parts.length; i++) {
-      ctx.progress(parts.length > 1 ? 'Sending part ${i + 1} of ${parts.length}' : 'Sending message');
       final replyTo = previous;
       final text = parts[i];
       // Later messages sit out a short flood wait (about one message per
       // second per chat) instead of leaving the post half finished.
-      final id = ids.isEmpty
-          ? await _sendText(api, chat, variant, text, markdown, replyTo)
-          : await chatSendWithFloodWait(
-              () => _sendText(api, chat, variant, text, markdown, replyTo), _telegramFloodWait);
+      final id = await ctx.creating(
+          parts.length > 1 ? 'Sending part ${i + 1} of ${parts.length}' : 'Sending message',
+          () => ids.isEmpty
+              ? _sendText(api, chat, variant, text, markdown, replyTo)
+              : chatSendWithFloodWait(() => _sendText(api, chat, variant, text, markdown, replyTo), _telegramFloodWait, sleep: ctx.wait));
       sent.add(id);
       previous = id;
     }
@@ -453,29 +453,34 @@ class TelegramAdapter extends PlatformAdapter {
       MediaKind.video => ('sendVideo', 'video'),
       MediaKind.audio => document ? ('sendDocument', 'document') : ('sendAudio', 'audio'),
     };
-    ctx.progress('Uploading ${m.noun} 1 of 1');
+    final label = 'Uploading ${m.noun} 1 of 1';
+    ctx.uploading(m, label);
     final bytes = await ctx.readMedia(m);
     final thumbnail = m.isAudio ? await _audioThumbnail(m, ctx) : null;
     final performer = m.audioTags?.artist?.trim() ?? '';
-    final res = await api.multipart(method, {
-      'chat_id': chat,
-      ..._captionFields(caption, markdown),
-      if (v.sensitive && !m.isAudio) 'has_spoiler': 'true',
-      if (v.extra['silent'] == true) 'disable_notification': 'true',
-      if (m.isVideo) 'supports_streaming': 'true',
-      if (m.kind != MediaKind.image && m.width != null) 'width': '${m.width}',
-      if (m.kind != MediaKind.image && m.height != null) 'height': '${m.height}',
-      if (m.kind != MediaKind.image && !document && m.durationMs != null) 'duration': '${(m.durationMs! / 1000).round()}',
-      if (m.isAudio && !document) 'title': telegramTrackTitle(m),
-      if (m.isAudio && !document && performer.isNotEmpty) 'performer': performer,
-      // The cover, uploaded alongside under its own name.
-      if (thumbnail != null) 'thumbnail': 'attach://cover',
-      // A lossless file stays a file: Telegram must not treat it as anything else.
-      if (document) 'disable_content_type_detection': 'true',
-    }, [
-      HttpFilePart(field: field, bytes: bytes, fileName: m.isAudio ? m.audioTaggedFileName ?? chatFileName(m) : chatFileName(m), contentType: m.mimeType),
-      if (thumbnail != null) HttpFilePart(field: 'cover', bytes: thumbnail, fileName: 'cover.jpg', contentType: 'image/jpeg'),
-    ]);
+    // The upload is the post.
+    final res = await ctx.creating(
+        label,
+        () => api.multipart(method, {
+              'chat_id': chat,
+              ..._captionFields(caption, markdown),
+              if (v.sensitive && !m.isAudio) 'has_spoiler': 'true',
+              if (v.extra['silent'] == true) 'disable_notification': 'true',
+              if (m.isVideo) 'supports_streaming': 'true',
+              if (m.kind != MediaKind.image && m.width != null) 'width': '${m.width}',
+              if (m.kind != MediaKind.image && m.height != null) 'height': '${m.height}',
+              if (m.kind != MediaKind.image && !document && m.durationMs != null) 'duration': '${(m.durationMs! / 1000).round()}',
+              if (m.isAudio && !document) 'title': telegramTrackTitle(m),
+              if (m.isAudio && !document && performer.isNotEmpty) 'performer': performer,
+              // The cover, uploaded alongside under its own name.
+              if (thumbnail != null) 'thumbnail': 'attach://cover',
+              // A lossless file stays a file: Telegram must not treat it as anything else.
+              if (document) 'disable_content_type_detection': 'true',
+            }, [
+              HttpFilePart(field: field, bytes: bytes, fileName: m.isAudio ? m.audioTaggedFileName ?? chatFileName(m) : chatFileName(m), contentType: m.mimeType),
+              if (thumbnail != null) HttpFilePart(field: 'cover', bytes: thumbnail, fileName: 'cover.jpg', contentType: 'image/jpeg'),
+            ]),
+        uploads: true);
     return _messageId(res);
   }
 
@@ -512,12 +517,16 @@ class TelegramAdapter extends PlatformAdapter {
         if (m.isVideo && m.durationMs != null) 'duration': (m.durationMs! / 1000).round(),
       });
     }
-    ctx.progress('Uploading ${v.media.length} files as an album');
-    final res = await api.multipart('sendMediaGroup', {
-      'chat_id': chat,
-      'media': telegramField(media),
-      if (v.extra['silent'] == true) 'disable_notification': 'true',
-    }, files);
+    final label = 'Uploading ${v.media.length} files as an album';
+    ctx.uploadingAll(label);
+    final res = await ctx.creating(
+        label,
+        () => api.multipart('sendMediaGroup', {
+              'chat_id': chat,
+              'media': telegramField(media),
+              if (v.extra['silent'] == true) 'disable_notification': 'true',
+            }, files),
+        uploads: true);
     if (res is! List || res.isEmpty) {
       throw const AdapterException(PublishError.platform('Telegram did not return the album messages'));
     }

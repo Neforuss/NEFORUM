@@ -965,7 +965,7 @@ void main() {
 
         final feed = await FacebookAdapter().publish(text, facebookAccount, keys, _ctx((r) async => lost(r)));
         expect(feed.success, isFalse);
-        expect(feed.error!.message, contains('Could not reach Facebook'));
+        expect(feed.error!.outcomeUnknown, isTrue);
         expectClean('${feed.error!.message} ${feed.error!.raw}', 'Facebook, the post');
 
         // The Page post went live, then the story is lost: a separate way out.
@@ -980,7 +980,7 @@ void main() {
           ),
         );
         expect(story.remoteId, 'p1');
-        expect(story.error!.message, contains('Could not reach Facebook'));
+        expect(story.error!.outcomeUnknown, isTrue);
         expectClean('${story.error!.message} ${story.error!.raw}', 'Facebook, the story');
 
         // Taking back a scheduled post: DELETE has the token in its address.

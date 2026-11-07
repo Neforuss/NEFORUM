@@ -328,6 +328,7 @@ class BlueskyApi {
     }
     final deadline = ctx.now().add(maxWait);
     var lastProgress = -1;
+    ctx.serverWait('Bluesky is processing the video');
     while (true) {
       final blob = _blobOf(status);
       if (blob != null) return blob;
@@ -342,9 +343,9 @@ class BlueskyApi {
       final progress = status['progress'];
       if (progress is int && progress != lastProgress) {
         lastProgress = progress;
-        ctx.progress('Bluesky is processing the video ($progress%)');
+        ctx.serverWait('Bluesky is processing the video ($progress%)', percent: progress);
       }
-      await Future<void>.delayed(pollInterval);
+      await ctx.wait(pollInterval);
       final s = await ctx.http.get(xrpc(blueskyVideoService, 'app.bsky.video.getJobStatus', {'jobId': jobId}),
           throwOnError: false);
       if (!s.ok && _blobOf(_jobStatus(s.jsonMap)) == null) {

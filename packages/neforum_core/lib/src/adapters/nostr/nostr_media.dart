@@ -64,7 +64,7 @@ class NostrMediaUploader {
       final m = media[i];
       final label = m.noun;
       final where = host?.name ?? Uri.parse(nip96Server).host;
-      ctx.progress('Uploading $label ${i + 1} of ${media.length} to $where');
+      ctx.uploading(m, 'Uploading $label ${i + 1} of ${media.length} to $where');
       final bytes = await ctx.readMedia(m);
       out.add(host != null ? await _viaHost(m, bytes) : await _viaNip96(apiUrl!, m, bytes));
     }
@@ -81,7 +81,7 @@ class NostrMediaUploader {
     }
     try {
       // Nostr notes are permanent, so the link must not expire.
-      final hosted = await host.upload(m, bytes);
+      final hosted = await host.upload(m, bytes, via: ctx.http);
       if (hosted.expiresAt != null) {
         try {
           await host.delete(hosted);
@@ -181,8 +181,8 @@ class NostrMediaUploader {
       throw const AdapterException(PublishError.platform('Media server accepted the upload but gave no processing URL.'));
     }
     for (var i = 0; i < maxPolls; i++) {
-      await Future<void>.delayed(pollInterval);
-      ctx.progress('Waiting for the media server to process the upload');
+      ctx.serverWait('Waiting for the media server to process the upload');
+      await ctx.wait(pollInterval);
       final body = await _getJson(Uri.parse(processingUrl), 'Media processing',
           headers: {'Authorization': nip98Header(processingUrl, 'GET')});
       if (body['nip94_event'] is Map) return body;

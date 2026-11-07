@@ -7,11 +7,13 @@ import '../model/post_variant.dart';
 import '../model/publish_result.dart';
 import '../model/sign_in_lifetime.dart';
 import '../model/validation.dart';
+import '../publish/publish_progress.dart';
 import '../text/rules_validator.dart';
 import 'adapter_context.dart';
 import 'connect_spec.dart';
 
 export '../model/sign_in_lifetime.dart';
+export '../publish/publish_progress.dart' show ProgressFamily, ProgressShape, ProgressSlot;
 export 'sign_in_policies.dart';
 
 /// The contract every platform implements.
@@ -113,6 +115,10 @@ abstract class PlatformAdapter {
   /// escape.
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx);
+
+  /// How this post will go on this network, for the progress figures. Most
+  /// networks are a plain upload and an answer; the others override it.
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.direct);
 
   /// Builds the hand-off plan for this platform, or `null` when the platform
   /// has no sensible hand-off route.

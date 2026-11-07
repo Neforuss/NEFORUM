@@ -34,13 +34,15 @@ const Duration chatMaxFloodWait = Duration(seconds: 10);
 /// how long the platform asked to wait, or `null` for any other error), waits
 /// once and tries again. A 429 means the message was not accepted, so the
 /// second try cannot duplicate it.
-Future<T> chatSendWithFloodWait<T>(Future<T> Function() send, Duration? Function(Object error) floodWait) async {
+///
+/// [sleep] is the run's own wait, so that Cancel ends it.
+Future<T> chatSendWithFloodWait<T>(Future<T> Function() send, Duration? Function(Object error) floodWait, {Future<void> Function(Duration)? sleep}) async {
   try {
     return await send();
   } on Object catch (e) {
     final wait = floodWait(e);
     if (wait == null || wait > chatMaxFloodWait) rethrow;
-    await Future<void>.delayed(wait);
+    await (sleep == null ? Future<void>.delayed(wait) : sleep(wait));
     return send();
   }
 }

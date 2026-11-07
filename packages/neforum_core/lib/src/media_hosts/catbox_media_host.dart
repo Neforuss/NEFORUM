@@ -141,11 +141,11 @@ class CatboxMediaHost implements MediaHost, DescribesVerify {
   }
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) =>
-      _upload(media, bytes, timeFor(ttl));
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) =>
+      _upload(media, bytes, timeFor(ttl), via ?? _http);
 
   /// Uploads with an explicit litterbox [time] (ignored for catbox).
-  Future<HostedMedia> _upload(MediaAttachment media, Uint8List bytes, LitterboxTime time) async {
+  Future<HostedMedia> _upload(MediaAttachment media, Uint8List bytes, LitterboxTime time, NeforumHttp http) async {
     checkSize(this, media, bytes.length);
     final ext = extensionFor(media);
     if (!temporary) _checkCatboxRules(media, ext, bytes.length);
@@ -156,12 +156,13 @@ class CatboxMediaHost implements MediaHost, DescribesVerify {
     };
     final fileName = _uploadName(media, ext);
     final r = await guardedUpload(id, 'reach ${temporary ? 'litterbox.catbox.moe' : 'catbox.moe'}',
-        () => _http.multipart(temporary ? litterboxApi : catboxApi,
+        () => http.multipart(temporary ? litterboxApi : catboxApi,
             fields: fields,
             files: [HttpFilePart(field: 'fileToUpload', bytes: bytes, fileName: fileName, contentType: media.mimeType)],
             throwOnError: false),
         delay: _retryDelay,
-        log: _log);
+        log: _log,
+        cancellation: http.cancellation);
     final body = r.body.trim();
     final url = Uri.tryParse(body);
     if (!r.ok) {
@@ -210,11 +211,11 @@ class CatboxMediaHost implements MediaHost, DescribesVerify {
     final probe = probeAttachment();
     final bytes = Uint8List.fromList(probeBytes());
     if (temporary) {
-      await _upload(probe, bytes, LitterboxTime.hour1);
+      await _upload(probe, bytes, LitterboxTime.hour1, _http);
       return;
     }
     if (userhash != null) {
-      final hosted = await _upload(probe, bytes, LitterboxTime.hour1);
+      final hosted = await _upload(probe, bytes, LitterboxTime.hour1, _http);
       try {
         await delete(hosted);
       } on MediaHostException catch (e) {

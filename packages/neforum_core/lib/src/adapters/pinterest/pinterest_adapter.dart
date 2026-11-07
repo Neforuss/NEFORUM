@@ -595,15 +595,20 @@ class PinterestAdapter extends PlatformAdapter {
       'media_source': mediaSource,
     };
 
-    ctx.progress('Creating the Pin');
+    // Inline images go up inside this one request.
+    if (!isVideo) ctx.uploadingAll('Creating the Pin');
     final String pinId;
     try {
-      pinId = await api.createPin(body);
+      pinId = await api.createPin(body, inlineImages: !isVideo);
     } on HttpFailure catch (e) {
       return PublishResult.failure(PinterestApi.mapFailure(e, context: 'Creating the Pin', videoPin: isVideo));
     }
     return PublishResult.ok(remoteId: pinId, remoteUrl: PinterestApi.pinUrl(pinId), publishedAt: ctx.now());
   }
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, variant.media.any((m) => m.isVideo) ? ProgressFamily.waitNoNumber : ProgressFamily.direct, steps: 1);
 
   Future<Uint8List> _readImage(MediaAttachment m, AdapterContext ctx) async {
     PinterestApi.contentTypeOf(m); // throws for GIF/WebP before reading the file

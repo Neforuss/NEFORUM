@@ -298,11 +298,16 @@ class NostrAdapter extends PlatformAdapter {
           random: _random,
         );
         final live = sessions.where((s) => !s.isClosed).toList();
-        ctx.progress(parts.length > 1
-            ? 'Sending part ${i + 1} of ${parts.length} to ${live.length} relays'
-            : 'Sending note to ${live.length} relay${live.length == 1 ? '' : 's'}');
-        final acks = await Future.wait(live.map((s) => s.publish(event, relayTimeout)));
+        // A relay that never said OK may still have the note and pass it on.
+        final acks = await ctx.creating(
+            parts.length > 1
+                ? 'Sending part ${i + 1} of ${parts.length} to ${live.length} relays'
+                : 'Sending note to ${live.length} relay${live.length == 1 ? '' : 's'}',
+            () => Future.wait(live.map((s) => s.publish(event, relayTimeout))));
         final accepted = acks.where((a) => a.accepted).toList();
+        if (accepted.isEmpty && acks.any((a) => a.status == RelayAckStatus.timeout || a.status == RelayAckStatus.connectionError)) {
+          throw AdapterException(ctx.outcomeUnknownError(details: acks.map((a) => '$a').join('; ')));
+        }
         for (final a in acks.where((a) => !a.accepted)) {
           ctx.log.warn('Nostr relay $a');
         }
@@ -335,6 +340,9 @@ class NostrAdapter extends PlatformAdapter {
       await Future.wait(sessions.map(_closeQuietly));
     }
   }
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.waitNoNumber);
 
   static Future<void> _closeQuietly(RelaySession s) async {
     try {

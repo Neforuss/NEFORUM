@@ -616,7 +616,6 @@ class MastodonAdapter extends PlatformAdapter {
     final ids = [...v.postedThreadIds];
     String? firstUrl;
     for (var i = start; i < parts.length; i++) {
-      if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length}');
       final form = _statusForm(
         v,
         p,
@@ -626,9 +625,12 @@ class MastodonAdapter extends PlatformAdapter {
         scheduledAt: schedule,
       );
       try {
-        final res = await api.postStatus(
-          form,
-          idempotencyKey: _idempotencyKey(account, v, i, form, scheduled: schedule != null),
+        // The Idempotency-Key is the real dedupe: the same post sent again is the
+        // same post, so a lost answer is safe to retry.
+        final res = await ctx.creating(
+          parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting',
+          () => api.postStatus(form, idempotencyKey: _idempotencyKey(account, v, i, form, scheduled: schedule != null)),
+          idempotent: true,
         );
         final id = _string(res['id']);
         if (id == null) {
@@ -700,6 +702,9 @@ class MastodonAdapter extends PlatformAdapter {
   @override
   bool get resumesThreads => true;
 
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.waitNoNumber);
+
   /// A ScheduledStatus (`id`, `scheduled_at`, `params`) rather than a Status.
   static bool _isScheduledStatus(Map<String, dynamic> res) => res['scheduled_at'] is String && res['params'] is Map;
 
@@ -723,7 +728,7 @@ class MastodonAdapter extends PlatformAdapter {
     final ids = <String>[];
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
-      ctx.progress('Uploading ${m.noun} ${i + 1} of ${media.length}');
+      ctx.uploading(m, 'Uploading ${m.noun} ${i + 1} of ${media.length}');
       final bytes = await _read(m, ctx);
       // Part and position are in the key because the server takes each id
       // once: the same file used twice in a thread is two uploads.

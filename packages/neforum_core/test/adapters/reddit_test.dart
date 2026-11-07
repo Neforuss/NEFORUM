@@ -658,11 +658,12 @@ void main() {
       expect(r.error!.retryAfter, const Duration(minutes: 2));
     });
 
-    test('network failure -> network error result, not an exception', () async {
-      final ctx = testContext(handler: (req) async => throw http.ClientException('connection refused'));
+    test('a lost answer on the submit -> an unconfirmed error result, not an exception, and no retry', () async {
+      final ctx = testContext(handler: (req) async => throw http.ClientException('connection closed'));
       final r = await adapter.publish(_variant(), _apiAccount(), _secrets(), ctx);
       expect(r.error!.kind, PublishErrorKind.network);
-      expect(r.error!.retryable, isTrue);
+      expect(r.error!.retryable, isFalse);
+      expect(r.error!.outcomeUnknown, isTrue);
     });
 
     test('400 -> validation, 503 -> network', () async {

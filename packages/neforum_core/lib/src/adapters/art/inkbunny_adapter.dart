@@ -252,14 +252,15 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
       files.add((variant.media[i], await _read(variant.media[i], ctx)));
     }
     final api = InkbunnyApi(ctx);
-    ctx.progress('Uploading to Inkbunny');
+    ctx.uploadingAll('Uploading to Inkbunny');
     final submissionId = await api.upload(sid, files);
 
-    ctx.progress('Filling in the submission');
+    // The upload stays hidden: this request is what makes it public.
     try {
-      await api.edit(editForm(sid, submissionId, variant));
+      await ctx.creating('Filling in the submission', () => api.edit(editForm(sid, submissionId, variant)));
     } on Exception catch (e) {
       final err = switch (e) {
+        AdapterException() => e.error,
         InkbunnyException() => InkbunnyApi.mapError(e, context: 'Finishing the Inkbunny submission'),
         HttpFailure() => e.toPublishError(context: 'Finishing the Inkbunny submission'),
         _ => NeforumHttp.isTransportError(e)
@@ -271,8 +272,11 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
       return PublishResult.failure(PublishError(
         kind: err.kind,
         notAllowed: err.notAllowed,
-        message: '${err.message}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
-            'on inkbunny.net (${InkbunnyApi.submissionUrl(submissionId)}).',
+        outcomeUnknown: err.outcomeUnknown,
+        message: err.outcomeUnknown == true
+            ? '${err.message} Your files are uploaded as submission $submissionId (${InkbunnyApi.submissionUrl(submissionId)}).'
+            : '${err.message}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
+                'on inkbunny.net (${InkbunnyApi.submissionUrl(submissionId)}).',
         statusCode: err.statusCode,
         raw: err.raw,
       ));

@@ -303,10 +303,12 @@ NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the si
     final ids = <String>[];
     final files = variant.media;
     for (var i = 0; i < files.length; i++) {
-      ctx.progress('Uploading ${files[i].isVideo ? 'video' : 'photo'} ${i + 1} of ${files.length}');
+      final label = 'Uploading ${files[i].isVideo ? 'video' : 'photo'} ${i + 1} of ${files.length}';
+      ctx.uploading(files[i], label);
       try {
         final bytes = await _read(files[i], ctx);
-        ids.add(await api.upload(files[i], bytes, fields));
+        // Each file is a post of its own as it arrives.
+        ids.add(await ctx.creating(label, () => api.upload(files[i], bytes, fields), uploads: true));
       } on Exception catch (e) {
         final error = switch (e) {
           FlickrException() => FlickrApi.mapUploadError(e, context: 'Uploading to Flickr'),
@@ -321,6 +323,7 @@ NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the si
         return PublishResult.failure(PublishError(
           kind: error.kind,
           notAllowed: error.notAllowed,
+          outcomeUnknown: error.outcomeUnknown,
           message: 'File ${i + 1} of ${files.length} failed: ${error.message}. The files already uploaded '
               '(${ids.join(', ')}) stay on Flickr; upload the rest yourself.',
           statusCode: error.statusCode,
@@ -335,6 +338,10 @@ NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the si
       publishedAt: ctx.now(),
     );
   }
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, ProgressFamily.direct, steps: variant.media.length, interleaved: true);
 
   /// The upload fields every file of [v] gets: title, description, tags, who
   /// may see it, its safety level (the rating) and its content type.

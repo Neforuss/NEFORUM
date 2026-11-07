@@ -627,7 +627,7 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
             'Threads downloads images and videos from a public web address. Set up a media host in '
             'Settings > Media hosting, or post text only.'));
       }
-      final api = ThreadsApi(ctx.http, tokens.accessToken, delay: _delay, log: ctx.log);
+      final api = ThreadsApi(ctx.http, tokens.accessToken, delay: (d) => ctx.wait(d, via: _delay), log: ctx.log);
       final parts = variant.isThread ? variant.threadParts : [variant.text];
       final linkPart = _linkPartIndex(variant, parts);
       String? replyTo;
@@ -646,14 +646,14 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
             'media_type': 'TEXT',
             ...base,
             if (i == linkPart) 'link_attachment': variant.link!,
-          }, onWait: ctx.progress);
+          }, onWait: ctx.serverWait);
           // Meta wants every container checked before publishing; publishing
           // one it has not finished fails with "media not found". A text
           // container is usually FINISHED at once (one GET, no wait).
-          await api.waitUntilReady(containerId, onWait: ctx.progress, delays: threadsTextPollDelays, what: 'the post');
+          await api.waitUntilReady(containerId, onWait: ctx.serverWait, delays: threadsTextPollDelays, what: 'the post');
         }
-        ctx.progress(parts.length > 1 ? 'Publishing part ${i + 1} of ${parts.length}' : 'Publishing to Threads');
-        final id = await api.publishContainer(userId, containerId, onWait: ctx.progress);
+        final id = await ctx.creating(parts.length > 1 ? 'Publishing part ${i + 1} of ${parts.length}' : 'Publishing to Threads',
+            () => api.publishContainer(userId, containerId, onWait: ctx.progress));
         ids.add(id);
         replyTo = id;
       }
@@ -677,6 +677,9 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
     }
   }
 
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.pullFromUrl);
+
   /// Parameters that only apply to the first post of a thread.
   static Map<String, String> _rootParams(PostVariant v) {
     final rc = v.extraAs<String>(extraReplyControl);
@@ -693,7 +696,7 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
       final m = v.media.single;
       final url = await _host(m, 1, 1, hosted, ctx);
       final id = await api.createContainer(userId, {..._mediaParams(m, url, v), ...base});
-      await api.waitUntilReady(id, onWait: ctx.progress, mediaUrl: url);
+      await api.waitUntilReady(id, onWait: ctx.serverWait, mediaUrl: url);
       return id;
     }
     final children = <String>[];
@@ -702,7 +705,7 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
       final url = await _host(m, i + 1, v.media.length, hosted, ctx);
       // The spoiler flag belongs on the CAROUSEL container, not its items.
       final id = await api.createContainer(userId, {..._mediaParams(m, url, v, spoiler: false), 'is_carousel_item': 'true'});
-      await api.waitUntilReady(id, onWait: ctx.progress, mediaUrl: url);
+      await api.waitUntilReady(id, onWait: ctx.serverWait, mediaUrl: url);
       children.add(id);
     }
     final id = await api.createContainer(userId, {
@@ -711,7 +714,7 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
       if (v.sensitive) 'is_spoiler_media': 'true',
       ...base,
     });
-    await api.waitUntilReady(id, onWait: ctx.progress);
+    await api.waitUntilReady(id, onWait: ctx.serverWait);
     return id;
   }
 
@@ -725,9 +728,9 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
   Future<String> _host(MediaAttachment m, int n, int total, List<HostedMedia> hosted, AdapterContext ctx) async {
     final host = ctx.mediaHost!;
     final kind = m.isVideo ? 'video' : 'image';
-    ctx.progress('Uploading $kind $n of $total to ${host.name}');
+    ctx.uploading(m, 'Uploading $kind $n of $total to ${host.name}');
     final bytes = await ctx.readMedia(m);
-    final h = await host.upload(m, bytes, ttl: const Duration(hours: 6));
+    final h = await host.upload(m, bytes, ttl: const Duration(hours: 6), via: ctx.http);
     hosted.add(h);
     return h.url.toString();
   }

@@ -420,14 +420,18 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
       return PublishResult.failure(
           PublishError.validation('${image.fileName ?? 'The image'} is larger than Dribbble\'s 8 MB limit'));
     }
-    ctx.progress('Uploading the shot');
-    final shotId = await DribbbleApi(ctx: ctx, accessToken: tokens.accessToken).createShot(
-      image,
-      bytes,
-      title: artworkTitle(variant),
-      description: artworkDescription(variant),
-      tags: variant.tags.take(DribbbleLimits.maxTags).toList(),
-    );
+    ctx.uploading(image, 'Uploading the shot');
+    // One POST that is also the post.
+    final shotId = await ctx.creating(
+        'Uploading the shot',
+        () => DribbbleApi(ctx: ctx, accessToken: tokens.accessToken).createShot(
+              image,
+              bytes,
+              title: artworkTitle(variant),
+              description: artworkDescription(variant),
+              tags: variant.tags.take(DribbbleLimits.maxTags).toList(),
+            ),
+        uploads: true);
     return PublishResult.ok(
       remoteId: shotId,
       remoteUrl: shotId == null ? account.profileUrl : DribbbleApi.shotUrl(shotId),
