@@ -548,8 +548,8 @@ class NeforumHttp {
   /// An exception that did not pass through this class may quote a whole
   /// address, and some APIs carry a token in the path or the query.
   static String _withoutPaths(String text) => text
-      .replaceAll(RegExp(r'uri=\S+'), 'uri=(address removed)')
-      .replaceAllMapped(RegExp(r'(https?://[^/\s?#]+)[^\s]*'), (m) => m[1]!);
+      .replaceAllMapped(RegExp(r'(https?://[^/\s?#]+)[^\s]*'), (m) => m[1]!)
+      .replaceAll(RegExp(r'uri=(?!https?://)\S+'), 'uri=(address removed)');
 
   static bool _retryable(int status) => status == 429 || status == 502 || status == 503 || status == 504;
 
