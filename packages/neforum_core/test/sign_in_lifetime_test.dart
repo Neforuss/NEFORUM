@@ -907,8 +907,8 @@ void main() {
         // The log really saw each layer, or the check above proves nothing.
         expect(logs.where((l) => l.contains(' ends ')), isNotEmpty, reason: 'the tracker');
         for (final (name, line) in [
-          ('the HTTP client', 'graph.facebook.com/'),
-          ('the HTTP client', 'introspectToken'),
+          ('the HTTP client', 'graph.facebook.com (attempt'),
+          ('the HTTP client', 'www.linkedin.com (attempt'),
           ('the Facebook adapter', 'Facebook debug_token failed'),
           ('the Threads API', 'Threads debug_token failed'),
           ('the LinkedIn adapter', 'LinkedIn token introspection failed'),
