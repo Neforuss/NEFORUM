@@ -102,10 +102,11 @@ class MatrixApi {
       _check(await _ctx.http.postJson(uri(segments), body, headers: _auth, throwOnError: false, method: 'PUT'));
 
   /// `POST /_matrix/media/v3/upload?filename=` with the raw bytes; returns
-  /// the `mxc://` content URI.
+  /// the `mxc://` content URI. Stored media is not a message: nothing shows in
+  /// the room until an event refers to it.
   Future<String> upload(Uint8List bytes, {required String contentType, required String fileName}) async {
     final res = await _ctx.http.putBytes(uri(['media', 'v3', 'upload'], {'filename': fileName}), bytes,
-        headers: {..._auth, 'Content-Type': contentType}, throwOnError: false, method: 'POST');
+        headers: {..._auth, 'Content-Type': contentType}, throwOnError: false, method: 'POST', retrySafe: true);
     final json = _check(res);
     final mxc = chatStr(json['content_uri']);
     if (mxc == null || !mxc.startsWith('mxc://')) {

@@ -251,7 +251,7 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
       throw AdapterException(e.toRefreshError('Reddit'));
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        throw AdapterException(PublishError.network('Could not reach Reddit to renew the sign-in: $e'));
+        throw AdapterException(PublishError.network('Could not reach Reddit to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
       rethrow;
     }
@@ -367,7 +367,7 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     } on HttpFailure catch (e) {
       return PublishResult.failure(RedditApi.mapHttpError(e));
     } on Object catch (e) {
-      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Reddit: $e'));
+      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Reddit: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       if (e is FormatException) {
         return PublishResult.failure(PublishError.platform('Reddit sent a response NEFORUM did not understand: $e'));
       }

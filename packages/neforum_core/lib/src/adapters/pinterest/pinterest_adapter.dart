@@ -470,7 +470,7 @@ class PinterestAdapter extends PlatformAdapter {
       ctx.log.warn('Pinterest publish failed: $e');
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Pinterest ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Pinterest (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       // dart:io is off limits here, so recognise file errors by name.
       if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {

@@ -113,9 +113,9 @@ Future<NeforumResponse> guardedCall(
   } on TimeoutException {
     throw MediaHostException('Timed out while trying to $what', hostId: hostId, temporary: true);
   } on http.ClientException catch (e) {
-    throw MediaHostException('Could not $what: ${e.message}', hostId: hostId, temporary: true);
+    throw MediaHostException('Could not $what: ${e.message}', hostId: hostId, temporary: true, details: NeforumHttp.transportDetails(e));
   } on Object catch (e) {
-    throw MediaHostException('Could not $what: $e', hostId: hostId, temporary: NeforumHttp.isTransportError(e));
+    throw MediaHostException('Could not $what: $e', hostId: hostId, temporary: NeforumHttp.isTransportError(e), details: NeforumHttp.transportDetails(e));
   }
 }
 
@@ -157,7 +157,8 @@ Future<NeforumResponse> guardedUpload(
         '${e.message} (tried twice). Check your internet connection, then try again later or choose another media '
         'host in Settings.',
         hostId: e.hostId,
-        temporary: true);
+        temporary: true,
+        details: e.details);
   }
 }
 

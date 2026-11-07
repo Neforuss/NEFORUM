@@ -82,12 +82,14 @@ class GhostApi {
 
   Future<NeforumResponse> delete(String path) => ctx.http.delete(endpoint(path), headers: _headers);
 
-  /// `POST images/upload/` (multipart `file`, `purpose=image`, `ref`).
+  /// `POST images/upload/` (multipart `file`, `purpose=image`, `ref`). A stored
+  /// file is not a post: nothing shows on the site until `posts/` is called.
   Future<NeforumResponse> uploadImage(Uint8List bytes, {required String fileName, required String contentType}) =>
       ctx.http.multipart(endpoint('images/upload/'),
           headers: _headers,
           fields: {'purpose': 'image', 'ref': fileName},
-          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)]);
+          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)],
+          retrySafe: true);
 
   /// `POST media/upload/` (multipart `file`, optional `thumbnail`, `ref`):
   /// audio and video, stored as uploaded. Answers `{media: [{url, ref}]}`,
@@ -96,7 +98,8 @@ class GhostApi {
       ctx.http.multipart(endpoint('media/upload/'),
           headers: _headers,
           fields: {'ref': fileName},
-          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType), ?thumbnail]);
+          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType), ?thumbnail],
+          retrySafe: true);
 }
 
 /// `(type, message, context)` of the first entry in Ghost's `errors` array.
@@ -154,7 +157,7 @@ Future<T> guardGhost<T>(String what, Future<T> Function() call) async {
   } on HttpFailure catch (f) {
     throw AdapterException(mapGhostFailure(f, what));
   } on Exception catch (e) {
-    throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+    throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
   }
 }
 

@@ -192,7 +192,7 @@ PublishError? youtubeNetworkError(Object e, String context, DateTime now) {
   if (e is AdapterException) return e.error;
   if (e is HttpFailure) return mapYouTubeError(e.response, context: context, now: now);
   if (e is http.ClientException || e is TimeoutException || isTransientIoError(e)) {
-    return PublishError.network('$context: network error ($e)');
+    return PublishError.network('$context: network error (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e));
   }
   return null;
 }
@@ -326,7 +326,7 @@ class YouTubeResumableUpload {
       } on Object catch (e) {
         if (!isNetworkException(e)) rethrow;
         ctx.log.warn('YouTube upload interrupted: $e');
-        lastError = PublishError.network('YouTube upload interrupted ($e)');
+        lastError = PublishError.network('YouTube upload interrupted (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e));
         continue;
       }
       if (res.statusCode == 200 || res.statusCode == 201) return res.jsonMap;
@@ -349,7 +349,7 @@ class YouTubeResumableUpload {
           headers: {..._auth, 'Content-Range': 'bytes */$total'}, throwOnError: false);
     } on Object catch (e) {
       if (!isNetworkException(e)) rethrow;
-      return _Probe.error(PublishError.network('YouTube upload status check failed ($e)'));
+      return _Probe.error(PublishError.network('YouTube upload status check failed (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
     }
     if (res.statusCode == 200 || res.statusCode == 201) return _Probe.done(res.jsonMap);
     if (res.statusCode == 308) return _Probe.offset(parseUploadedOffset(res.headers['range']));

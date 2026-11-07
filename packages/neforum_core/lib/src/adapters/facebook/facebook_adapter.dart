@@ -689,9 +689,9 @@ class FacebookAdapter extends PlatformAdapter {
     } on HttpFailure catch (f) {
       return PublishResult.failure(mapGraphFailure(f));
     } on TimeoutException catch (e) {
-      return PublishResult.failure(PublishError.network('Facebook did not answer in time', raw: '$e'));
+      return PublishResult.failure(PublishError.network('Facebook did not answer in time', raw: NeforumHttp.transportDetails(e)));
     } on Exception catch (e) {
-      return PublishResult.failure(PublishError.network('Could not reach Facebook: $e', raw: '$e'));
+      return PublishResult.failure(PublishError.network('Could not reach Facebook: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -762,9 +762,9 @@ class FacebookAdapter extends PlatformAdapter {
   static PublishError? _errorOf(Object e) => switch (e) {
         AdapterException(:final error) => error,
         HttpFailure() => mapGraphFailure(e),
-        TimeoutException() => PublishError.network('Facebook did not answer in time', raw: '$e'),
+        TimeoutException() => PublishError.network('Facebook did not answer in time', raw: NeforumHttp.transportDetails(e)),
         OperationCancelledException() => const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'),
-        Exception() => PublishError.network('Could not reach Facebook: $e', raw: '$e'),
+        Exception() => PublishError.network('Could not reach Facebook: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)),
         _ => null,
       };
 
@@ -912,9 +912,9 @@ class FacebookAdapter extends PlatformAdapter {
       res = await ctx.http.delete(graphUri(id, withToken(const {}, token, appSecret)),
           throwOnError: false);
     } on TimeoutException catch (e) {
-      throw AdapterException(PublishError.network('Facebook did not answer in time', raw: '$e'));
+      throw AdapterException(PublishError.network('Facebook did not answer in time', raw: NeforumHttp.transportDetails(e)));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('Could not reach Facebook: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Could not reach Facebook: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
     if (res.ok) {
       if (res.jsonMap['success'] == false) {

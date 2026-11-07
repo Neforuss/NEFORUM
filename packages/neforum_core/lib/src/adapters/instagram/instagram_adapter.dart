@@ -362,7 +362,7 @@ class InstagramAdapter extends PlatformAdapter {
     } on TimeoutException {
       return PublishResult.failure(const PublishError.network('Timed out talking to Instagram'));
     } on http.ClientException catch (e) {
-      return PublishResult.failure(PublishError.network('Network error: ${e.message}'));
+      return PublishResult.failure(PublishError.network(e.message, raw: NeforumHttp.transportDetails(e)));
     } finally {
       await _cleanup(hosted, ctx);
     }
@@ -454,7 +454,7 @@ class InstagramAdapter extends PlatformAdapter {
         AdapterException(:final error) => error,
         HttpFailure() => mapHttpFailure(e),
         TimeoutException() => const PublishError.network('Timed out talking to Instagram'),
-        http.ClientException(:final message) => PublishError.network('Network error: $message'),
+        http.ClientException(:final message) => PublishError.network(message, raw: NeforumHttp.transportDetails(e)),
         OperationCancelledException() => const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'),
         _ => null,
       };
@@ -538,7 +538,7 @@ class InstagramAdapter extends PlatformAdapter {
         rethrow;
       } on Object catch (e) {
         if (NeforumHttp.isTransportError(e)) {
-          throw AdapterException(PublishError.network('Could not reach your media host (${host.name}): $e'));
+          throw AdapterException(PublishError.network('Could not reach your media host (${host.name}): ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
         }
         throw AdapterException(PublishError.configuration('Your media host (${host.name}) failed: $e'));
       }

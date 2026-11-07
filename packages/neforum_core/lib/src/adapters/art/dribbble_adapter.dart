@@ -393,7 +393,7 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
     } on Object catch (e) {
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Dribbble ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Dribbble (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       return PublishResult.failure(PublishError.platform('Dribbble publish failed: $text', raw: text));
     }

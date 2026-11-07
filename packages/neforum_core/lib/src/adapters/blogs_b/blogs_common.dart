@@ -73,9 +73,9 @@ Future<T> guardBlog<T>(
   } on HttpFailure catch (f) {
     throw AdapterException(mapHttp(f));
   } on TimeoutException catch (e) {
-    throw AdapterException(PublishError.network('$context: timed out', raw: '$e'));
+    throw AdapterException(PublishError.network('$context: timed out', raw: NeforumHttp.transportDetails(e)));
   } on http.ClientException catch (e) {
-    throw AdapterException(PublishError.network('$context: network error', raw: e.message));
+    throw AdapterException(PublishError.network('$context: network error', raw: NeforumHttp.transportDetails(e)));
   } on FormatException catch (e) {
     throw AdapterException(PublishError.platform('$context: unexpected response', raw: e.message));
   }

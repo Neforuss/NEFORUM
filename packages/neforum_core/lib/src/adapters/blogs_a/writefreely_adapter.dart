@@ -348,7 +348,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
     } on HttpFailure catch (f) {
       throw AdapterException(mapWriteFreelyFailure(f, 'WriteFreely post'));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('WriteFreely post failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('WriteFreely post failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
     final data = blogMap(r.jsonMap['data']);
     final postId = blogStr(data?['id']);
@@ -382,7 +382,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
     try {
       return (await host!.upload(m, bytes)).url.toString();
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('Upload to ${host!.name} failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Upload to ${host!.name} failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -402,7 +402,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
     } on AdapterException {
       rethrow;
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

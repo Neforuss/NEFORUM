@@ -656,7 +656,7 @@ Images and videos cannot be prefilled on the web; on a phone they go through the
     } on MediaHostException catch (e) {
       return fail(e.toPublishError());
     } on Exception catch (e) {
-      return fail(PublishError.network('Could not reach Threads: $e'));
+      return fail(PublishError.network('Could not reach Threads: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     } finally {
       await _cleanup(hosted, ctx);
     }

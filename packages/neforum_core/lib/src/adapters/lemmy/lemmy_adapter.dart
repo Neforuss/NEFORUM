@@ -344,7 +344,7 @@ class LemmyAdapter extends PlatformAdapter {
     } on FormatException {
       // Fall through to resolve_object.
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('Community lookup: could not reach ${api.instance.host}', raw: '$e'));
+      throw AdapterException(PublishError.network('Community lookup: could not reach ${api.instance.host}', raw: NeforumHttp.transportDetails(e)));
     }
     final remote = name.contains('@');
     if (remote && api.jwt != null) {

@@ -380,7 +380,7 @@ class BlueskyAdapter extends PlatformAdapter {
     } on HttpFailure catch (e) {
       return PublishResult.failure(mapBlueskyFailure(e, now: ctx.now()));
     } on Exception catch (e) {
-      return PublishResult.failure(PublishError.network('Could not reach Bluesky: $e'));
+      return PublishResult.failure(PublishError.network('Could not reach Bluesky: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

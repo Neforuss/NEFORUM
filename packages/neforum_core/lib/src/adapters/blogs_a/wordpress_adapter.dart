@@ -519,7 +519,7 @@ class WordPressAdapter extends PlatformAdapter {
       }
       throw AdapterException(mapWordPressFailure(f, what));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -613,7 +613,7 @@ class WordPressAdapter extends PlatformAdapter {
       }
       throw AdapterException(mapWordPressFailure(f, 'WordPress $taxonomy "$name"'));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('WordPress $taxonomy "$name" failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('WordPress $taxonomy "$name" failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

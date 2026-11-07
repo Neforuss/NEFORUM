@@ -100,7 +100,7 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(e?.message ?? 'Unknown error', style: dialogContext.text.bodyMedium?.copyWith(color: nf.text)),
             const SizedBox(height: Space.md),
-            Text(_advice(e), style: dialogContext.text.bodySmall),
+            Text(targetErrorAdvice(e), style: dialogContext.text.bodySmall),
             if (e?.raw != null) ...[
               const SizedBox(height: Space.md),
               NfWell(
@@ -144,7 +144,12 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
   );
 }
 
-String _advice(PublishError? e) => switch (e?.kind) {
+/// The advice line under a failed target's message.
+String targetErrorAdvice(PublishError? e) => switch (e?.kind) {
+      PublishErrorKind.network when e?.uploadInterrupted == true && (e!.retryable || e.isPartialThread) =>
+        'A slow or busy connection usually causes this. Retry when nothing else is uploading, or use a smaller file.',
+      // The whole request went out and no answer came back.
+      PublishErrorKind.network when e?.uploadInterrupted == true => 'Look on the site first: it may be there. Retry only if it is not.',
       PublishErrorKind.auth => 'The sign-in expired or was revoked. Reconnect the account in Accounts, then retry.',
       PublishErrorKind.quota => 'A posting limit was reached. Retry after it resets, or post this one by hand-off.',
       PublishErrorKind.validation => 'The platform rejected the content. Customize the post for this network and retry.',

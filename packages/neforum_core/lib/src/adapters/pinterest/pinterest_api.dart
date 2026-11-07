@@ -117,8 +117,26 @@ class PinterestApi {
   // --------------------------------------------------------------- writes
 
   /// `POST /v5/pins`. Returns the new Pin's id.
+  ///
+  /// An inline image makes this POST an upload that is also the post. If the
+  /// body never went out whole, Pinterest cannot have made the Pin. Once it
+  /// has, a lost answer leaves that open, so it is not retried.
   Future<String> createPin(Map<String, Object?> body) async {
-    final res = await ctx.http.postJson(endpoint('pins'), body, headers: _auth);
+    final NeforumResponse res;
+    try {
+      res = await ctx.http.postJson(endpoint('pins'), body, headers: _auth);
+    } on Exception catch (e) {
+      final trace = NeforumHttp.uploadTrace(e);
+      if (trace == null) rethrow;
+      final details = NeforumHttp.transportDetails(e);
+      throw AdapterException(trace.wholeBodySent
+          ? PublishError(
+              kind: PublishErrorKind.network,
+              message: 'Pinterest did not confirm this Pin. Check your board before retrying.',
+              raw: details,
+              uploadInterrupted: true)
+          : PublishError.network('${NeforumHttp.transportMessage(e)} This Pin was not created.', raw: details, uploadInterrupted: true));
+    }
     final id = res.jsonMap['id']?.toString();
     if (id == null || id.isEmpty) {
       throw AdapterException(PublishError.platform('Pinterest did not return a Pin id', raw: _snippet(res.body)));

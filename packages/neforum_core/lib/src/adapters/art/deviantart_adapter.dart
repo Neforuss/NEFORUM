@@ -364,7 +364,7 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
     } on Object catch (e) {
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach DeviantArt ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach DeviantArt (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       return PublishResult.failure(PublishError.platform('DeviantArt publish failed: $text', raw: text));
     }

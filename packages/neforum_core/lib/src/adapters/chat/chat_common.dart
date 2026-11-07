@@ -49,7 +49,7 @@ Future<T> chatSendWithFloodWait<T>(Future<T> Function() send, Duration? Function
 /// failure, unreadable media file, ...) onto a [PublishError]. [secret] is
 /// blanked out of the text: the Telegram bot token is part of every URL.
 PublishError chatUnexpected(Object e, String host, {String? secret}) {
-  var text = e.toString();
+  var text = NeforumHttp.transportDetails(e);
   if (secret != null && secret.isNotEmpty) text = text.replaceAll(secret, '<token>');
   if (NeforumHttp.isTransportError(e)) {
     return PublishError.network('Could not reach $host', raw: chatSnippet(text));
