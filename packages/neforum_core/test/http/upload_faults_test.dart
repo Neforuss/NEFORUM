@@ -841,6 +841,54 @@ void main() {
         });
       }
 
+      test('a cancel while reading stays a cancel', () async {
+        final ctx = AdapterContext(
+          http: NeforumHttp(client: FaultClient((i, r) => fail('nothing to send'))),
+          log: Logger('t', sink: (l, a, m, [e]) {}),
+          readMedia: (m) async => throw const OperationCancelledException(),
+        );
+        await expectLater(ctx.readMedia(_image('i')), throwsA(isA<OperationCancelledException>()));
+      });
+
+      test('a second file that cannot be read on Flickr keeps one full stop, and says what is up', () async {
+        var uploads = 0;
+        final account = fakeAccount('flickr', tier: PlatformTier.byokApi, config: const {'userNsid': '1@N01'});
+        final ctx = AdapterContext(
+          http: NeforumHttp(client: FaultClient((i, r) {
+            uploads++;
+            return http.StreamedResponse(Stream.value(utf8.encode('<rsp stat="ok"><photoid>1001</photoid></rsp>')), 200);
+          })),
+          log: Logger('t', sink: (l, a, m, [e]) {}),
+          clock: () => DateTime.utc(2026, 11, 6),
+          readMedia: (m) async {
+            if (m.id == 'j') throw const OSError('The system cannot find the path specified', 3);
+            return fakeJpegBytes;
+          },
+        );
+        final r = await builtinAdapter('flickr').publish(
+          PostVariant(text: 'x', title: 'T', artwork: const ArtworkDetails(), media: [_image('i'), _image('j')]),
+          account,
+          const OAuth1Credentials(consumerKey: 'ck', consumerSecret: 'cs', token: 't', tokenSecret: 'ts').toSecrets(),
+          ctx,
+        );
+        expect(uploads, 1);
+        expect(
+          r.error!.message,
+          'File 2 of 2 failed: Could not read j.jpg. Attach it again and retry. The files already uploaded (1001) stay on Flickr; upload the rest yourself.',
+        );
+      });
+
+      test('no wrapper around another error adds a second full stop', () {
+        final doubled = RegExp(r'\$\{(?:err|error)\.message\}\. ');
+        final hits = Directory('lib/src/adapters')
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.dart') && doubled.hasMatch(f.readAsStringSync()))
+            .map((f) => f.path)
+            .toList();
+        expect(hits, isEmpty);
+      });
+
       test('no adapter quotes the exception in the message', () {
         final quoting = RegExp(r"(?:Could not read \$\{[^}]*\}|missing or unreadable)[^'\n]*\$");
         final hits = [Directory('lib/src/adapters'), Directory('lib/src/publish')]

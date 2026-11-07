@@ -266,7 +266,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
       // would upload them again.
       return PublishResult.failure(PublishError(
         kind: err.kind,
-        message: '${err.message}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
+        message: '${err.clause}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
             'on inkbunny.net (${InkbunnyApi.submissionUrl(submissionId)}).',
         statusCode: err.statusCode,
         raw: err.raw,

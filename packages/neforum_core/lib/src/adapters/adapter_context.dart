@@ -76,6 +76,8 @@ class AdapterContext {
   Future<Uint8List> readMedia(MediaAttachment media) async {
     try {
       return await (_readMedia != null ? _readMedia(media) : readMediaFromPath(media.path));
+    } on OperationCancelledException {
+      rethrow;
     } on Object catch (e) {
       throw AdapterException(PublishError.configuration('Could not read ${media.fileName ?? media.path}. Attach it again and retry.', raw: '$e'));
     }

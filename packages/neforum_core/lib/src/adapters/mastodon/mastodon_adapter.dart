@@ -533,7 +533,7 @@ class MastodonAdapter extends PlatformAdapter {
     final thisOne = _megabytes(size) == most ? 'a little over that' : _megabytes(size);
     return PublishError.validation(
       '${p.domain} takes ${m.noun}s up to $most, and this one is $thisOne. '
-      'Nothing was posted.',
+      '${live > 0 ? 'Nothing more was posted.' : 'Nothing was posted.'}',
       raw: NeforumHttp.transportDetails(failure),
     );
   }

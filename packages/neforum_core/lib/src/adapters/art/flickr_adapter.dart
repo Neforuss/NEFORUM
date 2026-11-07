@@ -317,7 +317,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
         // Earlier files are on Flickr: a retry would upload them again.
         return PublishResult.failure(PublishError(
           kind: error.kind,
-          message: 'File ${i + 1} of ${files.length} failed: ${error.message}. The files already uploaded '
+          message: 'File ${i + 1} of ${files.length} failed: ${error.clause}. The files already uploaded '
               '(${ids.join(', ')}) stay on Flickr; upload the rest yourself.',
           statusCode: error.statusCode,
           raw: error.raw,

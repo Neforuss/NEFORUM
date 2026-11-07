@@ -107,7 +107,7 @@ class PublishError {
   final bool? uploadInterrupted;
 
   /// [message] without its full stop, to go in the middle of a sentence.
-  String get _clause => message.endsWith('.') ? message.substring(0, message.length - 1) : message;
+  String get clause => message.endsWith('.') ? message.substring(0, message.length - 1) : message;
 
   /// Wraps an error that happened after some parts of a thread were already
   /// posted. Never retryable: a retry would post the earlier parts again.
@@ -115,7 +115,7 @@ class PublishError {
     if (postedIds.isEmpty) return this;
     return PublishError(
       kind: kind,
-      message: 'Part ${postedIds.length + 1} of $total failed: $_clause. '
+      message: 'Part ${postedIds.length + 1} of $total failed: $clause. '
           'Parts already posted (${postedIds.join(', ')}) stay live; finish the thread by hand.',
       retryable: false,
       statusCode: statusCode,
@@ -130,7 +130,7 @@ class PublishError {
     if (postedIds.isEmpty) return this;
     return PublishError(
       kind: kind,
-      message: 'Part ${postedIds.length + 1} of $total failed: $_clause. '
+      message: 'Part ${postedIds.length + 1} of $total failed: $clause. '
           'The first ${postedIds.length} part(s) are live; Retry posts the rest of the thread.',
       retryable: false,
       statusCode: statusCode,
@@ -143,7 +143,7 @@ class PublishError {
   /// posts went live. The next attempt posts only the rest.
   PublishError asResumableSeries({required int liveCount, required int total}) => PublishError(
         kind: kind,
-        message: 'Post ${liveCount + 1} of $total failed: $_clause. '
+        message: 'Post ${liveCount + 1} of $total failed: $clause. '
             'The first $liveCount post(s) are live; Retry posts the rest.',
         retryable: false,
         statusCode: statusCode,
