@@ -22,9 +22,6 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:neforum_app/platform/storage.dart';
 
 class _Host implements PublishHost {
-  _Host({this.takes = true});
-
-  final bool takes;
   final begins = <Map<String, Object?>>[];
   final updates = <Map<String, Object?>>[];
   final ends = <Map<String, Object?>>[];
@@ -36,7 +33,6 @@ class _Host implements PublishHost {
   @override
   Future<bool> begin({required String postId, required String title, required List<PublishHostNetwork> networks}) async {
     begins.add({'postId': postId, 'title': title, 'networks': [for (final n in networks) n.toJson()]});
-    if (!takes) throw StateError('no host here');
     return true;
   }
 

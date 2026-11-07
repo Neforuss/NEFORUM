@@ -14,9 +14,9 @@ import '../support/test_context.dart';
 
 /// A network with an upload and a post.
 class _Net extends PlatformAdapter {
-  _Net(this.id);
+  _Net(this.key);
 
-  final String id;
+  final String key;
   int uploads = 0;
   int posts = 0;
 
@@ -25,8 +25,8 @@ class _Net extends PlatformAdapter {
 
   @override
   PlatformDescriptor get descriptor => PlatformDescriptor(
-        id: id,
-        name: id,
+        id: key,
+        name: key,
         tiers: const {PlatformTier.openApi},
         defaultTier: PlatformTier.openApi,
         text: const TextRules(maxLength: 500),
@@ -44,7 +44,7 @@ class _Net extends PlatformAdapter {
   @override
   Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     uploads++;
-    await ctx.http.postJson(Uri.parse('https://$id.test/upload'), {'bytes': 'x'});
+    await ctx.http.postJson(Uri.parse('https://$key.test/upload'), {'bytes': 'x'});
     await ctx.creating('Posting', () async {
       posts++;
     });
@@ -59,7 +59,7 @@ void main() {
 
   Future<PublishService> service(List<_Net> nets) async {
     for (final n in nets) {
-      await accounts.upsert(fakeAccount(n.id, id: n.id));
+      await accounts.upsert(fakeAccount(n.key, id: n.key));
     }
     return PublishService(
       registry: AdapterRegistry(nets),
