@@ -7,9 +7,11 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/sign_in_risks.dart';
 import '../../theme/backdrop.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
+import '../accounts/sign_in_risk_notes.dart';
 import '../activity/time_format.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
@@ -128,6 +130,9 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       final ok = await confirmDialog(context, title: 'Post to $targets ${targets == 1 ? 'network' : 'networks'}?', message: 'Your post goes out right away.', confirmLabel: 'Post now');
       if (!ok || !mounted) return;
     }
+    // Nothing is scheduled to miss a network without the person being told.
+    if (c.scheduledAt != null && !await confirmSignInRisks(context, ref.read(composerSignInRisksProvider))) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       final actions = ref.read(postActionsProvider);

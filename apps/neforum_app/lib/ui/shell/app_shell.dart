@@ -22,6 +22,7 @@ import '../../state/update_checks.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/buttons.dart';
+import '../accounts/sign_in_banner.dart';
 import '../compose/open_in_composer.dart';
 import '../handoff/handoff_sheet.dart';
 import '../root.dart';
@@ -125,6 +126,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         context.go('${AppSection.activity.path}/post/$postId');
         // Only the networks this reminder is for; later ones get their own.
         await ref.read(postActionsProvider).publishExisting(postId, retryFailed: false, dueTargetsOnly: true);
+      case OpenSignInsIntent():
+        context.go(kSignInsPath);
     }
   }
 
@@ -178,6 +181,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       if (demo) const _DemoBanner(),
       const _KeyringBanner(),
       const UpdateBanner(),
+      const SignInBanner(),
       Expanded(child: widget.shell),
     ]);
 

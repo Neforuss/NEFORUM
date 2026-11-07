@@ -339,6 +339,16 @@ class InstagramAdapter extends PlatformAdapter {
     }
   }
 
+  /// Treats the stamp as a week old, which is what [refreshSecrets] waits for.
+  /// Under 24 hours Instagram refuses a refresh, so nothing happens then.
+  @override
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final now = ctx.now();
+    final refreshedAt = DateTime.tryParse(secrets[keyRefreshedAt] ?? '');
+    if (refreshedAt != null && now.difference(refreshedAt) < minRefreshAge) return null;
+    return refreshSecrets(account, {...secrets, keyRefreshedAt: now.subtract(refreshEvery).toUtc().toIso8601String()}, ctx);
+  }
+
   // --- validation --------------------------------------------------------------
 
   /// Post + Story checks the feed post and the story each by its own rules.

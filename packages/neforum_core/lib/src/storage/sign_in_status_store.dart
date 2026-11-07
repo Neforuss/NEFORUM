@@ -35,12 +35,16 @@ class SignInStatusStore {
   Stream<void> get changes => _changes.stream;
 
   /// Every account's status, by account id.
-  Future<Map<String, SignInStatus>> all() async {
+  Future<Map<String, SignInStatus>> all() async => await allIfReadable() ?? {};
+
+  /// [all], or null when the file could not be read at all: what must not take
+  /// a busy file for "no accounts have a status" asks this.
+  Future<Map<String, SignInStatus>?> allIfReadable() async {
     final Object? data;
     try {
       data = await _read();
     } on Object {
-      return {};
+      return null;
     }
     final out = <String, SignInStatus>{};
     if (data is! Map) return out;
@@ -218,6 +222,30 @@ class SignInStatusTracker implements SignInOutcomes {
         _log.warn('Could not read the keys of ${account.id} for their sign-in date (${e.runtimeType})');
       }
     }
+  }
+
+  /// What opening the sign-ins page asks for: statuses still missing, and a
+  /// server read for each of [accounts] that can answer one
+  /// ([PlatformAdapter.canReadSignIn]), at most once per [serverReadEvery]. The
+  /// others are not asked, so they cost no keychain prompt. One account's
+  /// failure costs the others nothing.
+  Future<void> refreshForPage(Iterable<ConnectedAccount> accounts, AdapterContext ctx) async {
+    try {
+      await seedMissing();
+    } on Object catch (e) {
+      _log.warn('Could not fill in the sign-in dates (${e.runtimeType})');
+    }
+    await Future.wait([
+      for (final account in accounts)
+        if (registry.byId(account.platformId)?.canReadSignIn(account) ?? false)
+          () async {
+            try {
+              await readFromServer(account, ctx);
+            } on Object catch (e) {
+              _log.debug('Could not read the ${account.platformId} sign-in (${e.runtimeType})');
+            }
+          }(),
+    ]);
   }
 
   SignInStatus _empty(ConnectedAccount account, DateTime now) {

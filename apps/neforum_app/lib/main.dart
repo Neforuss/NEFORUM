@@ -60,6 +60,9 @@ Future<void> _publishInBackground(String postId) async {
       final discarded = await services.discardIfComplete(postId);
       await announcePublishResult(services, done, discarded: discarded);
       await planNextReminders(services, done);
+      // A renewal in this run moved a date, and a warning planned for the old one
+      // would say something no longer true: no status stream reaches this isolate.
+      await services.signInWarnings.run();
       await services.cloudSync.syncNow();
     }
     services.dispose();

@@ -90,6 +90,24 @@ Most networks say how long a sign-in lasts only when it is made or renewed, so N
 
 NEFORUM asks when you connect, after a post, and when the sign-ins page opens, at most once a day per account. It never asks X in the background: X charges per request and does not say whether this read counts.
 
+## What NEFORUM warns you about
+
+The **Sign-ins** page in Accounts lists every connected account under three headings: **You must reconnect**, **Renews when NEFORUM posts** and **No end date known**. Each date also shows on the account's closed card. Where a network can renew now, the page offers **Renew now**. Where the network or its token can report a date, **Check now** reads it.
+
+A notification goes out at 10:00 on these days before the date, and when the date comes:
+
+| Case | Days before |
+|---|---|
+| You must reconnect | 14, 7, 3, 1 |
+| Renews when NEFORUM posts | 7, 1 |
+| A date the vendor announced (X keys) | 60, 30, 14, 7, 3, 1 |
+
+- Only days still ahead when NEFORUM first learns the date count, and each one fires once on each device. A device that was off says the latest one when it next runs.
+- Phones ask the system ahead of time. They keep at most 20 of these waiting, and post reminders go first when the system's room runs short. Computers check while NEFORUM runs, on its timer and when it starts.
+- A banner above every section shows anything at 14 days or fewer, ended or refused. Closing it holds until the next of those days.
+- A refused sign-in raises one notification until it works again, whether or not **Tell me how each post went** is on.
+- Scheduling or rescheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that already holds the post still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so. A network that is only about to be asked can say no, so that warning asks first too, and if it does say no the queue says the post misses it.
+
 ## Still open
 
 Each of these would change a row above. None can be settled from the vendor's public pages.

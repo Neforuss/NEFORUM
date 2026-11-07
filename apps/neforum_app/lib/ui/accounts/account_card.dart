@@ -4,9 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../state/account_connection.dart';
 import '../../state/artwork_targets.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/sign_in_view.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
@@ -60,6 +62,7 @@ class AccountCard extends ConsumerWidget {
             _Menu(account: a),
           ]),
         ),
+        _SignInLine(account: a),
         if (a.lastError != null)
           Container(
             margin: const EdgeInsets.symmetric(horizontal: Space.lg),
@@ -109,6 +112,50 @@ class AccountCard extends ConsumerWidget {
         // account, the section starts closed instead of showing it open.
         AccountConnectionSection(key: ValueKey('connection-${a.id}'), account: a, network: d?.name ?? a.platformId),
       ]),
+    );
+  }
+}
+
+/// When the sign-in ends, on the closed card, from the status file: no section
+/// to open and no keychain prompt. Tapping it opens the sign-ins page. Hand-off
+/// accounts have no line, since they have no sign-in.
+class _SignInLine extends ConsumerWidget {
+  const _SignInLine({required this.account});
+  final ConnectedAccount account;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(signInMinuteProvider);
+    final status = ref.watch(signInStatusesProvider).value?[account.id];
+    final policy = ref.watch(registryProvider).byId(account.platformId)?.signInPolicyFor(account);
+    if (status == null || policy == null) return const SizedBox.shrink();
+    final now = ref.watch(signInClockProvider)();
+    final line = signInCardLine(status, policy, now);
+    if (line == null) return const SizedBox.shrink();
+    final nf = context.nf;
+    final urgency = signInUrgencyOf(status, now);
+    final color = switch (urgency) {
+      SignInUrgency.ended => nf.danger,
+      SignInUrgency.soon => nf.warning,
+      SignInUrgency.calm => nf.textMuted,
+    };
+    return Semantics(
+      button: true,
+      child: InkWell(
+        key: ValueKey('sign-in-line-${account.id}'),
+        onTap: () => context.go(kSignInsPath),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.lg, Space.sm),
+          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(urgency == SignInUrgency.ended ? Icons.link_off_rounded : Icons.event_rounded, size: 15, color: color),
+            ),
+            const SizedBox(width: Space.sm),
+            Expanded(child: Text(line, style: context.text.bodySmall?.copyWith(color: urgency == SignInUrgency.calm ? nf.textMuted : nf.text))),
+          ]),
+        ),
+      ),
     );
   }
 }

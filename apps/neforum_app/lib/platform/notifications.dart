@@ -26,9 +26,19 @@ sealed class NotificationIntent {
         return RunHandoffIntent(parts[1], parts.sublist(2).join(':'));
       case 'publish' when parts.length >= 2:
         return PublishDueIntent(parts[1]);
+      case kSignInsPayload:
+        return const OpenSignInsIntent();
     }
     return null;
   }
+}
+
+/// Payload of a sign-in warning.
+const String kSignInsPayload = 'signins';
+
+/// A sign-in warning: opens the sign-ins page.
+class OpenSignInsIntent extends NotificationIntent {
+  const OpenSignInsIntent();
 }
 
 class OpenPostIntent extends NotificationIntent {
@@ -89,6 +99,12 @@ class NotificationService {
     description: 'When a post goes out, or fails',
     importance: Importance.defaultImportance,
   );
+  static const _channelSignIns = AndroidNotificationChannel(
+    'neforum.signins',
+    'Sign-ins',
+    description: 'When a sign-in is about to end and needs you',
+    importance: Importance.defaultImportance,
+  );
 
   Future<void> init() async {
     if (_ready) return;
@@ -146,6 +162,7 @@ class NotificationService {
       final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       await android?.createNotificationChannel(_channelScheduled);
       await android?.createNotificationChannel(_channelResults);
+      await android?.createNotificationChannel(_channelSignIns);
       if (!kIsWeb) {
         final launch = await _plugin.getNotificationAppLaunchDetails();
         if (launch?.didNotificationLaunchApp ?? false) {
@@ -192,10 +209,10 @@ class NotificationService {
       );
 
   /// Shows a notification now.
-  Future<void> show({required String key, required String title, required String body, String? payload}) async {
+  Future<void> show({required String key, required String title, required String body, String? payload, bool signIn = false}) async {
     if (!_ready) return;
     try {
-      await _plugin.show(id: _id(key), title: title, body: body, notificationDetails: _details(_channelResults), payload: payload);
+      await _plugin.show(id: _id(key), title: title, body: body, notificationDetails: _details(signIn ? _channelSignIns : _channelResults), payload: payload);
     } on Object catch (e) {
       debugPrint('Notification failed: $e');
     }
@@ -205,10 +222,10 @@ class NotificationService {
   /// special alarm permission is needed; a minute late is fine for a reminder.
   /// With [publishAction] the reminder carries a "Publish now" button
   /// (iOS), which publishes without opening the app.
-  Future<void> schedule({required String key, required DateTime when, required String title, required String body, required String payload, bool publishAction = false}) async {
+  Future<void> schedule({required String key, required DateTime when, required String title, required String body, required String payload, bool publishAction = false, bool signIn = false}) async {
     if (!_ready || kIsWeb) return;
     if (!when.isAfter(DateTime.now())) {
-      return show(key: key, title: title, body: body, payload: payload);
+      return show(key: key, title: title, body: body, payload: payload, signIn: signIn);
     }
     try {
       await _plugin.zonedSchedule(
@@ -216,7 +233,7 @@ class NotificationService {
         title: title,
         body: body,
         scheduledDate: tz.TZDateTime.from(when, tz.local),
-        notificationDetails: _details(_channelScheduled, category: publishAction ? 'neforum.due' : 'neforum.post'),
+        notificationDetails: _details(signIn ? _channelSignIns : _channelScheduled, category: publishAction ? 'neforum.due' : 'neforum.post'),
         androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
         payload: payload,
       );
@@ -233,6 +250,18 @@ class NotificationService {
       await _plugin.cancel(id: _id(key));
     } on Object {
       // Not every platform can cancel (unpackaged Windows builds).
+    }
+  }
+
+  /// How many notifications wait in the OS, leaving out those with
+  /// [exceptPayload]. 0 where the OS will not say (unpackaged Windows builds).
+  Future<int> pendingCount({String? exceptPayload}) async {
+    if (!_ready) return 0;
+    try {
+      final pending = await _plugin.pendingNotificationRequests();
+      return pending.where((p) => exceptPayload == null || p.payload != exceptPayload).length;
+    } on Object {
+      return 0;
     }
   }
 

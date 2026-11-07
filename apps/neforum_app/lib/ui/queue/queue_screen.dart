@@ -11,6 +11,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
+import '../accounts/sign_in_risk_notes.dart';
 import '../activity/time_format.dart';
 import '../compose/open_in_composer.dart';
 import '../router.dart';
@@ -238,6 +239,9 @@ class _AgendaRow extends ConsumerWidget {
     final t = post.scheduledAt!;
     final format = TimeFormatting.of(context, ref);
     final soon = t.difference(DateTime.now()).inMinutes < 60;
+    // A network this post may miss says so here, for as long as it holds.
+    final risks = watchPostSignInRisks(ref, post);
+    final footer = risks.isEmpty ? null : SignInRiskNotes(risks);
     if (context.isCompact) {
       // Phones: no separate time column; the card shows the time.
       return Padding(
@@ -246,6 +250,7 @@ class _AgendaRow extends ConsumerWidget {
           post: post,
           onTap: () => _editPost(context, ref, post),
           actions: postMenuActions(context, ref, post),
+          footer: footer,
         ),
       );
     }
@@ -291,6 +296,7 @@ class _AgendaRow extends ConsumerWidget {
               showTime: false,
               onTap: () => _editPost(context, ref, post),
               actions: postMenuActions(context, ref, post),
+              footer: footer,
             ),
           ),
         ),

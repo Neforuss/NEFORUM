@@ -92,6 +92,19 @@ class PublishOptions {
   final Duration retryBackoffBase;
 }
 
+/// Result of [PublishService.renewSignIn].
+@immutable
+class SignInRenewalOutcome {
+  const SignInRenewalOutcome({required this.renewed, this.error});
+
+  /// The stored keys changed.
+  final bool renewed;
+
+  /// Why it did not work. [PublishError.message] and `raw` can quote a server:
+  /// the page goes by [PublishError.kind].
+  final PublishError? error;
+}
+
 /// One target resolved and validated, for the composer's live preview.
 @immutable
 class TargetPreview {
@@ -790,13 +803,17 @@ class PublishService {
   ///
   /// [again]: whether keys that a sync brought during the renewal may be
   /// renewed in turn (once).
+  ///
+  /// [now]: renew even if the keys have time left ("Renew now"). On a rotating
+  /// platform it takes its turn like any due renewal: it retires the keys the
+  /// other devices hold.
   Future<(Map<String, String>?, PublishError?)> _freshSecrets(
-      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {bool again = true}) async {
+      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {bool again = true, bool now = false}) async {
     final secretMap = await secrets.read(account.id) ?? const <String, String>{};
     // A renewal carries when it happened and where its dates came from, inside
     // the same map, so they travel with the keys in one sync record.
     Future<Map<String, String>?> renew(ConnectedAccount a, Map<String, String> s) async {
-      final fresh = await adapter.refreshSecrets(a, s, ctx);
+      final fresh = await (now ? adapter.renewSignInNow(a, s, ctx) : adapter.refreshSecrets(a, s, ctx));
       return fresh == null ? null : stampSignInRenewal(s, fresh, now: _now());
     }
 
@@ -807,7 +824,7 @@ class PublishService {
           // reconnect made on another device (another app, its keys): the
           // keys it hands over are renewed with the account as stored now,
           // never the one this attempt loaded before that sync.
-          ? await coordinator.renew(account, secretMap, (s) async => renew(await accounts.get(account.id) ?? account, s), renewsEarly: (s) => adapter.renewsEarly(account, s, _now()))
+          ? await coordinator.renew(account, secretMap, (s) async => renew(await accounts.get(account.id) ?? account, s), renewsEarly: (s) => now || adapter.renewsEarly(account, s, _now()))
           : await renew(account, secretMap);
       if (refreshed == null) return (secretMap, null);
       // 1.3.5: the keys stored here changed while the network answered.
@@ -881,6 +898,25 @@ class PublishService {
       _log.warn('Could not re-read the ${adapter.descriptor.name} keys after the refused renewal (${e.runtimeType})');
     }
     return adapter.renewsEarly(account, held, _now()) ? held : null;
+  }
+
+  /// "Renew now" on the sign-ins page: renews [accountId]'s sign-in through the
+  /// same path a post takes, with the sync coordinator on rotating platforms,
+  /// and stores the result. A refused renewal counts as a refused sign-in.
+  Future<SignInRenewalOutcome> renewSignIn(String accountId) async {
+    final account = await accounts.get(accountId);
+    final adapter = account == null ? null : registry.byId(account.platformId);
+    if (account == null || adapter == null) return const SignInRenewalOutcome(renewed: false);
+    final before = await secrets.read(accountId) ?? const <String, String>{};
+    final ctx = context(log: _log.child(account.platformId));
+    final (keys, error) = await _freshSecrets(account, adapter, ctx, now: true);
+    if (error != null) {
+      if (refusesSignIn(error)) {
+        await _bestEffort(_log, 'note the refused renewal', () => signInOutcomes?.publishFinished(account, worked: false, refused: true, ctx: ctx) ?? Future<void>.value());
+      }
+      return SignInRenewalOutcome(renewed: false, error: error);
+    }
+    return SignInRenewalOutcome(renewed: keys != null && !_sameKeys(before, keys));
   }
 
   /// Tells [signInOutcomes] how [t] went. Not awaited: a post never waits for

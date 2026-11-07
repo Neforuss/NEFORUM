@@ -76,6 +76,9 @@ class FacebookAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.facebookFor(account);
 
+  @override
+  bool canReadSignIn(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
   /// `GET /debug_token` with the app's own access token. Only `expires_at` is
   /// read as an end: what `data_access_expires_at` means for a Page token whose
   /// permissions Meta lists as exempt from that clock is not documented, so it

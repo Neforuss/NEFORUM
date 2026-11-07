@@ -43,6 +43,7 @@ export 'src/publish/publish_pause_signal.dart';
 export 'src/publish/publish_progress.dart';
 export 'src/publish/publish_service.dart';
 export 'src/publish/schedule_hold_plan.dart';
+export 'src/publish/sign_in_warnings.dart';
 export 'src/quota/quota_tracker.dart';
 export 'src/schedule/random_moment.dart';
 export 'src/schedule/schedule_engine.dart';

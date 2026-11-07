@@ -149,6 +149,13 @@ class ThreadsAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.threadsFor(account);
 
+  @override
+  bool canReadSignIn(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
+  /// [refreshSecrets] renews at every post older than Meta's 24 hours, and treats a run-out token as the end.
+  @override
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) => refreshSecrets(account, secrets, ctx);
+
   /// Threads' own `debug_token`, with the token as its own caller.
   @override
   Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {

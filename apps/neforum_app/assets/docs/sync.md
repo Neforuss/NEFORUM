@@ -161,7 +161,7 @@ X and Tumblr give out a new sign-in key every time one is renewed, and the old k
 2. **The newest keys travel.** The renewed keys go into the file right away, and the other devices use them instead of renewing themselves.
 3. **Retry after a refusal.** If X or Tumblr refuses a device's keys because another device renewed a moment earlier, NEFORUM reads the file again and retries with the newer keys. With a cloud app's folder, the new file can take a minute to arrive, so NEFORUM tries again a little later instead of asking you to reconnect.
 
-Each device also keeps its own note of when each sign-in ends, so a closed card can show the date with no keychain prompt. That note (`sign-in-status.json`) stays on the device: the dates themselves travel with the keys. See [How long each sign-in lasts](sign-in-lifetimes.md).
+Each device also keeps its own note of when each sign-in ends, so a closed card can show the date with no keychain prompt. That note (`sign-in-status.json`), and the record of which warnings it already gave (`sign-in-warnings.json`), stay on the device: the dates themselves travel with the keys. See [How long each sign-in lasts](sign-in-lifetimes.md).
 
 You can avoid renewals on Tumblr by connecting with **OAuth 1.0a keys**, which are not renewed. X offers the same keys until **31 January 2027**, when it stops accepting them. See "Stay connected on several devices" in the [X](platforms/x.md) and [Tumblr](platforms/tumblr.md) guides. TikTok, DeviantArt and Pixelfed also replace their keys on renewal and take the same turns.
 
