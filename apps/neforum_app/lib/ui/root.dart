@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../brand/neforum_logo.dart';
+import '../media/caption_fonts.dart' show CaptionFont, MissingFontOffer, missingFontOffers;
 import '../platform/desktop.dart';
 import '../platform/env.dart';
 import '../state/providers.dart';
@@ -14,6 +15,7 @@ import '../state/settings.dart';
 import '../theme/app_theme.dart';
 import '../theme/text_scale.dart';
 import '../theme/tokens.dart';
+import 'compose/font_download_sheet.dart';
 import 'router.dart';
 import 'ui_zoom.dart';
 
@@ -108,7 +110,7 @@ class NeforumApp extends ConsumerWidget {
             // Phones and tablets: the text size from Settings > Appearance.
             child: TextScale(
               scale: Env.isMobile ? settings.mobileTextScale : 1,
-              child: _RenderWarningBanner(child: child ?? const SizedBox.shrink()),
+              child: RenderWarningBanner(child: child ?? const SizedBox.shrink()),
             ),
           ),
         );
@@ -122,37 +124,74 @@ class NeforumApp extends ConsumerWidget {
 /// it is dismissed. A banner, not a toast: the "Saved" toast that follows a
 /// save would replace a toast at once. Warnings that come while it is up are
 /// added to it.
-class _RenderWarningBanner extends StatefulWidget {
-  const _RenderWarningBanner({required this.child});
+///
+/// 1.4: a font missing here that the font list has ([missingFontOffers]) comes
+/// with a button that fetches it.
+class RenderWarningBanner extends ConsumerStatefulWidget {
+  const RenderWarningBanner({super.key, required this.child});
   final Widget child;
 
   @override
-  State<_RenderWarningBanner> createState() => _RenderWarningBannerState();
+  ConsumerState<RenderWarningBanner> createState() => _RenderWarningBannerState();
 }
 
-class _RenderWarningBannerState extends State<_RenderWarningBanner> {
+class _RenderWarningBannerState extends ConsumerState<RenderWarningBanner> {
   late final StreamSubscription<String> _subscription;
+  late final StreamSubscription<MissingFontOffer> _fontOffers;
   final List<String> _messages = [];
+
+  /// 1.4: fonts missing here that the font list has, each with its button.
+  final List<MissingFontOffer> _offers = [];
 
   @override
   void initState() {
     super.initState();
     _subscription = renderWarnings.listen(_show);
+    _fontOffers = missingFontOffers.listen(_offer);
   }
 
   void _show(String message) {
+    if (!_messages.contains(message)) _messages.add(message);
+    _present();
+  }
+
+  void _offer(MissingFontOffer offer) {
+    _offers.add(offer);
+    _present();
+  }
+
+  void _present() {
     final messenger = mounted ? ScaffoldMessenger.maybeOf(context) : null;
     if (messenger == null) return;
-    if (!_messages.contains(message)) _messages.add(message);
+    final offering = [for (final o in _offers) if (canOfferFontDownload(ref, o.font)) o];
+    final lines = [
+      ..._messages,
+      for (final o in _offers)
+        offering.contains(o)
+            ? 'The font ${o.font.family} is not on this device, so ${o.usage} uses the default font.'
+            : 'The font ${o.font.family} is not on this device, so ${o.usage} uses the default font. Install or import ${o.font.family} here to use it.',
+    ];
+    final seen = <String>{};
     messenger
       ..removeCurrentMaterialBanner()
       ..showMaterialBanner(MaterialBanner(
         leading: const Icon(Icons.warning_amber_rounded),
-        content: Text(_messages.join('\n')),
+        content: Text(lines.join('\n')),
         actions: [
+          for (final o in offering)
+            if (seen.add(o.font.family))
+              // Its own context: this one is under the Navigator, for the question.
+              Builder(
+                builder: (buttonContext) => TextButton(
+                  key: Key('font-offer-${o.font.source!.id}'),
+                  onPressed: () => _download(buttonContext, o.font),
+                  child: Text(fontDownloadLabel(o.font)),
+                ),
+              ),
           TextButton(
             onPressed: () {
               _messages.clear();
+              _offers.clear();
               messenger.hideCurrentMaterialBanner();
             },
             child: const Text('Dismiss'),
@@ -161,9 +200,23 @@ class _RenderWarningBannerState extends State<_RenderWarningBanner> {
       ));
   }
 
+  Future<void> _download(BuildContext buttonContext, CaptionFont font) async {
+    final source = font.source;
+    if (source == null) return;
+    final done = await downloadFontWithPrompts(buttonContext, ref, id: source.id, family: font.family);
+    if (done == null || !mounted) return;
+    _offers.removeWhere((o) => o.font.source?.id == source.id);
+    if (_messages.isEmpty && _offers.isEmpty) {
+      ScaffoldMessenger.maybeOf(context)?.hideCurrentMaterialBanner();
+    } else {
+      _present();
+    }
+  }
+
   @override
   void dispose() {
     _subscription.cancel();
+    _fontOffers.cancel();
     super.dispose();
   }
 

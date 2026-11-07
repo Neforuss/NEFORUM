@@ -10,7 +10,9 @@ import '../platform/storage.dart';
 import '../state/providers.dart';
 import '../state/render_warnings.dart';
 import '../theme/tokens.dart';
+import 'font_catalog.dart';
 import 'font_files.dart';
+import 'font_installer.dart' show listDownloadedFonts;
 import 'font_storage_web.dart' if (dart.library.io) 'font_storage_io.dart' as files;
 
 // Fonts for the caption written on photos and for text cards (1.3.1) beyond
@@ -26,7 +28,7 @@ import 'font_storage_web.dart' if (dart.library.io) 'font_storage_io.dart' as fi
 /// NEFORUM's `fonts` folder). Kept in the caption style's JSON.
 @immutable
 class CaptionFont {
-  const CaptionFont({required this.family, this.path, this.fileId});
+  const CaptionFont({required this.family, this.path, this.fileId, this.source});
 
   /// Null when [j] holds no family name.
   static CaptionFont? tryParse(Object? j) {
@@ -37,6 +39,7 @@ class CaptionFont {
       family: family.trim(),
       path: path is String && path.isNotEmpty ? path : null,
       fileId: fileId is String && fileId.isNotEmpty ? fileId : null,
+      source: CatalogFontSource.tryParse(j['source']),
     );
   }
 
@@ -49,6 +52,10 @@ class CaptionFont {
   /// folder of NEFORUM's data).
   final String? fileId;
 
+  /// 1.4: the font list's name for it, when it was downloaded. A device
+  /// without the font can offer to fetch the same one.
+  final CatalogFontSource? source;
+
   bool get isImported => fileId != null;
 
   /// The name the font is loaded under: the same for a family wherever its
@@ -59,13 +66,14 @@ class CaptionFont {
         'family': family,
         if (path != null) 'path': path,
         if (fileId != null) 'fileId': fileId,
+        if (source != null) 'source': source!.toJson(),
       };
 
   @override
-  bool operator ==(Object other) => other is CaptionFont && other.family == family && other.path == path && other.fileId == fileId;
+  bool operator ==(Object other) => other is CaptionFont && other.family == family && other.path == path && other.fileId == fileId && other.source == source;
 
   @override
-  int get hashCode => Object.hash(family, path, fileId);
+  int get hashCode => Object.hash(family, path, fileId, source);
 
   @override
   String toString() => 'CaptionFont($family)';
@@ -100,6 +108,18 @@ final ValueNotifier<int> captionFontsRevision = ValueNotifier<int>(0);
 /// not (the caption then uses the built-in font).
 String? registeredCaptionFontAlias(CaptionFont? font) => font != null && _registered.contains(font.alias) ? font.alias : null;
 
+/// Plain alias -> the aliases of a downloaded font's other subsets, in order.
+final Map<String, List<String>> _subsetAliases = {};
+
+/// The other files of a downloaded [font], to put first in the fallback list:
+/// a downloaded font comes as one file per script, and the engine draws only
+/// the first file it gets for a family and style. So each script has a family
+/// name of its own. Empty for any other font.
+List<String> captionFontSubsetAliases(CaptionFont? font) {
+  final all = font == null ? null : _subsetAliases[font.alias];
+  return all == null ? const [] : [for (final a in all) if (_registered.contains(a)) a];
+}
+
 /// Marks [font] as loaded without loading anything, for tests.
 @visibleForTesting
 void debugMarkCaptionFontRegistered(CaptionFont font, {bool registered = true}) {
@@ -111,6 +131,7 @@ void debugMarkCaptionFontRegistered(CaptionFont font, {bool registered = true}) 
 @visibleForTesting
 void debugResetCaptionFonts() {
   _registered.clear();
+  _subsetAliases.clear();
   _reportedMissing.clear();
   _loading.clear();
   _catalog = null;
@@ -271,13 +292,14 @@ Future<CaptionFont> importCaptionFont(AppStorage storage, String fileName, Uint8
 
 final Map<String, Future<bool>> _loading = {};
 
-/// Loads [font] into the engine, from its installed file, its imported file,
-/// or (a style made on another device) the same family installed here;
-/// true once it can be drawn. False when the font is not on this device:
-/// the caption then uses the built-in font. Never throws.
+/// Loads [font] into the engine, from its downloaded files, its installed
+/// file, its imported file, or (a style made on another device) the same family
+/// installed here; true once it can be drawn. False when the font is not on
+/// this device: the caption then uses the built-in font. Never throws, and
+/// never contacts anyone: a font is only ever downloaded when the user says so.
 Future<bool> prepareCaptionFont(AppStorage storage, CaptionFont font) {
   if (_registered.contains(font.alias)) return Future.value(true);
-  final key = '${font.alias}|${font.path}|${font.fileId}';
+  final key = '${font.alias}|${font.path}|${font.fileId}|${font.source?.id}';
   final running = _loading[key];
   if (running != null) return running;
   final job = _load(storage, font).catchError((Object e) {
@@ -292,6 +314,8 @@ Future<bool> prepareCaptionFont(AppStorage storage, CaptionFont font) {
 }
 
 Future<bool> _load(AppStorage storage, CaptionFont font) async {
+  // A style that names the font list's font: that one, where it is here.
+  if (font.source != null && await _loadDownloaded(storage, font)) return true;
   final sources = <FontSource>[];
   Future<void> addFile(String? path) async {
     if (path == null || !await files.fontFileExists(path)) return;
@@ -310,7 +334,9 @@ Future<bool> _load(AppStorage storage, CaptionFont font) async {
   } else {
     sources.addAll(installed.where((s) => s.path != font.path));
   }
-  if (sources.isEmpty) return false;
+  // The same family downloaded here: also for a style that lost its source
+  // going through a device with 1.3.
+  if (sources.isEmpty) return font.source == null && await _loadDownloaded(storage, font);
 
   FontSource? pick(FontFace? face) => face == null ? null : sources.firstWhere((s) => identical(s.face, face));
   final regular = pick(regularFaceOf(sources.map((s) => s.face)));
@@ -326,12 +352,95 @@ Future<bool> _load(AppStorage storage, CaptionFont font) async {
   return true;
 }
 
+/// Loads the downloaded font [font] names, or the one of the same family:
+/// its first subset under [CaptionFont.alias], each other one under a name of
+/// its own, all weights of a subset together. False when it is not here or its
+/// first subset cannot be read.
+Future<bool> _loadDownloaded(AppStorage storage, CaptionFont font) async {
+  final dataDir = storage.dataDir;
+  if (dataDir == null) return false;
+  final all = await listDownloadedFonts(dataDir);
+  final id = font.source?.id;
+  final lower = font.family.toLowerCase();
+  final match = all.where((f) => id != null ? f.id == id : f.family.toLowerCase() == lower).firstOrNull;
+  if (match == null) return false;
+  final bySubset = <String, List<Uint8List>>{};
+  await Future.wait([
+    for (final f in match.files)
+      files.readCatalogFontFile(dataDir, match.folder, f.file, f.sha256).then((bytes) {
+        if (bytes != null) (bySubset[f.subset] ??= []).add(bytes);
+      }),
+  ]);
+  if (bySubset[match.subsets.first] == null) return false;
+  await _registerSubsets(font, match, bySubset);
+  return true;
+}
+
+Future<void> _registerSubsets(CaptionFont font, DownloadedFont downloaded, Map<String, List<Uint8List>> bySubset) async {
+  final first = downloaded.subsets.first;
+  String aliasOf(String subset) => subset == first ? font.alias : '${font.alias}/$subset';
+  _subsetAliases[font.alias] = [for (final s in downloaded.subsets) if (s != first) aliasOf(s)];
+  await Future.wait([
+    for (final s in downloaded.subsets)
+      if (bySubset[s] != null && s != first) _register(aliasOf(s), bySubset[s]!),
+  ]);
+  // Last: the font counts as loaded only with every script in place.
+  if (bySubset[first] != null) await _register(font.alias, bySubset[first]!);
+}
+
+/// The font a downloaded font is chosen as.
+CaptionFont captionFontOf(DownloadedFont downloaded) => CaptionFont(family: downloaded.family, source: downloaded.source);
+
+/// Adds weights that were just downloaded to a font already in use.
+Future<void> registerAddedFontWeights(DownloadedFont downloaded, Map<DownloadedFontFile, Uint8List> added) async {
+  final font = captionFontOf(downloaded);
+  if (!_registered.contains(font.alias)) return;
+  final bySubset = <String, List<Uint8List>>{};
+  for (final e in added.entries) {
+    (bySubset[e.key.subset] ??= []).add(e.value);
+  }
+  await _registerSubsets(font, downloaded, bySubset);
+}
+
+/// Stops using a downloaded font that was removed: styles naming it draw the
+/// built-in font again and offer it once more. The engine keeps the file's
+/// glyphs until NEFORUM restarts, under a name no style then uses.
+void forgetDownloadedFont(String family) {
+  final alias = CaptionFont(family: family).alias;
+  _registered.remove(alias);
+  for (final a in _subsetAliases.remove(alias) ?? const <String>[]) {
+    _registered.remove(a);
+  }
+  final prefix = '${family.toLowerCase()}|';
+  _reportedMissing.removeWhere((k) => k.startsWith(prefix));
+  captionFontsRevision.value++;
+}
+
 final Set<String> _reportedMissing = {};
+
+/// A picture was drawn without a font the font list has: the app can offer
+/// [font] to the user. The picture is already drawn, and nothing waits for this.
+@immutable
+class MissingFontOffer {
+  const MissingFontOffer(this.font, this.usage);
+  final CaptionFont font;
+
+  /// What used the default font: "the text card", "the caption on the photo".
+  final String usage;
+}
+
+final StreamController<MissingFontOffer> _missingFontOffers = StreamController<MissingFontOffer>.broadcast();
+
+/// Fonts to offer, for the app to show wherever the user is. Nobody listens in
+/// a background run, which only draws in the default font.
+Stream<MissingFontOffer> get missingFontOffers => _missingFontOffers.stream;
 
 /// [prepareCaptionFont] for a picture that is being saved: within the render
 /// time limit, and when the font is not on this device the user is told once
 /// per family and [usage] (each run) that [usage] ("the caption on the
-/// photo", "the text card") uses the built-in font.
+/// photo", "the text card") uses the built-in font. Never waits for a download,
+/// so a scheduled post is never held up by a font: one from the font list is
+/// only offered ([missingFontOffers]).
 Future<bool> prepareCaptionFontForRender(AppStorage storage, CaptionFont font, {String usage = 'the caption on the photo'}) async {
   bool ready;
   try {
@@ -340,8 +449,13 @@ Future<bool> prepareCaptionFontForRender(AppStorage storage, CaptionFont font, {
     ready = false;
   }
   if (!ready && _reportedMissing.add('${font.family.toLowerCase()}|$usage')) {
-    reportRenderWarning('The font ${font.family} is not on this device, so $usage uses the default font. '
-        'Install or import ${font.family} here to use it.');
+    if (font.source != null) {
+      debugPrint('The font ${font.family} is not on this device, so $usage uses the default font.');
+      _missingFontOffers.add(MissingFontOffer(font, usage));
+    } else {
+      reportRenderWarning('The font ${font.family} is not on this device, so $usage uses the default font. '
+          'Install or import ${font.family} here to use it.');
+    }
   }
   return ready;
 }
@@ -355,6 +469,9 @@ final installedFontsProvider = FutureProvider<InstalledFontCatalog>((ref) => loa
 
 /// The fonts the user imported ([loadImportedFonts]).
 final importedFontsProvider = FutureProvider<List<ImportedFont>>((ref) => loadImportedFonts(ref.read(servicesProvider).storage));
+
+/// The fonts downloaded from the font list ([listDownloadedFonts]).
+final downloadedFontsProvider = FutureProvider<List<DownloadedFont>>((ref) => listDownloadedFonts(ref.read(servicesProvider).storage.dataDir));
 
 /// Whether [font] is loaded and drawn ([prepareCaptionFont]); true for no
 /// custom font. Watching it starts the loading.

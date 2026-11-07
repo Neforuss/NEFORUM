@@ -47,7 +47,9 @@ dependencies:
 
   # Utilities
   collection: ^1.19.0
+  crypto: ^3.0.7
   cross_file: any
+  http: ^1.6.0
   image: ^4.10.1
   mime: ^2.1.0
   path: ^1.9.0

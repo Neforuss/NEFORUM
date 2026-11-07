@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/caption_fonts.dart' show CaptionFont;
+import '../media/font_catalog.dart' show FontDownloadMode;
 import '../media/text_card.dart';
 import '../platform/update_check.dart';
 import '../theme/tokens.dart';
@@ -189,6 +190,7 @@ class AppSettings {
     this.updateCheckedAt,
     this.updateLatestRelease = const {},
     this.updateDismissedVersion,
+    this.fontDownloads = FontDownloadMode.ask, // 1.4: fonts
     this.textCardEveryNetwork = false, // 1.3: cards
     // 1.3.1: sidebar
     this.navigationChromeOpacity = 0,
@@ -267,6 +269,7 @@ class AppSettings {
         updateCheckedAt: DateTime.tryParse('${j['updateCheckedAt'] ?? ''}'),
         updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
+        fontDownloads: FontDownloadMode.values.asNameMap()[j['fontDownloads']] ?? FontDownloadMode.ask, // 1.4: fonts
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
@@ -475,6 +478,11 @@ class AppSettings {
   /// a later one comes out (critical ones come back at the next start).
   /// Device-only.
   final String? updateDismissedVersion;
+
+  /// 1.4: fonts. Whether this device may contact the font list. Device-only:
+  /// agreeing to contact a third party is per device.
+  final FontDownloadMode fontDownloads;
+
   /// 1.3: cards. New text-only posts start with the same text card on every
   /// network that takes images, not only on those that need one. Each post
   /// can change it.
@@ -594,6 +602,7 @@ class AppSettings {
     DateTime? updateCheckedAt,
     Map<String, dynamic>? updateLatestRelease,
     String? updateDismissedVersion,
+    FontDownloadMode? fontDownloads, // 1.4: fonts
     bool? textCardEveryNetwork, // 1.3: cards
     // 1.3.1: sidebar
     double? navigationChromeOpacity,
@@ -669,6 +678,7 @@ class AppSettings {
         updateCheckedAt: updateCheckedAt ?? this.updateCheckedAt,
         updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
+        fontDownloads: fontDownloads ?? this.fontDownloads, // 1.4: fonts
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
@@ -745,6 +755,7 @@ class AppSettings {
         if (updateCheckedAt != null) 'updateCheckedAt': updateCheckedAt!.toUtc().toIso8601String(),
         if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
+        'fontDownloads': fontDownloads.name, // 1.4: fonts
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,

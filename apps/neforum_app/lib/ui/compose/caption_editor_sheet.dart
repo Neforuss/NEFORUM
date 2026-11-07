@@ -16,6 +16,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart' show showToast;
+import 'font_download_sheet.dart';
 import 'font_picker_sheet.dart';
 
 /// The colours a colour fill would use around the photo at a path; `.$2` =
@@ -384,7 +385,7 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
         ),
       ]),
       if (_style.customFont case final custom?)
-        if (ref.watch(captionFontReadyProvider(custom)) case AsyncData(value: false))
+        if (ref.watch(captionFontReadyProvider(custom)) case AsyncData(value: false)) ...[
           Padding(
             padding: const EdgeInsets.only(top: Space.xs),
             child: Text(
@@ -392,6 +393,8 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
               style: context.text.bodySmall?.copyWith(color: nf.textFaint),
             ),
           ),
+          MissingFontDownloadButton(font: custom),
+        ],
       const SizedBox(height: Space.md),
       Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
         FilterChip(

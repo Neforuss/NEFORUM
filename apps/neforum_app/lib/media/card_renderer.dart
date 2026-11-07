@@ -449,7 +449,9 @@ class CardDesignPainter extends CustomPainter {
         : null;
     return TextStyle(
       fontFamily: alias ?? resolved.family,
-      fontFamilyFallback: alias == null ? [...resolved.fallback, ...kCaptionFontFallbacks] : [resolved.family, ...resolved.fallback, ...kCaptionFontFallbacks],
+      fontFamilyFallback: alias == null
+          ? [...resolved.fallback, ...kCaptionFontFallbacks]
+          : [...captionFontSubsetAliases(b.customFont), resolved.family, ...resolved.fallback, ...kCaptionFontFallbacks],
       fontWeight: weight,
       fontStyle: b.italic ? FontStyle.italic : FontStyle.normal,
       fontVariations: alias == null && resolved.variations.isNotEmpty ? [FontVariation('wght', b.weight.toDouble())] : null,

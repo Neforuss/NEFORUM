@@ -72,6 +72,7 @@ const int _maxNameTable = 4 << 20;
 const int _tagTtcf = 0x74746366; // 'ttcf'
 const int _tagName = 0x6E616D65; // 'name'
 const int _tagOs2 = 0x4F532F32; // 'OS/2'
+const int _tagCmap = 0x636D6170; // 'cmap'
 
 int _u16(Uint8List b, int o) => b[o] << 8 | b[o + 1];
 int _u32(Uint8List b, int o) => b[o] << 24 | b[o + 1] << 16 | b[o + 2] << 8 | b[o + 3];
@@ -254,6 +255,152 @@ Uint8List? extractFontFace(Uint8List bytes, int index) {
   } on Object {
     return null;
   }
+}
+
+/// Most code points read from one font's character map. The largest real
+/// fonts map about 70,000.
+const int _maxMappedCodePoints = 200000;
+
+/// The Unicode character map of a single-face font: code point -> glyph
+/// index, without code points that map to the missing glyph. Empty for
+/// anything without a character map NEFORUM reads (format 4 or 12).
+Map<int, int> readCharacterMap(Uint8List bytes) {
+  final out = <int, int>{};
+  try {
+    final tables = _tables(bytesFontReader(bytes), 0);
+    final cmap = tables?[_tagCmap];
+    if (cmap == null || cmap.$1 + cmap.$2 > bytes.length || cmap.$2 < 4) return out;
+    final at = cmap.$1;
+    final count = _u16(bytes, at + 2);
+    var bestScore = 0, bestOffset = -1;
+    for (var i = 0; i < count; i++) {
+      final r = at + 4 + i * 8;
+      final platform = _u16(bytes, r), encoding = _u16(bytes, r + 2);
+      final offset = at + _u32(bytes, r + 4);
+      if (offset + 2 > bytes.length) continue;
+      final format = _u16(bytes, offset);
+      final int score;
+      if (format == 12 && (platform == 3 && encoding == 10 || platform == 0)) {
+        score = 4;
+      } else if (format == 4 && platform == 3 && encoding == 1) {
+        score = 3;
+      } else if (format == 4 && platform == 0) {
+        score = 2;
+      } else if (format == 4 && platform == 3 && encoding == 0) {
+        score = 1;
+      } else {
+        continue;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestOffset = offset;
+      }
+    }
+    if (bestOffset < 0) return out;
+    if (_u16(bytes, bestOffset) == 12) {
+      _readCmapFormat12(bytes, bestOffset, out);
+    } else {
+      _readCmapFormat4(bytes, bestOffset, out);
+    }
+  } on Object {
+    // A file that lies about its sizes: whatever was read stays.
+  }
+  return out;
+}
+
+void _readCmapFormat4(Uint8List b, int at, Map<int, int> out) {
+  final segments = _u16(b, at + 6) ~/ 2;
+  final ends = at + 14, starts = ends + segments * 2 + 2, deltas = starts + segments * 2, ranges = deltas + segments * 2;
+  for (var s = 0; s < segments; s++) {
+    final end = _u16(b, ends + s * 2), start = _u16(b, starts + s * 2);
+    final delta = _u16(b, deltas + s * 2), range = _u16(b, ranges + s * 2);
+    for (var c = start; c <= end && c != 0xFFFF; c++) {
+      var glyph = 0;
+      if (range == 0) {
+        glyph = (c + delta) & 0xFFFF;
+      } else {
+        final g = _u16(b, ranges + s * 2 + range + (c - start) * 2);
+        if (g != 0) glyph = (g + delta) & 0xFFFF;
+      }
+      if (glyph != 0) out[c] = glyph;
+      if (out.length >= _maxMappedCodePoints) return;
+    }
+  }
+}
+
+void _readCmapFormat12(Uint8List b, int at, Map<int, int> out) {
+  final groups = _u32(b, at + 12);
+  for (var g = 0; g < groups; g++) {
+    final r = at + 16 + g * 12;
+    final start = _u32(b, r), end = _u32(b, r + 4), first = _u32(b, r + 8);
+    if (end < start || end > 0x10FFFF) continue;
+    for (var c = start; c <= end; c++) {
+      final glyph = first + c - start;
+      if (glyph != 0) out[c] = glyph;
+      if (out.length >= _maxMappedCodePoints) return;
+    }
+  }
+}
+
+/// Code points that draw nothing in a working font: spaces, controls, format
+/// characters, blanks and private use.
+bool _isBlankByDesign(int c) =>
+    c <= 0x20 ||
+    (c >= 0x7F && c <= 0xA0) ||
+    c == 0xAD ||
+    c == 0x34F ||
+    c == 0x61C ||
+    (c >= 0x115F && c <= 0x1160) ||
+    c == 0x1680 ||
+    (c >= 0x17B4 && c <= 0x17B5) ||
+    (c >= 0x180B && c <= 0x180F) ||
+    (c >= 0x2000 && c <= 0x200F) ||
+    (c >= 0x2028 && c <= 0x202F) ||
+    (c >= 0x205F && c <= 0x206F) ||
+    c == 0x2800 ||
+    c == 0x3000 ||
+    c == 0x3164 ||
+    (c >= 0xD800 && c <= 0xF8FF) ||
+    (c >= 0xFE00 && c <= 0xFE0F) ||
+    c == 0xFEFF ||
+    c == 0xFFA0 ||
+    (c >= 0xFFF0 && c <= 0xFFFF) ||
+    c >= 0xE0000;
+
+/// How many characters [fontSampleCodePoints] picks.
+const int kFontSampleSize = 8;
+
+/// Characters that this very file maps, to test that it really draws: "A" and
+/// "g" where it has them, then others spread over what it covers. Asking a
+/// font for characters it lacks would test the system's fallback font instead.
+/// Empty when the file maps nothing drawable.
+List<int> fontSampleCodePoints(Uint8List bytes) {
+  final mapped = readCharacterMap(bytes).keys.where((c) => !_isBlankByDesign(c)).toList()..sort();
+  if (mapped.isEmpty) return const [];
+  final chosen = <int>[
+    if (mapped.contains(0x41)) 0x41,
+    if (mapped.contains(0x67)) 0x67,
+  ];
+  final room = kFontSampleSize - chosen.length;
+  for (var i = 0; i < room; i++) {
+    final c = mapped[(i * mapped.length) ~/ room];
+    if (!chosen.contains(c)) chosen.add(c);
+  }
+  return chosen;
+}
+
+/// Whether [bytes] is a whole plain font file a downloaded font may be: an
+/// sfnt with every table inside the file, a readable family name and a
+/// character map. False for WOFF and WOFF2 (the engine would accept them and
+/// draw nothing), collections, a file cut short and an error page.
+bool isWholeFontFile(Uint8List bytes) {
+  if (bytes.length < 12 || !_isSfntVersion(_u32(bytes, 0))) return false;
+  final tables = _tables(bytesFontReader(bytes), 0);
+  if (tables == null) return false;
+  for (final (offset, length) in tables.values) {
+    if (offset + length > bytes.length) return false;
+  }
+  return readFontFacesFromBytes(bytes).isNotEmpty && readCharacterMap(bytes).isNotEmpty;
 }
 
 /// The face of [faces] to draw regular words in: upright and closest to
