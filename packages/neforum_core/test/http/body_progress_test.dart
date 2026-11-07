@@ -6,6 +6,8 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
+import 'package:neforum_core/src/http/transient_io.dart' as io;
+import 'package:neforum_core/src/http/transient_stub.dart' as web;
 import 'package:test/test.dart';
 
 /// Reads what the connection would read, then answers.
@@ -97,6 +99,11 @@ void main() {
     await net(_ReadingClient(status: 413)).putBytes(url, Uint8List(100 * 1024), throwOnError: false);
     expect(seen.last.answered, isTrue);
     expect(seen.last.confirmed, isFalse);
+  });
+
+  test('a browser collects the body first, so only there do its pieces count for nothing', () {
+    expect(io.bodyPiecesAreCounted, isTrue);
+    expect(web.bodyPiecesAreCounted, isFalse);
   });
 
   test('bound keeps what it is not given', () {

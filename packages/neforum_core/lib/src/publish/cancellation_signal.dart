@@ -3,7 +3,11 @@ import 'dart:async';
 /// Thrown by work that stopped because its [CancellationSignal] was
 /// cancelled (an HTTP request aborted, a retry pause cut short).
 class OperationCancelledException implements Exception {
-  const OperationCancelledException();
+  const OperationCancelledException({this.notSent = false});
+
+  /// The request's body never went out whole, so the server cannot have acted on
+  /// it. False means nothing is known either way.
+  final bool notSent;
 
   @override
   String toString() => 'The operation was cancelled';

@@ -368,6 +368,24 @@ void main() {
       expect(tracker.current.permille, 1000);
     });
 
+    test('an account that cannot be read fails its own target and no other', () async {
+      await save(const [PostTarget(accountId: 'gone'), PostTarget(accountId: 'a')]);
+      final broken = _BrokenFor('gone');
+      await broken.upsert(fakeAccount('net', id: 'a'));
+      final done = await PublishService(
+        registry: AdapterRegistry([net]),
+        accounts: broken,
+        posts: posts,
+        secrets: InMemorySecretStore(),
+        quota: QuotaTracker(InMemoryQuotaRepository()),
+        http: NeforumHttp(client: MockClient((_) async => http.Response('', 500)), maxRetries: 0),
+        clock: () => testNow,
+        log: Logger('test', sink: (l, a, m, [e]) {}),
+      ).publish('p1');
+      expect(done.targetFor('a')!.status, TargetStatus.published);
+      expect(done.targetFor('gone')!.status, isNot(TargetStatus.published));
+    });
+
     group('hand-offs wait for the automatic targets', () {
       test('whatever order the post lists them in', () async {
         await save(const [PostTarget(accountId: 'hand'), PostTarget(accountId: 'a'), PostTarget(accountId: 'b')]);
@@ -493,6 +511,16 @@ class _Launcher implements HandoffLauncher {
     onShown(account.id);
     return answer == null ? HandoffResult.launched : answer!();
   }
+}
+
+/// Accounts whose file cannot give one of them.
+class _BrokenFor extends InMemoryAccountRepository {
+  _BrokenFor(this.id);
+
+  final String id;
+
+  @override
+  Future<ConnectedAccount?> get(String accountId) => accountId == id ? throw StateError('busy file') : super.get(accountId);
 }
 
 /// A usage count that says one account's quota is used up.

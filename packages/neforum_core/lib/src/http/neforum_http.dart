@@ -413,7 +413,7 @@ class NeforumHttp {
     while (true) {
       attempt++;
       meter.sent = 0;
-      signal?.throwIfCancelled();
+      if (signal != null && signal.isCancelled) throw const OperationCancelledException(notSent: true);
       try {
         final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
         // The host only: some APIs carry a token in the path or the query.
@@ -446,11 +446,11 @@ class NeforumHttp {
       } on HttpFailure {
         rethrow;
       } on OperationCancelledException {
-        rethrow;
+        throw OperationCancelledException(notSent: upload && meter.sent < meter.total);
       } on Object catch (e) {
         // An aborted request surfaces as a ClientException; report it as
         // the cancellation it is, never as a network error to retry.
-        if (signal != null && signal.isCancelled) throw const OperationCancelledException();
+        if (signal != null && signal.isCancelled) throw OperationCancelledException(notSent: upload && meter.sent < meter.total);
         if (!isTransportError(e)) rethrow;
         final cause = _safeDetails('$e');
         final trace = upload
@@ -576,7 +576,8 @@ class NeforumHttp {
       source,
       onPiece: (n) {
         meter.sent += n;
-        report?.call();
+        // A browser collects the whole body first: there, only the answer means anything.
+        if (bodyPiecesAreCounted) report?.call();
       },
       onProgress: () => arm(stallLimit, 'Nothing could be sent to ${url.host} for ${stallLimit.inSeconds} s'),
       onSent: () => arm(answerLimit, '${url.host} did not answer within ${answerLimit.inSeconds} s of the upload'),

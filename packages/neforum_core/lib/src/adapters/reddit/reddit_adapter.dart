@@ -483,7 +483,11 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     ctx.serverWait('Waiting for Reddit to process the media');
     String? message;
     try {
-      message = await _socketReader(ws, mediaSocketTimeout);
+      final read = _socketReader(ws, mediaSocketTimeout);
+      final signal = ctx.cancellation;
+      // Cancel ends the wait, not the post: Reddit has it, so this reads as a socket
+      // that said nothing.
+      message = await (signal == null ? read : Future.any<String?>([read, signal.whenCancelled.then<String?>((_) => null)]));
     } on Object catch (e) {
       ctx.log.warn('Reddit media status socket failed; the post is probably still being created', e);
       return sub;

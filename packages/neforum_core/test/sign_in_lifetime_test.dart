@@ -980,8 +980,31 @@ void main() {
           ),
         );
         expect(story.remoteId, 'p1');
-        expect(story.error!.outcomeUnknown, isTrue);
+        // What was lost is the upload of an unpublished photo, which makes no post.
+        expect(story.error!.message, contains('Could not reach Facebook'));
+        expect(story.error!.outcomeUnknown, isNot(isTrue));
         expectClean('${story.error!.message} ${story.error!.raw}', 'Facebook, the story');
+
+        // The story's own post call: that one may be live.
+        final storyPost = await FacebookAdapter().publish(
+          PostVariant(text: 'hello', storyMedia: [fakeImage(width: 1080, height: 1920)], extra: const {kPlacementKey: 'feedAndStory'}),
+          facebookAccount,
+          keys,
+          AdapterContext(
+            http: NeforumHttp(
+                client: MockClient((r) async => r.url.path.endsWith('/feed')
+                    ? http.Response(jsonEncode({'id': 'p1'}), 200)
+                    : r.url.path.endsWith('/photos')
+                        ? http.Response(jsonEncode({'id': 'ph1'}), 200)
+                        : lost(r)),
+                maxRetries: 0),
+            clock: () => _now,
+            readMedia: (_) async => Uint8List(1),
+          ),
+        );
+        expect(storyPost.remoteId, 'p1');
+        expect(storyPost.error!.outcomeUnknown, isTrue, reason: '${storyPost.error}');
+        expectClean('${storyPost.error!.message} ${storyPost.error!.raw}', 'Facebook, the story post');
 
         // Taking back a scheduled post: DELETE has the token in its address.
         Object? thrown;

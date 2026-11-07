@@ -9,6 +9,7 @@ import '../../model/post.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
+import '../../publish/cancellation_signal.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
@@ -248,7 +249,7 @@ class NostrAdapter extends PlatformAdapter {
       ).uploadAll(variant.media);
 
       ctx.progress('Connecting to ${relays.length} relay${relays.length == 1 ? '' : 's'}');
-      final opened = await Future.wait(relays.map((r) => RelaySession.open(
+      final opening = Future.wait(relays.map((r) => RelaySession.open(
             r,
             _connector,
             timeout: connectTimeout,
@@ -264,6 +265,18 @@ class NostrAdapter extends PlatformAdapter {
               ],
             ),
           )));
+      final List<({RelaySession? session, RelayAck? failure})> opened;
+      try {
+        opened = await ctx.untilCancelled(opening);
+      } on OperationCancelledException {
+        // Sockets that open after Cancel have nobody left to close them.
+        unawaited(opening.then((all) async {
+          for (final o in all) {
+            if (o.session case final s?) await _closeQuietly(s);
+          }
+        }));
+        rethrow;
+      }
       final openFailures = <RelayAck>[];
       for (final o in opened) {
         if (o.session != null) sessions.add(o.session!);
@@ -303,10 +316,18 @@ class NostrAdapter extends PlatformAdapter {
             parts.length > 1
                 ? 'Sending part ${i + 1} of ${parts.length} to ${live.length} relays'
                 : 'Sending note to ${live.length} relay${live.length == 1 ? '' : 's'}',
-            () => Future.wait(live.map((s) => s.publish(event, relayTimeout))));
+            () => ctx.untilCancelled(Future.wait(live.map((s) => s.publish(event, relayTimeout)))));
         final accepted = acks.where((a) => a.accepted).toList();
         if (accepted.isEmpty && acks.any((a) => a.status == RelayAckStatus.timeout || a.status == RelayAckStatus.connectionError)) {
-          throw AdapterException(ctx.outcomeUnknownError(details: acks.map((a) => '$a').join('; ')));
+          final unknown = ctx.outcomeUnknownError(details: acks.map((a) => '$a').join('; '));
+          throw AdapterException(i == 0
+              ? unknown
+              : PublishError(
+                  kind: unknown.kind,
+                  outcomeUnknown: true,
+                  raw: unknown.raw,
+                  message: '${unknown.message} The first $i part${i == 1 ? ' is' : 's are'} already live at https://njump.me/${Nip19.encode('note', ids.first)}',
+                ));
         }
         for (final a in acks.where((a) => !a.accepted)) {
           ctx.log.warn('Nostr relay $a');

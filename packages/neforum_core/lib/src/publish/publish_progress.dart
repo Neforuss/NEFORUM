@@ -534,7 +534,9 @@ class TargetProgressTracker {
       if (total > 0) slot.total = total;
       slot.high = math.max(math.min(slot.high, slot.total), math.min(position, slot.total));
     }
-    if (_resending && !e.confirmed) {
+    // Sending again, or told by the server to start lower: nothing measured so far
+    // says anything about the speed from here on.
+    if (_resending) {
       _meter.reset();
     } else {
       _meter.add(e.at, position, confirmed: e.confirmed);
@@ -661,11 +663,13 @@ class PublishProgressTracker {
   final Map<String, TargetProgressTracker> _targets = {};
   DateTime? _lastPublished;
   int _shown = 0;
+  bool _planned = false;
 
   /// Sets the run's members. Targets that are not part of the run are left out of
   /// every figure.
   void plan(PublishRunPlan plan) {
     final now = _now();
+    _planned = true;
     _targets.clear();
     for (final t in plan.targets) {
       if (t.outcome == TargetOutcome.notThisRun) continue;
@@ -709,7 +713,8 @@ class PublishProgressTracker {
       if (t.outcome == TargetOutcome.failed) failed++;
     }
     final raw = weights == 0 ? 0 : sum ~/ weights;
-    _shown = open ? math.max(_shown, math.min(raw, kPermilleCapUntilOutcome)) : 1000;
+    // Before the plan nothing has ended: a look this early must not stick at 100.
+    if (_planned) _shown = open ? math.max(_shown, math.min(raw, kPermilleCapUntilOutcome)) : 1000;
     return PostProgress(
       postId: postId,
       permille: _shown,

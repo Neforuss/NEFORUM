@@ -91,6 +91,8 @@ class AdapterContext {
   String? _slot;
   int _waitPolls = 0;
   int _created = 0;
+  DateTime? _stageSince;
+  int _stageBytes = 0;
 
   bool get isCancelled => cancellation?.isCancelled ?? false;
 
@@ -124,6 +126,13 @@ class AdapterContext {
     int attempt = 1,
     int? waitPolls,
   }) {
+    if (onEvent != null) {
+      if (stage != _stage) {
+        finishStage();
+        _stageSince = now();
+      }
+      if (position != null && position > _stageBytes) _stageBytes = position;
+    }
     _stage = stage;
     onEvent?.call(ProgressEvent(
       stage: stage,
@@ -139,6 +148,18 @@ class AdapterContext {
       attempt: attempt,
       waitPolls: waitPolls,
     ));
+  }
+
+  /// Leaves the trace of the stage that just ended: one local log line with how long
+  /// it took and how many bytes it counted. The publish service calls this when a
+  /// target ends; the last stage has nothing after it to end it.
+  void finishStage() {
+    final since = _stageSince;
+    final stage = _stage;
+    if (since == null || stage == null) return;
+    log.debug('Stage ${stage.name}: ${now().difference(since).inMilliseconds} ms, $_stageBytes bytes');
+    _stageSince = null;
+    _stageBytes = 0;
   }
 
   /// [m] starts going up. Bodies from here on count toward its slot of the plan,
@@ -234,14 +255,11 @@ class AdapterContext {
       return result;
     } on HttpFailure {
       rethrow;
-    } on OperationCancelledException {
-      if (idempotent) rethrow;
+    } on OperationCancelledException catch (e) {
+      // Stopped halfway through its body, this request can have made nothing.
+      if (idempotent || e.notSent) rethrow;
       mayBeLive = true;
-      throw AdapterException(PublishError(
-        kind: PublishErrorKind.cancelled,
-        message: _unconfirmedMessage,
-        outcomeUnknown: true,
-      ));
+      throw AdapterException(cancelledUnconfirmedError());
     } on Object catch (e) {
       if (idempotent || !NeforumHttp.isTransportError(e) || NeforumHttp.neverReachedServer(e)) rethrow;
       mayBeLive = true;
@@ -261,6 +279,17 @@ class AdapterContext {
         uploadInterrupted: uploadInterrupted ? true : null,
         outcomeUnknown: true,
       );
+
+  /// The same, when the person cancelled before anyone could say.
+  PublishError cancelledUnconfirmedError() => PublishError(kind: PublishErrorKind.cancelled, message: _unconfirmedMessage, outcomeUnknown: true);
+
+  /// [future], or [OperationCancelledException] as soon as the run is cancelled. For
+  /// work [http] does not carry, such as relay sockets.
+  Future<T> untilCancelled<T>(Future<T> future) {
+    final signal = cancellation;
+    if (signal == null) return future;
+    return Future.any([future, signal.whenCancelled.then<T>((_) => throw const OperationCancelledException())]);
+  }
 
   void _routeBody(BodyProgress p) {
     final slot = _slot;

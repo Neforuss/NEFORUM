@@ -503,8 +503,14 @@ class PublishService {
     final automatic = <PostTarget>[];
     final handoffs = <PostTarget>[];
     for (final t in post.targets) {
-      final account = await accounts.get(t.accountId);
-      (account?.tier == PlatformTier.handoff ? handoffs : automatic).add(t);
+      PlatformTier? tier;
+      try {
+        tier = (await accounts.get(t.accountId))?.tier;
+      } on Object catch (e) {
+        // The target itself reports what is wrong with it when its turn comes.
+        _log.debug('Could not read the account of ${t.accountId}: $e');
+      }
+      (tier == PlatformTier.handoff ? handoffs : automatic).add(t);
     }
     return [...automatic, ...handoffs];
   }
@@ -688,7 +694,7 @@ class PublishService {
       log.info('${account.displayName}: keeping the schedule on this device (${issues.errors.first.message})');
       return null;
     }
-    final ctx = context(onProgress: onProgress, log: log);
+    final ctx = context(onProgress: onProgress, log: log, networkName: name);
     final (secretMap, secretError) = await _freshSecrets(account, adapter, ctx);
     if (secretMap == null) {
       log.warn('${account.displayName}: could not hand the schedule to $name (${secretError?.message}); it stays on this device');
@@ -1051,6 +1057,7 @@ class PublishService {
       result = await _publishSeries(adapter, variant, account, secretMap, ctx, log,
           first: result, done: earlier?.seriesRemoteIds ?? const [], cancelled: cancelled);
     }
+    ctx.finishStage();
     // What this attempt put live; an earlier one already counted its own.
     final alreadyCounted = earlier?.allRemoteIds.length ?? 0;
 

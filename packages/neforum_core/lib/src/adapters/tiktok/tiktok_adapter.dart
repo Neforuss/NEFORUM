@@ -13,6 +13,7 @@ import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
+import '../../publish/cancellation_signal.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
@@ -367,6 +368,7 @@ class TikTokAdapter extends PlatformAdapter {
                   if (variant.extraAs<bool>('isAigc') == true) 'is_aigc': true,
                 },
                 context: 'TikTok photo init',
+                makesPost: true,
               ),
           countsAsPosted: false);
       final publishId = init['publish_id'] as String?;
@@ -446,9 +448,18 @@ class TikTokAdapter extends PlatformAdapter {
   Future<_Status> _poll(String publishId, String token, AdapterContext ctx) async {
     ctx.serverWait('Waiting for TikTok to process the post');
     for (var i = 0; i < maxPolls; i++) {
-      await ctx.wait(pollInterval);
-      final data = await tiktokCall(ctx, 'POST', TikTokEndpoints.statusFetch, token,
-          body: {'publish_id': publishId}, context: 'TikTok status');
+      final Map<String, dynamic> data;
+      // TikTok has the post by now, so a status it could not give, or a Cancel while
+      // waiting for it, must not leave a target that a retry would post twice.
+      try {
+        await ctx.wait(pollInterval);
+        data = await tiktokCall(ctx, 'POST', TikTokEndpoints.statusFetch, token,
+            body: {'publish_id': publishId}, context: 'TikTok status');
+      } on OperationCancelledException {
+        throw AdapterException(ctx.cancelledUnconfirmedError());
+      } on AdapterException catch (e) {
+        throw AdapterException(ctx.outcomeUnknownError(details: e.error.raw ?? e.error.message));
+      }
       final status = data['status'] as String? ?? '';
       switch (status) {
         case 'PUBLISH_COMPLETE':

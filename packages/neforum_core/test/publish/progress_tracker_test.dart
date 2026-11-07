@@ -58,6 +58,29 @@ void main() {
       expect(t.permille, greaterThan(before!));
     });
 
+    test('after a resume from a lower offset the time left starts over, and can come back', () {
+      final t = tracker(ProgressFamily.wholeFile, slots: const [ProgressSlot('a', 1000000)]);
+      var sent = 0;
+      void second() {
+        now = now.add(const Duration(seconds: 1));
+        sent += 1000;
+        t.apply(bytes(sent, 1000000));
+      }
+
+      for (var i = 0; i < 25; i++) {
+        second();
+      }
+      expect(t.snapshot(now).eta, isNotNull);
+      t.apply(bytes(sent = 5000, 1000000, confirmed: true));
+      expect(t.snapshot(now).eta, isNull, reason: 'the server says less than the count did');
+      expect(t.snapshot(now).resending, isTrue);
+      for (var i = 0; i < 60; i++) {
+        second();
+      }
+      expect(t.snapshot(now).resending, isFalse);
+      expect(t.snapshot(now).eta, isNotNull, reason: 'past the old mark, and two windows agree again');
+    });
+
     test('all sent with no answer is not 100, and neither is every step counted', () {
       final t = tracker(ProgressFamily.direct);
       t.apply(bytes(1000, 1000));
@@ -335,6 +358,20 @@ void main() {
       expect(updates, 8, reason: 'a stage change goes out at once');
       run.outcome('x', TargetOutcome.published);
       expect(updates, 9, reason: 'so does an outcome');
+    });
+
+    test('a look before the plan reads 0 and does not stick', () {
+      final run = PublishProgressTracker(postId: 'p', clock: () => now);
+      expect(run.current.permille, 0);
+      run.plan(plan([member('a'), member('b')]));
+      expect(run.current.permille, 0);
+      run.outcome('a', TargetOutcome.published);
+      expect(run.current.permille, 500);
+    });
+
+    test('a run with nothing to do is finished', () {
+      final run = PublishProgressTracker(postId: 'p', clock: () => now)..plan(plan([member('a', text, TargetOutcome.notThisRun)]));
+      expect((run.current.permille, run.current.total, run.current.finished), (1000, 0, true));
     });
 
     test('never a time left for the post', () {

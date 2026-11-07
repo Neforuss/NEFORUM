@@ -5,6 +5,10 @@ import 'dart:io';
 bool isTransientIoError(Object e) =>
     e is SocketException || e is HandshakeException || e is HttpException;
 
+/// A body's pieces go to the connection as they are read, so a count of them says
+/// how far it has got.
+const bool bodyPiecesAreCounted = true;
+
 /// No connection was made, so nothing of the request left: the name did not
 /// resolve, the server refused, no route, or the TLS handshake failed. A write
 /// that fails on a live connection is not one of these.

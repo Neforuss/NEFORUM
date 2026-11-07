@@ -13,6 +13,7 @@ import 'package:neforum_core/src/adapters/blogs_a/wordpress_adapter.dart';
 import 'package:neforum_core/src/adapters/bluesky/bluesky_adapter.dart';
 import 'package:neforum_core/src/adapters/chat/discord_adapter.dart';
 import 'package:neforum_core/src/adapters/mastodon/mastodon_adapter.dart';
+import 'package:neforum_core/src/adapters/tiktok/tiktok_adapter.dart';
 import 'package:neforum_core/src/adapters/youtube/youtube_adapter.dart';
 import 'package:test/test.dart';
 
@@ -36,6 +37,30 @@ class _Recorder implements CreateRecorder {
 
   @override
   Future<void> end({required bool mayBeLive}) async => marks.add(mayBeLive ? 'end live' : 'end refused');
+}
+
+/// Takes [readPieces] pieces of the body (all of it when null), then holds the request
+/// until it is aborted.
+class _Holding extends http.BaseClient {
+  _Holding({this.readPieces, required this.onHeld});
+
+  final int? readPieces;
+  final void Function() onHeld;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    final hold = readPieces;
+    final body = request.finalize();
+    if (hold == null) {
+      await body.drain<void>();
+    } else {
+      await body.take(hold).drain<void>();
+    }
+    onHeld();
+    final trigger = request is http.Abortable ? request.abortTrigger : null;
+    await trigger;
+    throw http.RequestAbortedException(request.url);
+  }
 }
 
 /// A network with one post call, whose failure the test chooses.
@@ -159,6 +184,30 @@ void main() {
       }).then<AdapterException>((_) => fail('should throw'), onError: (Object e) => e as AdapterException);
       expect(e.error.kind, PublishErrorKind.cancelled);
       expect(e.error.outcomeUnknown, isTrue);
+    });
+
+    group('Cancel during an upload that is the post', () {
+      Future<Object?> cancelAfter(http.Client client, CancellationSignal signal) async {
+        final c = AdapterContext(http: NeforumHttp(client: client, maxRetries: 0), networkName: 'Net', createRecorder: recorder, cancellation: signal);
+        return c
+            .creating('Uploading', () => c.http.putBytes(Uri.parse('https://x.test/'), Uint8List(256 * 1024), method: 'POST'), uploads: true)
+            .then<Object?>((v) => v, onError: (Object e) => e);
+      }
+
+      test('with its body only partly sent: nothing can be live, so it is a plain cancel', () async {
+        final signal = CancellationSignal();
+        final e = await cancelAfter(_Holding(readPieces: 2, onHeld: signal.cancel), signal);
+        expect(e, isA<OperationCancelledException>().having((c) => c.notSent, 'notSent', isTrue));
+        expect(recorder.marks, ['begin', 'end refused']);
+      });
+
+      test('with its whole body sent: the post may be live, so it says so', () async {
+        final signal = CancellationSignal();
+        final e = await cancelAfter(_Holding(onHeld: signal.cancel), signal);
+        expect(e, isA<AdapterException>().having((x) => x.error.outcomeUnknown, 'outcomeUnknown', isTrue));
+        expect((e as AdapterException).error.kind, PublishErrorKind.cancelled);
+        expect(recorder.marks, ['begin', 'end live']);
+      });
     });
 
     test('Cancel before it starts: no request, nothing unknown', () async {
@@ -300,9 +349,19 @@ void main() {
       await journal.endCreate('p1', 'a', mayBeLive: true);
       final after = (await journal.entries())['p1']!;
       expect(after.inFlightCreate, isNull);
-      expect(after.createdUnsaved, 'a', reason: 'a kill here must not read as "not posted"');
+      expect(after.createdUnsaved, {'a'}, reason: 'a kill here must not read as "not posted"');
       await journal.clearCreate('p1');
       expect((await journal.entries())['p1']!.outcomeUnknownAccounts, isEmpty);
+    });
+
+    test('a save that failed and a run that went on: both posts stay on record', () async {
+      await journal.record('p1');
+      await journal.beginCreate('p1', 'a');
+      await journal.endCreate('p1', 'a', mayBeLive: true);
+      await journal.beginCreate('p1', 'b');
+      await journal.endCreate('p1', 'b', mayBeLive: true);
+      await journal.record('p1');
+      expect((await journal.entries())['p1']!.outcomeUnknownAccounts, {'a', 'b'}, reason: 'read back through the file');
     });
 
     test('an older journal entry reads as no mark', () {
@@ -332,6 +391,41 @@ void main() {
       final done = await service(net).delegateSchedules('p1');
       expect(done.targets.single.status, TargetStatus.failed);
       expect(done.targets.single.result!.error!.outcomeUnknown, isTrue);
+      expect(done.targets.single.result!.error!.message, contains('Check Net before retrying'));
+    });
+
+    test('each finished stage leaves one local line, with its time and bytes and nothing else', () async {
+      final lines = <String>[];
+      final net = _Net();
+      final s = PublishService(
+        registry: AdapterRegistry([net]),
+        accounts: accounts,
+        posts: posts,
+        secrets: InMemorySecretStore(),
+        quota: QuotaTracker(InMemoryQuotaRepository()),
+        http: NeforumHttp(client: MockClient((_) async => http.Response('', 200)), maxRetries: 0),
+        clock: () => now,
+        log: Logger('test', sink: (l, a, m, [e]) => lines.add(m)),
+      );
+      await s.publish('p1', onEvent: (_, e) {});
+      expect(lines.where((l) => l.startsWith('Stage ')), ['Stage posting: 0 ms, 0 bytes'], reason: 'the renewal is the service\'s own event, not the adapter\'s');
+    });
+
+    test('a stage that sent bytes says how many, and how long it took', () async {
+      final lines = <String>[];
+      var at = testNow;
+      final c = AdapterContext(
+        http: NeforumHttp(client: MockClient((_) async => http.Response('', 200))),
+        clock: () => at,
+        log: Logger('t', sink: (l, a, m, [e]) => lines.add(m)),
+        onEvent: (_) {},
+      );
+      c.uploading(fakeImage(), 'Uploading');
+      at = at.add(const Duration(seconds: 3));
+      await c.http.putBytes(Uri.parse('https://x.test/'), Uint8List(100), method: 'POST');
+      c.serverWait('Processing');
+      expect(lines, contains('Stage uploading: 3000 ms, 100 bytes'));
+      expect(lines.where((l) => l.startsWith('Stage ')), hasLength(1));
     });
 
     test('a pause holds a run\'s post and lets the rest of the run be', () async {
@@ -429,6 +523,63 @@ void main() {
       final r = await WordPressAdapter().publish(const PostVariant(text: 'x', title: 'T'), account, const {'app_password': 'p', 'username': 'u', 'application_password': 'p'}, ctx);
       expect(r.success, isFalse);
       expect(r.error!.outcomeUnknown, isTrue, reason: '${r.error}');
+    });
+
+    group('TikTok, once it has the post', () {
+      final account = fakeAccount('tiktok', tier: PlatformTier.byokApi, config: const {'clientKey': 'ck', 'openId': 'o'});
+      final keys = {'access_token': 't', 'refresh_token': 'r', 'token_type': 'Bearer', 'expires_at': testNow.add(const Duration(days: 1)).toUtc().toIso8601String()};
+      final variant = PostVariant(text: 'x', media: [fakeImage()]);
+      http.Response ok(http.Request r) => http.Response(
+          jsonEncode({
+            'data': {'publish_id': 'pub1', 'privacy_level_options': ['SELF_ONLY'], 'creator_username': 'u'},
+            'error': {'code': 'ok'},
+          }),
+          200,
+          headers: jsonHeaders);
+      bool isStatus(http.Request r) => r.url.path.contains('/status/fetch');
+
+      test('a status it cannot read is unknown, not a failure to retry', () async {
+        final ctx = testContext(mediaHost: FakeMediaHost(), handler: (r) async => isStatus(r) ? throw lost : ok(r));
+        final r = await TikTokAdapter(pollInterval: Duration.zero).publish(variant, account, keys, ctx);
+        expect(r.error!.outcomeUnknown, isTrue, reason: '${r.error}');
+        expect(r.error!.retryable, isFalse);
+      });
+
+      test('a status refused by the server is unknown too: the post is still made', () async {
+        final ctx = testContext(mediaHost: FakeMediaHost(), handler: (r) async => isStatus(r) ? http.Response('{}', 503, headers: jsonHeaders) : ok(r));
+        final r = await TikTokAdapter(pollInterval: Duration.zero).publish(variant, account, keys, ctx);
+        expect(r.error!.outcomeUnknown, isTrue, reason: '${r.error}');
+        expect(r.error!.retryable, isFalse);
+      });
+
+      test('a real FAILED from TikTok stays what it is', () async {
+        final ctx = testContext(
+          mediaHost: FakeMediaHost(),
+          handler: (r) async => isStatus(r)
+              ? http.Response(jsonEncode({'data': {'status': 'FAILED', 'fail_reason': 'file_format_check_failed'}, 'error': {'code': 'ok'}}), 200, headers: jsonHeaders)
+              : ok(r),
+        );
+        final r = await TikTokAdapter(pollInterval: Duration.zero).publish(variant, account, keys, ctx);
+        expect(r.error!.outcomeUnknown, isNot(isTrue), reason: '${r.error}');
+      });
+
+      test('Cancel during the wait says the post may be live', () async {
+        final signal = CancellationSignal();
+        final ctx = AdapterContext(
+          http: NeforumHttp(client: MockClient((r) async => ok(r)), maxRetries: 0),
+          mediaHost: FakeMediaHost(),
+          clock: () => testNow,
+          readMedia: (_) async => fakeJpegBytes,
+          cancellation: signal,
+          networkName: 'TikTok',
+          onEvent: (e) {
+            if (e.stage == ProgressStage.serverProcessing) signal.cancel();
+          },
+        );
+        final r = await TikTokAdapter(pollInterval: const Duration(minutes: 1)).publish(variant, account, keys, ctx).timeout(const Duration(seconds: 1));
+        expect(r.error!.kind, PublishErrorKind.cancelled);
+        expect(r.error!.outcomeUnknown, isTrue);
+      });
     });
 
     test('YouTube: a lost answer it could not ask about is unknown, one it could ask about is not', () async {

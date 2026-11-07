@@ -2,11 +2,14 @@
 // file or a poll finished its sleep. Both now stop within a second.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/instagram/instagram_api.dart';
+import 'package:neforum_core/src/adapters/nostr/nostr_adapter.dart';
+import 'package:neforum_core/src/adapters/nostr/nostr_relay.dart';
 import 'package:neforum_core/src/adapters/threads/threads_api.dart';
 import 'package:neforum_core/src/adapters/youtube/youtube_api.dart';
 import 'package:test/test.dart';
@@ -196,9 +199,64 @@ void main() {
       final upload = YouTubeResumableUpload(ctx: ctx, accessToken: 't', maxResumes: 3, resumeDelay: const Duration(minutes: 1));
       final (took, outcome) = await _cancelled(signal, () => upload.upload(metadata: const {}, bytes: Uint8List(10), mimeType: 'video/mp4'));
       expect(took, lessThan(_second));
+      // The whole file had gone out with no answer, and now nobody can ask the session.
+      expect(outcome, isA<AdapterException>().having((e) => e.error.outcomeUnknown, 'outcomeUnknown', isTrue));
+    });
+
+    test('YouTube, its wait before a resume when nothing can have arrived: a plain cancel', () async {
+      final signal = CancellationSignal();
+      var first = true;
+      final ctx = AdapterContext(
+        http: NeforumHttp(
+            client: _Answering((r) {
+              if (r.method == 'POST') return http.StreamedResponse(const Stream.empty(), 200, headers: {'location': 'https://upload.example/s'});
+              if (first) {
+                first = false;
+                throw const SocketException('Failed host lookup', osError: OSError('x', 11001));
+              }
+              return _status(200);
+            }),
+            maxRetries: 0),
+        cancellation: signal,
+      );
+      final upload = YouTubeResumableUpload(ctx: ctx, accessToken: 't', maxResumes: 3, resumeDelay: const Duration(minutes: 1));
+      final (took, outcome) = await _cancelled(signal, () => upload.upload(metadata: const {}, bytes: Uint8List(10), mimeType: 'video/mp4'));
+      expect(took, lessThan(_second));
       expect(outcome, isA<OperationCancelledException>());
     });
+
+    test('Nostr, relays that never answer', () async {
+      final signal = CancellationSignal();
+      final relay = _SilentRelay();
+      final adapter = NostrAdapter(relayTimeout: const Duration(minutes: 1), connectTimeout: const Duration(minutes: 1), connector: (_) async => relay);
+      final account = fakeAccount('nostr', config: const {'relays': ['wss://a.example']});
+      final ctx = AdapterContext(http: NeforumHttp(client: _HangingClient()), cancellation: signal, networkName: 'Nostr');
+      final (took, outcome) = await _cancelled(signal, () async {
+        final r = await adapter.publish(const PostVariant(text: 'gm'), account, const {'privateKey': '67dea2ed018072d675f5415ecfaed7d2597555e202d85b3d65ea4e58d2d92ffa'}, ctx);
+        return r.error;
+      });
+      expect(took, lessThan(_second));
+      expect(outcome, isA<PublishError>().having((e) => e.outcomeUnknown, 'outcomeUnknown', isTrue), reason: 'the note went out, so it may be live');
+      expect(relay.closed, isTrue);
+    });
   });
+}
+
+class _SilentRelay implements RelayConnection {
+  final _out = StreamController<String>();
+  bool closed = false;
+
+  @override
+  Stream<String> get messages => _out.stream;
+
+  @override
+  void send(String message) {}
+
+  @override
+  Future<void> close() async {
+    closed = true;
+    await _out.close();
+  }
 }
 
 class _RecordingHost extends FakeMediaHost {

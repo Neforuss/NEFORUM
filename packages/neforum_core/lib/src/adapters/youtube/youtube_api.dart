@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../../http/neforum_http.dart';
 import '../../http/transient_stub.dart' if (dart.library.io) '../../http/transient_io.dart';
 import '../../model/publish_result.dart';
+import '../../publish/cancellation_signal.dart';
 import '../adapter_context.dart';
 import '../platform_adapter.dart';
 
@@ -303,9 +304,16 @@ class YouTubeResumableUpload {
     var unanswered = false;
     for (var attempt = 0; attempt <= maxResumes; attempt++) {
       if (attempt > 0) {
-        await ctx.wait(resumeDelay);
-        ctx.uploadingAll('Resuming YouTube upload (attempt ${attempt + 1})');
-        final probe = await _probe(session, total);
+        final _Probe probe;
+        try {
+          await ctx.wait(resumeDelay);
+          ctx.uploadingAll('Resuming YouTube upload (attempt ${attempt + 1})');
+          probe = await _probe(session, total);
+        } on OperationCancelledException {
+          // Nobody can ask the session any more, and a new attempt opens a new one.
+          if (unanswered) throw AdapterException(ctx.cancelledUnconfirmedError());
+          rethrow;
+        }
         if (probe.done != null) return probe.done!;
         if (probe.error != null) {
           lastError = probe.error;
@@ -333,6 +341,10 @@ class YouTubeResumableUpload {
           bodyOffset: offset,
           bodyWhole: total,
         );
+      } on OperationCancelledException catch (e) {
+        // The whole file went out: YouTube may have the video.
+        if (e.notSent) rethrow;
+        throw AdapterException(ctx.cancelledUnconfirmedError());
       } on Object catch (e) {
         if (!isNetworkException(e)) rethrow;
         ctx.log.warn('YouTube upload interrupted: $e');
