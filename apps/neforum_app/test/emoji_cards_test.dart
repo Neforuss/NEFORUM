@@ -228,6 +228,35 @@ void main() {
       expect(withIt, without);
     });
 
+    testWidgets('a design\'s signature words leave it out too', (t) async {
+      EmojiSupport.debugProbe = (c) => EmojiDraw.missing;
+      await EmojiSupport.prepare('\u{1FAE0}');
+      final design = cardTemplateById('neon')!.design(CardKind.text).copyWith(blocks: [
+        const CardTextBlock(role: CardBlockRole.signature, anchor: CardAnchor.topLeft, color: 0xFF000000, size: 60),
+      ]);
+      Future<Uint8List> signed(String words) => _rgba(600, 600, (c) => CardDesignPainter(design: design, texts: {CardBlockRole.signature: words}).paint(c, const Size(600, 600)));
+      expect((await t.runAsync(() => signed('Me\u{1FAE0}')))!, (await t.runAsync(() => signed('Me')))!);
+    });
+
+    testWidgets('a live preview tries a new emoji in the background, then repaints without it', (t) async {
+      EmojiSupport.debugProbe = (c) => EmojiDraw.missing;
+      final before = captionFontsRevision.value;
+      expect(EmojiSupport.known('\u{1FAE0}'), isNull);
+      emojiSpan('a\u{1FAE0}', const TextStyle());
+      await t.runAsync(() => Future<void>.delayed(Duration.zero));
+      expect(EmojiSupport.known('\u{1FAE0}'), EmojiDraw.missing);
+      expect(captionFontsRevision.value, greaterThan(before));
+      expect(emojiSpan('a\u{1FAE0}', const TextStyle()).toPlainText(), 'a');
+      expect(warnings, isEmpty, reason: 'only a saved picture warns');
+    });
+
+    testWidgets('a text field never tries or drops anything', (t) async {
+      EmojiSupport.debugProbe = (c) => EmojiDraw.missing;
+      expect(emojiSpan('a\u{1FAE0}', const TextStyle(), dropMissing: false).toPlainText(), 'a\u{1FAE0}');
+      await t.runAsync(() => Future<void>.delayed(Duration.zero));
+      expect(EmojiSupport.known('\u{1FAE0}'), isNull);
+    });
+
     test('text with no emoji costs no try and no warning', () async {
       var tries = 0;
       EmojiSupport.debugProbe = (c) {

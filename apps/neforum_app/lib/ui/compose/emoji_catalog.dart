@@ -110,8 +110,10 @@ class EmojiDeviceSupport {
   /// The device has an emoji font at all.
   final bool anyFont;
 
-  /// Whether [e] draws here. Flags always stay.
+  /// Whether [e] draws here. Flags always stay, where there is an emoji font at
+  /// all: with none, every one would be a box.
   bool draws(Emoji e) {
+    if (!anyFont) return false;
     if (e.category == Category.flags) return true;
     final hidden = hiddenVersions;
     if (hidden == null) return (double.tryParse(e.addedIn) ?? 99) <= 12.1;

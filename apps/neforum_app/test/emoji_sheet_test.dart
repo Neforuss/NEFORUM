@@ -276,8 +276,24 @@ void main() {
 
     testWidgets('no emoji font at all: says so, and draws no boxes', (t) async {
       EmojiSupport.debugProbe = (_) => EmojiDraw.missing;
-      await _pump(t);
+      final s = await _pump(t);
       expect(find.textContaining('no emoji font'), findsOneWidget);
+      // Every category, flags too: nothing in the grid that would be a box.
+      Finder glyphs() => find.descendant(of: find.byType(GridView), matching: find.byType(Text));
+      expect(glyphs(), findsNothing);
+      await t.tap(find.byKey(const Key('emoji-category-flags')));
+      await _settle(t);
+      expect(glyphs(), findsNothing);
+      expect(find.text('Search by name to add an emoji.'), findsOneWidget);
+      // Search still reaches them, as plain icons, and they can go in.
+      await t.enterText(find.byKey(const Key('emoji-search')), 'tada');
+      await _settle(t);
+      expect(glyphs(), findsNothing);
+      final tile = find.byKey(const ValueKey('emoji-1F389'));
+      expect(find.descendant(of: tile, matching: find.byIcon(Icons.image_not_supported_outlined)), findsOneWidget);
+      await t.tap(tile);
+      await t.pump();
+      expect(s.picks, ['\u{1F389}']);
       await t.pumpWidget(const SizedBox.shrink());
     });
   });

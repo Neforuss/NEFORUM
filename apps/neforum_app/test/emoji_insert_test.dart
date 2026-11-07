@@ -28,6 +28,7 @@ import 'package:neforum_app/ui/compose/emoji_insert.dart';
 import 'package:neforum_app/ui/compose/media_tray.dart';
 import 'package:neforum_app/ui/compose/poll_sheet.dart';
 import 'package:neforum_app/ui/compose/track_details_sheet.dart';
+import 'package:neforum_app/widgets/char_ring.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 const String grin = '\u{1F600}';
@@ -281,7 +282,9 @@ void main() {
       _desktop('text', (t) async {
         final h = await open(t);
         final field = _fieldLabelled('Text');
+        final usedBefore = t.widget<CharRing>(find.byType(CharRing).last).used;
         await _exercise(t, field, committed: () => t.widget<TextField>(field).controller!.text);
+        expect(t.widget<CharRing>(find.byType(CharRing).last).used, greaterThan(usedBefore), reason: 'onChanged ran: the ring moved');
         await t.tap(find.text('Save'));
         await _settle(t);
         expect(sheetSave(t, h, (o) => o.text ?? ''), 'hello $grin$grin');
@@ -292,6 +295,7 @@ void main() {
         final h = await open(t);
         final field = _fieldLabelled('Title');
         await _exercise(t, field, committed: () => t.widget<TextField>(field).controller!.text);
+        expect(find.text('10/300'), findsOneWidget, reason: 'onChanged ran: the counter moved');
         await t.tap(find.text('Save'));
         await _settle(t);
         expect(sheetSave(t, h, (o) => o.title ?? ''), 'hello $grin$grin');

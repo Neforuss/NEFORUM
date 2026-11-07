@@ -129,7 +129,7 @@ class _EmojiPanelState extends ConsumerState<EmojiPanel> {
                 onPick: widget.onPick,
               )
             : found.isEmpty
-                ? Center(child: Padding(padding: const EdgeInsets.all(Space.lg), child: Text('No emoji found', style: context.text.bodyMedium?.copyWith(color: nf.textFaint))))
+                ? Center(child: Padding(padding: const EdgeInsets.all(Space.lg), child: Text(!_support.anyFont && !searching ? 'Search by name to add an emoji.' : 'No emoji found', textAlign: TextAlign.center, style: context.text.bodyMedium?.copyWith(color: nf.textFaint))))
                 : _Grid(
                     key: PageStorageKey('emoji-${_category?.name}-$searching'),
                     glyphs: [

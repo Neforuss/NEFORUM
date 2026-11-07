@@ -35,8 +35,11 @@ TextStyle emojiStyleOf(TextStyle base) => base.copyWith(
 /// [text] as a span in [style], with each emoji in the emoji font. Text with no
 /// emoji gets the plain span it always had, so such a card stays the same
 /// picture, byte for byte. Emoji this device cannot draw are left out, unless
-/// [dropMissing] is false (a text field has to keep every character).
+/// [dropMissing] is false (a text field has to keep every character); ones not
+/// tried yet are tried in the background, for the next paint of a live preview
+/// (a saved picture tries them first, [EmojiSupport.prepare]).
 TextSpan emojiSpan(String text, TextStyle style, {bool dropMissing = true}) {
+  if (dropMissing) EmojiSupport.note(text);
   final shown = dropMissing ? EmojiSupport.withoutMissing(text) : text;
   final children = emojiRuns(shown, style);
   if (children == null) return TextSpan(text: shown, style: style);

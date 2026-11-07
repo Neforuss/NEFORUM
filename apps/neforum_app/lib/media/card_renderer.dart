@@ -641,10 +641,7 @@ class _LaidText extends _LaidBlock {
 class _LaidSignature extends _LaidBlock {
   _LaidSignature(super.block, String words, TextStyle style, this.u)
       : word = TextPainter(
-          text: TextSpan(
-            text: words,
-            style: style.copyWith(fontFamily: block.customFont == null ? Fonts.display : style.fontFamily, fontWeight: FontWeight.w800, height: 1),
-          ),
+          text: emojiSpan(words, style.copyWith(fontFamily: block.customFont == null ? Fonts.display : style.fontFamily, fontWeight: FontWeight.w800, height: 1)),
           textDirection: TextDirection.ltr,
           maxLines: 1,
         )..layout();
