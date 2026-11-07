@@ -419,7 +419,8 @@ void main() {
       final res = await wp.publish(PostVariant(title: 'T', text: 'x', media: [fakeImage()]), account(), secrets, ctx);
       expect(res.isFailure, isTrue);
       expect(res.error!.kind, PublishErrorKind.configuration);
-      expect(res.error!.message, contains('file was moved'));
+      expect(res.error!.message, 'Could not read img1.jpg. Attach it again and retry.');
+      expect(res.error!.raw, contains('file was moved'));
     });
 
     test('publish: contributors are downgraded to pending', () async {
