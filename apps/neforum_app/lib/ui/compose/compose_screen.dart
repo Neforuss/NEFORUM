@@ -291,7 +291,13 @@ class _WriteColumn extends ConsumerWidget {
             : 'Edit draft';
     final compact = context.isCompact;
 
-    final page = PageBody(
+    // The title above the picker when editing: its two lines and the space
+    // under them.
+    final titleHeight = editingPost == null ? 0.0 : MediaQuery.textScalerOf(context).scale(16.0 + 36.0) + Space.xs + 2 + Space.xl;
+
+    // The picker needs the height of the page, which a scroll view does not
+    // pass on to what is inside it.
+    final page = LayoutBuilder(builder: (context, box) => PageBody(
       maxWidth: 780,
       bottomPadding: Space.xxl,
       // A short post can still be dragged down to close the keyboard.
@@ -324,7 +330,7 @@ class _WriteColumn extends ConsumerWidget {
                 ),
             ]),
           ),
-        TargetPicker(grid: targetGrid, keyboardOpen: keyboardOpen),
+        TargetPicker(grid: targetGrid, keyboardOpen: keyboardOpen, availableHeight: box.maxHeight - PageBody.topPadding(context) - titleHeight),
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
         const ThreadPartEditors(),
@@ -337,7 +343,7 @@ class _WriteColumn extends ConsumerWidget {
           _Starters(onFocus: focusNode.requestFocus),
         ],
       ],
-    );
+    ));
     return Env.isMobile ? _DragDownHidesKeyboard(child: page) : page;
   }
 }

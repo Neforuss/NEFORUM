@@ -1150,6 +1150,9 @@ final composerReadinessProvider = Provider<ComposerReadiness>((ref) {
   final previews = ref.watch(composerPreviewsProvider);
   var ready = 0, blocked = 0, handoff = 0, warnings = 0;
   for (final p in previews) {
+    // Disabled in Accounts, still in the selection of an old draft: publishing
+    // skips it, so it is not one of the accounts this post goes to.
+    if (!p.account.enabled) continue;
     if (!p.canPublish) {
       blocked++;
     } else if (p.account.tier == PlatformTier.handoff) {

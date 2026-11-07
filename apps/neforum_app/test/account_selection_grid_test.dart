@@ -1,6 +1,8 @@
 // The phone composer's account grid: 21 accounts at 360 x 640, at the normal
 // and the largest text size. What the grid promises is counted here: taps to
-// leave out 3, nothing sideways, every state on screen, nothing cut.
+// leave out 3, nothing sideways, every state on screen, nothing cut, and the
+// text field still there. At 360 x 640 21 accounts are tiles; [_tall] is the
+// same width with the height for names.
 
 import 'dart:io';
 
@@ -68,11 +70,15 @@ const _networks = [
   'nostr', 'lemmy', 'wordpress', 'substack', 'snapchat', 'whatsapp', 'matrix',
 ];
 
-ConnectedAccount _account(String platformId, {String? id, String? handle, bool enabled = true, PlatformTier? tier, String? avatarUrl}) => ConnectedAccount(
+/// A phone of the same width as 360 x 640, tall enough for 21 accounts by name
+/// at every text size.
+const _tall = Size(360, 900);
+
+ConnectedAccount _account(String platformId, {String? id, String? handle, String? displayName, bool enabled = true, PlatformTier? tier, String? avatarUrl}) => ConnectedAccount(
       id: id ?? 'acct-$platformId',
       platformId: platformId,
       tier: tier ?? builtinRegistry().descriptor(platformId)!.defaultTier,
-      displayName: platformId,
+      displayName: displayName ?? platformId,
       handle: handle,
       avatarUrl: avatarUrl,
       createdAt: DateTime.utc(2026, 10, 1),
@@ -149,6 +155,13 @@ void _expectAtLeastTouchSize(WidgetTester t, Finder f, String what) {
 }
 
 final _editor = find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController);
+
+/// How much of the post's text field is above the action bar, with nothing scrolled.
+double _fieldOnScreen(WidgetTester t) => t.getRect(find.byType(ComposerActionBar)).top - t.getRect(_editor).top;
+
+/// A line of the text field, at the current text size.
+double _line(WidgetTester t) => MediaQuery.textScalerOf(t.element(_editor)).scale(17 * 1.55);
+
 final _summary = find.byType(AccountSelectionSummary);
 final _filter = find.byKey(kTargetFilterKey);
 
@@ -295,7 +308,7 @@ void main() {
       testWidgets('selected, left out and disabled differ in more than colour, and tier always shows', (t) async {
         final accounts = _twentyOne();
         accounts[15] = _account('lemmy', enabled: false);
-        final c = await _boot(t, accounts: accounts, textScale: scale);
+        final c = await _boot(t, accounts: accounts, textScale: scale, size: _tall);
         c.read(composerProvider.notifier).toggleAccount('acct-threads');
         await _settle(t);
 
@@ -319,9 +332,29 @@ void main() {
         await _end(t);
       });
 
+      testWidgets('on a tile, selected, left out and disabled differ in more than colour too, and tier always shows', (t) async {
+        final accounts = _twentyOne();
+        accounts[15] = _account('lemmy', enabled: false);
+        final c = await _boot(t, accounts: accounts, textScale: scale);
+        c.read(composerProvider.notifier).toggleAccount('acct-threads');
+        await _settle(t);
+
+        Iterable<IconData?> icons(String id) => t.widgetList<Icon>(find.descendant(of: _cell(id), matching: find.byType(Icon))).map((i) => i.icon);
+        PlatformTile face(String id) => t.widget<PlatformTile>(find.descendant(of: _cell(id), matching: find.byType(PlatformTile)));
+
+        expect(t.widget<AccountCell>(_cell('acct-mastodon')).tile, isTrue);
+        expect(icons('acct-mastodon'), containsAll([Icons.check_circle_rounded, tierIcon(accounts[0].tier)]));
+        expect(face('acct-mastodon').dimmed, isFalse);
+        expect(icons('acct-threads'), containsAll([Icons.radio_button_unchecked_rounded, tierIcon(accounts[3].tier)]));
+        expect(icons('acct-threads'), isNot(contains(Icons.check_circle_rounded)));
+        expect(face('acct-threads').dimmed, isTrue);
+        expect(icons('acct-lemmy'), containsAll([Icons.block_rounded, tierIcon(accounts[15].tier)]));
+        await _end(t);
+      });
+
       testWidgets('every name reads whole on one line', (t) async {
         final accounts = _twentyOne();
-        await _boot(t, accounts: accounts, textScale: scale);
+        await _boot(t, accounts: accounts, textScale: scale, size: _tall);
         for (final a in accounts) {
           final label = _entry(t, a.id).label;
           final paragraph = t.renderObject<RenderParagraph>(find.descendant(of: _cell(a.id), matching: find.text(label)));
@@ -426,10 +459,15 @@ void main() {
     await _end(t);
   });
 
-  testWidgets('at normal text the header keeps its words and the rows their gap', (t) async {
-    await _boot(t, accounts: _twentyOne());
+  testWidgets('at normal text the header keeps its words, and rows of names and tiles their gap', (t) async {
+    await _boot(t, accounts: _twentyOne(), size: _tall);
     expect(find.descendant(of: find.byType(TargetPicker), matching: find.text('Post to')), findsOneWidget);
     expect(t.getRect(_cell('acct-instagram')).top - t.getRect(_cell('acct-mastodon')).bottom, 4);
+    await _end(t);
+    await _boot(t, accounts: _twentyOne());
+    expect(find.descendant(of: find.byType(TargetPicker), matching: find.text('Post to')), findsOneWidget);
+    expect(t.getRect(_cell('acct-linkedin')).top - t.getRect(_cell('acct-mastodon')).bottom, 4, reason: 'six to a row');
+    expect(t.getSize(_cell('acct-facebook')).height, 48);
     await _end(t);
   });
 
@@ -1183,7 +1221,7 @@ void main() {
         final registry = builtinRegistry();
         // Every platform, so a long new name without a shortName fails here.
         final accounts = [for (final d in registry.descriptors) _account(d.id)];
-        await _boot(t, accounts: accounts, textScale: scale);
+        await _boot(t, accounts: accounts, textScale: scale, size: const Size(360, 2400));
         for (final a in accounts) {
           final label = _entry(t, a.id).label;
           final paragraph = t.renderObject<RenderParagraph>(find.descendant(of: _cell(a.id), matching: find.text(label)));
@@ -1196,7 +1234,7 @@ void main() {
 
     for (final (scale, columns) in const [(1.0, 4), (1.5, 3)]) {
       testWidgets('21 ordinary names take $columns columns at text x$scale', (t) async {
-        await _boot(t, accounts: _twentyOne(), textScale: scale);
+        await _boot(t, accounts: _twentyOne(), textScale: scale, size: _tall);
         final top = t.getRect(_cell('acct-mastodon')).top;
         final firstRow = t.elementList(_cells).where((e) => (e.renderObject! as RenderBox).localToGlobal(Offset.zero).dy == top);
         expect(firstRow.length, columns);
@@ -1206,7 +1244,7 @@ void main() {
 
     testWidgets('one long art site name leaves the ordinary accounts as they are', (t) async {
       final accounts = [..._twentyOne().take(20), _account('artstation')];
-      await _boot(t, accounts: accounts);
+      await _boot(t, accounts: accounts, size: _tall);
       final top = t.getRect(_cell('acct-mastodon')).top;
       expect(t.elementList(_cells).where((e) => (e.renderObject! as RenderBox).localToGlobal(Offset.zero).dy == top).length, 4);
       final name = t.renderObject<RenderParagraph>(find.descendant(of: _cell('acct-artstation'), matching: find.text('ArtStation')));
@@ -1224,6 +1262,468 @@ void main() {
       expect(t.getRect(_cell('acct-matrix')), before);
       await _end(t);
     });
+  });
+
+  // Every account on screen, whichever 21 and whatever the text size. The test
+  // the grid passed before this only held for 21 one-word networks at x1 and
+  // x1.5, the two points it had been tuned to.
+  group('whichever 21 at 360 x 640', () {
+    final registry = builtinRegistry();
+    final longest = registry.descriptors.where((d) => !d.isArtPlatform).toList()..sort((a, b) => b.compactName.length.compareTo(a.compactName.length));
+    final sets = <String, List<ConnectedAccount>>{
+      'three art sites': [..._twentyOne().take(18), _account('behance'), _account('cara'), _account('artstation')],
+      'three networks twice': [
+        ..._twentyOne().take(18),
+        _account('mastodon', id: 'm2', handle: '@ben@social.example'),
+        _account('bluesky', id: 'b2', handle: 'ben.bsky.social'),
+        _account('x', id: 'x2', handle: '@ben'),
+      ],
+      'the longest names': [for (final d in longest.take(21)) _account(d.id)],
+      'all on one network': [for (var i = 0; i < 21; i++) _account('mastodon', id: 'm$i', handle: '@user$i@social.example')],
+    };
+
+    void expectAllOnScreen(WidgetTester t, List<ConnectedAccount> accounts) {
+      final limit = t.getRect(find.byType(ComposerActionBar)).top;
+      for (final a in accounts) {
+        final cell = _cell(a.id);
+        expect(t.getRect(cell).bottom, lessThanOrEqualTo(limit), reason: '${a.id} is above the action bar');
+        _expectAtLeastTouchSize(t, cell, a.id);
+        expect(find.descendant(of: cell, matching: find.byIcon(tierIcon(a.tier))), findsOneWidget, reason: a.id);
+        final state = find.descendant(
+          of: cell,
+          matching: find.byWidgetPredicate((w) => w is Icon && const [Icons.check_circle_rounded, Icons.radio_button_unchecked_rounded, Icons.brush_outlined, Icons.block_rounded].contains(w.icon)),
+        );
+        expect(state, findsOneWidget, reason: a.id);
+      }
+    }
+
+    for (final scale in const [1.0, 1.5]) {
+      for (final entry in sets.entries) {
+        testWidgets('${entry.key}, text x$scale', (t) async {
+          await _boot(t, accounts: entry.value, textScale: scale);
+          expectAllOnScreen(t, entry.value);
+          await _end(t);
+        });
+      }
+    }
+
+    // In steps of the app's own setting, and the system's text size multiplies.
+    for (var percent = 85; percent <= 150; percent += 5) {
+      testWidgets('text x${percent / 100}', (t) async {
+        final accounts = _twentyOne();
+        await _boot(t, accounts: accounts, textScale: percent / 100);
+        expectAllOnScreen(t, accounts);
+        expect(_fieldOnScreen(t), greaterThanOrEqualTo(_line(t)), reason: 'and the text field, under its title');
+        await _end(t);
+      });
+    }
+
+    testWidgets('system text x1.15 with the app at x1', (t) async {
+      t.platformDispatcher.textScaleFactorTestValue = 1.15;
+      addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
+      final accounts = _twentyOne();
+      await _boot(t, accounts: accounts);
+      expectAllOnScreen(t, accounts);
+      await _end(t);
+    });
+  });
+
+  group('the text field with the grid open', () {
+    for (final scale in const [1.0, 1.5]) {
+      testWidgets('21 accounts leave a line of it on screen under the title, reached with a tap and no scrolling, text x$scale', (t) async {
+        final c = await _boot(t, accounts: _twentyOne(), textScale: scale);
+        expect(_fieldOnScreen(t), greaterThanOrEqualTo(_line(t)));
+        final field = t.getRect(_editor);
+        await t.tapAt(field.topLeft + const Offset(24, 12));
+        await t.pump();
+        expect(t.state<EditableTextState>(find.descendant(of: _editor, matching: find.byType(EditableText))).widget.focusNode.hasFocus, isTrue);
+        await t.enterText(_editor, 'Words');
+        await t.pump();
+        expect(c.read(composerProvider).text, 'Words');
+        await _end(t);
+      });
+
+      testWidgets('as few accounts as leave the room keep their names, with two lines of the field, text x$scale', (t) async {
+        final accounts = _twentyOne().take(9).toList();
+        await _boot(t, accounts: accounts, textScale: scale);
+        expect(t.widget<AccountCell>(_cell('acct-mastodon')).tile, isFalse);
+        expect(find.descendant(of: _cell('acct-mastodon'), matching: find.text('Mastodon')), findsOneWidget);
+        expect(_fieldOnScreen(t), greaterThanOrEqualTo(2 * _line(t)));
+        await _end(t);
+      });
+
+      testWidgets('a taller phone keeps names for all 21, with two lines of the field, text x$scale', (t) async {
+        await _boot(t, accounts: _twentyOne(), textScale: scale, size: _tall);
+        expect(t.widget<AccountCell>(_cell('acct-mastodon')).tile, isFalse);
+        expect(_fieldOnScreen(t), greaterThanOrEqualTo(2 * _line(t)));
+        await _end(t);
+      });
+
+      testWidgets('choosing does not change the form, though the title comes and goes with it, text x$scale', (t) async {
+        final accounts = _twentyOne().take(scale == 1 ? 16 : 9).toList();
+        final c = await _boot(t, accounts: accounts, textScale: scale);
+        expect(t.widget<AccountCell>(_cell('acct-mastodon')).tile, isFalse);
+        c.read(composerProvider.notifier).selectAccounts(const ['acct-mastodon']);
+        await _settle(t);
+        expect(t.widget<AccountCell>(_cell('acct-mastodon')).tile, isFalse);
+        await _end(t);
+      });
+
+      // The form is decided from a sum, not from a layout: this holds the two
+      // together, or a change in the cell would quietly break the choice.
+      for (final (name, accounts, size) in [
+        ('21 names', _twentyOne(), _tall),
+        ('21 tiles', _twentyOne(), const Size(360, 640)),
+        ('siblings as names', [for (var i = 0; i < 6; i++) _account('mastodon', id: 'm$i', handle: '@user$i@a.example')], const Size(360, 900)),
+        ('siblings as tiles', [..._twentyOne().take(15), for (var i = 0; i < 6; i++) _account('bluesky', id: 'b$i', handle: 'user$i.example')], const Size(360, 640)),
+        ('art sites', [..._twentyOne().take(18), _account('behance'), _account('cara'), _account('artstation')], const Size(360, 640)),
+        ('art sites as names', [..._twentyOne().take(4), _account('behance'), _account('cara')], const Size(360, 640)),
+        ('no gap', [for (var i = 0; i < 21; i++) _account('mastodon', id: 'm$i', handle: '@user$i@social.example')], const Size(360, 640)),
+      ]) {
+        testWidgets('the height it decides by is the height it takes: $name, text x$scale', (t) async {
+          await _boot(t, accounts: accounts, textScale: scale, size: size);
+          final grid = find.byType(AccountSelectionGrid);
+          final widget = t.widget<AccountSelectionGrid>(grid);
+          final context = t.element(grid);
+          final box = t.getSize(grid);
+          expect(accountGridHeight(context, widget.entries, box.width, widget.form), moreOrLessEquals(box.height, epsilon: 0.5), reason: '${widget.form}');
+          final other = accountGridOtherHeight(context, widget.entries, box.width, artworkSwitch: accounts.any((a) => builtinRegistry().descriptor(a.platformId)!.isArtPlatform), filter: false);
+          expect(other, moreOrLessEquals(t.getSize(find.byType(TargetPicker)).height - box.height, epsilon: 0.5));
+          await _end(t);
+        });
+      }
+    }
+
+    testWidgets('a shorter page, as a banner above every section makes it, changes the form', (t) async {
+      await _boot(t, accounts: _twentyOne().take(16).toList());
+      expect(t.widget<AccountCell>(_cell('acct-mastodon')).tile, isFalse, reason: '4 rows of names fit');
+      await _end(t);
+      await _boot(t, accounts: _twentyOne().take(16).toList(), size: const Size(360, 576));
+      expect(t.widget<AccountCell>(_cell('acct-mastodon')).tile, isTrue);
+      await _end(t);
+    });
+  });
+
+  group('sizes between the tuned ones', () {
+    test('a cell is never narrower than its longest word, across phones and words', () {
+      for (var width = 248.0; width <= 448; width++) {
+        for (var word = 30.0; word <= 170; word += 0.37) {
+          final columns = accountGridColumns(width, word);
+          if (columns == 2 && word + 10 > (width - 4) / 2) continue; // Too long for any column: it may shorten.
+          final cell = (width - (columns - 1) * 4) / columns;
+          expect(cell - 2 * 4 - 2 * 1, greaterThanOrEqualTo(word), reason: 'word $word in $columns columns of $width');
+        }
+      }
+    });
+
+    for (final (size, scale) in const [
+      (Size(390, 844), 1.2),
+      (Size(340, 800), 1.0),
+      (Size(416, 900), 1.0),
+      (Size(415, 900), 1.3),
+      (Size(429, 900), 1.35),
+      (Size(357, 900), 1.5),
+    ]) {
+      testWidgets('names stay whole and cells 48 tall at ${size.width} wide, text x$scale', (t) async {
+        final accounts = _twentyOne();
+        await _boot(t, accounts: accounts, textScale: scale, size: size);
+        for (final a in accounts) {
+          final label = _entry(t, a.id).label;
+          final paragraph = t.renderObject<RenderParagraph>(find.descendant(of: _cell(a.id), matching: find.text(label)));
+          final boxes = paragraph.getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: label.length));
+          expect(boxes.map((b) => b.top).toSet().length, 1, reason: '$label broke in two');
+          expect(t.getSize(_cell(a.id)).height, 48, reason: label);
+        }
+        await _end(t);
+      });
+    }
+
+    for (final percent in const [100, 110, 125, 135, 150]) {
+      testWidgets('the header stays on one line at 360 px, text x${percent / 100}', (t) async {
+        await _boot(t, accounts: _twentyOne(), textScale: percent / 100);
+        final fold = t.getRect(find.byKey(kTargetFoldKey));
+        for (final label in const ['All', 'Automatic only', 'None']) {
+          expect(t.getRect(find.widgetWithText(TextButton, label)).top, fold.top, reason: label);
+        }
+        await _end(t);
+      });
+    }
+
+    testWidgets('choosing accounts does not change the words of the header', (t) async {
+      final c = await _boot(t, accounts: _twentyOne(), textScale: 1.25);
+      final title = find.descendant(of: find.byType(TargetPicker), matching: find.text('Post to'));
+      final before = title.evaluate().length;
+      c.read(composerProvider.notifier).selectAccounts(const ['acct-x']);
+      await _settle(t);
+      expect(title.evaluate().length, before);
+      await _end(t);
+    });
+  });
+
+  group('names nothing can be read from', () {
+    // ghost_adapter takes its handle from a URL's host, which can be empty.
+    testWidgets('an empty handle or display name leaves the picker standing, with the targets separate', (t) async {
+      for (final accounts in [
+        [_account('ghost', id: 'a', handle: '', displayName: 'My blog'), _account('ghost', id: 'b', handle: 'other.example')],
+        [_account('ghost', id: 'a', displayName: ''), _account('ghost', id: 'b', handle: 'other.example')],
+        [_account('ghost', id: 'a', handle: '', displayName: ''), _account('ghost', id: 'b', handle: '', displayName: '')],
+        [_account('ghost', id: 'a', handle: '@'), _account('ghost', id: 'b', handle: '@@')],
+      ]) {
+        await _boot(t, accounts: accounts);
+        expect(t.takeException(), isNull);
+        expect(_cells, findsNWidgets(2));
+        expect(_entry(t, 'a').handle, isNotEmpty);
+        expect(_entry(t, 'a').handle, isNot(_entry(t, 'b').handle));
+        await t.tap(_cell('a'));
+        await _settle(t);
+        expect(t.takeException(), isNull);
+        await _end(t);
+      }
+    });
+
+    test('an empty handle gives way to the display name, then to a number', () {
+      expect(accountGridHandles([_account('ghost', id: 'a', handle: '', displayName: 'My blog'), _account('ghost', id: 'b', handle: 'x.example')]), {'a': 'My blog', 'b': 'x.example'});
+      expect(accountGridHandles([_account('ghost', id: 'a', handle: '', displayName: ''), _account('ghost', id: 'b', displayName: '')]), {'a': 'Account 1', 'b': 'Account 2'});
+    });
+
+    test('accounts that share a handle are told apart by their display names, then by a number', () {
+      // matrix_adapter: handle = login.userId. wordpress_adapter: handle = username.
+      final rooms = [
+        _account('matrix', id: 'r1', handle: '@ana:matrix.org', displayName: 'Family (@ana:matrix.org)'),
+        _account('matrix', id: 'r2', handle: '@ana:matrix.org', displayName: 'Work (@ana:matrix.org)'),
+      ];
+      expect(accountGridHandles(rooms), {'r1': 'Family', 'r2': 'Work'});
+      expect(accountGridIdentities(rooms), {'r1': 'Family (@ana:matrix.org)', 'r2': 'Work (@ana:matrix.org)'});
+      final same = [_account('matrix', id: 'r1', handle: '@ana:matrix.org', displayName: 'Same'), _account('matrix', id: 'r2', handle: '@ana:matrix.org', displayName: 'Same')];
+      expect(accountGridHandles(same), {'r1': '#1 @ana:matrix.org', 'r2': '#2 @ana:matrix.org'});
+      expect(accountGridIdentities(same), {'r1': '#1 @ana:matrix.org', 'r2': '#2 @ana:matrix.org'});
+    });
+
+    test('long handles that start alike start from where they differ, since a cell cuts off their ends', () {
+      final pair = [_account('bluesky', id: 'a', handle: 'julien-barbier.bsky.social'), _account('bluesky', id: 'b', handle: 'julien-barbier.neforum.example')];
+      expect(accountGridHandles(pair), {'a': '…bsky.social', 'b': '…neforum.example'});
+      // The full handle stays for the tooltip and screen readers.
+      expect(accountGridIdentities(pair)['a'], 'julien-barbier.bsky.social');
+      // Each from its own point: three that do not all share the same start.
+      final three = accountGridHandles([
+        _account('bluesky', id: 'a', handle: 'julien-barbier.one'),
+        _account('bluesky', id: 'b', handle: 'julien-barbier.two'),
+        _account('bluesky', id: 'c', handle: 'ana.example'),
+      ]);
+      expect(three, {'a': '…one', 'b': '…two', 'c': 'ana.example'});
+      // Never two the same after shortening.
+      final clash = accountGridHandles([
+        _account('bluesky', id: 'a', handle: 'julien-barbier.q'),
+        _account('bluesky', id: 'b', handle: 'julien-barbier.r'),
+        _account('bluesky', id: 'c', handle: 'robert-durand-x.q'),
+        _account('bluesky', id: 'd', handle: 'robert-durand-x.r'),
+      ]);
+      expect(clash.values.toSet().length, 4);
+    });
+
+    for (final form in const ['names', 'tiles']) {
+      testWidgets('two rooms and two sites of one person read differently in the cell, the tooltip and to a screen reader, as $form', (t) async {
+        final handle = t.ensureSemantics();
+        final accounts = [
+          _account('matrix', id: 'room1', handle: '@ana:matrix.org', displayName: 'Family (@ana:matrix.org)'),
+          _account('matrix', id: 'room2', handle: '@ana:matrix.org', displayName: 'Work (@ana:matrix.org)'),
+          _account('wordpress', id: 'site1', handle: 'julien', displayName: 'Julien (Cooking)'),
+          _account('wordpress', id: 'site2', handle: 'julien', displayName: 'Julien (Travel)'),
+          if (form == 'tiles') for (final n in _networks.take(14)) _account(n),
+        ];
+        // The 14 are all other networks than Matrix and WordPress.
+        await _boot(t, accounts: accounts);
+        expect(t.widget<AccountCell>(_cell('room1')).tile, form == 'tiles');
+        for (final (a, b) in const [('room1', 'room2'), ('site1', 'site2')]) {
+          final (x, y) = (_entry(t, a), _entry(t, b));
+          expect(x.handle, isNot(y.handle));
+          expect(x.tooltip, isNot(y.tooltip));
+          expect(x.semanticLabel, isNot(y.semanticLabel));
+          expect(find.descendant(of: _cell(a), matching: find.text(x.handle!)), findsOneWidget);
+          // What a cell can show of them differs as well.
+          String start(String s) => s.substring(0, s.length < 10 ? s.length : 10);
+          expect(start(x.handle!), isNot(start(y.handle!)));
+        }
+        expect(_entry(t, 'room1').semanticLabel, contains('Family'));
+        handle.dispose();
+        await _end(t);
+      });
+    }
+  });
+
+  group('the fold names what it does not count', () {
+    Finder inSummary(Finder f) => find.descendant(of: _summary, matching: f);
+
+    testWidgets('with the Only list, a disabled account still shows, and the tiers of what is left out', (t) async {
+      final handle = t.ensureSemantics();
+      final accounts = _twentyOne();
+      accounts[3] = _account('threads', enabled: false);
+      final c = await _boot(t, accounts: accounts);
+      c.read(composerProvider.notifier).selectAccounts(const ['acct-mastodon', 'acct-bluesky', 'acct-x']);
+      await _settle(t);
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+
+      expect(inSummary(find.text('Only:')), findsOneWidget);
+      expect(inSummary(find.text('Disabled:')), findsOneWidget);
+      expect(inSummary(find.text('Threads')), findsOneWidget);
+      expect(inSummary(find.byIcon(Icons.block_rounded)), findsOneWidget);
+      // 21, less 3 going out, less 1 disabled.
+      expect(inSummary(find.text('Left out 17:')), findsOneWidget);
+      final left = AccountTierCounts.of(t.widget<AccountSelectionSummary>(_summary).entries, leftOut: true);
+      expect(left.values.reduce((a, b) => a + b), 17);
+      for (final tier in left.keys) {
+        expect(inSummary(find.byIcon(tierIcon(tier))), findsWidgets);
+      }
+      expect(find.bySemanticsLabel(RegExp(r'Disabled Threads\. Left out 17: ')), findsOneWidget);
+      handle.dispose();
+      await _end(t);
+    });
+
+    testWidgets('with nothing chosen the tiers of what is left out still show', (t) async {
+      final c = await _boot(t, accounts: _twentyOne());
+      c.read(composerProvider.notifier).selectAccounts(const []);
+      await _settle(t);
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(inSummary(find.text('Left out 21:')), findsOneWidget);
+      await _end(t);
+    });
+
+    testWidgets('art sites are named, each with how it posts', (t) async {
+      await _boot(t, accounts: [_account('mastodon'), _account('nostr'), _account('behance'), _account('cara')]);
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(inSummary(find.text('Art sites:')), findsOneWidget);
+      expect(inSummary(find.text('Behance')), findsOneWidget);
+      expect(inSummary(find.text('Cara')), findsOneWidget);
+      expect(inSummary(find.text('2 of 2')), findsOneWidget);
+      await _end(t);
+    });
+
+    testWidgets('a disabled account in an old draft is not counted as going out, in the fold or the action bar', (t) async {
+      final accounts = _twentyOne();
+      accounts[3] = _account('threads', enabled: false);
+      final c = await _boot(t, accounts: accounts);
+      c.read(composerProvider.notifier).selectAccounts([for (final a in accounts) a.id]);
+      await _settle(t);
+      expect(find.text('20 of 21'), findsOneWidget);
+      final r = c.read(composerReadinessProvider);
+      expect(r.ready + r.handoff + r.blocked, 20);
+
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(inSummary(find.text('20 of 21')), findsOneWidget);
+      expect(inSummary(find.text('Disabled:')), findsOneWidget);
+      expect(inSummary(find.byIcon(Icons.block_rounded)), findsOneWidget);
+      final tiers = AccountTierCounts.of(t.widget<AccountSelectionSummary>(_summary).entries);
+      expect(tiers.values.reduce((a, b) => a + b), 20);
+      await _end(t);
+    });
+
+    testWidgets('over the keyboard they become icons too, and the caret stays in view', (t) async {
+      final accounts = [..._twentyOne().take(15), _account('lemmy', id: 'off', enabled: false), _account('behance'), _account('cara'), _account('artstation'), _account('dribbble')];
+      await _boot(t, accounts: accounts);
+      await t.ensureVisible(_editor);
+      await _settle(t);
+      await t.enterText(_editor, List.generate(30, (i) => 'Line $i of a long post').join('\n'));
+      await _settle(t);
+      _keyboard(t, 280);
+      await _settle(t);
+      expect(inSummary(find.text('Art sites:')), findsOneWidget);
+      expect(inSummary(find.text('Behance')), findsNothing);
+      expect(inSummary(find.byType(PlatformTile)), findsNWidgets(5));
+      _expectCaretInView(t);
+      _keyboard(t, 0);
+      await _settle(t);
+      await _end(t);
+    });
+  });
+
+  group('artwork choices at any text size', () {
+    for (final (size, scale) in const [(Size(360, 640), 1.0), (Size(360, 640), 1.25), (Size(360, 640), 1.5), (Size(320, 640), 1.5)]) {
+      testWidgets('no rating is broken in two at ${size.width} wide, text x$scale', (t) async {
+        final c = await _boot(t, accounts: [_account('mastodon'), _account('behance'), _account('cara')], textScale: scale, size: size);
+        c.read(composerProvider.notifier).setArtwork(const ArtworkDetails());
+        await _settle(t);
+        for (final label in const ['General', 'Mature', 'Adult']) {
+          final paragraph = t.renderObject<RenderParagraph>(find.descendant(of: find.byType(SegmentedButton<ArtworkMaturity>), matching: find.text(label)));
+          final boxes = paragraph.getBoxesForSelection(TextSelection(baseOffset: 0, extentOffset: label.length));
+          expect(boxes.map((b) => b.top).toSet().length, 1, reason: '$label broke in two');
+        }
+        expect(t.takeException(), isNull);
+        await _end(t);
+      });
+    }
+  });
+
+  group('past the tested sizes', () {
+    testWidgets('25 accounts: the filter does not scroll sideways, whatever is typed in it', (t) async {
+      final accounts = [for (var i = 0; i < 25; i++) _account('mastodon', id: 'm$i', handle: '@u$i@two.example')];
+      await _boot(t, accounts: accounts);
+      void expectNothingSideways() {
+        final scrollables = t.widgetList<Scrollable>(find.descendant(of: find.byType(TargetPicker), matching: find.byType(Scrollable)));
+        for (final s in scrollables) {
+          expect(axisDirectionToAxis(s.axisDirection), isNot(Axis.horizontal));
+        }
+      }
+
+      expect(_filter, findsOneWidget);
+      expectNothingSideways();
+      await t.enterText(_filter, 'a very long query that goes well past the end of the field on a small phone');
+      await _settle(t);
+      expectNothingSideways();
+      expect(find.text('No account matches.'), findsOneWidget);
+      await t.enterText(_filter, 'u1\n');
+      await _settle(t);
+      expect(t.widget<TextField>(_filter).controller!.text, 'u1', reason: 'no second line');
+      expect(_cells, findsNWidgets(11));
+      await _end(t);
+    });
+
+    for (final (system, app) in const [(1.3, 1.5), (2.0, 1.0), (2.0, 1.5)]) {
+      testWidgets('system text x$system with the app at x$app has no overflow, open, folded or with artwork', (t) async {
+        t.platformDispatcher.textScaleFactorTestValue = system;
+        addTearDown(t.platformDispatcher.clearTextScaleFactorTestValue);
+        final accounts = [..._twentyOne().take(19), _account('behance'), _account('cara')];
+        final c = await _boot(t, accounts: accounts, textScale: app);
+        expect(t.takeException(), isNull);
+        await t.ensureVisible(find.byKey(kTargetFoldKey));
+        await t.pump();
+        await t.tap(find.byKey(kTargetFoldKey));
+        await _settle(t);
+        expect(t.takeException(), isNull);
+        await t.ensureVisible(find.byKey(kTargetFoldKey));
+        await t.pump();
+        await t.tap(find.byKey(kTargetFoldKey));
+        await _settle(t);
+        c.read(composerProvider.notifier).setArtwork(const ArtworkDetails());
+        await _settle(t);
+        expect(t.takeException(), isNull);
+        await _end(t);
+      });
+    }
+
+    for (final dark in const [false, true]) {
+      testWidgets('a disabled cell can be read, ${dark ? 'dark' : 'light'}', (t) async {
+        t.platformDispatcher.platformBrightnessTestValue = dark ? Brightness.dark : Brightness.light;
+        addTearDown(t.platformDispatcher.clearPlatformBrightnessTestValue);
+        await _boot(t, accounts: [_account('mastodon'), _account('lemmy', enabled: false)]);
+        final nf = t.element(_cell('acct-lemmy')).nf;
+        expect(nf.isDark, dark);
+        double contrast(Color c) {
+          final (a, b) = (c.computeLuminance(), nf.surfaceSunken.computeLuminance());
+          return (a > b ? a + 0.05 : b + 0.05) / (a > b ? b + 0.05 : a + 0.05);
+        }
+
+        for (final icon in t.widgetList<Icon>(find.descendant(of: _cell('acct-lemmy'), matching: find.byType(Icon)))) {
+          expect(contrast(icon.color!), greaterThanOrEqualTo(3), reason: '${icon.icon}');
+        }
+        final name = t.widget<Text>(find.descendant(of: _cell('acct-lemmy'), matching: find.text('Lemmy')));
+        expect(contrast(name.style!.color!), greaterThanOrEqualTo(4.5));
+        await _end(t);
+      });
+    }
   });
 
   group('wider windows keep the chips', () {
