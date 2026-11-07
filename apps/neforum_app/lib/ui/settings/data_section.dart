@@ -86,6 +86,8 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
       await s.accounts.delete(a.id);
     }
     await s.signInStatusStore.clear();
+    await s.signInWarnings.run();
+    await s.signInWarningStore.clear();
     // The post being written goes too, then every post with its
     // notifications, then any media file left over.
     ref.read(composerProvider.notifier).reset();

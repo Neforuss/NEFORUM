@@ -4,12 +4,16 @@ import 'package:intl/intl.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../platform/env.dart';
+import '../../state/account_connection.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/sign_in_risks.dart';
+import '../../state/sign_in_view.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/surfaces.dart';
+import '../accounts/sign_in_risk_notes.dart';
 import '../activity/time_format.dart';
 
 /// Picks a date and time for the post. Returns null when cancelled; a
@@ -168,6 +172,20 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
     final past = each ? accounts.any((a) => !(_times[a.id] ?? _when).isAfter(now)) : !_when.isAfter(now);
     final tz = DateTime.now().timeZoneName;
     final format = TimeFormatting.of(context, ref);
+    // A sign-in that ends before the time picked says so before Schedule.
+    final statuses = ref.watch(signInStatusesProvider).value ?? const {};
+    final risks = [
+      for (final t in targets)
+        ?signInRiskFor(
+          accountId: t.$1.id,
+          account: t.$1,
+          network: t.$2.name,
+          status: statuses[t.$1.id],
+          due: each ? (_times[t.$1.id] ?? _when) : _when,
+          now: ref.watch(signInClockProvider)(),
+          willHold: signInWillHold(settings, t.$1, t.$2, isThread: t.$3),
+        ),
+    ];
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
@@ -276,6 +294,10 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
             const SizedBox(height: Space.xs),
             Text('Time zone: $tz', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
             const SizedBox(height: Space.lg),
+            ],
+            if (risks.isNotEmpty) ...[
+              SignInRiskNotes(risks, showButton: false),
+              const SizedBox(height: Space.sm),
             ],
             if (held.isNotEmpty)
               _Note(

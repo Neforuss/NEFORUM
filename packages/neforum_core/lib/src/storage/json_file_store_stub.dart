@@ -1,4 +1,5 @@
 import '../publish/publish_journal.dart';
+import '../publish/sign_in_warnings.dart';
 import '../util/logger.dart';
 import 'repositories.dart';
 import 'secret_store.dart';
@@ -13,7 +14,8 @@ class JsonFileStore {
         quota = InMemoryQuotaRepository(),
         secrets = InMemorySecretStore(),
         publishJournal = PublishJournal.inMemory(),
-        signInStatus = SignInStatusStore.inMemory();
+        signInStatus = SignInStatusStore.inMemory(),
+        signInWarnings = SignInWarningStore.inMemory();
 
   final String directory;
   final InMemoryAccountRepository accounts;
@@ -22,8 +24,11 @@ class JsonFileStore {
   final InMemorySecretStore secrets;
   final PublishJournal publishJournal;
   final SignInStatusStore signInStatus;
+  final SignInWarningStore signInWarnings;
 
   static SignInStatusStore openSignInStatus(String directory) => SignInStatusStore.inMemory();
+
+  static SignInWarningStore openSignInWarnings(String directory) => SignInWarningStore.inMemory();
 
   static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock}) => PublishJournal.inMemory(owner: owner, clock: clock);
 

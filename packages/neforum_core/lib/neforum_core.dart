@@ -40,6 +40,7 @@ export 'src/model/validation.dart';
 export 'src/publish/cancellation_signal.dart';
 export 'src/publish/publish_journal.dart';
 export 'src/publish/publish_service.dart';
+export 'src/publish/sign_in_warnings.dart';
 export 'src/quota/quota_tracker.dart';
 export 'src/schedule/schedule_engine.dart';
 export 'src/storage/json_file_store_stub.dart' if (dart.library.io) 'src/storage/json_file_store.dart';

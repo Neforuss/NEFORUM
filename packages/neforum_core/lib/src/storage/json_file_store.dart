@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import '../model/account.dart';
 import '../model/post.dart';
 import '../publish/publish_journal.dart';
+import '../publish/sign_in_warnings.dart';
 import '../util/logger.dart';
 import 'repositories.dart';
 import 'secret_store.dart';
@@ -18,7 +19,7 @@ import 'sign_in_status_store.dart';
 /// by the app for everything except secrets (which go to the OS keychain).
 ///
 /// Files: `accounts.json`, `posts.json`, `quota.json`, `secrets.json`,
-/// `publish-journal.json`, `sign-in-status.json`.
+/// `publish-journal.json`, `sign-in-status.json`, `sign-in-warnings.json`.
 class JsonFileStore {
   JsonFileStore(this.directory)
       : accounts = JsonAccountRepository(JsonFile(p.join(directory, 'accounts.json'))),
@@ -26,7 +27,8 @@ class JsonFileStore {
         quota = JsonQuotaRepository(JsonFile(p.join(directory, 'quota.json'))),
         secrets = JsonSecretStore(JsonFile(p.join(directory, 'secrets.json'))),
         publishJournal = openPublishJournal(directory),
-        signInStatus = openSignInStatus(directory);
+        signInStatus = openSignInStatus(directory),
+        signInWarnings = openSignInWarnings(directory);
 
   final String directory;
   final JsonAccountRepository accounts;
@@ -40,6 +42,16 @@ class JsonFileStore {
 
   /// What this device last worked out about each account's sign-in.
   final SignInStatusStore signInStatus;
+
+  /// Which sign-in warnings this device already gave.
+  final SignInWarningStore signInWarnings;
+
+  /// The record of sign-in warnings in [directory]. Device-only, like the
+  /// status. Every read goes to the file, since background isolates write it too.
+  static SignInWarningStore openSignInWarnings(String directory) {
+    final file = JsonFile(p.join(directory, 'sign-in-warnings.json'), writeAttempts: 3);
+    return SignInWarningStore(read: file.read, write: file.write);
+  }
 
   /// The sign-in status in [directory]. Device-only: never synced or exported.
   /// Every read goes to the file, since background isolates write it too.
@@ -62,6 +74,7 @@ class JsonFileStore {
     accounts.dispose();
     posts.dispose();
     signInStatus.dispose();
+    signInWarnings.dispose();
   }
 }
 

@@ -108,6 +108,9 @@ class LemmyAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.lemmy(account);
 
+  @override
+  bool canReadSignIn(ConnectedAccount account) => account.tier == PlatformTier.openApi;
+
   /// The login JWT's own `exp`, with no network. An account connected before
   /// 1.4 on a Lemmy 1.0 server has one a week out.
   @override

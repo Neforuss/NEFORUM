@@ -1,3 +1,4 @@
+import '../auth/oauth2_pkce.dart';
 import '../handoff/handoff_plan.dart';
 import '../model/account.dart';
 import '../model/photo_fit.dart';
@@ -69,6 +70,27 @@ abstract class PlatformAdapter {
   /// and must not count as use of a paid API: X stays null because its
   /// pay-per-use pricing of a read is unknown.
   Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => null;
+
+  /// [readSignIn] has an answer for [account]: the sign-ins page offers "Check
+  /// now", and opening that page asks only these, so the rest cost no keychain
+  /// prompt. An adapter that overrides [readSignIn] overrides this too.
+  bool canReadSignIn(ConnectedAccount account) => false;
+
+  /// "Renew now": a renewal of [secrets] now, where [refreshSecrets] would wait
+  /// for them to run out. Null when there was nothing to renew. Throws what
+  /// [refreshSecrets] throws.
+  ///
+  /// The default tells [refreshSecrets] that the access token has run out, which
+  /// is the question every refresh token path asks. A date in the answer is
+  /// always the server's, and with none the old one is dropped, not this one.
+  /// An adapter that treats a run-out token as the end (Threads, Instagram)
+  /// overrides this.
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final past = ctx.now().subtract(const Duration(days: 1)).toUtc().toIso8601String();
+    final fresh = await refreshSecrets(account, {...secrets, OAuthTokens.keyExpiresAt: past}, ctx);
+    if (fresh == null || fresh[OAuthTokens.keyExpiresAt] != past) return fresh;
+    return {...fresh}..remove(OAuthTokens.keyExpiresAt);
+  }
 
   /// The platform hands out a new refresh token on every renewal and kills
   /// the old one (X, Tumblr, TikTok, Pixelfed). An account copied to a second

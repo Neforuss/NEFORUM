@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../state/nav_history.dart';
 import 'accounts/accounts_screen.dart';
 import 'accounts/add_account_screen.dart';
+import 'accounts/sign_ins_screen.dart';
 import 'activity/activity_screen.dart';
 import 'activity/post_detail_screen.dart';
 import 'compose/compose_screen.dart';
@@ -15,6 +16,9 @@ import 'shell/app_shell.dart';
 /// Root navigator: dialogs and sheets opened by services (hand-off, paste
 /// code) attach here so they show above every tab.
 final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
+
+/// Every sign-in by when it ends: where warnings send the person.
+const String kSignInsPath = '/accounts/sign-ins';
 
 /// The five top-level sections, in navigation order.
 enum AppSection {
@@ -79,6 +83,7 @@ final routerProvider = Provider<GoRouter>((ref) {
                   path: 'add',
                   builder: (context, state) => AddAccountScreen(query: state.uri.queryParameters),
                 ),
+                GoRoute(path: 'sign-ins', builder: (context, state) => const SignInsScreen()),
               ],
             ),
           ]),

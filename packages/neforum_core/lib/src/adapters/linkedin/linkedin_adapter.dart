@@ -119,6 +119,9 @@ class LinkedInAdapter extends PlatformAdapter {
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.linkedInFor(account);
 
   @override
+  bool canReadSignIn(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
+  @override
   PlatformDescriptor get descriptor => linkedInDescriptor;
 
   // ------------------------------------------------------------- connect

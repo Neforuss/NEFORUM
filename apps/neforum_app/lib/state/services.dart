@@ -19,6 +19,7 @@ import 'composer_draft.dart' show kComposerDraftFile;
 import 'demo.dart';
 import 'media_host_config.dart';
 import 'settings.dart';
+import 'sign_in_notifications.dart';
 
 /// Every long-lived object the app needs, created once at startup (and again
 /// when the user toggles demo mode).
@@ -38,6 +39,8 @@ class AppServices {
     required this.publishJournal,
     required this.signInStatusStore,
     required this.signInStatus,
+    required this.signInWarningStore,
+    required this.signInWarnings,
     required this.demo,
     required this._settings,
   }) : quota = QuotaTracker(quotaRepo);
@@ -56,6 +59,14 @@ class AppServices {
 
   /// Keeps [signInStatusStore] current: [secrets] tells it about every write.
   final SignInStatusTracker signInStatus;
+
+  /// Which sign-in warnings this device already gave, and what was closed of
+  /// the banner. Device-only: never synced, never exported.
+  final SignInWarningStore signInWarningStore;
+
+  /// Warns ahead of a sign-in's end. Runs on start, on the scheduler's timer,
+  /// on every status change and after each background run.
+  final SignInWarningService signInWarnings;
   final QuotaRepository quotaRepo;
   final SecretStore secrets;
   final AdapterRegistry registry;
@@ -98,6 +109,7 @@ class AppServices {
     late final SecretStore keychain;
     late final PublishJournal journal;
     late final SignInStatusStore signInStore;
+    late final SignInWarningStore warningStore;
     final AdapterRegistry registry;
 
     if (demo) {
@@ -107,8 +119,10 @@ class AppServices {
       keychain = InMemorySecretStore();
       journal = PublishJournal.inMemory();
       signInStore = SignInStatusStore.inMemory();
+      warningStore = SignInWarningStore.inMemory();
       registry = demoRegistry(real);
       await seedDemo(registry: registry, accounts: accounts, posts: posts, quota: quota, media: MediaLibrary(st));
+      await seedDemoSignIns(registry: registry, accounts: accounts, statuses: signInStore);
     } else {
       final store = JsonFileStore(st.dataDir ?? '');
       accounts = store.accounts;
@@ -117,6 +131,7 @@ class AppServices {
       keychain = SecureSecretStore();
       journal = store.publishJournal;
       signInStore = store.signInStatus;
+      warningStore = store.signInWarnings;
       registry = real;
     }
 
@@ -150,6 +165,14 @@ class AppServices {
       publishJournal: journal,
       signInStatusStore: signInStore,
       signInStatus: signIn,
+      signInWarningStore: warningStore,
+      signInWarnings: SignInWarningService(
+        store: warningStore,
+        statuses: signInStore,
+        accounts: accounts,
+        sink: demo ? const SilentSignInSink() : SignInNotificationSink(accounts: accounts, registry: registry),
+        schedulesAhead: Env.isAndroid || Env.isIOS,
+      ),
       demo: demo,
       settings: settings,
     );

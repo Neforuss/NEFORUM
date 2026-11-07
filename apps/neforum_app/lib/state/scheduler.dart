@@ -33,14 +33,22 @@ class AppScheduler {
   Timer? _timer;
   Timer? _retentionTimer;
   Timer? _recoveryTimer;
+
+  /// Held here: stop runs while the providers shut down and cannot read them.
+  SignInWarningService? _warnings;
   bool _busy = false;
 
   AppServices get _s => ref.read(servicesProvider);
 
   void start() {
     if (_timer != null) return;
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => runDue());
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(runDue());
+      // A date passes with no write: desktops fire sign-in warnings from here.
+      unawaited(_s.signInWarnings.run());
+    });
     unawaited(runDue());
+    _warnings = _s.signInWarnings..start();
     if (Env.isAndroid || Env.isIOS) unawaited(_registerPeriodic());
     // Startup applied retention already (main.dart); kept posts expire by
     // the hour after that.
@@ -57,6 +65,8 @@ class AppScheduler {
     _retentionTimer = null;
     _recoveryTimer?.cancel();
     _recoveryTimer = null;
+    _warnings?.stop();
+    _warnings = null;
   }
 
   /// Settles the runs on this device that ended without saving their
@@ -139,6 +149,8 @@ class AppScheduler {
   /// Sets up OS-level reminders and background work for a scheduled post.
   Future<void> planReminders(Post p) async {
     await planPostReminders(_s, p);
+    // Reminders go first in the OS's limited room: sign-in warnings make way.
+    await _s.signInWarnings.run();
     updateTrayStatus();
   }
 
@@ -351,6 +363,9 @@ Future<int> publishDueHeadless(AppServices s) async {
     // The next network's time: WorkManager one-off on Android, a reminder on iOS.
     await planNextReminders(s, done);
   }
+  // A renewal in this run moved a date, and a warning planned for the old one
+  // would say something no longer true: no status stream reaches this isolate.
+  await s.signInWarnings.run();
   return due.length;
 }
 
