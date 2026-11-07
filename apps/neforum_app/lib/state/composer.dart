@@ -15,6 +15,7 @@ import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
+import '../platform/publish_host.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
 import 'card_designs.dart';
@@ -22,6 +23,8 @@ import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
 import 'providers.dart';
+import 'publish_run_session.dart';
+import 'publish_run_surface.dart';
 import 'scheduler.dart';
 import 'settings.dart';
 import 'shrunk_videos.dart';
@@ -1376,18 +1379,45 @@ class PostActions {
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
+    // At the tap, while NEFORUM is in front: that is when the system gives time.
+    final surface = ref.read(publishSurfaceProvider.notifier);
+    final networks = await _hostNetworks(postId, accountIds: accountIds, dueTargetsOnly: dueTargetsOnly);
+    final session = surface.start(postId, title: publishSurfaceTitle(networks.length), networks: networks);
     try {
-      return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
+      return await _publishExisting(postId, signal, session, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
       await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
+      await session.finish(null, error: '$e');
       rethrow;
     } finally {
+      surface.remove(postId, session);
       active.end(postId, signal);
     }
   }
 
-  Future<Post> _publishExisting(String postId, CancellationSignal signal,
+  /// The networks a run will post to: names and sizes, never the post's words.
+  Future<List<PublishHostNetwork>> _hostNetworks(String postId, {Set<String>? accountIds, required bool dueTargetsOnly}) async {
+    final s = ref.read(servicesProvider);
+    final out = <PublishHostNetwork>[];
+    try {
+      final post = await s.posts.get(postId);
+      if (post == null) return out;
+      final bytes = post.media.fold<int>(0, (sum, m) => sum + m.sizeBytes);
+      final now = DateTime.now();
+      for (final t in post.targets) {
+        if (t.isDone || (accountIds != null && !accountIds.contains(t.accountId)) || (dueTargetsOnly && !post.isTargetDue(t, now))) continue;
+        final a = await s.accounts.get(t.accountId);
+        final d = a == null ? null : s.registry.descriptor(a.platformId);
+        if (d != null) out.add(PublishHostNetwork(id: t.accountId, name: d.name, bytes: bytes));
+      }
+    } on Object catch (e) {
+      debugPrint('Could not list the networks of $postId: ${e.runtimeType}');
+    }
+    return out;
+  }
+
+  Future<Post> _publishExisting(String postId, CancellationSignal signal, PublishRunSession session,
       {Set<String>? accountIds, required bool retryFailed, bool dueTargetsOnly = false}) async {
     final s = ref.read(servicesProvider);
     // A background isolate may have posted some of it meanwhile: the run
@@ -1417,17 +1447,26 @@ class PostActions {
     post = await attachShrunkVideos(s, post, ref.read(settingsProvider),
         onProgress: run.progress, cancellation: signal, onlyAccountIds: starting);
     await s.posts.upsert(post);
+    final tracker = PublishProgressTracker(postId: postId, onChange: session.progress);
     final done = await s.publisher().publish(
           postId,
           interactive: true,
           onlyAccountIds: accountIds,
           retryFailed: retryFailed,
           onProgress: run.progress,
+          onPlan: tracker.plan,
+          onEvent: tracker.event,
+          onOutcome: tracker.outcome,
           cancellation: signal,
           dueTargetsOnly: dueTargetsOnly,
+          pause: session.pause,
         );
     final finalPost = await s.applySkips(postId) ?? done;
     run.finish(finalPost);
+    await session.finish(tracker.current, unknown: {
+      for (final t in finalPost.targets)
+        if (t.result?.error?.outcomeUnknown == true) t.accountId,
+    });
     try {
       // Networks still waiting for their own time keep their reminder.
       final next = finalPost.scheduledAt;
@@ -1466,6 +1505,17 @@ class PostActions {
     }
   }
 
+  /// A post that may be live although no answer says so comes first: that is the
+  /// one thing the person must do before retrying.
+  @visibleForTesting
+  static String publishResultBody(Post p) {
+    for (final t in p.targets) {
+      final e = t.result?.error;
+      if (e?.outcomeUnknown == true) return e!.message;
+    }
+    return _short(p.text);
+  }
+
   Future<void> _notifyResult(Post p) async {
     final settings = ref.read(settingsProvider);
     if (!settings.notifyOnPublish) return;
@@ -1476,7 +1526,7 @@ class PostActions {
     await NotificationService.instance.show(
       key: 'result:${p.id}',
       title: failed > 0 ? 'Posted to $ok, $failed failed' : 'Posted to $ok · $waiting waiting for you',
-      body: _short(p.text),
+      body: publishResultBody(p),
       payload: 'post:${p.id}',
     );
   }

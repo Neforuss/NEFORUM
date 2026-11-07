@@ -132,7 +132,7 @@ These come from the platforms, not from NEFORUM. The setup guides explain each o
 - **Platforms that can hold a post publish it themselves:** Mastodon (and Pleroma, Akkoma, Friendica, GoToSocial 0.20+), Facebook Pages, YouTube, Tumblr, WordPress and Ghost. NEFORUM hands them the post when you schedule it, so it goes out even if your device is off. Editing, rescheduling, publishing now or deleting the post in NEFORUM takes their copy back first. If that fails (offline, expired sign-in), NEFORUM tells you instead of pretending. Threads, private or unlisted YouTube videos, and times too close or too far out stay on the device.
 - **Windows and macOS:** for everything else, NEFORUM keeps running in the tray (menu bar) when you close the window and posts on time. It can start when you sign in.
 - **Android:** posts go out in the background within a few minutes of their time.
-- **iPhone and iPad:** iOS does not let apps run on a timer. Networks that hold posts need nothing from the phone. For the rest you get a notification at the scheduled time; its **Publish now** button posts without opening the app.
+- **iPhone and iPad:** iOS does not let apps run on a timer. Networks that hold posts need nothing from the phone. For the rest you get a notification at the scheduled time. For a text post, its **Publish now** button tries to post in the few seconds iOS allows without opening the app. A post with photos or video opens NEFORUM, because it can take longer. If you leave the app mid-post, iOS may pause it: on iOS 16.2 and later the Live Activity says so, and the post continues when you open NEFORUM. A post cannot finish after you swipe the app away.
 - **Hand-off accounts** always get a "time to post" reminder.
 
 ## Sync without a server

@@ -321,7 +321,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
   }
 
   static String _deviceNote() {
-    if (Env.isIOS) return 'at the scheduled time you get a notification with a Publish now button (iOS does not let apps post on a timer).';
+    if (Env.isIOS) return 'at the scheduled time you get a notification with a Publish now button (iOS does not let apps post on a timer). Posts with photos or video open NEFORUM to finish.';
     if (Env.isAndroid) return 'goes out in the background within a few minutes of its time.';
     if (Env.isDesktop) return 'keep NEFORUM running (it stays in the tray when you close the window) and it goes out on time.';
     return 'scheduling works in the installed apps; the web preview only stores the time.';

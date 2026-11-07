@@ -16,6 +16,7 @@ import '../../platform/update_check.dart';
 import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
 import '../../state/providers.dart';
+import '../../state/publish_run_session.dart';
 import '../../state/scheduler.dart';
 import '../../state/settings.dart' show NavigationChromeStyle;
 import '../../state/update_checks.dart';
@@ -45,10 +46,13 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   StreamSubscription<NotificationIntent>? _intentSub;
+  late final AppLifecycleListener _publishWindow;
 
   @override
   void initState() {
     super.initState();
+    // A run going on outside the app is told when the window comes and goes.
+    _publishWindow = publishWindowListener(ref);
     UiBridge.instance = _ShellUiBridge();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(schedulerProvider).start();
@@ -104,6 +108,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void dispose() {
     _intentSub?.cancel();
+    _publishWindow.dispose();
     super.dispose();
   }
 

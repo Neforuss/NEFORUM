@@ -331,8 +331,9 @@ class AppServices {
     return true;
   }
 
-  /// Shown on targets a closed or crashed NEFORUM left unposted.
-  static const interruptedMessage = 'NEFORUM closed before this was posted. Retry it.';
+  /// Shown on targets a run left unposted when its process ended. iOS stopping
+  /// the app and a person swiping it away look alike, so it names neither.
+  static const interruptedMessage = 'NEFORUM was closed before this was posted. Retry it.';
 
   /// Shown on targets a run of this process did not reach because it
   /// stopped with [error].

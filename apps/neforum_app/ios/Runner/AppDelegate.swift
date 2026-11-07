@@ -11,6 +11,10 @@ import workmanager_apple
   /// BGTaskSchedulerPermittedIdentifiers in Info.plist.
   static let publishDueTask = "org.neforum.publish_due"
 
+  /// Must match kPublishAction and kDueCategory in lib/platform/notifications.dart.
+  static let publishAction = "publish"
+  static let dueCategory = "neforum.due"
+
   override func application(
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
@@ -20,11 +24,13 @@ import workmanager_apple
     WorkmanagerPlugin.setPluginRegistrantCallback { registry in
       GeneratedPluginRegistrant.register(with: registry)
       SyncFolderPlugin.register(in: registry)
+      PublishRunPlugin.register(in: registry)
     }
     // Same for the isolate that runs "Publish now" on a due-post reminder.
     FlutterLocalNotificationsPlugin.setPluginRegistrantCallback { registry in
       GeneratedPluginRegistrant.register(with: registry)
       SyncFolderPlugin.register(in: registry)
+      PublishRunPlugin.register(in: registry)
     }
     WorkmanagerPlugin.registerPeriodicTask(
       withIdentifier: AppDelegate.publishDueTask,
@@ -44,6 +50,25 @@ import workmanager_apple
     SyncFolderPlugin.register(in: engineBridge.pluginRegistry)
     ClipboardPlugin.register(in: engineBridge.pluginRegistry)
     VideoCompositorPlugin.register(in: engineBridge.pluginRegistry)
+    PublishRunPlugin.register(in: engineBridge.pluginRegistry)
+    // Whatever an earlier process left on the Lock Screen is out of date.
+    PublishRunKeeper.shared.endLeftoverActivities()
+  }
+
+  /// "Publish now" on a text post's reminder runs without opening the app. The
+  /// notification plugin calls its completion handler as soon as it has queued the
+  /// event, before Dart has started, so the background assertion has to come first.
+  /// Dart gives it back through `end` in lib/main.dart, and it expires by itself.
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    if response.actionIdentifier == AppDelegate.publishAction,
+       response.notification.request.content.categoryIdentifier == AppDelegate.dueCategory {
+      PublishRunKeeper.shared.beginNotificationAction()
+    }
+    super.userNotificationCenter(center, didReceive: response, withCompletionHandler: completionHandler)
   }
 }
 

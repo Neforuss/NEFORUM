@@ -11,7 +11,7 @@ class SchedulingSettingsSection extends ConsumerWidget {
 
   static String _deviceText() {
     if (Env.isIOS) {
-      return 'iOS does not let apps post on a timer. At the scheduled time you get a notification; its Publish now button posts without opening NEFORUM.';
+      return 'iOS does not let apps post on a timer. At the scheduled time you get a notification. Its Publish now button tries to post a text post in the short time iOS allows, and opens NEFORUM for a post with photos or video.';
     }
     if (Env.isAndroid) return 'Android posts them in the background within a few minutes of their time.';
     if (Env.isDesktop) return 'NEFORUM posts them on time while it runs. Closing the window keeps it in the tray; it can also start when you sign in.';

@@ -219,7 +219,7 @@ void main() {
     });
 
     test('every notification about a post is cancelled with it', () {
-      expect(NotificationService.postKeys('p1'), ['due:p1', 'result:p1', 'handoff:p1']);
+      expect(NotificationService.postKeys('p1'), ['due:p1', 'result:p1', 'handoff:p1', 'paused:p1']);
     });
   });
 

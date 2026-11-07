@@ -6,6 +6,8 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../brand/neforum_logo.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/publish_run_session.dart';
+import '../../state/publish_run_surface.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
@@ -118,6 +120,7 @@ class PublishProgressSheet extends ConsumerWidget {
           Text(headline, textAlign: TextAlign.center, style: context.text.headlineSmall),
           const SizedBox(height: Space.xs),
           Text(sub, textAlign: TextAlign.center, style: context.text.bodySmall?.copyWith(color: error != null ? nf.danger : null)),
+          if (!done) const PublishSurfaceLine(),
           if (!done) ...[
             const SizedBox(height: Space.lg),
             ClipRRect(
@@ -204,6 +207,34 @@ class PublishProgressSheet extends ConsumerWidget {
         ]),
       ),
     ]);
+  }
+}
+
+/// What the system is doing to this run, in the reducer's words: that leaving can
+/// pause it, that it was paused, or that it stopped and needs an answer.
+class PublishSurfaceLine extends ConsumerWidget {
+  const PublishSurfaceLine({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final surface = ref.watch(publishSurfaceProvider);
+    final postId = ref.watch(publishRunProvider)?.postId;
+    final line = surface?.sheetLine;
+    if (surface == null || line == null || postId == null || surface.postId != postId) return const SizedBox.shrink();
+    final stopped = surface.phase == PublishSurfacePhase.stopped;
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.sm),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(line, textAlign: TextAlign.center, style: context.text.bodySmall?.copyWith(color: stopped ? context.nf.warning : null)),
+        if (stopped) ...[
+          const SizedBox(height: Space.sm),
+          Wrap(alignment: WrapAlignment.center, spacing: Space.sm, runSpacing: Space.sm, children: [
+            FilledButton(onPressed: () => ref.read(publishSurfaceProvider.notifier).continueRun(postId), child: const Text('Continue')),
+            OutlinedButton(onPressed: () => ref.read(postActionsProvider).cancelPublishing(postId), child: const Text('Cancel the rest')),
+          ]),
+        ],
+      ]),
+    );
   }
 }
 

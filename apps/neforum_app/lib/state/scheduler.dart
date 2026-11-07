@@ -220,6 +220,7 @@ Future<void> planPostReminders(AppServices s, Post p) async {
         body: '${held}Publish now: ${_short(p.text)}',
         payload: 'publish:${p.id}',
         publishAction: true,
+        publishOpensApp: reminderOpensApp(p),
       );
     }
   } else if (handoffNames.isNotEmpty) {
@@ -263,6 +264,11 @@ Future<void> planNextReminders(AppServices s, Post done) async {
     debugPrint('Could not plan the next run of ${done.id}: $e');
   }
 }
+
+/// Whether a reminder's "Publish now" should open NEFORUM. A text post can go out
+/// in the seconds iOS gives a background action. Files can take longer, and only a
+/// tap with the app in front may ask iOS for more time.
+bool reminderOpensApp(Post p) => p.media.isNotEmpty;
 
 String _join(List<String> names) {
   if (names.isEmpty) return 'your networks';
