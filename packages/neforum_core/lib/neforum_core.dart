@@ -57,6 +57,7 @@ export 'src/sync/sync_providers.dart';
 export 'src/sync/sync_sources.dart';
 export 'src/text/media_packer.dart';
 export 'src/text/rules_validator.dart';
+export 'src/text/emoji_clusters.dart';
 export 'src/text/text_counter.dart';
 export 'src/text/text_splitter.dart';
 export 'src/text/url_detector.dart';

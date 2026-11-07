@@ -35,10 +35,78 @@ class UrlDetector {
     'one', 'two', 'red', 'blue', 'pink', 'black', 'rocks', 'wiki', 'science', 'pro', 'name', 'mobi',
   ];
 
+  /// A link ends at a space, a delimiter or a text direction mark: an address
+  /// never holds one, and right-to-left writers often have them around links.
   static final RegExp _scheme = RegExp(
-    r'''(?<![\w@/])(https?://[^\s<>"'`]+)''',
+    r'''(?<![\w@/])(https?://[^\s<>"'`‎‏‪-‮⁦-⁩]+)''',
     caseSensitive: false,
   );
+
+  /// Longest part of a host name between dots (RFC 1035), in its ASCII form.
+  static const int _maxLabel = 63;
+
+  /// Whether every part of the host in the link [url] fits the limit a real
+  /// host name has, measuring non-ASCII parts in their `xn--` form. Past it the
+  /// text is not an address anywhere, so it counts and shows as plain words.
+  static bool _hostFits(String url) {
+    var host = url.substring(url.indexOf('://') + 3);
+    final end = host.indexOf(RegExp(r'[/?#]'));
+    if (end >= 0) host = host.substring(0, end);
+    host = host.substring(host.lastIndexOf('@') + 1);
+    final port = host.lastIndexOf(':');
+    if (port >= 0) host = host.substring(0, port);
+    return host.split('.').every((label) => _asciiLength(label) <= _maxLabel);
+  }
+
+  static int _asciiLength(String label) {
+    final ascii = label.runes.every((r) => r < 0x80);
+    return ascii ? label.length : 4 + punycodeLength(label.toLowerCase());
+  }
+
+  /// Length of the Punycode form (RFC 3492) of [input], without `xn--`.
+  @visibleForTesting
+  static int punycodeLength(String input) {
+    const base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700;
+    final runes = input.runes.toList();
+    final basic = runes.where((r) => r < 0x80).length;
+    var out = basic == 0 ? 0 : basic + 1;
+    var n = 128, delta = 0, bias = 72, handled = basic;
+
+    int adapt(int d, int points, bool first) {
+      var x = first ? d ~/ damp : d ~/ 2;
+      x += x ~/ points;
+      var k = 0;
+      while (x > ((base - tMin) * tMax) ~/ 2) {
+        x ~/= base - tMin;
+        k += base;
+      }
+      return k + ((base - tMin + 1) * x) ~/ (x + skew);
+    }
+
+    while (handled < runes.length) {
+      final next = runes.where((r) => r >= n).reduce((a, b) => a < b ? a : b);
+      delta += (next - n) * (handled + 1);
+      n = next;
+      for (final r in runes) {
+        if (r < n) delta++;
+        if (r != n) continue;
+        var q = delta;
+        for (var k = base;; k += base) {
+          final t = k <= bias ? tMin : (k >= bias + tMax ? tMax : k - bias);
+          if (q < t) break;
+          out++;
+          q = (q - t) ~/ (base - t);
+        }
+        out++;
+        bias = adapt(delta, handled + 1, handled == basic);
+        delta = 0;
+        handled++;
+      }
+      delta++;
+      n++;
+    }
+    return out;
+  }
 
   static final RegExp _bare = RegExp(
     r'''(?<![\w@./-])((?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:'''
@@ -53,7 +121,8 @@ class UrlDetector {
     final out = <UrlMatch>[];
     for (final m in _scheme.allMatches(text)) {
       final trimmed = _trim(text, m.start, m.end);
-      out.add(UrlMatch(start: trimmed.$1, end: trimmed.$2, text: text.substring(trimmed.$1, trimmed.$2), hasScheme: true));
+      final url = text.substring(trimmed.$1, trimmed.$2);
+      if (_hostFits(url)) out.add(UrlMatch(start: trimmed.$1, end: trimmed.$2, text: url, hasScheme: true));
     }
     for (final m in _bare.allMatches(text)) {
       if (out.any((u) => m.start < u.end && m.end > u.start)) continue; // overlaps a scheme URL

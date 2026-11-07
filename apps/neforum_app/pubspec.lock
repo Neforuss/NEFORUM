@@ -1120,6 +1120,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.0"
+  unicode_emojis:
+    dependency: "direct main"
+    description:
+      name: unicode_emojis
+      sha256: "9002605ccf3894f7761b28b9f14abb17e0ce0926ec14bd031083765d87b66157"
+      url: "https://pub.dev"
+    source: hosted
+    version: "0.6.0"
   universal_platform:
     dependency: transitive
     description:

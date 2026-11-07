@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../theme/tokens.dart';
+import 'emoji_insert.dart';
 
 /// Returned by [showPollEditor] when the user removes the poll.
 const PostPoll kRemovePoll = PostPoll(options: []);
@@ -124,13 +125,17 @@ class _PollEditorState extends State<_PollEditor> {
             if (_kind == _Kind.quiz)
               Padding(padding: const EdgeInsets.only(top: Space.xs), child: Radio<int>(value: i)),
             Expanded(
-              child: TextField(
+              child: EmojiTargetField(
                 controller: _options[i],
                 onChanged: (_) => setState(() {}),
-                maxLength: max,
-                decoration: InputDecoration(
-                  labelText: _kind == _Kind.imagePoll ? 'Caption for image ${i + 1}' : 'Answer ${i + 1}',
-                  counterText: max == null ? null : '${_options[i].text.characters.length}/$max',
+                child: TextField(
+                  controller: _options[i],
+                  onChanged: (_) => setState(() {}),
+                  maxLength: max,
+                  decoration: InputDecoration(
+                    labelText: _kind == _Kind.imagePoll ? 'Caption for image ${i + 1}' : 'Answer ${i + 1}',
+                    counterText: max == null ? null : '${_options[i].text.characters.length}/$max',
+                  ),
                 ),
               ),
             ),
@@ -149,8 +154,11 @@ class _PollEditorState extends State<_PollEditor> {
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.xxl, Space.xs),
-        child: Text('Poll or quiz', style: context.text.headlineSmall),
+        padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.lg, Space.xs),
+        child: Row(children: [
+          Expanded(child: Text('Poll or quiz', style: context.text.headlineSmall)),
+          const EmojiButton(),
+        ]),
       ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: Space.xxl),
@@ -212,13 +220,17 @@ class _PollEditorState extends State<_PollEditor> {
               ),
             if (_kind == _Kind.quiz) ...[
               const SizedBox(height: Space.sm),
-              TextField(
+              EmojiTargetField(
                 controller: _explanation,
                 onChanged: (_) => setState(() {}),
-                minLines: 2,
-                maxLines: 5,
-                maxLength: r.quizExplanationMaxLength,
-                decoration: const InputDecoration(labelText: 'Explanation (optional, shown after answering)'),
+                child: TextField(
+                  controller: _explanation,
+                  onChanged: (_) => setState(() {}),
+                  minLines: 2,
+                  maxLines: 5,
+                  maxLength: r.quizExplanationMaxLength,
+                  decoration: const InputDecoration(labelText: 'Explanation (optional, shown after answering)'),
+                ),
               ),
             ],
             if (r.notes != null) Text(r.notes!, style: context.text.bodySmall?.copyWith(color: nf.textFaint)),

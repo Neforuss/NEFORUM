@@ -13,6 +13,7 @@ import '../../widgets/char_ring.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
 import 'customize_sheet.dart';
+import 'emoji_insert.dart';
 
 /// What a network gets when its version follows the main post: the main text
 /// with that network's hashtags and link added, not yet split into a thread.
@@ -172,6 +173,11 @@ class _VersionEditorState extends ConsumerState<_VersionEditor> {
     notifier.setVersionText(widget.preview.account.id, text.trim() == widget.base.trim() ? null : text);
   }
 
+  void _changed(String v) {
+    setState(() {});
+    _set(v);
+  }
+
   void _apply(VersionTransform t) {
     final next = applyTransform(t, _ctrl.text, widget.preview.descriptor);
     _ctrl.value = TextEditingValue(text: next, selection: TextSelection.collapsed(offset: next.length));
@@ -233,24 +239,26 @@ class _VersionEditorState extends ConsumerState<_VersionEditor> {
         const SizedBox(height: Space.sm),
         NfWell(
           padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.xs),
-          child: TextField(
+          child: EmojiTargetField(
             controller: _ctrl,
             focusNode: _focus,
-            onChanged: (v) {
-              setState(() {});
-              _set(v);
-            },
-            minLines: 3,
-            maxLines: null,
-            keyboardType: TextInputType.multiline,
-            style: context.text.bodyMedium?.copyWith(height: 1.5),
-            decoration: InputDecoration(
-              hintText: 'The ${d.name} version',
-              filled: false,
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.symmetric(vertical: Space.sm),
+            onChanged: _changed,
+            child: TextField(
+              controller: _ctrl,
+              focusNode: _focus,
+              onChanged: _changed,
+              minLines: 3,
+              maxLines: null,
+              keyboardType: TextInputType.multiline,
+              style: context.text.bodyMedium?.copyWith(height: 1.5),
+              decoration: InputDecoration(
+                hintText: 'The ${d.name} version',
+                filled: false,
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                contentPadding: const EdgeInsets.symmetric(vertical: Space.sm),
+              ),
             ),
           ),
         ),

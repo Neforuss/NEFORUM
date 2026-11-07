@@ -12,6 +12,7 @@ import 'aligned_text.dart';
 import 'caption_fonts.dart';
 import 'card_design.dart';
 import 'card_templates.dart' show cardShapeOf, cardTemplateById, kCardTemplatePictureAreas;
+import 'emoji_text.dart';
 import 'photo_composite.dart';
 import 'photo_pixels.dart';
 import 'render_parameters.dart' show stableHash;
@@ -178,6 +179,7 @@ class CardRenderInput {
 /// still-picture video of a sound file).
 Future<Uint8List> renderCardDesign(CardRenderInput input, {bool png = false}) async {
   final width = input.size.width.round(), height = input.size.height.round();
+  await EmojiSupport.prepare([...input.texts.values, for (final b in input.design.blocks) b.text].join(' '));
   final words = await rasterizeWordsLayer(width, height, (canvas) {
     CardDesignPainter(
       design: input.design,

@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:characters/characters.dart';
 import 'package:meta/meta.dart';
 
 import '../audio/audio_publishing.dart';
@@ -239,7 +240,7 @@ class VariantResolver {
       // without a separate field.
       final firstLine = (o.text ?? written.firstOrNull ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
       if (firstLine.isNotEmpty) {
-        title = t.titleMax != null && firstLine.length > t.titleMax! ? '${firstLine.substring(0, t.titleMax! - 1)}…' : firstLine;
+        title = t.titleMax != null && firstLine.length > t.titleMax! ? '${_cutToUnits(firstLine, t.titleMax! - 1)}…' : firstLine;
         issues.add(ValidationIssue.info('title.derived', 'Title taken from the first line for ${d.name}', field: 'title'));
       }
     }
@@ -341,11 +342,24 @@ class VariantResolver {
 
   /// [title] with the number of post [index] (from 0) of a series of
   /// [count], shortened to keep within the title limit.
+  /// The start of [text], at most [units] UTF-16 units long, ending between two
+  /// whole characters: a cut never leaves half an emoji behind.
+  static String _cutToUnits(String text, int units) {
+    final kept = StringBuffer();
+    var length = 0;
+    for (final c in text.characters) {
+      if (length + c.length > units) break;
+      kept.write(c);
+      length += c.length;
+    }
+    return kept.toString();
+  }
+
   static String _numberedTitle(String title, int index, int count, TextRules t) {
     final label = ' (${index + 1}/$count)';
     final max = t.titleMax;
     if (max == null || title.length + label.length <= max) return '$title$label';
-    return '${title.substring(0, math.max(0, max - label.length - 1)).trimRight()}…$label';
+    return '${_cutToUnits(title, math.max(0, max - label.length - 1)).trimRight()}…$label';
   }
 
   /// The posts of a thread on a network whose every post carries its own

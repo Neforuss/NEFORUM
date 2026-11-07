@@ -18,6 +18,7 @@ import '../../widgets/color_swatch_field.dart';
 import '../../widgets/layout.dart' show showToast;
 import 'card_background_sheet.dart';
 import 'card_design_view.dart';
+import 'emoji_insert.dart';
 import 'font_download_sheet.dart';
 import 'font_picker_sheet.dart';
 
@@ -613,7 +614,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
     final same = d.blocks.where((x) => x.role == b.role).length;
     if (b.role == CardBlockRole.custom && b.text.trim().isNotEmpty) {
       final t = b.text.trim();
-      return t.length > 16 ? '${t.substring(0, 15)}…' : t;
+      return t.characters.length > 16 ? '${t.characters.take(15)}…' : t;
     }
     return same > 1 ? '${b.role.label} ${d.blocks.take(i + 1).where((x) => x.role == b.role).length}' : b.role.label;
   }
@@ -670,12 +671,10 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
       if (b.role == CardBlockRole.custom)
         Padding(
           padding: const EdgeInsets.only(top: Space.xs),
-          child: TextFormField(
-            key: Key('card-block-text-$index'),
-            initialValue: b.text,
-            minLines: 1,
-            maxLines: 3,
-            decoration: const InputDecoration(labelText: 'Words', isDense: true),
+          child: _BlockWordsField(
+            key: ValueKey('card-block-words-$index'),
+            fieldKey: Key('card-block-text-$index'),
+            words: b.text,
             onChanged: (v) => set((x) => x.copyWith(text: v)),
           ),
         ),
@@ -990,6 +989,57 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
 
 /// Asks for a preset's name; the dialog owns its text field's controller, so
 /// it lives as long as the dialog's closing animation.
+/// The words of a custom block: a field with a controller, so the emoji sheet
+/// can write at its cursor. Follows the design when it changes from outside.
+class _BlockWordsField extends StatefulWidget {
+  const _BlockWordsField({super.key, required this.fieldKey, required this.words, required this.onChanged});
+  final Key fieldKey;
+  final String words;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_BlockWordsField> createState() => _BlockWordsFieldState();
+}
+
+class _BlockWordsFieldState extends State<_BlockWordsField> {
+  late final TextEditingController _words = TextEditingController(text: widget.words);
+
+  @override
+  void didUpdateWidget(_BlockWordsField old) {
+    super.didUpdateWidget(old);
+    if (widget.words != _words.text) {
+      _words.value = TextEditingValue(text: widget.words, selection: TextSelection.collapsed(offset: widget.words.length));
+    }
+  }
+
+  @override
+  void dispose() {
+    _words.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(
+          child: EmojiTargetField(
+            controller: _words,
+            onChanged: widget.onChanged,
+            isDefault: true,
+            child: TextField(
+              key: widget.fieldKey,
+              controller: _words,
+              minLines: 1,
+              maxLines: 3,
+              decoration: const InputDecoration(labelText: 'Words', isDense: true),
+              onChanged: widget.onChanged,
+            ),
+          ),
+        ),
+        const SizedBox(width: Space.xs),
+        const EmojiButton(size: 36),
+      ]);
+}
+
 class _PresetNameDialog extends StatefulWidget {
   const _PresetNameDialog({required this.initial});
   final String initial;
