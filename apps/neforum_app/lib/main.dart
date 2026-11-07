@@ -11,6 +11,7 @@ import 'platform/env.dart';
 import 'platform/notifications.dart';
 import 'platform/storage.dart';
 import 'state/fitted_photos.dart';
+import 'state/publish_result_notices.dart';
 import 'state/scheduler.dart';
 import 'state/services.dart';
 import 'ui/root.dart';
@@ -58,7 +59,7 @@ Future<void> _publishInBackground(String postId) async {
       await fitPhotosOfSavedPost(services, postId);
       final done = await services.publisher().publish(postId, interactive: false, retryFailed: false, dueTargetsOnly: true);
       final discarded = await services.discardIfComplete(postId);
-      await announcePublishResult(services, done, discarded: discarded);
+      await announcePublishResult(services, done, discarded: discarded, onlyAccountIds: targetsChangedByRun(post, done));
       await planNextReminders(services, done);
       await services.cloudSync.syncNow();
     }

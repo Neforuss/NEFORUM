@@ -5,25 +5,32 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/neforum_logo.dart';
 import '../../state/composer.dart';
+import '../../state/notification_state.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
+import '../shell/notification_prompt.dart';
 
 /// Shows live progress for the publish run in [publishRunProvider].
 Future<void> showPublishProgress(BuildContext context) {
   const sheet = PublishProgressSheet();
+  // While it is open and visible, the sheet is the run's result (D10).
+  final open = ProviderScope.containerOf(context, listen: false).read(publishSheetOpenProvider.notifier)..opened();
+  final Future<void> shown;
   if (context.isCompact) {
-    return showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, isDismissible: false, enableDrag: false, builder: (_) => sheet);
+    shown = showModalBottomSheet<void>(context: context, isScrollControlled: true, useSafeArea: true, isDismissible: false, enableDrag: false, builder: (_) => sheet);
+  } else {
+    shown = showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Dialog(
+        clipBehavior: Clip.antiAlias,
+        child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 520, maxHeight: 760), child: sheet),
+      ),
+    );
   }
-  return showDialog<void>(
-    context: context,
-    barrierDismissible: false,
-    builder: (_) => Dialog(
-      clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 520, maxHeight: 760), child: sheet),
-    ),
-  );
+  return shown.whenComplete(open.closed);
 }
 
 /// The run's progress, with Cancel while it goes. It cannot be swiped
@@ -130,6 +137,7 @@ class PublishProgressSheet extends ConsumerWidget {
           ],
         ]),
       ),
+      const NotificationHintLine(),
       if (targets.isNotEmpty)
         Flexible(
           child: ListView.separated(

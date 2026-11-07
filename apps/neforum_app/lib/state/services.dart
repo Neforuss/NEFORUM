@@ -18,6 +18,7 @@ import 'cloud_sync.dart';
 import 'composer_draft.dart' show kComposerDraftFile;
 import 'demo.dart';
 import 'media_host_config.dart';
+import 'publish_result_notices.dart';
 import 'settings.dart';
 
 /// Every long-lived object the app needs, created once at startup (and again
@@ -378,8 +379,10 @@ class AppServices {
     final at = now ?? DateTime.now();
     final roller = publisher();
     Future<void> settle(Post post, {Set<String> mayBeLive = const {}}) async {
-      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage, unconfirmed: await _unconfirmedMessages(mayBeLive))));
+      final done = roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage, unconfirmed: await _unconfirmedMessages(mayBeLive)));
+      await posts.upsert(done);
       recovered++;
+      await _announceInterrupted(done);
     }
 
     final settled = <String>[];
@@ -399,6 +402,19 @@ class AppServices {
       }
     }
     return recovered;
+  }
+
+  /// Says that a run a closed NEFORUM left unfinished was settled. Best effort:
+  /// the post already shows Retry in Activity.
+  Future<void> _announceInterrupted(Post settled) async {
+    if (demo || !_settings.notifyOnPublish) return;
+    try {
+      final notice = publishInterruptedNotice(settled, fallbackMessage: interruptedMessage);
+      await NotificationService.instance.showResults([notice]);
+      await UnseenResults(storage).add(UnseenResult(postId: settled.id, at: DateTime.now(), title: notice.title, lines: [notice.body]));
+    } on Object catch (e) {
+      debugPrint('Could not announce the interrupted run of ${settled.id}: $e');
+    }
   }
 
   /// Settles post [postId] after its run in this process stopped with
@@ -546,8 +562,15 @@ class _NotificationCancellingPostRepository implements PostRepository {
 
   @override
   Future<void> delete(String id) async {
+    // Read first: each network has its own notification.
+    Post? post;
+    try {
+      post = await _posts.get(id);
+    } on Object catch (e) {
+      debugPrint('Could not read post $id before deleting it: $e');
+    }
     await _posts.delete(id);
-    await NotificationService.instance.cancelPostNotifications(id);
+    await NotificationService.instance.cancelPostNotifications(id, accountIds: post?.targets.map((t) => t.accountId) ?? const []);
   }
 
   @override

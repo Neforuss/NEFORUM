@@ -11,6 +11,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/surfaces.dart';
 import '../activity/time_format.dart';
+import '../shell/notification_prompt.dart';
 
 /// Picks a date and time for the post. Returns null when cancelled; a
 /// `DateTime(0)` sentinel means "clear the schedule". Pass [post] when
@@ -174,6 +175,7 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.xxl, Space.sm),
         child: Text('Schedule post', style: context.text.headlineSmall),
       ),
+      const NotificationHintLine(scheduling: true),
       Flexible(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: Space.xxl),

@@ -192,6 +192,11 @@ class AppSettings {
     this.updateLatestRelease = const {},
     this.updateDismissedVersion,
     this.fontDownloads = FontDownloadMode.ask, // 1.4: fonts
+    // 1.4: notifications
+    this.notificationPromptAt,
+    this.notificationOsAskedAt,
+    this.notificationHintShownAt,
+    this.notificationBannerClosedAt,
     this.textCardEveryNetwork = false, // 1.3: cards
     // 1.3.1: sidebar
     this.navigationChromeOpacity = 0,
@@ -272,6 +277,11 @@ class AppSettings {
         updateLatestRelease: Map<String, dynamic>.from(j['updateLatestRelease'] as Map? ?? const {}),
         updateDismissedVersion: j['updateDismissedVersion'] as String?,
         fontDownloads: FontDownloadMode.values.asNameMap()[j['fontDownloads']] ?? FontDownloadMode.ask, // 1.4: fonts
+        // 1.4: notifications
+        notificationPromptAt: DateTime.tryParse('${j['notificationPromptAt'] ?? ''}'),
+        notificationOsAskedAt: DateTime.tryParse('${j['notificationOsAskedAt'] ?? ''}'),
+        notificationHintShownAt: DateTime.tryParse('${j['notificationHintShownAt'] ?? ''}'),
+        notificationBannerClosedAt: DateTime.tryParse('${j['notificationBannerClosedAt'] ?? ''}'),
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
@@ -489,6 +499,24 @@ class AppSettings {
   /// agreeing to contact a third party is per device.
   final FontDownloadMode fontDownloads;
 
+  /// 1.4: when the explanation screen about notifications was shown here. It
+  /// is shown once. Saying Not now spends nothing with the OS. Device-only.
+  final DateTime? notificationPromptAt;
+
+  /// 1.4: when NEFORUM last showed the OS prompt for notifications. Android
+  /// has no way to tell "never asked" from "said no twice" without it.
+  /// Device-only.
+  final DateTime? notificationOsAskedAt;
+
+  /// 1.4: when the one quiet line about notifications was shown in a Post or
+  /// Schedule sheet. Device-only.
+  final DateTime? notificationHintShownAt;
+
+  /// 1.4: when the banner about notifications was closed. It stays closed
+  /// until a post finishes unseen or, on iOS, a post is scheduled that needs
+  /// the reminder. Device-only.
+  final DateTime? notificationBannerClosedAt;
+
   /// 1.3: cards. New text-only posts start with the same text card on every
   /// network that takes images, not only on those that need one. Each post
   /// can change it.
@@ -610,6 +638,11 @@ class AppSettings {
     Map<String, dynamic>? updateLatestRelease,
     String? updateDismissedVersion,
     FontDownloadMode? fontDownloads, // 1.4: fonts
+    // 1.4: notifications
+    DateTime? notificationPromptAt,
+    DateTime? notificationOsAskedAt,
+    DateTime? notificationHintShownAt,
+    DateTime? notificationBannerClosedAt,
     bool? textCardEveryNetwork, // 1.3: cards
     // 1.3.1: sidebar
     double? navigationChromeOpacity,
@@ -687,6 +720,11 @@ class AppSettings {
         updateLatestRelease: updateLatestRelease ?? this.updateLatestRelease,
         updateDismissedVersion: updateDismissedVersion ?? this.updateDismissedVersion,
         fontDownloads: fontDownloads ?? this.fontDownloads, // 1.4: fonts
+        // 1.4: notifications
+        notificationPromptAt: notificationPromptAt ?? this.notificationPromptAt,
+        notificationOsAskedAt: notificationOsAskedAt ?? this.notificationOsAskedAt,
+        notificationHintShownAt: notificationHintShownAt ?? this.notificationHintShownAt,
+        notificationBannerClosedAt: notificationBannerClosedAt ?? this.notificationBannerClosedAt,
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
@@ -765,6 +803,11 @@ class AppSettings {
         if (updateLatestRelease.isNotEmpty) 'updateLatestRelease': updateLatestRelease,
         if (updateDismissedVersion != null) 'updateDismissedVersion': updateDismissedVersion,
         'fontDownloads': fontDownloads.name, // 1.4: fonts
+        // 1.4: notifications
+        if (notificationPromptAt != null) 'notificationPromptAt': notificationPromptAt!.toUtc().toIso8601String(),
+        if (notificationOsAskedAt != null) 'notificationOsAskedAt': notificationOsAskedAt!.toUtc().toIso8601String(),
+        if (notificationHintShownAt != null) 'notificationHintShownAt': notificationHintShownAt!.toUtc().toIso8601String(),
+        if (notificationBannerClosedAt != null) 'notificationBannerClosedAt': notificationBannerClosedAt!.toUtc().toIso8601String(),
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,

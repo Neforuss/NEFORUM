@@ -4,18 +4,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/neforum_logo.dart';
 import '../../platform/desktop.dart';
 import '../../platform/env.dart';
 import '../../platform/files_app_folder.dart';
+import '../../platform/notification_access.dart';
 import '../../platform/notifications.dart';
 import '../../platform/secure_secret_store.dart';
 import '../../platform/ui_bridge.dart';
 import '../../platform/update_check.dart';
 import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
+import '../../state/notification_state.dart';
 import '../../state/providers.dart';
+import '../../state/publish_result_notices.dart';
 import '../../state/scheduler.dart';
 import '../../state/settings.dart' show NavigationChromeStyle;
 import '../../state/update_checks.dart';
@@ -30,6 +34,7 @@ import '../settings/sync_section.dart';
 import 'app_backdrop.dart';
 import '../settings/updates_section.dart';
 import 'nav_input.dart';
+import 'notification_prompt.dart';
 import 'paste_code_dialog.dart';
 import 'see_through_chrome.dart';
 
@@ -46,9 +51,18 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> {
   StreamSubscription<NotificationIntent>? _intentSub;
 
+  /// Back from the OS's settings (or anywhere): what the OS says now.
+  late final AppLifecycleListener _lifecycle;
+
+  Future<void> _rereadNotifications() async {
+    await ref.read(notificationAccessProvider.notifier).refresh();
+    if (mounted) await showUnseenResultsIfAny(context, ref);
+  }
+
   @override
   void initState() {
     super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _rereadNotifications);
     UiBridge.instance = _ShellUiBridge();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(schedulerProvider).start();
@@ -62,17 +76,28 @@ class _AppShellState extends ConsumerState<AppShell> {
       // Linux: a desktop without a keyring is named at start, not at the
       // first post (see _KeyringBanner).
       if (Env.isLinux && !ref.read(isDemoProvider)) unawaited(SecureSecretStore.verifyAvailable());
-      // Update checks: asked once, then at most daily (never in the demo).
       final updates = ref.read(updateCheckProvider.notifier);
-      if (updates.applies && ref.read(settingsProvider).updateCheck == UpdateCheckMode.ask) {
-        unawaited(askAboutUpdateChecks(context, ref));
-      }
+      unawaited(_askFirstStartQuestions());
       updates.start();
       if (Env.isIOS) {
         FilesAppFolder.listenForOpened(_takeOpenedSyncFile);
         unawaited(_takeOpenedSyncFile());
       }
     });
+  }
+
+  /// One question at a time: notifications among the first things in setup
+  /// (once, with the OS prompt only on Turn on), then update checks (asked
+  /// once, then at most daily, never in the demo). Then what finished while
+  /// NEFORUM was closed, when the OS could not say.
+  Future<void> _askFirstStartQuestions() async {
+    await askAboutNotificationsOnFirstLaunch(context, ref);
+    if (!mounted) return;
+    final updates = ref.read(updateCheckProvider.notifier);
+    if (updates.applies && ref.read(settingsProvider).updateCheck == UpdateCheckMode.ask) {
+      await askAboutUpdateChecks(context, ref);
+    }
+    if (mounted) await showUnseenResultsIfAny(context, ref);
   }
 
   /// A .neforumsync file tapped in the Files app: Settings > Sync with that
@@ -104,6 +129,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void dispose() {
     _intentSub?.cancel();
+    _lifecycle.dispose();
     super.dispose();
   }
 
@@ -125,6 +151,19 @@ class _AppShellState extends ConsumerState<AppShell> {
         context.go('${AppSection.activity.path}/post/$postId');
         // Only the networks this reminder is for; later ones get their own.
         await ref.read(postActionsProvider).publishExisting(postId, retryFailed: false, dueTargetsOnly: true);
+      case RetryTargetIntent(:final postId, :final accountId):
+        context.go('${AppSection.activity.path}/post/$postId');
+        // The notification may be old: only a network still waiting for a retry.
+        final post = await ref.read(servicesProvider).posts.get(postId);
+        if (!notificationRetryAllowed(post, accountId) || ref.read(activePublishingProvider).containsKey(postId)) return;
+        try {
+          await ref.read(postActionsProvider).publishExisting(postId, accountIds: {accountId});
+        } on Object catch (e) {
+          // Activity shows the target's outcome.
+          debugPrint('Retry from a notification stopped: $e');
+        }
+      case OpenLinkIntent(:final link):
+        await launchUrl(link, mode: LaunchMode.externalApplication);
     }
   }
 
@@ -177,6 +216,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     final body = Column(children: [
       if (demo) const _DemoBanner(),
       const _KeyringBanner(),
+      const _NotificationsBanner(),
       const UpdateBanner(),
       Expanded(child: widget.shell),
     ]);
@@ -637,6 +677,44 @@ class _KeyringBanner extends StatelessWidget {
           ]),
         );
       },
+    );
+  }
+}
+
+/// D9: notifications are off. Over every section until closed, and back when a
+/// post finishes unseen or, on iOS, a post is scheduled that needs the
+/// reminder. Settings and the pill on Activity stay either way.
+class _NotificationsBanner extends ConsumerWidget {
+  const _NotificationsBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final view = ref.watch(notificationAccessProvider);
+    final closedAt = ref.watch(settingsProvider.select((s) => s.notificationBannerClosedAt));
+    final atRisk = Env.isIOS ? ref.watch(scheduledPostsProvider).where((p) => p.needsDeviceAtSchedule).toList() : const <Post>[];
+    final neededAt = atRisk.isEmpty ? null : atRisk.map((p) => p.updatedAt).reduce((a, b) => a.isAfter(b) ? a : b);
+    if (!notificationBannerVisible(view, demo: ref.watch(isDemoProvider), closedAt: closedAt, reminderNeededAt: neededAt)) return const SizedBox.shrink();
+    final words = notificationBannerText(view, remindersAtRisk: atRisk.isNotEmpty);
+    final nf = context.nf;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.only(left: Space.lg, right: Space.xs, top: Space.xs, bottom: Space.xs),
+      decoration: BoxDecoration(color: words.urgent ? nf.dangerSoft : nf.warningSoft, border: Border(bottom: BorderSide(color: nf.border))),
+      child: Row(children: [
+        Icon(Icons.notifications_off_outlined, size: 16, color: words.urgent ? nf.danger : nf.warning),
+        const SizedBox(width: Space.sm),
+        Expanded(child: Text(words.text, style: context.text.bodySmall?.copyWith(color: nf.text))),
+        TextButton(
+          onPressed: () => turnOnNotifications(context, ref),
+          style: TextButton.styleFrom(foregroundColor: nf.text),
+          child: Text(words.action),
+        ),
+        IconButton(
+          tooltip: 'Hide this',
+          onPressed: () => closeNotificationsBanner(ref),
+          icon: const Icon(Icons.close_rounded, size: 18),
+        ),
+      ]),
     );
   }
 }

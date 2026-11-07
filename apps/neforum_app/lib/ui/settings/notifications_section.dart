@@ -3,9 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../platform/env.dart';
-import '../../platform/notifications.dart';
+import '../../platform/notification_access.dart';
+import '../../state/notification_state.dart';
 import '../../state/providers.dart';
-import '../../widgets/layout.dart';
+import '../shell/notification_prompt.dart';
 import 'setting_row.dart';
 
 class NotificationSettingsSection extends ConsumerWidget {
@@ -15,26 +16,17 @@ class NotificationSettingsSection extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
-    final how = Env.isIOS
-        ? 'On iPhone and iPad, a notification at the scheduled time lets you publish with one tap.'
-        : Env.isAndroid
-            ? 'Android publishes scheduled posts in the background and tells you how it went.'
-            : 'Hand-off networks always get a reminder when it is time to post.';
+    final row = notificationRowText(ref.watch(notificationAccessProvider), os: notificationOsName, isIOS: Env.isIOS);
+    final action = row.action;
     return SettingsSection(title: 'Notifications', icon: Icons.notifications_none_rounded, children: [
       SettingRow(
-        title: 'Allow notifications',
-        description: how,
+        title: row.title,
+        description: row.description,
         stackOnCompact: true,
-        trailing: OutlinedButton(
-          onPressed: () async {
-            final ok = await NotificationService.instance.requestPermission();
-            if (context.mounted) showToast(context, ok ? 'Notifications are on' : 'Notifications are off; you can enable them in system settings', icon: ok ? Icons.check_rounded : Icons.info_outline_rounded);
-          },
-          child: const Text('Allow'),
-        ),
+        trailing: action == null ? null : OutlinedButton(onPressed: () => turnOnNotifications(context, ref), child: Text(action)),
       ),
       SettingSwitch(
-        title: 'Tell me when scheduled posts go out',
+        title: 'Tell me how each post went',
         value: s.notifyOnPublish,
         onChanged: (v) => n.update((x) => x.copyWith(notifyOnPublish: v)),
       ),
