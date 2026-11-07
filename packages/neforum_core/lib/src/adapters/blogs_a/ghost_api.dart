@@ -68,25 +68,32 @@ class GhostApi {
 
   Uri endpoint(String path, [Map<String, String>? query]) => joinPath(apiUrl, '/ghost/api/admin/$path', query);
 
-  Map<String, String> get _headers => {
-        'Accept-Version': ghostAcceptVersion,
-        'Accept': 'application/json',
-        if (key != null) 'Authorization': 'Ghost ${key!.token(ctx.now())}',
-      };
+  static const Map<String, String> _headers = {
+    'Accept-Version': ghostAcceptVersion,
+    'Accept': 'application/json',
+  };
+
+  /// A token for each try: one lives 5 minutes, and a re-sent upload can start
+  /// later than that.
+  HeaderSigner? get _sign {
+    final k = key;
+    return k == null ? null : () => {'Authorization': 'Ghost ${k.token(ctx.now())}'};
+  }
 
   Future<NeforumResponse> get(String path, [Map<String, String>? query]) =>
-      ctx.http.get(endpoint(path, query), headers: _headers);
+      ctx.http.get(endpoint(path, query), headers: _headers, signHeaders: _sign);
 
   Future<NeforumResponse> postJson(String path, Object body, [Map<String, String>? query]) =>
-      ctx.http.postJson(endpoint(path, query), body, headers: _headers);
+      ctx.http.postJson(endpoint(path, query), body, headers: _headers, signHeaders: _sign);
 
-  Future<NeforumResponse> delete(String path) => ctx.http.delete(endpoint(path), headers: _headers);
+  Future<NeforumResponse> delete(String path) => ctx.http.delete(endpoint(path), headers: _headers, signHeaders: _sign);
 
   /// `POST images/upload/` (multipart `file`, `purpose=image`, `ref`). A stored
   /// file is not a post: nothing shows on the site until `posts/` is called.
   Future<NeforumResponse> uploadImage(Uint8List bytes, {required String fileName, required String contentType}) =>
       ctx.http.multipart(endpoint('images/upload/'),
           headers: _headers,
+          signHeaders: _sign,
           fields: {'purpose': 'image', 'ref': fileName},
           files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)],
           retrySafe: true);
@@ -97,6 +104,7 @@ class GhostApi {
   Future<NeforumResponse> uploadMedia(Uint8List bytes, {required String fileName, required String contentType, HttpFilePart? thumbnail}) =>
       ctx.http.multipart(endpoint('media/upload/'),
           headers: _headers,
+          signHeaders: _sign,
           fields: {'ref': fileName},
           files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType), ?thumbnail],
           retrySafe: true);

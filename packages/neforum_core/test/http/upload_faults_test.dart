@@ -96,6 +96,33 @@ void main() {
       expect(NeforumHttp.transportDetails(e), contains('TimeoutException'));
     });
 
+    test('after a whole upload the answer limit is twice the base', () async {
+      final net = NeforumHttp(client: _NoAnswerAfterBody(), timeout: const Duration(milliseconds: 40), maxRetries: 0);
+      final e = await net.putBytes(url, _big).then<Object>((_) => fail('should throw'), onError: (Object e) => e);
+      expect(e, isA<RequestTimedOut>());
+      expect((e as RequestTimedOut).duration, const Duration(milliseconds: 80));
+    });
+
+    test('each try counts its own bytes', () async {
+      final net = NeforumHttp(client: FaultClient((i, r) => null));
+      // Raw bytes, so every try's first piece is a full one.
+      final e = await net.putBytes(url, _big, retrySafe: true).then<Object>((_) => fail('should throw'), onError: (Object e) => e) as UploadInterrupted;
+      expect(e.trace.attempts, 3);
+      expect(e.trace.sentBytes, 16 * 1024, reason: 'the last try alone, not the three added up');
+      expect(e.details, contains('${e.trace.sentBytes} of ${e.trace.totalBytes} bytes'));
+    });
+
+    test('no log line carries the address past its host, or the whole exception', () async {
+      final lines = <String>[];
+      final log = Logger('t', sink: (l, a, m, [err]) => lines.add('$m ${err ?? ''}'));
+      final upload = HttpFilePart(field: 'f', bytes: _big, fileName: 'x', contentType: 'image/jpeg');
+      await expectLater(NeforumHttp(client: FaultClient((i, r) => null), log: log).multipart(url, files: [upload], retrySafe: true), throwsA(isA<UploadInterrupted>()));
+      await expectLater(NeforumHttp(client: FaultClient((i, r) => null), log: log, maxRetries: 0).get(url), throwsA(isA<ConnectionFailed>()));
+      expect(lines.where((l) => l.contains('attempt 1')), isNotEmpty, reason: 'the debug line about each try ran');
+      expect(lines.where((l) => l.contains('giving up')), hasLength(2));
+      expect(lines.where((l) => l.contains('SECRET')), isEmpty);
+    });
+
     test('anything that is not a connection problem passes through', () async {
       final net = NeforumHttp(client: FaultClient((i, r) => throw const FormatException('bad')), maxRetries: 0);
       await expectLater(net.get(url), throwsA(isA<FormatException>()));
@@ -229,6 +256,20 @@ void main() {
       expect(r.error!.message, isNot(contains('Nothing was posted')));
     });
 
+    test('the older media address is sent again too', () async {
+      var v1 = 0;
+      final c = FaultClient((i, r) {
+        if (_isStatus(r.url.path)) return jsonAnswer({'id': 's1', 'url': 'https://x/s1'});
+        if (r.url.path == '/api/v2/media') return jsonAnswer({}, 404);
+        v1++;
+        return v1 == 1 ? null : jsonAnswer({'id': 'm', 'url': 'u'});
+      });
+      final r = await MastodonAdapter().publish(PostVariant(text: 'x', media: [_image('i')]), _account(), _secrets, _ctx(c));
+      expect(r.success, isTrue, reason: '${r.error?.message}');
+      expect(v1, 2);
+      expect(c.count(_isStatus), 1);
+    });
+
     test('details and message stay apart for every wording', () async {
       final c = FaultClient((i, r) => null);
       final r = await MastodonAdapter().publish(PostVariant(text: 'x', media: [_image('i')]), _account(), _secrets, _ctx(c));
@@ -318,7 +359,7 @@ void main() {
       expect(c.count(_isMedia) - before, 2);
     });
 
-    test('kept ids are gone after a success, also when the server holds the post', () async {
+    test('kept ids are gone once the server holds the post', () async {
       final when = DateTime.utc(2026, 11, 7);
       var fail = true;
       var uploads = 0;
@@ -337,6 +378,26 @@ void main() {
       final before = c.count(_isMedia);
       expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).isHeldByPlatform, isTrue);
       expect(c.count(_isMedia) - before, 2, reason: 'nothing kept once the post is with the server');
+    });
+
+    test('kept ids are gone once the post is up', () async {
+      var fail = true;
+      var uploads = 0;
+      final c = FaultClient((i, r) {
+        if (_isStatus(r.url.path)) return jsonAnswer({'id': 's$i', 'url': 'https://x/s$i'});
+        uploads++;
+        return fail && uploads >= 2 ? null : jsonAnswer({'id': 'm$uploads', 'url': 'u'});
+      });
+      final adapter = MastodonAdapter();
+      final v = PostVariant(text: 'x', media: [_image('i1'), _image('i2')], sourcePostId: 'p');
+      expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).success, isFalse);
+      fail = false;
+      expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).success, isTrue);
+      final before = c.count(_isMedia);
+      // The same post again, say the user posts it a second time: each id is
+      // spent, and the server takes an id once.
+      expect((await adapter.publish(v, _account(), _secrets, _ctx(c))).success, isTrue);
+      expect(c.count(_isMedia) - before, 2, reason: 'nothing kept once the post is up');
     });
 
     test('a real refusal of the status is not retried without kept ids', () async {
@@ -479,6 +540,61 @@ void main() {
       expect(r.error!.message, contains('cut off'));
     });
 
+    test('a server that does not answer the probe costs its time limit, no more', () async {
+      expect(MastodonAdapter().limitProbeTimeout, const Duration(seconds: 15));
+      final c = FaultClient((i, r) => r.url.path.contains('instance') ? Completer<http.StreamedResponse?>().future : null);
+      final adapter = MastodonAdapter(limitProbeTimeout: const Duration(milliseconds: 50));
+      final r = await adapter.publish(PostVariant(text: 'x', media: [_image('i')]), _account(), _secrets, _ctx(c));
+      expect(r.error!.kind, PublishErrorKind.network);
+      expect(r.error!.message, contains('cut off'));
+    }, timeout: const Timeout(Duration(seconds: 20)));
+
+    test('a cancel during the probe stays a cancel, not a cut-off upload', () async {
+      final signal = CancellationSignal();
+      final c = FaultClient((i, r) {
+        if (!r.url.path.contains('instance')) return null;
+        signal.cancel();
+        return Completer<http.StreamedResponse?>().future;
+      });
+      final ctx = AdapterContext(
+        http: NeforumHttp(client: c),
+        log: Logger('t', sink: (l, a, m, [e]) {}),
+        clock: () => DateTime.utc(2026, 11, 6),
+        readMedia: (m) async => _big,
+        cancellation: signal,
+      );
+      final r = await MastodonAdapter().publish(PostVariant(text: 'x', media: [_image('i')]), _account(), _secrets, ctx);
+      expect(c.count((l) => l.contains('instance')), 1);
+      expect(r.error!.uploadInterrupted, isNull);
+      expect(r.error!.message, isNot(contains('cut off')));
+    });
+
+    test('a file too big for a thread with live parts: nothing more was posted', () async {
+      final c = FaultClient((i, r) => r.url.path.contains('instance')
+          ? jsonAnswer({'configuration': {'media_attachments': {'image_size_limit': 512 * 1024}}})
+          : null);
+      final v = PostVariant(
+          text: '', threadParts: const ['one', 'two'], postedThreadIds: const ['s1'], media: [_image('i')], mediaPartIndexes: const [1], sourcePostId: 'p');
+      final r = await MastodonAdapter().publish(v, _account(), _secrets, _ctx(c));
+      expect(r.error!.message, '$_instance takes images up to 0.5 MB, and this one is 1 MB. Nothing more was posted.');
+    });
+
+    test('a small file that fails is not put down to the size limit', () async {
+      final c = FaultClient((i, r) => null);
+      final r = await MastodonAdapter().publish(PostVariant(text: 'x', media: [_image('i')]), _account(), _secrets, _ctx(c, bytes: Uint8List(100)));
+      expect(r.error!.message, 'The connection to $_instance failed.');
+      expect(c.count((l) => l.contains('instance')), 0, reason: 'only a watched upload can have lost an early answer');
+    });
+
+    test('a file just over the limit does not read as the same size', () async {
+      final c = FaultClient((i, r) => r.url.path.contains('instance')
+          ? jsonAnswer({'configuration': {'media_attachments': {'image_size_limit': 16 * 1024 * 1024}}})
+          : null);
+      final bytes = Uint8List(16 * 1024 * 1024 + 20 * 1024);
+      final r = await MastodonAdapter().publish(PostVariant(text: 'x', media: [_image('i')]), _account(), _secrets, _ctx(c, bytes: bytes));
+      expect(r.error!.message, '$_instance takes images up to 16 MB, and this one is a little over that. Nothing was posted.');
+    });
+
     test('videos and sound files are held to the video limit', () async {
       final c = FaultClient((i, r) => r.url.path.contains('instance')
           ? jsonAnswer({'configuration': {'media_attachments': {'image_size_limit': 99 * 1024 * 1024, 'video_size_limit': 512 * 1024}}})
@@ -553,6 +669,29 @@ void main() {
       final postApi = GhostApi(Uri.parse('https://blog.example'), _ctx(post), key: const GhostAdminKey('6489d8a1b2c3d4e5f6a7b8c9', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'));
       await expectLater(postApi.postJson('posts/', {'posts': <Object>[]}), throwsA(isA<ConnectionFailed>()));
       expect(post.n, 1);
+    });
+
+    test('Ghost: a re-send that starts after the first token ran out carries a new one', () async {
+      var now = DateTime.utc(2026, 11, 6, 12);
+      final exps = <int>[];
+      final c = FaultClient((i, r) {
+        final token = r.headers['Authorization']!.split(' ').last;
+        final payload = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(token.split('.')[1])))) as Map<String, dynamic>;
+        final exp = payload['exp'] as int;
+        exps.add(exp);
+        // What Ghost does with a token past its end.
+        if (exp * 1000 <= now.millisecondsSinceEpoch) return jsonAnswer({'errors': [{'type': 'TokenExpiredError', 'message': 'Token expired'}]}, 401);
+        if (i == 0) {
+          // A first try that ran longer than a token lives, then dropped.
+          now = now.add(ghostTokenLifetime + const Duration(minutes: 1));
+          return null;
+        }
+        return jsonAnswer({'images': <Object>[]});
+      });
+      final api = GhostApi(Uri.parse('https://blog.example'), _ctx(c, now: () => now), key: const GhostAdminKey('6489d8a1b2c3d4e5f6a7b8c9', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'));
+      expect((await api.uploadImage(_big, fileName: 'a.jpg', contentType: 'image/jpeg')).ok, isTrue);
+      expect(c.n, 2);
+      expect(exps.last, greaterThan(exps.first));
     });
 
     test('Matrix: stored media is sent again', () async {
@@ -670,6 +809,97 @@ void main() {
         expect(r.error!.raw, contains('10053'), reason: 'the details box keeps the system text: ${r.error!.message}');
       });
     }
+
+    group('a file that cannot be read', () {
+      test('the real reader, a real missing file: plain words, the system text in the details', () async {
+        final missing = '${Directory.systemTemp.path}${Platform.pathSeparator}neforum-no-such-file-${DateTime.now().microsecondsSinceEpoch}.jpg';
+        final image = MediaAttachment(id: 'i', path: missing, mimeType: 'image/jpeg', sizeBytes: 64, width: 10, height: 10, fileName: 'i.jpg');
+        final c = FaultClient((i, r) => fail('nothing to send'));
+        final ctx = AdapterContext(http: NeforumHttp(client: c), log: Logger('t', sink: (l, a, m, [e]) {}));
+        final r = await MastodonAdapter().publish(PostVariant(text: 'x', media: [image]), _account(), _secrets, ctx);
+        expect(r.error!.kind, PublishErrorKind.configuration);
+        expect(r.error!.message, 'Could not read i.jpg. Attach it again and retry.');
+        expect(r.error!.raw, contains('errno'));
+      });
+
+      for (final MapEntry(key: name, value: (adapter, account, secrets, variant)) in cases.entries) {
+        test(name, () async {
+          final ctx = AdapterContext(
+            http: NeforumHttp(client: FaultClient((i, r) => jsonAnswer({'id': 'x', 'data': {'id': 'x'}})), maxRetries: 0),
+            log: Logger('t', sink: (l, a, m, [e]) {}),
+            mediaHost: FakeMediaHost(),
+            clock: () => DateTime.utc(2026, 11, 6),
+            readMedia: (m) async => throw PathNotFoundException(m.path, const OSError('The system cannot find the path specified', 3), 'Cannot open file'),
+          );
+          final error = await adapter
+              .publish(variant.copyWith(media: [_image('i')]), account, secrets, ctx)
+              .then((r) => r.error!, onError: (Object e) => (e as AdapterException).error);
+          _expectPlain(error.message);
+          expect(error.message, isNot(contains('PathNotFound')));
+          expect(error.message, contains('Could not read i.jpg'));
+          expect(error.raw, contains('errno = 3'));
+        });
+      }
+
+      test('a cancel while reading stays a cancel', () async {
+        final ctx = AdapterContext(
+          http: NeforumHttp(client: FaultClient((i, r) => fail('nothing to send'))),
+          log: Logger('t', sink: (l, a, m, [e]) {}),
+          readMedia: (m) async => throw const OperationCancelledException(),
+        );
+        await expectLater(ctx.readMedia(_image('i')), throwsA(isA<OperationCancelledException>()));
+      });
+
+      test('a second file that cannot be read on Flickr keeps one full stop, and says what is up', () async {
+        var uploads = 0;
+        final account = fakeAccount('flickr', tier: PlatformTier.byokApi, config: const {'userNsid': '1@N01'});
+        final ctx = AdapterContext(
+          http: NeforumHttp(client: FaultClient((i, r) {
+            uploads++;
+            return http.StreamedResponse(Stream.value(utf8.encode('<rsp stat="ok"><photoid>1001</photoid></rsp>')), 200);
+          })),
+          log: Logger('t', sink: (l, a, m, [e]) {}),
+          clock: () => DateTime.utc(2026, 11, 6),
+          readMedia: (m) async {
+            if (m.id == 'j') throw const OSError('The system cannot find the path specified', 3);
+            return fakeJpegBytes;
+          },
+        );
+        final r = await builtinAdapter('flickr').publish(
+          PostVariant(text: 'x', title: 'T', artwork: const ArtworkDetails(), media: [_image('i'), _image('j')]),
+          account,
+          const OAuth1Credentials(consumerKey: 'ck', consumerSecret: 'cs', token: 't', tokenSecret: 'ts').toSecrets(),
+          ctx,
+        );
+        expect(uploads, 1);
+        expect(
+          r.error!.message,
+          'File 2 of 2 failed: Could not read j.jpg. Attach it again and retry. The files already uploaded (1001) stay on Flickr; upload the rest yourself.',
+        );
+      });
+
+      test('no wrapper around another error adds a second full stop', () {
+        final doubled = RegExp(r'\$\{(?:err|error)\.message\}\. ');
+        final hits = Directory('lib/src/adapters')
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.dart') && doubled.hasMatch(f.readAsStringSync()))
+            .map((f) => f.path)
+            .toList();
+        expect(hits, isEmpty);
+      });
+
+      test('no adapter quotes the exception in the message', () {
+        final quoting = RegExp(r"(?:Could not read \$\{[^}]*\}|missing or unreadable)[^'\n]*\$");
+        final hits = [Directory('lib/src/adapters'), Directory('lib/src/publish')]
+            .expand((d) => d.listSync(recursive: true))
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.dart') && quoting.hasMatch(f.readAsStringSync()))
+            .map((f) => f.path)
+            .toList();
+        expect(hits, isEmpty);
+      });
+    });
 
     test('an upload error stays readable on a device that has never heard of the field', () {
       const e = PublishError.network('x', uploadInterrupted: true);

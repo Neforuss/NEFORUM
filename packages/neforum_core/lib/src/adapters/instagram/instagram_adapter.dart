@@ -448,7 +448,7 @@ class InstagramAdapter extends PlatformAdapter {
             kind: error.kind,
             notAllowed: error.notAllowed,
             outcomeUnknown: error.outcomeUnknown,
-            message: '${_cap(label)} failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on Instagram '
+            message: '${_cap(label)} failed: ${error.clause}. $what ${ids.length == 1 ? 'is' : 'are'} already live on Instagram '
                 '(${ids.join(', ')}); post the rest by hand.',
             statusCode: error.statusCode,
             raw: error.raw,
@@ -582,11 +582,7 @@ class InstagramAdapter extends PlatformAdapter {
   }
 
   static Future<Uint8List> _read(AdapterContext ctx, MediaAttachment m) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Object catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   Future<void> _cleanup(List<HostedMedia> hosted, AdapterContext ctx) async {

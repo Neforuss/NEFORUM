@@ -126,6 +126,21 @@ void main() {
     expect(LinkedInApi.mapFailure(_f(404, {'message': 'gone'}), 'post', _now).notAllowed, isNull);
   });
 
+  test('the thread and series wrappers keep notAllowed and outcomeUnknown', () {
+    const refused = PublishError(kind: PublishErrorKind.auth, message: 'No rights.', notAllowed: true);
+    const unsure = PublishError(kind: PublishErrorKind.network, message: 'Lost.', outcomeUnknown: true);
+    for (final e in [refused, unsure]) {
+      for (final w in [
+        e.asResumableSeries(liveCount: 1, total: 3),
+        e.asResumableThread(postedIds: const ['a'], total: 3),
+        e.asPartialThread(postedIds: const ['a'], total: 3),
+      ]) {
+        expect(w.notAllowed, e.notAllowed);
+        expect(w.outcomeUnknown, e.outcomeUnknown);
+      }
+    }
+  });
+
   test('every copy of an error in the source keeps notAllowed: a rewrapped 403 cannot start saying the sign-in expired', () {
     final copy = RegExp(r'kind: [^,\n]*\b(\w+)\.kind,');
     final offenders = <String>[];

@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
@@ -705,13 +704,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       final m = variant.media[i];
       ctx.progress('Preparing ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${variant.media.length}');
       final identifier = 'media$i';
-      final Uint8List bytes;
-      try {
-        bytes = await ctx.readMedia(m);
-      } on Exception catch (e) {
-        return PublishResult.failure(PublishError.configuration(
-            'Could not read ${m.fileName ?? m.path}; re-attach it and try again ($e)'));
-      }
+      final bytes = await ctx.readMedia(m);
       uploads.add(TumblrUpload(
         identifier: identifier,
         bytes: bytes,

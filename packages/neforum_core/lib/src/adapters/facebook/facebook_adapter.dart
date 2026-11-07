@@ -697,7 +697,7 @@ class FacebookAdapter extends PlatformAdapter {
               kind: error.kind,
               notAllowed: error.notAllowed,
               outcomeUnknown: error.outcomeUnknown,
-              message: 'Publishing $label failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on '
+              message: 'Publishing $label failed: ${error.clause}. $what ${ids.length == 1 ? 'is' : 'are'} already live on '
                   'Facebook (${ids.join(', ')}); post the rest by hand.',
               statusCode: error.statusCode,
               raw: error.raw,
@@ -930,11 +930,7 @@ class FacebookAdapter extends PlatformAdapter {
   }
 
   Future<Uint8List> _read(AdapterContext ctx, MediaAttachment m) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ---------------------------------------------------------------------

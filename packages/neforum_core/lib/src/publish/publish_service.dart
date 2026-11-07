@@ -1148,6 +1148,7 @@ class PublishService {
             raw: cause.raw,
             notAllowed: cause.notAllowed,
             outcomeUnknown: cause.outcomeUnknown,
+            uploadInterrupted: stopped ? null : cause.uploadInterrupted,
           ),
           remoteId: result.remoteId,
           remoteUrl: result.remoteUrl,
@@ -1215,15 +1216,7 @@ class PublishService {
     final extra = [...first.additionalRemoteIds];
     final total = variant.seriesPosts.length + 1;
     PublishResult stopped(PublishError e) => PublishResult.partialFailure(
-          PublishError(
-            kind: e.kind,
-            notAllowed: e.notAllowed,
-            outcomeUnknown: e.outcomeUnknown,
-            message: 'Post ${ids.length + 2} of $total failed: ${e.message}. '
-                'The first ${ids.length + 1} post(s) are live; Retry posts the rest.',
-            statusCode: e.statusCode,
-            raw: e.raw,
-          ),
+          e.asResumableSeries(liveCount: ids.length + 1, total: total),
           remoteId: first.remoteId,
           remoteUrl: first.remoteUrl,
           threadRemoteIds: first.threadRemoteIds,
@@ -1235,7 +1228,7 @@ class PublishService {
     for (var i = done.length; i < variant.seriesPosts.length; i++) {
       if (cancelled()) return stopped(const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'));
       ctx.progress('Posting ${i + 2} of $total');
-      final r = await _attempt(adapter, variant.seriesPosts[i], account, secrets, ctx, log);
+      final r = await _attempt(adapter, variant.seriesPosts[i], account, secrets, ctx.copyWith(livePostCount: ids.length + 1), log);
       if (r.isHeldByPlatform) return stopped(const PublishError.platform('The network held this post instead of publishing it'));
       if (!r.success) {
         // Whatever of this post went live stays recorded.
@@ -1424,7 +1417,7 @@ class PublishService {
     final text = e.toString();
     // dart:io is off limits here (web builds), so recognise file errors by name.
     if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException') || text.contains('Media not found')) {
-      return PublishError.configuration('A media file for this post is missing or unreadable. Re-attach it and try again. ($text)');
+      return PublishError.configuration('A media file for this post is missing or unreadable. Re-attach it and try again.', raw: text);
     }
     if (e is FormatException || e is TypeError) {
       return PublishError.platform('$platform sent a response NEFORUM did not understand: $text');

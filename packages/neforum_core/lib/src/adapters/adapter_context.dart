@@ -39,6 +39,7 @@ class AdapterContext {
     this.networkName,
     this.createRecorder,
     this.pause,
+    this.livePostCount = 0,
   })  : _baseHttp = http,
         log = log ?? Logger('adapter'),
         now = clock ?? systemClock,
@@ -93,6 +94,10 @@ class AdapterContext {
   int _created = 0;
   DateTime? _stageSince;
   int _stageBytes = 0;
+
+  /// Posts of this target that are already live when this call starts: the
+  /// earlier posts of a series. A failure then must not say nothing was posted.
+  final int livePostCount;
 
   bool get isCancelled => cancellation?.isCancelled ?? false;
 
@@ -310,7 +315,15 @@ class AdapterContext {
     final before = _stage;
     final open = _slot;
     if (onEvent != null) _emit(ProgressStage.reading, _label ?? 'Reading ${media.fileName ?? 'the file'}');
-    final bytes = await (_readMedia != null ? _readMedia(media) : readMediaFromPath(media.path));
+    final Uint8List bytes;
+    try {
+      bytes = await (_readMedia != null ? _readMedia(media) : readMediaFromPath(media.path));
+    } on OperationCancelledException {
+      rethrow;
+    } on Object catch (e) {
+      // Plain words for every adapter; the system's text, with its errno, goes to the details box.
+      throw AdapterException(PublishError.configuration('Could not read ${media.fileName ?? media.path}. Attach it again and retry.', raw: '$e'));
+    }
     if (onEvent != null && open != null && before == ProgressStage.uploading) _emit(ProgressStage.uploading, _label ?? '', slot: open);
     return bytes;
   }
@@ -321,7 +334,7 @@ class AdapterContext {
     return b;
   }
 
-  AdapterContext copyWith({AuthBroker? broker, MediaHost? mediaHost, Logger? log, void Function(String)? onProgress}) =>
+  AdapterContext copyWith({AuthBroker? broker, MediaHost? mediaHost, Logger? log, void Function(String)? onProgress, int? livePostCount}) =>
       AdapterContext(
         http: _baseHttp,
         broker: broker ?? this.broker,
@@ -336,5 +349,6 @@ class AdapterContext {
         networkName: networkName,
         createRecorder: createRecorder,
         pause: pause,
+        livePostCount: livePostCount ?? this.livePostCount,
       );
 }

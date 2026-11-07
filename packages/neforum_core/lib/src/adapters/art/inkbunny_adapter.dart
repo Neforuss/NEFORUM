@@ -275,7 +275,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
         outcomeUnknown: err.outcomeUnknown,
         message: err.outcomeUnknown == true
             ? '${err.message} Your files are uploaded as submission $submissionId (${InkbunnyApi.submissionUrl(submissionId)}).'
-            : '${err.message}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
+            : '${err.clause}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
                 'on inkbunny.net (${InkbunnyApi.submissionUrl(submissionId)}).',
         statusCode: err.statusCode,
         raw: err.raw,
@@ -314,11 +314,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ------------------------------------------------------------- hand-off

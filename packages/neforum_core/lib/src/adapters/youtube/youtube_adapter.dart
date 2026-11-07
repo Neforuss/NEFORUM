@@ -404,7 +404,7 @@ class YouTubeAdapter extends PlatformAdapter {
   static PublishError _unexpected(Object e) {
     final text = e.toString();
     if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
-      return PublishError.configuration('The video file for this post is missing or unreadable; re-attach it ($text)');
+      return PublishError.configuration('The video file for this post is missing or unreadable. Re-attach it and try again.', raw: text);
     }
     return PublishError.platform('YouTube upload failed: $text', raw: text);
   }

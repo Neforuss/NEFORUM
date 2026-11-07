@@ -6,7 +6,7 @@ import 'package:neforum_app/theme/tokens.dart';
 import 'package:neforum_app/ui/activity/target_chip.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
-const _uploadAdvice = 'A slow or busy connection usually causes this. Retry when nothing else is uploading, or use a smaller file.';
+const _uploadAdvice = 'A slow connection or the server can end an upload early, and NEFORUM cannot tell which it was. Retry when nothing else is uploading, or use a smaller file.';
 const _usualAdvice = 'This is usually temporary: a connection problem or the platform being busy. Retry in a minute.';
 
 Future<void> _showError(WidgetTester tester, PublishError error) async {
@@ -61,6 +61,10 @@ void main() {
     // A thread with live parts cannot be retried from the start, but Retry
     // posts the rest of it.
     expect(targetErrorAdvice(cut.asResumableThread(postedIds: const ['a'], total: 2)), _uploadAdvice);
+    // So does a series with live posts.
+    expect(targetErrorAdvice(cut.asResumableSeries(liveCount: 1, total: 2)), _uploadAdvice);
+    // The advice names no cause it cannot know.
+    expect(_uploadAdvice, isNot(contains('usually')));
     // The upload that is the post went out whole and no answer came.
     const unknown = PublishError(kind: PublishErrorKind.network, message: 'not confirmed', uploadInterrupted: true);
     expect(targetErrorAdvice(unknown), 'Look on the site first: it may be there. Retry only if it is not.');

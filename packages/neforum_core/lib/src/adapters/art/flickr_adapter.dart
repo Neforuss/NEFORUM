@@ -324,7 +324,7 @@ NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the si
           kind: error.kind,
           notAllowed: error.notAllowed,
           outcomeUnknown: error.outcomeUnknown,
-          message: 'File ${i + 1} of ${files.length} failed: ${error.message}. The files already uploaded '
+          message: 'File ${i + 1} of ${files.length} failed: ${error.clause}. The files already uploaded '
               '(${ids.join(', ')}) stay on Flickr; upload the rest yourself.',
           statusCode: error.statusCode,
           raw: error.raw,
@@ -374,11 +374,7 @@ NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the si
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ------------------------------------------------------------- hand-off

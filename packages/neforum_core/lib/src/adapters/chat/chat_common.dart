@@ -58,8 +58,7 @@ PublishError chatUnexpected(Object e, String host, {String? secret}) {
   }
   // dart:io is off limits in lib/, so recognise file errors by name.
   if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
-    return PublishError.configuration(
-        'A media file for this post is missing or unreadable. Re-attach it and try again. (${chatSnippet(text, 200)})');
+    return PublishError.configuration('A media file for this post is missing or unreadable. Re-attach it and try again.', raw: chatSnippet(text));
   }
   return PublishError.platform('Unexpected error while posting via $host: ${chatSnippet(text, 200)}');
 }

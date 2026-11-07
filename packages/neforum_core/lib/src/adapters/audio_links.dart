@@ -40,12 +40,7 @@ Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
   for (var i = 0; i < sound.length; i++) {
     final m = sound[i];
     ctx.uploading(m, 'Uploading sound file ${i + 1} of ${sound.length} to ${host.name}');
-    final Uint8List bytes;
-    try {
-      bytes = await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}; re-attach it and try again ($e)'));
-    }
+    final bytes = await ctx.readMedia(m);
     final url = await _hostPermanently(host, m, bytes, platform, ctx);
     links.add(markdown ? '[${audioLinkLabel(m)}]($url)' : url);
   }

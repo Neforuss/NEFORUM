@@ -93,8 +93,8 @@ class PublishError {
   const PublishError.unsupported(String message)
       : this(kind: PublishErrorKind.unsupported, message: message);
 
-  const PublishError.configuration(String message)
-      : this(kind: PublishErrorKind.configuration, message: message);
+  const PublishError.configuration(String message, {String? raw})
+      : this(kind: PublishErrorKind.configuration, message: message, raw: raw);
 
   final PublishErrorKind kind;
   final String message;
@@ -105,16 +105,17 @@ class PublishError {
   final String? raw;
   final Duration? retryAfter;
 
-  /// The connection gave out during an upload, which a slow or busy uplink
-  /// usually explains. Omitted from JSON when null, so a device on an older
-  /// version reads the post as before.
+  /// The connection ended during an upload. NEFORUM cannot tell a slow uplink
+  /// from a server that closed early. Omitted from JSON when null, so a device
+  /// on an older version reads the post as before.
   final bool? uploadInterrupted;
 
   /// The words for [outcomeUnknown].
   static String unconfirmedMessage(String network) => 'NEFORUM could not confirm this. Check $network before retrying.';
 
   /// [message] without its full stop, to go in the middle of a sentence.
-  String get _clause => message.endsWith('.') ? message.substring(0, message.length - 1) : message;
+  String get clause => message.endsWith('.') ? message.substring(0, message.length - 1) : message;
+
   /// An `auth` error that means "not allowed" rather than "expired": the
   /// sign-in works, but the network refuses this account or this action (a bot
   /// without rights, a firewall, a missing permission). A nullable field and
@@ -134,7 +135,7 @@ class PublishError {
     if (postedIds.isEmpty) return this;
     return PublishError(
       kind: kind,
-      message: 'Part ${postedIds.length + 1} of $total failed: $_clause. '
+      message: 'Part ${postedIds.length + 1} of $total failed: $clause. '
           'Parts already posted (${postedIds.join(', ')}) stay live; finish the thread by hand.',
       retryable: false,
       statusCode: statusCode,
@@ -151,7 +152,7 @@ class PublishError {
     if (postedIds.isEmpty) return this;
     return PublishError(
       kind: kind,
-      message: 'Part ${postedIds.length + 1} of $total failed: $_clause. '
+      message: 'Part ${postedIds.length + 1} of $total failed: $clause. '
           'The first ${postedIds.length} part(s) are live; Retry posts the rest of the thread.',
       retryable: false,
       statusCode: statusCode,
@@ -162,11 +163,31 @@ class PublishError {
     );
   }
 
+  /// Wraps an error on a later post of a series, after its first [liveCount]
+  /// posts went live. The next attempt posts only the rest.
+  PublishError asResumableSeries({required int liveCount, required int total}) => PublishError(
+        kind: kind,
+        message: 'Post ${liveCount + 1} of $total failed: $clause. '
+            'The first $liveCount post(s) are live; Retry posts the rest.',
+        retryable: false,
+        statusCode: statusCode,
+        raw: raw,
+        uploadInterrupted: uploadInterrupted,
+        notAllowed: notAllowed,
+        outcomeUnknown: outcomeUnknown,
+      );
+
   /// The wording of [asPartialThread] and [asResumableThread].
   static final _partialThread = RegExp(r'^Part \d+ of \d+ failed: ');
 
+  /// The wording of [asResumableSeries].
+  static final _partialSeries = RegExp(r'^Post \d+ of \d+ failed: ');
+
   /// Made by [asPartialThread]: the first parts of the thread are live.
   bool get isPartialThread => !retryable && _partialThread.hasMatch(message);
+
+  /// Made by [asResumableSeries]: the first posts of the series are live.
+  bool get isPartialSeries => !retryable && _partialSeries.hasMatch(message);
 
   Map<String, dynamic> toJson() => {
         'kind': kind.name,
