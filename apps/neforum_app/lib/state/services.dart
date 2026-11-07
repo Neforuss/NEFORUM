@@ -377,8 +377,8 @@ class AppServices {
     final runs = await publishJournal.entries();
     final at = now ?? DateTime.now();
     final roller = publisher();
-    Future<void> settle(Post post) async {
-      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage)));
+    Future<void> settle(Post post, {Set<String> mayBeLive = const {}}) async {
+      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage, unconfirmed: await _unconfirmedMessages(mayBeLive))));
       recovered++;
     }
 
@@ -388,7 +388,7 @@ class AppServices {
       final post = await posts.get(run.postId);
       settled.add(run.postId);
       if (post == null || post.status != PostStatus.publishing) continue;
-      await settle(post);
+      await settle(post, mayBeLive: run.outcomeUnknownAccounts);
     }
     await publishJournal.remove(settled);
     if (atStartup) {
@@ -426,13 +426,27 @@ class AppServices {
           await publishJournal.release(postId);
           return;
         }
-        outcome = publisher().rollUpStatus(failUnfinishedTargets(stored, stoppedMessage(error))).copyWith(updatedAt: DateTime.now());
+        outcome = publisher()
+            .rollUpStatus(failUnfinishedTargets(stored, stoppedMessage(error), unconfirmed: await _unconfirmedMessages(run?.outcomeUnknownAccounts ?? const {})))
+            .copyWith(updatedAt: DateTime.now());
       }
       _unsavedOutcomes[postId] = outcome;
       await _saveOutcome(outcome);
     } on Object catch (e) {
       debugPrint('Could not settle the stopped run of $postId: $e');
     }
+  }
+
+  /// For each of [accountIds], whose request to make a post was under way when its
+  /// run died: the words saying nobody knows whether the post is live.
+  Future<Map<String, String>> _unconfirmedMessages(Set<String> accountIds) async {
+    final out = <String, String>{};
+    for (final id in accountIds) {
+      final account = await accounts.get(id);
+      final adapter = account == null ? null : registry.byId(account.platformId);
+      out[id] = PublishError.unconfirmedMessage(adapter?.descriptor.name ?? 'the network');
+    }
+    return out;
   }
 
   /// Saves [outcome] unless the post was deleted or changed since its run
@@ -606,14 +620,19 @@ List<Post> expiredPosts(Iterable<Post> all, PublishedPostRetention retention, Da
 DateTime lastChangeOf(Post post) => post.targets.map((t) => t.lastAttemptAt).nonNulls.fold(post.updatedAt, (last, t) => t.isAfter(last) ? t : last);
 
 /// [post] with every target still waiting or being posted marked failed
-/// with [message], so that it can be retried.
-Post failUnfinishedTargets(Post post, String message) {
+/// with [message], so that it can be retried. A target in [unconfirmed] gets the
+/// message there instead and [PublishError.outcomeUnknown]: its request to make the
+/// post was under way, so the post may be live and nothing retries it by itself.
+Post failUnfinishedTargets(Post post, String message, {Map<String, String> unconfirmed = const {}}) {
   var fixed = post;
   for (final t in post.targets) {
     if (t.status != TargetStatus.pending && t.status != TargetStatus.publishing) continue;
+    final unknown = unconfirmed[t.accountId];
     fixed = fixed.withTarget(t.copyWith(
       status: TargetStatus.failed,
-      result: PublishResult.failure(PublishError(kind: PublishErrorKind.network, message: message)),
+      result: PublishResult.failure(unknown == null
+          ? PublishError(kind: PublishErrorKind.network, message: message)
+          : PublishError(kind: PublishErrorKind.network, message: unknown, outcomeUnknown: true)),
     ));
   }
   return fixed;

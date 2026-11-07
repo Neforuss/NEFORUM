@@ -443,8 +443,9 @@ class MicropubAdapter extends PlatformAdapter {
     }
     _addExtras(pairs, v, account);
 
-    ctx.progress(files.isEmpty ? 'Posting to ${endpoint.host}' : 'Uploading the post with ${files.length} file(s)');
-    final res = await guardBlog('Micropub post', () => _send(endpoint, token, pairs, files, ctx),
+    final label = files.isEmpty ? 'Posting to ${endpoint.host}' : 'Uploading the post with ${files.length} file(s)';
+    if (files.isNotEmpty) ctx.uploadingAll(label);
+    final res = await guardBlog('Micropub post', () => ctx.creating(label, () => _send(endpoint, token, pairs, files, ctx), uploads: files.isNotEmpty),
         mapHttp: (f) => micropubError(f, context: 'Micropub post'));
     final json = res.jsonMap;
     final location = res.headers['location'];
@@ -474,7 +475,7 @@ class MicropubAdapter extends PlatformAdapter {
   }
 
   Future<String> _uploadMedia(Uri media, String token, MediaAttachment m, int n, int total, AdapterContext ctx) async {
-    ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} $n of $total');
+    ctx.uploading(m, 'Uploading ${m.isVideo ? 'video' : 'image'} $n of $total');
     final context = 'Media upload $n/$total';
     final bytes = await ctx.readMedia(m);
     final res = await guardBlog(context, () => ctx.http.send('POST', media,

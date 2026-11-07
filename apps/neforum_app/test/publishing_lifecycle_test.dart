@@ -301,6 +301,41 @@ void main() {
       expect((await services.posts.get('synced'))!.status, PostStatus.publishing);
     });
 
+    test('killed during the request that makes a post: that target says so, and no later run posts it', () async {
+      await services.accounts.upsert(ConnectedAccount(id: 'acct-1', platformId: 'mastodon', tier: PlatformTier.openApi, displayName: 'A', createdAt: DateTime(2026)));
+      await services.posts.upsert(_post('killed', status: PostStatus.publishing, targets: [TargetStatus.published, TargetStatus.pending, TargetStatus.pending]));
+      await runOnRecord('killed', ago: const Duration(hours: 1));
+      await services.publishJournal.beginCreate('killed', 'acct-1');
+
+      expect(await services.recoverInterruptedPublishing(), 1);
+
+      final killed = (await services.posts.get('killed'))!;
+      expect(killed.targets.map((t) => t.status), [TargetStatus.published, TargetStatus.failed, TargetStatus.failed]);
+      final lost = killed.targets[1].result!.error!;
+      expect(lost.outcomeUnknown, isTrue);
+      expect(lost.retryable, isFalse);
+      expect(lost.message, 'NEFORUM could not confirm this. Check Mastodon before retrying.');
+      final other = killed.targets[2].result!.error!;
+      expect(other.message, AppServices.interruptedMessage, reason: 'this one never started, so it really was not posted');
+      expect(other.outcomeUnknown, isNull);
+      expect(await services.publishJournal.entries(), isEmpty);
+      // What the record says survives the sync file: a nullable field, no new kind.
+      expect(PublishError.fromJson(lost.toJson()).outcomeUnknown, isTrue);
+    });
+
+    test('killed after the network answered, before the result was saved: the same warning, not "was not posted"', () async {
+      await services.posts.upsert(_post('killed', status: PostStatus.publishing, targets: [TargetStatus.pending]));
+      await runOnRecord('killed', ago: const Duration(hours: 1));
+      await services.publishJournal.beginCreate('killed', 'acct-0');
+      await services.publishJournal.endCreate('killed', 'acct-0', mayBeLive: true);
+
+      await services.recoverInterruptedPublishing();
+
+      final error = (await services.posts.get('killed'))!.targets.single.result!.error!;
+      expect(error.outcomeUnknown, isTrue);
+      expect(error.message, contains('Check the network before retrying'));
+    });
+
     test('a background run that fell silent is settled from what it saved: the networks it reached keep the post', () async {
       await services.posts.upsert(_post('background', status: PostStatus.publishing, targets: [TargetStatus.pending, TargetStatus.pending, TargetStatus.pending]));
       expect((await services.posts.get('background'))!.targets.first.status, TargetStatus.pending, reason: 'the UI has the post in its cache');

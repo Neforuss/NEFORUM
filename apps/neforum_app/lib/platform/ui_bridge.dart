@@ -1,3 +1,5 @@
+import 'dart:ui' show AppLifecycleState;
+
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 /// What the user chose in the hand-off sheet.
@@ -46,6 +48,12 @@ class _HeadlessBridge implements UiBridge {
   Future<HandoffDecision> showHandoff(HandoffPlan plan, {required Post post, required ConnectedAccount account, required PostVariant variant}) async =>
       (choice: HandoffChoice.later, note: null);
 }
+
+/// Whether something can be shown to the person now. A desktop app can bring its
+/// window up itself. On a phone a hidden app cannot, and a sheet opened there waits
+/// unseen, so the hand-off is deferred and announced instead.
+bool canShowUi({required bool canRaiseWindow, required AppLifecycleState? lifecycle}) =>
+    canRaiseWindow || lifecycle == null || lifecycle == AppLifecycleState.resumed || lifecycle == AppLifecycleState.inactive;
 
 /// [HandoffLauncher] that shows the hand-off sheet through [UiBridge].
 class AppHandoffLauncher implements HandoffLauncher {

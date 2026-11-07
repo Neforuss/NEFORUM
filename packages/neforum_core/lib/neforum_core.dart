@@ -39,6 +39,8 @@ export 'src/model/sign_in_lifetime.dart';
 export 'src/model/validation.dart';
 export 'src/publish/cancellation_signal.dart';
 export 'src/publish/publish_journal.dart';
+export 'src/publish/publish_pause_signal.dart';
+export 'src/publish/publish_progress.dart';
 export 'src/publish/publish_service.dart';
 export 'src/quota/quota_tracker.dart';
 export 'src/schedule/schedule_engine.dart';

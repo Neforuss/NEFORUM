@@ -26,7 +26,7 @@ class _Host implements MediaHost {
   List<MediaHostField> get fields => const [];
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     final f = failWith;
     if (f != null) throw f;
     uploaded.add(media.id);

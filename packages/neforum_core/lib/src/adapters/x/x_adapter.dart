@@ -562,13 +562,14 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       ];
       final replySettings = variant.extraAs<String>('replySettings');
       for (var i = start; i < parts.length; i++) {
-        if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length}');
-        final id = await api.createPost(
-          text: parts[i],
-          mediaIds: mediaIds[i],
-          inReplyTo: i == 0 ? null : ids.last,
-          replySettings: _replySettings.contains(replySettings) ? replySettings : null,
-        );
+        final id = await ctx.creating(
+            parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting to X',
+            () => api.createPost(
+                  text: parts[i],
+                  mediaIds: mediaIds[i],
+                  inReplyTo: i == 0 ? null : ids.last,
+                  replySettings: _replySettings.contains(replySettings) ? replySettings : null,
+                ));
         ids.add(id);
       }
     } on AdapterException catch (e) {
@@ -590,6 +591,10 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
 
   @override
   bool get resumesThreads => true;
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(
+      variant, variant.media.any((m) => m.isVideo || m.kind == MediaKind.gif) ? ProgressFamily.waitReported : ProgressFamily.direct);
 
   /// A thread that broke half-way must not be posted again from the start:
   /// the parts already on X would be refused as duplicates. Its live parts

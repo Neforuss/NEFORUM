@@ -39,7 +39,7 @@ Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
   final links = <String>[];
   for (var i = 0; i < sound.length; i++) {
     final m = sound[i];
-    ctx.progress('Uploading sound file ${i + 1} of ${sound.length} to ${host.name}');
+    ctx.uploading(m, 'Uploading sound file ${i + 1} of ${sound.length} to ${host.name}');
     final Uint8List bytes;
     try {
       bytes = await ctx.readMedia(m);
@@ -129,7 +129,7 @@ Future<String> _hostPermanently(MediaHost host, MediaAttachment m, Uint8List byt
   }
   final HostedMedia hosted;
   try {
-    hosted = await host.upload(m, bytes);
+    hosted = await host.upload(m, bytes, via: ctx.http);
   } on MediaHostException catch (e) {
     throw AdapterException(e.toPublishError());
   }

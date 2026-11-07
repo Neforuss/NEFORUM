@@ -502,11 +502,10 @@ class MisskeyAdapter extends PlatformAdapter {
     final ids = [...variant.postedThreadIds];
     String? replyId = ids.isNotEmpty ? ids.last : _str(variant.extra['replyId']);
     for (var i = start; i < parts.length; i++) {
-      ctx.progress(parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting note');
       final body = _noteBody(variant, account, parts[i], fileIds[i], replyId);
       try {
-        final res = await guardMisskey(
-            parts.length > 1 ? 'Misskey note ${i + 1}/${parts.length}' : 'Misskey note', ctx, () => api.callMap('notes/create', body));
+        final res = await guardMisskey(parts.length > 1 ? 'Misskey note ${i + 1}/${parts.length}' : 'Misskey note', ctx,
+            () => ctx.creating(parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting note', () => api.callMap('notes/create', body)));
         final created = res['createdNote'];
         final noteId = created is Map ? _str(created['id']) : null;
         if (noteId == null) {
@@ -537,7 +536,7 @@ class MisskeyAdapter extends PlatformAdapter {
   }
 
   Future<String> _upload(MisskeyApi api, MediaAttachment m, int index, int total, bool sensitive, AdapterContext ctx) async {
-    ctx.progress('Uploading ${m.noun} ${index + 1} of $total');
+    ctx.uploading(m, 'Uploading ${m.noun} ${index + 1} of $total');
     final bytes = await ctx.readMedia(m);
     // A sound file: "Artist - Title.mp3" in the Drive and "Artist – Title" as
     // its caption unless it has one of its own.

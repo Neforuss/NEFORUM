@@ -382,10 +382,13 @@ class GhostAdapter extends PlatformAdapter {
       'canonical_url': ?canonical,
       'slug': ?slug,
     };
-    ctx.progress(status == 'scheduled' ? 'Scheduling the post' : 'Publishing the post');
-    final r = await guardGhost('Ghost post', () => api.postJson('posts/', {
-          'posts': [post],
-        }, {'source': 'html'}));
+    final r = await guardGhost(
+        'Ghost post',
+        () => ctx.creating(
+            status == 'scheduled' ? 'Scheduling the post' : 'Publishing the post',
+            () => api.postJson('posts/', {
+                  'posts': [post],
+                }, {'source': 'html'})));
     final created = blogMap(blogList(r.jsonMap['posts']).firstOrNull);
     final postId = blogStr(created?['id']);
     if (created == null || postId == null) {
@@ -434,7 +437,7 @@ class GhostAdapter extends PlatformAdapter {
   }
 
   Future<String> _upload(GhostApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
-    ctx.progress('Uploading image ${index + 1} of $total');
+    ctx.uploading(m, 'Uploading image ${index + 1} of $total');
     final bytes = await readBlogMedia(ctx, m);
     final what = 'Ghost image upload ${index + 1}/$total';
     final r = await guardGhost(what, () => api.uploadImage(bytes, fileName: safeFileName(m), contentType: m.mimeType));
@@ -448,7 +451,7 @@ class GhostAdapter extends PlatformAdapter {
   /// Uploads a sound file, with its cover as the thumbnail; returns its URL
   /// and the thumbnail's (null when there is none or Ghost kept none).
   Future<(String, String?)> _uploadAudio(GhostApi api, MediaAttachment m, int index, int total, AdapterContext ctx) async {
-    ctx.progress('Uploading sound file ${index + 1} of $total');
+    ctx.uploading(m, 'Uploading sound file ${index + 1} of $total');
     final bytes = await readBlogMedia(ctx, m);
     final thumbnail = await audioCoverUploadPart(m, ctx);
     final what = 'Ghost sound file upload ${index + 1}/$total';

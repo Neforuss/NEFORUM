@@ -646,7 +646,7 @@ class _ShellUiBridge implements UiBridge {
   BuildContext? get _ctx => rootNavigatorKey.currentContext;
 
   @override
-  bool get interactive => _ctx != null;
+  bool get interactive => _ctx != null && canShowUi(canRaiseWindow: Env.isDesktop, lifecycle: WidgetsBinding.instance.lifecycleState);
 
   @override
   Future<String?> askPaste(Uri authorizationUrl, Uri redirectUri) async {

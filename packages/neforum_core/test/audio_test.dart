@@ -49,7 +49,7 @@ class _TemporaryHost extends FakeMediaHost {
   String get name => 'Temporary host';
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     uploaded.add(media);
     return HostedMedia(hostId: id, url: Uri.parse('https://tmp.example.test/${media.id}'), expiresAt: testNow.add(const Duration(hours: 1)));
   }

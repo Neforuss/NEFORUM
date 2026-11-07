@@ -592,7 +592,8 @@ void main() {
       final e = await client(net).createPin(body).then<AdapterException>((_) => fail('should throw'), onError: (Object e) => e as AdapterException);
       expect(c.n, 1);
       expect(e.error.retryable, isFalse);
-      expect(e.error.message, 'Pinterest did not confirm this Pin. Check your board before retrying.');
+      expect(e.error.message, PublishError.unconfirmedMessage('the network'));
+      expect(e.error.outcomeUnknown, isTrue);
       expect(e.error.raw, contains('handed to the connection'));
     });
   });

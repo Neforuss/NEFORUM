@@ -129,6 +129,7 @@ Future<Map<String, dynamic>> tiktokCall(
   String accessToken, {
   Object? body,
   required String context,
+  bool makesPost = false,
 }) async {
   final headers = {
     'Authorization': 'Bearer $accessToken',
@@ -140,6 +141,9 @@ Future<Map<String, dynamic>> tiktokCall(
         ? await ctx.http.get(url, headers: headers, throwOnError: false)
         : await ctx.http.postJson(url, body ?? const <String, dynamic>{}, headers: headers, throwOnError: false);
   } on Object catch (e) {
+    // [makesPost]: a lost answer is for AdapterContext.creating to report, which
+    // cannot see it once it is a plain network error here.
+    if (makesPost && NeforumHttp.isTransportError(e) && !NeforumHttp.neverReachedServer(e)) rethrow;
     final err = networkErrorFor(e, context);
     if (err == null) rethrow;
     throw AdapterException(err);

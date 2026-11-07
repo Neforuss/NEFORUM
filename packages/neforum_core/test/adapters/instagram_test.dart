@@ -706,7 +706,7 @@ class _FailingHost extends FakeMediaHost {
   final Object error;
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async => throw error;
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async => throw error;
 }
 
 /// Litterbox having an outage.

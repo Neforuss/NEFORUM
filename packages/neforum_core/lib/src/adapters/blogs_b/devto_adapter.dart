@@ -309,9 +309,8 @@ class DevtoAdapter extends PlatformAdapter {
       if (blogStr(v.extra['series']) != null) 'series': blogStr(v.extra['series']),
       if (blogInt(v.extra['organizationId']) != null) 'organization_id': blogInt(v.extra['organizationId']),
     };
-    ctx.progress('Publishing the article on ${base.host}');
     final res = await guardBlog('DEV article',
-        () => ctx.http.postJson(base.replace(path: '/api/articles'), {'article': article}, headers: _headers(key)),
+        () => ctx.creating('Publishing the article on ${base.host}', () => ctx.http.postJson(base.replace(path: '/api/articles'), {'article': article}, headers: _headers(key))),
         mapHttp: (f) => devtoError(f, context: 'DEV article'));
     final json = res.jsonMap;
     final articleId = blogInt(json['id'])?.toString() ?? blogStr(json['id']);
@@ -333,9 +332,9 @@ class DevtoAdapter extends PlatformAdapter {
     final urls = <String>[];
     for (var i = 0; i < v.media.length; i++) {
       final m = v.media[i];
-      ctx.progress('Uploading image ${i + 1} of ${v.media.length} to ${host.name}');
+      ctx.uploading(m, 'Uploading image ${i + 1} of ${v.media.length} to ${host.name}');
       try {
-        final hosted = await host.upload(m, await ctx.readMedia(m));
+        final hosted = await host.upload(m, await ctx.readMedia(m), via: ctx.http);
         urls.add(hosted.url.toString());
       } on MediaHostException catch (e) {
         throw AdapterException(e.toPublishError());

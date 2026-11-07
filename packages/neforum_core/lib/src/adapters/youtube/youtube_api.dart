@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import '../../http/neforum_http.dart';
 import '../../http/transient_stub.dart' if (dart.library.io) '../../http/transient_io.dart';
 import '../../model/publish_result.dart';
+import '../../publish/cancellation_signal.dart';
 import '../adapter_context.dart';
 import '../platform_adapter.dart';
 
@@ -269,7 +270,9 @@ class YouTubeResumableUpload {
     bool notifySubscribers = true,
   }) async {
     final session = await _openSession(metadata, bytes.length, mimeType, notifySubscribers);
-    return _sendBytes(session, bytes, mimeType);
+    // The session is the dedupe key while it lasts: a lost answer is asked about,
+    // not re-sent. [_sendBytes] says itself when even that gave no answer.
+    return ctx.creating('Uploading video to YouTube', () => _sendBytes(session, bytes, mimeType), idempotent: true, uploads: true);
   }
 
   Future<Uri> _openSession(Map<String, dynamic> metadata, int length, String mimeType, bool notify) async {
@@ -297,11 +300,20 @@ class YouTubeResumableUpload {
     final total = bytes.length;
     var offset = 0;
     PublishError? lastError;
+    // The whole file went out and no answer has said what became of it.
+    var unanswered = false;
     for (var attempt = 0; attempt <= maxResumes; attempt++) {
       if (attempt > 0) {
-        await Future<void>.delayed(resumeDelay);
-        ctx.progress('Resuming YouTube upload (attempt ${attempt + 1})');
-        final probe = await _probe(session, total);
+        final _Probe probe;
+        try {
+          await ctx.wait(resumeDelay);
+          ctx.uploadingAll('Resuming YouTube upload (attempt ${attempt + 1})');
+          probe = await _probe(session, total);
+        } on OperationCancelledException {
+          // Nobody can ask the session any more, and a new attempt opens a new one.
+          if (unanswered) throw AdapterException(ctx.cancelledUnconfirmedError());
+          rethrow;
+        }
         if (probe.done != null) return probe.done!;
         if (probe.error != null) {
           lastError = probe.error;
@@ -309,10 +321,12 @@ class YouTubeResumableUpload {
           continue;
         }
         offset = probe.offset!;
+        unanswered = false;
+        ctx.uploadOffset(offset, total);
       }
       final NeforumResponse res;
       try {
-        ctx.progress(offset == 0
+        ctx.uploadingAll(offset == 0
             ? 'Uploading video to YouTube (${_mb(total)})'
             : 'Uploading the remaining ${_mb(total - offset)} to YouTube');
         res = await ctx.http.putBytes(
@@ -324,11 +338,18 @@ class YouTubeResumableUpload {
             if (offset > 0) 'Content-Range': 'bytes $offset-${total - 1}/$total',
           },
           throwOnError: false,
+          bodyOffset: offset,
+          bodyWhole: total,
         );
+      } on OperationCancelledException catch (e) {
+        // The whole file went out: YouTube may have the video.
+        if (e.notSent) rethrow;
+        throw AdapterException(ctx.cancelledUnconfirmedError());
       } on Object catch (e) {
         if (!isNetworkException(e)) rethrow;
         ctx.log.warn('YouTube upload interrupted: $e');
         lastError = PublishError.network('YouTube upload interrupted (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e));
+        unanswered = !NeforumHttp.neverReachedServer(e);
         continue;
       }
       if (res.statusCode == 200 || res.statusCode == 201) return res.jsonMap;
@@ -340,6 +361,7 @@ class YouTubeResumableUpload {
       if (!err.retryable || _expired(res)) throw AdapterException(err);
       lastError = err;
     }
+    if (unanswered) throw AdapterException(ctx.outcomeUnknownError(details: lastError?.raw));
     throw AdapterException(lastError ?? const PublishError.network('YouTube upload failed'));
   }
 

@@ -143,11 +143,11 @@ class WebDavMediaHost implements MediaHost, DescribesVerify {
       };
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     checkSize(this, media, bytes.length);
     final fileName = randomObjectName(media, _newId);
     final fileUrl = folderUrl.resolve(Uri.encodeComponent(fileName));
-    await _put(fileUrl, bytes, media.mimeType);
+    await _put(fileUrl, bytes, media.mimeType, via ?? _http);
 
     final template = publicUrlTemplate;
     if (template != null) {
@@ -217,9 +217,9 @@ class WebDavMediaHost implements MediaHost, DescribesVerify {
   /// The server as the subject of a sentence in error messages.
   String get _service => isNextcloud && publicUrlTemplate == null ? 'Nextcloud' : 'Your WebDAV host';
 
-  Future<void> _put(Uri fileUrl, Uint8List bytes, String contentType) async {
-    Future<NeforumResponse> put() => guardedUpload(id, 'reach ${folderUrl.host}', () => _http.putBytes(fileUrl, bytes,
-        headers: {'Authorization': _auth, 'Content-Type': contentType}, throwOnError: false), delay: _retryDelay, log: _log);
+  Future<void> _put(Uri fileUrl, Uint8List bytes, String contentType, NeforumHttp http) async {
+    Future<NeforumResponse> put() => guardedUpload(id, 'reach ${folderUrl.host}', () => http.putBytes(fileUrl, bytes,
+        headers: {'Authorization': _auth, 'Content-Type': contentType}, throwOnError: false), delay: _retryDelay, log: _log, cancellation: http.cancellation);
     var r = await put();
     if (r.statusCode == 404 || r.statusCode == 409) {
       // The folder does not exist yet: create it (one level) and retry.

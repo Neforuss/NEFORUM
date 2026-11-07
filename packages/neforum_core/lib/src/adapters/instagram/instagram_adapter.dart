@@ -415,8 +415,7 @@ class InstagramAdapter extends PlatformAdapter {
       } else {
         containerId = await _carousel(api, igUserId, token, v, urls, caption, ctx);
       }
-      ctx.progress('Publishing to Instagram…');
-      mediaId = await api.publish(igUserId, token, containerId);
+      mediaId = await api.publish(igUserId, token, containerId, label: 'Publishing to Instagram…');
       link = await api.permalink(mediaId, token);
     }
 
@@ -427,8 +426,7 @@ class InstagramAdapter extends PlatformAdapter {
       final label = frames.length == 1 ? 'your story' : 'story frame ${i + 1} of ${frames.length}';
       try {
         final containerId = await _single(api, igUserId, token, {'media_type': 'STORIES', _urlField(m): urlOf[m.id]!}, label);
-        ctx.progress('Publishing $label to Instagram…');
-        storyIds.add(await api.publish(igUserId, token, containerId));
+        storyIds.add(await api.publish(igUserId, token, containerId, label: 'Publishing $label to Instagram…'));
       } on Object catch (e) {
         final error = _errorOf(e);
         if (error == null || (mediaId == null && storyIds.isEmpty)) rethrow;
@@ -439,6 +437,7 @@ class InstagramAdapter extends PlatformAdapter {
           PublishError(
             kind: error.kind,
             notAllowed: error.notAllowed,
+            outcomeUnknown: error.outcomeUnknown,
             message: '${_cap(label)} failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on Instagram '
                 '(${ids.join(', ')}); post the rest by hand.',
             statusCode: error.statusCode,
@@ -457,6 +456,21 @@ class InstagramAdapter extends PlatformAdapter {
           remoteId: storyIds.first, remoteUrl: link, additionalRemoteIds: storyIds.skip(1).toList(), publishedAt: ctx.now());
     }
     return PublishResult.ok(remoteId: mediaId, remoteUrl: link, additionalRemoteIds: storyIds, publishedAt: ctx.now());
+  }
+
+  /// Every file once, each published copy one step, and a story's copies go out
+  /// one after another.
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) {
+    final placement = variant.placement;
+    final feed = placement.includesFeed ? variant.media : const <MediaAttachment>[];
+    final frames = placement.includesStory ? variant.storyFrames : const <MediaAttachment>[];
+    return ProgressShape(
+      family: ProgressFamily.pullFromUrl,
+      slots: {for (final m in [...feed, ...frames]) m.id: ProgressSlot.of(m)}.values.toList(),
+      steps: (feed.isEmpty ? 0 : 1) + frames.length,
+      interleaved: frames.isNotEmpty,
+    );
   }
 
   /// The error a failed call ended with, as [publish] reports it; null for
@@ -493,7 +507,7 @@ class InstagramAdapter extends PlatformAdapter {
   }
 
   Future<String> _single(InstagramApi api, String igUserId, String token, Map<String, String> fields, String label) async {
-    api.ctx.progress('Sending $label to Instagram…');
+    api.ctx.serverWait('Sending $label to Instagram…');
     final id = await api.createContainer(igUserId, token, fields, label: label);
     await api.waitUntilFinished(id, token, label: label);
     return id;
@@ -505,7 +519,7 @@ class InstagramAdapter extends PlatformAdapter {
     for (var i = 0; i < v.media.length; i++) {
       final m = v.media[i];
       final label = 'item ${i + 1} of ${v.media.length}';
-      ctx.progress('Sending carousel $label to Instagram…');
+      ctx.serverWait('Sending carousel $label to Instagram…');
       final id = await api.createContainer(igUserId, token, {
         'is_carousel_item': 'true',
         if (m.isVideo) 'media_type': 'VIDEO',
@@ -515,7 +529,7 @@ class InstagramAdapter extends PlatformAdapter {
       await api.waitUntilFinished(id, token, label: 'carousel $label');
       children.add(id);
     }
-    ctx.progress('Assembling the carousel…');
+    ctx.serverWait('Assembling the carousel…');
     final parent = await api.createContainer(igUserId, token, {
       'media_type': 'CAROUSEL',
       'children': children.join(','),
@@ -532,10 +546,10 @@ class InstagramAdapter extends PlatformAdapter {
     final urls = <String>[];
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
-      ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${media.length} to ${host.name}…');
+      ctx.uploading(m, 'Uploading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${media.length} to ${host.name}…');
       final bytes = await _read(ctx, m);
       try {
-        final h = await host.upload(m, bytes, ttl: const Duration(hours: 24));
+        final h = await host.upload(m, bytes, ttl: const Duration(hours: 24), via: ctx.http);
         hosted.add(h);
         urls.add(h.url.toString());
       } on MediaHostException catch (e) {

@@ -401,7 +401,7 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
     final bytes = await _read(image, ctx);
     final api = DeviantArtApi(ctx: ctx, accessToken: tokens.accessToken);
 
-    ctx.progress('Uploading the image to Sta.sh');
+    ctx.uploading(image, 'Uploading the image to Sta.sh');
     final itemId = await api.submit(
       image,
       bytes,
@@ -412,9 +412,8 @@ NEFORUM asks for `basic` and `user` to read your username, `stash` to put a file
       noAi: art.disallowAiTraining,
     );
 
-    ctx.progress('Publishing the deviation');
     try {
-      final deviation = await api.publish(publishForm(itemId, art));
+      final deviation = await ctx.creating('Publishing the deviation', () => api.publish(publishForm(itemId, art)));
       return PublishResult.ok(remoteId: deviation.id, remoteUrl: deviation.url, publishedAt: ctx.now());
     } on HttpFailure catch (e) {
       final err = DeviantArtApi.mapFailure(e, context: 'Publishing on DeviantArt', publishing: true);

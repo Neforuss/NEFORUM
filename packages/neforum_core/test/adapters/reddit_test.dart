@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show ZLibCodec;
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/reddit/reddit_adapter.dart';
 import 'package:neforum_core/src/adapters/reddit/reddit_media.dart';
@@ -90,6 +92,39 @@ PostVariant _variant({
 
 void main() {
   final adapter = RedditAdapter(socketReader: (url, timeout) async => null);
+
+  test('Cancel ends the wait for the media socket within a second: the post is made, so it counts as made', () async {
+    final signal = CancellationSignal();
+    final waiting = Completer<void>();
+    final ctx = AdapterContext(
+      http: NeforumHttp(
+          client: MockClient((req) async {
+            if (req.url.path == '/api/media/asset.json') return _json(_lease('k1'));
+            if (req.url.host.contains('s3-accelerate')) return _s3Created('k1');
+            return _json({
+              'json': {
+                'errors': <Object>[],
+                'data': {'user_submitted_page': 'https://www.reddit.com/user/alice/submitted/', 'websocket_url': 'wss://ws.example.test/post'},
+              },
+            });
+          }),
+          maxRetries: 0),
+      clock: () => testNow,
+      cancellation: signal,
+      readMedia: (_) async => fakeJpegBytes,
+    );
+    final withSocket = RedditAdapter(socketReader: (url, timeout) {
+      waiting.complete();
+      return Completer<String?>().future;
+    });
+    final run = withSocket.publish(_variant(text: '', media: [fakeImage()]), _apiAccount(), _secrets(), ctx);
+    await waiting.future.timeout(const Duration(seconds: 5));
+    final clock = Stopwatch()..start();
+    signal.cancel();
+    final r = await run.timeout(const Duration(seconds: 5));
+    expect(clock.elapsed, lessThan(const Duration(seconds: 1)));
+    expect(r.success, isTrue, reason: '${r.error}');
+  });
 
   group('descriptor', () {
     final d = adapter.descriptor;
@@ -658,11 +693,12 @@ void main() {
       expect(r.error!.retryAfter, const Duration(minutes: 2));
     });
 
-    test('network failure -> network error result, not an exception', () async {
-      final ctx = testContext(handler: (req) async => throw http.ClientException('connection refused'));
+    test('a lost answer on the submit -> an unconfirmed error result, not an exception, and no retry', () async {
+      final ctx = testContext(handler: (req) async => throw http.ClientException('connection closed'));
       final r = await adapter.publish(_variant(), _apiAccount(), _secrets(), ctx);
       expect(r.error!.kind, PublishErrorKind.network);
-      expect(r.error!.retryable, isTrue);
+      expect(r.error!.retryable, isFalse);
+      expect(r.error!.outcomeUnknown, isTrue);
     });
 
     test('400 -> validation, 503 -> network', () async {

@@ -29,6 +29,8 @@ import '../text/variant_resolver.dart';
 import '../util/logger.dart';
 import 'cancellation_signal.dart';
 import 'publish_journal.dart';
+import 'publish_pause_signal.dart';
+import 'publish_progress.dart';
 
 /// What happened when the environment tried to execute a [HandoffPlan].
 enum HandoffOutcome {
@@ -140,6 +142,41 @@ class PublishOutcomeNotSaved implements Exception {
   String toString() => 'The result could not be saved: $cause';
 }
 
+/// A hand-off held back until the run's automatic targets are done.
+class _LaterHandoff {
+  _LaterHandoff(this.plan, this.attempt, this.variant, this.account);
+
+  final HandoffPlan plan;
+  final PostTarget attempt;
+  final PostVariant variant;
+  final ConnectedAccount account;
+}
+
+/// Keeps [PublishJournal] up to date around a request that can make a post. A
+/// journal that cannot be written does not stop the post, as with heartbeats.
+class _JournalCreateRecorder implements CreateRecorder {
+  _JournalCreateRecorder(this._journal, this._postId, this._accountId, this._log);
+
+  final PublishJournal _journal;
+  final String _postId;
+  final String _accountId;
+  final Logger _log;
+
+  @override
+  Future<void> begin() => _safely(() => _journal.beginCreate(_postId, _accountId));
+
+  @override
+  Future<void> end({required bool mayBeLive}) => _safely(() => _journal.endCreate(_postId, _accountId, mayBeLive: mayBeLive));
+
+  Future<void> _safely(Future<void> Function() change) async {
+    try {
+      await change();
+    } on Object catch (e) {
+      _log.warn('Could not update the publish journal for $_postId: $e');
+    }
+  }
+}
+
 /// Fans a [Post] out to its targets: resolves the per-platform variant,
 /// validates, refreshes tokens, checks quota, publishes or hands off, and
 /// records the outcome on the post.
@@ -201,7 +238,16 @@ class PublishService {
   final Logger _log;
   final Future<Uint8List> Function(MediaAttachment media)? _readMedia;
 
-  AdapterContext context({void Function(String message)? onProgress, Logger? log, CancellationSignal? cancellation}) => AdapterContext(
+  AdapterContext context({
+    void Function(String message)? onProgress,
+    Logger? log,
+    CancellationSignal? cancellation,
+    void Function(ProgressEvent event)? onEvent,
+    String? networkName,
+    CreateRecorder? createRecorder,
+    PublishPauseSignal? pause,
+  }) =>
+      AdapterContext(
         http: http,
         broker: broker,
         mediaHost: mediaHostProvider?.call(),
@@ -211,6 +257,10 @@ class PublishService {
         browserFills: browserFills?.call() ?? false,
         readMedia: _readMedia,
         cancellation: cancellation,
+        onEvent: onEvent,
+        networkName: networkName,
+        createRecorder: createRecorder,
+        pause: pause,
       );
 
   // ---------------------------------------------------------------------
@@ -268,14 +318,27 @@ class PublishService {
   /// When the outcome cannot be saved at the end, [PublishOutcomeNotSaved]
   /// carries it. The run stays on record in [journal] until its outcome is
   /// saved.
+  ///
+  /// When [interactive], automatic targets go first and hand-offs after them, so
+  /// a sheet waiting for the person never holds up a network that needs nobody.
+  ///
+  /// [onPlan] hears the run's targets once, before anything is sent. [onEvent]
+  /// hears what each target is doing, and [onOutcome] how it ended, as soon as it
+  /// has ended and including targets this run leaves alone. A
+  /// [PublishProgressTracker] turns these into figures. While [pause] is paused no
+  /// request that makes a post starts.
   Future<Post> publish(
     String postId, {
     bool interactive = true,
     Set<String>? onlyAccountIds,
     bool retryFailed = true,
     void Function(String accountId, String message)? onProgress,
+    void Function(PublishRunPlan plan)? onPlan,
+    void Function(String accountId, ProgressEvent event)? onEvent,
+    void Function(String accountId, TargetOutcome outcome)? onOutcome,
     CancellationSignal? cancellation,
     bool dueTargetsOnly = false,
+    PublishPauseSignal? pause,
   }) async {
     var post = await _require(postId);
     await _recordRun(postId);
@@ -286,31 +349,36 @@ class PublishService {
       await posts.upsert(post);
       _log.info('Publishing "${_short(post.text)}" to ${post.targets.length} target(s)');
 
-      for (final target in post.targets) {
-        if (onlyAccountIds != null && !onlyAccountIds.contains(target.accountId)) continue;
+      TargetOutcome? turnOf(PostTarget t) =>
+          _turnOf(post, t, interactive: interactive, onlyAccountIds: onlyAccountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
+      if (onPlan != null) onPlan(await _planRun(post, turnOf));
+      final order = await _runOrder(post, interactive: interactive);
+      final later = <_LaterHandoff>[];
+      for (final target in order) {
+        final turn = turnOf(target);
         if (target.isHeldByPlatform) {
           // The platform publishes this one itself; record it once its time
           // has come. Never publish it a second time from here.
           final held = target.result;
-          if (held != null && _isReleased(held)) {
+          if (turn == TargetOutcome.published && held != null) {
             post = post.withTarget(target.copyWith(status: TargetStatus.published, result: held.asReleased()));
             await _saveProgress(post);
           }
+        }
+        if (turn != null) {
+          onOutcome?.call(target.accountId, turn);
           continue;
         }
-        if (target.isDone) continue;
-        if (dueTargetsOnly && target.status == TargetStatus.pending && !post.isTargetDue(target, _now())) continue;
-        if (_isFailedOrCancelled(target) && !retryFailed) continue;
-        // Its live copies would go out a second time, unless what is live is
-        // recorded well enough to post only the rest.
-        if (_isFailedOrCancelled(target) && target.isPartlyLive && !target.canResume) continue;
-        if (target.status == TargetStatus.awaitingHandoff && !interactive) continue;
         if (cancellation != null && cancellation.isCancelled) {
           // Waiting retries included: the scheduler must not pick them up later.
           post = post.withTarget(_cancel(target));
+          onOutcome?.call(target.accountId, TargetOutcome.cancelled);
           continue;
         }
-        if (_inBackoff(target)) continue;
+        if (_inBackoff(target)) {
+          onOutcome?.call(target.accountId, TargetOutcome.notThisRun);
+          continue;
+        }
         PostTarget updated;
         try {
           updated = await _publishTarget(
@@ -319,6 +387,9 @@ class PublishService {
             interactive: interactive,
             onProgress: onProgress == null ? null : (m) => onProgress(target.accountId, m),
             cancellation: cancellation,
+            onEvent: onEvent == null ? null : (e) => onEvent(target.accountId, e),
+            pause: pause,
+            later: later,
           );
         } on Object catch (e, st) {
           // Something around the network call broke (a file that cannot be
@@ -331,7 +402,25 @@ class PublishService {
               : _fail(target, PublishError.platform('Something went wrong before this was posted: $e'));
         }
         post = post.withTarget(updated);
-        await _saveProgress(post); // persist progress target by target
+        // Persist progress target by target. Once saved, the state on disk knows
+        // about this target's post and recovery needs no journal mark for it.
+        if (await _saveProgress(post)) await _clearCreate(postId);
+        if (!later.any((l) => l.attempt.accountId == target.accountId)) onOutcome?.call(target.accountId, _outcomeOf(updated));
+      }
+      // Hand-offs a quota sent this way wait for the automatic targets too.
+      for (final l in later) {
+        PostTarget updated;
+        try {
+          updated = cancellation != null && cancellation.isCancelled
+              ? _cancel(l.attempt)
+              : await _launchHandoff(l.plan, post, l.attempt, l.variant, l.account, onEvent: onEvent == null ? null : (e) => onEvent(l.attempt.accountId, e));
+        } on Object catch (e) {
+          _log.error('Unexpected error with ${l.attempt.accountId}', e);
+          updated = _fail(l.attempt, PublishError.platform('Something went wrong before this was posted: $e'));
+        }
+        post = post.withTarget(updated);
+        await _saveProgress(post);
+        onOutcome?.call(l.attempt.accountId, _outcomeOf(updated));
       }
       if (cancellation != null && cancellation.isCancelled) _log.info('Publishing "${_short(post.text)}" was cancelled');
       post = _rollup(post).copyWith(updatedAt: _now());
@@ -351,13 +440,124 @@ class PublishService {
 
   /// Saves the run's progress after a target. A write that fails does not
   /// stop the run: [post] keeps every result in memory, and the next write
-  /// (after the next target, or at the end) saves them all.
-  Future<void> _saveProgress(Post post) async {
+  /// (after the next target, or at the end) saves them all. True when saved.
+  Future<bool> _saveProgress(Post post) async {
     try {
       await posts.upsert(post);
+      return true;
     } on Object catch (e) {
       _log.warn('Could not save the progress of "${_short(post.text)}" yet ($e); the next write includes it');
+      return false;
     }
+  }
+
+  Future<void> _clearCreate(String postId) async {
+    try {
+      await journal?.clearCreate(postId);
+    } on Object catch (e) {
+      _log.warn('Could not update the publish journal for $postId: $e');
+    }
+  }
+
+  /// How this run leaves target [t] alone, or null when it is the run's to post.
+  /// Live already counts as what it is, for a retry to credit. A target in backoff
+  /// is decided apart: Cancel still reaches it.
+  TargetOutcome? _turnOf(
+    Post post,
+    PostTarget t, {
+    required bool interactive,
+    required Set<String>? onlyAccountIds,
+    required bool retryFailed,
+    required bool dueTargetsOnly,
+  }) {
+    if (onlyAccountIds != null && !onlyAccountIds.contains(t.accountId)) return TargetOutcome.notThisRun;
+    if (t.isHeldByPlatform) {
+      final held = t.result;
+      return held != null && _isReleased(held) ? TargetOutcome.published : TargetOutcome.notThisRun;
+    }
+    if (t.isDone) return _outcomeOf(t);
+    if (dueTargetsOnly && t.status == TargetStatus.pending && !post.isTargetDue(t, _now())) return TargetOutcome.notThisRun;
+    if (_isFailedOrCancelled(t) && !retryFailed) return TargetOutcome.notThisRun;
+    // Its live copies would go out a second time, unless what is live is
+    // recorded well enough to post only the rest.
+    if (_isFailedOrCancelled(t) && t.isPartlyLive && !t.canResume) return TargetOutcome.notThisRun;
+    if (t.status == TargetStatus.awaitingHandoff && !interactive) return TargetOutcome.notThisRun;
+    return null;
+  }
+
+  /// How a target that went through a run ended for that run. A target waiting for
+  /// its retry is finished with this run all the same.
+  static TargetOutcome _outcomeOf(PostTarget t) => switch (t.status) {
+        TargetStatus.published || TargetStatus.heldByPlatform => TargetOutcome.published,
+        TargetStatus.handedOff => TargetOutcome.handedOff,
+        TargetStatus.awaitingHandoff => TargetOutcome.awaitingUser,
+        TargetStatus.skipped => TargetOutcome.skipped,
+        TargetStatus.cancelled => TargetOutcome.cancelled,
+        TargetStatus.pending || TargetStatus.publishing || TargetStatus.failed => TargetOutcome.failed,
+      };
+
+  /// The order of a run: automatic targets first and hand-offs after them when
+  /// someone is there to do them. Otherwise nothing waits, and the order stays.
+  Future<List<PostTarget>> _runOrder(Post post, {required bool interactive}) async {
+    if (!interactive) return post.targets;
+    final automatic = <PostTarget>[];
+    final handoffs = <PostTarget>[];
+    for (final t in post.targets) {
+      PlatformTier? tier;
+      try {
+        tier = (await accounts.get(t.accountId))?.tier;
+      } on Object catch (e) {
+        // The target itself reports what is wrong with it when its turn comes.
+        _log.debug('Could not read the account of ${t.accountId}: $e');
+      }
+      (tier == PlatformTier.handoff ? handoffs : automatic).add(t);
+    }
+    return [...automatic, ...handoffs];
+  }
+
+  /// Fixes the run's members and how each will go.
+  Future<PublishRunPlan> _planRun(Post post, TargetOutcome? Function(PostTarget t) turnOf) async {
+    final targets = <PlannedTarget>[];
+    for (final t in post.targets) {
+      var outcome = turnOf(t);
+      if (outcome == null && _inBackoff(t)) outcome = TargetOutcome.notThisRun;
+      var name = t.accountId;
+      var shape = const ProgressShape(family: ProgressFamily.textOnly);
+      try {
+        final account = await accounts.get(t.accountId);
+        final adapter = account == null ? null : registry.byId(account.platformId);
+        if (account != null && adapter != null) {
+          name = adapter.descriptor.name;
+          if (account.tier != PlatformTier.handoff) {
+            final variant = resolver.resolve(post, t, adapter.descriptorForAccount(account), account: account);
+            shape = _shapeOf(adapter, variant, account, t.canResume ? t.result : null);
+          }
+        }
+      } on Object catch (e) {
+        // The target itself reports what is wrong with it when its turn comes.
+        _log.debug('No plan for ${t.accountId}: $e');
+      }
+      targets.add(PlannedTarget(accountId: t.accountId, name: name, shape: shape, outcome: outcome));
+    }
+    return PublishRunPlan(postId: post.id, targets: targets);
+  }
+
+  /// What is still to do for [variant]: a series one plan after another, and
+  /// [earlier]'s live parts and posts credited from the start.
+  static ProgressShape _shapeOf(PlatformAdapter adapter, PostVariant variant, ConnectedAccount account, PublishResult? earlier) {
+    ProgressShape allDone(ProgressShape s) => ProgressShape(family: s.family, steps: s.steps, stepsDone: s.steps);
+    final parts = earlier?.threadRemoteIds ?? const <String>[];
+    final firstDone = earlier != null &&
+        earlier.remoteId != null &&
+        (!variant.isThread || parts.length >= variant.threadParts.length || earlier.seriesRemoteIds.isNotEmpty);
+    final first = adapter.progressShape(!firstDone && parts.isNotEmpty && adapter.resumesThreads ? variant.copyWith(postedThreadIds: parts) : variant, account);
+    var shape = firstDone ? allDone(first) : first;
+    final done = earlier?.seriesRemoteIds.length ?? 0;
+    for (var i = 0; i < variant.seriesPosts.length; i++) {
+      final next = adapter.progressShape(variant.seriesPosts[i], account);
+      shape = shape.followedBy(i < done ? allDone(next) : next);
+    }
+    return shape;
   }
 
   Future<void> _recordRun(String postId) async {
@@ -445,8 +645,10 @@ class PublishService {
   /// Those targets become [TargetStatus.heldByPlatform] and go out even when
   /// this device is off. Everything else stays pending for the local
   /// scheduler, which is also the fallback whenever delegation does not work
-  /// (thread, schedule too soon or too far out, platform error): this method
-  /// never fails a target.
+  /// (thread, schedule too soon or too far out, platform error). This method
+  /// fails a target in one case only: the request to hold the post lost its answer.
+  /// The platform may be holding it, and posting it from here as well would post
+  /// it twice.
   Future<Post> delegateSchedules(
     String postId, {
     Set<String>? onlyAccountIds,
@@ -492,7 +694,7 @@ class PublishService {
       log.info('${account.displayName}: keeping the schedule on this device (${issues.errors.first.message})');
       return null;
     }
-    final ctx = context(onProgress: onProgress, log: log);
+    final ctx = context(onProgress: onProgress, log: log, networkName: name);
     final (secretMap, secretError) = await _freshSecrets(account, adapter, ctx);
     if (secretMap == null) {
       log.warn('${account.displayName}: could not hand the schedule to $name (${secretError?.message}); it stays on this device');
@@ -521,6 +723,7 @@ class PublishService {
       log.warn('$name published ${account.displayName}\'s post immediately instead of holding it');
       return target.copyWith(status: TargetStatus.published, result: result, attempts: 1, lastAttemptAt: _now());
     }
+    if (result.error?.outcomeUnknown == true) return _fail(target, result.error!, account: account);
     log.warn('${account.displayName}: $name did not take the schedule (${result.error?.message}); it stays on this device');
     return null;
   }
@@ -693,9 +896,12 @@ class PublishService {
     required void Function(String message)? onProgress,
     bool forceHandoff = false,
     CancellationSignal? cancellation,
+    void Function(ProgressEvent event)? onEvent,
+    PublishPauseSignal? pause,
+    List<_LaterHandoff>? later,
   }) async {
     final updated = await _publishTargetOnce(post, target,
-        interactive: interactive, onProgress: onProgress, forceHandoff: forceHandoff, cancellation: cancellation);
+        interactive: interactive, onProgress: onProgress, forceHandoff: forceHandoff, cancellation: cancellation, onEvent: onEvent, pause: pause, later: later);
     _noteSignIn(updated);
     final earlier = target.canResume ? target.result : null;
     final r = updated.result;
@@ -724,6 +930,9 @@ class PublishService {
     required void Function(String message)? onProgress,
     bool forceHandoff = false,
     CancellationSignal? cancellation,
+    void Function(ProgressEvent event)? onEvent,
+    PublishPauseSignal? pause,
+    List<_LaterHandoff>? later,
   }) async {
     bool cancelled() => cancellation != null && cancellation.isCancelled;
     final account = await accounts.get(target.accountId);
@@ -738,7 +947,16 @@ class PublishService {
       return _fail(target, PublishError.unsupported('No adapter for platform "${account.platformId}"'));
     }
     final log = _log.child(account.platformId);
-    final ctx = context(onProgress: onProgress, log: log, cancellation: cancellation);
+    final journal = this.journal;
+    final ctx = context(
+      onProgress: onProgress,
+      log: log,
+      cancellation: cancellation,
+      onEvent: onEvent,
+      networkName: adapter.descriptor.name,
+      createRecorder: journal == null ? null : _JournalCreateRecorder(journal, post.id, target.accountId, log),
+      pause: pause,
+    );
 
     final PostVariant variant;
     final List<ValidationIssue> issues;
@@ -765,7 +983,7 @@ class PublishService {
     );
 
     if (account.tier == PlatformTier.handoff || forceHandoff) {
-      return _handoff(post, attempt, variant, account, adapter, interactive: interactive, cancellation: cancellation);
+      return _handoff(post, attempt, variant, account, adapter, interactive: interactive, cancellation: cancellation, onEvent: onEvent);
     }
 
     // ---- API tiers ----------------------------------------------------
@@ -774,6 +992,7 @@ class PublishService {
     // renewal cut short would leave only a dead token on this device. A
     // renewal that has started finishes and its keys are saved; Cancel
     // takes effect right after.
+    onEvent?.call(ProgressEvent(stage: ProgressStage.renewingSignIn, label: 'Checking the ${adapter.descriptor.name} sign-in', at: _now()));
     final (freshSecrets, secretError) = await _freshSecrets(account, adapter, context(onProgress: onProgress, log: log));
     // A renewal cut short by the user is not a broken sign-in.
     if (cancelled()) return _cancel(attempt);
@@ -810,7 +1029,7 @@ class PublishService {
       );
       if (options.fallbackToHandoffOnQuota && adapter.buildHandoff(variant, account: account) != null) {
         log.warn('${account.displayName}: ${err.message}; falling back to hand-off');
-        return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message, cancellation: cancellation);
+        return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message, cancellation: cancellation, onEvent: onEvent, later: later);
       }
       return _fail(attempt, err);
     }
@@ -838,6 +1057,7 @@ class PublishService {
       result = await _publishSeries(adapter, variant, account, secretMap, ctx, log,
           first: result, done: earlier?.seriesRemoteIds ?? const [], cancelled: cancelled);
     }
+    ctx.finishStage();
     // What this attempt put live; an earlier one already counted its own.
     final alreadyCounted = earlier?.allRemoteIds.length ?? 0;
 
@@ -881,6 +1101,7 @@ class PublishService {
             statusCode: cause.statusCode,
             raw: cause.raw,
             notAllowed: cause.notAllowed,
+            outcomeUnknown: cause.outcomeUnknown,
           ),
           remoteId: result.remoteId,
           remoteUrl: result.remoteUrl,
@@ -899,7 +1120,7 @@ class PublishService {
     // the whole post off then would post those parts a second time.
     if (err.kind == PublishErrorKind.quota && err.retryable && options.fallbackToHandoffOnQuota && adapter.buildHandoff(variant, account: account) != null) {
       log.warn('${account.displayName}: ${err.message}; falling back to hand-off');
-      return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message, cancellation: cancellation);
+      return _handoff(post, attempt, variant, account, adapter, interactive: interactive, reason: err.message, cancellation: cancellation, onEvent: onEvent, later: later);
     }
     return _fail(attempt, err, account: account);
   }
@@ -951,6 +1172,7 @@ class PublishService {
           PublishError(
             kind: e.kind,
             notAllowed: e.notAllowed,
+            outcomeUnknown: e.outcomeUnknown,
             message: 'Post ${ids.length + 2} of $total failed: ${e.message}. '
                 'The first ${ids.length + 1} post(s) are live; Retry posts the rest.',
             statusCode: e.statusCode,
@@ -996,6 +1218,8 @@ class PublishService {
     required bool interactive,
     String? reason,
     CancellationSignal? cancellation,
+    void Function(ProgressEvent event)? onEvent,
+    List<_LaterHandoff>? later,
   }) async {
     HandoffPlan? plan;
     try {
@@ -1015,6 +1239,20 @@ class PublishService {
     if (!interactive || launcher == null) {
       return attempt.copyWith(status: TargetStatus.awaitingHandoff);
     }
+    if (later != null) {
+      // The automatic targets go first: nobody has to answer a sheet for those.
+      later.add(_LaterHandoff(plan, attempt, variant, account));
+      return attempt.copyWith(status: TargetStatus.awaitingHandoff);
+    }
+    return _launchHandoff(plan, post, attempt, variant, account, onEvent: onEvent);
+  }
+
+  /// Puts [plan] in front of the person and records what came of it.
+  Future<PostTarget> _launchHandoff(HandoffPlan plan, Post post, PostTarget attempt, PostVariant variant, ConnectedAccount account,
+      {void Function(ProgressEvent event)? onEvent}) async {
+    final launcher = handoffLauncher;
+    if (launcher == null) return attempt.copyWith(status: TargetStatus.awaitingHandoff);
+    onEvent?.call(ProgressEvent(stage: ProgressStage.handingOff, label: 'Waiting for you', at: _now()));
     final launched = await launcher.launch(plan, post: post, target: attempt, variant: variant, account: account);
     return switch (launched.outcome) {
       HandoffOutcome.launched => attempt.copyWith(
@@ -1074,8 +1312,9 @@ class PublishService {
   PostTarget _cancel(PostTarget t, {PublishError? cause}) {
     // A thread cut off halfway keeps the adapter's explanation: its first
     // parts are live, and a retry would post them again.
-    final error = cause != null && _isPartialThread(cause)
-        ? PublishError(kind: PublishErrorKind.cancelled, message: cause.message, statusCode: cause.statusCode, raw: cause.raw)
+    // So does a request that was under way: the post may be live.
+    final error = cause != null && (_isPartialThread(cause) || cause.outcomeUnknown == true)
+        ? PublishError(kind: PublishErrorKind.cancelled, message: cause.message, statusCode: cause.statusCode, raw: cause.raw, outcomeUnknown: cause.outcomeUnknown)
         : _cancelledError;
     _log.info('${t.accountId}: cancelled');
     return t.copyWith(status: TargetStatus.cancelled, result: PublishResult.failure(error));

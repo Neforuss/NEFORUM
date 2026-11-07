@@ -37,6 +37,7 @@ class PublishError {
     this.retryAfter,
     this.uploadInterrupted,
     this.notAllowed,
+    this.outcomeUnknown,
   });
 
   factory PublishError.fromJson(Map<String, dynamic> json) => PublishError(
@@ -50,6 +51,7 @@ class PublishError {
             : Duration(seconds: json['retryAfterSeconds'] as int),
         uploadInterrupted: json['uploadInterrupted'] as bool?,
         notAllowed: json['notAllowed'] as bool?,
+        outcomeUnknown: json['outcomeUnknown'] as bool?,
       );
 
   const PublishError.auth(String message, {String? raw, int? statusCode, bool? notAllowed})
@@ -108,6 +110,9 @@ class PublishError {
   /// version reads the post as before.
   final bool? uploadInterrupted;
 
+  /// The words for [outcomeUnknown].
+  static String unconfirmedMessage(String network) => 'NEFORUM could not confirm this. Check $network before retrying.';
+
   /// [message] without its full stop, to go in the middle of a sentence.
   String get _clause => message.endsWith('.') ? message.substring(0, message.length - 1) : message;
   /// An `auth` error that means "not allowed" rather than "expired": the
@@ -116,6 +121,12 @@ class PublishError {
   /// not a new [PublishErrorKind]: a device on 1.3.5 reads synced posts with
   /// `values.byName`, which throws on a kind it does not know.
   final bool? notAllowed;
+
+  /// The request that makes the post ended with no answer: the post may be live.
+  /// It is never retried automatically; the person checks the network first. A
+  /// nullable field and not a new [PublishErrorKind], for the same reason as
+  /// [notAllowed], and omitted from JSON when null.
+  final bool? outcomeUnknown;
 
   /// Wraps an error that happened after some parts of a thread were already
   /// posted. Never retryable: a retry would post the earlier parts again.
@@ -130,6 +141,7 @@ class PublishError {
       raw: raw,
       uploadInterrupted: uploadInterrupted,
       notAllowed: notAllowed,
+      outcomeUnknown: outcomeUnknown,
     );
   }
 
@@ -146,6 +158,7 @@ class PublishError {
       raw: raw,
       uploadInterrupted: uploadInterrupted,
       notAllowed: notAllowed,
+      outcomeUnknown: outcomeUnknown,
     );
   }
 
@@ -164,6 +177,7 @@ class PublishError {
         if (retryAfter != null) 'retryAfterSeconds': retryAfter!.inSeconds,
         if (uploadInterrupted != null) 'uploadInterrupted': uploadInterrupted,
         if (notAllowed == true) 'notAllowed': true,
+        if (outcomeUnknown == true) 'outcomeUnknown': true,
       };
 
   @override

@@ -735,13 +735,17 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     final NeforumResponse res;
     // JSON and multipart bodies are not part of an OAuth 1.0a signature.
     if (uploads.isEmpty) {
-      ctx.progress('Publishing to Tumblr');
-      res = await ctx.http.postJson(url, body, headers: headers, signHeaders: auth.signer('POST', url));
+      res = await ctx.creating('Publishing to Tumblr', () => ctx.http.postJson(url, body, headers: headers, signHeaders: auth.signer('POST', url)));
     } else {
-      ctx.progress('Uploading ${uploads.length} file${uploads.length == 1 ? '' : 's'} to Tumblr');
+      // One body holds every file and the post: the upload is the post.
+      final label = 'Uploading ${uploads.length} file${uploads.length == 1 ? '' : 's'} to Tumblr';
+      ctx.uploadingAll(label);
       final mp = TumblrApi.multipart(body, uploads);
-      res = await ctx.http.putBytes(url, mp.body,
-          method: 'POST', headers: {...headers, 'Content-Type': mp.contentType}, signHeaders: auth.signer('POST', url));
+      res = await ctx.creating(
+          label,
+          () => ctx.http.putBytes(url, mp.body,
+              method: 'POST', headers: {...headers, 'Content-Type': mp.contentType}, signHeaders: auth.signer('POST', url)),
+          uploads: true);
     }
 
     final postId = TumblrApi.createdId(res);
@@ -1050,9 +1054,9 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     final hosted = <HostedMedia>[];
     try {
       for (var i = 0; i < photos.length; i++) {
-        ctx.progress('Uploading photo ${i + 1} of ${photos.length} to ${host.name}');
+        ctx.uploading(photos[i], 'Uploading photo ${i + 1} of ${photos.length} to ${host.name}');
         final bytes = await ctx.readMedia(photos[i]);
-        hosted.add(await host.upload(photos[i], bytes, ttl: handoffMediaTtl));
+        hosted.add(await host.upload(photos[i], bytes, ttl: handoffMediaTtl, via: ctx.http));
       }
     } on Object catch (e) {
       ctx.log.warn('Tumblr hand-off: could not put the photos on ${host.name}; using the plain hand-off', e);

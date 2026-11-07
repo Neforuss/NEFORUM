@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:neforum_core/neforum_core.dart' hide Visibility;
+import 'package:neforum_core/neforum_core.dart' hide TargetProgress, Visibility;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/neforum_logo.dart';

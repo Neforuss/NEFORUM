@@ -454,6 +454,9 @@ class YouTubeAdapter extends PlatformAdapter {
     return PublishResult.ok(remoteId: videoId, remoteUrl: url, publishedAt: ctx.now());
   }
 
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.wholeFile, steps: 1);
+
   // ------------------------------------------------------------- scheduled
 
   /// Deletes the video YouTube holds for a scheduled post (`videos.delete`,

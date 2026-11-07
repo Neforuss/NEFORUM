@@ -346,7 +346,7 @@ void main() {
       expect(res.remoteId, 'at://$did/app.bsky.feed.post/p1');
       expect(res.remoteUrl, 'https://bsky.app/profile/alice.bsky.social/post/p1');
       expect(res.threadRemoteIds, isEmpty);
-      expect(progress, ['Uploading image 1 of 2 to Bluesky', 'Uploading image 2 of 2 to Bluesky']);
+      expect(progress, ['Uploading image 1 of 2 to Bluesky', 'Uploading image 2 of 2 to Bluesky', 'Posting to Bluesky']);
     });
 
     test('image whose real bytes exceed 2,000,000 fails before uploading', () async {

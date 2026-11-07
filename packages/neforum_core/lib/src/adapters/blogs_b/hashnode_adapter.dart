@@ -349,8 +349,7 @@ class HashnodeAdapter extends PlatformAdapter {
       if (cover != null) 'coverImage': cover,
     };
 
-    ctx.progress('Publishing on Hashnode');
-    final data = await _guard('Hashnode post', () => api.call(HashnodeDocs.publishPost, {'input': input}));
+    final data = await _guard('Hashnode post', () => ctx.creating('Publishing on Hashnode', () => api.call(HashnodeDocs.publishPost, {'input': input})));
     final post = blogMap(blogMap(data['publishPost'])['post']);
     final postId = blogStr(post['id']);
     if (postId == null) {
@@ -362,7 +361,7 @@ class HashnodeAdapter extends PlatformAdapter {
 
   Future<String> _uploadImage(HashnodeApi api, MediaAttachment m, int n, int total, AdapterContext ctx) async {
     final context = 'Hashnode image $n/$total';
-    ctx.progress('Uploading image $n of $total');
+    ctx.uploading(m, 'Uploading image $n of $total');
     final created = await _guard(context,
         () => api.call(HashnodeDocs.createImageUpload, {
               'input': {'contentType': m.mimeType},

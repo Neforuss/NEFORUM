@@ -132,9 +132,13 @@ class UploadTrace {
 /// text for the details box and for logs, with the address cut down to its
 /// origin (some APIs carry a token in the path or the query).
 class ConnectionFailed extends http.ClientException {
-  ConnectionFailed(Uri url, this.details, {String? message}) : super(message ?? 'The connection to ${url.host} failed.', url);
+  ConnectionFailed(Uri url, this.details, {String? message, this.neverSent = false}) : super(message ?? 'The connection to ${url.host} failed.', url);
 
   final String details;
+
+  /// No connection was ever made (no such host, connection refused), so the
+  /// server cannot have seen the request.
+  final bool neverSent;
 
   @override
   String toString() => message;
@@ -145,7 +149,7 @@ class ConnectionFailed extends http.ClientException {
 /// sent an answer first, it is lost: dart:io only returns a response once the
 /// whole body went out.
 class UploadInterrupted extends ConnectionFailed {
-  UploadInterrupted(Uri url, String cause, this.trace)
+  UploadInterrupted(Uri url, String cause, this.trace, {super.neverSent})
       : super(url, '$cause\n${trace.summary}', message: 'The upload to ${url.host} was cut off${_triedText(trace.attempts)}.');
 
   final UploadTrace trace;
@@ -165,6 +169,47 @@ class RequestTimedOut extends TimeoutException {
 
 String _triedText(int attempts) => attempts > 1 ? ' (tried $attempts times)' : '';
 
+/// How far a request's body has got. [sent] is bytes handed to the connection,
+/// not bytes the server has: buffers in the operating system and on the path can
+/// hold most of a small file, so a count never means "received".
+@immutable
+class BodyProgress {
+  const BodyProgress({
+    required this.sent,
+    required this.total,
+    this.offset = 0,
+    this.whole,
+    this.attempt = 1,
+    this.answered = false,
+    this.status,
+  });
+
+  /// Bytes of this request's body the connection has taken.
+  final int sent;
+
+  /// The request's content length.
+  final int total;
+
+  /// Where this body starts in the whole file (chunked uploads, resumes).
+  final int offset;
+
+  /// The whole file's size when this body is a part of it.
+  final int? whole;
+
+  /// 1, 2, ... inside [NeforumHttp]'s own retry loop. [sent] restarts on each.
+  final int attempt;
+
+  /// The server answered this request.
+  final bool answered;
+  final int? status;
+
+  /// The server answered for this body with a success.
+  bool get confirmed => answered && status != null && status! >= 200 && status! < 300;
+}
+
+/// Told how a request's body goes (see [NeforumHttp.bound]).
+typedef BodyObserver = void Function(BodyProgress progress);
+
 /// Thin wrapper over `package:http` with a NEFORUM user agent, JSON/form/
 /// multipart helpers, timeouts and bounded retries for transient failures.
 class NeforumHttp {
@@ -178,9 +223,10 @@ class NeforumHttp {
   })  : _client = client ?? http.Client(),
         _log = log ?? Logger('http'),
         cancellation = null,
+        observer = null,
         _ownsClient = true;
 
-  NeforumHttp._bound(NeforumHttp base, CancellationSignal this.cancellation)
+  NeforumHttp._bound(NeforumHttp base, this.cancellation, this.observer)
       : _client = base._client,
         userAgent = base.userAgent,
         maxRetries = base.maxRetries,
@@ -205,13 +251,29 @@ class NeforumHttp {
   /// When set, cancelling it aborts the request in flight and every later
   /// one fails with [OperationCancelledException] (see [withCancellation]).
   final CancellationSignal? cancellation;
+
+  /// When set, told how the bodies of uploads go (see [bound]).
+  final BodyObserver? observer;
   final bool _ownsClient;
 
   /// The same connection pool, with every request bound to [signal]: the
   /// client is shared by publishing, sync and media hosts, so a publish run
   /// is stopped request by request instead of by closing it.
   NeforumHttp withCancellation(CancellationSignal? signal) =>
-      signal == null || identical(signal, cancellation) ? this : NeforumHttp._bound(this, signal);
+      signal == null || identical(signal, cancellation) ? this : NeforumHttp._bound(this, signal, observer);
+
+  /// The same connection pool with [cancellation] and [observer] over this one's.
+  ///
+  /// The observer hears about bodies that carry a file (`bytes` or `files`) and
+  /// any body big enough to be watched, which is how a JSON body with a base64
+  /// image counts. A small JSON or form call says nothing: it is not an upload. A
+  /// watched body reports each piece as the connection takes it. A smaller one
+  /// goes over in one piece, so it reports once, when the answer arrives.
+  NeforumHttp bound({CancellationSignal? cancellation, BodyObserver? observer}) {
+    final signal = cancellation ?? this.cancellation;
+    final watcher = observer ?? this.observer;
+    return identical(signal, this.cancellation) && identical(watcher, this.observer) ? this : NeforumHttp._bound(this, signal, watcher);
+  }
 
   /// Closes the client. A view made by [withCancellation] leaves the shared
   /// client open.
@@ -244,9 +306,18 @@ class NeforumHttp {
     bool throwOnError = true,
     String method = 'POST',
     bool retrySafe = false,
+    int? bodyOffset,
+    int? bodyWhole,
   }) =>
       send(method, url,
-          headers: headers, signHeaders: signHeaders, fields: fields, files: files, throwOnError: throwOnError, retrySafe: retrySafe);
+          headers: headers,
+          signHeaders: signHeaders,
+          fields: fields,
+          files: files,
+          throwOnError: throwOnError,
+          retrySafe: retrySafe,
+          bodyOffset: bodyOffset,
+          bodyWhole: bodyWhole);
 
   /// Sends raw bytes (used for S3 presigned PUTs, chunked uploads, ...).
   Future<NeforumResponse> putBytes(Uri url, Uint8List bytes,
@@ -254,8 +325,17 @@ class NeforumHttp {
           HeaderSigner? signHeaders,
           bool throwOnError = true,
           String method = 'PUT',
-          bool retrySafe = false}) =>
-      send(method, url, headers: headers, signHeaders: signHeaders, bytes: bytes, throwOnError: throwOnError, retrySafe: retrySafe);
+          bool retrySafe = false,
+          int? bodyOffset,
+          int? bodyWhole}) =>
+      send(method, url,
+          headers: headers,
+          signHeaders: signHeaders,
+          bytes: bytes,
+          throwOnError: throwOnError,
+          retrySafe: retrySafe,
+          bodyOffset: bodyOffset,
+          bodyWhole: bodyWhole);
 
   Future<Uint8List> download(Uri url, {Map<String, String>? headers}) async {
     final r = await send('GET', url, headers: headers);
@@ -272,6 +352,9 @@ class NeforumHttp {
   /// anything that can publish: a platform where the upload is the post must
   /// never set it.
   ///
+  /// [bodyOffset] and [bodyWhole] say where this body sits in a bigger file, for
+  /// [observer]: chunked uploads and resumes.
+  ///
   /// Transport failures leave as [ConnectionFailed], [UploadInterrupted] or
   /// [RequestTimedOut], whose text is fit to show to a person.
   Future<NeforumResponse> send(
@@ -287,6 +370,8 @@ class NeforumHttp {
     bool throwOnError = true,
     Duration? timeout,
     bool retrySafe = false,
+    int? bodyOffset,
+    int? bodyWhole,
   }) async {
     // Encoded up front so that a big JSON body (Pinterest's base64 images)
     // counts as what it is: an upload.
@@ -314,21 +399,38 @@ class NeforumHttp {
     final meter = _UploadMeter();
     final clock = Stopwatch()..start();
     var attempt = 0;
+    final watcher = observer;
+    final reports = watcher != null && bodySize > 0 && (upload || bytes != null || (files?.isNotEmpty ?? false));
+    void report({bool answered = false, int? status}) => watcher!(BodyProgress(
+          sent: answered ? meter.total : meter.sent,
+          total: meter.total,
+          offset: bodyOffset ?? 0,
+          whole: bodyWhole,
+          attempt: attempt,
+          answered: answered,
+          status: status,
+        ));
     while (true) {
       attempt++;
       meter.sent = 0;
-      signal?.throwIfCancelled();
+      if (signal != null && signal.isCancelled) throw const OperationCancelledException(notSent: true);
       try {
         final attemptHeaders = signHeaders == null ? headers : {...?headers, ...signHeaders()};
         // The host only: some APIs carry a token in the path or the query.
         _log.debug('$method ${url.host} (attempt $attempt)');
         final http.Response res;
         if (upload) {
-          res = await _unlessCancelled(_sendWatched(method, url, attemptHeaders, jsonBytes, formBytes, fields, files, bytes, base, signal, meter), signal);
+          res = await _unlessCancelled(
+              _sendWatched(method, url, attemptHeaders, jsonBytes, formBytes, fields, files, bytes, base, signal, meter, reports ? report : null), signal);
+          if (reports) report(answered: true, status: res.statusCode);
         } else {
           final req = _build(method, url, attemptHeaders, jsonBytes, formBytes, fields, files, bytes, abortTrigger: signal?.whenCancelled);
           final streamed = await _unlessCancelled(_client.send(req).timeout(base), signal);
           res = await _unlessCancelled(http.Response.fromStream(streamed).timeout(base), signal);
+          if (reports) {
+            meter.total = req.contentLength ?? bodySize;
+            report(answered: true, status: res.statusCode);
+          }
         }
         final out = NeforumResponse(res.statusCode, _lowercase(res.headers), res.bodyBytes, url);
         if (!out.ok && attempt <= retries && (idempotent ? _retryable(out.statusCode) : _notProcessed(out) || (retrySafe && _gatewayError(out)))) {
@@ -344,11 +446,11 @@ class NeforumHttp {
       } on HttpFailure {
         rethrow;
       } on OperationCancelledException {
-        rethrow;
+        throw OperationCancelledException(notSent: upload && meter.sent < meter.total);
       } on Object catch (e) {
         // An aborted request surfaces as a ClientException; report it as
         // the cancellation it is, never as a network error to retry.
-        if (signal != null && signal.isCancelled) throw const OperationCancelledException();
+        if (signal != null && signal.isCancelled) throw OperationCancelledException(notSent: upload && meter.sent < meter.total);
         if (!isTransportError(e)) rethrow;
         final cause = _safeDetails('$e');
         final trace = upload
@@ -375,7 +477,18 @@ class NeforumHttp {
       final tried = trace == null ? '' : _triedText(trace.attempts);
       return RequestTimedOut('$what$tried.', e.duration, trace == null ? cause : '$cause\n${trace.summary}', trace: trace);
     }
-    return trace == null ? ConnectionFailed(url, cause) : UploadInterrupted(url, cause, trace);
+    final neverSent = isConnectFailure(e);
+    return trace == null ? ConnectionFailed(url, cause, neverSent: neverSent) : UploadInterrupted(url, cause, trace, neverSent: neverSent);
+  }
+
+  /// Whether transport error [e] proves the server cannot have acted on the
+  /// request: no connection was made, or the body never went out whole. Anything
+  /// else may have reached the server, its answer lost.
+  static bool neverReachedServer(Object e) {
+    if (e is ConnectionFailed && e.neverSent) return true;
+    if (isConnectFailure(e)) return true;
+    final trace = uploadTrace(e);
+    return trace != null && !trace.wholeBodySent;
   }
 
   /// [future], or [OperationCancelledException] as soon as [signal] fires,
@@ -441,7 +554,7 @@ class NeforumHttp {
   /// for [uploadStallTimeout], or when the server has not answered [base]
   /// twice over after the last one (it may still be processing a video).
   Future<http.Response> _sendWatched(String method, Uri url, Map<String, String>? headers, Uint8List? jsonBytes, Uint8List? formBytes,
-      Map<String, String>? fields, List<HttpFilePart>? files, Uint8List? bytes, Duration base, CancellationSignal? signal, _UploadMeter meter) async {
+      Map<String, String>? fields, List<HttpFilePart>? files, Uint8List? bytes, Duration base, CancellationSignal? signal, _UploadMeter meter, void Function()? report) async {
     final abort = Completer<void>();
     final stalled = Completer<Never>();
     Timer? watchdog;
@@ -461,7 +574,11 @@ class NeforumHttp {
     meter.total = plain.contentLength ?? 0;
     final body = _watchedBody(
       source,
-      onPiece: (n) => meter.sent += n,
+      onPiece: (n) {
+        meter.sent += n;
+        // A browser collects the whole body first: there, only the answer means anything.
+        if (bodyPiecesAreCounted) report?.call();
+      },
       onProgress: () => arm(stallLimit, 'Nothing could be sent to ${url.host} for ${stallLimit.inSeconds} s'),
       onSent: () => arm(answerLimit, '${url.host} did not answer within ${answerLimit.inSeconds} s of the upload'),
     );

@@ -8,14 +8,28 @@ import '../util/logger.dart';
 /// One publish run in progress on this device, as [PublishJournal] keeps it.
 @immutable
 class PublishJournalEntry {
-  const PublishJournalEntry({required this.postId, required this.owner, required this.startedAt, required this.heartbeatAt});
+  const PublishJournalEntry({
+    required this.postId,
+    required this.owner,
+    required this.startedAt,
+    required this.heartbeatAt,
+    this.inFlightCreate,
+    this.createdUnsaved = const {},
+  });
 
   factory PublishJournalEntry.fromJson(String postId, Map<String, dynamic> json) => PublishJournalEntry(
         postId: postId,
         owner: json['owner'] as String,
         startedAt: DateTime.parse(json['startedAt'] as String),
         heartbeatAt: DateTime.parse(json['heartbeatAt'] as String),
+        inFlightCreate: _accountIn(json['inFlightCreate']),
+        createdUnsaved: {...?(json['createdUnsaved'] as List?)?.whereType<String>()},
       );
+
+  static String? _accountIn(Object? value) {
+    final id = value is Map ? value['accountId'] : null;
+    return id is String ? id : null;
+  }
 
   final String postId;
 
@@ -26,10 +40,25 @@ class PublishJournalEntry {
   /// The last time the run showed that it was still executing.
   final DateTime heartbeatAt;
 
+  /// The account whose request that makes a post is under way. If the run dies
+  /// with this set, the post may be live and nobody saw the answer.
+  final String? inFlightCreate;
+
+  /// The accounts with a post the network answered for, or a request that lost its
+  /// answer, whose result is not saved yet. If the run dies with one here, a retry
+  /// from the saved state would post it again. More than one when a save failed and
+  /// the run went on.
+  final Set<String> createdUnsaved;
+
+  /// The accounts whose post may be live although the saved state does not say so.
+  Set<String> get outcomeUnknownAccounts => {?inFlightCreate, ...createdUnsaved};
+
   Map<String, dynamic> toJson() => {
         'owner': owner,
         'startedAt': startedAt.toUtc().toIso8601String(),
         'heartbeatAt': heartbeatAt.toUtc().toIso8601String(),
+        if (inFlightCreate != null) 'inFlightCreate': {'accountId': inFlightCreate},
+        if (createdUnsaved.isNotEmpty) 'createdUnsaved': createdUnsaved.toList(),
       };
 }
 
@@ -118,6 +147,37 @@ class PublishJournal {
           owner: owner,
           startedAt: previous != null && previous.owner == owner ? previous.startedAt : now,
           heartbeatAt: now,
+          inFlightCreate: previous?.inFlightCreate,
+          createdUnsaved: previous?.createdUnsaved ?? const {},
+        );
+        return true;
+      });
+
+  /// A request that can make a post is about to start for [accountId]. Written
+  /// before the request, so a kill during it leaves the mark.
+  Future<void> beginCreate(String postId, String accountId) => _changeEntry(postId, inFlight: accountId, created: (e) => e.createdUnsaved);
+
+  /// That request ended. [mayBeLive]: the network has the post, or the answer was
+  /// lost; the mark stays until the result is saved ([clearCreate]).
+  Future<void> endCreate(String postId, String accountId, {required bool mayBeLive}) =>
+      _changeEntry(postId, inFlight: null, created: (e) => mayBeLive ? {...e.createdUnsaved, accountId} : e.createdUnsaved);
+
+  /// The post's results are saved: the saved state now tells the truth about all of
+  /// its targets, since each save writes every result so far.
+  Future<void> clearCreate(String postId) => _changeEntry(postId, inFlight: null, created: (_) => const {});
+
+  Future<void> _changeEntry(String postId, {required String? inFlight, required Set<String> Function(PublishJournalEntry e) created}) => _change((runs) {
+        final e = runs[postId];
+        if (e == null) return false;
+        final after = created(e);
+        if (e.inFlightCreate == inFlight && e.createdUnsaved.length == after.length && e.createdUnsaved.containsAll(after)) return false;
+        runs[postId] = PublishJournalEntry(
+          postId: postId,
+          owner: e.owner,
+          startedAt: e.startedAt,
+          heartbeatAt: e.heartbeatAt,
+          inFlightCreate: inFlight,
+          createdUnsaved: after,
         );
         return true;
       });

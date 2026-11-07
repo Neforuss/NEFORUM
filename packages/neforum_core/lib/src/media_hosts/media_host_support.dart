@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../http/neforum_http.dart';
 import '../model/media.dart';
+import '../publish/cancellation_signal.dart';
 import '../util/logger.dart';
 import 'media_host.dart';
 
@@ -110,6 +111,8 @@ Future<NeforumResponse> guardedCall(
     return f.response;
   } on MediaHostException {
     rethrow;
+  } on OperationCancelledException {
+    rethrow;
   } on TimeoutException {
     throw MediaHostException('Timed out while trying to $what', hostId: hostId, temporary: true);
   } on http.ClientException catch (e) {
@@ -139,6 +142,7 @@ Future<NeforumResponse> guardedUpload(
   MediaHostDelay delay = mediaHostDefaultDelay,
   Duration pause = mediaHostRetryPause,
   Logger? log,
+  CancellationSignal? cancellation,
 }) async {
   try {
     final first = await guardedCall(hostId, what, call);
@@ -148,7 +152,12 @@ Future<NeforumResponse> guardedUpload(
     if (!e.temporary) rethrow;
     log?.warn('${e.message}; trying once more in ${pause.inSeconds}s');
   }
-  await delay(pause);
+  if (cancellation == null) {
+    await delay(pause);
+  } else {
+    await Future.any([delay(pause), cancellation.whenCancelled]);
+    cancellation.throwIfCancelled();
+  }
   try {
     return await guardedCall(hostId, what, call);
   } on MediaHostException catch (e) {
