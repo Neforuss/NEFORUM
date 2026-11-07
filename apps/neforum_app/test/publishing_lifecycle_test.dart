@@ -16,7 +16,6 @@ import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/composer_draft.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/publish_result_notices.dart';
-import 'package:neforum_app/state/scheduler.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/theme/app_theme.dart';
