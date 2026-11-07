@@ -62,8 +62,10 @@ class MainActivity : FlutterActivity() {
             MethodChannel(messenger, ClipboardChannel.NAME).setMethodCallHandler(null)
             val resolver = applicationContext.contentResolver
             val main = Handler(Looper.getMainLooper())
+            // Its own thread: this Activity's would keep the dead Activity alive.
+            val worker = Executors.newSingleThreadExecutor()
             MethodChannel(messenger, SYNC_FOLDER_CHANNEL).setMethodCallHandler { call, result ->
-                if (call.method == "pick") result.success(null) else serveSyncFolder(resolver, io, main, call, result)
+                if (call.method == "pick") result.success(null) else serveSyncFolder(resolver, worker, main, call, result)
             }
         }
         PublishHost.detach(flutterEngine)
