@@ -11,6 +11,7 @@ import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
+import '../../widgets/publish_progress.dart';
 import '../../widgets/surfaces.dart';
 import '../compose/open_in_composer.dart';
 import '../queue/post_menu.dart';
@@ -183,6 +184,7 @@ class _Footer extends ConsumerWidget {
     final onlyFailed = retry.every((t) => t.status == TargetStatus.failed);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Wrap(spacing: Space.xs + 2, runSpacing: Space.xs + 2, children: [for (final t in post.targets) TargetChip(post: post, target: t)]),
+      PublishRunStatus(post: post, padding: const EdgeInsets.only(top: Space.md)),
       if (signal != null) ...[
         // Being published by this process right now.
         const SizedBox(height: Space.md),

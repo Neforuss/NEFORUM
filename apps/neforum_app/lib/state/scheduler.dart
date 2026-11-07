@@ -114,12 +114,23 @@ class AppScheduler {
         final active = ref.read(activePublishingProvider.notifier);
         final signal = CancellationSignal();
         active.begin(p.id, signal);
+        // Activity and the post's page show this run's figures.
+        final figures = ref.read(publishProgressProvider.notifier);
+        final tracker = figures.begin(p.id);
         final Post done;
         try {
           await fitPhotosOfSavedPost(_s, p.id);
           // Networks whose own time has not come yet wait for a later run.
-          final published =
-              await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal, dueTargetsOnly: true);
+          final published = await _s.publisher().publish(
+                p.id,
+                interactive: interactive,
+                retryFailed: false,
+                onPlan: tracker.plan,
+                onEvent: tracker.event,
+                onOutcome: tracker.outcome,
+                cancellation: signal,
+                dueTargetsOnly: true,
+              );
           // With automatic posting on, the browser extension posts the
           // hand-off targets now instead of leaving them waiting; Cancel in
           // Activity stops that too.
@@ -130,6 +141,7 @@ class AppScheduler {
           rethrow;
         } finally {
           active.end(p.id, signal);
+          figures.end(p.id, tracker);
         }
         out.add(done);
         final discarded = await _s.discardIfComplete(p.id);

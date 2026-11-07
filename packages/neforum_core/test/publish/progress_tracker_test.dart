@@ -48,6 +48,22 @@ void main() {
       expect(t.snapshot().resending, isFalse);
     });
 
+    test('the wait after the last byte has its own start, and it ends if bytes go out again', () {
+      final t = tracker(ProgressFamily.direct);
+      t.apply(bytes(500, 1000));
+      expect(t.snapshot().allSentAt, isNull);
+      now = now.add(const Duration(seconds: 40));
+      final sentAt = now;
+      t.apply(bytes(1000, 1000));
+      expect(t.snapshot().allSentAt, sentAt);
+      now = now.add(const Duration(seconds: 5));
+      t.apply(bytes(1000, 1000));
+      expect(t.snapshot().allSentAt, sentAt, reason: 'one more report of the same count starts nothing');
+      t.apply(bytes(10, 1000, attempt: 2));
+      expect(t.snapshot().allSentAt, isNull, reason: 'it is sending again, so it is not waiting');
+      expect(t.snapshot().toJson()['allSentAt'], isNull);
+    });
+
     test('a resume from a lower server offset holds', () {
       final t = tracker(ProgressFamily.wholeFile);
       t.apply(bytes(900, 1000));

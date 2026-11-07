@@ -292,6 +292,7 @@ class TargetProgress {
     required this.stage,
     required this.label,
     required this.stageStartedAt,
+    this.allSentAt,
     this.position,
     this.slotTotal,
     this.confirmed = false,
@@ -321,6 +322,10 @@ class TargetProgress {
 
   /// When [stage] began, so a wait can show its real elapsed time.
   final DateTime? stageStartedAt;
+
+  /// When the connection took the last byte of the open upload. From here on the
+  /// target waits for the server's answer, and that wait has a real elapsed time.
+  final DateTime? allSentAt;
   final int? position;
   final int? slotTotal;
   final bool confirmed;
@@ -349,6 +354,7 @@ class TargetProgress {
         'stage': stage?.name,
         'label': label,
         'stageStartedAt': stageStartedAt?.toUtc().toIso8601String(),
+        'allSentAt': allSentAt?.toUtc().toIso8601String(),
         'position': position,
         'slotTotal': slotTotal,
         'confirmed': confirmed,
@@ -455,6 +461,7 @@ class TargetProgressTracker {
   ProgressStage? _stage;
   String? _label;
   DateTime? _stageStartedAt;
+  DateTime? _allSentAt;
   DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
   String? _slot;
   int? _position;
@@ -522,6 +529,7 @@ class TargetProgressTracker {
     _position = position;
     _slotTotal = total;
     _confirmed = e.confirmed;
+    _allSentAt = total > 0 && position >= total ? (_allSentAt ?? e.at) : null;
     if (key == ProgressEvent.wholeBody) {
       _resending = position < _wholeHigh;
       if (total > 0) _wholeTotal = total;
@@ -610,6 +618,7 @@ class TargetProgressTracker {
       stage: _stage,
       label: _label,
       stageStartedAt: _stageStartedAt,
+      allSentAt: _allSentAt,
       position: _position,
       slotTotal: total,
       confirmed: _confirmed,

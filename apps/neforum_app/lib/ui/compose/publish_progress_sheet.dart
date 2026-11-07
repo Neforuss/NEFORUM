@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:neforum_core/neforum_core.dart' hide TargetProgress, Visibility;
+import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/neforum_logo.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/publish_progress_view.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
+import '../../widgets/publish_progress.dart';
 
 /// Shows live progress for the publish run in [publishRunProvider].
 Future<void> showPublishProgress(BuildContext context) {
@@ -44,13 +46,20 @@ class PublishProgressSheet extends ConsumerWidget {
     final error = run.error;
     final targets = run.progress.entries.toList();
     final post = run.result;
+    // The run's figures, from the moment it has a plan until it is over. Before that
+    // nothing is known to count, and after it the post is the record.
+    final postId = run.postId;
+    final live = done || postId == null ? null : ref.watch(publishProgressOfProvider(postId));
+    // Saved as each network ends, so a finished row has its link or its error at once.
+    final saved = postId == null ? null : ref.watch(postByIdProvider(postId));
 
     int count(TargetStatus s) => targets.where((e) => e.value.status == s).length;
     final ok = count(TargetStatus.published) + count(TargetStatus.handedOff);
     final failed = count(TargetStatus.failed);
     final cancelled = count(TargetStatus.cancelled);
     final waiting = count(TargetStatus.awaitingHandoff);
-    final total = targets.length;
+    // A plan with no member of this run is about to end: the words stay as they were.
+    final total = live == null || live.total == 0 ? targets.length : live.total;
 
     final String headline;
     final String sub;
@@ -58,7 +67,7 @@ class PublishProgressSheet extends ConsumerWidget {
       headline = 'Could not post';
       sub = error;
     } else if (run.preparing) {
-      headline = run.cancelling ? 'Cancelling…' : 'Getting your post ready…';
+      headline = run.cancelling ? 'Cancelling…' : kGettingReady;
       sub = 'Saving it and preparing the photos each network needs.';
     } else if (!done) {
       headline = run.cancelling ? 'Cancelling…' : 'Posting to $total ${total == 1 ? 'network' : 'networks'}…';
@@ -108,44 +117,46 @@ class PublishProgressSheet extends ConsumerWidget {
     }
 
     final retryIds = post == null ? const <String>{} : post.targets.where(needsRetry).map((t) => t.accountId).toSet();
+    // Once the plan is known its members are the rows: a network this run leaves
+    // alone has no row to look busy in.
+    final rowIds = live != null ? [for (final t in live.targets) t.accountId] : [for (final e in targets) e.key];
+    final liveRows = {for (final t in live?.targets ?? const <TargetProgress>[]) t.accountId: t};
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xxl, Space.xxl, Space.md),
         child: Column(children: [
-          AnimatedSwitcher(duration: Motion.medium, child: badge),
-          const SizedBox(height: Space.lg),
+          // A phone on its side keeps its room for the networks.
+          if (MediaQuery.sizeOf(context).height >= 480) ...[
+            AnimatedSwitcher(duration: Motion.medium, child: badge),
+            const SizedBox(height: Space.lg),
+          ],
           Text(headline, textAlign: TextAlign.center, style: context.text.headlineSmall),
           const SizedBox(height: Space.xs),
           Text(sub, textAlign: TextAlign.center, style: context.text.bodySmall?.copyWith(color: error != null ? nf.danger : null)),
           if (!done) ...[
             const SizedBox(height: Space.lg),
-            ClipRRect(
-              borderRadius: Radii.rPill,
-              child: LinearProgressIndicator(
-                value: total == 0 ? null : (targets.where((e) => e.value.status != TargetStatus.pending && e.value.status != TargetStatus.publishing).length / total).clamp(0.05, 1.0),
-                minHeight: 5,
-              ),
-            ),
+            if (live == null || live.total == 0) const PublishGettingReady() else PostProgressFigure(live),
           ],
         ]),
       ),
-      if (targets.isNotEmpty)
+      if (rowIds.isNotEmpty)
         Flexible(
           child: ListView.separated(
             shrinkWrap: true,
             padding: const EdgeInsets.symmetric(horizontal: Space.lg),
-            itemCount: targets.length,
+            itemCount: rowIds.length,
             separatorBuilder: (_, _) => Divider(height: 1, color: nf.border, indent: 60),
             itemBuilder: (context, i) {
-              final e = targets[i];
-              final account = ref.watch(accountByIdProvider(e.key));
-              final target = post?.targetFor(e.key);
+              final id = rowIds[i];
+              final account = ref.watch(accountByIdProvider(id));
               return _Row(
                 account: account,
                 platformName: account == null ? 'Removed account' : (registry.descriptor(account.platformId)?.name ?? account.platformId),
-                progress: e.value,
-                url: target?.result?.remoteUrl,
+                row: run.progress[id],
+                live: liveRows[id],
+                reportedAt: live?.at,
+                saved: post?.targetFor(id) ?? saved?.targetFor(id),
                 stopped: done,
               );
             },
@@ -228,11 +239,19 @@ class _Closing extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.account, required this.platformName, required this.progress, this.url, this.stopped = false});
+  const _Row({required this.account, required this.platformName, this.row, this.live, this.reportedAt, this.saved, this.stopped = false});
   final ConnectedAccount? account;
   final String platformName;
-  final TargetProgress progress;
-  final String? url;
+
+  /// The row before the plan is known, and after the run.
+  final PublishRunRow? row;
+
+  /// The row from the plan on.
+  final TargetProgress? live;
+  final DateTime? reportedAt;
+
+  /// The target as last saved, which holds what it ended with.
+  final PostTarget? saved;
 
   /// The run is over: nothing is waiting any more, even a target the run
   /// never reached (it stopped with an error).
@@ -241,8 +260,17 @@ class _Row extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    final (label, tone, icon) = targetStatusStyle(progress.status);
-    final busy = !stopped && (progress.status == TargetStatus.publishing || progress.status == TargetStatus.pending);
+    final outcome = live?.outcome;
+    final running = !stopped && live != null && outcome == null;
+    final status = outcome == null ? (row?.status ?? TargetStatus.pending) : statusOfOutcome(outcome, saved: saved);
+    final (label, tone, icon) = targetStatusStyle(status);
+    // The run has not got to it, and may be making its smaller video copy.
+    final before = !stopped && live == null && (status == TargetStatus.publishing || status == TargetStatus.pending);
+    final ended = outcome == TargetOutcome.failed || outcome == TargetOutcome.cancelled || outcome == TargetOutcome.skipped;
+    // A saved error is from this run only once this run has ended the target.
+    final message = live == null ? row?.message : (ended ? saved?.result?.error?.message : null);
+    final words = message ?? (status == TargetStatus.awaitingHandoff ? 'Waiting for you' : label);
+    final url = saved?.result?.remoteUrl;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Space.md, horizontal: Space.sm),
       child: Row(children: [
@@ -251,37 +279,41 @@ class _Row extends StatelessWidget {
         Expanded(
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
             Text(platformName, style: context.text.titleSmall),
-            AnimatedSwitcher(
-              duration: Motion.fast,
-              child: Text(
-                progress.message ?? (busy ? 'Waiting…' : label),
-                key: ValueKey('${progress.status}${progress.message}'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: context.text.bodySmall?.copyWith(color: progress.status == TargetStatus.failed ? nf.danger : nf.textMuted),
-              ),
-            ),
+            if (running)
+              TargetProgressLine(live!, reportedAt: reportedAt)
+            else
+              Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                // Only the smaller copy is under way this early, and it has its own number.
+                if (before && status == TargetStatus.publishing)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 3, right: Space.xs + 2),
+                    child: ExcludeSemantics(child: SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.6, color: nf.accent))),
+                  ),
+                Expanded(
+                  child: Text(
+                    before ? (message ?? 'Waiting') : words,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: context.text.bodySmall?.copyWith(color: status == TargetStatus.failed ? nf.danger : nf.textMuted),
+                  ),
+                ),
+              ]),
           ]),
         ),
-        const SizedBox(width: Space.sm),
-        AnimatedSwitcher(
-          duration: Motion.medium,
-          transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
-          child: busy
-              ? SizedBox(
-                  key: const ValueKey('spin'),
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2.2, color: progress.status == TargetStatus.pending ? nf.textFaint : nf.accent),
-                )
-              : (url != null && progress.status == TargetStatus.published
-                  ? TextButton(
-                      key: const ValueKey('open'),
-                      onPressed: () => launchUrl(Uri.parse(url!), mode: LaunchMode.externalApplication),
-                      child: const Text('Open'),
-                    )
-                  : StatusPill(label, key: ValueKey(label), tone: tone, icon: icon, dense: true)),
-        ),
+        if (!running && !before) ...[
+          const SizedBox(width: Space.sm),
+          AnimatedSwitcher(
+            duration: Motion.medium,
+            transitionBuilder: (c, a) => ScaleTransition(scale: a, child: c),
+            child: url != null && status == TargetStatus.published
+                ? TextButton(
+                    key: const ValueKey('open'),
+                    onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                    child: const Text('Open'),
+                  )
+                : StatusPill(label, key: ValueKey(label), tone: tone, icon: icon, dense: true),
+          ),
+        ],
       ]),
     );
   }
