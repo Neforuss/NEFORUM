@@ -5,6 +5,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../theme/tokens.dart';
+import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
 
 // Phones choose where a post goes in a grid of names that fits the screen:
@@ -25,8 +26,24 @@ const double kAccountCellMinHeight = 48;
 /// The fold control of the grid, open or folded.
 const kTargetFoldKey = ValueKey('target-picker-fold');
 
+/// The field that narrows the grid down, past [kTargetFilterThreshold] accounts.
+const kTargetFilterKey = ValueKey('target-picker-filter');
+
+/// The filter field appears above this many accounts.
+const int kTargetFilterThreshold = 24;
+
+/// Over the keyboard the folded summary names this many accounts at most.
+/// Past it they are shown as icons, to leave the text its room.
+const int kSummaryNamesOverKeyboard = 4;
+
 const double _gap = Space.xs;
 const double _cellPaddingX = Space.xs;
+
+/// Above this text size the whole grid only just fits. At text x1.5 on a
+/// 360 x 640 phone the picker has 384 px above the action bar: 7 rows of 48 and
+/// a header of 48, nothing to spare. So the header leaves out the words "Post
+/// to" and the rows give up the gap between them.
+bool accountGridIsTight(BuildContext context) => MediaQuery.textScalerOf(context).scale(10) > 12.5;
 
 /// One account as the grid and its summary show it.
 class AccountEntry {
@@ -60,6 +77,9 @@ class AccountEntry {
   final bool artSite;
 
   bool get disabled => onTap == null;
+
+  /// [query] in lower case is in anything that names this account.
+  bool matches(String query) => [platformName, label, handle, account.handle, account.displayName].any((t) => t != null && t.toLowerCase().contains(query));
 
   /// Chosen or left out: what the count and the summary are about.
   bool get counted => !artSite;
@@ -152,12 +172,13 @@ class AccountSelectionGrid extends StatelessWidget {
     final nf = context.nf;
     final ordinary = entries.where((e) => !e.artSite).toList();
     final art = entries.where((e) => e.artSite).toList();
+    final rowGap = accountGridIsTight(context) ? 0.0 : _gap;
     return LayoutBuilder(builder: (context, box) {
       // Each part by its own names: one long art site's name leaves the
       // ordinary accounts as they are.
       int columnsOf(List<AccountEntry> part) => accountGridColumns(box.maxWidth, _widestWord(context, part));
       return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
-        _Rows(entries: ordinary, columns: columnsOf(ordinary)),
+        _Rows(entries: ordinary, columns: columnsOf(ordinary), rowGap: rowGap),
         if (art.isNotEmpty) ...[
           Padding(
             padding: EdgeInsets.only(top: ordinary.isEmpty ? 0 : Space.sm, bottom: Space.xs),
@@ -167,7 +188,7 @@ class AccountSelectionGrid extends StatelessWidget {
               Expanded(child: Text('Art sites: choosing one turns on Artwork', style: context.text.bodySmall?.copyWith(color: nf.textFaint))),
             ]),
           ),
-          _Rows(entries: art, columns: columnsOf(art)),
+          _Rows(entries: art, columns: columnsOf(art), rowGap: rowGap),
         ],
       ]);
     });
@@ -175,15 +196,16 @@ class AccountSelectionGrid extends StatelessWidget {
 }
 
 class _Rows extends StatelessWidget {
-  const _Rows({required this.entries, required this.columns});
+  const _Rows({required this.entries, required this.columns, required this.rowGap});
   final List<AccountEntry> entries;
   final int columns;
+  final double rowGap;
 
   @override
   Widget build(BuildContext context) {
     final rows = <Widget>[];
     for (var i = 0; i < entries.length; i += columns) {
-      if (i > 0) rows.add(const SizedBox(height: _gap));
+      if (i > 0 && rowGap > 0) rows.add(SizedBox(height: rowGap));
       rows.add(IntrinsicHeight(
         child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           for (var c = 0; c < columns; c++) ...[
@@ -211,6 +233,7 @@ class AccountCell extends StatefulWidget {
 
 class _AccountCellState extends State<AccountCell> {
   bool _hover = false;
+  bool _focused = false;
 
   @override
   Widget build(BuildContext context) {
@@ -221,13 +244,16 @@ class _AccountCellState extends State<AccountCell> {
     final leftOut = enabled && !sel && !e.artSite;
     return Tooltip(
       message: e.tooltip,
-      child: MouseRegion(
-        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
+      child: Material(
+        type: MaterialType.transparency,
+        // A desktop window narrowed to this width gets the grid too, so the
+        // Tab key reaches every cell that can be chosen.
+        child: InkWell(
           onTap: e.onTap,
+          onHover: (v) => setState(() => _hover = v),
+          onFocusChange: (v) => setState(() => _focused = v),
+          mouseCursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
+          borderRadius: Radii.rXs,
           child: Semantics(
             button: true,
             selected: sel,
@@ -239,7 +265,7 @@ class _AccountCellState extends State<AccountCell> {
               duration: context.motion(Motion.fast),
               curve: Motion.standard,
               constraints: const BoxConstraints(minHeight: kAccountCellMinHeight),
-              padding: const EdgeInsets.symmetric(horizontal: _cellPaddingX, vertical: Space.xs),
+              padding: const EdgeInsets.symmetric(horizontal: _cellPaddingX, vertical: Space.xxs),
               decoration: BoxDecoration(
                 color: !enabled
                     ? nf.surfaceSunken
@@ -251,9 +277,11 @@ class _AccountCellState extends State<AccountCell> {
                 // so the ones left out are what the eye finds.
                 border: Border.all(color: sel ? nf.accent.withValues(alpha: 0.45) : (_hover && enabled ? nf.borderStrong : nf.border)),
               ),
+              // Drawn over the cell, so that the name does not move.
+              foregroundDecoration: _focused ? BoxDecoration(borderRadius: Radii.rXs, border: Border.all(color: nf.accent, width: 2)) : null,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
                 Row(children: [
-                  PlatformTile(e.account.platformId, size: 18, dimmed: !sel),
+                  _AccountFace(e, size: 18, dimmed: !sel),
                   const Spacer(),
                   Icon(tierIcon(e.account.tier), size: 13, color: sel ? tierTone(e.account.tier).fg(nf) : nf.textFaint),
                   const SizedBox(width: Space.xxs),
@@ -301,6 +329,27 @@ class _AccountCellState extends State<AccountCell> {
   }
 }
 
+/// The account's photo when its network has several accounts, which the
+/// network's mark alone cannot tell apart; otherwise the mark.
+class _AccountFace extends StatelessWidget {
+  const _AccountFace(this.entry, {required this.size, required this.dimmed});
+  final AccountEntry entry;
+  final double size;
+  final bool dimmed;
+
+  @override
+  Widget build(BuildContext context) {
+    final a = entry.account;
+    final url = a.avatarUrl;
+    if (entry.handle != null && url != null && url.startsWith('http')) {
+      // No badge: the cell names the network, and at this size it would cover
+      // the photo.
+      return AccountAvatar(a, size: size, showBadge: false, dimmed: dimmed);
+    }
+    return PlatformTile(a.platformId, size: size, dimmed: dimmed);
+  }
+}
+
 /// The tiers of the chosen accounts, each as its glyph and a count.
 class AccountTierCounts extends StatelessWidget {
   const AccountTierCounts({super.key, required this.entries});
@@ -336,9 +385,15 @@ class AccountTierCounts extends StatelessWidget {
 /// with how it posts. No account's state is lost, and with everything chosen
 /// it takes one line.
 class AccountSelectionSummary extends StatelessWidget {
-  const AccountSelectionSummary({super.key, required this.entries, required this.onOpen});
+  const AccountSelectionSummary({super.key, required this.entries, required this.onOpen, this.focusNode, this.overKeyboard = false});
   final List<AccountEntry> entries;
   final VoidCallback onOpen;
+
+  /// The fold control's focus, kept when it opens and folds.
+  final FocusNode? focusNode;
+
+  /// The keyboard is showing: a long list of names becomes icons.
+  final bool overKeyboard;
 
   /// The accounts the summary names, and the word in front of them: `null`
   /// when everything or nothing is chosen, which the count already says.
@@ -355,17 +410,22 @@ class AccountSelectionSummary extends StatelessWidget {
     final nf = context.nf;
     final counts = AccountTierCounts.of(entries);
     final list = named(entries);
+    final count = accountCountLabel(entries);
+    // With nothing to count, the count would read "0 of 0".
+    final note = count != null ? null : (entries.isEmpty ? 'No art sites connected' : 'Only art sites connected');
+    final iconsOnly = list != null && overKeyboard && list.$2.length > kSummaryNamesOverKeyboard;
     final words = [
-      'Post to, ${accountCountLabel(entries)}',
+      count == null ? 'Post to' : 'Post to, $count',
+      ?note,
       for (final t in PlatformTier.values)
         if (counts[t] != null) '${counts[t]} ${tierShortLabel(t)}',
       if (list != null) '${list.$1} ${list.$2.map((e) => '${_nameOf(e)}${e.disabled ? ' disabled' : ''}').join(', ')}',
       'Show all accounts',
     ];
-    // The detector outside: excluded semantics would take its tap action away.
-    return GestureDetector(
+    // The well outside: excluded semantics would take its tap action away.
+    return InkWell(
       key: kTargetFoldKey,
-      behavior: HitTestBehavior.opaque,
+      focusNode: focusNode,
       onTap: onOpen,
       child: Semantics(
         button: true,
@@ -380,12 +440,20 @@ class AccountSelectionSummary extends StatelessWidget {
               Expanded(child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerRight, child: AccountTierCounts(entries: entries))),
             ]),
           ),
+          if (note != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: Space.xs),
+              child: Text(note, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+            ),
           if (list != null)
             Padding(
               padding: const EdgeInsets.only(bottom: Space.xs),
-              child: Wrap(spacing: Space.sm, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
-                Text('${list.$1}:', style: context.text.bodySmall?.copyWith(color: nf.textMuted, fontWeight: FontWeight.w600)),
-                for (final e in list.$2) _SummaryItem(e),
+              child: Wrap(spacing: iconsOnly ? Space.xs : Space.sm, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
+                Padding(
+                  padding: EdgeInsets.only(right: iconsOnly ? Space.xs : 0),
+                  child: Text('${list.$1}:', style: context.text.bodySmall?.copyWith(color: nf.textMuted, fontWeight: FontWeight.w600)),
+                ),
+                for (final e in list.$2) _SummaryItem(e, iconOnly: iconsOnly),
               ]),
             ),
         ]),
@@ -397,23 +465,30 @@ class AccountSelectionSummary extends StatelessWidget {
 }
 
 class _SummaryItem extends StatelessWidget {
-  const _SummaryItem(this.entry);
+  const _SummaryItem(this.entry, {this.iconOnly = false});
   final AccountEntry entry;
+
+  /// The network's name goes. A handle stays: it is the only thing that tells
+  /// two accounts on one network apart.
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
+    final name = iconOnly ? entry.handle : AccountSelectionSummary._nameOf(entry);
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      PlatformTile(entry.account.platformId, size: 15, dimmed: !entry.selected),
-      const SizedBox(width: Space.xs),
-      Flexible(
-        child: Text(
-          AccountSelectionSummary._nameOf(entry),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: context.text.bodySmall?.copyWith(color: nf.text, fontWeight: FontWeight.w500),
+      _AccountFace(entry, size: iconOnly ? 18 : 15, dimmed: !entry.selected),
+      if (name != null) ...[
+        const SizedBox(width: Space.xs),
+        Flexible(
+          child: Text(
+            name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: context.text.bodySmall?.copyWith(color: nf.text, fontWeight: FontWeight.w500),
+          ),
         ),
-      ),
+      ],
       const SizedBox(width: Space.xxs),
       Icon(tierIcon(entry.account.tier), size: 12, color: nf.textMuted),
       if (entry.disabled) ...[
@@ -424,27 +499,31 @@ class _SummaryItem extends StatelessWidget {
   }
 }
 
-/// "18 of 21": chosen of the accounts that can be chosen for this post.
-String accountCountLabel(List<AccountEntry> entries) {
+/// "18 of 21": chosen of the accounts that can be chosen for this post. `null`
+/// when none can, as with only art sites connected.
+String? accountCountLabel(List<AccountEntry> entries) {
   final counted = entries.where((e) => e.counted);
-  return '${counted.where((e) => e.selected).length} of ${counted.length}';
+  return counted.isEmpty ? null : '${counted.where((e) => e.selected).length} of ${counted.length}';
 }
 
-/// "Post to 18 of 21" with the fold chevron.
+/// "Post to 18 of 21" with the fold chevron. Without [showTitle] the words
+/// "Post to" go, as long as there is a count to show.
 class AccountCountLabel extends StatelessWidget {
-  const AccountCountLabel({super.key, required this.entries, required this.folded});
+  const AccountCountLabel({super.key, required this.entries, required this.folded, this.showTitle = true});
   final List<AccountEntry> entries;
   final bool folded;
+  final bool showTitle;
 
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
+    final count = accountCountLabel(entries);
     return Row(mainAxisSize: MainAxisSize.min, children: [
-      Text('Post to', style: context.text.titleSmall?.copyWith(color: nf.textMuted)),
-      const SizedBox(width: Space.sm),
-      Text(accountCountLabel(entries), style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
-      const SizedBox(width: Space.xxs),
-      Icon(folded ? Icons.expand_more_rounded : Icons.expand_less_rounded, size: 20, color: nf.textMuted),
+      if (showTitle || count == null) Text('Post to', style: context.text.titleSmall?.copyWith(color: nf.textMuted)),
+      if (showTitle && count != null) const SizedBox(width: Space.sm),
+      if (count != null) Text(count, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+      if (showTitle) const SizedBox(width: Space.xxs),
+      Icon(folded ? Icons.expand_more_rounded : Icons.expand_less_rounded, size: showTitle ? 20 : 16, color: nf.textMuted),
     ]);
   }
 }

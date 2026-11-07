@@ -19,6 +19,7 @@ class NewgroundsAdapter extends ArtHandoffAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'newgrounds',
     name: 'Newgrounds',
+    shortName: 'NG',
     iconKey: 'newgrounds',
     homepage: 'https://www.newgrounds.com/art',
     tiers: {PlatformTier.handoff},

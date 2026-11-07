@@ -10,18 +10,21 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/brand/platform_brand.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/device_transfer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
+import 'package:neforum_app/theme/tokens.dart';
 import 'package:neforum_app/ui/compose/account_selection_grid.dart';
 import 'package:neforum_app/ui/compose/action_bar.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/compose/target_picker.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
+import 'package:neforum_app/widgets/account_avatar.dart';
 import 'package:neforum_app/widgets/badges.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
@@ -65,12 +68,13 @@ const _networks = [
   'nostr', 'lemmy', 'wordpress', 'substack', 'snapchat', 'whatsapp', 'matrix',
 ];
 
-ConnectedAccount _account(String platformId, {String? id, String? handle, bool enabled = true}) => ConnectedAccount(
+ConnectedAccount _account(String platformId, {String? id, String? handle, bool enabled = true, PlatformTier? tier, String? avatarUrl}) => ConnectedAccount(
       id: id ?? 'acct-$platformId',
       platformId: platformId,
-      tier: builtinRegistry().descriptor(platformId)!.defaultTier,
+      tier: tier ?? builtinRegistry().descriptor(platformId)!.defaultTier,
       displayName: platformId,
       handle: handle,
+      avatarUrl: avatarUrl,
       createdAt: DateTime.utc(2026, 10, 1),
       enabled: enabled,
     );
@@ -88,13 +92,14 @@ Future<ProviderContainer> _boot(
   Size size = const Size(360, 640),
   double textScale = 1,
   _MemoryStorage? storage,
+  Map<String, Object> settings = const {},
 }) async {
   t.view.physicalSize = size;
   t.view.devicePixelRatio = 1;
   addTearDown(t.view.reset);
   addTearDown(t.view.resetViewInsets);
   // The first-start question about update checks would cover the screen.
-  final store = (storage ?? _MemoryStorage())..json['settings.json'] = {'updateCheck': 'off'};
+  final store = (storage ?? _MemoryStorage())..json['settings.json'] = {'updateCheck': 'off', ...settings};
   final services = (await t.runAsync(() => AppServices.create(demo: true, storage: store)))!;
   await t.pumpWidget(ProviderScope(overrides: [
     servicesProvider.overrideWithValue(services),
@@ -143,11 +148,92 @@ void _expectAtLeastTouchSize(WidgetTester t, Finder f, String what) {
   expect(s.width >= 48 && s.height >= 48, isTrue, reason: '$what is ${s.width} x ${s.height}');
 }
 
+final _editor = find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController);
+final _summary = find.byType(AccountSelectionSummary);
+final _filter = find.byKey(kTargetFilterKey);
+
+void _keyboard(WidgetTester t, double height) => t.view.viewInsets = FakeViewPadding(bottom: height);
+
+/// The text field's caret is on screen: below the Write and Preview tabs and
+/// above the action bar, which sits on the keyboard.
+void _expectCaretInView(WidgetTester t) {
+  final state = t.state<EditableTextState>(find.descendant(of: _editor, matching: find.byType(EditableText)));
+  final box = state.renderEditable;
+  final selection = state.textEditingValue.selection;
+  final offset = selection.isValid ? selection.extent : const TextPosition(offset: 0);
+  final caret = box.localToGlobal(box.getLocalRectForCaret(offset).center);
+  expect(caret.dy, greaterThan(t.getRect(find.text('Write')).bottom), reason: 'the caret is below the tabs');
+  expect(caret.dy, lessThan(t.getRect(find.byType(ComposerActionBar)).top), reason: 'the caret is above the action bar');
+}
+
+/// The account of the cell that has the keyboard focus.
+String? _focusedCell() {
+  String? id;
+  FocusManager.instance.primaryFocus?.context?.visitAncestorElements((e) {
+    final w = e.widget;
+    if (w is AccountCell) {
+      id = w.entry.account.id;
+      return false;
+    }
+    return true;
+  });
+  return id;
+}
+
+bool _foldHasFocus() {
+  var found = false;
+  FocusManager.instance.primaryFocus?.context?.visitAncestorElements((e) {
+    if (e.widget.key == kTargetFoldKey) {
+      found = true;
+      return false;
+    }
+    return true;
+  });
+  return found;
+}
+
+/// Runs [body] as a desktop window, where the Tab key is how some people move.
+Future<void> _onDesktop(WidgetTester t, Future<void> Function() body) async {
+  debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+  try {
+    await body();
+  } finally {
+    debugDefaultTargetPlatformOverride = null;
+  }
+}
+
 void main() {
   setUpAll(_loadFonts);
 
   for (final scale in const [1.0, 1.5]) {
     group('21 accounts at 360 x 640, text x$scale', () {
+      testWidgets('every account is on screen at once, with its states, on a 48 x 48 target', (t) async {
+        final accounts = _twentyOne();
+        accounts[6] = _account('linkedin', enabled: false);
+        final c = await _boot(t, accounts: accounts, textScale: scale);
+        c.read(composerProvider.notifier).toggleAccount('acct-reddit');
+        await _settle(t);
+
+        final limit = t.getRect(find.byType(ComposerActionBar)).top;
+        for (final a in accounts) {
+          final cell = _cell(a.id);
+          expect(t.getRect(cell).bottom, lessThanOrEqualTo(limit), reason: '${a.platformId} is above the action bar without scrolling');
+          _expectAtLeastTouchSize(t, cell, a.platformId);
+          final hit = t.hitTestOnBinding(t.getCenter(cell));
+          expect(hit.path.any((e) => e.target == t.renderObject(cell)), isTrue, reason: '${a.platformId} takes the tap');
+
+          // Tier and state: their own shapes, whatever the colour.
+          expect(find.descendant(of: cell, matching: find.byIcon(tierIcon(a.tier))), findsOneWidget, reason: a.platformId);
+          final state = !a.enabled
+              ? Icons.block_rounded
+              : c.read(composerProvider).selected.contains(a.id)
+                  ? Icons.check_circle_rounded
+                  : Icons.radio_button_unchecked_rounded;
+          expect(find.descendant(of: cell, matching: find.byIcon(state)), findsOneWidget, reason: a.platformId);
+        }
+        await _end(t);
+      });
+
       testWidgets('leaving out 3 takes 3 taps from the default state, none of them hunting sideways', (t) async {
         final c = await _boot(t, accounts: _twentyOne(), textScale: scale);
         expect(c.read(composerProvider).selected.length, 21, reason: 'the default state: nothing marked, everything chosen');
@@ -305,31 +391,455 @@ void main() {
     });
   }
 
-  testWidgets('at normal text every one of the 21 is on screen with no scrolling at all', (t) async {
-    await _boot(t, accounts: _twentyOne());
-    final bar = t.getRect(find.byType(ComposerActionBar));
-    for (final e in t.elementList(_cells)) {
-      final box = e.renderObject! as RenderBox;
-      final bottom = box.localToGlobal(Offset.zero).dy + box.size.height;
-      expect(bottom, lessThanOrEqualTo(bar.top), reason: '${(e.widget as AccountCell).entry.label} is behind the action bar');
+  testWidgets('at the largest text the count and the quick choices share a line, and the words stay for screen readers', (t) async {
+    final handle = t.ensureSemantics();
+    await _boot(t, accounts: _twentyOne(), textScale: 1.5);
+    final fold = t.getRect(find.byKey(kTargetFoldKey));
+    for (final label in const ['All', 'Automatic only', 'None']) {
+      expect(t.getRect(find.widgetWithText(TextButton, label)).top, fold.top, reason: label);
     }
+    expect(find.text('21 of 21'), findsOneWidget);
+    expect(find.descendant(of: find.byType(TargetPicker), matching: find.text('Post to')), findsNothing);
+    expect(find.bySemanticsLabel(RegExp(r'^Post to, 21 of 21\. Fold the accounts$')), findsOneWidget);
+    handle.dispose();
     await _end(t);
   });
 
-  testWidgets('at the largest text the last cell is one short downward scroll away', (t) async {
-    await _boot(t, accounts: _twentyOne(), textScale: 1.5);
-    final bar = t.getRect(find.byType(ComposerActionBar));
-    var lowest = 0.0;
-    for (final e in t.elementList(_cells)) {
-      final box = e.renderObject! as RenderBox;
-      final bottom = box.localToGlobal(Offset.zero).dy + box.size.height;
-      if (bottom > lowest) lowest = bottom;
+  testWidgets('at the largest text the header stays on one line for every count, and its words do not touch', (t) async {
+    final c = await _boot(t, accounts: _twentyOne(), textScale: 1.5);
+    final limit = t.getRect(find.byType(ComposerActionBar)).top;
+    var widest = 0.0;
+    for (final p in [..._networks, null]) {
+      final fold = t.getRect(find.byKey(kTargetFoldKey));
+      if (fold.width > widest) widest = fold.width;
+      for (final label in const ['All', 'Automatic only', 'None']) {
+        expect(t.getRect(find.widgetWithText(TextButton, label)).top, fold.top, reason: '$label at ${accountCountLabel(t.widget<AccountCountLabel>(find.byType(AccountCountLabel)).entries)}');
+      }
+      expect(t.getRect(_cell('acct-matrix')).bottom, lessThanOrEqualTo(limit));
+      expect(t.getRect(find.text('None')).left - t.getRect(find.text('Automatic only')).right, greaterThanOrEqualTo(Space.xs));
+      if (p != null) {
+        c.read(composerProvider.notifier).toggleAccount('acct-$p');
+        await _settle(t);
+      }
     }
-    final scroll = lowest - bar.top;
-    // Printed for the record; the bound keeps it from growing unnoticed.
-    debugPrint('largest text: ${scroll.toStringAsFixed(0)} px of the grid is below the action bar');
-    expect(scroll, lessThanOrEqualTo(200));
+    debugPrint('largest text: the widest count takes ${widest.toStringAsFixed(1)} px of the 328 px header');
     await _end(t);
+  });
+
+  testWidgets('at normal text the header keeps its words and the rows their gap', (t) async {
+    await _boot(t, accounts: _twentyOne());
+    expect(find.descendant(of: find.byType(TargetPicker), matching: find.text('Post to')), findsOneWidget);
+    expect(t.getRect(_cell('acct-instagram')).top - t.getRect(_cell('acct-mastodon')).bottom, 4);
+    await _end(t);
+  });
+
+  group('the fold over the keyboard', () {
+    testWidgets('over the keyboard the artwork controls step aside, and come back', (t) async {
+      final c = await _boot(t, accounts: [_account('behance'), _account('cara')]);
+      await t.tap(find.byKey(TargetPicker.artworkSwitchKey));
+      await _settle(t);
+      expect(c.read(composerProvider).isArtwork, isTrue);
+      expect(find.text('Made with AI'), findsOneWidget);
+
+      _keyboard(t, 280);
+      await _settle(t);
+      expect(find.text('Made with AI'), findsNothing);
+      expect(find.byKey(TargetPicker.artworkSwitchKey), findsNothing);
+
+      // Opened by hand over the keyboard, they are back with the grid.
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(find.byKey(TargetPicker.artworkSwitchKey), findsOneWidget);
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(find.byKey(TargetPicker.artworkSwitchKey), findsNothing);
+
+      _keyboard(t, 0);
+      await _settle(t);
+      expect(find.text('Made with AI'), findsOneWidget);
+      expect(find.byKey(TargetPicker.artworkSwitchKey), findsOneWidget);
+      await _end(t);
+    });
+
+    testWidgets('folded by choice: artwork controls stay when there is no keyboard', (t) async {
+      await _boot(t, accounts: [_account('mastodon'), _account('behance')], settings: {'targetPickerFolded': true});
+      expect(_summary, findsOneWidget);
+      expect(find.byKey(TargetPicker.artworkSwitchKey), findsOneWidget);
+      await _end(t);
+    });
+
+    // The grid folds within the frame: a height animation moved the field out
+    // of view after it had scrolled its caret into view.
+    testWidgets('a long post scrolled to its end keeps the caret in view when the tiles fold', (t) async {
+      await _boot(t, accounts: _twentyOne());
+      await t.ensureVisible(_editor);
+      await _settle(t);
+      await t.enterText(_editor, List.generate(30, (i) => 'Line $i of a long post').join('\n'));
+      await _settle(t);
+      _keyboard(t, 280);
+      await _settle(t);
+      expect(_cells, findsNothing);
+      _expectCaretInView(t);
+      _keyboard(t, 0);
+      await _settle(t);
+      await _end(t);
+    });
+
+    testWidgets('folding takes its height at once and fades in', (t) async {
+      await _boot(t, accounts: _twentyOne());
+      final picker = find.byType(TargetPicker);
+      final open = t.getSize(picker).height;
+      await t.tap(find.byKey(kTargetFoldKey));
+      await t.pump();
+      await t.pump(const Duration(milliseconds: 40));
+      final midway = t.getSize(picker).height;
+      final fade = t.widget<FadeTransition>(find.ancestor(of: _summary, matching: find.byType(FadeTransition)).first);
+      expect(fade.opacity.value, inExclusiveRange(0, 1));
+      await _settle(t);
+      expect(midway, lessThan(open));
+      expect(midway, t.getSize(picker).height);
+      await _end(t);
+    });
+
+    testWidgets('the system setting for less motion: the fold works, without any animation', (t) async {
+      t.platformDispatcher.accessibilityFeaturesTestValue = const FakeAccessibilityFeatures(disableAnimations: true);
+      addTearDown(t.platformDispatcher.clearAccessibilityFeaturesTestValue);
+      await _boot(t, accounts: _twentyOne());
+      await t.tap(find.byKey(kTargetFoldKey));
+      await t.pump();
+      expect(_summary, findsOneWidget);
+      expect(_cells, findsNothing);
+      await t.tap(find.byKey(kTargetFoldKey));
+      await t.pump();
+      expect(_cells, findsNWidgets(21));
+      expect(t.takeException(), isNull);
+      await _end(t);
+    });
+
+    Finder inSummary(Finder f) => find.descendant(of: _summary, matching: f);
+
+    for (final scale in const [1.0, 1.5]) {
+      testWidgets('ten named accounts become icons over the keyboard and stay short, text x$scale', (t) async {
+        final handle = t.ensureSemantics();
+        final c = await _boot(t, accounts: _twentyOne(), textScale: scale);
+        for (final p in _networks.take(10)) {
+          c.read(composerProvider.notifier).toggleAccount('acct-$p');
+        }
+        await _settle(t);
+        await t.ensureVisible(_editor);
+        await t.pump();
+        await t.tap(_editor);
+        _keyboard(t, 280);
+        await _settle(t);
+
+        expect(inSummary(find.text('Left out:')), findsOneWidget);
+        expect(inSummary(find.text('Mastodon')), findsNothing);
+        expect(inSummary(find.byType(PlatformTile)), findsNWidgets(10));
+        // Every one still shows how it posts.
+        final tierGlyphs = t.widgetList<Icon>(inSummary(find.byType(Icon))).where((i) => PlatformTier.values.any((tier) => tierIcon(tier) == i.icon));
+        expect(tierGlyphs.length, greaterThanOrEqualTo(10));
+        final height = t.getSize(_summary).height;
+        debugPrint('ten named over the keyboard, text x$scale: summary $height px');
+        expect(height, lessThanOrEqualTo(100));
+        // A screen reader still hears the names.
+        expect(find.bySemanticsLabel(RegExp(r'Left out Mastodon, Bluesky, ')), findsOneWidget);
+        handle.dispose();
+        _keyboard(t, 0);
+        await _settle(t);
+        await _end(t);
+      });
+    }
+
+    testWidgets('four named accounts keep their names over the keyboard, five do not', (t) async {
+      final c = await _boot(t, accounts: _twentyOne());
+      for (final p in _networks.take(4)) {
+        c.read(composerProvider.notifier).toggleAccount('acct-$p');
+      }
+      await _settle(t);
+      await t.ensureVisible(_editor);
+      await t.pump();
+      await t.tap(_editor);
+      _keyboard(t, 280);
+      await _settle(t);
+      expect(inSummary(find.text('Mastodon')), findsOneWidget);
+      c.read(composerProvider.notifier).toggleAccount('acct-${_networks[4]}');
+      await _settle(t);
+      expect(inSummary(find.text('Mastodon')), findsNothing);
+      _keyboard(t, 0);
+      await _settle(t);
+      await _end(t);
+    });
+
+    for (final scale in const [1.0, 1.5]) {
+      testWidgets('ten named accounts keep their names with no keyboard, text x$scale', (t) async {
+        final c = await _boot(t, accounts: _twentyOne(), settings: {'targetPickerFolded': true}, textScale: scale);
+        for (final p in _networks.take(10)) {
+          c.read(composerProvider.notifier).toggleAccount('acct-$p');
+        }
+        await _settle(t);
+        expect(inSummary(find.text('Mastodon')), findsOneWidget);
+        debugPrint('ten named with their names, text x$scale: summary ${t.getSize(_summary).height} px');
+        await _end(t);
+      });
+    }
+
+    testWidgets('as icons, two accounts on one network keep what tells them apart', (t) async {
+      final accounts = [
+        _account('mastodon', id: 'work', handle: '@ana@social.example'),
+        _account('mastodon', id: 'home', handle: '@ben@social.example'),
+        for (final p in _networks.skip(1).take(10)) _account(p),
+      ];
+      final c = await _boot(t, accounts: accounts);
+      for (final id in const ['work', 'home', 'acct-bluesky', 'acct-x', 'acct-threads']) {
+        c.read(composerProvider.notifier).toggleAccount(id);
+      }
+      await _settle(t);
+      await t.ensureVisible(_editor);
+      await t.pump();
+      await t.tap(_editor);
+      _keyboard(t, 280);
+      await _settle(t);
+      expect(inSummary(find.text('Bluesky')), findsNothing);
+      expect(inSummary(find.text('@ana')), findsOneWidget);
+      expect(inSummary(find.text('@ben')), findsOneWidget);
+      _keyboard(t, 0);
+      await _settle(t);
+      await _end(t);
+    });
+  });
+
+  group('reached with the Tab key, in a desktop window narrowed to a phone\'s width', () {
+    const narrow = Size(500, 800);
+
+    Future<void> tabTo(WidgetTester t, bool Function() arrived) async {
+      for (var i = 0; i < 80; i++) {
+        await t.sendKeyEvent(LogicalKeyboardKey.tab);
+        await t.pump();
+        if (arrived()) return;
+      }
+      fail('the Tab key never got there');
+    }
+
+    testWidgets('a cell takes focus, shows it without moving, and Enter or Space operates it', (t) async {
+      await _onDesktop(t, () async {
+        final c = await _boot(t, accounts: _twentyOne(), size: narrow);
+        expect(_cells, findsNWidgets(21));
+        final before = t.getRect(_cell('acct-nostr'));
+        AnimatedContainer box() => t.widget<AnimatedContainer>(find.byKey(const ValueKey('account-cell-box-acct-nostr')));
+        expect(box().foregroundDecoration, isNull);
+
+        await tabTo(t, () => _focusedCell() == 'acct-nostr');
+        await _settle(t);
+        final ring = (box().foregroundDecoration! as BoxDecoration).border! as Border;
+        expect(ring.top.width, 2);
+        expect(t.getRect(_cell('acct-nostr')), before, reason: 'the focus mark takes no room');
+
+        await t.sendKeyEvent(LogicalKeyboardKey.enter);
+        await _settle(t);
+        expect(c.read(composerProvider).selected, isNot(contains('acct-nostr')));
+        expect(_focusedCell(), 'acct-nostr');
+        await t.sendKeyEvent(LogicalKeyboardKey.space);
+        await _settle(t);
+        expect(c.read(composerProvider).selected, contains('acct-nostr'));
+        await _end(t);
+      });
+    });
+
+    testWidgets('a disabled cell is passed over', (t) async {
+      await _onDesktop(t, () async {
+        final accounts = [_account('mastodon'), _account('lemmy', enabled: false), _account('nostr')];
+        await _boot(t, accounts: accounts, size: narrow);
+        final seen = <String>{};
+        await tabTo(t, () {
+          final id = _focusedCell();
+          if (id != null) seen.add(id);
+          return id == 'acct-nostr';
+        });
+        expect(seen, {'acct-mastodon', 'acct-nostr'});
+        await _end(t);
+      });
+    });
+
+    testWidgets('the fold control is reached too, and keeps the focus both ways', (t) async {
+      await _onDesktop(t, () async {
+        await _boot(t, accounts: _twentyOne(), size: narrow);
+        await tabTo(t, _foldHasFocus);
+        await t.sendKeyEvent(LogicalKeyboardKey.enter);
+        await _settle(t);
+        expect(_cells, findsNothing);
+        expect(_foldHasFocus(), isTrue);
+        await t.sendKeyEvent(LogicalKeyboardKey.enter);
+        await _settle(t);
+        expect(_cells, findsNWidgets(21));
+        expect(_foldHasFocus(), isTrue);
+        await _end(t);
+      });
+    });
+  });
+
+  group('the filter field', () {
+    List<ConnectedAccount> many(int n) => [
+          for (var i = 0; i < n; i++)
+            _account('mastodon', id: 'm$i', tier: i.isEven ? PlatformTier.openApi : PlatformTier.handoff, handle: i < 3 ? '@alpha$i@one.example' : '@user$i@two.example'),
+        ];
+
+    testWidgets('24 accounts have none, 25 have one, on a whole touch target', (t) async {
+      expect(kTargetFilterThreshold, 24);
+      await _boot(t, accounts: many(24));
+      expect(_filter, findsNothing);
+      await _end(t);
+      await _boot(t, accounts: many(25));
+      expect(_filter, findsOneWidget);
+      _expectAtLeastTouchSize(t, _filter, 'the filter');
+      await _end(t);
+    });
+
+    testWidgets('it narrows the cells, All and None act on the matches and it says so, and its keyboard does not fold it', (t) async {
+      final c = await _boot(t, accounts: many(30));
+      Set<String> selected() => c.read(composerProvider).selected;
+      await t.tap(_filter);
+      _keyboard(t, 280);
+      await _settle(t);
+      expect(_filter, findsOneWidget, reason: 'its own keyboard leaves it in place');
+      expect(_cells, findsNWidgets(30));
+
+      await t.enterText(_filter, 'alpha');
+      await _settle(t);
+      expect(_cells, findsNWidgets(3));
+      expect(find.text('All, Automatic only and None act on the 3 shown'), findsOneWidget);
+
+      await t.tap(find.widgetWithText(TextButton, 'None'));
+      await _settle(t);
+      expect(selected().length, 27);
+      expect(selected(), isNot(anyOf(contains('m0'), contains('m1'), contains('m2'))));
+      expect(find.text('27 of 30'), findsOneWidget, reason: 'the count stays about all of them');
+
+      await t.tap(find.widgetWithText(TextButton, 'Automatic only'));
+      await _settle(t);
+      expect(selected(), containsAll(const ['m0', 'm2']));
+      expect(selected(), isNot(contains('m1')), reason: 'the hand-off one');
+      expect(selected().length, 29);
+
+      await t.tap(find.widgetWithText(TextButton, 'All'));
+      await _settle(t);
+      expect(selected().length, 30);
+
+      await t.enterText(_filter, 'nothing like this');
+      await _settle(t);
+      expect(find.text('No account matches.'), findsOneWidget);
+
+      await t.tap(find.byTooltip('Clear'));
+      await _settle(t);
+      expect(_cells, findsNWidgets(30));
+      expect(find.textContaining('act on the'), findsNothing);
+
+      // The fold control works while typing in the filter too. That takes the
+      // field away and the keyboard with it, so it is the lasting choice.
+      await t.ensureVisible(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(_cells, findsNothing);
+      expect(_filter, findsNothing);
+      expect(_summary, findsOneWidget);
+      expect(c.read(settingsProvider).targetPickerFolded, isTrue);
+
+      _keyboard(t, 0);
+      await _settle(t);
+      expect(_summary, findsOneWidget, reason: 'it stays folded when the keyboard has gone');
+      await _settle(t);
+      await _end(t);
+    });
+
+    testWidgets('a filter opened over the keyboard stays open while typing in it, whatever the lasting choice', (t) async {
+      await _boot(t, accounts: many(30), settings: {'targetPickerFolded': true});
+      await t.ensureVisible(_editor);
+      await t.pump();
+      await t.tap(_editor);
+      _keyboard(t, 280);
+      await _settle(t);
+      await t.ensureVisible(find.byKey(kTargetFoldKey));
+      await t.pump();
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      await t.tap(_filter);
+      await _settle(t);
+      expect(_filter, findsOneWidget);
+      expect(_cells, findsNWidgets(30));
+
+      // The fold control still folds it from there, with the choice already
+      // being folded.
+      await t.ensureVisible(find.byKey(kTargetFoldKey));
+      await t.pump();
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(_filter, findsNothing);
+      expect(_summary, findsOneWidget);
+
+      // Opened by hand, it stays open for the text too, until folded by hand.
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(_filter, findsOneWidget);
+      await t.ensureVisible(_editor);
+      await t.pump();
+      await t.tap(_editor);
+      await _settle(t);
+      expect(_cells, findsNWidgets(30));
+      await t.ensureVisible(find.byKey(kTargetFoldKey));
+      await t.pump();
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(_filter, findsNothing);
+      _keyboard(t, 0);
+      await _settle(t);
+      await _end(t);
+    });
+
+    testWidgets('from the filter, moving on to the text folds the grid as usual', (t) async {
+      await _boot(t, accounts: many(30));
+      await t.tap(_filter);
+      _keyboard(t, 280);
+      await _settle(t);
+      expect(_cells, findsNWidgets(30));
+      await t.ensureVisible(_editor);
+      await t.pump();
+      await t.tap(_editor);
+      await _settle(t);
+      expect(_cells, findsNothing);
+      expect(_filter, findsNothing);
+      _keyboard(t, 0);
+      await _settle(t);
+      await _end(t);
+    });
+
+    testWidgets('quick choices over matches skip art sites, as they do without a filter', (t) async {
+      final accounts = [...many(25), _account('cara')];
+      final c = await _boot(t, accounts: accounts);
+      await t.enterText(_filter, 'a');
+      await _settle(t);
+      await t.tap(find.widgetWithText(TextButton, 'All'));
+      await _settle(t);
+      expect(c.read(composerProvider).selected, isNot(contains('acct-cara')));
+      await _end(t);
+    });
+
+    testWidgets('finds by network, short name and handle', (t) async {
+      final accounts = [...many(24), _account('x'), _account('nostr')];
+      await _boot(t, accounts: accounts);
+      await t.enterText(_filter, 'twitter');
+      await _settle(t);
+      expect(_cells, findsOneWidget, reason: 'the network\'s full name');
+      await t.enterText(_filter, 'NOSTR');
+      await _settle(t);
+      expect(_cells, findsOneWidget);
+      await t.enterText(_filter, 'user24');
+      await _settle(t);
+      expect(_cells, findsNothing);
+      await t.enterText(_filter, 'user23');
+      await _settle(t);
+      expect(_cells, findsOneWidget, reason: 'a handle');
+      await _end(t);
+    });
   });
 
   group('the fold', () {
@@ -528,8 +1038,90 @@ void main() {
     });
   });
 
+  group('the account\'s photo', () {
+    const photo = 'https://avatars.example/a.png';
+
+    testWidgets('several accounts on one network show the photo; a network\'s only account keeps the mark', (t) async {
+      final c = await _boot(t, accounts: [
+        _account('mastodon', id: 'work', handle: '@ana@social.example', avatarUrl: photo),
+        _account('mastodon', id: 'home', handle: '@ben@social.example', avatarUrl: photo),
+        _account('mastodon', id: 'none', handle: '@cy@social.example'),
+        _account('mastodon', id: 'local', handle: '@di@social.example', avatarUrl: 'mem://a.png'),
+        _account('bluesky', avatarUrl: photo),
+      ]);
+      Finder avatar(String id) => find.descendant(of: _cell(id), matching: find.byType(AccountAvatar));
+      expect(avatar('work'), findsOneWidget);
+      expect(avatar('home'), findsOneWidget);
+      expect(avatar('none'), findsNothing, reason: 'no photo');
+      expect(avatar('local'), findsNothing, reason: 'not a photo that can be fetched');
+      expect(avatar('acct-bluesky'), findsNothing, reason: 'the only one on its network');
+      expect(find.descendant(of: _cell('none'), matching: find.byType(PlatformTile)), findsOneWidget);
+
+      // The cell is no taller or wider for it, and left out fades it.
+      expect(t.getSize(_cell('work')), t.getSize(_cell('none')));
+      expect(t.widget<AccountAvatar>(avatar('work')).dimmed, isFalse);
+      c.read(composerProvider.notifier).toggleAccount('work');
+      await _settle(t);
+      expect(t.widget<AccountAvatar>(avatar('work')).dimmed, isTrue);
+
+      // The summary shows the same face.
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(find.descendant(of: _summary, matching: find.byType(AccountAvatar)), findsOneWidget);
+      expect(t.takeException(), isNull);
+      await _end(t);
+    });
+  });
+
   group('art sites behave as they do on a computer', () {
     final accounts = [_account('mastodon'), _account('nostr'), _account('behance'), _account('cara')];
+
+    testWidgets('only art sites connected: the count and the summary say nothing untrue', (t) async {
+      final handle = t.ensureSemantics();
+      await _boot(t, accounts: [_account('behance'), _account('cara')]);
+      expect(find.textContaining(' of '), findsNothing);
+      expect(find.bySemanticsLabel(RegExp(r'0 of 0')), findsNothing);
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(find.textContaining(' of '), findsNothing);
+      expect(find.descendant(of: _summary, matching: find.text('Only art sites connected')), findsOneWidget);
+      expect(find.bySemanticsLabel(RegExp(r'0 of 0')), findsNothing);
+      _expectAtLeastTouchSize(t, find.byKey(kTargetFoldKey), 'the folded summary');
+      handle.dispose();
+      await _end(t);
+    });
+
+    testWidgets('artwork mode with no art site left: it does not claim there are only art sites', (t) async {
+      final c = await _boot(t, accounts: [_account('mastodon')]);
+      c.read(composerProvider.notifier).setArtwork(const ArtworkDetails());
+      await _settle(t);
+      expect(_cells, findsNothing);
+      expect(find.textContaining(' of '), findsNothing);
+      _expectAtLeastTouchSize(t, find.byKey(kTargetFoldKey), 'the fold control');
+      await t.tap(find.byKey(kTargetFoldKey));
+      await _settle(t);
+      expect(find.descendant(of: _summary, matching: find.text('No art sites connected')), findsOneWidget);
+      expect(find.text('Only art sites connected'), findsNothing);
+      await _end(t);
+    });
+
+    testWidgets('the fold control keeps its whole target at the largest text with no count to show', (t) async {
+      await _boot(t, accounts: [_account('behance'), _account('cara')], textScale: 1.5);
+      _expectAtLeastTouchSize(t, find.byKey(kTargetFoldKey), 'the fold control');
+      expect(find.descendant(of: find.byType(TargetPicker), matching: find.text('Post to')), findsOneWidget);
+      await _end(t);
+    });
+
+    testWidgets('long art site names keep their short form, on one row with the others, at the largest text', (t) async {
+      await _boot(t, accounts: [_account('deviantart'), _account('furaffinity'), _account('newgrounds')], textScale: 1.5);
+      for (final (id, name) in const [('acct-deviantart', 'Deviant'), ('acct-furaffinity', 'Fur Aff.'), ('acct-newgrounds', 'NG')]) {
+        expect(find.descendant(of: _cell(id), matching: find.text(name)), findsOneWidget);
+      }
+      final top = t.getRect(_cell('acct-deviantart')).top;
+      expect(t.getRect(_cell('acct-furaffinity')).top, top);
+      expect(t.getRect(_cell('acct-newgrounds')).top, top, reason: 'one long name would drop the section to two columns');
+      await _end(t);
+    });
 
     testWidgets('never counted or chosen for an ordinary post, shown apart, and tapping one turns on Artwork with it alone', (t) async {
       final c = await _boot(t, accounts: accounts);
@@ -613,11 +1205,11 @@ void main() {
     }
 
     testWidgets('one long art site name leaves the ordinary accounts as they are', (t) async {
-      final accounts = [..._twentyOne().take(20), _account('newgrounds')];
+      final accounts = [..._twentyOne().take(20), _account('artstation')];
       await _boot(t, accounts: accounts);
       final top = t.getRect(_cell('acct-mastodon')).top;
       expect(t.elementList(_cells).where((e) => (e.renderObject! as RenderBox).localToGlobal(Offset.zero).dy == top).length, 4);
-      final name = t.renderObject<RenderParagraph>(find.descendant(of: _cell('acct-newgrounds'), matching: find.text('Newgrounds')));
+      final name = t.renderObject<RenderParagraph>(find.descendant(of: _cell('acct-artstation'), matching: find.text('ArtStation')));
       expect(name.didExceedMaxLines, isFalse);
       expect(name.getBoxesForSelection(const TextSelection(baseOffset: 0, extentOffset: 10)).map((b) => b.top).toSet().length, 1);
       await _end(t);
