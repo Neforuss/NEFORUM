@@ -568,6 +568,17 @@ jobs:
           cp -a "$pkg/icons" "$appdir/usr/share"/
           cp "$pkg/icons/hicolor/256x256/apps/org.neforum.NEFORUM.png" "$appdir/org.neforum.NEFORUM.png"
           ln -s org.neforum.NEFORUM.png "$appdir/.DirIcon"
+          # The AppImage catalog's own lint (appimage.github.io), pinned by commit
+          # and hash, with this Ubuntu's desktop-file-validate and appstreamcli:
+          # 1.4.0 failed the catalog on a .desktop key these older tools reject.
+          sudo apt-get install -y desktop-file-utils appstream > /dev/null
+          curl -fsSL -o "$tools/appdir-lint.sh" \
+            "https://raw.githubusercontent.com/AppImage/appimage.github.io/43bfa8028da03218288d73bbdf45fda2e18c98c5/code/appdir-lint.sh"
+          curl -fsSL -o "$tools/excludelist" \
+            "https://raw.githubusercontent.com/AppImage/AppImages/15a64c20dc23a0154622ba25829364323903b6b5/excludelist"
+          echo "835eb24ca7be3c7af028b6342aebe67f184759be2e54a865d246e6122535c476  $tools/appdir-lint.sh" | sha256sum -c -
+          echo "50db0f894f34b169c47a5cbc0c17dbab61e9edebca5bc8269a1e6ac1bf4bdad9  $tools/excludelist" | sha256sum -c -
+          EXCLUDELIST="$tools/excludelist" bash "$tools/appdir-lint.sh" "$appdir"
           # --appimage-extract-and-run: CI runners have no FUSE.
           ARCH=${{ matrix.appimage-arch }} "$tools/appimagetool" --appimage-extract-and-run --no-appstream \
             --runtime-file "$tools/runtime" "$appdir" "$GITHUB_WORKSPACE/NEFORUM-${{ matrix.appimage-arch }}.AppImage"
