@@ -4,22 +4,6 @@
 
 It is not for posts. Text, image, poll and text-card posts on your channel's **Posts** tab are **YouTube Posts**, a separate network in NEFORUM ([its guide](youtube_posts.md)): Google has no API for them, so they go by hand-off. Before NEFORUM 1.4.1 this network was called just "YouTube", which was easy to take for the Posts tab.
 
-## The video's details
-
-In the composer, open **Customize** on the YouTube videos preview. Under **YouTube videos options**:
-
-- **Visibility**: public, unlisted (only people with the link) or private. By default it follows the post's visibility.
-- **Category**: one of the categories YouTube offers when you upload (People & Blogs is YouTube's own default).
-- **Made for kids**: YouTube asks this of every video. A video made for kids gets no personalised ads and no comments.
-- **Altered or synthetic content**: realistic content made or changed with AI or other tools; YouTube shows viewers a label.
-- **Tell my subscribers**: off uploads the video without a notification to subscribers.
-- **Thumbnail**: your own picture instead of a frame YouTube picks. YouTube asks for a JPEG or PNG, 1280 x 720 and under 2 MB (it takes up to 50 MB through the API). NEFORUM keeps it with the post and sets it right after the upload.
-  - It needs a **verified channel** (youtube.com/verify). If YouTube refuses the thumbnail, the video still counts as posted, and the post's details say why (for example: the channel is not verified, or it has set too many thumbnails lately). Then pick it in YouTube Studio.
-  - A **hand-off** upload cannot set it: pick the thumbnail in YouTube Studio's upload window.
-  - The thumbnail file stays on the device it was chosen on. A post scheduled there and published from another device goes without it, and says so.
-
-The title is the post's title (or its first line), the tags are its hashtags, and a schedule is YouTube's own when it can be (see below).
-
 ## Steps
 
 These steps create your own Google app for "Your own API keys" (about 10 minutes). Read *Before you use the API* below first, and connect from NEFORUM on Windows or macOS.
@@ -74,6 +58,22 @@ Status as of October 2026.
 - **Unused for 6 months:** even in production, Google ends a sign-in that has not been used for 6 months. NEFORUM renews only when it posts, so post at least that often or reconnect. Google also keeps at most 100 sign-ins per Google account per app and silently ends the oldest.
 - **Connect from the desktop app.** Google only accepts `http://127.0.0.1` sign-ins for "Desktop app" clients. It rejects `neforum://` (custom schemes must contain a dot and belong to an iOS/Android client), so the Connect button doesn't work on Android/iOS.
 - Channels that are not phone-verified can't upload videos longer than **15 minutes**. Verify at <https://www.youtube.com/verify>.
+
+## The video's details
+
+In the composer, open **Customize** on the YouTube videos preview. Under **YouTube videos options**:
+
+- **Visibility**: public, unlisted (only people with the link) or private. By default it follows the post's visibility.
+- **Category**: one of the categories YouTube offers when you upload (People & Blogs is YouTube's own default).
+- **Made for kids**: YouTube asks this of every video. A video made for kids gets no personalised ads and no comments.
+- **Altered or synthetic content**: realistic content made or changed with AI or other tools; YouTube shows viewers a label.
+- **Tell my subscribers**: off uploads the video without a notification to subscribers.
+- **Thumbnail**: your own picture instead of a frame YouTube picks. YouTube asks for a JPEG or PNG, 1280 x 720 and under 2 MB (it takes up to 50 MB through the API). NEFORUM keeps it with the post and sets it right after the upload.
+  - It needs a **verified channel** (youtube.com/verify). If YouTube refuses the thumbnail, the video still counts as posted, and the post's details say why (for example: the channel is not verified, or it has set too many thumbnails lately). Then pick it in YouTube Studio.
+  - A **hand-off** upload cannot set it: pick the thumbnail in YouTube Studio's upload window.
+  - The thumbnail file stays on the device it was chosen on. A post scheduled there and published from another device goes without it, and says so.
+
+The title is the post's title (or its first line), the tags are its hashtags, and a schedule is YouTube's own when it can be (see below).
 
 ## How it works
 
