@@ -27,6 +27,8 @@
 //                          { lines, problems, title } (title: filled it)
 //   stepPages              a form over several pages: fill each page
 //   manualPublish          why the user presses Publish even for automatic jobs
+//   postedPattern          what the site says once a post went up, for a
+//                          composer that stays open after posting (TikTok)
 
 (() => {
   const NF = (globalThis.NEFORUM_EXT ??= {});
@@ -290,10 +292,23 @@
       },
       editor: () => document.querySelector('ytd-backstage-post-dialog-renderer #contenteditable-root, #contenteditable-root[contenteditable="true"]'),
       postSelectors: ['ytd-backstage-post-dialog-renderer #submit-button button', 'ytd-backstage-post-dialog-renderer #submit-button', '#post-button button', '#post-button'],
-      // Images need the image option chosen first.
+      // The files go into the post box's own file input: never pasted or
+      // dropped elsewhere (the search bar at the top is a text field too).
+      prefer: ['input', 'drop'],
+      fileInput: () => {
+        const box = youTubePostBox();
+        return box === document ? null : box.querySelector('input[type="file"]');
+      },
+      // Images need the image option chosen first: its button opens the
+      // post box's file input, which takes the files without the file window.
       async beforeMedia() {
-        const imageButton = findByText('button, [role="button"], yt-button-shape button', /^\s*(image|images|add image|photo)\s*$/i, youTubePostBox());
-        if (imageButton) press(imageButton);
+        const box = youTubePostBox();
+        if (box !== document && box.querySelector('input[type="file"]')) return;
+        // Its name or its text (an icon button says it only in its label).
+        const imageButton = [...box.querySelectorAll('button, [role="button"], yt-button-shape button')].find(
+          (b) => visible(b) && NF.fill.namesOf(b).some((n) => /^(add )?(an )?(image|images|photo|photos)$/.test(n)),
+        );
+        await NF.fill.pressForFileInput(imageButton, { root: box });
       },
       // An image poll: each image goes into its own answer.
       async attach(files, job) {
@@ -414,8 +429,14 @@
           { timeout: 30000 },
         ),
       prefer: ['input', 'drop'],
-      // Greyed out until the upload is done; Post now waits for it.
-      postSelectors: ['button[data-e2e="post_video_button"]', '[data-e2e="post_video_button"]'],
+      // Greyed out until the upload is done; Post now waits for it. TikTok
+      // Studio's button, then the older upload page's.
+      postSelectors: ['button[data-e2e="post_video_button"]', '[data-e2e="post_video_button"]', 'button[data-e2e="post-button"]', '.btn-post button', '.btn-post'],
+      postWords: ['post', 'post now'],
+      // "Continue to post?" while TikTok's content check still runs.
+      afterPostWords: ['post now'],
+      // TikTok Studio stays on the page after posting and says so.
+      postedPattern: /your (video|post|photos?) (has|have) been (uploaded|posted|published)|(video|post|photos?) (published|posted)|manage (your )?posts|upload another/i,
     },
 
     instagram: {

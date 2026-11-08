@@ -332,7 +332,7 @@ void main() {
       expect(await bridge.firstChoice(), isNull);
     });
 
-    test('posted: reported only for jobs that allow posting from the page', () async {
+    test('posted: the post went up (confirmed, user) for every job; pressed only for jobs that allow posting from the page', () async {
       final token = await pair('Firefox');
       final results = <BrowserFillResult>[];
       final sub = bridge.results.listen(results.add);
@@ -345,8 +345,13 @@ void main() {
       await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'posted': 'maybe'});
       await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true});
 
+      // A job the extension may not post (1.4.1): the user's own Post, seen
+      // going up, and I posted it on the page count; a press without a sign
+      // cannot have come from the extension, so it says nothing.
       job = bridge.createJob(platformId: 'tiktok', platformName: 'TikTok', url: 'https://www.tiktok.com/tiktokstudio/upload?tab=photo', hosts: const ['www.tiktok.com'], text: 'Hi')!;
       await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'posted': 'confirmed'});
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'posted': 'user'});
+      await call('POST', '/v1/job/${job.id}/result', token: token, body: {'status': 'filled', 'text': true, 'posted': 'pressed'});
       await pumpEventQueue();
 
       expect(results.map((r) => r.posted), [
@@ -354,8 +359,11 @@ void main() {
         BrowserPostState.pressed,
         BrowserPostState.none,
         BrowserPostState.none,
-        BrowserPostState.none, // this job did not allow it
+        BrowserPostState.confirmed,
+        BrowserPostState.user,
+        BrowserPostState.none, // this job does not let the extension press Post
       ]);
+      expect(results.map((r) => r.posted.wentUp), [true, false, false, false, true, true, false]);
       expect(results.first.browser, 'Firefox');
     });
 
@@ -470,7 +478,7 @@ void main() {
         (BrowserAutomaticState.stopped, BrowserPostState.none),
         (BrowserAutomaticState.manual, BrowserPostState.none),
         (BrowserAutomaticState.none, BrowserPostState.none),
-        (BrowserAutomaticState.none, BrowserPostState.none), // neither automatic nor quick post
+        (BrowserAutomaticState.none, BrowserPostState.confirmed), // neither automatic nor quick post: no automatic state, but the post went up
       ]);
       expect(results[3].message, 'Not everything was filled in.');
     });
@@ -579,7 +587,7 @@ void main() {
       final chrome = manifest('chrome');
       final firefox = manifest('firefox');
       expect(firefox['version'], chrome['version']);
-      expect(chrome['version'], '1.1.3');
+      expect(chrome['version'], '1.1.4');
       final matches = [for (final m in (chrome['content_scripts'] as List).single['matches'] as List) m as String];
       expect((firefox['content_scripts'] as List).single['matches'], matches);
       bool matched(String host) => matches.any((m) => m == 'https://$host/*' || (m.startsWith('https://*.') && host.endsWith(m.substring(10, m.length - 2))));
@@ -1257,8 +1265,18 @@ HKEY_CURRENT_USER\SOFTWARE\Clients\StartMenuInternet\NoCommand
     await open();
     expect(launcher.opened.last, (_chrome.id, url));
     expect(bridge.job!.target, _chrome.id);
-    await tester.tap(find.text('Later'));
-    await tester.pumpAndSettle();
+    // 1.4.1: I posted it on the page's panel finishes the hand-off too.
+    choice = null;
+    final second = bridge.job!.id;
+    await tester.runAsync(() async {
+      final r = await _call(client, port, 'POST', '/v1/job/$second/result', token: chrome, body: {'status': 'filled', 'text': true, 'media': 0, 'posted': 'user'});
+      expect(r.status, 204);
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('You marked it as posted on youtube.com. Marking this hand-off as done…'), findsOneWidget);
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+    expect(choice, HandoffChoice.posted, reason: 'the sheet closed itself as posted');
 
     // None can start: the default browser, and any paired browser fills in.
     launcher.gone.add(_chrome.id);

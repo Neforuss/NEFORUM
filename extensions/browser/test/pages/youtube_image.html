@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: YouTube Posts image test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  [hidden] { display: none !important; }
+  ytd-searchbox { display: block; margin-bottom: 18px; }
+  ytd-searchbox input { width: 420px; padding: 8px 12px; border-radius: 20px; border: 1px solid #bbb; }
+  ytd-backstage-post-dialog-renderer { display: grid; gap: 8px; max-width: 520px; border: 1px solid #bbb; border-radius: 10px; padding: 10px; }
+  #contenteditable-root { min-height: 40px; outline: 1px dashed #ccc; padding: 6px; }
+  .row { display: flex; gap: 6px; align-items: center; }
+</style>
+</head>
+<body>
+  <!--
+    A YouTube channel page's top and its post box (NEFORUM 1.4.1: Attach used
+    to focus the search bar). The search bar comes first and is the widest
+    text field on the page; the post box's Image button opens a hidden file
+    input with a click, the way YouTube's does, and nothing else takes files.
+      ?p=youtube_posts
+    window.result() says where the photo went and what the search bar holds.
+    Load it, wait for the fill, then press Attach file on the panel: the photo
+    must land once more in the post box, the search bar must stay empty and
+    unfocused, and no file window may open.
+  -->
+  <ytd-searchbox><form role="search" action="/results"><input name="search_query" type="text" placeholder="Search" aria-label="Search"></form></ytd-searchbox>
+  <ytd-backstage-post-dialog-renderer>
+    <div id="contenteditable-root" contenteditable="true" aria-label="Share an update with your fans"></div>
+    <div class="row">
+      <button type="button" aria-label="Image" id="image-button">Image</button>
+    </div>
+    <div id="thumbs"></div>
+    <div id="submit-button"><button type="button" id="post">Post</button></div>
+  </ytd-backstage-post-dialog-renderer>
+  <script>
+    window.NEFORUM_TEST_TEXT = 'A photo for the channel';
+    const box = document.querySelector('ytd-backstage-post-dialog-renderer');
+    const thumbs = document.getElementById('thumbs');
+    window.__added = [];
+    window.__windows = 0;
+    // YouTube's Image button: a new hidden input each time, clicked at once.
+    document.getElementById('image-button').addEventListener('click', () => {
+      const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+      input.addEventListener('change', () => {
+        for (const f of input.files) {
+          window.__added.push(f.name);
+          thumbs.append(Object.assign(document.createElement('span'), { textContent: f.name }));
+        }
+      });
+      box.append(input);
+      // A click nobody stopped would open the file window here.
+      input.addEventListener('click', (e) => setTimeout(() => { if (!e.defaultPrevented) window.__windows++; }), { once: true });
+      input.click();
+    });
+    window.result = () => ({
+      added: [...window.__added],
+      windows: window.__windows,
+      search: document.querySelector('ytd-searchbox input').value,
+      searchFocused: document.activeElement === document.querySelector('ytd-searchbox input'),
+    });
+  </script>
+  <script src="harness.js"></script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>
