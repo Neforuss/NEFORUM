@@ -73,6 +73,12 @@ void main() {
       expect(() => XmlDocument.parse(xml), returnsNormally);
     });
 
+    // Ubuntu 22.04's appstreamcli (0.15) warns on URL types added later
+    // (vcs-browser, contribute), and the catalog's lint fails on a warning.
+    test('only URL types older validators know', () {
+      final types = XmlDocument.parse(xml).findAllElements('url').map((u) => u.getAttribute('type')).toSet();
+      expect(types.difference({'homepage', 'bugtracker', 'faq', 'help', 'donation', 'translate', 'contact'}), isEmpty);
+    });
     test('the newest release is this version', () {
       final releases = XmlDocument.parse(xml).findAllElements('release').map((r) => r.getAttribute('version')).toList();
       expect(releases.first, kAppVersion, reason: 'add a <release> for every version');
