@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:neforum_core/neforum_core.dart';
-import 'package:neforum_core/src/storage/json_file_store.dart' show JsonFile, JsonPostRepository;
+import 'package:neforum_core/src/storage/json_file_store.dart'
+    show JsonAccountRepository, JsonFile, JsonPostRepository, JsonQuotaRepository, JsonSecretStore;
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -178,6 +180,83 @@ void main() {
     });
   });
 
+  group('two first reads at once', () {
+    // The app's start: the sign-in dates (unawaited) list the accounts while the
+    // Android probe's prepare hook stores one. If each caller had its own read, the
+    // writer's read would end first and the lister's, holding the file from before
+    // the write, would end last and replace the cache: what the CI emulator showed
+    // as "This account was removed". Each test lets the newest read end first.
+    ConnectedAccount account(String id) =>
+        ConnectedAccount(id: id, platformId: 'mastodon', tier: PlatformTier.openApi, displayName: id, createdAt: DateTime.utc(2026, 11, 7));
+
+    test('accounts: what one stores while another is still reading stays, in memory and on disk', () async {
+      final file = _HeldReads(p.join(dir.path, 'accounts.json'));
+      final accounts = JsonAccountRepository(file);
+      final listing = accounts.all();
+      final storing = accounts.upsert(account('probe'));
+      await file.taken();
+      file.releaseNewest();
+      await storing;
+      file.releaseAll();
+      await listing;
+
+      expect((await accounts.get('probe'))?.id, 'probe', reason: 'a late read must not replace what was stored');
+      await accounts.upsert(account('second'));
+      expect((await JsonFileStore(dir.path).accounts.all()).map((a) => a.id), unorderedEquals(['probe', 'second']),
+          reason: 'and the next write must not drop it from the file');
+      expect(file.reads, 1, reason: 'both first callers wait for one read');
+    });
+
+    test('quota: an event recorded while another is still reading is still counted and saved', () async {
+      final file = _HeldReads(p.join(dir.path, 'quota.json'));
+      final quota = JsonQuotaRepository(file);
+      final at = DateTime.utc(2026, 11, 7, 12);
+      final counting = quota.countSince('a', 'posts', at);
+      final recording = quota.record(QuotaEvent(accountId: 'a', ruleId: 'posts', at: at));
+      await file.taken();
+      file.releaseNewest();
+      await recording;
+      file.releaseAll();
+      await counting;
+
+      expect(await quota.countSince('a', 'posts', at), 1);
+      await quota.record(QuotaEvent(accountId: 'a', ruleId: 'posts', at: at));
+      expect(await JsonFileStore(dir.path).quota.countSince('a', 'posts', at), 2);
+    });
+
+    test('secrets: keys written while another is still reading are still there', () async {
+      final file = _HeldReads(p.join(dir.path, 'secrets.json'));
+      final secrets = JsonSecretStore(file);
+      final reading = secrets.read('other');
+      final writing = secrets.write('probe', const {'access_token': 't'});
+      await file.taken();
+      file.releaseNewest();
+      await writing;
+      file.releaseAll();
+      await reading;
+
+      expect(await secrets.read('probe'), {'access_token': 't'});
+    });
+
+    test('a first read that fails fails every caller waiting on it, and the next caller reads again', () async {
+      final file = _HeldReads(p.join(dir.path, 'accounts.json'), failFirst: true);
+      final accounts = JsonAccountRepository(file);
+      final first = accounts.all();
+      final second = accounts.get('probe');
+      await file.taken();
+      file.releaseAll();
+      await expectLater(first, throwsA(isA<FileSystemException>()));
+      await expectLater(second, throwsA(isA<FileSystemException>()));
+
+      final third = accounts.upsert(account('probe'));
+      await file.taken();
+      file.releaseAll();
+      await third;
+      expect((await accounts.get('probe'))?.id, 'probe');
+      expect(file.reads, 2, reason: 'one read per attempt, however many callers wait on it');
+    });
+  });
+
   test('posts come back with local times, the same moments that were saved', () async {
     final saved = Post(
       id: 'p1',
@@ -205,4 +284,45 @@ void main() {
     expect((await repo.due(DateTime.utc(2026, 10, 3, 23, 45).toLocal())).single.id, 'p1');
     expect(back.toJson()['scheduledAt'], '2026-10-03T23:45:00.000Z');
   });
+}
+
+/// A [JsonFile] whose reads take the file as it is when asked, then wait until the
+/// test releases them, so two first reads can finish in either order.
+class _HeldReads extends JsonFile {
+  _HeldReads(super.path, {this.failFirst = false});
+
+  final bool failFirst;
+  final List<Completer<void>> _gates = [];
+  int _taken = 0;
+  int get reads => _gates.length;
+
+  @override
+  Future<Object?> read() async {
+    final gate = Completer<void>();
+    _gates.add(gate);
+    final index = _gates.length - 1;
+    final content = await super.read();
+    _taken++;
+    await gate.future;
+    if (failFirst && index == 0) throw FileSystemException('held by another program', path);
+    return content;
+  }
+
+  /// Waits until every read started so far has taken the file. A repository asks
+  /// for its read synchronously, so the reads are all started once the callers are.
+  Future<void> taken() async {
+    for (var i = 0; i < 400 && _taken < reads; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(_taken, reads, reason: 'every started read took the file');
+  }
+
+  /// Ends the newest read still held.
+  void releaseNewest() => _gates.lastWhere((g) => !g.isCompleted).complete();
+
+  void releaseAll() {
+    for (final g in _gates) {
+      if (!g.isCompleted) g.complete();
+    }
+  }
 }

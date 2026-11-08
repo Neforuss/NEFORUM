@@ -6,6 +6,7 @@ import 'dart:io';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/main.dart' show openWorkspace;
 import 'package:neforum_app/platform/process_identity.dart';
 import 'package:neforum_app/platform/publish_host.dart';
 import 'package:neforum_app/platform/storage.dart';
@@ -190,6 +191,23 @@ void main() {
   });
 
   group('the probe', () {
+    test('the account the prepare hook stores is the one the app publishes with, after startup as runNeforum runs it', () async {
+      // runNeforum leaves the sign-in dates running (unawaited) while prepare stores
+      // the account. On CI's emulator the dates' late first read of accounts.json
+      // replaced the cache, and the tapped post failed with "This account was
+      // removed". Many fresh starts, since the order of two file reads decides it.
+      for (var i = 0; i < 25; i++) {
+        final st = await openAppStorage(overrideDir: (await Directory('${dir.path}/start-$i').create()).path);
+        final s = await openWorkspace(st, prepare: (s) => seedBackgroundProbe(s, 'http://127.0.0.1:9'));
+        opened.add(s);
+        expect(s.demo, isFalse);
+        // What startup left running reads the file meanwhile.
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+        expect((await s.accounts.get(kProbeAccountId))?.id, kProbeAccountId, reason: 'start $i: the account the UI publishes with');
+        expect((await s.posts.get(kProbePostId))!.targets.single.accountId, kProbeAccountId);
+      }
+    });
+
     test('the fake server takes the real adapter through its steps, and one status comes of it', () async {
       final overrides = HttpOverrides.current;
       HttpOverrides.global = null;

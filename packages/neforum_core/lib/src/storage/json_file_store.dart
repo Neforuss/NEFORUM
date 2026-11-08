@@ -170,17 +170,42 @@ Future<void> _saveOrUndo(Future<void> Function() save, void Function() undo) asy
   }
 }
 
+/// A cache filled by the first read of a file. Callers that ask while that read
+/// is under way wait for the same read and get the same object, so a change one
+/// of them makes is never replaced by a second read that started before the
+/// change was written. (`_cache ??= await read()` checks before the read and
+/// assigns after it: a later first caller's older picture then won.) A read
+/// that fails fails everyone waiting on it, and the next caller reads again.
+class _LoadOnce<T extends Object> {
+  _LoadOnce(this._read);
+
+  final Future<T> Function() _read;
+  T? _value;
+  Future<T>? _reading;
+
+  Future<T> call() async {
+    final value = _value;
+    if (value != null) return value;
+    final reading = _reading ??= _read();
+    try {
+      final loaded = await reading;
+      return _value ??= loaded;
+    } finally {
+      if (identical(_reading, reading)) _reading = null;
+    }
+  }
+}
+
 class JsonAccountRepository implements AccountRepository {
   JsonAccountRepository(this._file);
 
   final JsonFile _file;
-  Map<String, ConnectedAccount>? _cache;
   final _changes = StreamController<void>.broadcast();
 
-  Future<Map<String, ConnectedAccount>> _load() async => _cache ??= {
+  late final _load = _LoadOnce<Map<String, ConnectedAccount>>(() async => {
         for (final j in (await _file.read() as List? ?? const []))
           (j as Map)['id'] as String: ConnectedAccount.fromJson(Map<String, dynamic>.from(j)),
-      };
+      });
 
   Future<void> _save() async {
     await _file.write((await _load()).values.map((a) => a.toJson()).toList());
@@ -343,11 +368,10 @@ class JsonQuotaRepository implements QuotaRepository {
   JsonQuotaRepository(this._file);
 
   final JsonFile _file;
-  List<QuotaEvent>? _cache;
 
-  Future<List<QuotaEvent>> _load() async => _cache ??= [
+  late final _load = _LoadOnce<List<QuotaEvent>>(() async => [
         for (final j in (await _file.read() as List? ?? const [])) QuotaEvent.fromJson(Map<String, dynamic>.from(j as Map)),
-      ];
+      ]);
 
   Future<void> _save() async => _file.write((await _load()).map((e) => e.toJson()).toList());
 
@@ -386,12 +410,11 @@ class JsonSecretStore extends SecretStore {
   JsonSecretStore(this._file);
 
   final JsonFile _file;
-  Map<String, Map<String, String>>? _cache;
 
-  Future<Map<String, Map<String, String>>> _load() async => _cache ??= {
+  late final _load = _LoadOnce<Map<String, Map<String, String>>>(() async => {
         for (final e in (await _file.read() as Map? ?? const {}).entries)
           e.key as String: Map<String, String>.from(e.value as Map),
-      };
+      });
 
   @override
   Future<Map<String, String>?> read(String accountId) async {

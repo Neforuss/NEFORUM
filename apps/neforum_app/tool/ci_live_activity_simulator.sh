@@ -10,6 +10,11 @@ set -euo pipefail
 OUT="${OUT:-build/live-activity}"
 BUNDLE_ID="org.neforum.neforumApp"
 mkdir -p "$OUT"
+# Absolute: simctl hands --stdout and --stderr to the simulator's side to open, which
+# does not start in this directory. A relative path there never reached this folder.
+OUT="$(cd "$OUT" && pwd -P)"
+PROBE_LOG="$OUT/probe.log"
+LAUNCH_LOG="$OUT/launch.log"
 
 # The newest runtime's first iPhone Pro: every one since the 14 Pro has an island.
 UDID=$(xcrun simctl list devices available -j | python3 -c '
@@ -40,25 +45,86 @@ APP=build/ios-simulator/Build/Products/Debug-iphonesimulator/Runner.app
 test -d "$APP/PlugIns/NeforumLiveActivity.appex"
 
 xcrun simctl install "$UDID" "$APP"
+# What was built, for any run that goes wrong later. .txt so the job uploads it.
+plutil -p "$APP/Info.plist" > "$OUT/app-info-plist.txt" 2>&1 || true
+plutil -p "$APP/PlugIns/NeforumLiveActivity.appex/Info.plist" > "$OUT/appex-info-plist.txt" 2>&1 || true
+
+# Why SpringBoard said no: its own log and the app's, from the simulator.
+evidence() {
+  xcrun simctl spawn "$UDID" log show --last 2m --style compact \
+    --predicate 'process == "SpringBoard" OR process CONTAINS "neforum" OR process == "Runner"' \
+    > "$OUT/springboard-$1.log" 2>&1 || true
+  {
+    echo "== codesign Runner.app"
+    codesign -dvvv --entitlements - "$APP" 2>&1 || true
+    echo "== codesign NeforumLiveActivity.appex"
+    codesign -dvvv --entitlements - "$APP/PlugIns/NeforumLiveActivity.appex" 2>&1 || true
+    echo "== lipo"
+    lipo -info "$APP/Runner" 2>&1 || true
+    echo "== Rosetta"
+    if /usr/bin/arch -x86_64 /usr/bin/true 2> /dev/null; then echo "installed"; else echo "not installed"; fi
+    echo "== simctl appinfo"
+    xcrun simctl appinfo "$UDID" "$BUNDLE_ID" 2>&1 || true
+  } > "$OUT/app-evidence-$1.txt"
+}
+
+# The probe's own launch: its stdout carries PROBE_READY.
+launch_probe() {
+  local attempts="$1" attempt
+  for attempt in $(seq 1 "$attempts"); do
+    if xcrun simctl launch --stdout="$PROBE_LOG" --stderr="$PROBE_LOG" "$UDID" "$BUNDLE_ID" 2>> "$LAUNCH_LOG"; then
+      return 0
+    fi
+    echo "launch attempt $attempt refused" | tee -a "$LAUNCH_LOG"
+    sleep 5
+  done
+  return 1
+}
+
+# Where PROBE_READY is read: the redirected stdout, or the simulator's log when only a
+# launch without redirection was taken.
+READY_FROM=stdout
 # A freshly booted simulator's SpringBoard can refuse the first launches
 # ("denied by service delegate (SBMainWorkspace)") for a few seconds.
-launched=no
-for attempt in 1 2 3 4 5 6; do
-  if xcrun simctl launch --stdout="$OUT/probe.log" --stderr="$OUT/probe.log" "$UDID" "$BUNDLE_ID" 2>> "$OUT/launch.log"; then
-    launched=yes
-    break
+if ! launch_probe 6; then
+  evidence refused
+  # Is it the redirection or the app? One launch without it says which.
+  if xcrun simctl launch "$UDID" "$BUNDLE_ID" 2>> "$LAUNCH_LOG"; then
+    echo "a launch without --stdout/--stderr was taken: the redirection is what SpringBoard refused" | tee -a "$LAUNCH_LOG"
+    READY_FROM=log
+  elif ! /usr/bin/arch -x86_64 /usr/bin/true 2> /dev/null; then
+    # Reported on Apple silicon runners: SpringBoard refuses until Rosetta is there.
+    echo "a launch without redirection was refused too, and Rosetta is missing: installing it" | tee -a "$LAUNCH_LOG"
+    sudo softwareupdate --install-rosetta --agree-to-license >> "$LAUNCH_LOG" 2>&1 || true
+    if ! launch_probe 3; then
+      evidence after-rosetta
+      echo "The simulator refused every launch of $BUNDLE_ID, with Rosetta too. See springboard-*.log and app-evidence-*.txt"
+      exit 1
+    fi
+  else
+    echo "The simulator refused every launch of $BUNDLE_ID, with and without redirection. See springboard-refused.log and app-evidence-refused.txt"
+    exit 1
   fi
-  echo "launch attempt $attempt refused" | tee -a "$OUT/launch.log"
-  sleep 5
-done
-[ "$launched" = yes ] || { echo "The simulator refused every launch of $BUNDLE_ID"; exit 1; }
+fi
 
 # A debug build starts slowly on a CI machine.
+ready=no
 for _ in $(seq 1 90); do
-  grep -q PROBE_READY "$OUT/probe.log" 2>/dev/null && break
+  if [ "$READY_FROM" = stdout ]; then
+    grep -q PROBE_READY "$PROBE_LOG" 2>/dev/null && { ready=yes; break; }
+  else
+    xcrun simctl spawn "$UDID" log show --last 5m --style compact --predicate 'eventMessage CONTAINS "PROBE_READY"' \
+      > "$PROBE_LOG" 2>&1 || true
+    grep -q 'PROBE_READY begin=' "$PROBE_LOG" && { ready=yes; break; }
+  fi
   sleep 2
 done
-grep PROBE_READY "$OUT/probe.log"
+if [ "$ready" != yes ]; then
+  evidence not-ready
+  echo "The probe never printed PROBE_READY (read from $READY_FROM). See probe.log and springboard-not-ready.log"
+  exit 1
+fi
+grep PROBE_READY "$PROBE_LOG"
 STARTED=$(date +%s)
 xcrun simctl io "$UDID" screenshot "$OUT/app-in-front.png"
 

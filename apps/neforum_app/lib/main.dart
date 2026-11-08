@@ -97,7 +97,20 @@ Future<void> runNeforum(List<String> args, {Future<void> Function(AppServices se
     await Workmanager().initialize(callbackDispatcher);
   }
 
-  final storage = await openAppStorage();
+  final services = await openWorkspace(await openAppStorage(), prepare: prepare);
+
+  await DesktopIntegration.instance.setCloseToTray(services.settings.minimizeToTray);
+  unawaited(services.startBrowserBridge());
+  unawaited(services.startCloudSync());
+
+  runApp(NeforumRoot(initial: services));
+}
+
+/// What [runNeforum] does with [storage] before the UI exists: the workspace it
+/// names, the reason the last run ended, the startup housekeeping, then [prepare].
+/// Tests run it as the app does.
+@visibleForTesting
+Future<AppServices> openWorkspace(AppStorage storage, {Future<void> Function(AppServices services)? prepare}) async {
   final mode = await storage.readJson('mode.json');
   // The web build is a preview: always a demo workspace.
   final demo = Env.isWeb || (mode?['demo'] as bool? ?? false);
@@ -107,10 +120,5 @@ Future<void> runNeforum(List<String> args, {Future<void> Function(AppServices se
   // closed NEFORUM left behind, and no file being attached is swept away.
   await services.performStartupMaintenance();
   await prepare?.call(services);
-
-  await DesktopIntegration.instance.setCloseToTray(services.settings.minimizeToTray);
-  unawaited(services.startBrowserBridge());
-  unawaited(services.startCloudSync());
-
-  runApp(NeforumRoot(initial: services));
+  return services;
 }
