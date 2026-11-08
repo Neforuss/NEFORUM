@@ -109,13 +109,20 @@ fi
 
 # A debug build starts slowly on a CI machine.
 ready=no
+# Both places, every time: a debug Flutter app on the simulator writes its prints to
+# the system log, not to the redirected stdout, even when the redirected launch was
+# taken (seen on CI: the activity started and went stale, PROBE_READY never reached
+# probe.log).
+SYSLOG_READY="$OUT/probe-syslog.log"
 for _ in $(seq 1 90); do
-  if [ "$READY_FROM" = stdout ]; then
-    grep -q PROBE_READY "$PROBE_LOG" 2>/dev/null && { ready=yes; break; }
-  else
-    xcrun simctl spawn "$UDID" log show --last 5m --style compact --predicate 'eventMessage CONTAINS "PROBE_READY"' \
-      > "$PROBE_LOG" 2>&1 || true
-    grep -q 'PROBE_READY begin=' "$PROBE_LOG" && { ready=yes; break; }
+  if grep -q PROBE_READY "$PROBE_LOG" 2>/dev/null; then ready=yes; READY_FROM=stdout; break; fi
+  xcrun simctl spawn "$UDID" log show --last 10m --style compact --predicate 'eventMessage CONTAINS "PROBE_READY"' \
+    > "$SYSLOG_READY" 2>&1 || true
+  if grep -q 'PROBE_READY begin=' "$SYSLOG_READY"; then
+    ready=yes
+    READY_FROM=syslog
+    cat "$SYSLOG_READY" >> "$PROBE_LOG"
+    break
   fi
   sleep 2
 done
