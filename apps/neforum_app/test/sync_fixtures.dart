@@ -128,6 +128,7 @@ AppSettings populatedSettings() => AppSettings(
       photoFit: PhotoFitMode.crop,
       fillFramePlatforms: const ['tiktok'],
       captionPhotoPlatforms: const ['instagram'],
+      captionOnStory: false, // 1.4.1
       movedAccountIds: const ['moved-1'],
       movedAt: DateTime.utc(2026, 10, 1),
       syncProviderId: 'dropbox',
