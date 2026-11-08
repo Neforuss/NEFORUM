@@ -57,9 +57,14 @@ class _IoDesktop with WindowListener implements DesktopIntegration {
     _windowReady = true;
   }
 
+  /// `flutter test` sets FLUTTER_TEST. The tray's native library is GTK on Linux
+  /// and is called directly, so in a test process with no GTK display it aborted
+  /// the process at exit and the rest of that test file never ran.
+  static final bool _underTest = Platform.environment.containsKey('FLUTTER_TEST');
+
   @override
   Future<void> initTray(void Function(TrayAction action) onAction) async {
-    if (!Env.isDesktop || _tray != null) return;
+    if (!Env.isDesktop || _tray != null || _underTest) return;
     try {
       final tray = TrayIcon.create();
       if (tray == null) return;
