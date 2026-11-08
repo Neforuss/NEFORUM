@@ -166,10 +166,44 @@ bool storyQualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? bac
 /// images at all. A variant whose only photo is the card's background
 /// ([backgroundMediaId], one of the post's own photos) qualifies too: the
 /// card takes the photo's place.
-bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgroundMediaId, bool everyNetwork = false}) {
+///
+/// On a network where the card is a choice ([kTextCardChoicePlatforms],
+/// YouTube Posts), a words-only post goes as text only when the post says so
+/// ([kTextCardChoiceKey] `text`), with a card when it says `card`, and
+/// otherwise with a card exactly when the post makes one for another network
+/// ([postMakesCard]).
+bool qualifiesForTextCard(PlatformDescriptor d, PostVariant v, {String? backgroundMediaId, bool everyNetwork = false, bool postMakesCard = false}) {
   final noMedia = v.media.isEmpty || (backgroundMediaId != null && v.media.length == 1 && v.media.single.id == backgroundMediaId);
-  return takesTextCards(d, everyNetwork: everyNetwork) && noMedia && v.text.trim().isNotEmpty;
+  if (!noMedia || v.text.trim().isEmpty) return false;
+  if (kTextCardChoicePlatforms.contains(d.id)) {
+    if (!acceptsTextCardImages(d)) return false;
+    return switch (textCardChoiceOf(v.extra)) {
+      TextCardChoice.text => false,
+      TextCardChoice.card => true,
+      null => everyNetwork || postMakesCard,
+    };
+  }
+  return takesTextCards(d, everyNetwork: everyNetwork);
 }
+
+/// Networks where a words-only post can go as text or with the post's text
+/// card (1.4.1): YouTube Posts, whose post box takes either.
+const Set<String> kTextCardChoicePlatforms = {'youtube_posts'};
+
+/// `PostOverrides.extra` key of that choice ([TextCardChoice.name]).
+const String kTextCardChoiceKey = 'textCardChoice';
+
+/// A words-only post on a [kTextCardChoicePlatforms] network.
+enum TextCardChoice {
+  /// With the text card (as an image of the words).
+  card,
+
+  /// The words alone.
+  text,
+}
+
+/// The choice in a target's [extra] knobs; null to follow the post.
+TextCardChoice? textCardChoiceOf(Map<String, dynamic> extra) => TextCardChoice.values.asNameMap()[extra[kTextCardChoiceKey]];
 
 /// Whether [d] is a network that gets text cards at all, whatever the post
 /// holds: it needs an image and takes a JPEG, or, with [everyNetwork], it

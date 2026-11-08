@@ -58,7 +58,13 @@ class RulesValidator {
     final images = v.media.where((x) => x.isImage).toList();
     final videos = v.media.where((x) => x.isVideo).toList();
     if (m.requiresMedia && v.media.isEmpty) {
-      issues.add(ValidationIssue.error('media.required', '${d.name} posts need at least one image or video', field: 'media'));
+      // What the network takes, said as it is: a video upload is not a post.
+      final need = m.maxImages == 0 && m.maxVideos > 0
+          ? '${d.name} uploads a video, and this post has none'
+          : m.maxVideos == 0 && m.maxImages > 0
+              ? '${d.name} needs at least one image'
+              : '${d.name} posts need at least one image or video';
+      issues.add(ValidationIssue.error('media.required', need, field: 'media'));
     }
     final sound = v.media.where((x) => x.isAudio).toList();
     if (sound.isNotEmpty) issues.addAll(_validateAudio(sound, v, d));

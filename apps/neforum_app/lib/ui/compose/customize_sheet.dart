@@ -1,8 +1,11 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:mime/mime.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
+import '../../media/text_card.dart' show kTextCardChoiceKey;
 import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
@@ -10,6 +13,7 @@ import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/char_ring.dart';
+import '../../widgets/layout.dart' show showToast;
 import '../../widgets/media_thumb.dart';
 import 'emoji_insert.dart';
 
@@ -28,7 +32,7 @@ class _Extra {
   final String? help;
 }
 
-const Map<String, List<_Extra>> _extrasByPlatform = {
+final Map<String, List<_Extra>> _extrasByPlatform = {
   'reddit': [
     _Extra('subreddit', 'Subreddit', hint: 'e.g. selfhosted (without r/)'),
     _Extra('flair_id', 'Flair ID', hint: 'Optional; some subreddits require one'),
@@ -37,7 +41,30 @@ const Map<String, List<_Extra>> _extrasByPlatform = {
   ],
   'lemmy': [_Extra('community', 'Community', hint: 'e.g. selfhosted@lemmy.world')],
   'pinterest': [_Extra('board', 'Board', hint: 'Board name or ID')],
-  'youtube': [_Extra('privacyStatus', 'Visibility', options: ['public', 'unlisted', 'private'])],
+  // 1.4.1: a video upload's own details (YouTube Data API videos.insert).
+  'youtube': [
+    const _Extra('privacyStatus', 'Visibility',
+        options: ['public', 'unlisted', 'private'],
+        optionLabels: {'public': 'Public', 'unlisted': 'Unlisted (only people with the link)', 'private': 'Private'},
+        defaultLabel: 'From the post\'s visibility'),
+    _Extra('categoryId', 'Category',
+        options: YouTubeAdapter.categories.keys.toList(),
+        optionLabels: YouTubeAdapter.categories,
+        defaultLabel: 'People & Blogs (YouTube\'s default)'),
+    const _Extra('madeForKids', 'Made for kids',
+        boolean: true, help: 'YouTube asks this of every video. A video made for kids gets no personalised ads and no comments.'),
+    const _Extra('containsSyntheticMedia', 'Altered or synthetic content',
+        boolean: true, help: 'Realistic content made or changed with AI or other tools: YouTube shows viewers a label.'),
+    const _Extra('notifySubscribers', 'Tell my subscribers', boolean: true, help: 'Off: the video goes up without a notification to subscribers.'),
+  ],
+  // 1.4.1: a words-only post goes as text, or with the post's text card.
+  'youtube_posts': [
+    const _Extra(kTextCardChoiceKey, 'A post with words only',
+        options: ['card', 'text'],
+        optionLabels: {'card': 'With a text card (an image of the words)', 'text': 'Text only'},
+        defaultLabel: 'A text card when the post makes one for another network',
+        help: 'YouTube Posts takes the words alone or with an image. The card is the one your other networks get.'),
+  ],
   'tiktok': [
     _Extra('privacyLevel', 'Who can watch',
         options: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'],
@@ -134,6 +161,7 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
   /// Settings default where there is one, else off.
   bool _defaultOf(String key) => switch (key) {
         kMentionEveryoneKey => ref.read(settingsProvider).discordMentionEveryone,
+        'notifySubscribers' => true,
         _ => false,
       };
 
@@ -325,6 +353,7 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
               const SizedBox(height: Space.sm),
               for (final e in extras) Padding(padding: const EdgeInsets.only(bottom: Space.md), child: _extraField(e)),
             ],
+            if (d.id == 'youtube') _thumbnailField(),
           ]),
         ),
       ),
@@ -358,6 +387,71 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
     ]);
   }
 
+  /// The custom thumbnail of a YouTube video upload (1.4.1): a JPEG or PNG
+  /// kept with the post and set right after the upload.
+  MediaAttachment? get _thumbnail {
+    final raw = _extra[YouTubeAdapter.thumbnailKey];
+    return raw is Map ? MediaAttachment.fromJson(Map<String, dynamic>.from(raw)) : null;
+  }
+
+  Future<void> _pickThumbnail() async {
+    try {
+      final files = await FilePicker.pickFiles(dialogTitle: 'Choose the video\'s thumbnail', type: FileType.custom, allowedExtensions: const ['jpg', 'jpeg', 'png']);
+      final f = files.firstOrNull;
+      if (f == null) return;
+      final bytes = await f.readAsBytes();
+      final mime = lookupMimeType(f.name, headerBytes: bytes.length > 16 ? bytes.sublist(0, 16) : bytes) ?? '';
+      if (!YouTubeAdapter.thumbnailMimeTypes.contains(mime)) {
+        if (mounted) showToast(context, 'YouTube takes a JPEG or PNG thumbnail', icon: Icons.info_outline_rounded);
+        return;
+      }
+      final made = await ref.read(servicesProvider).media.importBytes(bytes, fileName: f.name, mimeHint: mime);
+      if (!mounted) return;
+      setState(() => _extra[YouTubeAdapter.thumbnailKey] = made.toJson());
+    } on Object catch (e) {
+      if (mounted) showToast(context, 'Could not open the picture: $e', icon: Icons.error_outline_rounded);
+    }
+  }
+
+  Widget _thumbnailField() {
+    final nf = context.nf;
+    final thumb = _thumbnail;
+    final size = thumb == null ? null : '${(thumb.sizeBytes / 1000000).toStringAsFixed(1)} MB';
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.sm),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Thumbnail', style: context.text.titleSmall),
+        const SizedBox(height: Space.xs),
+        Text(
+          'Your own picture for the video, instead of a frame YouTube picks: JPEG or PNG, 1280 x 720 and under 2 MB '
+          'is what YouTube asks for. It needs a verified channel; if YouTube refuses it, the video still goes and NEFORUM says why.',
+          style: context.text.bodySmall,
+        ),
+        const SizedBox(height: Space.sm),
+        Row(children: [
+          if (thumb != null) ...[
+            ClipRRect(borderRadius: Radii.rSm, child: SizedBox(width: 128, height: 72, child: MediaThumb(thumb, size: 72, aspect: 16 / 9))),
+            const SizedBox(width: Space.md),
+            Expanded(
+              child: Text(
+                [thumb.fileName ?? 'Thumbnail', if (thumb.width != null) '${thumb.width} x ${thumb.height}', ?size].join(' · '),
+                style: context.text.bodySmall?.copyWith(color: nf.textMuted),
+              ),
+            ),
+          ] else
+            const Spacer(),
+          if (thumb != null)
+            TextButton(onPressed: () => setState(() => _extra.remove(YouTubeAdapter.thumbnailKey)), child: const Text('Remove')),
+          OutlinedButton.icon(
+            key: const Key('youtube-thumbnail'),
+            onPressed: _pickThumbnail,
+            icon: const Icon(Icons.image_outlined, size: 18),
+            label: Text(thumb == null ? 'Choose thumbnail' : 'Change'),
+          ),
+        ]),
+      ]),
+    );
+  }
   Widget _extraField(_Extra e) {
     final nf = context.nf;
     if (e.boolean) {

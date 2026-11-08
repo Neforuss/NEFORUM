@@ -10,7 +10,8 @@
 //     Image button, opens no file window, leaves the search bar alone;
 //   - the user's own click on a site's Post is watched and reported
 //     (posted: confirmed), the decoy Post is never pressed;
-//   - I posted it reports posted: user.
+//   - I posted it reports posted: user;
+//   - a text-only YouTube Posts job puts the words in and no file anywhere.
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -146,6 +147,9 @@ async function clickPanel(cdp, text) {
 }
 
 async function open(cdp, url) {
+  // Each scenario starts afresh: the tab remembers jobs it filled in
+  // (sessionStorage), and the test jobs' ids repeat between scenarios.
+  await evaluate(cdp, 'try { sessionStorage.clear() } catch {}');
   await cdp.send('Page.navigate', { url });
   await until(cdp, `document.readyState === 'complete' && Array.isArray(window.__results)`, `${url} to load`);
 }
@@ -165,6 +169,16 @@ const scenarios = {
     assert.equal(r.searchFocused, false, 'the search bar was not focused');
   },
 
+  async 'YouTube Posts, text only (1.4.1): the words go in, no file and no image option'(cdp, base) {
+    await open(cdp, `${base}/test/pages/youtube_image.html?p=youtube_posts&qp=0&media=0`);
+    await until(cdp, 'window.__results.length >= 1', 'the fill report');
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.text, 'A photo for the channel', 'the words are in the post box');
+    assert.deepEqual(r.added, [], 'no file was added');
+    assert.equal(r.inputs, 0, 'the image option was never opened');
+    assert.equal(r.windows, 0);
+    assert.equal(r.search, '');
+  },
   async "the user's own Post press is watched and reported as confirmed"(cdp, base) {
     await open(cdp, `${base}/test/pages/post.html?qp=0`);
     await until(cdp, 'window.__results.length >= 1', 'the fill report');

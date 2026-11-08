@@ -994,7 +994,24 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final cardFontHelp = cardFont?.source != null && settings.fontDownloads != FontDownloadMode.off
       ? 'Choose More fonts to download $cardFontFamily.'
       : 'Install or import $cardFontFamily here to use it.';
-  final out = <TargetPreview>[];
+  // 1.4.1: a network where the card is a choice (YouTube Posts) takes the
+  // post's card when another selected network gets one.
+  var postMakesCard = false;
+  if (settings.textCards) {
+    for (final a in accounts) {
+      if (!c.selected.contains(a.id) || kTextCardChoicePlatforms.contains(a.platformId)) continue;
+      final adapter = registry.byId(a.platformId);
+      if (adapter == null) continue;
+      final d = adapter.descriptorForAccount(a);
+      final v = resolver.resolve(post, withMentionDefault(post.targetFor(a.id)!, a.platformId, settings), d, account: a);
+      final placement = adapter.supportsStories(a) ? v.placement : PostPlacement.feed;
+      if ((placement.includesStory && storyQualifiesForTextCard(d, v, backgroundMediaId: backgroundPhotoId)) ||
+          (placement != PostPlacement.story && qualifiesForTextCard(d, v, backgroundMediaId: backgroundPhotoId, everyNetwork: everyNetwork))) {
+        postMakesCard = true;
+        break;
+      }
+    }
+  }  final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
     final adapter = registry.byId(a.platformId);
@@ -1011,7 +1028,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
     final storyCard = settings.textCards && placement.includesStory && storyQualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId);
     final feedCard = settings.textCards &&
         placement != PostPlacement.story &&
-        qualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId, everyNetwork: everyNetwork);
+        qualifiesForTextCard(d, variant, backgroundMediaId: backgroundPhotoId, everyNetwork: everyNetwork, postMakesCard: postMakesCard);
     if (storyCard || feedCard) {
       final signed = c.textCardBranded[d.id] ?? settings.textCardBranded(d.id);
       MediaAttachment placeholder({bool story = false}) => textCardPlaceholder(
@@ -1057,7 +1074,10 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
               ? '${d.name} needs an image, so your words go out as'
               : '${d.name} gets your words as';
       issues.add(ValidationIssue.info(
-          'media.text_card', '$what ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}',
+          'media.text_card',
+          '$what ${signed ? 'a NEFORUM' : 'a plain'} text card${background == null ? '' : ' over your photo'}'
+          // 1.4.1: where the card is a choice, say how to send the words alone.
+          '${feedCard && kTextCardChoicePlatforms.contains(d.id) ? ' (Customize: text only)' : ''}',
           field: 'media'));
       if (cardFontMissing) {
         issues.add(ValidationIssue.info(

@@ -19,7 +19,10 @@ const youtubeVideoMimeTypes = {
 /// and `videos.insert` reference, quota page last updated 2026-10-08).
 const youtubeDescriptor = PlatformDescriptor(
   id: 'youtube',
-  name: 'YouTube',
+  // 1.4.1: named for what it does, beside YouTube Posts (the channel's text
+  // and image posts), so nobody takes one for the other.
+  name: 'YouTube videos',
+  shortName: 'YT videos',
   iconKey: 'youtube',
   homepage: 'https://www.youtube.com',
   tiers: {PlatformTier.byokApi, PlatformTier.handoff},
@@ -58,8 +61,9 @@ const youtubeDescriptor = PlatformDescriptor(
     videoMimeTypes: youtubeVideoMimeTypes,
     supportsAltText: false,
     requiresPublicMediaUrl: false,
-    notes: 'Exactly one video per post (up to 12 hours / 256 GB; channels that are not phone-verified are limited '
-        'to 15 minutes). Vertical or square clips of 3 minutes or less automatically become Shorts.',
+    notes: 'A video upload, not a post: exactly one video (up to 12 hours / 256 GB; channels that are not phone-verified are limited '
+        'to 15 minutes). Vertical or square clips of 3 minutes or less automatically become Shorts. Text and image posts go to '
+        'YouTube Posts. A custom thumbnail (JPEG or PNG) can go with the video: Customize > YouTube video.',
   ),
   defaultQuotas: [
     QuotaRule(

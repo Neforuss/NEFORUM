@@ -1,6 +1,6 @@
 # Text cards: your @handle and the look of the words
 
-When a post is only words, the networks that need an image (Instagram, Pinterest, TikTok photo posts, Snapchat) get a NEFORUM text card: your words set large on a card, with the NEFORUM signature and your handle. With **Use the text card on every network**, every network that takes images gets the same card, each at its own shape. The text card editor sets your own @handle on the cards and how the words look, once for every network.
+When a post is only words, the networks that need an image (Instagram, Pinterest, TikTok photo posts, Snapchat) get a NEFORUM text card: your words set large on a card, with the NEFORUM signature and your handle. With **Use the text card on every network**, every network that takes images gets the same card, each at its own shape. **YouTube Posts** takes the words alone or with an image: it gets the card whenever another network of the post does, and Customize can make it **Text only** or always **With a text card** for that post. **YouTube videos** uploads videos only, so it never gets a card. The text card editor sets your own @handle on the cards and how the words look, once for every network.
 
 ## Steps
 

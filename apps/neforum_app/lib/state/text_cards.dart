@@ -210,17 +210,42 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
   var backdropTried = false;
   var p = post;
 
+  // A target that lists only a card gets back the list the card took the
+  // place of (every photo when it had none of its own). The story's own
+  // copies are made again below and by attachFittedPhotos.
+  PostTarget baseOf(PostTarget t) {
+    final own = t.overrides.mediaIds;
+    final userIds = own?.where((id) => !cards.containsKey(id)).toList();
+    final onlyCards = own != null && own.isNotEmpty && userIds!.isEmpty;
+    return t.copyWith(
+        overrides: _withOwnMediaIds(t.overrides, onlyCards ? _replacedMediaIds(t.overrides) : userIds).copyWith(clearStoryMediaIds: true));
+  }
+
+  // 1.4.1: a network where the card is a choice (YouTube Posts) takes the
+  // post's card when another network of the post gets one.
+  var postMakesCard = false;
+  if (settings.textCards) {
+    for (final t in post.targets) {
+      final account = await s.accounts.get(t.accountId);
+      final adapter = account == null ? null : s.registry.byId(account.platformId);
+      if (account == null || adapter == null || kTextCardChoicePlatforms.contains(account.platformId)) continue;
+      final d = adapter.descriptorForAccount(account);
+      final base = baseOf(t);
+      final variant = resolver.resolve(post.withTarget(base), base, d, account: account);
+      final placement = adapter.supportsStories(account) ? variant.placement : PostPlacement.feed;
+      if ((placement.includesStory && storyQualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId)) ||
+          (placement != PostPlacement.story && qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId, everyNetwork: everyNetwork))) {
+        postMakesCard = true;
+        break;
+      }
+    }
+  }
+
   for (final original in post.targets) {
     final t = p.targetFor(original.accountId)!;
     final own = t.overrides.mediaIds;
     final oldCard = own?.map((id) => cards[id]).whereType<MediaAttachment>().firstOrNull;
-    final userIds = own?.where((id) => !cards.containsKey(id)).toList();
-    final onlyCards = own != null && own.isNotEmpty && userIds!.isEmpty;
-    // A target that lists only a card gets back the list the card took the
-    // place of (every photo when it had none of its own). The story's own
-    // copies are made again below and by attachFittedPhotos.
-    final base = t.copyWith(
-        overrides: _withOwnMediaIds(t.overrides, onlyCards ? _replacedMediaIds(t.overrides) : userIds).copyWith(clearStoryMediaIds: true));
+    final base = baseOf(t);
     p = p.withTarget(base);
     if (!settings.textCards) continue;
 
@@ -235,7 +260,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     final placement = adapter.supportsStories(account) ? variant.placement : PostPlacement.feed;
     final storyCard = placement.includesStory && storyQualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId);
     final feedCard = placement != PostPlacement.story &&
-        qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId, everyNetwork: everyNetwork);
+        qualifiesForTextCard(d, variant, backgroundMediaId: ownBackgroundId, everyNetwork: everyNetwork, postMakesCard: postMakesCard);
     if (!storyCard && !feedCard) continue;
 
     if (chosenBackground != null && backgroundPhoto != null && !backdropTried) {

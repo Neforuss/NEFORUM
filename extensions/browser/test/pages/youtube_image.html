@@ -20,6 +20,7 @@
     text field on the page; the post box's Image button opens a hidden file
     input with a click, the way YouTube's does, and nothing else takes files.
       ?p=youtube_posts
+      &media=0       a words-only post (text only, 1.4.1): no file goes anywhere
     window.result() says where the photo went and what the search bar holds.
     Load it, wait for the fill, then press Attach file on the panel: the photo
     must land once more in the post box, the search bar must stay empty and
@@ -36,6 +37,7 @@
   </ytd-backstage-post-dialog-renderer>
   <script>
     window.NEFORUM_TEST_TEXT = 'A photo for the channel';
+    if (new URLSearchParams(location.search).get('media') === '0') window.NEFORUM_TEST_MEDIA = false;
     const box = document.querySelector('ytd-backstage-post-dialog-renderer');
     const thumbs = document.getElementById('thumbs');
     window.__added = [];
@@ -59,6 +61,8 @@
       windows: window.__windows,
       search: document.querySelector('ytd-searchbox input').value,
       searchFocused: document.activeElement === document.querySelector('ytd-searchbox input'),
+      text: document.getElementById('contenteditable-root').innerText.trim(),
+      inputs: box.querySelectorAll('input[type="file"]').length,
     });
   </script>
   <script src="harness.js"></script>

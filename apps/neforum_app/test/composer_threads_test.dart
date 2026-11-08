@@ -12,6 +12,7 @@ import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
+import 'package:neforum_app/ui/compose/customize_sheet.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
@@ -500,6 +501,68 @@ void main() {
       await tester.tap(find.text('Save'));
       await settle(tester);
       expect(c.read(composerProvider).overrides[discord.id], isNull);
+      await finish(tester);
+    });
+
+    testWidgets('1.4.1: YouTube videos and YouTube Posts each say what they are, with their own options', (tester) async {
+      final (services, c) = await boot(tester);
+      c.read(routerProvider).go('/compose');
+      await settle(tester);
+      final videos = ConnectedAccount(
+          id: 'demo-yt', platformId: 'youtube', tier: PlatformTier.byokApi, displayName: 'My channel', createdAt: DateTime.now(), config: const {'demo': true});
+      final posts = ConnectedAccount(id: 'demo-ytp', platformId: 'youtube_posts', tier: PlatformTier.handoff, displayName: 'My channel', createdAt: DateTime.now());
+      final ig = c.read(accountListProvider).where((a) => a.platformId == 'instagram').firstOrNull;
+      await tester.runAsync(() async {
+        await services.accounts.upsert(videos);
+        await services.accounts.upsert(posts);
+      });
+      await settle(tester);
+      c.read(composerProvider.notifier).selectAccounts([videos.id, posts.id, ?ig?.id]);
+      await tester.enterText(_editor, 'I love apples');
+      await settle(tester);
+
+      final previews = c.read(composerPreviewsProvider);
+      final yt = previews.singleWhere((p) => p.account.id == videos.id);
+      expect(yt.issues.firstWhere((i) => i.code == 'media.required').message, 'YouTube videos uploads a video, and this post has none');
+      expect(yt.issues.map((i) => i.code), contains('youtube.posts_for_text'));
+      expect(find.text('YouTube videos uploads a video: add one'), findsWidgets, reason: 'the empty preview says so too');
+      if (ig != null) {
+        // Instagram makes a card, so YouTube Posts takes it, and says how to send text only.
+        final ytp = previews.singleWhere((p) => p.account.id == posts.id);
+        expect(ytp.variant.media.single.isTextCard, isTrue);
+        expect(ytp.issues.firstWhere((i) => i.code == 'media.text_card').message, contains('(Customize: text only)'));
+      }
+
+      // Customize for YouTube videos: the upload's details and the thumbnail.
+      // (Opened from its preview; the preview list builds cards as they scroll in.)
+      Future<void> customize(String accountId) async {
+        unawaited(showCustomizeSheet(tester.element(find.byType(Scaffold).first), c.read(composerPreviewsProvider).singleWhere((p) => p.account.id == accountId)));
+        await settle(tester);
+      }
+
+      await customize(videos.id);
+      expect(find.text('Customize for YouTube videos'), findsOneWidget);
+      for (final label in ['Category', 'Made for kids', 'Altered or synthetic content', 'Tell my subscribers', 'Thumbnail']) {
+        expect(find.text(label), findsWidgets, reason: label);
+      }
+      expect(find.byKey(const Key('youtube-thumbnail')), findsOneWidget);
+      expect(tester.widget<SwitchListTile>(find.widgetWithText(SwitchListTile, 'Tell my subscribers')).value, isTrue, reason: 'on unless turned off');
+      await tester.tap(find.text('Cancel'));
+      await settle(tester);
+
+      // Customize for YouTube Posts: text only for this post.
+      await customize(posts.id);
+      expect(find.text('A post with words only'), findsOneWidget);
+      await tester.ensureVisible(find.text('A post with words only'));
+      await tester.tap(find.text('A post with words only'));
+      await settle(tester);
+      await tester.tap(find.text('Text only').last);
+      await settle(tester);
+      await tester.tap(find.text('Save'));
+      await settle(tester);
+      expect(c.read(composerProvider).overrides[posts.id]!.extra['textCardChoice'], 'text');
+      final after = c.read(composerPreviewsProvider).singleWhere((p) => p.account.id == posts.id);
+      expect(after.variant.media, isEmpty, reason: 'the words alone');
       await finish(tester);
     });
 

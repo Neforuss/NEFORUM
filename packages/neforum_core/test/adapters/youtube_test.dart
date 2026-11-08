@@ -317,8 +317,22 @@ void main() {
       final issues = adapter.validate(_variant(title: null, media: [fakeImage()]), _byok());
       final codes = issues.map((i) => i.code);
       expect(codes, containsAll(['youtube.video_required', 'title.required', 'media.too_many_images']));
-      final none = adapter.validate(_variant(media: const []), _byok()).map((i) => i.code);
-      expect(none, contains('media.required'));
+      final none = adapter.validate(_variant(media: const []), _byok());
+      expect(none.map((i) => i.code), containsAll(['media.required', 'youtube.posts_for_text']));
+      // 1.4.1: said as what it is, a video upload, never "posts".
+      expect(none.firstWhere((i) => i.code == 'media.required').message, 'YouTube videos uploads a video, and this post has none');
+      expect(none.firstWhere((i) => i.code == 'youtube.posts_for_text').message, contains('select YouTube Posts'));
+      expect(adapter.validate(_variant(media: [fakeImage()]), _byok()).firstWhere((i) => i.code == 'youtube.video_required').message,
+          contains('images and text cards go to YouTube Posts'));
+      expect(adapter.descriptor.name, 'YouTube videos');
+      expect(none.every((i) => !i.message.contains('YouTube posts need')), isTrue);
+    });
+
+    test('an unknown category is flagged; the listed ones pass', () {
+      expect(adapter.validate(_variant(extra: {'categoryId': '999'}), _byok()).map((i) => i.code), contains('youtube.category_unknown'));
+      for (final id in YouTubeAdapter.categories.keys) {
+        expect(adapter.validate(_variant(extra: {'categoryId': id}), _byok()).map((i) => i.code), isNot(contains('youtube.category_unknown')));
+      }
     });
 
     test('title and description limits', () {
@@ -433,6 +447,86 @@ void main() {
       expect(put.headers['content-type'], 'video/mp4');
       expect(put.headers.containsKey('content-range'), isFalse);
       expect(put.bodyBytes, _videoBytes);
+    });
+
+    group('custom thumbnail (1.4.1)', () {
+      final thumb = const MediaAttachment(id: 'thumb', path: '/media/thumb.jpg', mimeType: 'image/jpeg', sizeBytes: 300000, width: 1280, height: 720).toJson();
+      /// YouTube: the upload, then [thumbnail] for thumbnails.set.
+      (List<http.Request>, AdapterContext) youtube(http.Response Function() thumbnail) {
+        final calls = <http.Request>[];
+        final ctx = testContext(
+          mediaBytes: _videoBytes,
+          handler: (r) async {
+            calls.add(r);
+            if (r.url.path == '/upload/youtube/v3/thumbnails/set') return thumbnail();
+            if (r.method == 'POST') return http.Response('', 200, headers: {'location': _sessionUrl});
+            return _json(_videoResource(), 201);
+          },
+        );
+        return (calls, ctx);
+      }
+
+      test('set right after the upload, with the image as the body; the details go in the upload', () async {
+        final (calls, ctx) = youtube(() => _json({'items': []}));
+        final res = await adapter.publish(
+            _variant(extra: {'thumbnail': thumb, 'categoryId': '20', 'madeForKids': true, 'containsSyntheticMedia': true}), _byok(), _secrets, ctx);
+        expect(res.success, isTrue, reason: '${res.error}');
+        expect(res.notice, isNull);
+        expect(calls.map((c) => '${c.method} ${c.url.path}'),
+            ['POST /upload/youtube/v3/videos', 'PUT /upload/youtube/v3/videos', 'POST /upload/youtube/v3/thumbnails/set']);
+        final set = calls.last;
+        expect(set.url.queryParameters['videoId'], _videoId);
+        expect(set.headers['authorization'], 'Bearer ya29.token');
+        expect(set.headers['content-type'], 'image/jpeg');
+        expect(set.bodyBytes, _videoBytes, reason: 'the stored thumbnail file, read like any media');
+        final body = bodyOf(calls.first);
+        expect((body['snippet'] as Map)['categoryId'], '20');
+        expect((body['status'] as Map)['selfDeclaredMadeForKids'], isTrue);
+        expect((body['status'] as Map)['containsSyntheticMedia'], isTrue);
+      });
+
+      test('YouTube refuses it (unverified channel): the video still counts as posted, and the notice says why', () async {
+        final (_, ctx) = youtube(() => _googleError(403, 'forbidden', 'The authenticated user doesn\'t have permissions to upload and set custom video thumbnails.'));
+        final res = await adapter.publish(_variant(extra: {'thumbnail': thumb}), _byok(), _secrets, ctx);
+        expect(res.success, isTrue);
+        expect(res.remoteId, _videoId);
+        expect(res.notice, contains('the custom thumbnail did not go'));
+        expect(res.notice, contains('verify the channel'));
+        expect(PublishResult.fromJson(res.toJson()).notice, res.notice, reason: 'kept with the post');
+      });
+
+      test('too many thumbnails lately, or an image YouTube cannot read: posted, with the reason', () async {
+        for (final (answer, words) in [
+          (_googleError(429, 'uploadRateLimitExceeded'), 'too many thumbnails'),
+          (_googleError(400, 'invalidImage'), 'could not read the image'),
+        ]) {
+          final (_, ctx) = youtube(() => answer);
+          final res = await adapter.publish(_variant(extra: {'thumbnail': thumb}), _byok(), _secrets, ctx);
+          expect(res.success, isTrue);
+          expect(res.notice, contains(words));
+        }
+      });
+
+      test('a scheduled video carries the notice too', () async {
+        final (_, ctx) = youtube(() => _googleError(403, 'forbidden'));
+        final res = await adapter.publish(
+            _variant(extra: {'thumbnail': thumb}, scheduledAt: testNow.add(const Duration(days: 2))), _scheduling(), {..._secrets, 'scope': _allScopes}, ctx);
+        expect(res.isHeldByPlatform, isTrue, reason: '${res.error}');
+        expect(res.notice, contains('did not go'));
+      });
+
+      test('checked before posting: type, size, width; hand-off sets it in YouTube Studio', () {
+        MediaAttachment withThumb(String mime, int bytes, int width) => MediaAttachment(id: 't', path: '/t', mimeType: mime, sizeBytes: bytes, width: width, height: 720);
+        List<String> codes(MediaAttachment t, [ConnectedAccount? a]) => adapter.validate(_variant(extra: {'thumbnail': t.toJson()}), a ?? _byok()).map((i) => i.code).toList();
+        expect(codes(withThumb('image/webp', 1000, 1280)), contains('youtube.thumbnail_type'));
+        expect(codes(withThumb('image/png', 51 * 1024 * 1024, 1280)), contains('youtube.thumbnail_too_big'));
+        expect(codes(withThumb('image/jpeg', 3 * 1024 * 1024, 1280)), contains('youtube.thumbnail_large'));
+        expect(codes(withThumb('image/jpeg', 1000, 480)), contains('youtube.thumbnail_small'));
+        final ok = codes(withThumb('image/jpeg', 300000, 1280));
+        expect(ok.where((c) => c.startsWith('youtube.thumbnail_') && c != 'youtube.thumbnail_verified'), isEmpty);
+        expect(adapter.validate(_variant(extra: {'thumbnail': withThumb('image/jpeg', 1000, 1280).toJson()}), _byok()).hasErrors, isFalse);
+        expect(codes(withThumb('image/jpeg', 1000, 1280), fakeAccount('youtube', tier: PlatformTier.handoff)), contains('youtube.thumbnail_handoff'));
+      });
     });
 
     test('scheduled upload is private with publishAt and returns a held (scheduled) result', () async {

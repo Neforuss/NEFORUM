@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
@@ -41,6 +42,10 @@ import 'youtube_descriptor.dart';
 /// * `notifySubscribers`: default true; false skips subscriber notifications.
 /// * `madeForKids`: default false (`status.selfDeclaredMadeForKids`).
 /// * `containsSyntheticMedia`: disclose realistic AI-altered content.
+/// * `thumbnail` (1.4.1): a custom thumbnail, a stored JPEG or PNG
+///   ([MediaAttachment] JSON), set with `thumbnails.set` right after the upload.
+///   YouTube refusing it (unverified channel, too big) does not undo the video:
+///   the result says why in its [PublishResult.notice].
 class YouTubeAdapter extends PlatformAdapter {
   YouTubeAdapter({this.maxResumes = 3, this.resumeDelay = const Duration(seconds: 2)});
 
@@ -51,6 +56,49 @@ class YouTubeAdapter extends PlatformAdapter {
   final Duration resumeDelay;
 
   static const privacyStatuses = {'public', 'unlisted', 'private'};
+
+  /// `PostOverrides.extra` key of the custom thumbnail (1.4.1).
+  static const String thumbnailKey = 'thumbnail';
+
+  /// What `thumbnails.set` takes: JPEG or PNG, at most 50 MB (the API
+  /// reference); YouTube Help asks for under 2 MB, 1280 x 720, at least 640
+  /// pixels wide.
+  static const thumbnailMimeTypes = {'image/jpeg', 'image/png'};
+  static const int thumbnailMaxBytes = 50 * 1024 * 1024;
+  static const int thumbnailAdvisedMaxBytes = 2 * 1024 * 1024;
+  static const int thumbnailMinWidth = 640;
+
+  /// The categories a channel can pick when it uploads (YouTube's
+  /// assignable categories for the United States, by `videoCategories.list`
+  /// id). `snippet.categoryId`; YouTube's own default is People & Blogs.
+  static const Map<String, String> categories = {
+    '1': 'Film & Animation',
+    '2': 'Autos & Vehicles',
+    '10': 'Music',
+    '15': 'Pets & Animals',
+    '17': 'Sports',
+    '19': 'Travel & Events',
+    '20': 'Gaming',
+    '22': 'People & Blogs',
+    '23': 'Comedy',
+    '24': 'Entertainment',
+    '25': 'News & Politics',
+    '26': 'Howto & Style',
+    '27': 'Education',
+    '28': 'Science & Technology',
+    '29': 'Nonprofits & Activism',
+  };
+
+  /// The custom thumbnail of [v], or null.
+  static MediaAttachment? thumbnailOf(PostVariant v) {
+    final raw = v.extra[thumbnailKey];
+    if (raw is! Map) return null;
+    try {
+      return MediaAttachment.fromJson(Map<String, dynamic>.from(raw));
+    } on Object {
+      return null;
+    }
+  }
 
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.youTubeFor(account);
@@ -72,7 +120,7 @@ class YouTubeAdapter extends PlatformAdapter {
           id: const Uuid().v4(),
           platformId: id,
           tier: tier,
-          displayName: name.isEmpty ? 'YouTube' : name,
+          displayName: name.isEmpty ? 'YouTube videos' : name,
           createdAt: ctx.now(),
         ),
       );
@@ -282,7 +330,19 @@ class YouTubeAdapter extends PlatformAdapter {
     final issues = super.validate(variant, account);
     final videos = variant.media.where((m) => m.isVideo).toList();
     if (variant.media.isNotEmpty && videos.isEmpty) {
-      issues.add(const ValidationIssue.error('youtube.video_required', 'YouTube posts need a video', field: 'media'));
+      issues.add(const ValidationIssue.error('youtube.video_required',
+          'YouTube videos uploads a video, not images: images and text cards go to YouTube Posts', field: 'media'));
+    }
+    if (videos.isEmpty) {
+      // 1.4.1: the two YouTube networks are easy to take for each other.
+      issues.add(const ValidationIssue.info('youtube.posts_for_text',
+          'For a text, image or text-card post on your channel, select YouTube Posts (your channel\'s Posts tab)', field: 'media'));
+    }
+    issues.addAll(_thumbnailIssues(variant, account));
+    final category = variant.extra['categoryId'];
+    if (category != null && !categories.containsKey('$category'.trim())) {
+      issues.add(ValidationIssue.warning('youtube.category_unknown',
+          'YouTube category "$category" is not one NEFORUM knows; YouTube may refuse it', field: 'account'));
     }
     if (_hasAngle(variant.title ?? '')) {
       issues.add(const ValidationIssue.warning(
@@ -341,6 +401,75 @@ class YouTubeAdapter extends PlatformAdapter {
   }
 
   static bool _hasAngle(String s) => s.contains('<') || s.contains('>');
+
+  /// What is wrong with the custom thumbnail of [v], checked against what
+  /// `thumbnails.set` takes and YouTube Help advises.
+  static List<ValidationIssue> _thumbnailIssues(PostVariant v, ConnectedAccount account) {
+    final thumb = thumbnailOf(v);
+    if (thumb == null) return const [];
+    if (account.tier != PlatformTier.byokApi) {
+      return const [
+        ValidationIssue.info('youtube.thumbnail_handoff',
+            'Hand-off cannot set the thumbnail: pick it in YouTube Studio\'s upload window (it is saved with the post)', field: 'account'),
+      ];
+    }
+    return [
+      if (!thumbnailMimeTypes.contains(thumb.mimeType))
+        const ValidationIssue.error('youtube.thumbnail_type', 'The YouTube thumbnail must be a JPEG or PNG', field: 'account')
+      else if (thumb.sizeBytes > thumbnailMaxBytes)
+        const ValidationIssue.error('youtube.thumbnail_too_big', 'The YouTube thumbnail is over 50 MB, the most YouTube takes', field: 'account')
+      else if (thumb.sizeBytes > thumbnailAdvisedMaxBytes)
+        const ValidationIssue.warning('youtube.thumbnail_large',
+            'The YouTube thumbnail is over 2 MB; YouTube asks for less, and may refuse it (the video still goes)', field: 'account'),
+      if (thumb.width != null && thumb.width! < thumbnailMinWidth)
+        const ValidationIssue.warning('youtube.thumbnail_small',
+            'The YouTube thumbnail is under 640 pixels wide; YouTube asks for 1280 x 720', field: 'account'),
+      const ValidationIssue.info('youtube.thumbnail_verified',
+          'A custom thumbnail needs a verified channel; if YouTube refuses it, the video still goes and NEFORUM says why',
+          field: 'account'),
+    ];
+  }
+
+  /// Sets the custom thumbnail of [v] on the uploaded video [videoId]
+  /// (`thumbnails.set`). Never fails the post, which is already on YouTube:
+  /// returns what to tell the user when the thumbnail did not go, else null.
+  Future<String?> _setThumbnail(PostVariant v, String videoId, String accessToken, AdapterContext ctx) async {
+    final thumb = thumbnailOf(v);
+    if (thumb == null) return null;
+    const fallback = 'YouTube shows a frame of the video instead; pick a thumbnail in YouTube Studio.';
+    final Uint8List bytes;
+    try {
+      bytes = await ctx.readMedia(thumb);
+    } on Object catch (e) {
+      ctx.log.warn('Could not read the YouTube thumbnail ${thumb.path}: $e');
+      return 'The video is up, but its thumbnail file could not be read on this device. $fallback';
+    }
+    ctx.progress('Setting the thumbnail');
+    final NeforumResponse res;
+    try {
+      res = await ctx.http.send('POST', YouTubeEndpoints.thumbnailSet(videoId),
+          headers: {'Authorization': 'Bearer $accessToken', 'Content-Type': thumbnailMimeTypes.contains(thumb.mimeType) ? thumb.mimeType : 'application/octet-stream'},
+          bytes: bytes,
+          throwOnError: false);
+    } on Object catch (e) {
+      ctx.log.warn('Could not reach YouTube to set the thumbnail: $e');
+      return 'The video is up, but YouTube could not be reached to set its thumbnail. $fallback';
+    }
+    if (res.ok) {
+      ctx.log.info('Custom thumbnail set on video $videoId');
+      return null;
+    }
+    final (reason, message) = googleErrorReason(res);
+    ctx.log.warn('YouTube refused the thumbnail of $videoId: ${res.statusCode} $reason $message');
+    final why = switch ((res.statusCode, reason)) {
+      (403, _) => 'YouTube does not let this channel set custom thumbnails yet (verify the channel at youtube.com/verify)',
+      (429, _) => 'the channel has set too many thumbnails lately',
+      (400, 'invalidImage') => 'YouTube could not read the image',
+      (413, _) => 'the image is too big for YouTube',
+      _ => 'YouTube answered ${res.statusCode}${reason.isEmpty ? '' : ' ($reason)'}',
+    };
+    return 'The video is up, but the custom thumbnail did not go: $why. $fallback';
+  }
 
   /// Why YouTube must not hold this post (code, message), or `null` when it
   /// can. [scope] is the granted OAuth scope string when known (publish);
@@ -414,7 +543,7 @@ class YouTubeAdapter extends PlatformAdapter {
     final tokens = OAuthTokens.fromSecrets(secrets);
     if (tokens == null) throw const AdapterException(PublishError.auth(_notSignedIn));
     final videos = variant.media.where((m) => m.isVideo).toList();
-    if (videos.isEmpty) throw const AdapterException(PublishError.validation('YouTube posts need a video'));
+    if (videos.isEmpty) throw const AdapterException(PublishError.validation('YouTube videos uploads a video, and this post has none'));
     if (videos.length > 1 || variant.media.length > 1) {
       throw const AdapterException(PublishError.validation('YouTube takes exactly one video per post'));
     }
@@ -444,14 +573,15 @@ class YouTubeAdapter extends PlatformAdapter {
     }
     _checkStatus(resource, metadata, videoId, ctx);
     final url = 'https://youtu.be/$videoId';
+    final notice = await _setThumbnail(variant, videoId, tokens.accessToken, ctx);
     if (holdUntil != null) {
       if (_map(resource['status'])['publishAt'] == null) {
         ctx.log.warn('YouTube did not echo publishAt for video $videoId; check in YouTube Studio that it is scheduled');
       }
       ctx.log.info('YouTube holds video $videoId as private until ${rfc3339(holdUntil)}');
-      return PublishResult.scheduled(remoteId: videoId, scheduledFor: holdUntil, remoteUrl: url);
+      return PublishResult.scheduled(remoteId: videoId, scheduledFor: holdUntil, remoteUrl: url, notice: notice);
     }
-    return PublishResult.ok(remoteId: videoId, remoteUrl: url, publishedAt: ctx.now());
+    return PublishResult.ok(remoteId: videoId, remoteUrl: url, publishedAt: ctx.now(), notice: notice);
   }
 
   @override

@@ -314,7 +314,14 @@ class _Visual extends ConsumerWidget {
                 Icon(Icons.add_photo_alternate_outlined, color: nf.textFaint, size: 30),
                 const SizedBox(height: Space.sm),
                 Text(
-                  p.descriptor.media.requiresMedia ? '${p.descriptor.name} needs a photo or video' : 'Add a photo or video',
+                  // 1.4.1: what the network takes, said as it is.
+                  p.descriptor.media.requiresMedia
+                      ? p.descriptor.media.maxImages == 0
+                          ? '${p.descriptor.name} uploads a video: add one'
+                          : p.descriptor.media.maxVideos == 0
+                              ? '${p.descriptor.name} needs a photo'
+                              : '${p.descriptor.name} needs a photo or video'
+                      : 'Add a photo or video',
                   textAlign: TextAlign.center,
                   style: context.text.bodySmall?.copyWith(color: nf.textFaint),
                 ),
