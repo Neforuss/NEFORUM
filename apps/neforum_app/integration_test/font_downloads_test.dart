@@ -165,7 +165,18 @@ void main() {
     await tester.tap(find.text('open'));
     await pumpUntil(() => find.byKey(const Key('font-search')).evaluate().isNotEmpty, 'the picker');
     await pumpUntil(() => services.asked.contains('/v1/fonts'), 'the list to be asked for');
-    await tester.enterText(find.byKey(const Key('font-search')), 'inter');
+    // "Find more fonts" lists only what can be downloaded. Without it, a small
+    // window (CI's is about 926 x 650) keeps the Download rows below the fold,
+    // and the list only builds the rows on screen.
+    await tester.tap(find.byKey(const Key('font-find-more')));
+    await pumpUntil(() => find.byKey(const ValueKey('font-catalog-lobster')).evaluate().isNotEmpty, 'the downloadable fonts');
+    // Typed through the field's own editing state, the way a keystroke arrives
+    // (onChanged runs). The test keyboard does not follow focus reliably on the
+    // real engine once the button has taken it.
+    tester
+        .state<EditableTextState>(find.descendant(of: find.byKey(const Key('font-search')), matching: find.byType(EditableText)))
+        .userUpdateTextEditingValue(const TextEditingValue(text: 'inter', selection: TextSelection.collapsed(offset: 5)), SelectionChangedCause.keyboard);
+    await pumpUntil(() => tester.widget<TextField>(find.byKey(const Key('font-search'))).controller?.text == 'inter', 'the search text to land');
     await pumpUntil(() => find.byKey(const ValueKey('font-catalog-inter')).evaluate().isNotEmpty, 'the search to find it');
     await pumpUntil(() => find.byKey(const ValueKey('font-catalog-lobster')).evaluate().isEmpty, 'the search to narrow the list');
     await tester.ensureVisible(find.byKey(const ValueKey('font-catalog-inter')));

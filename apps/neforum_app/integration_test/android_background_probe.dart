@@ -80,6 +80,12 @@ Future<void> _tap() async {
   try {
     final done = await ProviderScope.containerOf(app!, listen: false).read(postActionsProvider).publishExisting(kProbePostId);
     debugPrint('PROBE finished status=${done.status.name} targets=${done.targets.map((t) => t.status.name).join(',')}');
+    // Why a target failed, so a red run says what went wrong. The fake server
+    // holds no secrets, so its error text is safe to print.
+    for (final t in done.targets) {
+      final e = t.result?.error;
+      if (e != null) debugPrint('PROBE error kind=${e.kind.name} status=${e.statusCode} message=${e.message} raw=${e.raw}');
+    }
   } on Object catch (e) {
     debugPrint('PROBE stopped ${e.runtimeType}');
   }
