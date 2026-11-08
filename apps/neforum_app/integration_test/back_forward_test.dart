@@ -349,7 +349,12 @@ void main() {
       return true;
     }
 
-    Finder section(String label) => find.byWidgetPredicate((w) => w is Semantics && w.properties.label == label && w.properties.button == true);
+    /// The section's button: the sidebar or rail's when the window is wide, else
+    /// the compact layout's own label (CI's window at zoom 1.5 is about 617 wide).
+    Finder section(String label) {
+      final button = find.byWidgetPredicate((w) => w is Semantics && w.properties.label == label && w.properties.button == true);
+      return button.evaluate().isNotEmpty ? button : find.text(label).hitTestable();
+    }
 
     /// The view's physical pixels for a logical position, as `UiZoom` divides
     /// them: the engine's coordinates over zoom, then over the screen's ratio.

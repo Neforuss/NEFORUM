@@ -40,7 +40,18 @@ APP=build/ios-simulator/Build/Products/Debug-iphonesimulator/Runner.app
 test -d "$APP/PlugIns/NeforumLiveActivity.appex"
 
 xcrun simctl install "$UDID" "$APP"
-xcrun simctl launch --stdout="$OUT/probe.log" --stderr="$OUT/probe.log" "$UDID" "$BUNDLE_ID"
+# A freshly booted simulator's SpringBoard can refuse the first launches
+# ("denied by service delegate (SBMainWorkspace)") for a few seconds.
+launched=no
+for attempt in 1 2 3 4 5 6; do
+  if xcrun simctl launch --stdout="$OUT/probe.log" --stderr="$OUT/probe.log" "$UDID" "$BUNDLE_ID" 2>> "$OUT/launch.log"; then
+    launched=yes
+    break
+  fi
+  echo "launch attempt $attempt refused" | tee -a "$OUT/launch.log"
+  sleep 5
+done
+[ "$launched" = yes ] || { echo "The simulator refused every launch of $BUNDLE_ID"; exit 1; }
 
 # A debug build starts slowly on a CI machine.
 for _ in $(seq 1 90); do

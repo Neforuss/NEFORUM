@@ -24,10 +24,6 @@ class ShareChannel(private val activity: Activity) {
         MethodChannel(messenger, NAME).setMethodCallHandler { call, result -> handle(call, result) }
     }
 
-    companion object {
-        const val NAME = "neforum/share"
-    }
-
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         if (call.method != "share") {
             result.notImplemented()
@@ -80,6 +76,8 @@ class ShareChannel(private val activity: Activity) {
     }
 
     companion object {
+        const val NAME = "neforum/share"
+
         // The type of the share: text/plain without files; else the files'
         // own type when they all have one, else their family with a
         // wildcard subtype (all images, all videos), else any type.
