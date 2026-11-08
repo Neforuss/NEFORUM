@@ -334,10 +334,9 @@ class _Visual extends ConsumerWidget {
                         text: captionStyle.wordsFor(captionWords(_previewPost(ref), p.target)),
                         style: captionStyle,
                         fit: settings.photoFit,
-                      ),
-                      Align(
-                        alignment: const Alignment(0, 0.35),
-                        child: Icon(Icons.play_circle_outline_rounded, size: w * 0.18, color: Colors.white70),
+                        frameAspect: blockFrame,
+                        // Where the video plays, as the saved video has it.
+                        contentAspect: first.aspectRatio,
                       ),
                     ]),
                   ),
@@ -354,6 +353,7 @@ class _Visual extends ConsumerWidget {
                       text: captionStyle.wordsFor(captionWords(_previewPost(ref), p.target)),
                       style: captionStyle,
                       fit: settings.photoFit,
+                      frameAspect: blockFrame,
                     ),
                   ),
                 )

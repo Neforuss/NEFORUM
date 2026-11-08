@@ -32,7 +32,8 @@ final photoEdgeColoursProvider = FutureProvider.autoDispose.family<EdgeColours?,
 /// way Settings fit photos, under the style's background colour, and the
 /// photo scaled to fit below the block (cut to fill it when cropping).
 class CaptionBlockFrame extends ConsumerWidget {
-  const CaptionBlockFrame({super.key, required this.platformId, required this.photo, required this.text, required this.style, required this.fit});
+  const CaptionBlockFrame(
+      {super.key, required this.platformId, required this.photo, required this.text, required this.style, required this.fit, this.frameAspect, this.contentAspect});
 
   final String platformId;
 
@@ -42,17 +43,28 @@ class CaptionBlockFrame extends ConsumerWidget {
   final CaptionStyle style;
   final PhotoFitMode fit;
 
+  /// The network's frame (width / height), which decides its safe area; null:
+  /// the shape this is laid out in.
+  final double? frameAspect;
+
+  /// The shape of what goes under the words (a video's, without [photo]);
+  /// null: [photo]'s own.
+  final double? contentAspect;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final storage = ref.read(servicesProvider).storage;
     final font = style.font.resolve(platformId);
     // The block's height follows the font: measured again once it loads.
     ref.watch(captionFontReadyProvider(style.customFont));
+    final under = contentAspect ?? photo?.aspectRatio;
+    final crop = fit == PhotoFitMode.crop;
     return LayoutBuilder(builder: (context, c) {
       final size = Size(c.maxWidth, c.maxHeight);
-      final aspect = size.width / size.height;
-      final safe = captionSafeArea(platformId, aspect);
-      final layout = CaptionBlockLayout.measure(text: text, style: style, font: font, frame: size, safe: safe);
+      // The network's frame, also when the space it is shown in is not quite
+      // that shape: the safe area is the network's, as the saved photo's.
+      final safe = captionSafeArea(platformId, frameAspect ?? size.width / size.height);
+      final layout = CaptionBlockLayout.measure(text: text, style: style, font: font, frame: size, safe: safe, contentAspect: under, crop: crop);
       final content = layout.content;
       layout.dispose();
       final u = size.width / 1080;
@@ -85,11 +97,17 @@ class CaptionBlockFrame extends ConsumerWidget {
         if (style.background != CaptionBackground.none) ColoredBox(color: style.backgroundFill),
         Positioned.fromRect(
           rect: content,
-          child: photo == null
-              ? const SizedBox.shrink()
-              : storage.image(photo!.path, fit: fit == PhotoFitMode.crop ? BoxFit.cover : BoxFit.contain),
+          child: photo != null
+              ? storage.image(photo!.path, fit: fit == PhotoFitMode.crop ? BoxFit.cover : BoxFit.contain)
+              : contentAspect != null
+                  // A video: where it plays, under the words.
+                  ? ColoredBox(
+                      color: Colors.black26,
+                      child: Center(child: Icon(Icons.play_circle_outline_rounded, size: content.shortestSide * 0.35, color: Colors.white70)),
+                    )
+                  : const SizedBox.shrink(),
         ),
-        CustomPaint(painter: CaptionBlockPainter(text: text, font: font, style: style, safe: safe)),
+        CustomPaint(painter: CaptionBlockPainter(text: text, font: font, style: style, safe: safe, contentAspect: under, crop: crop)),
       ]);
     });
   }
@@ -118,7 +136,7 @@ class CaptionPhotoPreview extends ConsumerWidget {
     final double aspect;
     if (style.placement == CaptionPlacement.blockAbove) {
       aspect = frame;
-      body = CaptionBlockFrame(platformId: platformId, photo: photo, text: text, style: style, fit: settings.photoFit);
+      body = CaptionBlockFrame(platformId: platformId, photo: photo, text: text, style: style, fit: settings.photoFit, frameAspect: frame);
     } else {
       aspect = photo?.aspectRatio?.clamp(0.5, 1.91).toDouble() ?? frame;
       body = Stack(fit: StackFit.expand, children: [
@@ -452,7 +470,9 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
           child: LayoutBuilder(
             builder: (context, c) => c.maxWidth >= 560
                 ? Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    SizedBox(width: 220, child: preview),
+                    // Top-aligned in its column, so the preview keeps the
+                    // network's shape (a stretched one lost TikTok's 9:16).
+                    SizedBox(width: 220, child: Align(alignment: Alignment.topCenter, child: preview)),
                     const SizedBox(width: Space.xl),
                     Expanded(child: controls),
                   ])

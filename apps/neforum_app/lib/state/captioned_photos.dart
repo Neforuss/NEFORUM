@@ -100,7 +100,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     if (first.isVideo) {
       frame = videoFrameAspect(platform);
       if (frame == null) continue;
-      Map<String, dynamic> paramsWith({required bool fontFallback}) => {
+      Map<String, dynamic> paramsWith({required bool fontFallback, bool legacyLayout = false}) => {
             'kind': RenderKind.caption,
             'platform': platform,
             'style': look.toJson(),
@@ -108,6 +108,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
             'frameAspect': frame,
             'video': true,
             if (fontFallback) 'fontFallback': true, // 1.3: cards
+            if (!legacyLayout) 'layout': kCaptionBlockLayoutVersion, // 1.4.1: the video right under the words
           };
       String keyOf(Map<String, dynamic> params) => '$_captionKeyPrefix$platform|${first.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
       final fallback = await fontMissing();
@@ -117,8 +118,14 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
       if (copy == null && !composeVideos) {
         // Publishing never makes the copy again, so the one the save made is
         // used whether or not the caption font was here then or is here now.
-        final saved = keyOf(paramsWith(fontFallback: !fallback));
-        copy = used[saved] ?? pool[saved];
+        // A video saved before 1.4.1 keeps the block it was saved with.
+        for (final key in [
+          keyOf(paramsWith(fontFallback: !fallback)),
+          keyOf(paramsWith(fontFallback: fallback, legacyLayout: true)),
+          keyOf(paramsWith(fontFallback: !fallback, legacyLayout: true)),
+        ]) {
+          copy ??= used[key] ?? pool[key];
+        }
       }
       copy ??= composeVideos ? await _composeCaptionedVideo(s, first, words: words, style: look, platform: platform, frame: frame, key: key, params: params) : null;
       if (copy == null) continue;
@@ -136,6 +143,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
       'textHash': stableHash(words),
       'frameAspect': ?frame,
       if (frame != null) 'fit': settings.photoFit.name,
+      if (frame != null) 'layout': kCaptionBlockLayoutVersion, // 1.4.1: the photo right under the words
       if (await fontMissing()) 'fontFallback': true, // 1.3: cards
     };
     final key = '$_captionKeyPrefix$platform|${source.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
@@ -273,7 +281,7 @@ Future<MediaAttachment?> _composeCaptionedVideo(AppServices s, MediaAttachment v
   if (out == null) return null;
   final made = MediaAttachment(id: id, path: out, mimeType: 'video/mp4', sizeBytes: 0);
   try {
-    final overlay = await renderCaptionBlockOverlay(text: words, style: style, platformId: platform, frameAspect: frame);
+    final overlay = await renderCaptionBlockOverlay(text: words, style: style, platformId: platform, frameAspect: frame, videoAspect: video.aspectRatio);
     await compositor.compose(
       inputPath: video.path,
       outputPath: out,
