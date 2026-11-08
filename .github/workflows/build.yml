@@ -571,7 +571,8 @@ jobs:
           # The AppImage catalog's own lint (appimage.github.io), pinned by commit
           # and hash, with this Ubuntu's desktop-file-validate and appstreamcli:
           # 1.4.0 failed the catalog on a .desktop key these older tools reject.
-          sudo apt-get install -y desktop-file-utils appstream > /dev/null
+          # mimetype (libfile-mimeinfo-perl): the lint checks .DirIcon is a PNG with it, as the catalog does.
+          sudo apt-get install -y desktop-file-utils appstream libfile-mimeinfo-perl > /dev/null
           curl -fsSL -o "$tools/appdir-lint.sh" \
             "https://raw.githubusercontent.com/AppImage/appimage.github.io/43bfa8028da03218288d73bbdf45fda2e18c98c5/code/appdir-lint.sh"
           curl -fsSL -o "$tools/excludelist" \

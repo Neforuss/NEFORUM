@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- AppStream metadata for software centres and Flathub. Check with
-     `appstreamcli validate --pedantic org.neforum.NEFORUM.metainfo.xml`.
+<!-- AppStream metadata for software centres and Flathub. Check it with
+     appstreamcli's validate command and its pedantic option (no double
+     hyphen here: XML comments may not hold one).
      Add a <release> for every version that ships for Linux (newest first);
      the first Linux release is 1.3.0. -->
 <component type="desktop-application">
@@ -73,6 +74,11 @@
   </supports>
 
   <releases>
+    <release version="1.4.1" date="2026-11-08">
+      <description>
+        <p>A fix update. The browser extension (1.1.4) has an I posted it button on the page, and it sees a post you make with the site's own Post button (TikTok), so the hand-off moves on to the next network. YouTube Posts' Attach puts the photo into the post box through its image button instead of the search bar. A caption in a block above a TikTok or Instagram photo takes only the room its words need, with the photo right under it, and centred words sit in the middle of the frame; the caption editor's preview keeps the network's shape. With Post + Story on Instagram, the story's photo gets the caption written on it too. Lemmy gets a sound file as a video that plays in the post, and NEFORUM checks the instance kept its sound. The Linux desktop entry passes the AppImage catalog's validator.</p>
+      </description>
+    </release>
     <release version="1.4.0" date="2026-11-07">
       <description>
         <p>Posting shows real progress for each network: what it is doing and how much of each file the server has received, never a made-up number. Results are reported per network, with a notification when it finishes. Mastodon uploads that a slow connection cut off are now handled safely and never post twice. On phones, accounts are picked from a grid that shows every account at once. Fonts can be searched and installed from free, keyless sources inside the font picker, only after you agree to use the network. Mouse side buttons go back and forward on computers. Schedule a post at a random time inside a range you choose, and confirm it first. Every connection shows when its sign-in runs out, on one page that separates sign-ins that renew themselves from ones you must reconnect, with warnings before the date. Computers get an emoji picker with search, recent emoji and skin tones.</p>

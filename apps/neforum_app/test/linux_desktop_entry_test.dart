@@ -5,6 +5,8 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/platform/env.dart';
+import 'package:xml/xml.dart';
 
 /// The [Desktop Entry] keys of the Desktop Entry Specification 1.4.
 const _knownKeys = {
@@ -57,5 +59,24 @@ void main() {
     for (final key in ['Icon', 'Categories', 'Exec', 'Name', 'Type']) {
       expect(entry[key], isNotNull, reason: key);
     }
+  });
+
+  // The AppStream metainfo goes into the AppImage too: the catalog runs
+  // appstreamcli on it, whose XML parser rejects "--" inside a comment
+  // (NEFORUM 1.4.0's header comment had one).
+  group('AppStream metainfo', () {
+    final xml = File('../../packaging/linux/org.neforum.NEFORUM.metainfo.xml').readAsStringSync();
+
+    test('no comment holds a double hyphen, and the file parses', () {
+      final comments = RegExp(r'<!--([\s\S]*?)-->').allMatches(xml).map((m) => m.group(1)!);
+      expect(comments.where((c) => c.contains('--')), isEmpty);
+      expect(() => XmlDocument.parse(xml), returnsNormally);
+    });
+
+    test('the newest release is this version', () {
+      final releases = XmlDocument.parse(xml).findAllElements('release').map((r) => r.getAttribute('version')).toList();
+      expect(releases.first, kAppVersion, reason: 'add a <release> for every version');
+      expect(releases.toSet(), hasLength(releases.length));
+    });
   });
 }
