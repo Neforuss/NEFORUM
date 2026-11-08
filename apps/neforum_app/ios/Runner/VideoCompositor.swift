@@ -367,6 +367,9 @@ final class VideoCompositorPlugin: NSObject, FlutterPlugin {
     let width = int("frameWidth")
     let height = int("frameHeight")
     let audioBitrate = int("audioBitrate")
+    // Fewer frames for a network that counts them (Lemmy's pict-rs).
+    let rate = int("frameRate")
+    let frameRate = (1...60).contains(rate) ? Int32(rate) : MediaWriterJob.stillFrameRate
     let frameOk = (16...4096).contains(width) && (16...4096).contains(height) && width % 2 == 0 && height % 2 == 0
     guard frameOk, !audio.isEmpty, !output.isEmpty, audio != output else {
       result(FlutterError(code: "args", message: "The video request is not complete.", details: nil))
@@ -379,7 +382,7 @@ final class VideoCompositorPlugin: NSObject, FlutterPlugin {
     startJob(id: int("id"), code: "audioVideo", result: result) {
       try await MediaWriterJob.audioVideo(
         audio: URL(fileURLWithPath: audio), output: URL(fileURLWithPath: output), image: image,
-        frame: CGSize(width: width, height: height), audioBitrate: audioBitrate)
+        frame: CGSize(width: width, height: height), audioBitrate: audioBitrate, frameRate: frameRate)
     }
   }
 
@@ -490,7 +493,8 @@ final class MediaWriterJob {
     let appendNext: () throws -> CMTime?
   }
 
-  /// Still pictures are written at a rate every network accepts.
+  /// Still pictures are written at a rate every network accepts, unless a
+  /// network counts the frames (audioVideo's frameRate).
   static let stillFrameRate: Int32 = 30
 
   private let writer: AVAssetWriter
@@ -665,9 +669,9 @@ final class MediaWriterJob {
   }
 
   /// An MP4 of [image] (stretched to [frame]) for the length of the sound
-  /// at [audio], with that sound as AAC.
+  /// at [audio], with that sound as AAC, at [frameRate] frames per second.
   static func audioVideo(
-    audio: URL, output: URL, image: CGImage, frame: CGSize, audioBitrate: Int
+    audio: URL, output: URL, image: CGImage, frame: CGSize, audioBitrate: Int, frameRate: Int32 = stillFrameRate
   ) async throws -> MediaWriterJob {
     let asset = AVURLAsset(url: audio)
     let tracks = try await asset.loadTracks(withMediaType: .audio)
@@ -684,9 +688,8 @@ final class MediaWriterJob {
     // seconds keeps seeking quick.
     let video = try h264Input(
       size: frame, bitrate: max(500_000, Int(frame.width * frame.height) * 2),
-      keyFrameInterval: Int(stillFrameRate) * 2, writer: writer)
+      keyFrameInterval: max(1, Int(frameRate) * 2), writer: writer)
     let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video, sourcePixelBufferAttributes: nil)
-    let frameRate = stillFrameRate
     var index: CMTimeValue = 0
     let still = Feed(input: video) {
       let time = CMTime(value: index, timescale: frameRate)

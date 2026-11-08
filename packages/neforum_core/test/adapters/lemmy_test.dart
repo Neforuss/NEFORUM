@@ -6,6 +6,7 @@ import 'package:neforum_core/src/adapters/lemmy/lemmy_adapter.dart';
 import 'package:neforum_core/src/adapters/lemmy/lemmy_api.dart';
 import 'package:test/test.dart';
 
+import '../support/media_bytes.dart';
 import '../support/test_context.dart';
 
 http.Response _json(Object body, [int status = 200, Map<String, String> headers = const {}]) =>
@@ -356,6 +357,96 @@ void main() {
         'body': 'Some **markdown** body',
         'alt_text': 'A cat',
         'nsfw': false,
+      });
+    });
+
+    group('a track as a still-picture video (1.4.1)', () {
+      final video = MediaAttachment(
+        id: 'vid',
+        path: '/media/vid.mp4',
+        mimeType: 'video/mp4',
+        sizeBytes: 900,
+        width: 1280,
+        height: 720,
+        durationMs: 180000,
+        fileName: 'Track (video).mp4',
+        generated: true,
+        derivedFrom: 'track',
+        fitKey: 'audio|track|x',
+        renderParameters: const {'kind': 'audioVideo', 'fps': 1},
+      );
+      /// The instance: the upload, then [readBack] when the file is read back.
+      (List<http.Request>, AdapterContext) instance(List<int> readBack, {FakeMediaHost? host}) {
+        final calls = <http.Request>[];
+        final ctx = testContext(
+          mediaHost: host,
+          handler: (r) async {
+            calls.add(r);
+            if (r.method == 'POST' && r.url.path == '/pictrs/image') {
+              return _json({
+                'msg': 'ok',
+                'files': [
+                  {'file': 'vid.mp4', 'delete_token': 'del'},
+                ],
+              });
+            }
+            if (r.method == 'GET' && r.url.path == '/pictrs/image/vid.mp4') return http.Response.bytes(readBack, 200, headers: {'content-type': 'video/mp4'});
+            if (r.method == 'GET' && r.url.path.startsWith('/pictrs/image/delete/')) return http.Response('', 204);
+            return _json(_postView(950));
+          },
+        );
+        return (calls, ctx);
+      }
+
+      test('Lemmy takes it: video at 1 frame a second, up to 900 frames (15 minutes)', () {
+        final rules = adapter.descriptor.media;
+        expect((rules.audioAsLink, rules.audioAsVideoWhenPossible, rules.audioVideoFrameRate, rules.audioVideoMaxFrames), (true, true, 1, 900));
+        expect(rules.audioVideoFits(15 * 60 * 1000), isTrue);
+        expect(rules.audioVideoFits(15 * 60 * 1000 + 1000), isFalse, reason: 'a longer track goes as a link');
+        expect(rules.audioVideoFits(null), isTrue);
+      });
+
+      test('the instance kept the sound: the post links the upload', () async {
+        final (calls, ctx) = instance(mp4(['vide', 'soun']));
+        final res = await adapter.publish(_post(media: [video]), _account(), _secrets, ctx);
+        expect(res.success, isTrue, reason: '${res.error}');
+        expect(calls.map((c) => '${c.method} ${c.url.path}'), ['POST /pictrs/image', 'GET /pictrs/image/vid.mp4', 'POST /api/v3/post']);
+        expect(bodyOf(calls.last)['url'], 'https://lemmy.example/pictrs/image/vid.mp4');
+      });
+
+      test('the instance dropped the sound: the silent upload goes, the video is linked from the media host', () async {
+        final host = FakeMediaHost();
+        final (calls, ctx) = instance(mp4(['vide']), host: host);
+        final res = await adapter.publish(_post(media: [video]), _account(), _secrets, ctx);
+        expect(res.success, isTrue, reason: '${res.error}');
+        expect(calls.map((c) => '${c.method} ${c.url.path}'),
+            ['POST /pictrs/image', 'GET /pictrs/image/vid.mp4', 'GET /pictrs/image/delete/del/vid.mp4', 'POST /api/v3/post']);
+        expect(host.uploaded.single.id, 'vid');
+        expect(bodyOf(calls.last)['url'], 'https://cdn.example.test/vid');
+      });
+
+      test('the instance dropped the sound and there is no media host: nothing is posted, and the error says what to do', () async {
+        final (calls, ctx) = instance(mp4(['vide']));
+        final res = await adapter.publish(_post(media: [video]), _account(), _secrets, ctx);
+        expect(res.success, isFalse);
+        expect(res.error!.kind, PublishErrorKind.configuration);
+        expect(res.error!.message, contains('lemmy.example removes the sound from uploaded videos'));
+        expect(res.error!.message, contains('Settings > Media hosting'));
+        expect(calls.any((c) => c.url.path == '/api/v3/post'), isFalse);
+      });
+
+      test('the upload cannot be read back: posted as it is (an instance that hides its files is not a silent one)', () async {
+        final (calls, ctx) = instance(const [0x00, 0x01, 0x02]);
+        final res = await adapter.publish(_post(media: [video]), _account(), _secrets, ctx);
+        expect(res.success, isTrue, reason: '${res.error}');
+        expect(bodyOf(calls.last)['url'], 'https://lemmy.example/pictrs/image/vid.mp4');
+      });
+
+      test('a video of the user\'s own is never read back', () async {
+        final (calls, ctx) = instance(mp4(['vide']));
+        final res = await adapter.publish(_post(media: [fakeVideo()]), _account(), _secrets, ctx);
+        expect(res.success, isTrue, reason: '${res.error}');
+        expect(calls.where((c) => c.method == 'GET'), isEmpty);
       });
     });
 

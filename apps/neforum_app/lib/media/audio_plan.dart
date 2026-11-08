@@ -64,7 +64,8 @@ AudioRoute audioRouteFor(MediaRules rules, MediaAttachment source, AudioQuality 
     return AudioRoute.original;
   }
   if (rules.audioAsVideo) return AudioRoute.video;
-  if (rules.audioAsLink && rules.audioAsVideoWhenPossible && canMakeVideo) return AudioRoute.video;
+  // A track too long for the network's frame limit (Lemmy) goes as a link.
+  if (rules.audioAsLink && rules.audioAsVideoWhenPossible && canMakeVideo && rules.audioVideoFits(source.durationMs)) return AudioRoute.video;
   if (rules.audioAsLink) {
     if (lossless || source.isMp3 || standardMimeType == null) return AudioRoute.original;
     return AudioRoute.standardCopy;

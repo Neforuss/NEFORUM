@@ -141,6 +141,8 @@ class MediaRules {
     this.audioAsVideo = false,
     this.audioAsLink = false,
     this.audioAsVideoWhenPossible = false,
+    this.audioVideoFrameRate,
+    this.audioVideoMaxFrames,
   });
 
   final int maxImages;
@@ -193,10 +195,27 @@ class MediaRules {
   /// blogs).
   final bool audioAsLink;
 
-  /// For an [audioAsLink] network that takes uploaded videos (Tumblr): the track goes as a still-picture video whenever the device can
+  /// For an [audioAsLink] network that takes uploaded videos (Tumblr, Lemmy): the track goes as a still-picture video whenever the device can
   /// make one, so it plays in the post and needs no media host with lasting
   /// links; the link is what is left when it cannot.
   final bool audioAsVideoWhenPossible;
+
+  /// Frames per second of the still-picture video for this network; null
+  /// for the usual 30. Lemmy's media server (pict-rs) counts the frames of
+  /// an upload, so the picture goes at 1 a second there.
+  final int? audioVideoFrameRate;
+
+  /// Most frames a video upload may have (pict-rs: 900 by default); null for
+  /// no limit. A track too long for it at [audioVideoFrameRate] goes as a link.
+  final int? audioVideoMaxFrames;
+
+  /// Whether a still-picture video of a track [durationMs] long fits
+  /// [audioVideoMaxFrames] (an unknown length is tried).
+  bool audioVideoFits(int? durationMs) {
+    final max = audioVideoMaxFrames;
+    if (max == null || durationMs == null) return true;
+    return (durationMs / 1000 * (audioVideoFrameRate ?? 30)).ceil() <= max;
+  }
 
   bool get supportsAnyMedia => maxImages > 0 || maxVideos > 0 || maxAudios > 0;
 

@@ -20,6 +20,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:neforum_app/platform/video_compositor.dart';
 import 'package:neforum_app/state/shrunk_videos.dart';
 import 'package:neforum_app/state/video_frames.dart';
+import 'package:neforum_core/neforum_core.dart' show videoHasSound;
 
 /// Far longer than any of these files takes; a call that hangs fails the
 /// test instead of stalling CI.
@@ -89,6 +90,17 @@ void main() {
     expect(stillProgress.last, 1);
     // Static frames encode tiny: far under 1 MB for 3 seconds of 720p.
     expect(File(still).lengthSync(), lessThan(1000000));
+    expect(_videoFrames(File(still).readAsBytesSync()), closeTo(90, 2), reason: '30 frames a second');
+
+    // 1.4.1: Lemmy's pict-rs takes at most 900 frames, so its video is 1 a
+    // second, with the same sound and length.
+    final slow = path('still 1fps.mp4');
+    await compositor.renderAudioVideo(audioPath: wav, outputPath: slow, imagePng: picture, frameWidth: 1280, frameHeight: 720, frameRate: 1).timeout(_limit);
+    final slowProbe = await probed(slow);
+    expect((slowProbe.width, slowProbe.height, slowProbe.hasAudio), (1280, 720, true));
+    expect(slowProbe.durationMs, closeTo(3000, _durationToleranceMs));
+    expect(_videoFrames(File(slow).readAsBytesSync()), inInclusiveRange(3, 4), reason: '1 frame a second');
+    expect(videoHasSound(File(slow).readAsBytesSync()), isTrue, reason: 'what the Lemmy adapter checks after the upload');
 
     // --- compose: the existing compositor, a caption block over the video --
     final composed = path('composed.mp4');
@@ -349,4 +361,43 @@ Uint8List _overlay(int width, int height) {
     }
   }
   return img.encodePng(image);
+}
+
+/// How many frames the video track of the MP4 [b] has: the sample count of
+/// its `stsz` box (moov/trak/mdia/minf/stbl), the track whose handler is
+/// `vide`; 0 when there is none.
+int _videoFrames(Uint8List b) {
+  int u32(int at) => (b[at] << 24) | (b[at + 1] << 16) | (b[at + 2] << 8) | b[at + 3];
+  Iterable<(String, int, int)> boxes(int start, int end) sync* {
+    var at = start;
+    while (at + 8 <= end) {
+      final size = u32(at);
+      if (size < 8 || at + size > end) return;
+      yield (String.fromCharCodes(b.sublist(at + 4, at + 8)), at + 8, at + size);
+      at += size;
+    }
+  }
+
+  (int, int)? child(int start, int end, String type) {
+    for (final (t, s, e) in boxes(start, end)) {
+      if (t == type) return (s, e);
+    }
+    return null;
+  }
+
+  final moov = child(0, b.length, 'moov');
+  if (moov == null) return 0;
+  for (final (t, s, e) in boxes(moov.$1, moov.$2)) {
+    if (t != 'trak') continue;
+    final mdia = child(s, e, 'mdia');
+    if (mdia == null) continue;
+    final hdlr = child(mdia.$1, mdia.$2, 'hdlr');
+    if (hdlr == null || String.fromCharCodes(b.sublist(hdlr.$1 + 8, hdlr.$1 + 12)) != 'vide') continue;
+    final minf = child(mdia.$1, mdia.$2, 'minf');
+    final stbl = minf == null ? null : child(minf.$1, minf.$2, 'stbl');
+    final stsz = stbl == null ? null : child(stbl.$1, stbl.$2, 'stsz');
+    // version and flags (4), sample size (4), sample count (4).
+    if (stsz != null) return u32(stsz.$1 + 8);
+  }
+  return 0;
 }

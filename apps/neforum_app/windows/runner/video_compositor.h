@@ -80,6 +80,9 @@ struct StillVideoRequest {
   int frame_width = 0;
   int frame_height = 0;
   uint32_t audio_bitrate = 0;
+  // Frames per second (1 to 60): fewer for a network that counts the frames
+  // of an upload (Lemmy's pict-rs takes at most 900).
+  uint32_t frame_rate = 30;
 };
 
 // A sound file converted to "mp3" or "m4a" (transcodeAudio).
