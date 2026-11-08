@@ -83,8 +83,14 @@ class _Sheet {
   String get words => tester.widgetList<Text>(find.byType(Text)).map((t) => t.data ?? '').join(' | ');
 
 
+  /// A position the server confirmed (an answered chunk, a resume offset, the
+  /// answer to the whole body).
   ProgressEvent bytes(int position, int total, {String slot = 'm', int attempt = 1, String label = 'Uploading image 1 of 1'}) =>
-      ProgressEvent(stage: ProgressStage.uploading, label: label, at: now, slot: slot, position: position, slotTotal: total, attempt: attempt);
+      ProgressEvent(stage: ProgressStage.uploading, label: label, at: now, slot: slot, position: position, slotTotal: total, attempt: attempt, confirmed: true);
+
+  /// Bytes the connection took, with no answer for them yet.
+  ProgressEvent handed(int position, int total, {String slot = 'm', String label = 'Uploading image 1 of 1'}) =>
+      ProgressEvent(stage: ProgressStage.uploading, label: label, at: now, slot: slot, position: position, slotTotal: total);
   ProgressEvent wait(String label, {int? percent}) => ProgressEvent(stage: ProgressStage.serverProcessing, label: label, at: now, serverPercent: percent);
 
   /// One thing the run reports, a second after the last, as the tracker only publishes
@@ -154,8 +160,8 @@ void main() {
       int? permille = 100,
       ProgressFamily family = ProgressFamily.direct,
       DateTime? startedAt,
-      DateTime? allSentAt,
       int? position,
+      int? confirmed,
       int? total,
       int? serverPercent,
       bool resending = false,
@@ -170,8 +176,9 @@ void main() {
           stage: stage,
           label: label,
           stageStartedAt: startedAt,
-          allSentAt: allSentAt,
           position: position,
+          confirmed: confirmed != null && confirmed == position,
+          confirmedPosition: confirmed,
           slotTotal: total,
           serverPercent: serverPercent,
           resending: resending,
@@ -216,44 +223,55 @@ void main() {
       expect(targetRowView(target(stage: ProgressStage.posting, startedAt: _start), _start).line, 'Posting · 0:00');
     });
 
-    test('bytes say sent, never received; time left only when the meter has one', () {
-      final moving = targetRowView(target(stage: ProgressStage.uploading, label: 'Uploading video', startedAt: _start, position: 3 * _mib, total: 10 * _mib, permille: 270), _start);
-      expect(moving.line, 'Uploading video · Sent 3.0 MB of 10.0 MB');
+    test('bytes only handed to the connection: words and elapsed time, no number', () {
+      final v = targetRowView(target(stage: ProgressStage.uploading, label: 'Uploading video', startedAt: _start, position: 3 * _mib, total: 10 * _mib, permille: 270), _start.add(const Duration(seconds: 12)));
+      expect(v.line, 'Uploading video · Sending 10.0 MB to Bluesky · 0:12');
+      expect(v.percent, isNull, reason: 'the server has confirmed none of it');
+      expect(v.activity, isTrue);
+      expect(v.bar, 0.27, reason: 'the bar holds what was confirmed before');
+      expect(v.line, isNot(contains('3.0 MB')), reason: 'a count of handed-over bytes is not shown as progress');
+    });
+
+    test('all handed over with no answer: still sending, timed from when the upload began', () {
+      final v = targetRowView(target(stage: ProgressStage.uploading, label: 'Uploading', startedAt: _start, position: 3 * _mib, total: 3 * _mib, permille: 0), _start.add(const Duration(seconds: 42)));
+      expect(v.line, 'Uploading · Sending 3.0 MB to Bluesky · 0:42');
+      expect(v.percent, isNull);
+      expect(v.activity, isTrue);
+    });
+
+    test('what the server confirmed has its words and number; time left only when the meter has one', () {
+      final moving = targetRowView(
+          target(stage: ProgressStage.uploading, label: 'Uploading video', startedAt: _start, position: 4 * _mib, confirmed: 3 * _mib, total: 10 * _mib, permille: 270), _start);
+      expect(moving.line, 'Uploading video · Bluesky has 3.0 MB of 10.0 MB');
       expect(moving.percent, '27%');
       expect(moving.activity, isFalse);
       expect(moving.line, isNot(contains('received')));
 
       final measured = targetRowView(
-        target(stage: ProgressStage.uploading, label: 'Uploading video', startedAt: _start, position: 3 * _mib, total: 10 * _mib, eta: const Duration(seconds: 90), speed: _mib),
+        target(stage: ProgressStage.uploading, label: 'Uploading video', startedAt: _start, position: 3 * _mib, confirmed: 3 * _mib, total: 10 * _mib, eta: const Duration(seconds: 90), speed: _mib),
         _start,
       );
-      expect(measured.line, 'Uploading video · Sent 3.0 MB of 10.0 MB · 1.0 MB/s · about 2 min left to send');
+      expect(measured.line, 'Uploading video · Bluesky has 3.0 MB of 10.0 MB · 1.0 MB/s · about 2 min left to send');
     });
 
     test('bytes that stopped moving have no time left', () {
-      final t = target(stage: ProgressStage.uploading, label: 'Uploading video', startedAt: _start, position: 3 * _mib, total: 10 * _mib, eta: const Duration(seconds: 90), speed: _mib);
+      final t = target(
+          stage: ProgressStage.uploading, label: 'Uploading video', startedAt: _start, position: 3 * _mib, confirmed: 3 * _mib, total: 10 * _mib, eta: const Duration(seconds: 90), speed: _mib);
       expect(targetRowView(t, _start.add(const Duration(seconds: 19)), reportedAt: _start).line, contains('left to send'));
       final stalled = targetRowView(t, _start.add(const Duration(seconds: 21)), reportedAt: _start).line;
       expect(stalled, isNot(contains('left to send')));
       expect(stalled, isNot(contains('MB/s')));
     });
 
-    test('all sent with no answer: what was sent, whose turn it is, and how long since', () {
-      final v = targetRowView(
-        target(stage: ProgressStage.uploading, label: 'Uploading', startedAt: _start, allSentAt: _start.add(const Duration(seconds: 30)), position: 3 * _mib, total: 3 * _mib, permille: 900),
-        _start.add(const Duration(seconds: 42)),
-      );
-      expect(v.line, 'Sent 3.0 MB, waiting for Bluesky · 0:12');
-      expect(v.percent, isNull);
-      expect(v.activity, isTrue);
-      expect(v.bar, 0.9);
-    });
-
     test('a dropped connection says so and the figure holds', () {
-      final v = targetRowView(target(stage: ProgressStage.uploading, label: 'Uploading', startedAt: _start, position: 10, total: 100, resending: true, permille: 630), _start);
+      final v = targetRowView(target(stage: ProgressStage.uploading, label: 'Uploading', startedAt: _start, position: 10, confirmed: 70, total: 100, resending: true, permille: 630), _start);
       expect(v.line, 'Connection dropped, sending again');
       expect(v.bar, 0.63);
-      expect(v.percent, '63%');
+      expect(v.percent, '63%', reason: 'the server confirmed that much');
+      final unconfirmed = targetRowView(target(stage: ProgressStage.uploading, label: 'Uploading', startedAt: _start, position: 10, total: 100, resending: true, permille: 0), _start);
+      expect(unconfirmed.line, 'Connection dropped, sending again');
+      expect(unconfirmed.percent, isNull);
+      expect(unconfirmed.activity, isTrue);
     });
 
     test('a network nothing can be measured on has words and time only', () {
@@ -403,16 +421,33 @@ void main() {
       expect(s.rowBar('a')!, greaterThan(before));
     });
 
-    testWidgets('all sent with no answer says so, and the time starts when the bytes ended', (tester) async {
-      final s = await _open(tester, [_bytesTarget('a', 'Bluesky')]);
-      await s.send('a', () => s.bytes(_mib, 4 * _mib));
-      expect(find.textContaining('Sent 1.0 MB of 4.0 MB'), findsOneWidget);
-      await s.tick(const Duration(seconds: 30));
-      await s.send('a', () => s.bytes(4 * _mib, 4 * _mib));
-      for (var i = 0; i < 5; i++) {
+    testWidgets('a body handed over but not answered moves no number; the answer does', (tester) async {
+      final s = await _open(tester, [_bytesTarget('a', 'Bluesky', family: ProgressFamily.waitNoNumber), _textTarget('b', 'Mastodon')]);
+      s.tracker.outcome('b', TargetOutcome.published);
+      await tester.pump();
+      final before = s.postBar!;
+      final shown = percentLabel((before * 1000).round());
+      expect(find.text(shown), findsOneWidget);
+      // The connection takes the whole 4 MB at once; the server reads it slowly.
+      await s.send('a', () => s.handed(_mib, 4 * _mib));
+      await s.send('a', () => s.handed(4 * _mib, 4 * _mib));
+      for (var i = 0; i < 20; i++) {
         await s.tick(const Duration(seconds: 1));
+        expect(s.postBar, before, reason: 'the post figure stays where it was');
+        expect(find.text(shown), findsOneWidget);
+        expect(s.rowBar('a'), 0);
+        expect(find.descendant(of: find.byType(TargetProgressLine), matching: find.textContaining('%')), findsNothing, reason: 'the row has no number');
       }
-      expect(find.text('Sent 4.0 MB, waiting for Bluesky · 0:05'), findsOneWidget);
+      // Timed from the first byte's event, a second in, to now, 22 s in.
+      expect(find.text('Uploading image 1 of 1 · Sending 4.0 MB to Bluesky · 0:21'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget, reason: 'something is going on, with no number for it');
+      expect(s.words, isNot(contains('Sent')));
+
+      await s.send('a', () => s.bytes(4 * _mib, 4 * _mib)); // The server answers.
+      expect(s.postBar, greaterThan(before));
+      expect(s.rowBar('a'), 0.7);
+      expect(find.text('Uploading image 1 of 1 · Bluesky has 4.0 MB of 4.0 MB'), findsOneWidget);
+      expect(find.text('70%'), findsOneWidget);
     });
 
     testWidgets('time left shows only after two windows agree, and never for the whole post', (tester) async {
@@ -741,7 +776,7 @@ void main() {
         final bsky = accounts.firstWhere((a) => a.platformId == 'bluesky').id;
         c.read(activePublishingProvider.notifier).begin('live', CancellationSignal());
         tracker.plan(PublishRunPlan(postId: 'live', targets: [_bytesTarget(masto, 'Mastodon'), _bytesTarget(bsky, 'Bluesky')]));
-        tracker.event(masto, ProgressEvent(stage: ProgressStage.uploading, label: 'Uploading image 1 of 1', at: DateTime.now(), slot: 'm', position: 2 * _mib, slotTotal: 4 * _mib));
+        tracker.event(masto, ProgressEvent(stage: ProgressStage.uploading, label: 'Uploading image 1 of 1', at: DateTime.now(), slot: 'm', position: 2 * _mib, slotTotal: 4 * _mib, confirmed: true));
         final figure = percentLabel(c.read(publishProgressOfProvider('live'))!.permille);
         expect(figure, '22%');
 
@@ -754,7 +789,7 @@ void main() {
         await settle(tester);
         expect(find.text(figure), findsOneWidget, reason: 'the post page');
         expect(find.text('Posted to 0 of 2'), findsOneWidget);
-        expect(find.textContaining('Sent 2.0 MB of 4.0 MB'), findsOneWidget, reason: 'its row says what it is doing');
+        expect(find.textContaining('Mastodon has 2.0 MB of 4.0 MB'), findsOneWidget, reason: 'its row says what it is doing');
         expect(find.text('Waiting'), findsOneWidget, reason: 'the network the run has not reached');
         expect(tester.takeException(), isNull);
         expect(find.text(kPostingInBackground), findsNothing);

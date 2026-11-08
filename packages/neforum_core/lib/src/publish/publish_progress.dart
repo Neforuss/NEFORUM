@@ -78,8 +78,9 @@ const Map<ProgressFamily, ProgressWeights> kProgressWeights = {
   ProgressFamily.textOnly: ProgressWeights(0, 0, 100),
 };
 
-/// The highest a figure reads until an outcome, in permille. The byte count says
-/// what the connection took, not what the server has, so a count never reads 100.
+/// The highest a figure reads until an outcome, in permille. Bytes the server
+/// confirmed are still not the post, so no figure reads 100 before the answer
+/// that ends the target.
 const int kPermilleCapUntilOutcome = 990;
 
 /// A planned file of one target.
@@ -187,13 +188,16 @@ class ProgressEvent {
   final String? slot;
 
   /// Bytes through the slot: where the body starts in the file, plus what the
-  /// connection took of it.
+  /// connection took of it. When [confirmed], what the server answered for.
   final int? position;
 
   /// File size for a chunked upload, the request's length for one body.
   final int? slotTotal;
 
-  /// [position] is what the server answered for, not only what was sent.
+  /// [position] is what the server answered for: a resume offset it sent, or a
+  /// request it answered with a success. Only such a position moves a figure.
+  /// Bytes the connection took can sit in buffers for as long as the link takes
+  /// to carry them, so they move nothing.
   final bool confirmed;
 
   /// Posts live so far, set when one more just went live.
@@ -208,9 +212,10 @@ class ProgressEvent {
   final int? waitPolls;
 }
 
-/// Bytes per second, from positions at their real times. It says nothing until
-/// two windows in a row agree within 25%: the first seconds of a transfer are the
-/// socket's buffers filling, not speed.
+/// Bytes per second, from positions the server confirmed, at their real times.
+/// It says nothing until two windows in a row agree within 25%. The tracker feeds
+/// it confirmed positions only: a count of bytes the connection took measures how
+/// fast buffers fill, not how fast the server gets the file.
 class RateMeter {
   RateMeter({this.window = const Duration(seconds: 10)});
 
@@ -219,21 +224,11 @@ class RateMeter {
   int _windowPosition = 0;
   int? _lastRate;
   int? _agreedRate;
-  bool _confirmedOnly = false;
   DateTime? _lastAt;
   int _position = 0;
 
-  /// Records [position] at [at]. Once the server has answered for a position,
-  /// only its answers count: they are the truth, the count is not.
-  void add(DateTime at, int position, {bool confirmed = false}) {
-    if (confirmed && !_confirmedOnly) {
-      _confirmedOnly = true;
-      _restartWindow(at, position);
-      _lastAt = at;
-      _position = position;
-      return;
-    }
-    if (_confirmedOnly && !confirmed) return;
+  /// Records the confirmed [position] at [at].
+  void add(DateTime at, int position) {
     _lastAt = at;
     _position = position;
     final start = _windowStart;
@@ -263,7 +258,6 @@ class RateMeter {
     _windowPosition = 0;
     _lastRate = null;
     _agreedRate = null;
-    _confirmedOnly = false;
     _lastAt = null;
     _position = 0;
   }
@@ -273,8 +267,8 @@ class RateMeter {
   /// The speed, once measured, while bytes are still moving.
   int? bytesPerSecond(DateTime now) => _fresh(now) ? _agreedRate : null;
 
-  /// Time left to send up to [total]. Null when there is no honest figure, and
-  /// always once everything is sent: from there on it is the server's turn.
+  /// Time left until the server has [total]. Null when there is no honest
+  /// figure, and always once the server has it all.
   Duration? eta(int total, DateTime now) {
     final rate = bytesPerSecond(now);
     if (rate == null || rate <= 0 || _position >= total) return null;
@@ -293,10 +287,10 @@ class TargetProgress {
     required this.stage,
     required this.label,
     required this.stageStartedAt,
-    this.allSentAt,
     this.position,
     this.slotTotal,
     this.confirmed = false,
+    this.confirmedPosition,
     this.stepsDone = 0,
     this.steps = 0,
     this.serverPercent,
@@ -314,6 +308,8 @@ class TargetProgress {
   final String name;
 
   /// Null when nothing about the target can be measured and it has no outcome.
+  /// Moved only by what the server confirmed, steps it answered for and numbers
+  /// it sent.
   final int? permille;
   final ProgressFamily family;
 
@@ -324,12 +320,16 @@ class TargetProgress {
   /// When [stage] began, so a wait can show its real elapsed time.
   final DateTime? stageStartedAt;
 
-  /// When the connection took the last byte of the open upload. From here on the
-  /// target waits for the server's answer, and that wait has a real elapsed time.
-  final DateTime? allSentAt;
+  /// The open upload's last reported position: bytes the connection took, or,
+  /// when [confirmed], what the server answered for. Evidence and words only:
+  /// [permille] does not follow it.
   final int? position;
   final int? slotTotal;
   final bool confirmed;
+
+  /// What the server confirmed of the open upload. Null while it has confirmed
+  /// nothing of it: the bytes may be in buffers on the way.
+  final int? confirmedPosition;
   final int stepsDone;
   final int steps;
   final int? serverPercent;
@@ -355,10 +355,10 @@ class TargetProgress {
         'stage': stage?.name,
         'label': label,
         'stageStartedAt': stageStartedAt?.toUtc().toIso8601String(),
-        'allSentAt': allSentAt?.toUtc().toIso8601String(),
         'position': position,
         'slotTotal': slotTotal,
         'confirmed': confirmed,
+        'confirmedPosition': confirmedPosition,
         'stepsDone': stepsDone,
         'steps': steps,
         'serverPercent': serverPercent,
@@ -424,7 +424,13 @@ class _SlotState {
 
   final int planned;
   int total;
+
+  /// The highest position the server confirmed: the only one that counts.
   int high = 0;
+
+  /// The highest position the connection took, confirmed or not. It moves no
+  /// figure; it only tells a re-send from new bytes.
+  int sent = 0;
   bool credited = false;
 
   int get ppm {
@@ -435,7 +441,9 @@ class _SlotState {
   bool get filled => credited || (total > 0 && high >= total);
 }
 
-/// Works out one target's figure, in integers. It never falls, and it reads 100
+/// Works out one target's figure, in integers. Only what the server confirmed
+/// moves it: a confirmed position, an upload request it answered with a success,
+/// a step it answered for, a number it sent. It never falls, and it reads 100
 /// only on an outcome: the network answered, or this run is finished with it.
 class TargetProgressTracker {
   TargetProgressTracker({required this.accountId, required this.shape, this.name = '', RateMeter? meter}) : _meter = meter ?? RateMeter() {
@@ -452,6 +460,7 @@ class TargetProgressTracker {
   final Map<String, _SlotState> _slots = {};
 
   int _wholeHigh = 0;
+  int _wholeSent = 0;
   int _wholeTotal = 0;
   int _steps = 0;
   int _waitsDone = 0;
@@ -462,12 +471,12 @@ class TargetProgressTracker {
   ProgressStage? _stage;
   String? _label;
   DateTime? _stageStartedAt;
-  DateTime? _allSentAt;
   DateTime _lastAt = DateTime.fromMillisecondsSinceEpoch(0);
   String? _slot;
   int? _position;
   int? _slotTotal;
   bool _confirmed = false;
+  int? _confirmedPosition;
   int? _serverPercent;
   int _attempt = 1;
   bool _resending = false;
@@ -524,37 +533,42 @@ class TargetProgressTracker {
     final position = e.position!;
     final total = e.slotTotal ?? position;
     final key = e.slot;
+    if (key != _slot) _confirmedPosition = null;
     if (key != _slot || e.attempt != _attempt) _meter.reset();
     _slot = key;
     _attempt = e.attempt;
     _position = position;
     _slotTotal = total;
     _confirmed = e.confirmed;
-    _allSentAt = total > 0 && position >= total ? (_allSentAt ?? e.at) : null;
+    if (e.confirmed) _confirmedPosition = position;
     if (key == ProgressEvent.wholeBody) {
-      _resending = position < _wholeHigh;
+      _resending = position < _wholeSent;
       if (total > 0) _wholeTotal = total;
-      _wholeHigh = math.max(_wholeHigh, math.min(position, _wholeTotal));
+      _wholeSent = math.max(_wholeSent, math.min(position, _wholeTotal));
+      if (e.confirmed) _wholeHigh = math.max(_wholeHigh, math.min(position, _wholeTotal));
     } else {
       final slot = key == null ? null : _slots[key];
       // A file the plan does not know (a cover, a poster) moves no number.
       if (slot == null) return;
-      _resending = position < slot.high;
+      _resending = position < slot.sent;
       if (total > 0) slot.total = total;
-      slot.high = math.max(math.min(slot.high, slot.total), math.min(position, slot.total));
+      slot.sent = math.max(math.min(slot.sent, slot.total), math.min(position, slot.total));
+      if (e.confirmed) slot.high = math.max(math.min(slot.high, slot.total), math.min(position, slot.total));
     }
     // Sending again, or told by the server to start lower: nothing measured so far
-    // says anything about the speed from here on.
+    // says anything about the speed from here on. Only the server's answers make
+    // a speed.
     if (_resending) {
       _meter.reset();
-    } else {
-      _meter.add(e.at, position, confirmed: e.confirmed);
+    } else if (e.confirmed) {
+      _meter.add(e.at, position);
     }
   }
 
-  /// The adapter moved on, so a stage that turned out not to happen is credited
-  /// at once. Only uploads with no counted bytes are affected: the ones the
-  /// server already had from an earlier attempt.
+  /// The adapter moved on, which it does only once each upload request before
+  /// it was answered with a success, so an upload with no confirmed position (a
+  /// body too small to watch, a file the server had from an earlier attempt) is
+  /// credited at once, and so is a wait that turned out not to happen.
   void _reachedPosting() {
     _resending = false;
     if (!shape.interleaved) {
@@ -619,10 +633,10 @@ class TargetProgressTracker {
       stage: _stage,
       label: _label,
       stageStartedAt: _stageStartedAt,
-      allSentAt: _allSentAt,
       position: _position,
       slotTotal: total,
       confirmed: _confirmed,
+      confirmedPosition: _confirmedPosition,
       stepsDone: _steps,
       steps: shape.steps,
       serverPercent: _serverPercent,

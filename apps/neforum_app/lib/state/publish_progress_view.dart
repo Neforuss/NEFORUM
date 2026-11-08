@@ -17,7 +17,7 @@ const String kPostingInBackground = 'Posting in the background';
 const Duration kRateStaleAfter = Duration(seconds: 20);
 
 /// [permille] as the percentage on screen. Rounded down: the figure only ever
-/// claims what was counted.
+/// claims what the server confirmed.
 String percentLabel(int permille) => '${permille ~/ 10}%';
 
 /// What always sits beside the post's number, because a figure weighted by bytes
@@ -49,7 +49,9 @@ class TargetRowView {
   /// What is happening, with the elapsed time on a wait.
   final String line;
 
-  /// The row's figure. Null during a wait unless the network sent a number.
+  /// The row's figure. Null during a wait unless the network sent a number, and
+  /// null while the open upload has bytes on the way that the server has not
+  /// confirmed any of.
   final String? percent;
 
   /// How full the row's bar is. Null when it has no bar: nothing started yet, a
@@ -97,16 +99,20 @@ TargetRowView targetRowView(TargetProgress t, DateTime now, {DateTime? reportedA
   }
   if (stage != ProgressStage.uploading) return waiting(label, t.stageStartedAt);
 
-  // The bytes of a file the plan does not list have no figure either.
+  // Bytes the connection took can sit in buffers for as long as the link needs
+  // to carry them, so they are words and elapsed time, never a number. A number
+  // shows once the server confirms part of the open upload (an answered chunk, a
+  // resume offset), and it is the server's figure.
   final position = t.position;
   final total = t.slotTotal;
+  final confirmed = t.confirmedPosition;
+  final serverHasSome = confirmed != null && confirmed > 0;
+  final figure = permille == null || !serverHasSome ? null : percentLabel(permille);
   if (t.resending) {
-    return TargetRowView(line: 'Connection dropped, sending again', percent: permille == null ? null : percentLabel(permille), bar: bar);
+    return TargetRowView(line: 'Connection dropped, sending again', percent: figure, bar: bar, activity: figure == null);
   }
   if (position == null || total == null || total <= 0) return waiting(label, t.stageStartedAt);
-  if (position >= total) {
-    return waiting('Sent ${formatBytes(total)}, waiting for ${t.name}', t.allSentAt ?? t.stageStartedAt);
-  }
+  if (!serverHasSome) return waiting('$label · Sending ${formatBytes(total)} to ${t.name}', t.stageStartedAt);
 
   final fresh = reportedAt == null || now.difference(reportedAt) <= kRateStaleAfter;
   final speed = fresh ? t.bytesPerSecond : null;
@@ -114,11 +120,11 @@ TargetRowView targetRowView(TargetProgress t, DateTime now, {DateTime? reportedA
   return TargetRowView(
     line: [
       label,
-      'Sent ${formatBytes(position)} of ${formatBytes(total)}',
+      '${t.name} has ${formatBytes(confirmed < total ? confirmed : total)} of ${formatBytes(total)}',
       if (speed != null) '${formatBytes(speed)}/s',
       if (left != null) timeLeftLabel(left),
     ].join(' · '),
-    percent: permille == null ? null : percentLabel(permille),
+    percent: figure,
     bar: bar,
   );
 }

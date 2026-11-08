@@ -4,17 +4,29 @@ For anyone changing `packages/neforum_core/lib/src/publish/publish_progress.dart
 
 ## The rule
 
-A number on screen comes from a counted byte, a counted step or a number the network sent. Nothing else moves it. A wait shows words and elapsed time.
+A number on screen tracks what the server confirmed: bytes it answered for, a step it answered for, or a number it sent. Nothing else moves it, and it never goes backward. Anything else shows as words and elapsed time.
 
 ## Bytes
 
-`BodyProgress.sent` is bytes handed to the connection, not bytes the server has. On a slow link a 3 MB photo can read "all sent" within a second while the server has 2% of it, so:
+`BodyProgress.sent` is bytes handed to the connection, not bytes the server has. The operating system and the path buffer them: in a compiled Windows run against a server reading at 1 Mbit/s, the connection took a 3 MiB body in about 50 ms while the server had 0.5% of it, and it took 25 s more to read the rest. So handed-over bytes move no number at all. Only a confirmed position does (`ProgressEvent.confirmed`):
 
-- UI words say "sent", never "received".
+- the server's answer to a request, with a success (2xx): the whole body of that request counts once its upload request returns OK;
+- a chunk the server answered (X, LinkedIn, TikTok chunks);
+- a resume offset the server sent (`ctx.uploadOffset`, YouTube).
+
+An upload the adapter moved on from also counts in full: it moves on only once each upload request was answered. That covers bodies too small to watch and files the server had from an earlier attempt.
+
+What the screens do with it:
+
+- While bytes are on the way and the server has confirmed none of them, the row says "Uploading image 1 of 1 · Sending 3.0 MB to Mastodon · 0:12" and shows no number. Its bar and the post's number stay where they were. The words say "Sending", never "sent", "received" or "has": the server may have none of it yet.
+- Once the server confirms part of the open upload, the row says "Mastodon has 1.2 MB of 5.0 MB" with its number. That is the server's own figure.
 - A figure stops at 99.0% until an outcome. 100% means the network answered, or this run is finished with that target.
-- An answer per chunk or a resume offset is a confirmed position (`ProgressEvent.confirmed`). The speed comes from those alone once any exists.
+
+So a one-request upload on a slow link holds its number for the whole upload and moves once, on the answer. That is the price of never claiming bytes the server may not have. A chunked upload moves chunk by chunk.
 
 Files under 64 KiB go over in one piece and report once, on the answer. Small JSON and form calls report nothing: they are not uploads. A browser collects the whole body before sending any, so on the web build every upload reports only on its answer.
+
+The plain language upload error does not state a byte figure as fact: the figure goes in the details box, worded "handed to the connection".
 
 ## A target's figure
 
@@ -34,13 +46,15 @@ Arithmetic is in integers (permille and parts per million). Doubles compared wit
 
 A figure never falls. A retry, a re-send, a lower resume offset or a fallback host all write a lower position and change nothing until they pass the old mark. Meanwhile `TargetProgress.resending` is true so the words can say why the bar stopped.
 
+`TargetProgress.position` is the last position reported, handed over or confirmed, kept as evidence and for the words. `confirmedPosition` is what the server confirmed of the open upload, null while it has confirmed none of it. `permille` follows confirmed positions only.
+
 ## The post's figure
 
 Targets count by `max(planned bytes, 1 MiB)`, fixed when the run starts. A finished text post beside an unstarted 500 MiB upload is 0.2%, not 50%, which is why "Posted to 2 of 5" must always sit beside the number. Targets the run leaves alone are in no figure. A retry credits what is live already.
 
 ## Time left
 
-Per target, upload stage only, from `RateMeter`: nothing until two 10 s windows in a row agree within 25%, and nothing once all is sent. A new attempt, a re-send or a resume from a lower offset starts the measuring over. On unsteady links the row shows bytes and no time. There is never a time left for a whole post, because what remains includes waits nobody can measure. The 25% was tuned on loopback only.
+Per target, upload stage only, from `RateMeter`, which is fed confirmed positions only: nothing until two 10 s windows in a row agree within 25%, and nothing once the server has it all. A one-request upload has one confirmed position, its answer, so it never has a speed or a time left. A new attempt, a re-send or a resume from a lower offset starts the measuring over. On unsteady links the row shows bytes and no time. There is never a time left for a whole post, because what remains includes waits nobody can measure. The 25% was tuned on loopback only.
 
 ## What the screens show
 
@@ -49,14 +63,16 @@ The words live in `apps/neforum_app/lib/state/publish_progress_view.dart`, which
 | A network is | Its row says | Bar | Number |
 |---|---|---|---|
 | Not reached yet | Waiting | none | none |
-| Sending bytes | Its label, "Sent 1.2 MB of 5.0 MB", and speed and time left once measured | yes | yes |
-| Sending again after a drop | Connection dropped, sending again | holds | holds |
-| All sent, no answer | Sent 3.0 MB, waiting for Bluesky · 0:12 | holds | none |
+| Sending, nothing confirmed yet | Its label · Sending 3.0 MB to Mastodon · 0:12 | holds | none |
+| Sending, the server confirmed part | Its label, "Mastodon has 1.2 MB of 5.0 MB", and speed and time left once measured | yes | yes |
+| Sending again after a drop | Connection dropped, sending again | holds | only if the server confirmed part |
 | In a server wait | Its label · 1:12 | holds | only one the network sent |
 | Signing in, reading, posting | Its label · 0:07 | holds | none |
 | Handing off | Waiting for you | none | none |
 | Odysee | Its label · 1:05 | none | none |
 | Finished | Its result at once: Open, the error, or a pill | none | none |
+
+Android's notification and the iOS Live Activity and system bar take `postPermille` and each network's figure from the same `PostProgress` (`lib/state/publish_run_surface.dart`), so they follow the same rule. Their words say "Sending to Mastodon" during an upload, never that the server has it. Open point: D6 moves the iOS system bar during a server wait by its poll count, but nothing moves it during a one-request upload with nothing confirmed, so a long single-body upload in the background reports no progress to iOS until its answer. Whether iOS ends such a task early is untested here.
 
 Only rows with no number show the small spinner, and never a row that is queued or waiting for the person. The post's own figure stays on screen during a wait and does not move. Before the plan is known there is no figure, only an indeterminate bar.
 

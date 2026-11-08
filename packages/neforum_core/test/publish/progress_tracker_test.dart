@@ -1,5 +1,6 @@
-// What the numbers on a publish run may say: integer arithmetic, never backward,
-// 100 only on an outcome, and a time left only from a speed that held still.
+// What the numbers on a publish run may say: only what the server confirmed,
+// integer arithmetic, never backward, 100 only on an outcome, and a time left
+// only from a confirmed speed that held still.
 
 import 'package:neforum_core/neforum_core.dart';
 import 'package:test/test.dart';
@@ -12,8 +13,14 @@ void main() {
   var now = DateTime.utc(2026, 11, 6, 12);
   setUp(() => now = DateTime.utc(2026, 11, 6, 12));
 
-  ProgressEvent bytes(int position, int total, {String slot = 'a', int attempt = 1, bool confirmed = false}) => ProgressEvent(
-      stage: ProgressStage.uploading, label: 'Uploading', at: now, slot: slot, position: position, slotTotal: total, attempt: attempt, confirmed: confirmed);
+  /// A position the server confirmed: a chunk it answered, a resume offset it
+  /// sent, or the answer to a whole body.
+  ProgressEvent bytes(int position, int total, {String slot = 'a', int attempt = 1}) => ProgressEvent(
+      stage: ProgressStage.uploading, label: 'Uploading', at: now, slot: slot, position: position, slotTotal: total, attempt: attempt, confirmed: true);
+
+  /// Bytes the connection took, with no answer for them yet.
+  ProgressEvent handed(int position, int total, {String slot = 'a', int attempt = 1}) => ProgressEvent(
+      stage: ProgressStage.uploading, label: 'Uploading', at: now, slot: slot, position: position, slotTotal: total, attempt: attempt);
   ProgressEvent wait({int? percent}) => ProgressEvent(stage: ProgressStage.serverProcessing, label: 'Processing', at: now, serverPercent: percent);
   ProgressEvent posting({int? step}) => ProgressEvent(stage: ProgressStage.posting, label: 'Posting', at: now, stepDone: step);
 
@@ -48,30 +55,69 @@ void main() {
       expect(t.snapshot().resending, isFalse);
     });
 
-    test('the wait after the last byte has its own start, and it ends if bytes go out again', () {
-      final t = tracker(ProgressFamily.direct);
-      t.apply(bytes(500, 1000));
-      expect(t.snapshot().allSentAt, isNull);
-      now = now.add(const Duration(seconds: 40));
-      final sentAt = now;
+    test('a body fully handed to the connection but not answered leaves the figure where it was', () {
+      // The compiled slow-link run: the connection took a 3 MiB body in 50 ms,
+      // the server had 0.5% of it, and the figure read 70% for 25 s.
+      final t = tracker(ProgressFamily.waitNoNumber);
+      for (final p in [16 * 1024, 1500000, 3146116]) {
+        now = now.add(const Duration(milliseconds: 20));
+        t.apply(handed(p, 3146116));
+        expect(t.permille, 0, reason: 'handed over at $p: the server has confirmed nothing');
+      }
+      final waiting = t.snapshot(now);
+      expect((waiting.position, waiting.confirmedPosition, waiting.confirmed), (3146116, null, false));
+      expect(waiting.eta, isNull);
+      expect(waiting.bytesPerSecond, isNull);
+      now = now.add(const Duration(seconds: 25));
+      t.apply(bytes(3146116, 3146116)); // The server answers the request.
+      expect(t.permille, 700);
+      expect(t.snapshot().confirmedPosition, 3146116);
+      expect(t.snapshot().toJson(), containsPair('confirmedPosition', 3146116));
+    });
+
+    test('after a confirmed file, the next one handed over moves nothing until answered', () {
+      final t = tracker(ProgressFamily.direct, slots: const [ProgressSlot('a', 1000), ProgressSlot('b', 1000)]);
       t.apply(bytes(1000, 1000));
-      expect(t.snapshot().allSentAt, sentAt);
-      now = now.add(const Duration(seconds: 5));
-      t.apply(bytes(1000, 1000));
-      expect(t.snapshot().allSentAt, sentAt, reason: 'one more report of the same count starts nothing');
-      t.apply(bytes(10, 1000, attempt: 2));
-      expect(t.snapshot().allSentAt, isNull, reason: 'it is sending again, so it is not waiting');
-      expect(t.snapshot().toJson()['allSentAt'], isNull);
+      expect(t.permille, 450);
+      t.apply(handed(1000, 1000, slot: 'b'));
+      expect(t.permille, 450, reason: 'the percent stays where it was');
+      expect(t.snapshot().confirmedPosition, isNull, reason: 'a new file starts with nothing confirmed');
+      t.apply(bytes(1000, 1000, slot: 'b'));
+      expect(t.permille, 900);
+    });
+
+    test('chunks the server answered for move the figure; bytes of the next chunk in flight do not', () {
+      final t = tracker(ProgressFamily.wholeFile, slots: const [ProgressSlot('a', 4000)]);
+      t.apply(bytes(1000, 4000));
+      expect(t.permille, 237);
+      t.apply(handed(1900, 4000));
+      t.apply(handed(2000, 4000));
+      expect(t.permille, 237);
+      expect(t.snapshot().confirmedPosition, 1000);
+      t.apply(bytes(2000, 4000));
+      expect(t.permille, 475);
     });
 
     test('a resume from a lower server offset holds', () {
       final t = tracker(ProgressFamily.wholeFile);
       t.apply(bytes(900, 1000));
       final before = t.permille;
-      t.apply(bytes(500, 1000, confirmed: true));
+      t.apply(bytes(500, 1000));
       expect(t.permille, before);
+      expect(t.snapshot().resending, isTrue);
       t.apply(bytes(950, 1000));
       expect(t.permille, greaterThan(before!));
+    });
+
+    test('a handed-over body sent again after a drop says so, and still moves nothing', () {
+      final t = tracker(ProgressFamily.direct);
+      t.apply(handed(800, 1000));
+      t.apply(handed(100, 1000, attempt: 2));
+      expect(t.snapshot().resending, isTrue);
+      expect(t.permille, 0);
+      t.apply(handed(1000, 1000, attempt: 2));
+      expect(t.snapshot().resending, isFalse);
+      expect(t.permille, 0);
     });
 
     test('after a resume from a lower offset the time left starts over, and can come back', () {
@@ -87,7 +133,7 @@ void main() {
         second();
       }
       expect(t.snapshot(now).eta, isNotNull);
-      t.apply(bytes(sent = 5000, 1000000, confirmed: true));
+      t.apply(bytes(sent = 5000, 1000000));
       expect(t.snapshot(now).eta, isNull, reason: 'the server says less than the count did');
       expect(t.snapshot(now).resending, isTrue);
       for (var i = 0; i < 60; i++) {
@@ -97,7 +143,7 @@ void main() {
       expect(t.snapshot(now).eta, isNotNull, reason: 'past the old mark, and two windows agree again');
     });
 
-    test('all sent with no answer is not 100, and neither is every step counted', () {
+    test('the server has the whole file and no post yet: not 100, and neither is every step counted', () {
       final t = tracker(ProgressFamily.direct);
       t.apply(bytes(1000, 1000));
       expect(t.permille, 900);
@@ -265,19 +311,19 @@ void main() {
       expect(m.eta(35000, at.add(const Duration(seconds: 25))), isNull, reason: 'a stalled upload has no honest figure');
     });
 
-    test('answers from the server replace the count', () {
-      final m = RateMeter();
-      var at = start;
-      var counted = 0;
-      var answered = 0;
-      for (var i = 0; i < 40; i++) {
-        at = at.add(const Duration(seconds: 1));
-        counted += 5000; // The count runs ahead, into the buffers.
-        answered += 1000;
-        m.add(at, counted);
-        m.add(at, answered, confirmed: true);
+    test('through the tracker: a speed and a time left come from confirmed positions only', () {
+      final t = tracker(ProgressFamily.direct, slots: const [ProgressSlot('a', 1000000)]);
+      final speeds = <int?>[];
+      for (var chunk = 1; chunk <= 16; chunk++) {
+        t.apply(handed(chunk * 5000, 1000000)); // The connection takes each chunk at once...
+        expect(t.snapshot(now).bytesPerSecond, speeds.lastOrNull, reason: 'handed-over bytes change no speed');
+        now = now.add(const Duration(seconds: 5));
+        t.apply(bytes(chunk * 5000, 1000000)); // ...and the server answers for it 5 s later.
+        speeds.add(t.snapshot(now).bytesPerSecond);
       }
-      expect(m.bytesPerSecond(at), 1000);
+      expect(speeds.take(4).every((s) => s == null), isTrue, reason: '$speeds');
+      expect(speeds.whereType<int>().toSet(), {1000}, reason: 'the speed the server confirms, never the burst: $speeds');
+      expect(t.snapshot(now).eta, const Duration(seconds: 920), reason: 'what the server still needs, at the speed it confirms');
     });
 
     test('through the tracker: a time left only after the gate, gone on a new attempt', () {
@@ -356,6 +402,18 @@ void main() {
         expect(seen[i], greaterThanOrEqualTo(seen[i - 1]));
       }
       expect(seen.last, 1000);
+    });
+
+    test('the post figure holds while a body is only handed over, and moves on the answer', () {
+      final photo = ProgressShape(family: ProgressFamily.waitNoNumber, slots: [const ProgressSlot('a', 3 * _mib)]);
+      final run = PublishProgressTracker(postId: 'p', clock: () => now)..plan(plan([member('done'), member('x', photo)]));
+      run.outcome('done', TargetOutcome.published);
+      final before = run.current.permille;
+      expect(before, 250, reason: 'the finished text post, weighted against 3 MiB');
+      run.event('x', handed(3 * _mib, 3 * _mib));
+      expect(run.current.permille, before, reason: 'the server has confirmed none of it');
+      run.event('x', bytes(3 * _mib, 3 * _mib));
+      expect(run.current.permille, 250 + 3 * 700 ~/ 4);
     });
 
     test('at most one update per 200 ms, plus every stage change and outcome', () {

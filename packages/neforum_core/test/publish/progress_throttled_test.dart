@@ -1,6 +1,6 @@
 // The real thing: a real adapter, the real client and TLS, against a local server
-// that reads slowly. The bar may only say what counted bytes allow, may not fall, and
-// may not reach 100 before the server has answered.
+// that reads slowly. The bar may only say what the server confirmed, may not fall,
+// and may not reach 100 before the server has answered.
 
 @TestOn('vm')
 library;
@@ -20,12 +20,13 @@ import '../support/test_context.dart';
 const _fileBytes = 6 * 1024 * 1024;
 
 void main() {
-  test('through TLS on loopback, throttled: never falls, never ahead of the count, never 100 before the answer', () async {
+  test('through TLS on loopback, throttled: never falls, never ahead of what the server has, never 100 before the answer', () async {
     final context = SecurityContext()
       ..useCertificateChainBytes(utf8.encode(loopbackCertificatePem))
       ..usePrivateKeyBytes(utf8.encode(loopbackKeyPem));
     final server = await HttpServer.bindSecure(InternetAddress.loopbackIPv4, 0, context);
     var serverGot = 0;
+    var mediaAnswered = false;
     var answered = false;
     server.listen((request) async {
       if (request.uri.path.contains('/media')) {
@@ -34,6 +35,7 @@ void main() {
           // About 8 MiB/s: a second or so, in many pieces.
           await Future<void>.delayed(Duration(microseconds: chunk.length ~/ 8));
         }
+        mediaAnswered = true;
         answered = true;
         request.response
           ..statusCode = 200
@@ -92,8 +94,9 @@ void main() {
     );
 
     final figures = <int>[];
-    var counted = 0;
+    var handedOver = 0;
     var observations = 0;
+    var aheadOfServer = 0;
     final progress = PublishProgressTracker(
       postId: 'post1',
       interval: Duration.zero,
@@ -104,11 +107,17 @@ void main() {
         figures.add(p.permille);
         if (!answered) expect(p.permille, lessThan(1000), reason: 'never 100 before the server answered');
         expect(p.permille, lessThanOrEqualTo(kPermilleCapUntilOutcome + (p.finished ? 10 : 0)));
-        // Before the wait and the post: at most the upload's 70% of what was counted.
         final target = p.targets.single;
         if (target.stage == ProgressStage.uploading && !p.finished) {
-          final allowed = 700 * counted ~/ target.slotTotal.orOne;
-          expect(p.permille, lessThanOrEqualTo(allowed + 1), reason: 'never ahead of the counted bytes');
+          // At most the upload's 70% of what the server really has, not of what
+          // the connection took.
+          final allowed = 700 * serverGot ~/ target.slotTotal.orOne;
+          expect(p.permille, lessThanOrEqualTo(allowed), reason: 'never ahead of the server: $serverGot of ${target.slotTotal}');
+          if (!mediaAnswered) {
+            expect(p.permille, 0, reason: 'nothing confirmed before the media answer');
+            expect(target.confirmedPosition, isNull);
+          }
+          aheadOfServer = (target.position ?? 0) - serverGot > aheadOfServer ? (target.position ?? 0) - serverGot : aheadOfServer;
         }
       },
     );
@@ -117,7 +126,7 @@ void main() {
       'post1',
       onPlan: progress.plan,
       onEvent: (id, e) {
-        if (e.position != null) counted = e.position!;
+        if (e.position != null && !e.confirmed) handedOver = e.position!;
         progress.event(id, e);
       },
       onOutcome: progress.outcome,
@@ -125,9 +134,12 @@ void main() {
 
     expect(done.targets.single.status, TargetStatus.published);
     expect(serverGot, greaterThan(_fileBytes), reason: 'the whole file reached the server, with its multipart boundaries');
-    expect(observations, greaterThan(50), reason: 'the bar moved with the bytes, in many steps');
-    expect(figures.toSet().length, greaterThan(20));
+    expect(handedOver, serverGot, reason: 'the connection took the whole body');
+    expect(observations, greaterThan(50), reason: 'every piece was reported, and none moved the bar');
+    expect(figures.where((f) => f > 0 && f < 700), isEmpty, reason: 'no figure between nothing and the answer: $figures');
+    expect(figures, contains(700), reason: 'the answer to the media request credits the upload');
     expect(figures.last, 1000);
+    print('handed to the connection ahead of the server: at most ${aheadOfServer ~/ 1024} KiB');
   }, timeout: const Timeout(Duration(minutes: 2)));
 }
 
