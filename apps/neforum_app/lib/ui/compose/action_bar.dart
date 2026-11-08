@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import '../../state/composer.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
+import '../accounts/sign_in_risk_notes.dart';
 
 /// Bottom bar of the composer: draft, readiness summary, schedule, post.
 class ComposerActionBar extends ConsumerWidget {
@@ -104,7 +105,7 @@ class ComposerActionBar extends ConsumerWidget {
         ? null
         : IconButton(onPressed: onHideKeyboard, tooltip: 'Hide keyboard', icon: const Icon(Icons.keyboard_hide_rounded));
 
-    return Container(
+    final bar = Container(
       padding: EdgeInsets.fromLTRB(compact ? Space.lg : Space.xl, Space.md, compact ? Space.lg : Space.xl, Space.md),
       decoration: BoxDecoration(color: nf.bg, border: Border(top: BorderSide(color: nf.border))),
       child: compact
@@ -151,6 +152,10 @@ class ComposerActionBar extends ConsumerWidget {
               ]);
             }),
     );
+    // While typing on a phone, the warning gives its line back to the text, as
+    // the summary does; Schedule still asks.
+    if (hideKeyboard != null) return bar;
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [const ComposerSignInWarning(), bar]);
   }
 }
 

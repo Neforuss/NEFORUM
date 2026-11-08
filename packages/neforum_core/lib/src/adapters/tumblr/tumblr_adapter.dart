@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:uuid/uuid.dart';
 
@@ -33,8 +32,8 @@ import 'tumblr_api.dart';
 /// token that Tumblr replaces each time, so only one device stays
 /// connected), or, when the user also pastes an OAuth 1.0a token and token
 /// secret (shown by Tumblr's API console), OAuth 1.0a signatures. Those
-/// keys never expire, so the account works on every device at once. Both
-/// give the same account id.
+/// keys are not renewed and Tumblr publishes no limit on them, so the account
+/// works on every device at once. Both give the same account id.
 class TumblrAdapter extends PlatformAdapter {
   TumblrAdapter();
 
@@ -128,8 +127,9 @@ class TumblrAdapter extends PlatformAdapter {
     supportsLinkField: true,
   );
 
-  /// Every OAuth 2 refresh returns a new refresh token and invalidates the
-  /// old one.
+  /// Every OAuth 2 refresh returns a new refresh token. Tumblr's `api.md` does
+  /// not say the old one dies: that is treated as observed behaviour, the safe
+  /// reading for two devices.
   @override
   bool get rotatesRefreshTokens => true;
 
@@ -137,6 +137,9 @@ class TumblrAdapter extends PlatformAdapter {
   @override
   bool rotatesRefreshTokensFor(ConnectedAccount account) =>
       account.tier == PlatformTier.byokApi && !usesOAuth1(account);
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.tumblr(account);
 
   @override
   PlatformDescriptor get descriptor => tumblrDescriptor;
@@ -229,7 +232,7 @@ class TumblrAdapter extends PlatformAdapter {
 
 Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("The url's domain is not valid").
 
-**To stay connected on several devices**, also fill in the OAuth Token and Token Secret. The browser sign-in is renewed every 42 minutes and Tumblr ends the previous one each time, so it stays connected on only one device; these OAuth 1.0a keys never expire.
+**To stay connected on several devices**, also fill in the OAuth Token and Token Secret. The browser sign-in is renewed every 42 minutes and Tumblr ends the previous one each time, so it stays connected on only one device; these OAuth 1.0a keys are not renewed, and Tumblr publishes no limit on them.
 
 1. Open <https://api.tumblr.com/console>, enter the same Consumer Key and Secret Key and click **Authenticate**, then **Allow**.
 2. The console shows the keys (**Show keys**, and the code examples): copy **Token** and **Token Secret** into the fields below and click **Connect**. No browser sign-in needed.''';
@@ -484,7 +487,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
-    // OAuth 1.0a keys never expire: nothing to renew, and nothing that could
+    // OAuth 1.0a keys are not renewed: nothing to do, and nothing that could
     // end the connection on another device.
     if (account.tier != PlatformTier.byokApi || usesOAuth1(account)) return null;
     final tokens = OAuthTokens.fromSecrets(secrets);
@@ -506,14 +509,14 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       throw AdapterException(e.toRefreshError('Tumblr'));
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        throw AdapterException(PublishError.network('Could not reach Tumblr to renew the sign-in: $e'));
+        throw AdapterException(PublishError.network('Could not reach Tumblr to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
       rethrow;
     }
   }
 
   static const String _expiredMessage =
-      'Your Tumblr sign-in has expired (unused for 42 days or revoked). Reconnect Tumblr in Accounts.';
+      'Your Tumblr sign-in has expired (not renewed for about 42 days, or revoked). Reconnect Tumblr in Accounts.';
   static const String _reconnectMessage = 'Tumblr is not signed in. Reconnect Tumblr in Accounts.';
   static const String _keysMissingMessage =
       'The Tumblr keys of this account are missing. Reconnect Tumblr in Accounts and paste the four keys again.';
@@ -669,7 +672,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     } on HttpFailure catch (e) {
       return PublishResult.failure(TumblrApi.mapFailure(e, 'Posting to Tumblr'));
     } on Object catch (e) {
-      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Tumblr: $e'));
+      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Tumblr: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       if (e is FormatException) {
         return PublishResult.failure(PublishError.platform('Tumblr sent a response NEFORUM did not understand: $e'));
       }
@@ -701,13 +704,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       final m = variant.media[i];
       ctx.progress('Preparing ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${variant.media.length}');
       final identifier = 'media$i';
-      final Uint8List bytes;
-      try {
-        bytes = await ctx.readMedia(m);
-      } on Exception catch (e) {
-        return PublishResult.failure(PublishError.configuration(
-            'Could not read ${m.fileName ?? m.path}; re-attach it and try again ($e)'));
-      }
+      final bytes = await ctx.readMedia(m);
       uploads.add(TumblrUpload(
         identifier: identifier,
         bytes: bytes,
@@ -731,13 +728,17 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     final NeforumResponse res;
     // JSON and multipart bodies are not part of an OAuth 1.0a signature.
     if (uploads.isEmpty) {
-      ctx.progress('Publishing to Tumblr');
-      res = await ctx.http.postJson(url, body, headers: headers, signHeaders: auth.signer('POST', url));
+      res = await ctx.creating('Publishing to Tumblr', () => ctx.http.postJson(url, body, headers: headers, signHeaders: auth.signer('POST', url)));
     } else {
-      ctx.progress('Uploading ${uploads.length} file${uploads.length == 1 ? '' : 's'} to Tumblr');
+      // One body holds every file and the post: the upload is the post.
+      final label = 'Uploading ${uploads.length} file${uploads.length == 1 ? '' : 's'} to Tumblr';
+      ctx.uploadingAll(label);
       final mp = TumblrApi.multipart(body, uploads);
-      res = await ctx.http.putBytes(url, mp.body,
-          method: 'POST', headers: {...headers, 'Content-Type': mp.contentType}, signHeaders: auth.signer('POST', url));
+      res = await ctx.creating(
+          label,
+          () => ctx.http.putBytes(url, mp.body,
+              method: 'POST', headers: {...headers, 'Content-Type': mp.contentType}, signHeaders: auth.signer('POST', url)),
+          uploads: true);
     }
 
     final postId = TumblrApi.createdId(res);
@@ -931,7 +932,7 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
       ctx.log.info('Tumblr post $postId was already gone from the queue');
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        throw AdapterException(PublishError.network('Could not reach Tumblr to remove the scheduled post: $e'));
+        throw AdapterException(PublishError.network('Could not reach Tumblr to remove the scheduled post: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
       rethrow;
     }
@@ -1046,9 +1047,9 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
     final hosted = <HostedMedia>[];
     try {
       for (var i = 0; i < photos.length; i++) {
-        ctx.progress('Uploading photo ${i + 1} of ${photos.length} to ${host.name}');
+        ctx.uploading(photos[i], 'Uploading photo ${i + 1} of ${photos.length} to ${host.name}');
         final bytes = await ctx.readMedia(photos[i]);
-        hosted.add(await host.upload(photos[i], bytes, ttl: handoffMediaTtl));
+        hosted.add(await host.upload(photos[i], bytes, ttl: handoffMediaTtl, via: ctx.http));
       }
     } on Object catch (e) {
       ctx.log.warn('Tumblr hand-off: could not put the photos on ${host.name}; using the plain hand-off', e);

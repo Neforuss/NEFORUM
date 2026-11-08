@@ -2,8 +2,12 @@ package org.neforum.neforum_app
 
 import android.app.Activity
 import android.content.ContentResolver
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
@@ -14,15 +18,64 @@ import io.flutter.plugin.common.MethodChannel
 import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
 class MainActivity : FlutterActivity() {
     private var pendingPick: MethodChannel.Result? = null
     private var pendingMode = "folder"
     private val io = Executors.newSingleThreadExecutor()
+    private var ownEngine: FlutterEngine? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        takeOpenPost(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        takeOpenPost(intent)
+    }
+
+    /** A tap on the run's notification. Once: a recreated Activity keeps its intent. */
+    private fun takeOpenPost(intent: Intent?) {
+        if (intent?.action != ACTION_OPEN_POST) return
+        val postId = intent.getStringExtra(EXTRA_POST_ID)
+        intent.action = null
+        if (!postId.isNullOrEmpty()) PublishHost.openPost(postId)
+    }
+
+    /** The engine a publish run kept, whose Dart is still running. Null: a new one, as ever. */
+    override fun provideFlutterEngine(context: Context): FlutterEngine? = PublishHost.retainedEngine()
+
+    /** Only a run in progress keeps the engine: with none, this Activity's end is its end. */
+    override fun shouldDestroyEngineWithHost(): Boolean = !PublishHost.retains(ownEngine)
+
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        super.cleanUpFlutterEngine(flutterEngine)
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        if (PublishHost.retains(flutterEngine)) {
+            // Dart goes on with no Activity: these must fail cleanly instead of using a
+            // dead one. A hidden run hands nothing off, and a sync still reaches its file.
+            MethodChannel(messenger, ShareChannel.NAME).setMethodCallHandler(null)
+            MethodChannel(messenger, ClipboardChannel.NAME).setMethodCallHandler(null)
+            // It reads through the Activity: with none, Dart treats access as unread.
+            MethodChannel(messenger, NotificationAccessChannel.NAME).setMethodCallHandler(null)
+            val resolver = applicationContext.contentResolver
+            val main = Handler(Looper.getMainLooper())
+            // Its own thread: this Activity's would keep the dead Activity alive.
+            val worker = Executors.newSingleThreadExecutor()
+            MethodChannel(messenger, SYNC_FOLDER_CHANNEL).setMethodCallHandler { call, result ->
+                if (call.method == "pick") result.success(null) else serveSyncFolder(resolver, worker, main, call, result)
+            }
+        }
+        PublishHost.detach(flutterEngine)
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        ownEngine = flutterEngine
         // Set up again (the activity was recreated): a pick the previous
         // engine waited for hears "cancelled" rather than nothing.
         pendingPick?.let { earlier ->
@@ -33,12 +86,18 @@ class MainActivity : FlutterActivity() {
                 // That engine is gone.
             }
         }
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "neforum/syncfolder")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYNC_FOLDER_CHANNEL)
             .setMethodCallHandler { call, result -> handleSyncFolder(call, result) }
         // Hand-offs: sharing straight into an app, and photos on the clipboard.
         ShareChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
         ClipboardChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
-        VideoCompositor(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+        NotificationAccessChannel(this).register(flutterEngine.dartExecutor.binaryMessenger)
+        // A kept engine has its compositor still, perhaps in the middle of an export.
+        // It uses no Activity, and a new one would lose that export's cancel path.
+        if (!PublishHost.isKnown(flutterEngine)) {
+            VideoCompositor(applicationContext, flutterEngine.dartExecutor.binaryMessenger)
+        }
+        PublishHost.attach(applicationContext, flutterEngine)
     }
 
     /**
@@ -56,30 +115,7 @@ class MainActivity : FlutterActivity() {
             pick(call.argument<String>("mode") ?: "folder", result)
             return
         }
-        val bookmark = call.argument<String>("bookmark")
-        if (bookmark.isNullOrEmpty()) {
-            result.error("bookmark", "No folder was chosen.", null)
-            return
-        }
-        val target = Uri.parse(bookmark)
-        val isFile = call.argument<Boolean>("file") ?: false
-        val name = call.argument<String>("name") ?: ""
-        io.execute {
-            try {
-                val out = SyncStorage(contentResolver).run(call, target, isFile, name)
-                runOnUiThread { result.success(out) }
-            } catch (e: SyncConflictException) {
-                runOnUiThread { result.error("conflict", e.message, null) }
-            } catch (e: SyncLocationException) {
-                runOnUiThread { result.error("bookmark", e.message, null) }
-            } catch (e: SecurityException) {
-                runOnUiThread {
-                    result.error("bookmark", "Android no longer lets NEFORUM use this location: choose it again in Settings > Sync.", null)
-                }
-            } catch (e: Exception) {
-                runOnUiThread { result.error("io", e.message ?: e.toString(), null) }
-            }
-        }
+        serveSyncFolder(contentResolver, io, Handler(Looper.getMainLooper()), call, result)
     }
 
     private fun pick(mode: String, result: MethodChannel.Result) {
@@ -162,10 +198,41 @@ class MainActivity : FlutterActivity() {
     }
 
     companion object {
+        const val ACTION_OPEN_POST = "org.neforum.publish.OPEN_POST"
+        const val EXTRA_POST_ID = "postId"
+        private const val SYNC_FOLDER_CHANNEL = "neforum/syncfolder"
         private const val PICK_REQUEST = 52_780
 
         /** kSyncFileName in neforum_core. */
         private const val SYNC_FILE_NAME = "NEFORUM.neforumsync"
+    }
+}
+
+/** The "neforum/syncfolder" calls that need no Activity: everything but the picker. */
+private fun serveSyncFolder(resolver: ContentResolver, io: Executor, main: Handler, call: MethodCall, result: MethodChannel.Result) {
+    val bookmark = call.argument<String>("bookmark")
+    if (bookmark.isNullOrEmpty()) {
+        result.error("bookmark", "No folder was chosen.", null)
+        return
+    }
+    val target = Uri.parse(bookmark)
+    val isFile = call.argument<Boolean>("file") ?: false
+    val name = call.argument<String>("name") ?: ""
+    io.execute {
+        try {
+            val out = SyncStorage(resolver).run(call, target, isFile, name)
+            main.post { result.success(out) }
+        } catch (e: SyncConflictException) {
+            main.post { result.error("conflict", e.message, null) }
+        } catch (e: SyncLocationException) {
+            main.post { result.error("bookmark", e.message, null) }
+        } catch (e: SecurityException) {
+            main.post {
+                result.error("bookmark", "Android no longer lets NEFORUM use this location: choose it again in Settings > Sync.", null)
+            }
+        } catch (e: Exception) {
+            main.post { result.error("io", e.message ?: e.toString(), null) }
+        }
     }
 }
 

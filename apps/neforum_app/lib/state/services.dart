@@ -10,6 +10,7 @@ import '../platform/browser_bridge.dart';
 import '../platform/env.dart';
 import '../platform/media_library.dart';
 import '../platform/notifications.dart';
+import '../platform/process_identity.dart';
 import '../platform/secure_secret_store.dart';
 import '../platform/storage.dart';
 import '../platform/storage_maintenance.dart';
@@ -18,7 +19,9 @@ import 'cloud_sync.dart';
 import 'composer_draft.dart' show kComposerDraftFile;
 import 'demo.dart';
 import 'media_host_config.dart';
+import 'publish_result_notices.dart';
 import 'settings.dart';
+import 'sign_in_notifications.dart';
 
 /// Every long-lived object the app needs, created once at startup (and again
 /// when the user toggles demo mode).
@@ -36,6 +39,10 @@ class AppServices {
     required this.handoff,
     required this.browserBridge,
     required this.publishJournal,
+    required this.signInStatusStore,
+    required this.signInStatus,
+    required this.signInWarningStore,
+    required this.signInWarnings,
     required this.demo,
     required this._settings,
   }) : quota = QuotaTracker(quotaRepo);
@@ -47,6 +54,21 @@ class AppServices {
   /// The publish runs of this process and of the background isolates that
   /// share its data folder (see [recoverInterruptedPublishing]).
   final PublishJournal publishJournal;
+
+  /// What this device last worked out about each sign-in, readable with no
+  /// keychain prompt. Device-only: never synced, never exported.
+  final SignInStatusStore signInStatusStore;
+
+  /// Keeps [signInStatusStore] current: [secrets] tells it about every write.
+  final SignInStatusTracker signInStatus;
+
+  /// Which sign-in warnings this device already gave, and what was closed of
+  /// the banner. Device-only: never synced, never exported.
+  final SignInWarningStore signInWarningStore;
+
+  /// Warns ahead of a sign-in's end. Runs on start, on the scheduler's timer,
+  /// on every status change and after each background run.
+  final SignInWarningService signInWarnings;
   final QuotaRepository quotaRepo;
   final SecretStore secrets;
   final AdapterRegistry registry;
@@ -78,7 +100,7 @@ class AppServices {
   final Set<String> _skipped = {};
 
   /// [browserBridge] replaces the real one in tests.
-  static Future<AppServices> create({required bool demo, AppStorage? storage, BrowserBridge? browserBridge}) async {
+  static Future<AppServices> create({required bool demo, AppStorage? storage, BrowserBridge? browserBridge, @visibleForTesting String? journalProcess}) async {
     final st = storage ?? await openAppStorage();
     final settings = AppSettings.fromJson(await st.readJson('settings.json') ?? const {});
     final real = builtinRegistry();
@@ -86,27 +108,39 @@ class AppServices {
     late final AccountRepository accounts;
     late final PostRepository posts;
     late final QuotaRepository quota;
-    late final SecretStore secrets;
+    late final SecretStore keychain;
     late final PublishJournal journal;
+    late final SignInStatusStore signInStore;
+    late final SignInWarningStore warningStore;
     final AdapterRegistry registry;
 
     if (demo) {
       accounts = InMemoryAccountRepository();
       posts = _NotificationCancellingPostRepository(InMemoryPostRepository());
       quota = InMemoryQuotaRepository();
-      secrets = InMemorySecretStore();
+      keychain = InMemorySecretStore();
       journal = PublishJournal.inMemory();
+      signInStore = SignInStatusStore.inMemory();
+      warningStore = SignInWarningStore.inMemory();
       registry = demoRegistry(real);
       await seedDemo(registry: registry, accounts: accounts, posts: posts, quota: quota, media: MediaLibrary(st));
+      await seedDemoSignIns(registry: registry, accounts: accounts, statuses: signInStore);
     } else {
-      final store = JsonFileStore(st.dataDir ?? '');
+      final store = JsonFileStore(st.dataDir ?? '', process: journalProcess ?? publishProcessIdentity());
       accounts = store.accounts;
       posts = _NotificationCancellingPostRepository(store.posts);
       quota = store.quota;
-      secrets = SecureSecretStore();
+      keychain = SecureSecretStore();
       journal = store.publishJournal;
+      signInStore = store.signInStatus;
+      warningStore = store.signInWarnings;
       registry = real;
     }
+
+    // Every write of an account's keys, whoever makes it (a renewal, a connect,
+    // a sync, a restored backup), updates its status.
+    final signIn = SignInStatusTracker(store: signInStore, accounts: accounts, registry: registry, secrets: keychain);
+    final SecretStore secrets = SignInStatusSecretStore(keychain, signIn);
 
     late final AppServices services;
     final handoff = AppHandoffLauncher(onSkip: (postId, accountId) => services._skipped.add('$postId|$accountId'));
@@ -131,6 +165,16 @@ class AppServices {
       // unpair the extension.
       browserBridge: browserBridge ?? BrowserBridge.create(secrets: demo && Env.isDesktop ? SecureSecretStore() : secrets),
       publishJournal: journal,
+      signInStatusStore: signInStore,
+      signInStatus: signIn,
+      signInWarningStore: warningStore,
+      signInWarnings: SignInWarningService(
+        store: warningStore,
+        statuses: signInStore,
+        accounts: accounts,
+        sink: demo ? const SilentSignInSink() : SignInNotificationSink(accounts: accounts, registry: registry),
+        schedulesAhead: Env.isAndroid || Env.isIOS,
+      ),
       demo: demo,
       settings: settings,
     );
@@ -216,6 +260,7 @@ class AppServices {
         options: _settings.publishOptions,
         secretsCoordinator: cloudSync.active ? cloudSync : null,
         journal: publishJournal,
+        signInOutcomes: signInStatus,
         readMedia: media.read,
       );
 
@@ -311,8 +356,16 @@ class AppServices {
     return true;
   }
 
-  /// Shown on targets a closed or crashed NEFORUM left unposted.
-  static const interruptedMessage = 'NEFORUM closed before this was posted. Retry it.';
+  /// Shown on targets a run left unposted when its process ended. iOS stopping
+  /// the app and a person swiping it away look alike, so it names neither.
+  static const interruptedMessage = 'NEFORUM was closed before this was posted. Retry it.';
+
+  /// The same when the OS says the person stopped the app in the middle of a run.
+  static const stoppedByUserMessage = 'You stopped NEFORUM while it was posting. Retry it.';
+
+  /// What recovery writes on unfinished targets. main.dart sets it from the OS's
+  /// reason for the last exit.
+  String interruptionMessage = interruptedMessage;
 
   /// Shown on targets a run of this process did not reach because it
   /// stopped with [error].
@@ -348,7 +401,16 @@ class AppServices {
   ///
   /// A settled post keeps its last change time, so a newer real result
   /// still wins a sync merge.
-  Future<int> recoverInterruptedPublishing({DateTime? now, Set<String> exclude = const {}, bool atStartup = false}) async {
+  ///
+  /// Each settled post goes to [onSettled] and, unless [announce] is false,
+  /// gets [announceInterrupted].
+  Future<int> recoverInterruptedPublishing({
+    DateTime? now,
+    Set<String> exclude = const {},
+    bool atStartup = false,
+    void Function(Post settled)? onSettled,
+    bool announce = true,
+  }) async {
     await posts.reload();
     var recovered = 0;
     for (final outcome in _unsavedOutcomes.values.toList()) {
@@ -357,9 +419,12 @@ class AppServices {
     final runs = await publishJournal.entries();
     final at = now ?? DateTime.now();
     final roller = publisher();
-    Future<void> settle(Post post) async {
-      await posts.upsert(roller.rollUpStatus(failUnfinishedTargets(post, interruptedMessage)));
+    Future<void> settle(Post post, {Set<String> mayBeLive = const {}}) async {
+      final settledPost = roller.rollUpStatus(failUnfinishedTargets(post, interruptionMessage, unconfirmed: await _unconfirmedMessages(mayBeLive)));
+      await posts.upsert(settledPost);
       recovered++;
+      onSettled?.call(settledPost);
+      if (announce) await announceInterrupted(settledPost);
     }
 
     final settled = <String>[];
@@ -368,7 +433,7 @@ class AppServices {
       final post = await posts.get(run.postId);
       settled.add(run.postId);
       if (post == null || post.status != PostStatus.publishing) continue;
-      await settle(post);
+      await settle(post, mayBeLive: run.outcomeUnknownAccounts);
     }
     await publishJournal.remove(settled);
     if (atStartup) {
@@ -379,6 +444,24 @@ class AppServices {
       }
     }
     return recovered;
+  }
+
+  /// Says that a run a closed NEFORUM left unfinished was settled. Best effort:
+  /// the post already shows Retry in Activity. [show] replaces the OS
+  /// notification (the background task's tests).
+  Future<void> announceInterrupted(Post settled, {ShowNotification? show}) async {
+    if (demo || !_settings.notifyOnPublish) return;
+    try {
+      final notice = publishInterruptedNotice(settled, fallbackMessage: interruptionMessage);
+      if (show != null) {
+        await show(key: notice.key, title: notice.title, body: notice.body, payload: notice.payload);
+      } else {
+        await NotificationService.instance.showResults([notice]);
+      }
+      await UnseenResults(storage).add(UnseenResult(postId: settled.id, at: DateTime.now(), title: notice.title, lines: [notice.body]));
+    } on Object catch (e) {
+      debugPrint('Could not announce the interrupted run of ${settled.id}: $e');
+    }
   }
 
   /// Settles post [postId] after its run in this process stopped with
@@ -406,13 +489,27 @@ class AppServices {
           await publishJournal.release(postId);
           return;
         }
-        outcome = publisher().rollUpStatus(failUnfinishedTargets(stored, stoppedMessage(error))).copyWith(updatedAt: DateTime.now());
+        outcome = publisher()
+            .rollUpStatus(failUnfinishedTargets(stored, stoppedMessage(error), unconfirmed: await _unconfirmedMessages(run?.outcomeUnknownAccounts ?? const {})))
+            .copyWith(updatedAt: DateTime.now());
       }
       _unsavedOutcomes[postId] = outcome;
       await _saveOutcome(outcome);
     } on Object catch (e) {
       debugPrint('Could not settle the stopped run of $postId: $e');
     }
+  }
+
+  /// For each of [accountIds], whose request to make a post was under way when its
+  /// run died: the words saying nobody knows whether the post is live.
+  Future<Map<String, String>> _unconfirmedMessages(Set<String> accountIds) async {
+    final out = <String, String>{};
+    for (final id in accountIds) {
+      final account = await accounts.get(id);
+      final adapter = account == null ? null : registry.byId(account.platformId);
+      out[id] = PublishError.unconfirmedMessage(adapter?.descriptor.name ?? 'the network');
+    }
+    return out;
   }
 
   /// Saves [outcome] unless the post was deleted or changed since its run
@@ -469,6 +566,8 @@ class AppServices {
     await step('retention', applyRetention);
     await step('unused media', deleteUnreferencedMedia);
     await step('share-sheet copies', deleteExpiredShareExports);
+    // Not awaited: this waits on the keychain, and starting up never does.
+    unawaited(step('sign-in dates', signInStatus.seedMissing));
   }
 
   /// Names of the files every post, the composer draft on disk and
@@ -510,8 +609,15 @@ class _NotificationCancellingPostRepository implements PostRepository {
 
   @override
   Future<void> delete(String id) async {
+    // Read first: each network has its own notification.
+    Post? post;
+    try {
+      post = await _posts.get(id);
+    } on Object catch (e) {
+      debugPrint('Could not read post $id before deleting it: $e');
+    }
     await _posts.delete(id);
-    await NotificationService.instance.cancelPostNotifications(id);
+    await NotificationService.instance.cancelPostNotifications(id, accountIds: post?.targets.map((t) => t.accountId) ?? const []);
   }
 
   @override
@@ -584,14 +690,19 @@ List<Post> expiredPosts(Iterable<Post> all, PublishedPostRetention retention, Da
 DateTime lastChangeOf(Post post) => post.targets.map((t) => t.lastAttemptAt).nonNulls.fold(post.updatedAt, (last, t) => t.isAfter(last) ? t : last);
 
 /// [post] with every target still waiting or being posted marked failed
-/// with [message], so that it can be retried.
-Post failUnfinishedTargets(Post post, String message) {
+/// with [message], so that it can be retried. A target in [unconfirmed] gets the
+/// message there instead and [PublishError.outcomeUnknown]: its request to make the
+/// post was under way, so the post may be live and nothing retries it by itself.
+Post failUnfinishedTargets(Post post, String message, {Map<String, String> unconfirmed = const {}}) {
   var fixed = post;
   for (final t in post.targets) {
     if (t.status != TargetStatus.pending && t.status != TargetStatus.publishing) continue;
+    final unknown = unconfirmed[t.accountId];
     fixed = fixed.withTarget(t.copyWith(
       status: TargetStatus.failed,
-      result: PublishResult.failure(PublishError(kind: PublishErrorKind.network, message: message)),
+      result: PublishResult.failure(unknown == null
+          ? PublishError(kind: PublishErrorKind.network, message: message)
+          : PublishError(kind: PublishErrorKind.network, message: unknown, outcomeUnknown: true)),
     ));
   }
   return fixed;

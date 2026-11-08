@@ -15,6 +15,7 @@ import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'audio_quality_option.dart';
 import 'document_import.dart';
+import 'emoji_insert.dart';
 import 'media_tray.dart';
 import 'poll_sheet.dart';
 import 'rich_text.dart';
@@ -103,17 +104,21 @@ class _EditorCardState extends ConsumerState<EditorCard> {
               Icon(Icons.warning_amber_rounded, size: 18, color: nf.warning),
               const SizedBox(width: Space.sm),
               Expanded(
-                child: TextField(
+                child: EmojiTargetField(
                   controller: _cw,
                   onChanged: notifier.setContentWarning,
-                  style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
-                  decoration: const InputDecoration(
-                    hintText: 'Content warning (shown before the post, where supported)',
-                    filled: false,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    contentPadding: EdgeInsets.symmetric(vertical: Space.md),
+                  child: TextField(
+                    controller: _cw,
+                    onChanged: notifier.setContentWarning,
+                    style: context.text.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                    decoration: const InputDecoration(
+                      hintText: 'Content warning (shown before the post, where supported)',
+                      filled: false,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: Space.md),
+                    ),
                   ),
                 ),
               ),
@@ -132,20 +137,24 @@ class _EditorCardState extends ConsumerState<EditorCard> {
         if (showTitle)
           Padding(
             padding: const EdgeInsets.fromLTRB(Space.xl, Space.lg, Space.xl, 0),
-            child: TextField(
+            child: EmojiTargetField(
               controller: _title,
               onChanged: notifier.setTitle,
-              style: context.text.titleLarge?.copyWith(fontSize: 20),
-              textInputAction: TextInputAction.next,
-              decoration: InputDecoration(
-                hintText: 'Title (for Reddit, YouTube, blogs…)',
-                hintStyle: context.text.titleLarge?.copyWith(fontSize: 20, color: nf.textFaint),
-                filled: false,
-                border: InputBorder.none,
-                enabledBorder: InputBorder.none,
-                focusedBorder: InputBorder.none,
-                contentPadding: EdgeInsets.zero,
-                isDense: true,
+              child: TextField(
+                controller: _title,
+                onChanged: notifier.setTitle,
+                style: context.text.titleLarge?.copyWith(fontSize: 20),
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
+                  hintText: 'Title (for Reddit, YouTube, blogs…)',
+                  hintStyle: context.text.titleLarge?.copyWith(fontSize: 20, color: nf.textFaint),
+                  filled: false,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding: EdgeInsets.zero,
+                  isDense: true,
+                ),
               ),
             ),
           ),
@@ -153,29 +162,35 @@ class _EditorCardState extends ConsumerState<EditorCard> {
           padding: const EdgeInsets.fromLTRB(Space.xl, Space.md, Space.md, Space.sm),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Expanded(
-              child: TextField(
+              child: EmojiTargetField(
                 controller: _text,
-                focusNode: widget.focusNode,
                 onChanged: notifier.setText,
-                minLines: context.isCompact ? 5 : 7,
-                maxLines: null,
-                keyboardType: TextInputType.multiline,
-                style: context.text.bodyLarge?.copyWith(fontSize: 17, height: 1.55),
-                decoration: InputDecoration(
-                  hintText: "What's happening? Write once, NEFORUM adapts it for every network.",
-                  hintStyle: context.text.bodyLarge?.copyWith(fontSize: 17, color: nf.textFaint, height: 1.55),
-                  filled: false,
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  contentPadding: EdgeInsets.zero,
+                focusNode: widget.focusNode,
+                isDefault: true,
+                child: TextField(
+                  controller: _text,
+                  focusNode: widget.focusNode,
+                  onChanged: notifier.setText,
+                  minLines: context.isCompact ? 5 : 7,
+                  maxLines: null,
+                  keyboardType: TextInputType.multiline,
+                  style: context.text.bodyLarge?.copyWith(fontSize: 17, height: 1.55),
+                  decoration: InputDecoration(
+                    hintText: "What's happening? Write once, NEFORUM adapts it for every network.",
+                    hintStyle: context.text.bodyLarge?.copyWith(fontSize: 17, color: nf.textFaint, height: 1.55),
+                    filled: false,
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
               ),
             ),
             const SizedBox(width: Space.xs),
             // Always laid out, so the text does not reflow when it appears.
             Visibility(
-              visible: _hasContent(c),
+              visible: c.hasContent,
               maintainSize: true,
               maintainAnimation: true,
               maintainState: true,
@@ -290,10 +305,6 @@ class _EditorCardState extends ConsumerState<EditorCard> {
       ]),
     );
   }
-
-  /// Something "Clear post" would remove.
-  static bool _hasContent(ComposerState c) =>
-      !c.isEmpty || c.additionalParts.isNotEmpty || c.poll != null || c.contentWarning != null || c.tags.isNotEmpty || c.overrides.isNotEmpty;
 
   /// Empties the whole post (targets stay). Undo brings it back until
   /// anything else changes.
@@ -568,22 +579,27 @@ class _PartEditor extends ConsumerWidget {
           const SizedBox(width: Space.xs),
           ToolButton(icon: Icons.close_rounded, tooltip: 'Remove part ${index + 1}', size: 32, onPressed: onRemove),
         ]),
-        TextField(
+        EmojiTargetField(
           controller: field.controller,
-          focusNode: field.focus,
           onChanged: onChanged,
-          minLines: 2,
-          maxLines: null,
-          keyboardType: TextInputType.multiline,
-          style: context.text.bodyLarge?.copyWith(fontSize: 17, height: 1.55),
-          decoration: InputDecoration(
-            hintText: 'Continue the thread',
-            hintStyle: context.text.bodyLarge?.copyWith(fontSize: 17, color: nf.textFaint, height: 1.55),
-            filled: false,
-            border: InputBorder.none,
-            enabledBorder: InputBorder.none,
-            focusedBorder: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
+          focusNode: field.focus,
+          child: TextField(
+            controller: field.controller,
+            focusNode: field.focus,
+            onChanged: onChanged,
+            minLines: 2,
+            maxLines: null,
+            keyboardType: TextInputType.multiline,
+            style: context.text.bodyLarge?.copyWith(fontSize: 17, height: 1.55),
+            decoration: InputDecoration(
+              hintText: 'Continue the thread',
+              hintStyle: context.text.bodyLarge?.copyWith(fontSize: 17, color: nf.textFaint, height: 1.55),
+              filled: false,
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              contentPadding: EdgeInsets.zero,
+            ),
           ),
         ),
         // The attachments that go with this part (moved with the part chip
@@ -675,6 +691,7 @@ class _Toolbar extends ConsumerWidget {
                 size: s,
                 badge: c.media.isEmpty ? null : '${c.media.length}',
               ),
+              EmojiButton(size: s),
               ToolButton(icon: Icons.description_outlined, tooltip: 'Make a thread from a document (PDF, Word, EPUB, Markdown, text, web page)', onPressed: onDocument, size: s),
               ToolButton(icon: Icons.link_rounded, tooltip: 'Add a link', onPressed: onLink, active: c.link != null, size: s),
               ToolButton(icon: Icons.tag_rounded, tooltip: 'Hashtags', onPressed: onTags, active: c.tags.isNotEmpty, size: s),

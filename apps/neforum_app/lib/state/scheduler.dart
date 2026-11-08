@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:workmanager/workmanager.dart';
@@ -8,10 +8,15 @@ import 'package:workmanager/workmanager.dart';
 import '../platform/desktop.dart';
 import '../platform/env.dart';
 import '../platform/notifications.dart';
+import '../ui/activity/time_format.dart' show clockFormat, dayLabel;
 import 'automatic_handoff.dart';
 import 'fitted_photos.dart';
+import 'notification_state.dart';
 import 'providers.dart';
+import 'publish_result_notices.dart';
+import 'publish_run_keeper.dart';
 import 'services.dart';
+import 'settings.dart';
 
 /// Background task name shared with the WorkManager callback in main.dart.
 const String kPublishDueTask = 'org.neforum.publish_due';
@@ -33,14 +38,22 @@ class AppScheduler {
   Timer? _timer;
   Timer? _retentionTimer;
   Timer? _recoveryTimer;
+
+  /// Held here: stop runs while the providers shut down and cannot read them.
+  SignInWarningService? _warnings;
   bool _busy = false;
 
   AppServices get _s => ref.read(servicesProvider);
 
   void start() {
     if (_timer != null) return;
-    _timer = Timer.periodic(const Duration(seconds: 30), (_) => runDue());
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) {
+      unawaited(runDue());
+      // A date passes with no write: desktops fire sign-in warnings from here.
+      unawaited(_s.signInWarnings.run());
+    });
     unawaited(runDue());
+    _warnings = _s.signInWarnings..start();
     if (Env.isAndroid || Env.isIOS) unawaited(_registerPeriodic());
     // Startup applied retention already (main.dart); kept posts expire by
     // the hour after that.
@@ -57,6 +70,8 @@ class AppScheduler {
     _retentionTimer = null;
     _recoveryTimer?.cancel();
     _recoveryTimer = null;
+    _warnings?.stop();
+    _warnings = null;
   }
 
   /// Settles the runs on this device that ended without saving their
@@ -104,12 +119,35 @@ class AppScheduler {
         final active = ref.read(activePublishingProvider.notifier);
         final signal = CancellationSignal();
         active.begin(p.id, signal);
+        // Android refuses this when the app is not on screen; the run then goes on
+        // as before, without the keep-alive. iOS keeps its time for a person's tap,
+        // so a run the scheduler starts by itself asks for none there.
+        final kept = !Env.isIOS;
+        final keeper = ref.read(publishRunKeeperProvider);
+        if (kept) keeper.begin(p.id);
+        // Activity and the post's page show this run's figures. One tracker: the
+        // screens read its figures, the keep-alive too.
+        final figures = ref.read(publishProgressProvider.notifier);
+        final tracker = figures.begin(p.id, onChange: (progress) {
+          if (kept) keeper.progress(p.id, progress);
+        });
         final Post done;
         try {
           await fitPhotosOfSavedPost(_s, p.id);
           // Networks whose own time has not come yet wait for a later run.
-          final published =
-              await _s.publisher().publish(p.id, interactive: interactive, retryFailed: false, cancellation: signal, dueTargetsOnly: true);
+          final published = await _s.publisher().publish(
+                p.id,
+                interactive: interactive,
+                retryFailed: false,
+                cancellation: signal,
+                dueTargetsOnly: true,
+                onPlan: (plan) {
+                  tracker.plan(plan);
+                  if (kept) keeper.planned(p.id, plan);
+                },
+                onEvent: tracker.event,
+                onOutcome: tracker.outcome,
+              );
           // With automatic posting on, the browser extension posts the
           // hand-off targets now instead of leaving them waiting; Cancel in
           // Activity stops that too.
@@ -120,12 +158,21 @@ class AppScheduler {
           rethrow;
         } finally {
           active.end(p.id, signal);
+          figures.end(p.id, tracker);
+          if (kept) unawaited(keeper.end(p.id));
         }
         out.add(done);
         final discarded = await _s.discardIfComplete(p.id);
-        await announcePublishResult(_s, done, discarded: discarded);
+        await announcePublishResult(
+          _s,
+          done,
+          discarded: discarded,
+          delivery: unattendedRunDelivery(lifecycle: WidgetsBinding.instance.lifecycleState),
+          onlyAccountIds: targetsChangedByRun(p, done),
+        );
         await planNextReminders(_s, done);
       }
+      if (due.isNotEmpty) await ref.read(notificationAccessProvider.notifier).refresh();
       updateTrayStatus();
       return out;
     } on Object catch (e) {
@@ -139,6 +186,10 @@ class AppScheduler {
   /// Sets up OS-level reminders and background work for a scheduled post.
   Future<void> planReminders(Post p) async {
     await planPostReminders(_s, p);
+    // Reminders go first in the OS's limited room: sign-in warnings make way.
+    // Not awaited: scheduling a post never waits on a warning pass, which
+    // queues behind any pass already running.
+    unawaited(_s.signInWarnings.run());
     updateTrayStatus();
   }
 
@@ -220,6 +271,7 @@ Future<void> planPostReminders(AppServices s, Post p) async {
         body: '${held}Publish now: ${_short(p.text)}',
         payload: 'publish:${p.id}',
         publishAction: true,
+        publishOpensApp: reminderOpensApp(p),
       );
     }
   } else if (handoffNames.isNotEmpty) {
@@ -264,72 +316,99 @@ Future<void> planNextReminders(AppServices s, Post done) async {
   }
 }
 
+/// Whether a reminder's "Publish now" should open NEFORUM. A text post can go out
+/// in the seconds iOS gives a background action. Files can take longer, and only a
+/// tap with the app in front may ask iOS for more time.
+bool reminderOpensApp(Post p) => p.media.isNotEmpty;
+
 String _join(List<String> names) {
   if (names.isEmpty) return 'your networks';
   if (names.length == 1) return names.first;
   return '${names.sublist(0, names.length - 1).join(', ')} and ${names.last}';
 }
 
-/// Notifies the user about the outcome of an unattended publish run.
-/// [discarded]: the finished post was deleted right away (Settings >
-/// Activity and history), so the notification neither quotes nor opens it.
-Future<void> announcePublishResult(AppServices s, Post p, {bool discarded = false}) async {
-  final names = <String>[];
-  for (final t in p.targets.where((t) => t.status == TargetStatus.awaitingHandoff)) {
-    final a = await s.accounts.get(t.accountId);
-    final d = a == null ? null : s.registry.descriptor(a.platformId);
-    if (d != null) names.add(d.name);
+/// Notifies the user about the outcome of a publish run: one notification per
+/// network with a summary (see [publishResultNotices]). [discarded]: the
+/// finished post was deleted right away (Settings > Activity and history), so
+/// nothing quotes or opens it. [delivery] says who is watching; the default
+/// is for a run with no app on screen.
+Future<void> announcePublishResult(
+  AppServices s,
+  Post p, {
+  bool discarded = false,
+  RunEndDelivery delivery = RunEndDelivery.notifyAndRemember,
+  Set<String>? onlyAccountIds,
+}) async {
+  if (delivery == RunEndDelivery.none) return;
+  final accounts = {for (final t in p.targets) t.accountId: await s.accounts.get(t.accountId)};
+  final perNetwork = <String, int>{};
+  for (final a in accounts.values.nonNulls) {
+    perNetwork[a.platformId] = (perNetwork[a.platformId] ?? 0) + 1;
   }
-  final notice = publishResultNotice(p, discarded: discarded, notifyOnPublish: s.settings.notifyOnPublish, waitingNetworks: names);
-  if (notice == null) return;
-  await NotificationService.instance.show(key: notice.key, title: notice.title, body: notice.body, payload: notice.payload);
+  final networks = <String, ResultNetworkName>{};
+  accounts.forEach((id, a) {
+    final d = a == null ? null : s.registry.descriptor(a.platformId);
+    if (a != null && d != null) {
+      networks[id] = (name: d.name, accountLabel: (perNetwork[a.platformId] ?? 0) > 1 ? (a.handle ?? a.displayName) : null);
+    }
+  });
+  final notices = publishResultNotices(
+    p,
+    discarded: discarded,
+    notifyOnPublish: s.settings.notifyOnPublish,
+    networks: networks,
+    heldTime: (when) => _heldTimeLabel(when, s.settings),
+    onlyAccountIds: onlyAccountIds,
+    // Android conceals a notification on a secure lock screen. iOS and macOS
+    // have no such flag per notification, so there the text stays out of it.
+    quotePostText: !(Env.isIOS || Env.isMacOS),
+  );
+  if (notices.isEmpty) return;
+  await NotificationService.instance.showResults(notices);
+  if (delivery == RunEndDelivery.notifyAndRemember) {
+    await UnseenResults(s.storage).add(UnseenResult(
+      postId: p.id,
+      at: DateTime.now(),
+      title: notices.last.title,
+      lines: notices.length == 1 ? const [] : notices.last.lines,
+    ));
+  }
 }
 
-/// The notification [announcePublishResult] shows for [p], or null when
-/// there is nothing to say. [waitingNetworks] names the hand-offs waiting
-/// for the user. Only networks that got the post (published or handed off)
-/// count as posted, and nothing is announced as live when none did.
-({String key, String title, String body, String? payload})? publishResultNotice(
-  Post p, {
-  required bool discarded,
-  required bool notifyOnPublish,
-  List<String> waitingNetworks = const [],
-}) {
-  final waiting = p.targets.where((t) => t.status == TargetStatus.awaitingHandoff).length;
-  final failed = p.targets.where((t) => t.status == TargetStatus.failed).length;
-  final ok = p.targets.where((t) => t.status == TargetStatus.published || t.status == TargetStatus.handedOff).length;
-  // The user stopped this run in Activity and has seen how it ended.
-  if (waiting == 0 && p.targets.any((t) => t.status == TargetStatus.cancelled)) return null;
-  if (waiting > 0) {
-    // Automatic posting filled a page in without a confirmed post: say what
-    // to check there, so the post is not made a second time.
-    final note = p.targets.where((t) => t.status == TargetStatus.awaitingHandoff).map((t) => t.handoffNote).nonNulls.firstOrNull;
-    return (
-      key: 'handoff:${p.id}',
-      title: 'Time to post to ${_join(waitingNetworks)}',
-      body: '${ok > 0 ? 'Already posted to $ok. ' : ''}${note == null ? '' : '$note '}Tap to finish in ${waitingNetworks.length == 1 ? 'the app' : 'each app'}.',
-      payload: 'post:${p.id}',
-    );
+/// "18:00" today, otherwise "tomorrow, 18:00".
+String _heldTimeLabel(DateTime when, AppSettings settings) {
+  final use24Hour = switch (settings.clockFormat) {
+    ClockFormat.twelveHour => false,
+    ClockFormat.twentyFourHour => true,
+    ClockFormat.system => WidgetsBinding.instance.platformDispatcher.alwaysUse24HourFormat,
+  };
+  final local = when.toLocal();
+  final now = DateTime.now();
+  if (local.year == now.year && local.month == now.month && local.day == now.day) {
+    return clockFormat(use24Hour: use24Hour).format(local);
   }
-  if (!notifyOnPublish) return null;
-  if (p.targets.isNotEmpty && p.targets.every((t) => t.status == TargetStatus.skipped)) {
-    // Every account of the post is switched off: it stays in Activity.
-    return (
-      key: 'result:${p.id}',
-      title: 'Not posted',
-      body: 'The accounts for this post are switched off. It stays in Activity.',
-      payload: 'post:${p.id}',
-    );
+  return dayLabel(local, now: now, withTime: true, use24Hour: use24Hour).replaceFirst('Tomorrow', 'tomorrow');
+}
+
+/// The WorkManager and BGTask entry's work: first settles and announces runs that
+/// died (nothing else reports a stopped worker, and `due()` never returns a post left
+/// publishing), then publishes what is due. A live run elsewhere in this process keeps
+/// its heartbeat and is left alone. Returns how many posts were due. [show] replaces
+/// the OS notification of a settled run (tests).
+Future<int> runBackgroundPublish(AppServices s, {ShowNotification? show}) async {
+  final settled = <Post>[];
+  try {
+    await s.recoverInterruptedPublishing(onSettled: settled.add, announce: false);
+  } on Object catch (e) {
+    debugPrint('Recovery in the background task failed: $e');
   }
-  if (discarded) {
-    return (key: 'result:${p.id}', title: 'Posted to $ok ${ok == 1 ? 'network' : 'networks'}', body: 'Your scheduled post is live.', payload: null);
+  for (final p in settled) {
+    await s.announceInterrupted(p, show: show);
   }
-  return (
-    key: 'result:${p.id}',
-    title: failed > 0 ? 'Posted to $ok, $failed failed' : 'Posted to $ok ${ok == 1 ? 'network' : 'networks'}',
-    body: p.text.length > 90 ? '${p.text.substring(0, 90)}…' : p.text,
-    payload: 'post:${p.id}',
-  );
+  await s.startCloudSync(background: true);
+  final due = await publishDueHeadless(s);
+  await s.cloudSync.syncNow();
+  return due;
 }
 
 /// Publishes all due posts without UI (WorkManager / iOS background task).
@@ -347,10 +426,13 @@ Future<int> publishDueHeadless(AppServices s) async {
       rethrow;
     }
     final discarded = await s.discardIfComplete(p.id);
-    await announcePublishResult(s, done, discarded: discarded);
+    await announcePublishResult(s, done, discarded: discarded, onlyAccountIds: targetsChangedByRun(p, done));
     // The next network's time: WorkManager one-off on Android, a reminder on iOS.
     await planNextReminders(s, done);
   }
+  // A renewal in this run moved a date, and a warning planned for the old one
+  // would say something no longer true: no status stream reaches this isolate.
+  await s.signInWarnings.run();
   return due.length;
 }
 

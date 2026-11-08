@@ -1,3 +1,4 @@
+import '../auth/oauth2_pkce.dart';
 import '../handoff/handoff_plan.dart';
 import '../model/account.dart';
 import '../model/photo_fit.dart';
@@ -5,10 +6,16 @@ import '../model/platform_descriptor.dart';
 import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/publish_result.dart';
+import '../model/sign_in_lifetime.dart';
 import '../model/validation.dart';
+import '../publish/publish_progress.dart';
 import '../text/rules_validator.dart';
 import 'adapter_context.dart';
 import 'connect_spec.dart';
+
+export '../model/sign_in_lifetime.dart';
+export '../publish/publish_progress.dart' show ProgressFamily, ProgressShape, ProgressSlot;
+export 'sign_in_policies.dart';
 
 /// The contract every platform implements.
 ///
@@ -53,15 +60,56 @@ abstract class PlatformAdapter {
           ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
       null;
 
+  /// The documented facts about how long [account]'s sign-in lasts, from
+  /// [SignInPolicies]. No default on purpose: a new adapter has to answer, and
+  /// `sign_in_policy_table_test.dart` holds the answer to the docs.
+  SignInPolicy signInPolicyFor(ConnectedAccount account);
+
+  /// What the platform itself says about [secrets]' sign-in right now, or null
+  /// when it has no way to say (most have none). Called at connect, after a
+  /// publish and when the sign-ins page opens, at most once a day per account
+  /// (`SignInStatusTracker`). Must not throw for platform or network problems,
+  /// and must not count as use of a paid API: X stays null because its
+  /// pay-per-use pricing of a read is unknown.
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => null;
+
+  /// [readSignIn] has an answer for [account]: the sign-ins page offers "Check
+  /// now", and opening that page asks only these, so the rest cost no keychain
+  /// prompt. An adapter that overrides [readSignIn] overrides this too.
+  bool canReadSignIn(ConnectedAccount account) => false;
+
+  /// "Renew now": a renewal of [secrets] now, where [refreshSecrets] would wait
+  /// for them to run out. Null when there was nothing to renew. Throws what
+  /// [refreshSecrets] throws.
+  ///
+  /// The default tells [refreshSecrets] that the access token has run out, which
+  /// is the question every refresh token path asks. A date in the answer is
+  /// always the server's, and with none the old one is dropped, not this one.
+  /// An adapter that treats a run-out token as the end (Threads, Instagram)
+  /// overrides this.
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final past = ctx.now().subtract(const Duration(days: 1)).toUtc().toIso8601String();
+    final fresh = await refreshSecrets(account, {...secrets, OAuthTokens.keyExpiresAt: past}, ctx);
+    if (fresh == null || fresh[OAuthTokens.keyExpiresAt] != past) return fresh;
+    return {...fresh}..remove(OAuthTokens.keyExpiresAt);
+  }
+
   /// The platform hands out a new refresh token on every renewal and kills
-  /// the old one (X, Tumblr). An account copied to a second device then stays
-  /// connected on only one of them: whichever renews first. Export warns.
+  /// the old one (X, Tumblr, TikTok, Pixelfed). An account copied to a second
+  /// device then stays connected on only one of them: whichever renews first.
+  /// Export warns.
   bool get rotatesRefreshTokens => false;
 
   /// [rotatesRefreshTokens] for one account: on X and Tumblr an account
-  /// connected with OAuth 1.0a keys never renews anything, so it can live on
-  /// several devices. Ask this, not the getter, when an account is at hand.
+  /// connected with OAuth 1.0a keys is never renewed, so one device cannot end
+  /// another's. Ask this, not the getter, when an account is at hand.
   bool rotatesRefreshTokensFor(ConnectedAccount account) => rotatesRefreshTokens;
+
+  /// [secrets] have not expired, but a post at [now] renews them anyway. On a
+  /// network with rotating tokens the renewal then retires keys the other
+  /// devices still hold, so the sync coordinator has to know, and take turns as
+  /// it does for expired keys.
+  bool renewsEarly(ConnectedAccount account, Map<String, String> secrets, DateTime now) => false;
 
   /// The photos this platform takes through [account] for [variant], as rules a photo can be
   /// changed to meet (shape, file type, size, pixels). The app makes a fitted
@@ -89,6 +137,10 @@ abstract class PlatformAdapter {
   /// escape.
   Future<PublishResult> publish(
       PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx);
+
+  /// How this post will go on this network, for the progress figures. Most
+  /// networks are a plain upload and an answer; the others override it.
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.direct);
 
   /// Builds the hand-off plan for this platform, or `null` when the platform
   /// has no sensible hand-off route.

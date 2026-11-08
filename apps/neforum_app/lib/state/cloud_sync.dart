@@ -411,9 +411,9 @@ class CloudSync implements SecretsCoordinator {
   }
 
   @override
-  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh) {
+  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh, {bool Function(Map<String, String> secrets)? renewsEarly}) {
     final engine = _engine;
-    return engine == null ? refresh(current) : engine.renew(account, current, refresh);
+    return engine == null ? refresh(current) : engine.renew(account, current, refresh, renewsEarly: renewsEarly);
   }
 
   void dispose() {

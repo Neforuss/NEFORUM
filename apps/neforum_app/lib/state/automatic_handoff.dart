@@ -27,9 +27,12 @@ Uri? automaticHandoffPage(HandoffPlan plan) {
 /// reach, and their hand-offs wait for the user.
 Future<bool> automaticPostingApplies(AppServices s, ConnectedAccount account) async {
   if (!s.extensionFillsHandoffs || !s.settings.postsHandoffAutomatically(account.platformId)) return false;
-  final accounts = await s.accounts.all();
-  return !accounts.any((a) => a.platformId == account.platformId && a.id != account.id);
+  return automaticPostingAppliesTo(s, account, await s.accounts.all());
 }
+
+/// [automaticPostingApplies] with the account list at hand, for the UI.
+bool automaticPostingAppliesTo(AppServices s, ConnectedAccount account, Iterable<ConnectedAccount> accounts) =>
+    s.extensionFillsHandoffs && s.settings.postsHandoffAutomatically(account.platformId) && !accounts.any((a) => a.platformId == account.platformId && a.id != account.id);
 
 /// What a hand-off whose automatic posting ended without a confirmed post
 /// leaves for the user to check before posting it by hand

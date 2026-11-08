@@ -66,7 +66,7 @@ Why the clipboard? TikTok ignores text handed to it with shared files, and it ha
 
 ### Your own API keys
 
-NEFORUM keeps the client secret and tokens in your device's secure storage. Access tokens last 24 hours and are refreshed automatically. The sign-in lasts 365 days, after which you reconnect.
+NEFORUM keeps the client secret and tokens in your device's secure storage. NEFORUM renews the access token when it posts, and shows the end date TikTok reports for the sign-in; reconnect by then. TikTok's pages disagree on the numbers: the text says 2 hours and 180 days, a sample on the same page 24 hours and 365 days. TikTok replaces the renewal key every time, so without **Settings > Sync** an account stays connected on only one device.
 
 What NEFORUM sends:
 

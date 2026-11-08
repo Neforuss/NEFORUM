@@ -1,11 +1,12 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import '../../http/neforum_http.dart';
 import '../../model/publish_result.dart';
 import '../adapter_context.dart';
 import '../platform_adapter.dart';
+
+export '../../auth/jwt.dart' show jwtExpiry;
 
 /// Default entryway for accounts hosted by Bluesky itself.
 final Uri blueskyDefaultService = Uri.parse('https://bsky.social');
@@ -83,31 +84,20 @@ Uri? pdsFromDidDoc(Object? doc) {
   return null;
 }
 
-/// Reads the `exp` claim of a JWT without verifying it (we only need to know
-/// when to refresh). Returns `null` when the token is not a readable JWT.
-DateTime? jwtExpiry(String jwt) {
-  final parts = jwt.split('.');
-  if (parts.length < 2) return null;
-  try {
-    final payload = jsonDecode(utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))));
-    if (payload is! Map) return null;
-    final exp = payload['exp'];
-    if (exp is! num) return null;
-    return DateTime.fromMillisecondsSinceEpoch((exp * 1000).round(), isUtc: true);
-  } on FormatException {
-    return null;
-  }
-}
-
 /// Error codes that mean the session is no longer usable.
 const Set<String> _authErrors = {
   'ExpiredToken',
   'InvalidToken',
   'AuthenticationRequired',
   'AuthMissing',
+  'AuthFactorTokenRequired',
+};
+
+/// Error codes that mean the account cannot post, whatever its keys. A reconnect
+/// cannot help.
+const Set<String> _accountBlockedErrors = {
   'AccountTakedown',
   'AccountDeactivated',
-  'AuthFactorTokenRequired',
 };
 
 /// The XRPC `error` code of a failed response, if any.
@@ -145,6 +135,9 @@ PublishError mapBlueskyFailure(HttpFailure f, {required DateTime now, String con
     return PublishError.quota('$context rate limit reached ($text)',
         raw: raw, statusCode: r.statusCode, retryAfter: rateLimitResetIn(r, now));
   }
+  if (code != null && _accountBlockedErrors.contains(code)) {
+    return PublishError.auth('$context will not let this account post ($text). Reconnecting will not help: check the account on Bluesky', raw: raw, statusCode: r.statusCode, notAllowed: true);
+  }
   if (code != null && _authErrors.contains(code)) {
     return PublishError.auth('$context sign-in is no longer valid ($text); reconnect the account', raw: raw, statusCode: r.statusCode);
   }
@@ -157,6 +150,7 @@ PublishError mapBlueskyFailure(HttpFailure f, {required DateTime now, String con
   final base = f.toPublishError(context: context);
   return PublishError(
     kind: base.kind,
+    notAllowed: base.notAllowed,
     message: detail.isEmpty ? base.message : '$context: $text (HTTP ${r.statusCode})',
     retryable: base.retryable,
     statusCode: base.statusCode,
@@ -245,10 +239,11 @@ class BlueskyApi {
 
   // --- repo ------------------------------------------------------------
 
-  /// Uploads raw bytes and returns the blob object to embed.
+  /// Uploads raw bytes and returns the blob object to embed. A blob is not a
+  /// post: no record points at it yet, and the PDS drops unreferenced blobs.
   Future<Map<String, dynamic>> uploadBlob(Uint8List bytes, String mimeType) async {
     final r = await ctx.http.putBytes(xrpc(pds, 'com.atproto.repo.uploadBlob'), bytes,
-        method: 'POST', headers: {..._auth, 'Content-Type': mimeType});
+        method: 'POST', headers: {..._auth, 'Content-Type': mimeType}, retrySafe: true);
     final blob = r.jsonMap['blob'];
     if (blob is! Map) {
       throw const AdapterException(PublishError.platform('Bluesky uploadBlob returned no blob'));
@@ -341,6 +336,7 @@ class BlueskyApi {
     }
     final deadline = ctx.now().add(maxWait);
     var lastProgress = -1;
+    ctx.serverWait('Bluesky is processing the video');
     while (true) {
       final blob = _blobOf(status);
       if (blob != null) return blob;
@@ -355,9 +351,9 @@ class BlueskyApi {
       final progress = status['progress'];
       if (progress is int && progress != lastProgress) {
         lastProgress = progress;
-        ctx.progress('Bluesky is processing the video ($progress%)');
+        ctx.serverWait('Bluesky is processing the video ($progress%)', percent: progress);
       }
-      await Future<void>.delayed(pollInterval);
+      await ctx.wait(pollInterval);
       final s = await ctx.http.get(xrpc(blueskyVideoService, 'app.bsky.video.getJobStatus', {'jobId': jobId}),
           throwOnError: false);
       if (!s.ok && _blobOf(_jobStatus(s.jsonMap)) == null) {

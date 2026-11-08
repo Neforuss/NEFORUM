@@ -2,25 +2,33 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart' show Color;
+import 'package:flutter/widgets.dart' show WidgetsBinding;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import 'package:uuid/uuid.dart';
 
 import '../media/audio_plan.dart';
 import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
+import '../media/font_catalog.dart' show FontDownloadMode;
 import '../media/card_design.dart';
 import '../media/card_design_edits.dart' show designWithHandle;
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
+import '../platform/publish_host.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
 import 'card_designs.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
+import 'notification_state.dart';
 import 'providers.dart';
+import 'publish_result_notices.dart';
+import 'publish_run_keeper.dart';
+import 'publish_run_session.dart';
+import 'publish_run_surface.dart';
 import 'scheduler.dart';
 import 'settings.dart';
 import 'shrunk_videos.dart';
@@ -248,6 +256,9 @@ class ComposerState {
       media.isEmpty &&
       (title ?? '').trim().isEmpty &&
       (link ?? '').trim().isEmpty;
+
+  /// Something that clearing or replacing the post would lose.
+  bool get hasContent => !isEmpty || additionalParts.isNotEmpty || poll != null || contentWarning != null || tags.isNotEmpty || overrides.isNotEmpty;
 
   ComposerState copyWith({
     String? editingPostId,
@@ -979,6 +990,10 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final cardDesign = designOwn == null ? null : designWithHandle(designOwn, c.textCardStyle.handle);
   final cardFontMissing = settings.textCards && cardFont != null && ref.watch(captionFontReadyProvider(cardFont)).value == false;
   final cardFontFamily = cardFont?.family ?? '';
+  // 1.4: fonts. A font from the font list can be fetched from the picker.
+  final cardFontHelp = cardFont?.source != null && settings.fontDownloads != FontDownloadMode.off
+      ? 'Choose More fonts to download $cardFontFamily.'
+      : 'Install or import $cardFontFamily here to use it.';
   final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
@@ -1048,7 +1063,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
         issues.add(ValidationIssue.info(
             'media.text_card_font_missing',
             'The font $cardFontFamily is not on this device, so the card uses ${(c.textCardFont ?? settings.textCardFont).label}. '
-            'Install or import $cardFontFamily here to use it.',
+            '$cardFontHelp',
             field: 'media'));
       }
     } else if (settings.textCards && everyNetwork && !acceptsTextCardImages(d) && variant.media.isEmpty && variant.text.trim().isNotEmpty) {
@@ -1150,6 +1165,9 @@ final composerReadinessProvider = Provider<ComposerReadiness>((ref) {
   final previews = ref.watch(composerPreviewsProvider);
   var ready = 0, blocked = 0, handoff = 0, warnings = 0;
   for (final p in previews) {
+    // Disabled in Accounts, still in the selection of an old draft: publishing
+    // skips it, so it is not one of the accounts this post goes to.
+    if (!p.account.enabled) continue;
     if (!p.canPublish) {
       blocked++;
     } else if (p.account.tier == PlatformTier.handoff) {
@@ -1179,6 +1197,19 @@ Post rescheduledPost(Post post, DateTime when, DateTime now) {
       if (t.overrides.scheduledAt case final at? when !t.isDone) t.copyWith(overrides: t.overrides.copyWith(scheduledAt: at.add(shift))) else t,
   ]);
   return next.withScheduleFromTargets();
+}
+
+/// The clock [PostActions.schedule] and the schedule sheet judge a time by.
+/// Replaced in tests.
+final scheduleClockProvider = Provider<Clock>((ref) => systemClock);
+
+/// The post's time, or a network's, is past or under a minute ahead: scheduling
+/// it would send it at once. Nothing was saved.
+class SchedulePassedException implements Exception {
+  const SchedulePassedException();
+
+  @override
+  String toString() => 'SchedulePassedException';
 }
 
 /// A platform still holds a copy of a scheduled post that NEFORUM could not
@@ -1310,7 +1341,21 @@ class PostActions {
   }
 
   /// Schedules the composer's post at its [ComposerState.scheduledAt].
+  ///
+  /// Throws [SchedulePassedException], and saves nothing, when a network still
+  /// to go has a time that has passed: the scheduler would send it at once. A
+  /// composer can hold such a time for as long as its draft stays open.
   Future<Post> schedule() async {
+    final s = ref.read(servicesProvider);
+    final c = ref.read(composerProvider);
+    final editing = c.editingPostId;
+    final existing = editing == null ? null : await s.posts.get(editing);
+    final now = ref.read(scheduleClockProvider)();
+    for (final id in c.selected) {
+      if (existing?.targetFor(id)?.isDone ?? false) continue;
+      final at = c.overrides[id]?.scheduledAt ?? c.scheduledAt;
+      if (at != null && !scheduleTimeAccepted(at, now)) throw const SchedulePassedException();
+    }
     final p = await _save(PostStatus.scheduled);
     await ref.read(schedulerProvider).planReminders(p);
     _delegate(p);
@@ -1332,27 +1377,33 @@ class PostActions {
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
     final id = c.editingPostId ?? _uuid.v7();
+    // At once, while the app is on screen: it is the one time Android lets it begin.
+    final keeper = ref.read(publishRunKeeperProvider)..begin(id);
     try {
-      await s.publishJournal.record(id);
-    } on Object catch (e) {
-      // Only recovery after a crash needs the record; posting goes on.
-      debugPrint('Could not record the run of $id in the publish journal: $e');
+      try {
+        await s.publishJournal.record(id);
+      } on Object catch (e) {
+        // Only recovery after a crash needs the record; posting goes on.
+        debugPrint('Could not record the run of $id in the publish journal: $e');
+      }
+      final Post p;
+      try {
+        // Every network goes now: the times per network go too, so a network
+        // that fails is retried after its backoff, not at its old time.
+        p = (await _save(PostStatus.publishing, id: id)).withoutSchedule();
+        await s.posts.upsert(p);
+      } on Object catch (e) {
+        // Nothing is publishing: the post keeps its previous state, if any.
+        unawaited(s.publishJournal.release(id).catchError((Object _) {}));
+        run.fail(null, e);
+        rethrow;
+      }
+      ref.read(composerProvider.notifier).reset();
+      await ref.read(composerDraftKeeperProvider)?.keep(ref.read(composerProvider));
+      return await publishExisting(p.id, accountIds: c.selected);
+    } finally {
+      unawaited(keeper.end(id));
     }
-    final Post p;
-    try {
-      // Every network goes now: the times per network go too, so a network
-      // that fails is retried after its backoff, not at its old time.
-      p = (await _save(PostStatus.publishing, id: id)).withoutSchedule();
-      await s.posts.upsert(p);
-    } on Object catch (e) {
-      // Nothing is publishing: the post keeps its previous state, if any.
-      unawaited(s.publishJournal.release(id).catchError((Object _) {}));
-      run.fail(null, e);
-      rethrow;
-    }
-    ref.read(composerProvider.notifier).reset();
-    await ref.read(composerDraftKeeperProvider)?.keep(ref.read(composerProvider));
-    return publishExisting(p.id, accountIds: c.selected);
   }
 
   /// Runs (or re-runs) publishing for an existing post. Copies held by
@@ -1368,18 +1419,62 @@ class PostActions {
     if (!(ref.read(publishRunProvider)?.preparing ?? false)) run.prepare();
     final signal = ref.read(publishRunProvider)!.cancellation;
     final active = ref.read(activePublishingProvider.notifier)..begin(postId, signal);
+    // At the tap, while NEFORUM is in front: Android only lets a visible app begin,
+    // and that is when iOS gives time. Before anything is awaited, so a Cancel on
+    // the notification finds the run at once.
+    final keeper = ref.read(publishRunKeeperProvider)..begin(postId);
+    final surface = ref.read(publishSurfaceProvider.notifier);
+    PublishRunSession? session;
+    final figures = ref.read(publishProgressProvider.notifier);
+    // One tracker: the sheet and Activity read its figures, and the run's session,
+    // which words them for Android's notification and iOS's Live Activity.
+    final tracker = figures.begin(postId, onChange: (p) => session?.progress(p));
+    Post? before;
     try {
-      return await _publishExisting(postId, signal, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
+      final networks = await _hostNetworks(postId, accountIds: accountIds, dueTargetsOnly: dueTargetsOnly);
+      session = surface.start(postId, title: publishSurfaceTitle(networks.length), networks: networks);
+      before = await ref.read(servicesProvider).posts.get(postId);
+      return await _publishExisting(postId, signal, tracker, session, accountIds: accountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
     } on Object catch (e) {
       await ref.read(servicesProvider).concludeStoppedRun(postId, e);
       run.fail(postId, e);
+      await session?.finish(null, error: '$e');
+      if (before != null) await _announceStoppedRun(before);
       rethrow;
     } finally {
+      if (session != null) {
+        surface.remove(postId, session);
+        // A run that ended some other way still lets its hold go.
+        if (!session.isEnded) unawaited(session.finish(null, error: 'ended'));
+      }
       active.end(postId, signal);
+      figures.end(postId, tracker);
+      unawaited(keeper.end(postId));
     }
   }
 
-  Future<Post> _publishExisting(String postId, CancellationSignal signal,
+  /// The networks a run will post to: names and sizes, never the post's words.
+  Future<List<PublishHostNetwork>> _hostNetworks(String postId, {Set<String>? accountIds, required bool dueTargetsOnly}) async {
+    final s = ref.read(servicesProvider);
+    final out = <PublishHostNetwork>[];
+    try {
+      final post = await s.posts.get(postId);
+      if (post == null) return out;
+      final bytes = post.media.fold<int>(0, (sum, m) => sum + m.sizeBytes);
+      final now = DateTime.now();
+      for (final t in post.targets) {
+        if (t.isDone || (accountIds != null && !accountIds.contains(t.accountId)) || (dueTargetsOnly && !post.isTargetDue(t, now))) continue;
+        final a = await s.accounts.get(t.accountId);
+        final d = a == null ? null : s.registry.descriptor(a.platformId);
+        if (d != null) out.add(PublishHostNetwork(id: t.accountId, name: d.name, bytes: bytes));
+      }
+    } on Object catch (e) {
+      debugPrint('Could not list the networks of $postId: ${e.runtimeType}');
+    }
+    return out;
+  }
+
+  Future<Post> _publishExisting(String postId, CancellationSignal signal, PublishProgressTracker tracker, PublishRunSession session,
       {Set<String>? accountIds, required bool retryFailed, bool dueTargetsOnly = false}) async {
     final s = ref.read(servicesProvider);
     // A background isolate may have posted some of it meanwhile: the run
@@ -1404,22 +1499,40 @@ class PostActions {
     final now = DateTime.now();
     final starting = accountIds ?? {for (final t in due.targets) if (!dueTargetsOnly || due.isTargetDue(t, now)) t.accountId};
     run.start(postId, starting);
+    // What the last run said about these networks is out of date now.
+    await NotificationService.instance.cancelResults(postId, starting);
     // 1.3: video. Videos too big for a network get their smaller copy now,
     // with its progress on that network's row.
+    final keeper = ref.read(publishRunKeeperProvider);
     post = await attachShrunkVideos(s, post, ref.read(settingsProvider),
-        onProgress: run.progress, cancellation: signal, onlyAccountIds: starting);
+        onProgress: (accountId, message) {
+          run.progress(accountId, message);
+          keeper.alive(postId);
+        },
+        cancellation: signal,
+        onlyAccountIds: starting);
     await s.posts.upsert(post);
     final done = await s.publisher().publish(
           postId,
           interactive: true,
           onlyAccountIds: accountIds,
           retryFailed: retryFailed,
-          onProgress: run.progress,
+          onPlan: (plan) {
+            tracker.plan(plan);
+            keeper.planned(postId, plan);
+          },
+          onEvent: tracker.event,
+          onOutcome: tracker.outcome,
           cancellation: signal,
           dueTargetsOnly: dueTargetsOnly,
+          pause: session.pause,
         );
     final finalPost = await s.applySkips(postId) ?? done;
     run.finish(finalPost);
+    await session.finish(tracker.current, unknown: {
+      for (final t in finalPost.targets)
+        if (t.result?.error?.outcomeUnknown == true) t.accountId,
+    });
     try {
       // Networks still waiting for their own time keep their reminder.
       final next = finalPost.scheduledAt;
@@ -1428,8 +1541,10 @@ class PostActions {
       } else {
         await ref.read(schedulerProvider).cancelReminders(finalPost);
       }
-      await _notifyResult(finalPost);
-      await _discardIfComplete(postId);
+      // In this order: deleting a post removes its notifications.
+      final discarded = await _discardIfComplete(postId);
+      await announcePublishResult(s, finalPost, discarded: discarded, delivery: _tappedDelivery(), onlyAccountIds: starting);
+      await ref.read(notificationAccessProvider.notifier).refresh();
     } on Object catch (e) {
       // The post went out; tidying up afterwards must not look like a failure.
       debugPrint('After publishing $postId: $e');
@@ -1438,10 +1553,7 @@ class PostActions {
   }
 
   /// Asks the run publishing [postId] in this process to stop.
-  void cancelPublishing(String postId) {
-    ref.read(activePublishingProvider.notifier).cancel(postId);
-    if (ref.read(publishRunProvider)?.postId == postId) ref.read(publishRunProvider.notifier).cancel();
-  }
+  void cancelPublishing(String postId) => cancelPublishRun(ref, postId);
 
   /// What the composer mentions, so deleting a post never takes a file the
   /// composer still shows (a duplicated post shares its photos).
@@ -1451,26 +1563,30 @@ class PostActions {
   }
 
   /// Deletes [postId] once every network has it, when the setting keeps
-  /// nothing after posting.
-  Future<void> _discardIfComplete(String postId) async {
-    if (await ref.read(servicesProvider).discardIfComplete(postId, inUse: _composerReferences())) {
-      ref.read(schedulerProvider).updateTrayStatus();
-    }
+  /// nothing after posting. True when it was deleted.
+  Future<bool> _discardIfComplete(String postId) async {
+    final discarded = await ref.read(servicesProvider).discardIfComplete(postId, inUse: _composerReferences());
+    if (discarded) ref.read(schedulerProvider).updateTrayStatus();
+    return discarded;
   }
 
-  Future<void> _notifyResult(Post p) async {
-    final settings = ref.read(settingsProvider);
-    if (!settings.notifyOnPublish) return;
-    final ok = p.targets.where((t) => t.status == TargetStatus.published || t.status == TargetStatus.handedOff).length;
-    final failed = p.targets.where((t) => t.status == TargetStatus.failed).length;
-    final waiting = p.targets.where((t) => t.status == TargetStatus.awaitingHandoff).length;
-    if (failed == 0 && waiting == 0) return; // the in-app result sheet is enough
-    await NotificationService.instance.show(
-      key: 'result:${p.id}',
-      title: failed > 0 ? 'Posted to $ok, $failed failed' : 'Posted to $ok · $waiting waiting for you',
-      body: _short(p.text),
-      payload: 'post:${p.id}',
-    );
+  /// Who is watching as a run started from the app ends.
+  RunEndDelivery _tappedDelivery() =>
+      tappedRunDelivery(sheetOpen: ref.read(publishSheetOpenProvider) > 0, lifecycle: WidgetsBinding.instance.lifecycleState);
+
+  /// A run that stopped with an error instead of an outcome: told about like
+  /// any other when nobody is watching the sheet. Best effort.
+  /// Only the networks the stopped run changed: a run refused before it
+  /// started says nothing new about the others.
+  Future<void> _announceStoppedRun(Post before) async {
+    try {
+      final s = ref.read(servicesProvider);
+      final post = await s.posts.get(before.id);
+      if (post == null || post.status == PostStatus.publishing) return;
+      await announcePublishResult(s, post, delivery: _tappedDelivery(), onlyAccountIds: targetsChangedByRun(before, post));
+    } on Object catch (e) {
+      debugPrint('Could not announce the stopped run of ${before.id}: $e');
+    }
   }
 
   /// Hand-off for one target, triggered from a list or a notification.
@@ -1479,12 +1595,14 @@ class PostActions {
     final s = ref.read(servicesProvider);
     final p = await s.publisher().runHandoff(postId, accountId);
     final done = await s.applySkips(postId) ?? p;
+    if (done.targetFor(accountId)?.status != TargetStatus.awaitingHandoff) await NotificationService.instance.cancel('handoff:$postId:$accountId');
     await _discardIfComplete(postId);
     return done;
   }
 
   Future<Post> markHandedOff(String postId, String accountId, {bool done = true}) async {
     final p = await ref.read(servicesProvider).publisher().confirmHandoff(postId, accountId, completed: done);
+    await NotificationService.instance.cancel('handoff:$postId:$accountId');
     if (done) await _discardIfComplete(postId);
     return p;
   }
@@ -1560,6 +1678,5 @@ class PostActions {
     return next;
   }
 
-  static String _short(String s) => s.length > 80 ? '${s.substring(0, 80)}…' : s;
 }
 final postActionsProvider = Provider<PostActions>(PostActions.new);

@@ -32,6 +32,7 @@ class PinterestAdapter extends PlatformAdapter {
     this.videoPollInterval = const Duration(seconds: 5),
     this.videoPollAttempts = 60,
     this.refreshLeeway = const Duration(days: 3),
+    this.renewAfter = const Duration(days: 7),
   });
 
   /// Delay between `GET /v5/media/{id}` status checks.
@@ -43,6 +44,12 @@ class PinterestAdapter extends PlatformAdapter {
   /// Refresh the 30-day access token this long before it expires. Every
   /// refresh also renews the 60-day continuous refresh token.
   final Duration refreshLeeway;
+
+  /// A post also renews when the last renewal is older than this. Pinterest's
+  /// 60 days run from the last renewal, not the last use, so with [refreshLeeway]
+  /// alone a post on day 26 renewed nothing and a post on day 61 failed after
+  /// only 35 quiet days.
+  final Duration renewAfter;
 
   // Config keys (non-secret).
   static const cfgAppId = 'appId';
@@ -66,6 +73,9 @@ class PinterestAdapter extends PlatformAdapter {
 
   static const accessTrial = 'trial';
   static const accessStandard = 'standard';
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.pinterestFor(account);
 
   @override
   PlatformDescriptor get descriptor => pinterestDescriptor;
@@ -293,10 +303,8 @@ class PinterestAdapter extends PlatformAdapter {
       .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
       .replaceAll(RegExp(r'^-+|-+$'), '');
 
-  /// [continuousRefresh] asks apps created before 2025-09-25 for a
-  /// continuous (60-day, renewable) refresh token instead of the legacy
-  /// 365-day one; newer apps get one anyway and Pinterest ignores the flag.
-  /// It is only a code-exchange parameter.
+  /// [continuousRefresh] asks for a continuous (60-day, renewable) refresh
+  /// token. It is only a code-exchange parameter.
   static OAuth2Client _oauthClient(String appId, String appSecret, {bool continuousRefresh = false}) => OAuth2Client(
         authorizationEndpoint: PinterestApi.authorizationEndpoint,
         tokenEndpoint: PinterestApi.tokenEndpoint,
@@ -322,7 +330,16 @@ class PinterestAdapter extends PlatformAdapter {
     } else if (inSecs is int) {
       refreshExpiry = now.add(Duration(seconds: inSecs));
     }
-    if (refreshExpiry != null) out[secretRefreshExpiresAt] = refreshExpiry.toUtc().toIso8601String();
+    if (refreshExpiry != null) {
+      out[secretRefreshExpiresAt] = refreshExpiry.toUtc().toIso8601String();
+      out[SignInSecretKeys.refreshExpiresSource] = SignInDateSource.serverReported.name;
+    } else {
+      // Pinterest's refresh response table omits the field (its example has
+      // it). A date left over from before this renewal would refuse a token
+      // that works, so the documented 60 days stand in, marked as worked out.
+      out[secretRefreshExpiresAt] = now.add(SignInPolicies.pinterestRefreshLife).toUtc().toIso8601String();
+      out[SignInSecretKeys.refreshExpiresSource] = SignInDateSource.computed.name;
+    }
     return out;
   }
 
@@ -351,33 +368,52 @@ class PinterestAdapter extends PlatformAdapter {
     final tokens = OAuthTokens.fromSecrets(secrets);
     if (tokens == null) throw const AdapterException(PublishError.auth(_reconnectMessage));
     final now = ctx.now();
-    if (!tokens.isExpired(now: now, leeway: refreshLeeway)) return null;
+    final due = tokens.isExpired(now: now, leeway: refreshLeeway);
+    if (!due && !_renewalIsOld(secrets, tokens, now)) return null;
 
     final refresh = tokens.refreshToken;
     final appSecret = secrets[secretAppSecret];
     final appId = account.configString(cfgAppId);
     final refreshExpiry = DateTime.tryParse(secrets[secretRefreshExpiresAt] ?? '');
     if (refresh == null || refresh.isEmpty || appSecret == null || appSecret.isEmpty || appId.isEmpty) {
+      if (!due) return null;
       throw const AdapterException(PublishError.auth(_expiredMessage));
     }
     if (refreshExpiry != null && !now.isBefore(refreshExpiry)) {
+      if (!due) return null;
       throw const AdapterException(PublishError.auth(_expiredMessage));
     }
     try {
       final fresh = await _oauthClient(appId, appSecret).refresh(ctx.http, refreshToken: refresh, now: now);
       return _secretsFrom(fresh, secrets, now);
     } on OAuthException catch (e) {
+      // The access token still works: an early renewal never costs the post.
+      if (!due) {
+        ctx.log.warn('The early Pinterest renewal failed; the current token still works (${e.statusCode})');
+        return null;
+      }
       // Rejected grant -> reconnect; 429 -> quota; outages -> retry later.
       final err = e.toRefreshError('Pinterest');
       if (err.kind == PublishErrorKind.auth) {
         throw AdapterException(PublishError.auth(_expiredMessage, raw: e.toString(), statusCode: e.statusCode));
       }
       throw AdapterException(err);
+    } on Exception catch (e) {
+      if (due) rethrow;
+      ctx.log.warn('The early Pinterest renewal failed; the current token still works (${e.runtimeType})');
+      return null;
     }
   }
 
+  /// When the last renewal happened: recorded since 1.4, else 30 days before
+  /// the access token ends. Unknown counts as old.
+  bool _renewalIsOld(Map<String, String> secrets, OAuthTokens tokens, DateTime now) {
+    final last = DateTime.tryParse(secrets[SignInSecretKeys.lastRenewedAt] ?? '') ?? tokens.expiresAt?.subtract(const Duration(days: 30));
+    return last == null || now.difference(last) > renewAfter;
+  }
+
   static const String _expiredMessage =
-      'Your Pinterest sign-in has expired (it lapses after 60 days without use). Reconnect Pinterest in Accounts.';
+      'Your Pinterest sign-in has expired (it lapses 60 days after its last renewal). Reconnect Pinterest in Accounts.';
   static const String _reconnectMessage = 'Pinterest is not signed in. Reconnect Pinterest in Accounts.';
 
   // ------------------------------------------------------------ validate
@@ -470,12 +506,11 @@ class PinterestAdapter extends PlatformAdapter {
       ctx.log.warn('Pinterest publish failed: $e');
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Pinterest ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Pinterest (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       // dart:io is off limits here, so recognise file errors by name.
       if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
-        return PublishResult.failure(PublishError.configuration(
-            'A media file for this Pin is missing or unreadable; re-attach it and try again ($text)'));
+        return PublishResult.failure(PublishError.configuration('A media file for this Pin is missing or unreadable. Re-attach it and try again.', raw: text));
       }
       return PublishResult.failure(PublishError.platform('Pinterest publish failed: $text', raw: text));
     }
@@ -559,15 +594,20 @@ class PinterestAdapter extends PlatformAdapter {
       'media_source': mediaSource,
     };
 
-    ctx.progress('Creating the Pin');
+    // Inline images go up inside this one request.
+    if (!isVideo) ctx.uploadingAll('Creating the Pin');
     final String pinId;
     try {
-      pinId = await api.createPin(body);
+      pinId = await api.createPin(body, inlineImages: !isVideo);
     } on HttpFailure catch (e) {
       return PublishResult.failure(PinterestApi.mapFailure(e, context: 'Creating the Pin', videoPin: isVideo));
     }
     return PublishResult.ok(remoteId: pinId, remoteUrl: PinterestApi.pinUrl(pinId), publishedAt: ctx.now());
   }
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, variant.media.any((m) => m.isVideo) ? ProgressFamily.waitNoNumber : ProgressFamily.direct, steps: 1);
 
   Future<Uint8List> _readImage(MediaAttachment m, AdapterContext ctx) async {
     PinterestApi.contentTypeOf(m); // throws for GIF/WebP before reading the file

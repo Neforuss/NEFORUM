@@ -194,7 +194,7 @@ void main() {
       expect(find.byType(ListTile), findsNothing, reason: 'the list closes');
       expect(_chip(tester, 'Notifications').selected, isTrue);
       expect(_chip(tester, 'Appearance').selected, isFalse);
-      expect(tester.getTopLeft(find.text('Tell me when scheduled posts go out')).dy, lessThan(400));
+      expect(tester.getTopLeft(find.text('Tell me how each post went')).dy, lessThan(400));
       expect(tester.getTopLeft(find.text('Jump to')), bar, reason: 'pinned');
 
       _page(tester).jumpTo(0);

@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import '../http/neforum_http.dart';
 import '../model/media.dart';
 import '../model/publish_result.dart';
 
@@ -53,10 +54,14 @@ abstract class MediaHost {
   /// Largest file this host accepts, or `null` if unknown/unbounded.
   int? get maxBytes;
 
+  /// [via]: the publish run's own client view. Sending through it lets Cancel abort
+  /// the upload and lets the run count its bytes. Without it the host uses the
+  /// client it was built with.
   Future<HostedMedia> upload(
     MediaAttachment media,
     Uint8List bytes, {
     Duration? ttl,
+    NeforumHttp? via,
   });
 
   Future<void> delete(HostedMedia hosted);
@@ -87,9 +92,12 @@ typedef MediaHostDelay = Future<void> Function(Duration duration);
 Future<void> mediaHostDefaultDelay(Duration d) => Future<void>.delayed(d);
 
 class MediaHostException implements Exception {
-  const MediaHostException(this.message, {this.hostId, this.temporary = false});
+  const MediaHostException(this.message, {this.hostId, this.temporary = false, this.details});
   final String message;
   final String? hostId;
+
+  /// The system's own text for a connection problem, for the details box.
+  final String? details;
 
   /// The host had an outage-type problem (HTTP 5xx, timeout, network error)
   /// that NEFORUM already retried once; trying again later may work. `false`
@@ -99,7 +107,7 @@ class MediaHostException implements Exception {
   /// This failure for a post's status: an outage can be retried later; any
   /// other problem needs the settings or the file fixed. [message] is
   /// already a full sentence that names the host.
-  PublishError toPublishError() => temporary ? PublishError.network(message) : PublishError.configuration(message);
+  PublishError toPublishError() => temporary ? PublishError.network(message, raw: details) : PublishError.configuration(message);
 
   @override
   String toString() => 'MediaHostException(${hostId ?? ''}: $message)';

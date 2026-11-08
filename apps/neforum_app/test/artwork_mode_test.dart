@@ -16,6 +16,7 @@ import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/ui/accounts/account_card.dart';
 import 'package:neforum_app/ui/accounts/add_account_screen.dart';
 import 'package:neforum_app/ui/accounts/platform_picker.dart';
+import 'package:neforum_app/ui/compose/account_selection_grid.dart';
 import 'package:neforum_app/ui/compose/rich_text.dart';
 import 'package:neforum_app/ui/compose/target_picker.dart';
 import 'package:neforum_app/ui/root.dart';
@@ -200,9 +201,9 @@ void main() {
         // Art sites are never selected for an ordinary post.
         expect(c.read(composerProvider).selected, isNot(anyOf(contains('demo-behance'), contains('demo-cara'))));
         expect(c.read(composerProvider).selected, contains('demo-mastodon'));
-        final chips = find.descendant(of: find.byType(TargetPicker), matching: find.byType(AccountChip));
-        // Phones build only the chips in view of their scrolling row.
-        if (size.key == 'desktop') expect(chips.evaluate().length, c.read(accountListProvider).length);
+        // Chips on a computer, the grid's cells on a phone: every account either way.
+        final chips = find.descendant(of: find.byType(TargetPicker), matching: find.byType(size.key == 'desktop' ? AccountChip : AccountCell));
+        expect(chips.evaluate().length, c.read(accountListProvider).length);
 
         // Artwork on: only the art sites, chosen, with the Settings defaults.
         await tester.ensureVisible(find.byKey(TargetPicker.artworkSwitchKey));

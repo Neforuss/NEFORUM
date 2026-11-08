@@ -193,12 +193,13 @@ PublishError mapWordPressFailure(HttpFailure f, String what) {
   }
   if (_wpRoleCodes.contains(code)) {
     return PublishError.auth('$what: your WordPress user is not allowed to do this$detail. '
-        'Reconnect with an Author, Editor or Administrator account.', raw: raw, statusCode: status);
+        'Reconnect with an Author, Editor or Administrator account.', raw: raw, statusCode: status, notAllowed: true);
   }
   if (status == 403 && code.isEmpty) {
     return PublishError.auth(
         '$what: HTTP 403 from ${f.url.host}. A security plugin, firewall or host setting may be blocking '
         'the REST API or the Authorization header.',
+        notAllowed: true,
         raw: raw,
         statusCode: status);
   }
@@ -221,6 +222,6 @@ Future<T> guardWordPress<T>(String what, Future<T> Function() call) async {
   } on HttpFailure catch (f) {
     throw AdapterException(mapWordPressFailure(f, what));
   } on Exception catch (e) {
-    throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+    throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
   }
 }

@@ -53,6 +53,9 @@ class YouTubeAdapter extends PlatformAdapter {
   static const privacyStatuses = {'public', 'unlisted', 'private'};
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.youTubeFor(account);
+
+  @override
   PlatformDescriptor get descriptor => youtubeDescriptor;
 
   @override
@@ -251,7 +254,7 @@ class YouTubeAdapter extends PlatformAdapter {
       throw AdapterException(err);
     } on Object catch (e) {
       if (!isNetworkException(e)) rethrow;
-      throw AdapterException(PublishError.network('Could not reach Google to refresh the sign-in ($e)'));
+      throw AdapterException(PublishError.network('Could not reach Google to refresh the sign-in (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -401,7 +404,7 @@ class YouTubeAdapter extends PlatformAdapter {
   static PublishError _unexpected(Object e) {
     final text = e.toString();
     if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
-      return PublishError.configuration('The video file for this post is missing or unreadable; re-attach it ($text)');
+      return PublishError.configuration('The video file for this post is missing or unreadable. Re-attach it and try again.', raw: text);
     }
     return PublishError.platform('YouTube upload failed: $text', raw: text);
   }
@@ -451,6 +454,9 @@ class YouTubeAdapter extends PlatformAdapter {
     return PublishResult.ok(remoteId: videoId, remoteUrl: url, publishedAt: ctx.now());
   }
 
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.wholeFile, steps: 1);
+
   // ------------------------------------------------------------- scheduled
 
   /// Deletes the video YouTube holds for a scheduled post (`videos.delete`,
@@ -478,7 +484,7 @@ class YouTubeAdapter extends PlatformAdapter {
           headers: {'Authorization': 'Bearer ${tokens.accessToken}'}, throwOnError: false);
     } on Object catch (e) {
       if (!isNetworkException(e)) rethrow;
-      throw AdapterException(PublishError.network('Could not reach YouTube to delete the scheduled video ($e)'));
+      throw AdapterException(PublishError.network('Could not reach YouTube to delete the scheduled video (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
     }
     if (res.ok) {
       ctx.log.info('Deleted scheduled YouTube video $videoId');

@@ -3,7 +3,7 @@ description: >-
   NEFORUM: one app, one message, every platform. Free and open-source
   cross-poster for Android, iOS, macOS, Windows and Linux.
 publish_to: 'none'
-version: 1.3.5+26
+version: 1.4.0+27
 
 environment:
   sdk: ^3.13.0
@@ -47,7 +47,11 @@ dependencies:
 
   # Utilities
   collection: ^1.19.0
+  # Emoji data for the emoji sheet: pure Dart, MIT, Emoji 17.0 (ui/compose/emoji_sheet.dart).
+  unicode_emojis: 0.6.0
+  crypto: ^3.0.7
   cross_file: any
+  http: ^1.6.0
   image: ^4.10.1
   mime: ^2.1.0
   path: ^1.9.0

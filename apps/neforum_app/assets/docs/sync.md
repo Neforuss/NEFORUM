@@ -125,7 +125,8 @@ Use a private bucket and a key that can only read and write that bucket.
 | Settings (theme, text cards, photo fitting, posting rules, default targets, how the browser extension posts) | Yes |
 | Media hosts (main and fallback) and their keys | Yes |
 | Photos and videos | No: they stay on the device they were added on |
-| Device settings (start at sign-in, tray, the browser extension being on, automatic posting, zoom and text size, background picture, update checks, Sync itself) | No |
+| Fonts | No: each device keeps its own font files. A text card or caption style that names a font does sync. A device without that font draws the default font, never holds a post back for it, and offers one-tap download if the font came from the font list |
+| Device settings (start at sign-in, tray, the browser extension being on, automatic posting, zoom and text size, background picture, update checks, font downloads, Sync itself) | No |
 | An account's last error | No: another device may have no problem with that account |
 
 NEFORUM syncs when it starts, every five minutes, and a few seconds after you change something. You can also choose **Sync now** at any time.
@@ -160,7 +161,9 @@ X and Tumblr give out a new sign-in key every time one is renewed, and the old k
 2. **The newest keys travel.** The renewed keys go into the file right away, and the other devices use them instead of renewing themselves.
 3. **Retry after a refusal.** If X or Tumblr refuses a device's keys because another device renewed a moment earlier, NEFORUM reads the file again and retries with the newer keys. With a cloud app's folder, the new file can take a minute to arrive, so NEFORUM tries again a little later instead of asking you to reconnect.
 
-You can avoid renewals altogether by connecting X and Tumblr with **OAuth 1.0a keys**, which never expire. See "Stay connected on several devices" in the [X](platforms/x.md) and [Tumblr](platforms/tumblr.md) guides.
+Each device also keeps its own note of when each sign-in ends, so a closed card can show the date with no keychain prompt. That note (`sign-in-status.json`), and the record of which warnings it already gave (`sign-in-warnings.json`), stay on the device: the dates themselves travel with the keys. See [How long each sign-in lasts](sign-in-lifetimes.md).
+
+You can avoid renewals on Tumblr by connecting with **OAuth 1.0a keys**, which are not renewed. X offers the same keys until **31 January 2027**, when it stops accepting them. See "Stay connected on several devices" in the [X](platforms/x.md) and [Tumblr](platforms/tumblr.md) guides. TikTok, DeviantArt and Pixelfed also replace their keys on renewal and take the same turns.
 
 ## Scheduled posts
 

@@ -7,9 +7,11 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/sign_in_risks.dart';
 import '../../theme/backdrop.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
+import '../accounts/sign_in_risk_notes.dart';
 import '../activity/time_format.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
@@ -17,6 +19,7 @@ import 'action_bar.dart';
 import 'differentiation_panel.dart';
 import 'editor_card.dart';
 import 'media_tray.dart';
+import 'open_in_composer.dart';
 import 'preview_pane.dart';
 import 'publish_progress_sheet.dart';
 import 'schedule_sheet.dart';
@@ -39,7 +42,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
   final _focus = FocusNode();
   final _previewScroll = ScrollController();
   _Pane _pane = _Pane.write;
-  String? _loadedId;
+  String? _takingCommand;
   bool _busy = false;
 
   /// Phones and tablets: the on-screen keyboard is showing.
@@ -72,14 +75,25 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
   /// Takes the cursor out of the text field, which closes the keyboard.
   void _hideKeyboard() => FocusManager.instance.primaryFocus?.unfocus();
 
-  void _maybeLoad() {
+  /// `/compose?post=X` is a command, carried out once: X goes in the composer
+  /// and the location goes back to `/compose`. Nothing keeps the id, so the
+  /// same post can be opened again, and no history step can repeat the load.
+  void _takeEditCommand() {
     final id = widget.editPostId;
-    if (id == null || id == _loadedId) return;
+    if (id == null || id == _takingCommand) return;
     final post = ref.read(postByIdProvider(id));
-    if (post == null) return;
-    _loadedId = id;
+    // The list is still on its way at start: asked again when it arrives.
+    if (post == null && ref.read(postsProvider).isLoading) return;
+    _takingCommand = id;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.read(composerProvider.notifier).load(post);
+      if (!mounted) return;
+      _takingCommand = null;
+      if (post == null) {
+        showToast(context, 'This post is no longer in NEFORUM', icon: Icons.search_off_rounded);
+      } else {
+        openPostInComposer(context, ref, post);
+      }
+      context.go(AppSection.compose.path);
     });
   }
 
@@ -116,6 +130,9 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       final ok = await confirmDialog(context, title: 'Post to $targets ${targets == 1 ? 'network' : 'networks'}?', message: 'Your post goes out right away.', confirmLabel: 'Post now');
       if (!ok || !mounted) return;
     }
+    // Nothing is scheduled to miss a network without the person being told.
+    if (c.scheduledAt != null && !await confirmSignInRisks(context, ref.read(composerSignInRisksProvider))) return;
+    if (!mounted) return;
     setState(() => _busy = true);
     try {
       final actions = ref.read(postActionsProvider);
@@ -144,6 +161,10 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       }
     } on HeldCopiesException catch (e) {
       if (mounted) await showHeldCopiesDialog(context, e);
+    } on SchedulePassedException {
+      if (mounted) {
+        showToast(context, 'That time has passed. Pick a new one.', icon: Icons.schedule_rounded, actionLabel: 'Pick a time', onAction: _schedule);
+      }
     } on Object catch (e) {
       if (mounted) showToast(context, 'Could not publish: $e', icon: Icons.error_outline_rounded);
     } finally {
@@ -158,8 +179,8 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
 
   @override
   Widget build(BuildContext context) {
-    ref.listen(postByIdProvider(widget.editPostId ?? ''), (_, _) => _maybeLoad());
-    _maybeLoad();
+    ref.listen(postsProvider, (_, _) => _takeEditCommand());
+    _takeEditCommand();
     final nf = context.nf;
     final expanded = context.isExpanded;
     final compact = context.isCompact;
@@ -174,7 +195,7 @@ class _ComposeScreenState extends ConsumerState<ComposeScreen> with WidgetsBindi
       busy: _busy,
     );
 
-    final write = _WriteColumn(focusNode: _focus, editing: widget.editPostId != null, scrollableTargets: compact);
+    final write = _WriteColumn(focusNode: _focus, targetGrid: compact, keyboardOpen: Env.isMobile && _keyboardOpen);
 
     final Widget body;
     if (expanded) {
@@ -255,7 +276,7 @@ class _DragDownHidesKeyboard extends StatelessWidget {
   final Widget child;
 
   bool _onScroll(ScrollNotification n) {
-    // Only the column's own scroll view, not the sideways lists in it.
+    // Only the column's own scroll view, not any list inside it.
     if (n.depth != 0 || n.metrics.axis != Axis.vertical) return false;
     final drag = switch (n) {
       ScrollUpdateNotification(:final dragDetails) => dragDetails,
@@ -273,10 +294,10 @@ class _DragDownHidesKeyboard extends StatelessWidget {
 }
 
 class _WriteColumn extends ConsumerWidget {
-  const _WriteColumn({required this.focusNode, required this.editing, required this.scrollableTargets});
+  const _WriteColumn({required this.focusNode, required this.targetGrid, required this.keyboardOpen});
   final FocusNode focusNode;
-  final bool editing;
-  final bool scrollableTargets;
+  final bool targetGrid;
+  final bool keyboardOpen;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -290,7 +311,13 @@ class _WriteColumn extends ConsumerWidget {
             : 'Edit draft';
     final compact = context.isCompact;
 
-    final page = PageBody(
+    // The title above the picker when editing: its two lines and the space
+    // under them.
+    final titleHeight = editingPost == null ? 0.0 : MediaQuery.textScalerOf(context).scale(16.0 + 36.0) + Space.xs + 2 + Space.xl;
+
+    // The picker needs the height of the page, which a scroll view does not
+    // pass on to what is inside it.
+    final page = LayoutBuilder(builder: (context, box) => PageBody(
       maxWidth: 780,
       bottomPadding: Space.xxl,
       // A short post can still be dragged down to close the keyboard.
@@ -323,7 +350,7 @@ class _WriteColumn extends ConsumerWidget {
                 ),
             ]),
           ),
-        TargetPicker(scrollable: scrollableTargets),
+        TargetPicker(grid: targetGrid, keyboardOpen: keyboardOpen, availableHeight: box.maxHeight - PageBody.topPadding(context) - titleHeight),
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
         const ThreadPartEditors(),
@@ -336,7 +363,7 @@ class _WriteColumn extends ConsumerWidget {
           _Starters(onFocus: focusNode.requestFocus),
         ],
       ],
-    );
+    ));
     return Env.isMobile ? _DragDownHidesKeyboard(child: page) : page;
   }
 }

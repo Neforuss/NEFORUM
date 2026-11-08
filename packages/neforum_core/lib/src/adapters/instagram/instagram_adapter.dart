@@ -72,6 +72,9 @@ class InstagramAdapter extends PlatformAdapter {
   final Future<void> Function(Duration) _sleep;
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.instagramFor(account);
+
+  @override
   PlatformDescriptor get descriptor => InstagramRules.descriptor;
 
   @override
@@ -111,7 +114,7 @@ class InstagramAdapter extends PlatformAdapter {
               secret: true,
               help: 'App Dashboard > **API setup with Instagram login** > **Generate access tokens** > '
                   '**Generate token** next to your account (listed once it has accepted its Instagram Tester '
-                  'invite). Lasts 60 days; NEFORUM renews it automatically. With a token, leave the fields below '
+                  'invite). Lasts 60 days; NEFORUM renews it when it posts. With a token, leave the fields below '
                   'empty.',
             ),
             ConnectField(
@@ -162,7 +165,7 @@ class InstagramAdapter extends PlatformAdapter {
         config['tokenSource'] = 'dashboard';
       } else {
         final (token, appId, redirect) = await _oauth(input, ctx, api);
-        secrets = _tokenSecrets(token.accessToken, token.expiresIn ?? longLivedLifetime, ctx.now());
+        secrets = _renewedSecrets(token.accessToken, token.expiresIn, ctx.now());
         config
           ..['tokenSource'] = 'oauth'
           ..['appId'] = appId
@@ -296,6 +299,13 @@ class InstagramAdapter extends PlatformAdapter {
         keyRefreshedAt: now.toUtc().toIso8601String(),
       };
 
+  /// [token] with its end: the [reported] lifetime, else Meta's documented 60
+  /// days, marked as worked out.
+  Map<String, String> _renewedSecrets(String token, Duration? reported, DateTime now, [Map<String, String> existing = const {}]) => {
+        ..._tokenSecrets(token, reported ?? longLivedLifetime, now, existing),
+        SignInSecretKeys.expiresAtSource: (reported == null ? SignInDateSource.computed : SignInDateSource.serverReported).name,
+      };
+
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -321,12 +331,22 @@ class InstagramAdapter extends PlatformAdapter {
     try {
       ctx.progress('Refreshing the Instagram token…');
       final fresh = await _api(ctx).refresh(tokens.accessToken);
-      return _tokenSecrets(fresh.accessToken, fresh.expiresIn ?? longLivedLifetime, now, secrets);
+      return _renewedSecrets(fresh.accessToken, fresh.expiresIn, now, secrets);
     } on AdapterException catch (e) {
       if (e.error.kind == PublishErrorKind.auth) rethrow;
       ctx.log.warn('Instagram token refresh failed; keeping the current token: ${e.error.message}');
       return null;
     }
+  }
+
+  /// Treats the stamp as a week old, which is what [refreshSecrets] waits for.
+  /// Under 24 hours Instagram refuses a refresh, so nothing happens then.
+  @override
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final now = ctx.now();
+    final refreshedAt = DateTime.tryParse(secrets[keyRefreshedAt] ?? '');
+    if (refreshedAt != null && now.difference(refreshedAt) < minRefreshAge) return null;
+    return refreshSecrets(account, {...secrets, keyRefreshedAt: now.subtract(refreshEvery).toUtc().toIso8601String()}, ctx);
   }
 
   // --- validation --------------------------------------------------------------
@@ -362,7 +382,7 @@ class InstagramAdapter extends PlatformAdapter {
     } on TimeoutException {
       return PublishResult.failure(const PublishError.network('Timed out talking to Instagram'));
     } on http.ClientException catch (e) {
-      return PublishResult.failure(PublishError.network('Network error: ${e.message}'));
+      return PublishResult.failure(PublishError.network(e.message, raw: NeforumHttp.transportDetails(e)));
     } finally {
       await _cleanup(hosted, ctx);
     }
@@ -405,8 +425,7 @@ class InstagramAdapter extends PlatformAdapter {
       } else {
         containerId = await _carousel(api, igUserId, token, v, urls, caption, ctx);
       }
-      ctx.progress('Publishing to Instagram…');
-      mediaId = await api.publish(igUserId, token, containerId);
+      mediaId = await api.publish(igUserId, token, containerId, label: 'Publishing to Instagram…');
       link = await api.permalink(mediaId, token);
     }
 
@@ -417,8 +436,7 @@ class InstagramAdapter extends PlatformAdapter {
       final label = frames.length == 1 ? 'your story' : 'story frame ${i + 1} of ${frames.length}';
       try {
         final containerId = await _single(api, igUserId, token, {'media_type': 'STORIES', _urlField(m): urlOf[m.id]!}, label);
-        ctx.progress('Publishing $label to Instagram…');
-        storyIds.add(await api.publish(igUserId, token, containerId));
+        storyIds.add(await api.publish(igUserId, token, containerId, label: 'Publishing $label to Instagram…'));
       } on Object catch (e) {
         final error = _errorOf(e);
         if (error == null || (mediaId == null && storyIds.isEmpty)) rethrow;
@@ -428,7 +446,9 @@ class InstagramAdapter extends PlatformAdapter {
         return PublishResult.partialFailure(
           PublishError(
             kind: error.kind,
-            message: '${_cap(label)} failed: ${error.message}. $what ${ids.length == 1 ? 'is' : 'are'} already live on Instagram '
+            notAllowed: error.notAllowed,
+            outcomeUnknown: error.outcomeUnknown,
+            message: '${_cap(label)} failed: ${error.clause}. $what ${ids.length == 1 ? 'is' : 'are'} already live on Instagram '
                 '(${ids.join(', ')}); post the rest by hand.',
             statusCode: error.statusCode,
             raw: error.raw,
@@ -448,13 +468,28 @@ class InstagramAdapter extends PlatformAdapter {
     return PublishResult.ok(remoteId: mediaId, remoteUrl: link, additionalRemoteIds: storyIds, publishedAt: ctx.now());
   }
 
+  /// Every file once, each published copy one step, and a story's copies go out
+  /// one after another.
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) {
+    final placement = variant.placement;
+    final feed = placement.includesFeed ? variant.media : const <MediaAttachment>[];
+    final frames = placement.includesStory ? variant.storyFrames : const <MediaAttachment>[];
+    return ProgressShape(
+      family: ProgressFamily.pullFromUrl,
+      slots: {for (final m in [...feed, ...frames]) m.id: ProgressSlot.of(m)}.values.toList(),
+      steps: (feed.isEmpty ? 0 : 1) + frames.length,
+      interleaved: frames.isNotEmpty,
+    );
+  }
+
   /// The error a failed call ended with, as [publish] reports it; null for
   /// a programming error.
   static PublishError? _errorOf(Object e) => switch (e) {
         AdapterException(:final error) => error,
         HttpFailure() => mapHttpFailure(e),
         TimeoutException() => const PublishError.network('Timed out talking to Instagram'),
-        http.ClientException(:final message) => PublishError.network('Network error: $message'),
+        http.ClientException(:final message) => PublishError.network(message, raw: NeforumHttp.transportDetails(e)),
         OperationCancelledException() => const PublishError(kind: PublishErrorKind.cancelled, message: 'Cancelled'),
         _ => null,
       };
@@ -482,7 +517,7 @@ class InstagramAdapter extends PlatformAdapter {
   }
 
   Future<String> _single(InstagramApi api, String igUserId, String token, Map<String, String> fields, String label) async {
-    api.ctx.progress('Sending $label to Instagram…');
+    api.ctx.serverWait('Sending $label to Instagram…');
     final id = await api.createContainer(igUserId, token, fields, label: label);
     await api.waitUntilFinished(id, token, label: label);
     return id;
@@ -494,7 +529,7 @@ class InstagramAdapter extends PlatformAdapter {
     for (var i = 0; i < v.media.length; i++) {
       final m = v.media[i];
       final label = 'item ${i + 1} of ${v.media.length}';
-      ctx.progress('Sending carousel $label to Instagram…');
+      ctx.serverWait('Sending carousel $label to Instagram…');
       final id = await api.createContainer(igUserId, token, {
         'is_carousel_item': 'true',
         if (m.isVideo) 'media_type': 'VIDEO',
@@ -504,7 +539,7 @@ class InstagramAdapter extends PlatformAdapter {
       await api.waitUntilFinished(id, token, label: 'carousel $label');
       children.add(id);
     }
-    ctx.progress('Assembling the carousel…');
+    ctx.serverWait('Assembling the carousel…');
     final parent = await api.createContainer(igUserId, token, {
       'media_type': 'CAROUSEL',
       'children': children.join(','),
@@ -521,10 +556,10 @@ class InstagramAdapter extends PlatformAdapter {
     final urls = <String>[];
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
-      ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${media.length} to ${host.name}…');
+      ctx.uploading(m, 'Uploading ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${media.length} to ${host.name}…');
       final bytes = await _read(ctx, m);
       try {
-        final h = await host.upload(m, bytes, ttl: const Duration(hours: 24));
+        final h = await host.upload(m, bytes, ttl: const Duration(hours: 24), via: ctx.http);
         hosted.add(h);
         urls.add(h.url.toString());
       } on MediaHostException catch (e) {
@@ -538,7 +573,7 @@ class InstagramAdapter extends PlatformAdapter {
         rethrow;
       } on Object catch (e) {
         if (NeforumHttp.isTransportError(e)) {
-          throw AdapterException(PublishError.network('Could not reach your media host (${host.name}): $e'));
+          throw AdapterException(PublishError.network('Could not reach your media host (${host.name}): ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
         }
         throw AdapterException(PublishError.configuration('Your media host (${host.name}) failed: $e'));
       }
@@ -547,11 +582,7 @@ class InstagramAdapter extends PlatformAdapter {
   }
 
   static Future<Uint8List> _read(AdapterContext ctx, MediaAttachment m) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Object catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   Future<void> _cleanup(List<HostedMedia> hosted, AdapterContext ctx) async {
@@ -626,7 +657,7 @@ const String _apiIntro = '''
 1. Open <https://developers.facebook.com/apps/creation/> and create an app with the use case **Manage messaging & content on Instagram** (if asked for an app type, pick **Business**). No business portfolio? Pick **I don't want to connect a business portfolio yet**.
 2. **Use cases > Customize > Permissions and features**: click **+ Add** next to both `instagram_business_basic` and `instagram_business_content_publish` (neither is on by default). The list cuts the names off; each row's description shows the full name.
 3. **App roles > Roles > Add People > Instagram Tester**, enter your Instagram username, then accept the invite in Instagram: **Settings > Apps and websites > Tester invites**. Tokens can't be made without this.
-4. Open **API setup with Instagram login** (left menu). Your account now shows under **Generate access tokens**: click **Generate token**, log in in the pop-up, copy the token and paste it into the first field below. It lasts 60 days and NEFORUM renews it automatically.
+4. Open **API setup with Instagram login** (left menu). Your account now shows under **Generate access tokens**: click **Generate token**, log in in the pop-up, copy the token and paste it into the first field below. It lasts 60 days and NEFORUM renews it when it posts.
 5. Pick a **media host** in NEFORUM **Settings > Media hosting**, even for text-only posts (they go out as a text card image). **Litterbox** needs no setup and is fine to start; for regular posting a bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) is more reliable. The **Guide** button there explains each host.
 
 **Browser sign-in instead of a token:** copy the **Instagram app ID** and **Instagram app secret** from the top of the same page (the `-IG` app Meta made for you, not the Meta App ID), add `https://localhost:52771/callback` under **Set up Instagram business login > Business login settings > OAuth redirect URIs**, press **Sign in**, then paste the whole address of the page that fails to load.''';

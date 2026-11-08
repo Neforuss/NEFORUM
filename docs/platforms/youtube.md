@@ -52,7 +52,8 @@ Status as of October 2026.
 - **Uploads may be locked PRIVATE.** Your Google Cloud project has not been through YouTube's *API Services compliance audit*. YouTube Help (answer 7300965) says videos uploaded through an unverified API service are **locked as private**, cannot be appealed, and have to be uploaded again through the YouTube app or site. Since 2020 the API reference has said the same thing. **On 2026-10-08 Google changed the `videos.insert` reference to say that uploads from unverified projects "are not restricted to private viewing mode".** The Help Center page did not change, and the revision history has no entry for it. NEFORUM can't tell which page is right, so after every upload it checks the visibility YouTube reports. If YouTube made the video private, NEFORUM shows a warning. If you need guaranteed public videos, use **Hand-off**.
 - The audit that removes the lock is for real products. It needs a public HTTPS website, a privacy policy, terms of service and a demo account, so a personal project usually can't pass it.
 - **Quota:** each Google Cloud project gets **100 uploads (`videos.insert` calls) per day**, in a separate quota bucket (since 2026-06-01). All other calls share **10,000 units per day**; reading your channel costs 1 unit. Quotas reset at **midnight Pacific time**. Even failed requests count. YouTube can also stop a channel that uploads too much (`uploadLimitExceeded`).
-- **Testing vs. production:** if your Google Auth Platform app stays in *Testing*, Google ends your sign-in **every 7 days** and you have to reconnect. Click **Publish app** (step 5 of *Steps*) to avoid that. Google then shows an "unverified app" warning during sign-in. That warning is normal for your own app.
+- **Testing vs. production:** if your Google Auth Platform app stays in *Testing*, Google ends your sign-in **every 7 days** and you have to reconnect. Click **Publish app** (step 5 of *Steps*) to avoid that. Google then shows an "unverified app" warning during sign-in. That warning is normal for your own app. NEFORUM may not be able to show this 7-day date: Google documents the field that reports it only for time-limited access.
+- **Unused for 6 months:** even in production, Google ends a sign-in that has not been used for 6 months. NEFORUM renews only when it posts, so post at least that often or reconnect. Google also keeps at most 100 sign-ins per Google account per app and silently ends the oldest.
 - **Connect from the desktop app.** Google only accepts `http://127.0.0.1` sign-ins for "Desktop app" clients. It rejects `neforum://` (custom schemes must contain a dot and belong to an iOS/Android client), so the Connect button doesn't work on Android/iOS.
 - Channels that are not phone-verified can't upload videos longer than **15 minutes**. Verify at <https://www.youtube.com/verify>.
 
@@ -60,7 +61,7 @@ Status as of October 2026.
 
 ### Storage
 
-NEFORUM stores the tokens and the client secret only in this device's secure storage. To disconnect, remove the account in NEFORUM; it revokes the token at Google. Google's policies don't allow sharing one OAuth client across users, so every NEFORUM user creates their own.
+NEFORUM stores the tokens and the client secret only in this device's secure storage. To disconnect, remove the account in NEFORUM; it revokes the token at Google. Google then ends the grant for the whole app, so the account also stops working on your other devices. Google's policies don't allow sharing one OAuth client across users, so every NEFORUM user creates their own.
 
 ### What NEFORUM sends
 

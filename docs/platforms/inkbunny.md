@@ -24,7 +24,7 @@ This guide connects Inkbunny, so NEFORUM uploads your artwork and fills in the s
 
 Inkbunny only receives posts marked as artwork, with at least one image or an MP4 video.
 
-**Signing in**: NEFORUM sends your username and password to Inkbunny once (in the body of the request, never in the address) and gets a session back. It keeps only that session, in this device's secure storage, and forgets the password. Removing the account signs the session out.
+**Signing in**: NEFORUM sends your username and password to Inkbunny once (in the body of the request, never in the address) and gets a session back. It keeps only that session, in this device's secure storage, and forgets the password. Removing the account signs the session out. Inkbunny says a session stays valid "for several days after" its last use, so after a quiet spell a post can be refused and you connect again. No date can be known ahead of that.
 
 **Publishing** takes two calls:
 

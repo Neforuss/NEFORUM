@@ -52,7 +52,7 @@ This guide connects **your own LinkedIn profile** to NEFORUM with a free LinkedI
 What the automatic tier **cannot** do:
 
 - Post to **company Pages**. That needs LinkedIn's Community Management API, which LinkedIn only gives to registered companies after a review. NEFORUM does not support it.
-- **Stay signed in for more than 60 days.** LinkedIn sign-ins expire after 60 days, and self-serve apps get no way to renew them automatically. NEFORUM will tell you to reconnect. Reconnecting takes one click if you are still signed in to linkedin.com.
+- **Stay signed in for more than 60 days.** LinkedIn sign-ins expire after 60 days, and self-serve apps get no way to renew them automatically. NEFORUM shows the date and tells you to reconnect. Reconnecting takes one click only if you are still signed in to linkedin.com **and the current token has not ended yet**, so do it before day 60.
 - **Schedule on LinkedIn's side.** The API only publishes immediately. NEFORUM's own scheduler sends the post at the right time, so NEFORUM has to be running then, with a sign-in less than 60 days old.
 - Read your posts, comments or statistics back.
 - Mention people. Mentions need LinkedIn member IDs, and NEFORUM cannot look those up. `@` is shown as plain text. Hashtags such as `#flutter` work.

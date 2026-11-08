@@ -16,6 +16,8 @@ import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart' show showToast;
+import 'emoji_insert.dart';
+import 'font_download_sheet.dart';
 import 'font_picker_sheet.dart';
 
 /// The colours a colour fill would use around the photo at a path; `.$2` =
@@ -206,6 +208,8 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
         ));
   }
 
+  void _wordsChanged(String v) => _apply(v.trim().isEmpty ? _style.copyWith(clearText: true) : _style.copyWith(text: v));
+
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
@@ -271,28 +275,39 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
         ),
       if (!widget.defaults) ...[
         label('Words on the photo'),
-        TextField(
-          key: const Key('caption-words'),
-          controller: _words,
-          minLines: 1,
-          maxLines: 4,
-          decoration: InputDecoration(
-            hintText: 'Same as the caption',
-            helperText: 'Leave empty to use your caption, without trailing hashtags and links.',
-            helperMaxLines: 2,
-            suffixIcon: _words.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: 'Use the caption',
-                    icon: const Icon(Icons.close_rounded, size: 18),
-                    onPressed: () {
-                      _words.clear();
-                      _apply(_style.copyWith(clearText: true));
-                    },
-                  ),
+        Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(
+            child: EmojiTargetField(
+              controller: _words,
+              onChanged: _wordsChanged,
+              isDefault: true,
+              child: TextField(
+                key: const Key('caption-words'),
+                controller: _words,
+                minLines: 1,
+                maxLines: 4,
+                decoration: InputDecoration(
+                  hintText: 'Same as the caption',
+                  helperText: 'Leave empty to use your caption, without trailing hashtags and links.',
+                  helperMaxLines: 2,
+                  suffixIcon: _words.text.isEmpty
+                      ? null
+                      : IconButton(
+                          tooltip: 'Use the caption',
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          onPressed: () {
+                            _words.clear();
+                            _apply(_style.copyWith(clearText: true));
+                          },
+                        ),
+                ),
+                onChanged: _wordsChanged,
+              ),
+            ),
           ),
-          onChanged: (v) => _apply(v.trim().isEmpty ? _style.copyWith(clearText: true) : _style.copyWith(text: v)),
-        ),
+          const SizedBox(width: Space.xs),
+          const EmojiButton(),
+        ]),
       ],
       label('Place'),
       Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
@@ -384,7 +399,7 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
         ),
       ]),
       if (_style.customFont case final custom?)
-        if (ref.watch(captionFontReadyProvider(custom)) case AsyncData(value: false))
+        if (ref.watch(captionFontReadyProvider(custom)) case AsyncData(value: false)) ...[
           Padding(
             padding: const EdgeInsets.only(top: Space.xs),
             child: Text(
@@ -392,6 +407,8 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
               style: context.text.bodySmall?.copyWith(color: nf.textFaint),
             ),
           ),
+          MissingFontDownloadButton(font: custom),
+        ],
       const SizedBox(height: Space.md),
       Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
         FilterChip(

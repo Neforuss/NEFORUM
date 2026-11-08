@@ -20,6 +20,9 @@ class DemoAdapter extends PlatformAdapter {
   PlatformDescriptor get descriptor => inner.descriptor;
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => inner.signInPolicyFor(account);
+
+  @override
   PlatformDescriptor descriptorForAccount(ConnectedAccount account) => inner.descriptorForAccount(account);
 
   @override
@@ -64,12 +67,21 @@ class DemoAdapter extends PlatformAdapter {
   Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     final steps = variant.media.length;
     for (var i = 0; i < steps; i++) {
-      ctx.progress('Uploading ${i + 1} of $steps');
-      await Future<void>.delayed(const Duration(milliseconds: 380));
+      // The demo sends nothing, so it reports its file in steps, the way an upload
+      // answered per chunk does.
+      final m = variant.media[i];
+      final size = m.sizeBytes > 0 ? m.sizeBytes : 1;
+      ctx.uploading(m, 'Uploading ${i + 1} of $steps');
+      for (var part = 1; part <= 4; part++) {
+        await Future<void>.delayed(const Duration(milliseconds: 95));
+        ctx.uploadOffset(size * part ~/ 4, size);
+      }
     }
     final at = variant.scheduledAt;
-    ctx.progress(at != null ? 'Handing the schedule to ${descriptor.name}' : (variant.isThread ? 'Posting ${variant.threadParts.length}-part thread' : 'Posting'));
-    await Future<void>.delayed(Duration(milliseconds: 500 + (descriptor.id.hashCode % 7) * 120));
+    await ctx.creating(
+      at != null ? 'Handing the schedule to ${descriptor.name}' : (variant.isThread ? 'Posting ${variant.threadParts.length}-part thread' : 'Posting'),
+      () => Future<void>.delayed(Duration(milliseconds: 500 + (descriptor.id.hashCode % 7) * 120)),
+    );
     final id = 'demo${DateTime.now().millisecondsSinceEpoch}';
     if (at != null) return PublishResult.scheduled(remoteId: id, scheduledFor: at, remoteUrl: descriptor.homepage);
     // Post + Story: one id per story frame besides the feed post.
@@ -93,6 +105,25 @@ class DemoAdapter extends PlatformAdapter {
 }
 
 AdapterRegistry demoRegistry(AdapterRegistry real) => AdapterRegistry([for (final a in real.all) DemoAdapter(a)]);
+
+/// Sample dates for the demo's accounts, worked out by the real rules from a
+/// pretend sign-in. Nothing here is stored as a key, and each date is far enough
+/// off that the demo shows no warning.
+Future<void> seedDemoSignIns({required AdapterRegistry registry, required AccountRepository accounts, required SignInStatusStore statuses}) async {
+  final now = DateTime.now();
+  for (final a in await accounts.all()) {
+    final policy = registry.byId(a.platformId)?.signInPolicyFor(a) ?? SignInPolicy.noConnection;
+    final pretend = <String, String>{
+      if (policy.hasConnection) OAuthTokens.keyAccessToken: 'demo',
+      if (policy.renewal == SignInRenewal.credential) SignInSecretKeys.appPassword: 'demo',
+      if (policy.renewal == SignInRenewal.onUse) OAuthTokens.keyRefreshToken: 'demo',
+      if (policy.renewal == SignInRenewal.onUse) SignInSecretKeys.lastRenewedAt: now.subtract(const Duration(days: 3)).toUtc().toIso8601String(),
+      if (policy.limit == SignInLimit.date && policy.renewal == SignInRenewal.never) OAuthTokens.keyExpiresAt: now.add(const Duration(days: 45)).toUtc().toIso8601String(),
+    };
+    final life = deriveSignInLifetime(policy, pretend, now: now);
+    await statuses.change(a.id, (_) => SignInStatus.fromLifetime(a.id, life, hasConnection: policy.hasConnection, lastConfirmedAt: now.subtract(const Duration(days: 2))));
+  }
+}
 
 /// A small generated "photo" (soft gradient with shapes) so the demo has
 /// media without shipping sample pictures.

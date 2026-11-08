@@ -34,13 +34,15 @@ const Duration chatMaxFloodWait = Duration(seconds: 10);
 /// how long the platform asked to wait, or `null` for any other error), waits
 /// once and tries again. A 429 means the message was not accepted, so the
 /// second try cannot duplicate it.
-Future<T> chatSendWithFloodWait<T>(Future<T> Function() send, Duration? Function(Object error) floodWait) async {
+///
+/// [sleep] is the run's own wait, so that Cancel ends it.
+Future<T> chatSendWithFloodWait<T>(Future<T> Function() send, Duration? Function(Object error) floodWait, {Future<void> Function(Duration)? sleep}) async {
   try {
     return await send();
   } on Object catch (e) {
     final wait = floodWait(e);
     if (wait == null || wait > chatMaxFloodWait) rethrow;
-    await Future<void>.delayed(wait);
+    await (sleep == null ? Future<void>.delayed(wait) : sleep(wait));
     return send();
   }
 }
@@ -49,15 +51,14 @@ Future<T> chatSendWithFloodWait<T>(Future<T> Function() send, Duration? Function
 /// failure, unreadable media file, ...) onto a [PublishError]. [secret] is
 /// blanked out of the text: the Telegram bot token is part of every URL.
 PublishError chatUnexpected(Object e, String host, {String? secret}) {
-  var text = e.toString();
+  var text = NeforumHttp.transportDetails(e);
   if (secret != null && secret.isNotEmpty) text = text.replaceAll(secret, '<token>');
   if (NeforumHttp.isTransportError(e)) {
     return PublishError.network('Could not reach $host', raw: chatSnippet(text));
   }
   // dart:io is off limits in lib/, so recognise file errors by name.
   if (text.startsWith('FileSystemException') || text.contains('PathNotFoundException')) {
-    return PublishError.configuration(
-        'A media file for this post is missing or unreadable. Re-attach it and try again. (${chatSnippet(text, 200)})');
+    return PublishError.configuration('A media file for this post is missing or unreadable. Re-attach it and try again.', raw: chatSnippet(text));
   }
   return PublishError.platform('Unexpected error while posting via $host: ${chatSnippet(text, 200)}');
 }

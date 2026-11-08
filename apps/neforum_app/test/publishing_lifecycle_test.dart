@@ -15,7 +15,7 @@ import 'package:neforum_app/platform/storage_maintenance.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/composer_draft.dart';
 import 'package:neforum_app/state/providers.dart';
-import 'package:neforum_app/state/scheduler.dart';
+import 'package:neforum_app/state/publish_result_notices.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/theme/app_theme.dart';
@@ -161,16 +161,16 @@ void main() {
 
     test('notifications count only networks that got the post and never call a post nobody got live', () {
       final skipped = _post('n', targets: [TargetStatus.skipped, TargetStatus.skipped]);
-      final notice = publishResultNotice(skipped, discarded: false, notifyOnPublish: true)!;
+      final notice = publishResultNotices(skipped, discarded: false, notifyOnPublish: true).single;
       expect(notice.title, 'Not posted');
       expect(notice.body, contains('switched off'));
       expect(notice.body, isNot(contains('live')));
       expect(notice.payload, 'post:n', reason: 'the post is still there to open');
 
-      final mixed = publishResultNotice(_post('m', targets: [TargetStatus.published, TargetStatus.handedOff, TargetStatus.skipped]), discarded: true, notifyOnPublish: true)!;
-      expect(mixed.title, 'Posted to 2 networks');
-      expect(mixed.payload, isNull, reason: 'deleted: nothing to open');
-      expect(publishResultNotice(skipped, discarded: false, notifyOnPublish: false), isNull);
+      final mixed = publishResultNotices(_post('m', targets: [TargetStatus.published, TargetStatus.handedOff, TargetStatus.skipped]), discarded: true, notifyOnPublish: true);
+      expect(mixed.last.title, 'Posted to 2 of 3');
+      expect(mixed.last.payload, isNull, reason: 'deleted: nothing to open');
+      expect(publishResultNotices(skipped, discarded: false, notifyOnPublish: false), isEmpty);
     });
 
     test('deleted right away, after 7 or 30 days, or never', () {
@@ -219,7 +219,9 @@ void main() {
     });
 
     test('every notification about a post is cancelled with it', () {
-      expect(NotificationService.postKeys('p1'), ['due:p1', 'result:p1', 'handoff:p1']);
+      expect(NotificationService.postKeys('p1'), ['due:p1', 'result:p1', 'handoff:p1', 'paused:p1']);
+      expect(NotificationService.postKeys('p1', accountIds: ['a', 'b:c']),
+          ['due:p1', 'result:p1', 'handoff:p1', 'paused:p1', 'result:p1:a', 'handoff:p1:a', 'result:p1:b:c', 'handoff:p1:b:c']);
     });
   });
 
@@ -299,6 +301,41 @@ void main() {
       expect(await services.recoverInterruptedPublishing(now: DateTime.now().add(const Duration(minutes: 11))), 1);
       expect((await services.posts.get('background'))!.targets.single.status, TargetStatus.failed);
       expect((await services.posts.get('synced'))!.status, PostStatus.publishing);
+    });
+
+    test('killed during the request that makes a post: that target says so, and no later run posts it', () async {
+      await services.accounts.upsert(ConnectedAccount(id: 'acct-1', platformId: 'mastodon', tier: PlatformTier.openApi, displayName: 'A', createdAt: DateTime(2026)));
+      await services.posts.upsert(_post('killed', status: PostStatus.publishing, targets: [TargetStatus.published, TargetStatus.pending, TargetStatus.pending]));
+      await runOnRecord('killed', ago: const Duration(hours: 1));
+      await services.publishJournal.beginCreate('killed', 'acct-1');
+
+      expect(await services.recoverInterruptedPublishing(), 1);
+
+      final killed = (await services.posts.get('killed'))!;
+      expect(killed.targets.map((t) => t.status), [TargetStatus.published, TargetStatus.failed, TargetStatus.failed]);
+      final lost = killed.targets[1].result!.error!;
+      expect(lost.outcomeUnknown, isTrue);
+      expect(lost.retryable, isFalse);
+      expect(lost.message, 'NEFORUM could not confirm this. Check Mastodon before retrying.');
+      final other = killed.targets[2].result!.error!;
+      expect(other.message, AppServices.interruptedMessage, reason: 'this one never started, so it really was not posted');
+      expect(other.outcomeUnknown, isNull);
+      expect(await services.publishJournal.entries(), isEmpty);
+      // What the record says survives the sync file: a nullable field, no new kind.
+      expect(PublishError.fromJson(lost.toJson()).outcomeUnknown, isTrue);
+    });
+
+    test('killed after the network answered, before the result was saved: the same warning, not "was not posted"', () async {
+      await services.posts.upsert(_post('killed', status: PostStatus.publishing, targets: [TargetStatus.pending]));
+      await runOnRecord('killed', ago: const Duration(hours: 1));
+      await services.publishJournal.beginCreate('killed', 'acct-0');
+      await services.publishJournal.endCreate('killed', 'acct-0', mayBeLive: true);
+
+      await services.recoverInterruptedPublishing();
+
+      final error = (await services.posts.get('killed'))!.targets.single.result!.error!;
+      expect(error.outcomeUnknown, isTrue);
+      expect(error.message, contains('Check the network before retrying'));
     });
 
     test('a background run that fell silent is settled from what it saved: the networks it reached keep the post', () async {

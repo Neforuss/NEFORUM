@@ -6,16 +6,21 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../media/caption_fonts.dart' show downloadedFontsProvider;
+import '../../media/font_catalog.dart';
 import '../../platform/env.dart';
 import '../../platform/media_library.dart';
 import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
+import '../../state/font_downloads.dart';
 import '../../state/media_host_config.dart';
 import '../../state/providers.dart';
+import '../../state/publish_result_notices.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
+import '../compose/font_download_sheet.dart' show kFontDownloadDisclosure;
 import 'move_device.dart';
 import 'setting_row.dart';
 
@@ -65,7 +70,7 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
     final ok = await confirmDialog(
       context,
       title: 'Delete everything?',
-      message: 'This removes every account, key, post, draft and scheduled post from this device. Posts already published stay online. This cannot be undone.',
+      message: 'This removes every account, key, post, draft, scheduled post and downloaded font from this device. Posts already published stay online. This cannot be undone.',
       confirmLabel: 'Delete everything',
       destructive: true,
     );
@@ -81,6 +86,9 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
       await s.secrets.delete(a.id);
       await s.accounts.delete(a.id);
     }
+    await s.signInStatusStore.clear();
+    await s.signInWarnings.run();
+    await s.signInWarningStore.clear();
     // The post being written goes too, then every post with its
     // notifications, then any media file left over.
     ref.read(composerProvider.notifier).reset();
@@ -94,10 +102,14 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
     // Media host keys are keys too: remove both hosts and their secrets.
     var next = await clearMediaHost(ref.read(settingsProvider), s.secrets, slot: MediaHostSlot.fallback);
     next = await clearMediaHost(next, s.secrets);
-    await ref.read(settingsProvider.notifier).update((_) => next.copyWith(defaultTargetIds: const []));
+    await ref.read(settingsProvider.notifier).update((_) => next.copyWith(defaultTargetIds: const [], emojiRecents: const [], emojiSkinTone: 0));
     await s.refreshMediaHost();
     // Paired browsers' tokens are keys too (the demo shares the real ones).
     if (!s.demo) await s.browserBridge.forgetAll();
+    // Downloaded fonts, their saved list and previews, and the yes to fetching them.
+    await ref.read(fontDownloadsProvider.notifier).deleteAll();
+    // What finished while nobody was watching names networks.
+    await UnseenResults(s.storage).deleteAll();
     if (mounted) {
       showToast(
         context,
@@ -134,6 +146,7 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
         ),
       ),
       SettingRow(title: 'Media library', description: _mediaBytes == null ? 'Measuring…' : '${formatBytes(_mediaBytes!)} of attached photos and videos'),
+      if (ref.read(fontDownloadsProvider.notifier).available) const _FontDownloadsRow(),
       const MoveDeviceRows(),
       SettingRow(
         title: 'Export posts',
@@ -143,7 +156,7 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
       ),
       SettingRow(
         title: 'Delete everything',
-        description: 'Removes all accounts, keys and posts from this device.',
+        description: 'Removes all accounts, keys, posts and downloaded fonts from this device.',
         trailing: OutlinedButton(
           onPressed: _deleteAll,
           style: OutlinedButton.styleFrom(foregroundColor: nf.danger, side: BorderSide(color: nf.danger.withValues(alpha: 0.5))),
@@ -152,5 +165,25 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
         stackOnCompact: true,
       ),
     ]);
+  }
+}
+
+/// Whether this device may contact the font services, and what it holds.
+class _FontDownloadsRow extends ConsumerWidget {
+  const _FontDownloadsRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final mode = ref.watch(settingsProvider.select((s) => s.fontDownloads));
+    final fonts = ref.watch(downloadedFontsProvider).value ?? const <DownloadedFont>[];
+    final bytes = fonts.fold<int>(0, (a, f) => a + f.totalBytes);
+    final held = fonts.isEmpty ? 'No fonts downloaded.' : '${fonts.length == 1 ? '1 font' : '${fonts.length} fonts'} downloaded, ${formatBytes(bytes)}.';
+    return SettingSwitch(
+      key: const Key('font-downloads-setting'),
+      title: 'Find and download fonts',
+      description: '$kFontDownloadDisclosure\n$held Fonts already downloaded keep working with this off.',
+      value: mode == FontDownloadMode.on,
+      onChanged: (v) => ref.read(fontDownloadsProvider.notifier).setMode(v ? FontDownloadMode.on : FontDownloadMode.off),
+    );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -129,8 +131,13 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         }
         account = ConnectedAccount.fromJson({...account.toJson(), 'id': existing.first.id});
       }
-      await s.secrets.write(account.id, result.secrets);
+      // Stamped here, so the sign-in's start travels with its keys.
+      final secrets = stampNewSignIn(result.secrets, now: DateTime.now());
+      await s.secrets.write(account.id, secrets);
       await s.accounts.upsert(account.copyWith(clearLastError: true));
+      // Its date shows at once. A slow or failed server read never holds up
+      // connecting; the status from the stored dates is already there.
+      unawaited(s.signInStatus.accountConnected(account, secrets, s.connectContext()).catchError((Object _) => null));
       if (mounted) widget.onConnected(account);
     } on ConnectException catch (e) {
       setState(() {

@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.4.0" date="2026-11-07">
+      <description>
+        <p>Posting shows real progress for each network: what it is doing and how much of each file the server has received, never a made-up number. Results are reported per network, with a notification when it finishes. Mastodon uploads that a slow connection cut off are now handled safely and never post twice. On phones, accounts are picked from a grid that shows every account at once. Fonts can be searched and installed from free, keyless sources inside the font picker, only after you agree to use the network. Mouse side buttons go back and forward on computers. Schedule a post at a random time inside a range you choose, and confirm it first. Every connection shows when its sign-in runs out, on one page that separates sign-ins that renew themselves from ones you must reconnect, with warnings before the date. Computers get an emoji picker with search, recent emoji and skin tones.</p>
+      </description>
+    </release>
     <release version="1.3.5" date="2026-11-02">
       <description>
         <p>Each account card shows how the account is connected: the method, the developer app or server, and what it is allowed to do, never its keys. Sync carries the exact setup between devices, media hosts and connections included, shows what joining will do before it changes anything, starts from the device with the most accounts, and merges the same account into one instead of making copies. The text card editor lets you edit the @handle and gives far more control over the card's layout, so words and the handle never cover the picture.</p>

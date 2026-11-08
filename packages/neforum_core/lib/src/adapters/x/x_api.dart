@@ -79,7 +79,7 @@ class XApi {
   /// multipart bodies are used, and neither is part of an OAuth 1.0a
   /// signature; query parameters (the STATUS poll) are signed.
   Future<NeforumResponse> _call(String method, Uri url,
-      {Object? json, Map<String, String>? fields, List<HttpFilePart>? files}) {
+      {Object? json, Map<String, String>? fields, List<HttpFilePart>? files, int? bodyOffset, int? bodyWhole}) {
     final signer = _signer;
     return ctx.http.send(
       method,
@@ -89,6 +89,8 @@ class XApi {
       jsonBody: json,
       fields: fields,
       files: files,
+      bodyOffset: bodyOffset,
+      bodyWhole: bodyWhole,
     );
   }
 
@@ -120,7 +122,7 @@ class XApi {
       final label = m.isVideo
           ? 'Uploading video ${++videoNo} of $videos'
           : 'Uploading image ${++imageNo} of $images';
-      ctx.progress(label);
+      ctx.uploading(m, label);
       final bytes = await _read(m);
       final id = (m.isVideo || bytes.length > simpleUploadMaxBytes)
           ? await _chunkedUpload(m, bytes)
@@ -158,11 +160,7 @@ class XApi {
   // ---------------------------------------------------------------------
 
   Future<Uint8List> _read(MediaAttachment m) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   Future<String> _simpleUpload(MediaAttachment m, Uint8List bytes) async {
@@ -187,7 +185,7 @@ class XApi {
     final id = _requireMediaId(_map(init.jsonMap['data']), init);
     final segments = (bytes.length + chunkBytes - 1) ~/ chunkBytes;
     for (var i = 0; i < segments; i++) {
-      if (segments > 1) ctx.progress('Uploading ${m.isVideo ? 'video' : 'GIF'}: part ${i + 1} of $segments');
+      if (segments > 1) ctx.uploading(m, 'Uploading ${m.isVideo ? 'video' : 'GIF'}: part ${i + 1} of $segments');
       final end = (i + 1) * chunkBytes > bytes.length ? bytes.length : (i + 1) * chunkBytes;
       await _call(
         'POST',
@@ -201,6 +199,8 @@ class XApi {
             contentType: 'application/octet-stream',
           ),
         ],
+        bodyOffset: i * chunkBytes,
+        bodyWhole: bytes.length,
       );
     }
     final fin = await _call('POST', XEndpoints.mediaFinalize(id));
@@ -226,8 +226,8 @@ class XApi {
       if (waited >= _maxProcessingWait) break;
       final secs = (_int(p['check_after_secs']) ?? 2).clamp(0, 30);
       final pct = _int(p['progress_percent']);
-      ctx.progress('X is processing the video${pct == null ? '' : ' ($pct%)'}');
-      await Future<void>.delayed(Duration(seconds: secs));
+      ctx.serverWait('X is processing the video${pct == null ? '' : ' ($pct%)'}', percent: pct);
+      await ctx.wait(Duration(seconds: secs));
       waited += Duration(seconds: secs);
       final res = await _call('GET', XEndpoints.mediaStatus(id));
       current = _map(res.jsonMap['data'])['processing_info'];
@@ -333,6 +333,7 @@ class XApi {
           'regenerate the Access Token and Secret after switching to "Read and write": old tokens keep the old permission.',
           raw: raw,
           statusCode: status,
+          notAllowed: true,
         );
       }
       return PublishError.platform('X refused the request: $detail', raw: raw, statusCode: status);

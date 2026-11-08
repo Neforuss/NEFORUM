@@ -64,6 +64,7 @@ class MicropubAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'micropub',
     name: 'Micropub (IndieWeb / Micro.blog)',
+    shortName: 'Micropub',
     iconKey: 'micropub',
     homepage: 'https://micropub.spec.indieweb.org/',
     family: 'indieweb',
@@ -107,6 +108,9 @@ class MicropubAdapter extends PlatformAdapter {
     serverSideScheduling: false,
     supportsLinkField: false,
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.micropub(account);
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
@@ -341,11 +345,15 @@ class MicropubAdapter extends PlatformAdapter {
     );
     try {
       final fresh = await client.refresh(ctx.http, refreshToken: refresh, now: ctx.now());
-      return fresh.toSecrets(secrets);
+      final out = fresh.toSecrets(secrets);
+      // No expires_in: the new token has no known end. The old date would read
+      // as expired for ever.
+      if (fresh.expiresAt == null) out.remove(OAuthTokens.keyExpiresAt);
+      return out;
     } on OAuthException catch (e) {
       throw AdapterException(e.toRefreshError('Your site'));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('Could not renew the Micropub token', raw: '$e'));
+      throw AdapterException(PublishError.network('Could not renew the Micropub token', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -435,8 +443,9 @@ class MicropubAdapter extends PlatformAdapter {
     }
     _addExtras(pairs, v, account);
 
-    ctx.progress(files.isEmpty ? 'Posting to ${endpoint.host}' : 'Uploading the post with ${files.length} file(s)');
-    final res = await guardBlog('Micropub post', () => _send(endpoint, token, pairs, files, ctx),
+    final label = files.isEmpty ? 'Posting to ${endpoint.host}' : 'Uploading the post with ${files.length} file(s)';
+    if (files.isNotEmpty) ctx.uploadingAll(label);
+    final res = await guardBlog('Micropub post', () => ctx.creating(label, () => _send(endpoint, token, pairs, files, ctx), uploads: files.isNotEmpty),
         mapHttp: (f) => micropubError(f, context: 'Micropub post'));
     final json = res.jsonMap;
     final location = res.headers['location'];
@@ -466,7 +475,7 @@ class MicropubAdapter extends PlatformAdapter {
   }
 
   Future<String> _uploadMedia(Uri media, String token, MediaAttachment m, int n, int total, AdapterContext ctx) async {
-    ctx.progress('Uploading ${m.isVideo ? 'video' : 'image'} $n of $total');
+    ctx.uploading(m, 'Uploading ${m.isVideo ? 'video' : 'image'} $n of $total');
     final context = 'Media upload $n/$total';
     final bytes = await ctx.readMedia(m);
     final res = await guardBlog(context, () => ctx.http.send('POST', media,

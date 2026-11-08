@@ -10,6 +10,9 @@ import 'support/test_context.dart';
 
 /// A platform that records what it was asked to do.
 class _FakeAdapter extends PlatformAdapter {
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
   _FakeAdapter({this.scheduling = true, this.maxLength = 500});
 
   final bool scheduling;
@@ -115,6 +118,17 @@ class _SlowAdapter extends _FakeAdapter {
 class _BrokenCheckAdapter extends _FakeAdapter {
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => throw StateError('rules table missing');
+}
+
+/// A platform that refuses the time, or something else, in its checks.
+class _ScheduleRulesAdapter extends _FakeAdapter {
+  bool timeError = true;
+
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => [
+        const ValidationIssue.error('no.title', 'No title.', field: 'title'),
+        if (timeError) const ValidationIssue.error('schedule.too_far', 'Holds posts up to 30 days ahead.', field: 'scheduledAt'),
+      ];
 }
 
 /// Answers the token request only when the test lets it.
@@ -274,6 +288,76 @@ void main() {
       await scheduled();
       final p = await service().delegateSchedules('p1');
       expect(p.targets.single.status, TargetStatus.published);
+    });
+  });
+
+  group('holdPlanFor', () {
+    ScheduleHoldPlan plan(Post p, {ConnectedAccount? account}) => holdPlanFor(p, p.targets.single,
+        account: account ?? fakeAccount('fake'), adapter: adapter, resolver: const VariantResolver(), now: now);
+
+    /// The plan and [PublishService.delegateSchedules] on the same post: they
+    /// must agree, since the sheet words its promise from one and acts on the other.
+    Future<void> agrees(Post p, {required ScheduleHoldRefusal? refusal, ConnectedAccount? account}) async {
+      if (account != null) await accounts.upsert(account);
+      await posts.upsert(p);
+      expect(plan(p, account: account).refusal, refusal);
+      final before = adapter.published.length;
+      final after = await service().delegateSchedules(p.id);
+      expect(adapter.published.length - before, refusal == null ? 1 : 0, reason: 'what delegateSchedules did');
+      expect(after.targets.single.status, refusal == null ? TargetStatus.heldByPlatform : p.targets.single.status);
+    }
+
+    Post post({String text = 'Hello there', DateTime? when, PostTarget target = const PostTarget(accountId: 'acct-1')}) =>
+        Post(id: 'p1', text: text, createdAt: testNow, updatedAt: testNow, scheduledAt: when ?? at, status: PostStatus.scheduled, targets: [target]);
+
+    test('a pending target of a platform that holds posts goes', () => agrees(post(), refusal: null));
+
+    test('a thread stays', () async {
+      adapter = _FakeAdapter(maxLength: 20);
+      await agrees(post(text: 'This text is far too long for twenty characters, so it becomes a thread.'), refusal: ScheduleHoldRefusal.severalParts);
+    });
+
+    test('a platform with no scheduler stays', () async {
+      adapter = _FakeAdapter(scheduling: false);
+      await agrees(post(), refusal: ScheduleHoldRefusal.notOffered);
+    });
+
+    test('a time that has passed stays', () => agrees(post(when: testNow.subtract(const Duration(minutes: 1))), refusal: ScheduleHoldRefusal.notAhead));
+
+    test('a target already tried stays', () => agrees(post(target: const PostTarget(accountId: 'acct-1', attempts: 1)), refusal: ScheduleHoldRefusal.notPending));
+
+    test('a target already published stays', () => agrees(post(target: PostTarget(accountId: 'acct-1', status: TargetStatus.published, result: PublishResult.ok(remoteId: 'x'))), refusal: ScheduleHoldRefusal.notPending));
+
+    test('a turned off account stays', () {
+      final off = ConnectedAccount(id: 'acct-1', platformId: 'fake', displayName: 'Off', tier: PlatformTier.openApi, createdAt: testNow, enabled: false);
+      return agrees(post(), refusal: ScheduleHoldRefusal.notAutomatic, account: off);
+    });
+
+    test('a hand-off account stays', () => agrees(post(), refusal: ScheduleHoldRefusal.notAutomatic, account: fakeAccount('fake', tier: PlatformTier.handoff)));
+
+    test('a removed account stays', () async {
+      final p = post();
+      await posts.upsert(p);
+      await accounts.delete('acct-1');
+      expect(holdPlanFor(p, p.targets.single, account: null, adapter: adapter, resolver: const VariantResolver(), now: now).refusal, ScheduleHoldRefusal.noAccount);
+      expect((await service().delegateSchedules(p.id)).targets.single.status, TargetStatus.pending);
+      expect(adapter.published, isEmpty);
+    });
+
+    test('a time the rules refuse carries their words; any other problem says so too', () async {
+      adapter = _ScheduleRulesAdapter();
+      final tooFar = plan(post());
+      expect(tooFar.refusal, ScheduleHoldRefusal.timeRefused);
+      expect(tooFar.message, 'Holds posts up to 30 days ahead.');
+      await agrees(post(), refusal: ScheduleHoldRefusal.timeRefused);
+      (adapter as _ScheduleRulesAdapter).timeError = false;
+      expect(plan(post()).refusal, ScheduleHoldRefusal.invalid);
+      expect(plan(post()).message, 'No title.');
+    });
+
+    test('rules that break keep the post on this device instead of failing the run', () async {
+      adapter = _BrokenCheckAdapter();
+      await agrees(post(), refusal: ScheduleHoldRefusal.invalid);
     });
   });
 

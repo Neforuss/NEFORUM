@@ -61,7 +61,7 @@ Each NEFORUM user registers their **own** client ID. That means you get your own
 NEFORUM asks for these permissions: `identity` (your username), `submit` (posting and commenting), `read`, `mysubreddits` (your communities, for choosing one), `flair` (post flair). It asks for a **permanent** sign-in (`duration=permanent`) so that it can renew the one-hour access token by itself.
 
 - The client ID, your username and the default subreddit are stored with the account settings.
-- The access token (valid for 1 hour) and the refresh token are stored in your device's secret store. NEFORUM renews the access token automatically.
+- The access token (valid for 1 hour) and the refresh token are stored in your device's secret store. NEFORUM renews the access token when it posts. Reddit's current rules for how long the refresh token lasts could not be read (see [How long each sign-in lasts](../sign-in-lifetimes.md)).
 - Removing the account in NEFORUM revokes the refresh token at Reddit (`/api/v1/revoke_token`).
 - Every request identifies NEFORUM with a User-Agent of the form `<platform>:org.neforum.app:v0.1.0 (by /u/yourname)`, as Reddit's API rules require.
 

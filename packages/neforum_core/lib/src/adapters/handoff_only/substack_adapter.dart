@@ -27,6 +27,7 @@ class SubstackAdapter extends HandoffOnlyAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'substack',
     name: 'Substack Notes',
+    shortName: 'Substack',
     iconKey: 'substack',
     homepage: 'https://substack.com/',
     tiers: {PlatformTier.handoff},
@@ -55,6 +56,9 @@ class SubstackAdapter extends HandoffOnlyAdapter {
         'you paste it and tap Post.',
     setupGuide: 'docs/platforms/substack.md',
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
 
   @override
   PlatformDescriptor get descriptor => _descriptor;

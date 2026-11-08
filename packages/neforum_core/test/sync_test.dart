@@ -6,6 +6,7 @@ import 'package:crypto/crypto.dart' as crypto;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
+import 'package:neforum_core/src/adapters/art/pixelfed_adapter.dart';
 import 'package:neforum_core/src/adapters/tiktok/tiktok_adapter.dart';
 import 'package:neforum_core/src/adapters/tumblr/tumblr_adapter.dart';
 import 'package:neforum_core/src/adapters/x/x_adapter.dart';
@@ -502,6 +503,97 @@ void main() {
       expect(renewedOnB, isFalse);
       expect(waits, greaterThanOrEqualTo(2));
       expect(r?['refresh_token'], 'r1');
+    });
+
+    test('keys due early wait for another device\'s lease too, then use its keys', () async {
+      await a.accounts.upsert(account);
+      await a.secrets.write('x1', _tokens('a0', 'r0', later));
+      await a.engine.sync();
+      await b.engine.sync();
+      final cipher = BackupCipher(_pass, params: _fast, minimum: _fast);
+      final doc = SyncDocument.parse(await cipher.open(backend.bytes!));
+      doc.leases['x1'] = SyncLease(by: 'A', until: clock.now.add(const Duration(minutes: 2)));
+      backend.bytes = await cipher.seal(doc.toJson(writtenBy: 'A', writtenAt: clock.now));
+
+      var waits = 0;
+      final waitingB = SyncEngine(
+        backend: backend,
+        cipher: BackupCipher(_pass, params: _fast, minimum: _fast),
+        deviceId: 'B',
+        device: SyncDeviceInfo(label: 'B', platform: 'test', appVersion: '1', seenAt: DateTime.utc(2000)),
+        sources: [AccountsSyncSource(b.accounts), SecretsSyncSource(b.accounts, b.secrets)],
+        state: b.stateStore,
+        secrets: b.secrets,
+        clock: () => clock.now,
+        sleep: (d) async {
+          waits++;
+          clock.now = clock.now.add(d);
+          if (waits == 2) {
+            await a.secrets.write('x1', _tokens('a1', 'r1', later));
+            await a.engine.sync();
+          }
+        },
+      );
+      var renewedOnB = false;
+      final r = await waitingB.renew(account, (await b.secrets.read('x1'))!, (s) async {
+        renewedOnB = true;
+        return null;
+      }, renewsEarly: (s) => s['access_token'] == 'a0');
+      expect(renewedOnB, isFalse);
+      expect(waits, greaterThanOrEqualTo(2));
+      expect(r?['refresh_token'], 'r1');
+    });
+
+    group('another device holds the lease past the wait', () {
+      Future<int> renewalsOnB(String access) async {
+        await a.accounts.upsert(account);
+        await a.secrets.write('x1', _tokens(access, 'r0', access == 'a0' ? later : clock.now.subtract(const Duration(hours: 1))));
+        await a.engine.sync();
+        await b.engine.sync();
+        final cipher = BackupCipher(_pass, params: _fast, minimum: _fast);
+        final doc = SyncDocument.parse(await cipher.open(backend.bytes!));
+        doc.leases['x1'] = SyncLease(by: 'A', until: clock.now.add(const Duration(minutes: 30)));
+        backend.bytes = await cipher.seal(doc.toJson(writtenBy: 'A', writtenAt: clock.now));
+        final waitingB = SyncEngine(
+          backend: backend,
+          cipher: BackupCipher(_pass, params: _fast, minimum: _fast),
+          deviceId: 'B',
+          device: SyncDeviceInfo(label: 'B', platform: 'test', appVersion: '1', seenAt: DateTime.utc(2000)),
+          sources: [AccountsSyncSource(b.accounts), SecretsSyncSource(b.accounts, b.secrets)],
+          state: b.stateStore,
+          secrets: b.secrets,
+          clock: () => clock.now,
+          sleep: (d) async => clock.now = clock.now.add(d),
+        );
+        var renewals = 0;
+        await waitingB.renew(account, (await b.secrets.read('x1'))!, (s) async {
+          renewals++;
+          return _tokens('b1', 'rB', later);
+        }, renewsEarly: (s) => s['access_token'] == 'a0');
+        return renewals;
+      }
+
+      test('keys that still work do not renew: that could sign out the device with the lease', () async {
+        expect(await renewalsOnB('a0'), 0);
+        expect((await b.secrets.read('x1'))?['refresh_token'], 'r0');
+      });
+
+      test('dead keys renew anyway: nothing else can post', () async {
+        expect(await renewalsOnB('dead'), 1);
+      });
+    });
+
+    test('keys due early that nothing else renewed: this device takes the lease and renews, once', () async {
+      await a.accounts.upsert(account);
+      await a.secrets.write('x1', _tokens('a0', 'r0', later));
+      await a.engine.sync();
+      var calls = 0;
+      final r = await a.engine.renew(account, (await a.secrets.read('x1'))!, (s) async {
+        calls++;
+        return _tokens('a1', 'r1', later);
+      }, renewsEarly: (s) => s['access_token'] == 'a0');
+      expect((calls, r?['refresh_token']), (1, 'r1'));
+      expect((await a.secrets.read('x1'))?['refresh_token'], 'r1');
     });
 
     test('a refused renewal re-reads the file and uses keys another device just wrote', () async {
@@ -2293,6 +2385,28 @@ void main() {
       await expectOneSignIn([x, y]);
     });
 
+    test('a renewal carries when it happened and where its dates came from, in the keys record; the registration stays one', () async {
+      final (x, y) = await joinedOnTikTok();
+      final before = (await x.accounts.get(_uuid1))!.toJson();
+      clock.now = clock.now.add(const Duration(minutes: 31));
+      await y.posts.upsert(_post('p', targets: const [PostTarget(accountId: _uuid1)]));
+      final service = publisher(y, _TikTokPublishing(() async => PublishResult.ok(remoteId: 'v1')), (r) async => r.url.path.contains('/oauth/token/') ? tokenAnswer(r) : http.Response('{}', 200, headers: jsonHeaders));
+      await service.publish('p');
+      final renewedAt = clock.now.toUtc().toIso8601String();
+      await y.engine.sync();
+      await x.engine.sync();
+      for (final d in [x, y]) {
+        final keys = (await d.secrets.read(_uuid1))!;
+        expect(keys[StoredSecretKeys.lastRenewedAt], renewedAt, reason: d.id);
+        expect(keys[StoredSecretKeys.expiresAtSource], 'serverReported', reason: d.id);
+        expect(keys[StoredSecretKeys.refreshExpiresSource], 'serverReported', reason: d.id);
+        expect(DateTime.parse(keys[OAuthTokens.keyExpiresAt]!).isAfter(clock.now), isTrue, reason: '${d.id}: the renewed date came along');
+      }
+      final after = (await x.accounts.get(_uuid1))!.toJson();
+      expect(after['config'], before['config'], reason: 'nothing in config');
+      expect(sharesRegistration(before, after), isTrue, reason: 'a renewal never makes it another registration');
+    });
+
     for (final outcome in ['a success clears an old warning', 'an auth failure saves a warning']) {
       test('the publish service changes only the warning, on the account as stored now ($outcome): a reconnect that arrived by sync mid-upload stays', () async {
         final (x, y) = await joinedOnTikTok();
@@ -2513,6 +2627,283 @@ void main() {
 
     Post draft() => _post('p', targets: const [PostTarget(accountId: id)]);
 
+    group('TikTok renews 10 minutes before the end, and two devices still take turns', () {
+      late String validRefresh;
+      late int issued;
+      late List<String> presented;
+      Future<http.Response> server(http.Request r) async {
+        if (!r.url.path.contains('oauth/token')) return http.Response('{}', 200, headers: jsonHeaders);
+        final body = Uri.splitQueryString(r.body);
+        presented.add(body['refresh_token'] ?? '?');
+        if (body['refresh_token'] != validRefresh) return http.Response(jsonEncode({'error': 'invalid_grant'}), 400, headers: jsonHeaders);
+        issued++;
+        validRefresh = 'r$issued';
+        return http.Response(jsonEncode({'access_token': 'a$issued', 'refresh_token': validRefresh, 'expires_in': 86400, 'refresh_expires_in': 31536000, 'open_id': 'o', 'token_type': 'Bearer'}), 200, headers: jsonHeaders);
+      }
+
+      setUp(() {
+        validRefresh = 'r1';
+        issued = 1;
+        presented = [];
+      });
+
+      Future<(_Device, _Device)> twoDevices({required Duration accessLeft}) async {
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+        await a.accounts.upsert(ConnectedAccount(id: id, platformId: 'tiktok', tier: PlatformTier.byokApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'clientKey': 'k', 'openId': 'o'}));
+        await a.secrets.write(id, {'access_token': 'a1', 'refresh_token': 'r1', 'client_secret': 's', 'token_type': 'Bearer', 'expires_at': clock.now.add(accessLeft).toUtc().toIso8601String()});
+        await a.engine.sync();
+        await b.engine.sync();
+        return (a, b);
+      }
+
+      for (final (label, left) in [('5 minutes left', const Duration(minutes: 5)), ('expired', const Duration(minutes: -5))]) {
+        test('$label: A renews and shares, B has not synced: B takes A\'s keys, spends nothing, and its post goes out', () async {
+          final (a, b) = await twoDevices(accessLeft: left);
+          final adapter = _TikTokProbe();
+          await a.posts.upsert(draft());
+          await publisher(a, adapter, server).publish('p');
+          expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+          await a.engine.sync();
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          await b.posts.upsert(_post('q', targets: const [PostTarget(accountId: id)]));
+          await publisher(b, adapter, server).publish('q');
+          final t = (await b.posts.get('q'))!.targets.single;
+          expect(presented, ['r1'], reason: 'B never replays the spent key');
+          expect((t.status, t.result?.error?.message), (TargetStatus.published, null));
+          expect((await b.accounts.get(id))!.lastError, isNull, reason: 'no reconnect is asked for');
+          expect((await b.secrets.read(id))!['refresh_token'], 'r2');
+        });
+      }
+
+      test('5 minutes left, refused with nobody to explain it: the token that has not ended posts', () async {
+        final (a, _) = await twoDevices(accessLeft: const Duration(minutes: 5));
+        validRefresh = 'somebody-else-spent-it';
+        await a.posts.upsert(draft());
+        await publisher(a, _TikTokProbe(), server).publish('p');
+        expect(presented, ['r1']);
+        expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        expect((await a.secrets.read(id))!['access_token'], 'a1');
+      });
+    });
+
+    group('Pixelfed renews early, and two devices still take turns', () {
+      // As the server does it: league/oauth2-server's refresh grant revokes the
+      // old access token along with the refresh token it spends.
+      late String validRefresh, validAccess;
+      late int issued;
+      late List<String> presented;
+      Future<http.Response> server(http.Request r) async {
+        if (!r.url.path.contains('oauth/token')) return http.Response('{}', 200, headers: jsonHeaders);
+        final body = Uri.splitQueryString(r.body);
+        presented.add(body['refresh_token'] ?? '?');
+        if (body['refresh_token'] != validRefresh) return http.Response(jsonEncode({'error': 'invalid_grant'}), 400, headers: jsonHeaders);
+        issued++;
+        validRefresh = 'r$issued';
+        validAccess = 'a$issued';
+        return http.Response(jsonEncode({'access_token': validAccess, 'refresh_token': validRefresh, 'expires_in': 31536000, 'token_type': 'Bearer'}), 200, headers: jsonHeaders);
+      }
+
+      setUp(() {
+        validRefresh = 'r1';
+        validAccess = 'a1';
+        issued = 1;
+        presented = [];
+      });
+
+      Future<(_Device, _Device)> twoDevices({required Duration accessLeft}) async {
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+        await a.accounts.upsert(ConnectedAccount(id: id, platformId: 'pixelfed', tier: PlatformTier.openApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'instance': 'https://pix.example', 'software': 'pixelfed'}));
+        await a.secrets.write(id, {
+          'access_token': 'a1',
+          'refresh_token': 'r1',
+          'client_id': 'c',
+          'client_secret': 's',
+          'token_type': 'Bearer',
+          'expires_at': clock.now.add(accessLeft).toUtc().toIso8601String(),
+        });
+        await a.engine.sync();
+        await b.engine.sync();
+        return (a, b);
+      }
+
+      for (final (label, left) in [('early', const Duration(days: 10)), ('expired', const Duration(minutes: -5))]) {
+        test('$label: A renews and shares, B has not synced: B takes A\'s keys, spends nothing, and its post goes out', () async {
+          final (a, b) = await twoDevices(accessLeft: left);
+          final adapter = _PixelfedProbe(() => validAccess);
+          await a.posts.upsert(draft());
+          await publisher(a, adapter, server).publish('p');
+          expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+          await a.engine.sync();
+          clock.now = clock.now.add(const Duration(minutes: 1));
+          await b.posts.upsert(_post('q', targets: const [PostTarget(accountId: id)]));
+          await publisher(b, adapter, server).publish('q');
+          final t = (await b.posts.get('q'))!.targets.single;
+          expect(presented, ['r1'], reason: 'B never replays the spent key');
+          expect((t.status, t.result?.error?.message), (TargetStatus.published, null));
+          expect((await b.accounts.get(id))!.lastError, isNull, reason: 'no reconnect is asked for');
+          expect((await b.secrets.read(id))!['refresh_token'], 'r2');
+        });
+      }
+
+      test('early, sync file out of reach: no renewal, because it could sign the other device out; the post goes out on the token that works', () async {
+        final flaky = _FlakyBackend(backend)..failures = 0;
+        final a = _Device('A', flaky, clock);
+        // Connected while the file answered.
+        await a.accounts.upsert(ConnectedAccount(id: id, platformId: 'pixelfed', tier: PlatformTier.openApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'instance': 'https://pix.example', 'software': 'pixelfed'}));
+        await a.secrets.write(id, {'access_token': 'a1', 'refresh_token': 'r1', 'client_id': 'c', 'client_secret': 's', 'token_type': 'Bearer', 'expires_at': clock.now.add(const Duration(days: 10)).toUtc().toIso8601String()});
+        await a.engine.sync();
+        flaky.down = true;
+        await a.posts.upsert(draft());
+        await publisher(a, _PixelfedProbe(() => validAccess), server).publish('p');
+        expect(presented, isEmpty);
+        expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        expect((await a.secrets.read(id))!['refresh_token'], 'r1');
+      });
+
+      test('early, one device: it renews once, and the other device gets the keys from the file', () async {
+        final (a, b) = await twoDevices(accessLeft: const Duration(days: 10));
+        await a.posts.upsert(draft());
+        await publisher(a, _PixelfedProbe(() => validAccess), server).publish('p');
+        expect(presented, ['r1']);
+        await _rounds([a, b], clock, 1);
+        expect((await b.secrets.read(id))!['access_token'], 'a2');
+      });
+
+      test('a refused early renewal costs no post when the token still works, and the keys stay', () async {
+        final (a, _) = await twoDevices(accessLeft: const Duration(days: 10));
+        validRefresh = 'somebody-else-spent-it';
+        await a.posts.upsert(draft());
+        await publisher(a, _PixelfedProbe(() => validAccess), server).publish('p');
+        expect(presented, ['r1']);
+        expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        expect((await a.secrets.read(id))!['access_token'], 'a1');
+      });
+
+      group('folder storage: two copies of one file, and A\'s write reaches B\'s copy later', () {
+        Future<void> carry(SyncBackend from, MemorySyncBackend to) async {
+          final blob = await from.read();
+          await to.write(blob!.bytes, ifMatch: null);
+        }
+
+        ConnectedAccount pixelfedAccount() => ConnectedAccount(id: id, platformId: 'pixelfed', tier: PlatformTier.openApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'instance': 'https://pix.example', 'software': 'pixelfed'});
+        Map<String, String> keys(Duration left) => {'access_token': 'a1', 'refresh_token': 'r1', 'client_id': 'c', 'client_secret': 's', 'token_type': 'Bearer', 'expires_at': clock.now.add(left).toUtc().toIso8601String()};
+
+        /// A and B, each on its own copy, both holding the first keys and each
+        /// having seen the other.
+        Future<(_Device, _Device, MemorySyncBackend, MemorySyncBackend)> twoCopies(Duration left, {SyncBackend Function(MemorySyncBackend)? wrapB}) async {
+          final folderA = MemorySyncBackend(atomicWrites: false), folderB = MemorySyncBackend(atomicWrites: false);
+          final a = _Device('A', folderA, clock), b = _Device('B', wrapB?.call(folderB) ?? folderB, clock);
+          await a.accounts.upsert(pixelfedAccount());
+          await a.secrets.write(id, keys(left));
+          await a.engine.sync();
+          await carry(folderA, folderB);
+          await b.engine.sync();
+          await carry(folderB, folderA);
+          await a.engine.sync();
+          await carry(folderA, folderB);
+          return (a, b, folderA, folderB);
+        }
+
+        for (final (label, left) in [('early', const Duration(days: 10)), ('expired', const Duration(minutes: -5))]) {
+          test('$label: B replays the spent key before the file arrives: it waits, asks for no reconnect, and its post goes out once the file is there', () async {
+            final (a, b, folderA, folderB) = await twoCopies(left);
+            final adapter = _PixelfedProbe(() => validAccess);
+            await a.posts.upsert(draft());
+            await publisher(a, adapter, server).publish('p');
+            expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+            await a.engine.sync();
+            clock.now = clock.now.add(const Duration(minutes: 1));
+            await b.posts.upsert(_post('q', targets: const [PostTarget(accountId: id)]));
+
+            await publisher(b, adapter, server).publish('q');
+            final waiting = (await b.posts.get('q'))!.targets.single;
+            expect(presented, ['r1', 'r1'], reason: 'B cannot know yet, so it replays once and is refused');
+            expect((waiting.status, waiting.result?.error?.kind, waiting.result?.error?.retryable), (TargetStatus.pending, PublishErrorKind.network, true));
+            expect(waiting.result?.error?.message, contains('has not arrived here yet'));
+            expect((await b.accounts.get(id))!.lastError, isNull, reason: 'no reconnect is asked for');
+            expect((await b.secrets.read(id))!['access_token'], 'a1', reason: 'the keys wait for the file');
+
+            await carry(folderA, folderB);
+            clock.now = clock.now.add(const Duration(minutes: 20)); // the retry's backoff
+            await publisher(b, adapter, server).publish('q');
+            final done =(await b.posts.get('q'))!.targets.single;
+            expect((done.status, done.result?.error?.message), (TargetStatus.published, null));
+            expect(presented, ['r1', 'r1'], reason: 'the retry spends nothing: the file brought the keys');
+            expect((await b.accounts.get(id))!.lastError, isNull);
+            expect((await b.secrets.read(id))!['refresh_token'], 'r2');
+          });
+
+          test('$label: the file goes out of reach right after the refusal: B still waits, and asks for no reconnect', () async {
+            late _FlakyFolder flaky;
+            final (a, b, _, _) = await twoCopies(left, wrapB: (inner) => flaky = _FlakyFolder(inner)..failures = 0);
+            final adapter = _PixelfedProbe(() => validAccess);
+            await a.posts.upsert(draft());
+            await publisher(a, adapter, server).publish('p');
+            clock.now = clock.now.add(const Duration(minutes: 1));
+            await b.posts.upsert(_post('q', targets: const [PostTarget(accountId: id)]));
+            await publisher(b, adapter, (r) async {
+              if (r.url.path.contains('oauth/token')) flaky.down = true;
+              return server(r);
+            }).publish('q');
+            final t = (await b.posts.get('q'))!.targets.single;
+            expect((t.status, t.result?.error?.kind, t.result?.error?.retryable), (TargetStatus.pending, PublishErrorKind.network, true));
+            expect((await b.accounts.get(id))!.lastError, isNull);
+          });
+        }
+
+        test('early: the only device, refused: the token that still works posts, nothing waits', () async {
+          final a = _Device('A', MemorySyncBackend(atomicWrites: false), clock);
+          await a.accounts.upsert(pixelfedAccount());
+          await a.secrets.write(id, keys(const Duration(days: 10)));
+          await a.engine.sync();
+          validRefresh = 'revoked-on-the-server';
+          await a.posts.upsert(draft());
+          await publisher(a, _PixelfedProbe(() => validAccess), server).publish('p');
+          expect(presented, ['r1']);
+          expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+          expect((await a.secrets.read(id))!['access_token'], 'a1');
+        });
+
+        test('early: the other device went quiet long ago, refused: the token that still works posts, nothing waits for a file that is not coming', () async {
+          final (_, b, _, _) = await twoCopies(const Duration(days: 10));
+          clock.now = clock.now.add(const Duration(minutes: 31));
+          validRefresh = 'revoked-on-the-server';
+          await b.posts.upsert(draft());
+          await publisher(b, _PixelfedProbe(() => validAccess), server).publish('p');
+          expect(presented, ['r1']);
+          expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        });
+
+        test('early: the token address is down, not refusing: the token that still works posts, the other device or not', () async {
+          final (_, b, _, _) = await twoCopies(const Duration(days: 10));
+          await b.posts.upsert(draft());
+          await publisher(b, _PixelfedProbe(() => validAccess), (r) async => r.url.path.contains('oauth/token') ? http.Response('down', 503) : server(r)).publish('p');
+          expect((await b.posts.get('p'))!.targets.single.status, TargetStatus.published);
+          expect((await b.secrets.read(id))!['access_token'], 'a1');
+        });
+      });
+
+      test('early, no sync set up, refused: the token that still works posts, and the keys stay', () async {
+        final a = _Device('A', backend, clock);
+        await a.accounts.upsert(ConnectedAccount(id: id, platformId: 'pixelfed', tier: PlatformTier.openApi, displayName: 'Me', handle: '@me', createdAt: DateTime.utc(2026, 10, 1), config: const {'instance': 'https://pix.example', 'software': 'pixelfed'}));
+        await a.secrets.write(id, {'access_token': 'a1', 'refresh_token': 'r1', 'client_id': 'c', 'client_secret': 's', 'token_type': 'Bearer', 'expires_at': clock.now.add(const Duration(days: 10)).toUtc().toIso8601String()});
+        validRefresh = 'revoked-on-the-server';
+        await a.posts.upsert(draft());
+        await publisher(a, _PixelfedProbe(() => validAccess), server, coordinated: false).publish('p');
+        expect(presented, ['r1']);
+        expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+        expect((await a.secrets.read(id))!['access_token'], 'a1');
+      });
+
+      test('not due yet: no sync, no lease, no token call', () async {
+        final (a, _) = await twoDevices(accessLeft: const Duration(days: 40));
+        await a.posts.upsert(draft());
+        await publisher(a, _PixelfedProbe(() => validAccess), server).publish('p');
+        expect(presented, isEmpty);
+        expect((await a.posts.get('p'))!.targets.single.status, TargetStatus.published);
+      });
+    });
+
     for (final network in ['x', 'tumblr']) {
       test('$network: B renews the old sign-in while A reconnects through another app, and B\'s timer sync lands during the token call: the reconnect stays', () async {
         final server = _RotatingTokenServer(network);
@@ -2535,6 +2926,25 @@ void main() {
         for (final d in [a, b]) {
           expect(server.verdict((await d.accounts.get(id))!, await d.secrets.read(id)), 'account app=app-new; keys of app app-new; renewable', reason: d.id);
         }
+      });
+
+      test('$network: a renewal through the coordinator shares its stamps with the keys, and the account stays one registration', () async {
+        final server = _RotatingTokenServer(network);
+        final a = _Device('A', backend, clock), b = _Device('B', backend, clock);
+        await a.accounts.upsert(rotating(network, 'app-old', DateTime.utc(2026, 10, 1)));
+        await a.secrets.write(id, server.issue('app-old', clock.now.add(const Duration(minutes: 30))));
+        await a.engine.sync();
+        await b.engine.sync();
+        final before = (await a.accounts.get(id))!.toJson();
+        clock.now = clock.now.add(const Duration(minutes: 31));
+        await b.posts.upsert(draft());
+        await publisher(b, _RotatingPublishing.of(network, now: () => clock.now), server.handle).publish('p');
+        expect(server.calls, 1);
+        await _rounds([b, a], clock, 1);
+        final keys = (await a.secrets.read(id))!;
+        expect(DateTime.tryParse(keys[StoredSecretKeys.lastRenewedAt] ?? ''), isNotNull, reason: 'it reached the other device');
+        expect(keys[StoredSecretKeys.expiresAtSource], 'serverReported');
+        expect(sharesRegistration(before, (await a.accounts.get(id))!.toJson()), isTrue);
       });
 
       test('$network: the keychain cannot be re-read after the renewal: the rotating renewal is still stored (the old keys are dead)', () async {
@@ -3036,6 +3446,13 @@ class _FlakyBackend extends SyncBackend {
   Future<void> check() async {}
 }
 
+/// A synced folder (no compare and swap) that can go out of reach.
+class _FlakyFolder extends _FlakyBackend {
+  _FlakyFolder(super.inner);
+  @override
+  bool get atomicWrites => false;
+}
+
 /// A synced folder whose cloud app keeps both versions when two devices
 /// write over the same version (a conflicted copy), as Dropbox or OneDrive
 /// do.
@@ -3338,16 +3755,38 @@ class _BrokenBackend extends SyncBackend {
   Future<void> check() async {}
 }
 
+/// Pixelfed with its real renewal, whose posts work only with the access token
+/// the server currently accepts.
+class _PixelfedProbe extends PixelfedAdapter {
+  _PixelfedProbe(this.currentAccess);
+  final String Function() currentAccess;
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
+      secrets['access_token'] == currentAccess() ? PublishResult.ok(remoteId: 'r') : PublishResult.failure(const PublishError.auth('HTTP 401: token revoked'));
+}
+
+class _TikTokProbe extends TikTokAdapter {
+  @override
+  List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) => const [];
+  @override
+  Future<PublishResult> publish(PostVariant variant, ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async => PublishResult.ok(remoteId: 'r');
+}
+
 class _RecordingCoordinator implements SecretsCoordinator {
   final calls = <String>[];
   @override
-  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh) async {
+  Future<Map<String, String>?> renew(ConnectedAccount account, Map<String, String> current, SecretsRefresh refresh, {bool Function(Map<String, String> secrets)? renewsEarly}) async {
     calls.add(account.id);
     return {...current, 'access_token': 'from-coordinator'};
   }
 }
 
 class _RotatingAdapter extends PlatformAdapter {
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
   @override
   PlatformDescriptor get descriptor => const PlatformDescriptor(
         id: 'rot',

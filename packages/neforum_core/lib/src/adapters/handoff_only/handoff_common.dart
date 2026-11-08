@@ -8,6 +8,8 @@ import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
 
+export '../../model/sign_in_lifetime.dart' show SignInPolicy;
+
 /// Base class for platforms that NEFORUM can only reach by hand-off
 /// (Snapchat, WhatsApp, Google Business Profile, Substack Notes).
 ///

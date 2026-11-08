@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../audio/audio_publishing.dart';
 import '../../auth/oauth2_pkce.dart';
+import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
@@ -99,6 +100,9 @@ class MatrixAdapter extends PlatformAdapter {
     serverSideScheduling: false,
     supportsLinkField: false,
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.matrix(account);
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
@@ -308,6 +312,9 @@ class MatrixAdapter extends PlatformAdapter {
         'identifier': {'type': 'm.id.user', 'user': user},
         'password': password,
         'initial_device_display_name': 'NEFORUM',
+        // `refresh_token: true` stays unset on purpose: on Matrix Authentication
+        // Service it brings 5-minute tokens and rotation, for no gain to a tool
+        // that posts now and then.
       }, auth: false);
       final at = chatStr(res['access_token']);
       final userId = chatStr(res['user_id']) ?? user;
@@ -476,6 +483,7 @@ class MatrixAdapter extends PlatformAdapter {
       final cover = m.isAudio && !hasPictures ? m.audioCover : null;
       if (cover != null) {
         try {
+          ctx.closeUploadSlot();
           final picture = await ctx.readMedia(cover);
           final sized = MediaAttachment(id: cover.id, path: cover.path, mimeType: cover.mimeType, sizeBytes: picture.length, fileName: cover.fileName);
           uploaded.add((sized, await api.upload(picture, contentType: cover.mimeType, fileName: cover.fileName ?? 'cover.jpg'), m.audioCaption));
@@ -485,7 +493,7 @@ class MatrixAdapter extends PlatformAdapter {
           ctx.log.warn('Could not read the cover of ${m.fileName ?? m.id}: $e');
         }
       }
-      ctx.progress('Uploading ${m.noun} ${i + 1} of ${variant.media.length}');
+      ctx.uploading(m, 'Uploading ${m.noun} ${i + 1} of ${variant.media.length}');
       final bytes = await ctx.readMedia(m);
       uploaded.add((m, await api.upload(bytes, contentType: m.mimeType, fileName: _fileName(m)), null));
     }
@@ -495,19 +503,19 @@ class MatrixAdapter extends PlatformAdapter {
     final hasText = text.trim().isNotEmpty;
     sent.total = (hasText ? 1 : 0) + uploaded.length;
     if (hasText) {
-      ctx.progress('Sending message');
-      sent.add(await _send(api, roomId, _textContent(text, account.configString('formatting', 'markdown') != 'plain')));
+      sent.add(await ctx.creating('Sending message', () => _send(api, roomId, _textContent(text, account.configString('formatting', 'markdown') != 'plain'))));
     }
     for (var i = 0; i < uploaded.length; i++) {
       final (m, mxc, caption) = uploaded[i];
-      ctx.progress('Sending ${m.noun} ${i + 1} of ${uploaded.length}');
       final content = matrixMediaContent(m, mxc, caption: caption);
       // The transaction id is fixed before the first try, so a retry after
       // a flood wait is idempotent on the homeserver.
       final txnId = _newTxnId();
-      sent.add(ids.isEmpty
-          ? await _send(api, roomId, content, txnId)
-          : await chatSendWithFloodWait(() => _send(api, roomId, content, txnId), _matrixFloodWait));
+      sent.add(await ctx.creating(
+          'Sending ${m.noun} ${i + 1} of ${uploaded.length}',
+          () => ids.isEmpty
+              ? _send(api, roomId, content, txnId)
+              : chatSendWithFloodWait(() => _send(api, roomId, content, txnId), _matrixFloodWait, sleep: ctx.wait)));
     }
     if (ids.isEmpty) throw const AdapterException(PublishError.validation('Nothing to post'));
     return PublishResult.ok(
@@ -517,6 +525,10 @@ class MatrixAdapter extends PlatformAdapter {
       publishedAt: ctx.now(),
     );
   }
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, ProgressFamily.direct, steps: variant.media.length + (_fullText(variant).trim().isEmpty ? 0 : 1));
 
   Future<String> _send(MatrixApi api, String roomId, Map<String, Object?> content, [String? txnId]) async {
     final res =
@@ -570,7 +582,7 @@ class MatrixAdapter extends PlatformAdapter {
     } on AdapterException {
       rethrow;
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('Could not reach the homeserver', raw: '$e'));
+      throw AdapterException(PublishError.network('Could not reach the homeserver', raw: NeforumHttp.transportDetails(e)));
     }
   }
 

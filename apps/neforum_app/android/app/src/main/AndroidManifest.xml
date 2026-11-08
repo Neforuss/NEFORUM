@@ -6,6 +6,12 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Lets WorkManager reschedule queued posts after a reboot. -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- PublishService: a post the person sent goes on after they leave NEFORUM. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lets Android 16 show the running post as a Live Update. Not a runtime prompt. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
     <application
         android:label="NEFORUM"
@@ -52,6 +58,13 @@
             android:authorities="${applicationId}.handoff"
             android:exported="false"
             android:grantUriPermissions="true" />
+
+        <!-- Keeps the process alive during a publish run (PublishService.kt). -->
+        <service
+            android:name=".PublishService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->

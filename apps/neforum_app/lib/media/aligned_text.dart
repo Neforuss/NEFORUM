@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../state/settings.dart' show TextCardAlignment;
+import 'emoji_text.dart';
 
 /// Labels and icons for the five alignments, as the composer and Settings
 /// show them.
@@ -65,7 +66,15 @@ double alignmentAnchor(TextCardAlignment a, TextDirection direction) {
 /// with the letter spacing that makes it fill the width. A line that is a
 /// single word is centred instead.
 class AlignedText {
-  AlignedText(this.text, {required this.style, required this.alignment, required this.direction, this.maxLines});
+  AlignedText(String words, {required this.style, required this.alignment, required this.direction, this.maxLines}) : text = _shown(words);
+
+  /// [words] as drawn: an emoji this device cannot draw is left out, not drawn as
+  /// a blank or a "no glyph" tile, and the words are tried in the background for
+  /// the next paint (a saved picture tries them first, [EmojiSupport.prepare]).
+  static String _shown(String words) {
+    EmojiSupport.note(words);
+    return EmojiSupport.withoutMissing(words);
+  }
 
   final String text;
   final TextStyle style;
@@ -95,7 +104,7 @@ class AlignedText {
     _painter?.dispose();
     final full = fill || alignment.fillsWidth;
     _painter = TextPainter(
-      text: TextSpan(text: text, style: style),
+      text: emojiSpan(text, style),
       textAlign: textAlignOf(alignment),
       textDirection: direction,
       maxLines: maxLines,
@@ -140,7 +149,7 @@ class AlignedText {
   }
 
   TextPainter _line(String s, double extraSpacing) => TextPainter(
-        text: TextSpan(text: s, style: style.copyWith(letterSpacing: (style.letterSpacing ?? 0) + extraSpacing)),
+        text: emojiSpan(s, style.copyWith(letterSpacing: (style.letterSpacing ?? 0) + extraSpacing)),
         textDirection: direction,
         maxLines: 1,
       )..layout();

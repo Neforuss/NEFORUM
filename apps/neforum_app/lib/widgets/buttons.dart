@@ -145,6 +145,8 @@ class ToolButton extends StatefulWidget {
     this.size = 38,
     this.badge,
     this.color,
+    this.onChrome = false,
+    this.semanticLabel,
   });
 
   final IconData icon;
@@ -154,6 +156,12 @@ class ToolButton extends StatefulWidget {
   final double size;
   final String? badge;
   final Color? color;
+
+  /// On the navigation chrome (sidebar, rail) rather than on a page.
+  final bool onChrome;
+
+  /// What a screen reader says, when not the whole [tooltip].
+  final String? semanticLabel;
 
   @override
   State<ToolButton> createState() => _ToolButtonState();
@@ -166,8 +174,14 @@ class _ToolButtonState extends State<ToolButton> {
   Widget build(BuildContext context) {
     final nf = context.nf;
     final enabled = widget.onPressed != null;
-    final fg = !enabled ? nf.textFaint : widget.active ? nf.accent : (widget.color ?? (_hover ? nf.text : nf.textMuted));
-    final bg = widget.active ? nf.accentSoft : (_hover && enabled ? nf.surfaceHover : Colors.transparent);
+    final Color fg, bg;
+    if (widget.onChrome) {
+      fg = !enabled ? nf.onChromeMuted.withValues(alpha: 0.4) : (_hover ? nf.onChrome : nf.onChromeMuted);
+      bg = _hover && enabled ? nf.onChrome.withValues(alpha: 0.05) : Colors.transparent;
+    } else {
+      fg = !enabled ? nf.textFaint : widget.active ? nf.accent : (widget.color ?? (_hover ? nf.text : nf.textMuted));
+      bg = widget.active ? nf.accentSoft : (_hover && enabled ? nf.surfaceHover : Colors.transparent);
+    }
     return Tooltip(
       message: widget.tooltip,
       child: MouseRegion(
@@ -178,7 +192,8 @@ class _ToolButtonState extends State<ToolButton> {
           onTap: widget.onPressed,
           child: Semantics(
             button: true,
-            label: widget.tooltip,
+            enabled: enabled,
+            label: widget.semanticLabel ?? widget.tooltip,
             child: AnimatedContainer(
               duration: Motion.fast,
               width: widget.size,

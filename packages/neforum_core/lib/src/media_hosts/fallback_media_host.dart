@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
+import '../http/neforum_http.dart';
 import '../model/media.dart';
+import '../publish/cancellation_signal.dart';
 import '../util/logger.dart';
 import 'media_host.dart';
 
@@ -45,15 +47,18 @@ class FallbackMediaHost implements MediaHost, DescribesVerify {
   static bool _fits(MediaHost host, int bytes) => host.maxBytes == null || bytes <= host.maxBytes!;
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     if (!_fits(main, bytes.length)) {
-      final hosted = await fallback.upload(media, bytes, ttl: ttl);
+      final hosted = await fallback.upload(media, bytes, ttl: ttl, via: via);
       _report('${_label(media)} is larger than ${main.name} accepts, so ${fallback.name} stored it.');
       return _marked(hosted);
     }
     final MediaHostException first;
     try {
-      return await main.upload(media, bytes, ttl: ttl);
+      return await main.upload(media, bytes, ttl: ttl, via: via);
+    } on OperationCancelledException {
+      // The person stopped the run: no host is to blame, none tries next.
+      rethrow;
     } on MediaHostException catch (e) {
       first = e;
     } on Exception catch (e) {
@@ -61,9 +66,11 @@ class FallbackMediaHost implements MediaHost, DescribesVerify {
     }
     if (!_fits(fallback, bytes.length)) throw first;
     try {
-      final hosted = await fallback.upload(media, bytes, ttl: ttl);
+      final hosted = await fallback.upload(media, bytes, ttl: ttl, via: via);
       _report('${main.name} failed, so ${fallback.name} stored ${_label(media)}. ${first.message}');
       return _marked(hosted);
+    } on OperationCancelledException {
+      rethrow;
     } on MediaHostException catch (e) {
       throw _both(first, e.message, e.temporary);
     } on Exception catch (e) {

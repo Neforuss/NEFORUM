@@ -4,6 +4,7 @@
 // never shows a key, not even part of one.
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -11,16 +12,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/platform/browser_bridge.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/account_connection.dart';
 import 'package:neforum_app/state/cloud_sync.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
+import 'package:neforum_app/theme/app_theme.dart';
+import 'package:neforum_app/theme/tokens.dart';
 import 'package:neforum_app/ui/accounts/account_card.dart';
 import 'package:neforum_app/ui/accounts/connection_section.dart';
+import 'package:neforum_app/ui/activity/target_chip.dart';
 import 'package:neforum_app/ui/activity/time_format.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
+import 'package:neforum_app/ui/settings/data_section.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 class _MemoryStorage implements AppStorage {
@@ -56,6 +62,14 @@ class _Fakes {
 }
 
 final DateTime _connected = DateTime.utc(2026, 10, 12, 9, 30);
+
+/// What `signInExpiry` was until 1.4: it knew nothing about the platform, only
+/// what is stored. Its cases below are kept as they were, as proof that the
+/// model answers the same for a platform with no window and no deadline.
+SignInLifetime? signInExpiry(Map<String, String> secrets, {required DateTime now}) {
+  final life = deriveSignInLifetime(const SignInPolicy(limit: SignInLimit.undocumented, renewal: SignInRenewal.onUse), secrets, now: now);
+  return life.state == SignInState.noDate ? null : life;
+}
 String _iso(DateTime t) => t.toUtc().toIso8601String();
 
 /// Fails when any of [shown] holds 4 characters in a row of a stored key's
@@ -235,13 +249,15 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
           id: 'real-x-oauth2', name: 'Robin (@robinmakes)', handle: '@robinmakes'),
       oauth(expiresIn: const Duration(hours: 2), refresh: true, extra: {OAuthTokens.keyScope: 'tweet.write offline.access'}),
       keys: ['Access token', 'Refresh token'],
-      sign: SignInState.renews,
+      sign: SignInState.renewsUntil, // About 6 months after the last renewal.
       show: ['Client ID: x-client-id', 'Sign-in method: Browser sign-in (OAuth 2.0)'],
     ),
     _Real(
       _acct('x', PlatformTier.byokApi, {'authMode': 'oauth1', 'userId': '1234'}, id: 'real-x-oauth1', name: 'Robin (@robinmakes)', handle: '@robinmakes'),
       oauth1(),
       keys: oauth1Keys,
+      sign: SignInState.endsOn, // X retires OAuth 1.0a on 2027-01-31.
+      soon: false,
       show: ['Sign-in method: OAuth 1.0a keys'],
     ),
     _Real(
@@ -290,7 +306,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       }, id: 'real-tumblr-oauth2'),
       oauth(expiresIn: const Duration(minutes: 40), refresh: true, extra: {StoredSecretKeys.consumerSecret: f.next()}),
       keys: ['Access token', 'Refresh token', 'Consumer secret'],
-      sign: SignInState.renews,
+      sign: SignInState.renewsUntil, // About 42 days after the last renewal.
       show: ['OAuth Consumer Key: tumblr-consumer-key', 'Redirect URI: $loopback', 'Blog: robinblog', 'Sign-in method: Browser sign-in (OAuth 2.0)'],
     ),
     // OAuth 1.0a keeps the consumer key in the config AND with the keys:
@@ -427,7 +443,7 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
       _acct('deviantart', PlatformTier.byokApi, {'clientId': '12345', 'redirectUri': loopback, 'userId': 'u-1'}),
       oauth(expiresIn: const Duration(hours: 1), refresh: true, extra: {StoredSecretKeys.clientSecret: f.next()}),
       keys: ['Access token', 'Refresh token', 'Client secret'],
-      sign: SignInState.renews,
+      sign: SignInState.renewsUntil, // About 3 months after the last renewal.
       show: ['Client ID: 12345', 'Redirect URI: $loopback'],
     ),
     _Real(
@@ -731,11 +747,11 @@ void main() {
       expect(signInExpiry({OAuthTokens.keyAccessToken: 'a', OAuthTokens.keyExpiresAt: 'not a date'}, now: now), isNull);
     });
 
-    test('finding 2: a refresh token without an end of its own reads "Renews automatically", with no access-token time', () {
+    test('finding 2: a refresh token without an end of its own says when it renews, with no access-token time', () {
       for (final access in [_iso(now.add(const Duration(minutes: 90))), past]) {
         final e = signInExpiry({OAuthTokens.keyExpiresAt: access, OAuthTokens.keyRefreshToken: 'r'}, now: now)!;
         expect((e.state, e.endsAt, e.needsReconnecting), (SignInState.renews, null, false));
-        expect(signInText(e, when), 'Renews automatically.', reason: 'no changing time, no "Ran out"');
+        expect(signInText(e, when), 'Renews when NEFORUM posts. No end date is known.', reason: 'no changing time, no "Ran out"');
       }
       expect(signInExpiry({OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.appPassword: 'p', OAuthTokens.keyExpiresAt: past}, now: now)!.state, SignInState.renews,
           reason: 'Bluesky signs in again with its app password');
@@ -748,7 +764,7 @@ void main() {
         StoredSecretKeys.refreshExpiresAt: _iso(now.add(const Duration(days: 6))),
       }, now: now)!;
       expect((youtube.state, youtube.endsAt, youtube.endsSoon), (SignInState.renewsUntil, now.add(const Duration(days: 6)), true));
-      expect(signInText(youtube, when), 'Renews automatically until 7/11/2026, then needs reconnecting.');
+      expect(signInText(youtube, when), 'Renews when NEFORUM posts, until 7/11/2026, then needs reconnecting.');
       final pinterest = signInExpiry({OAuthTokens.keyRefreshToken: 'r', StoredSecretKeys.refreshExpiresAt: _iso(now.add(const Duration(days: 365)))}, now: now)!;
       expect((pinterest.state, pinterest.endsSoon), (SignInState.renewsUntil, false));
     });
@@ -776,6 +792,203 @@ void main() {
       expect(ahead.state, SignInState.renewsWhenUsed);
       expect(signInText(ahead, when), 'Renews when NEFORUM posts with it. Unused, it ends on 1/12/2026.');
       expect(signInExpiry({OAuthTokens.keyExpiresAt: past, StoredSecretKeys.refreshedAt: past}, now: now)!.needsReconnecting, isTrue);
+    });
+  });
+
+  group('sign-in text (1.4)', () {
+    SignInLifetime life(SignInPolicy p, Map<String, String> s, {DateTime? at}) => deriveSignInLifetime(p, s, now: at ?? now);
+    final ahead = now.add(const Duration(days: 30));
+
+    test('a date that something else can end first reads "at the latest"', () {
+      expect(signInText(life(SignInPolicies.linkedIn, {OAuthTokens.keyAccessToken: 'a', OAuthTokens.keyExpiresAt: _iso(ahead)}), when),
+          'Ends on 1/12/2026 at the latest, then needs reconnecting. Reconnect before it ends to skip the consent screen.');
+      expect(signInText(life(SignInPolicies.threads, {OAuthTokens.keyExpiresAt: _iso(ahead), StoredSecretKeys.tokenIssuedAt: _iso(now)}), when),
+          'Renews when NEFORUM posts with it. Unused, it ends on 1/12/2026 at the latest.');
+      expect(signInText(life(SignInPolicies.tikTok, {OAuthTokens.keyRefreshToken: 'r', StoredSecretKeys.refreshExpiresAt: _iso(ahead)}), when), contains('until 1/12/2026 at the latest'));
+    });
+
+    test('M4: a sign-in that ends when idle says about when, where it said "Renews automatically"', () {
+      final renewed = {OAuthTokens.keyRefreshToken: 'r', StoredSecretKeys.lastRenewedAt: _iso(now)};
+      expect(signInText(life(SignInPolicies.tumblrOAuth2, renewed), when), 'Renews when NEFORUM posts. Unused, it ends about 13/12/2026 at the latest.');
+      expect(signInText(life(SignInPolicies.xOAuth2, renewed), when), contains('Unused, it ends about 3/5/2027 at the latest'));
+      expect(signInText(life(SignInPolicies.youTube, renewed), when), contains('If your Google app is still in Testing'), reason: 'M5: said plainly, since the date may not reach NEFORUM');
+      expect(signInText(life(SignInPolicies.xOAuth2, {OAuthTokens.keyRefreshToken: 'r'}), when), 'Renews when NEFORUM posts. It ends if nothing renews it for about 183 days.');
+      expect(signInText(life(SignInPolicies.xOAuth2, renewed, at: now.add(const Duration(days: 200))), when), startsWith('It probably ended about 3/5/2027.'));
+    });
+
+    test('M12: a pasted token with no date yet says so', () {
+      expect(signInText(life(SignInPolicies.instagram, {OAuthTokens.keyAccessToken: 'a'}), when), 'Ends within 60 days of its last renewal. The date shows after NEFORUM first renews it.');
+    });
+
+    test('X keys say the deadline and what to do; Tumblr and Flickr keys do not', () {
+      final keys = OAuth1Credentials(consumerKey: 'k', consumerSecret: 's', token: 't', tokenSecret: 'x').toSecrets();
+      expect(signInText(life(SignInPolicies.xKeys, keys), when), 'Ends on 31/1/2027 at the latest, then needs reconnecting. X stops accepting these keys on that date. Reconnect by browser sign-in before then.');
+      expect(signInText(life(SignInPolicies.tumblrKeys, keys), when), 'No published end date.');
+      expect(signInText(life(SignInPolicies.flickrPolicy, keys), when), 'No published end date.');
+    });
+
+    test('no limit: says only what can really end it', () {
+      expect(signInText(life(SignInPolicies.nostrPolicy, {'nsec': 'k'}), when), 'No end date. A key does not expire.', reason: 'a Nostr key cannot be revoked');
+      expect(signInText(life(SignInPolicies.lemmyPolicy, {OAuthTokens.keyAccessToken: 'a'}), when), 'No end date. Logging out or a new password ends it.');
+      expect(signInText(life(SignInPolicies.facebook, {OAuthTokens.keyAccessToken: 'a'}), when), 'No end date. Meta can still end it: a password change, a removed app, or a Meta app left unused for 90 days.');
+    });
+
+    test('what the platform last said goes into the Connection section and the copied setup', () async {
+      final account = _acct('lemmy', PlatformTier.openApi, const {'instance': 'https://lemmy.example'});
+      final secrets = {OAuthTokens.keyAccessToken: 'a'};
+      final read = SignInServerRead(readAt: now, expiresAt: ahead);
+      final without = describeAccountConnection(account, adapter: _adapter('lemmy'), secrets: secrets, now: now);
+      expect(without.signIn!.expiresAt, isNull, reason: 'nothing read yet');
+      final c = describeAccountConnection(account, adapter: _adapter('lemmy'), secrets: secrets, now: now, serverRead: read);
+      expect((c.signIn!.expiresAt, c.signIn!.source), (ahead, SignInDateSource.serverReported));
+      expect(signInText(c.signIn!, when), 'Ends on 1/12/2026 at the latest, then needs reconnecting. Logging out or a new password ends it.');
+      final store = InMemorySecretStore();
+      await store.write(account.id, secrets);
+      final status = SignInStatus(accountId: account.id, limit: SignInLimit.none, source: SignInDateSource.serverReported, renewsItself: false, state: SignInState.endsOn, serverRead: read);
+      final all = await allConnectionSetupsText([account], secrets: store, registry: builtinRegistry(), travel: KeysTravel.thisDeviceOnly, deviceLabel: 'Test device', now: now, statuses: {account.id: status});
+      expect(all.text, contains('at the latest'));
+      expect(all.text, contains(connectionCopyMoment(ahead)));
+    });
+
+    testWidgets('the open section reads the status file: a one week Lemmy login from before 1.4 shows its date', (tester) async {
+      final account = _acct('lemmy', PlatformTier.openApi, const {'instance': 'https://lemmy.example'}, id: 'section-lemmy');
+      final end = DateTime.now().toUtc().add(const Duration(days: 5));
+      await tester.runAsync(() async {
+        final s = await AppServices.create(demo: true, storage: _MemoryStorage(const {}), browserBridge: BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0]));
+        addTearDown(s.dispose);
+        await s.accounts.upsert(account);
+        await s.secrets.write(account.id, {OAuthTokens.keyAccessToken: 'a'});
+        await s.signInStatusStore.change(account.id, (c) => SignInStatus(accountId: account.id, limit: SignInLimit.none, source: SignInDateSource.serverReported, renewsItself: false, state: SignInState.endsOn, expiresAt: end, serverRead: SignInServerRead(readAt: DateTime.now().toUtc(), expiresAt: end)));
+        final container = ProviderContainer(overrides: [servicesProvider.overrideWithValue(s)]);
+        addTearDown(container.dispose);
+        final keep = container.listen(accountConnectionProvider(account.id), (_, _) {});
+        addTearDown(keep.close);
+        final accounts = container.listen(accountsProvider, (_, _) {});
+        addTearDown(accounts.close);
+        await container.read(accountsProvider.future);
+        final c = await container.read(accountConnectionProvider(account.id).future);
+        expect(c!.signIn!.expiresAt, end);
+      });
+    });
+
+    test('no date: no limit, no published limit and idle time are three different things', () {
+      expect(signInText(life(SignInPolicies.mastodonNoLimit, {OAuthTokens.keyAccessToken: 'a'}), when), 'No end date. Ends only if revoked.');
+      expect(signInText(life(SignInPolicies.telegramPolicy, {'bot_token': 'b'}), when), 'No published end date.');
+      expect(signInText(life(SignInPolicies.inkbunnyPolicy, {StoredSecretKeys.sessionId: 's'}), when), 'Ends after idle time. Inkbunny ends the session after several days without use. No date can be known.');
+      expect(signInText(life(SignInPolicies.mastodonOtherServer, {OAuthTokens.keyAccessToken: 'a'}), when), 'No published end date. Your server decides.');
+      expect(signInText(life(SignInPolicies.blueskyPolicy, {OAuthTokens.keyAccessToken: 'a', StoredSecretKeys.appPassword: 'p'}), when), 'Renews automatically while the app password is valid.');
+    });
+
+    test('a date from the server on a no-limit platform reads as a date: Mitra', () {
+      final account = _acct('mastodon', PlatformTier.openApi, {'software': 'mitra'});
+      final c = describeAccountConnection(account, adapter: _adapter('mastodon'), secrets: {OAuthTokens.keyAccessToken: 'a', OAuthTokens.keyExpiresAt: _iso(ahead)}, now: now);
+      expect((c.signIn!.state, c.signIn!.expiresAt), (SignInState.endsOn, ahead));
+    });
+
+    test('no row with no sign-in: hand-off, the LBRY app, no keys, an unreadable keychain', () {
+      final secrets = {OAuthTokens.keyAccessToken: 'a'};
+      expect(describeAccountConnection(_acct('x', PlatformTier.handoff, const {}), adapter: _adapter('x'), secrets: secrets, now: now).signIn, isNull);
+      expect(describeAccountConnection(_acct('odysee', PlatformTier.openApi, const {}), adapter: _adapter('odysee'), secrets: secrets, now: now).signIn, isNull);
+      expect(describeAccountConnection(_acct('x', PlatformTier.byokApi, const {}), adapter: _adapter('x'), now: now).signIn, isNull);
+      expect(describeAccountConnection(_acct('x', PlatformTier.byokApi, const {}), adapter: _adapter('x'), secrets: secrets, now: now, keysUnreadable: true).signIn, isNull);
+      expect(describeAccountConnection(_acct('telegram', PlatformTier.openApi, const {}), adapter: _adapter('telegram'), secrets: {'bot_token': 'b'}, now: now).signIn, isNotNull);
+    });
+
+    test('the new bookkeeping keys are not listed as keys and not fed to the guard', () {
+      final secrets = {
+        OAuthTokens.keyAccessToken: 'QQQQQQQQ',
+        StoredSecretKeys.expiresAtSource: 'serverReported',
+        StoredSecretKeys.refreshExpiresSource: 'computed',
+        StoredSecretKeys.lastRenewedAt: _iso(now),
+      };
+      expect(storedKeyLabels(secrets, null), ['Access token']);
+      expect(SecretGuard(secrets).reveals('serverReported and computed'), isFalse);
+      expect(kSecretBookkeepingKeys, containsAll([StoredSecretKeys.expiresAtSource, StoredSecretKeys.refreshExpiresSource, StoredSecretKeys.lastRenewedAt]));
+    });
+
+    test('advice: not allowed does not say the sign-in expired', () {
+      expect(targetErrorAdvice(const PublishError.auth('expired')), contains('expired or was revoked'));
+      expect(targetErrorAdvice(const PublishError.auth('no rights', notAllowed: true)), isNot(contains('expired')));
+      expect(targetErrorAdvice(const PublishError.auth('no rights', notAllowed: true)), contains('does not allow this'));
+      expect(targetErrorAdvice(const PublishError.auth('no rights', notAllowed: true)), isNot(contains('sign-in works')), reason: 'a bare 403 does not prove that');
+    });
+  });
+
+  group('sign-in status in the app (1.4)', () {
+    testWidgets('every write through the services updates the status, and it shows no key', (tester) async {
+      await tester.runAsync(() async {
+        final storage = _MemoryStorage(const {});
+        final s = await AppServices.create(demo: true, storage: storage, browserBridge: BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0]));
+        addTearDown(s.dispose);
+        final account = _acct('linkedin', PlatformTier.byokApi, {'clientId': 'c'}, id: 'status-linkedin');
+        await s.accounts.upsert(account);
+        final end = DateTime.now().toUtc().add(const Duration(days: 30));
+        const secret = 'QZXCVBNMLKJHGFDSQ';
+        await s.secrets.write(account.id, stampNewSignIn({OAuthTokens.keyAccessToken: secret, OAuthTokens.keyExpiresAt: _iso(end)}, now: DateTime.now()));
+        final status = (await s.signInStatusStore.get(account.id))!;
+        expect((status.expiresAt, status.source, status.earlyRevocationPossible), (end, SignInDateSource.serverReported, true));
+        expect(jsonEncode(status.toJson()), isNot(contains(secret)));
+        // The publisher reports back through the same tracker.
+        expect(s.publisher().signInOutcomes, same(s.signInStatus));
+      });
+    });
+
+    testWidgets('Delete everything empties the status file, including what no account owns any more', (tester) async {
+      tester.view.physicalSize = const Size(1200, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final s = (await tester.runAsync(() async {
+        final s = await AppServices.create(demo: true, storage: _MemoryStorage({'themeMode': 'light'}));
+        final account = _acct('linkedin', PlatformTier.byokApi, {'clientId': 'c'}, id: 'status-delete');
+        await s.accounts.upsert(account);
+        await s.secrets.write(account.id, {OAuthTokens.keyAccessToken: 'QZXCVBNMLKJHGFDSQ', OAuthTokens.keyExpiresAt: _iso(DateTime.now().add(const Duration(days: 9)))});
+        await s.signInStatusStore.change('left-behind', (_) => const SignInStatus(accountId: 'left-behind', limit: SignInLimit.none, source: SignInDateSource.unknown, renewsItself: false, state: SignInState.noDate));
+        expect((await s.signInStatusStore.all()).keys, containsAll(['status-delete', 'left-behind']));
+        await s.signInWarnings.run();
+        await s.signInWarningStore.update((l) => l.copyWith(bannerClosed: {'status-delete': 'x'}));
+        expect((await s.signInWarningStore.read()).entries.keys, contains('status-delete'));
+        return s;
+      }))!;
+      await tester.pumpWidget(ProviderScope(
+        overrides: [servicesProvider.overrideWithValue(s)],
+        child: MaterialApp(theme: buildTheme(Brightness.light, AccentChoice.neforum), home: const Scaffold(body: SingleChildScrollView(child: DataSettingsSection()))),
+      ));
+      await tester.pump();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Delete\u2026'));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.tap(find.text('Delete everything').last);
+      for (var i = 0; i < 40; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 5)));
+      }
+      expect(await tester.runAsync(() => s.signInStatusStore.all()), isEmpty);
+      final ledger = (await tester.runAsync(() => s.signInWarningStore.read()))!;
+      expect(ledger.entries, isEmpty, reason: 'what was said about a sign-in goes too');
+      expect(ledger.bannerClosed, isEmpty);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
+    });
+
+    testWidgets('signInStatusesProvider follows the store', (tester) async {
+      await tester.runAsync(() async {
+        final s = await AppServices.create(demo: true, storage: _MemoryStorage(const {}), browserBridge: BrowserBridge.create(secrets: InMemorySecretStore(), ports: const [0]));
+        addTearDown(s.dispose);
+        final container = ProviderContainer(overrides: [servicesProvider.overrideWithValue(s)]);
+        addTearDown(container.dispose);
+        final seen = <Map<String, SignInStatus>>[];
+        final sub = container.listen(signInStatusesProvider, (_, next) {
+          if (next.hasValue) seen.add(next.value!);
+        }, fireImmediately: true);
+        addTearDown(sub.close);
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        await s.signInStatusStore.change('a', (_) => const SignInStatus(accountId: 'a', limit: SignInLimit.none, source: SignInDateSource.unknown, renewsItself: false, state: SignInState.noDate));
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(seen.last.keys, contains('a'));
+      });
+    });
+
+    test('the guide is in the app and matches docs/', () {
+      expect(File('assets/docs/sign-in-lifetimes.md').readAsStringSync(), File('../../docs/sign-in-lifetimes.md').readAsStringSync(), reason: 'run dart run tool/sync_docs.dart');
     });
   });
 
@@ -833,7 +1046,7 @@ void main() {
       expect(c.storedKeys, r.keys, reason: id);
       expect(c.needsKeys, r.needsKeys, reason: id);
       expect(c.keysMissing, isFalse, reason: id);
-      expect(c.signIn?.state, r.sign, reason: id);
+      expect(c.signIn?.state == SignInState.noDate ? null : c.signIn?.state, r.sign, reason: id);
       expect(c.signIn?.endsSoon ?? false, r.soon, reason: id);
       expect(lines, containsAll(r.show), reason: id);
       for (final label in r.hide) {
@@ -879,7 +1092,7 @@ Mastodon: Someone (@someone)
 How it posts: Automatically, through the open Mastodon API
 Server address: https://mastodon.example
 Server software: Mastodon
-Sign-in: Renews automatically.
+Sign-in: Renews when NEFORUM posts. No end date is known.
 Keys on this device: Access token, Refresh token (Synced)
 Connected: 2026-10-12''');
     _expectNoSecretShown([text], [secrets]);
@@ -1123,13 +1336,13 @@ Connected: 2026-10-12''');
       for (final clock in ['twelveHour', 'twentyFourHour']) {
         await _pumpAccounts(tester, settings: {'clockFormat': clock}, accounts: [(youtube.account, youtube.secrets)], keepDemoAccounts: false);
         await _open(tester, id);
-        screens.add(tester.widget<Text>(find.descendant(of: _card(id), matching: find.textContaining('Renews automatically until'))).data!);
+        screens.add(tester.widget<Text>(find.descendant(of: _card(id), matching: find.textContaining('Renews when NEFORUM posts, until'))).data!);
         await _tap(tester, find.descendant(of: _card(id), matching: find.text('Copy setup')));
         await _unmount(tester);
       }
       expect(copied, hasLength(2));
       expect(copied[0], copied[1]);
-      expect(copied[0], matches(RegExp(r'Sign-in: Renews automatically until \d{4}-\d\d-\d\dT\d\d:\d\dZ, then needs reconnecting\.')));
+      expect(copied[0], matches(RegExp(r'Sign-in: Renews when NEFORUM posts, until \d{4}-\d\d-\d\dT\d\d:\d\dZ at the latest, then needs reconnecting\.')));
       expect(copied[0], contains('\nConnected: 2026-10-12'));
       expect(screens[0], isNot(screens[1]), reason: 'on screen, each device writes its own clock');
     });
@@ -1184,7 +1397,7 @@ Connected: 2026-10-12''');
         'Client ID',
         'own-client-id',
         'Sign-in',
-        'Renews automatically.',
+        'Renews when NEFORUM posts. No end date is known. Your server decides.',
         'Keys on this device',
         'Access token: stored',
         'Refresh token: stored',
@@ -1229,9 +1442,9 @@ Connected: 2026-10-12''');
       await _pumpAccounts(tester, accounts: [(youtube.account, youtube.secrets), (x.account, x.secrets)], keepDemoAccounts: false);
       await _open(tester, youtube.account.id);
       await _open(tester, x.account.id);
-      expect(find.descendant(of: _card(youtube.account.id), matching: find.textContaining(RegExp(r'^Renews automatically until .+, then needs reconnecting\.$'))),
+      expect(find.descendant(of: _card(youtube.account.id), matching: find.textContaining(RegExp(r'^Renews when NEFORUM posts, until .+ at the latest, then needs reconnecting\. If your Google app is still in Testing, Google ends the sign-in every 7 days\.$'))),
           findsOneWidget);
-      expect(find.descendant(of: _card(x.account.id), matching: find.text('Renews automatically.')), findsOneWidget);
+      expect(find.descendant(of: _card(x.account.id), matching: find.textContaining(RegExp(r'^Renews when NEFORUM posts\. Unused, it ends about .+ at the latest\.$'))), findsOneWidget, reason: 'never the two-hour token\'s time');
       await _unmount(tester);
     });
 

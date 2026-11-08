@@ -8,23 +8,27 @@ import 'package:path/path.dart' as p;
 import '../model/account.dart';
 import '../model/post.dart';
 import '../publish/publish_journal.dart';
+import '../publish/sign_in_warnings.dart';
 import '../util/logger.dart';
 import 'repositories.dart';
 import 'secret_store.dart';
+import 'sign_in_status_store.dart';
 
 /// JSON-file persistence: one small file per store in [directory], written
 /// atomically (temp file + rename). Used by the CLI and, on desktop/mobile,
 /// by the app for everything except secrets (which go to the OS keychain).
 ///
 /// Files: `accounts.json`, `posts.json`, `quota.json`, `secrets.json`,
-/// `publish-journal.json`.
+/// `publish-journal.json`, `sign-in-status.json`, `sign-in-warnings.json`.
 class JsonFileStore {
-  JsonFileStore(this.directory)
+  JsonFileStore(this.directory, {String? process})
       : accounts = JsonAccountRepository(JsonFile(p.join(directory, 'accounts.json'))),
         posts = JsonPostRepository(JsonFile(p.join(directory, 'posts.json'))),
         quota = JsonQuotaRepository(JsonFile(p.join(directory, 'quota.json'))),
         secrets = JsonSecretStore(JsonFile(p.join(directory, 'secrets.json'))),
-        publishJournal = openPublishJournal(directory);
+        publishJournal = openPublishJournal(directory, process: process),
+        signInStatus = openSignInStatus(directory),
+        signInWarnings = openSignInWarnings(directory);
 
   final String directory;
   final JsonAccountRepository accounts;
@@ -36,19 +40,41 @@ class JsonFileStore {
   /// opened the same directory.
   final PublishJournal publishJournal;
 
+  /// What this device last worked out about each account's sign-in.
+  final SignInStatusStore signInStatus;
+
+  /// Which sign-in warnings this device already gave.
+  final SignInWarningStore signInWarnings;
+
+  /// The record of sign-in warnings in [directory]. Device-only, like the
+  /// status. Every read goes to the file, since background isolates write it too.
+  static SignInWarningStore openSignInWarnings(String directory) {
+    final file = JsonFile(p.join(directory, 'sign-in-warnings.json'), writeAttempts: 3);
+    return SignInWarningStore(read: file.read, write: file.write);
+  }
+
+  /// The sign-in status in [directory]. Device-only: never synced or exported.
+  /// Every read goes to the file, since background isolates write it too.
+  static SignInStatusStore openSignInStatus(String directory) {
+    final file = JsonFile(p.join(directory, 'sign-in-status.json'), writeAttempts: 3);
+    return SignInStatusStore(read: file.read, write: file.write);
+  }
+
   /// The publish journal in [directory] as one process sees it. Every call
   /// is another owner; [owner] and [clock] let tests stand in for another
-  /// process. Every read goes to the file, since other isolates write it
+  /// isolate. [process]: see [PublishJournal.process]. Every read goes to the file, since other isolates write it
   /// too. A write that keeps failing gives up after a few tries: a run that
   /// is not on record is never recovered, which costs nothing else.
-  static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock}) {
+  static PublishJournal openPublishJournal(String directory, {String? owner, Clock? clock, String? process}) {
     final file = JsonFile(p.join(directory, 'publish-journal.json'), writeAttempts: 3);
-    return PublishJournal(read: file.read, write: file.write, owner: owner, clock: clock);
+    return PublishJournal(read: file.read, write: file.write, owner: owner, clock: clock, process: process);
   }
 
   void dispose() {
     accounts.dispose();
     posts.dispose();
+    signInStatus.dispose();
+    signInWarnings.dispose();
   }
 }
 
@@ -144,17 +170,42 @@ Future<void> _saveOrUndo(Future<void> Function() save, void Function() undo) asy
   }
 }
 
+/// A cache filled by the first read of a file. Callers that ask while that read
+/// is under way wait for the same read and get the same object, so a change one
+/// of them makes is never replaced by a second read that started before the
+/// change was written. (`_cache ??= await read()` checks before the read and
+/// assigns after it: a later first caller's older picture then won.) A read
+/// that fails fails everyone waiting on it, and the next caller reads again.
+class _LoadOnce<T extends Object> {
+  _LoadOnce(this._read);
+
+  final Future<T> Function() _read;
+  T? _value;
+  Future<T>? _reading;
+
+  Future<T> call() async {
+    final value = _value;
+    if (value != null) return value;
+    final reading = _reading ??= _read();
+    try {
+      final loaded = await reading;
+      return _value ??= loaded;
+    } finally {
+      if (identical(_reading, reading)) _reading = null;
+    }
+  }
+}
+
 class JsonAccountRepository implements AccountRepository {
   JsonAccountRepository(this._file);
 
   final JsonFile _file;
-  Map<String, ConnectedAccount>? _cache;
   final _changes = StreamController<void>.broadcast();
 
-  Future<Map<String, ConnectedAccount>> _load() async => _cache ??= {
+  late final _load = _LoadOnce<Map<String, ConnectedAccount>>(() async => {
         for (final j in (await _file.read() as List? ?? const []))
           (j as Map)['id'] as String: ConnectedAccount.fromJson(Map<String, dynamic>.from(j)),
-      };
+      });
 
   Future<void> _save() async {
     await _file.write((await _load()).values.map((a) => a.toJson()).toList());
@@ -317,11 +368,10 @@ class JsonQuotaRepository implements QuotaRepository {
   JsonQuotaRepository(this._file);
 
   final JsonFile _file;
-  List<QuotaEvent>? _cache;
 
-  Future<List<QuotaEvent>> _load() async => _cache ??= [
+  late final _load = _LoadOnce<List<QuotaEvent>>(() async => [
         for (final j in (await _file.read() as List? ?? const [])) QuotaEvent.fromJson(Map<String, dynamic>.from(j as Map)),
-      ];
+      ]);
 
   Future<void> _save() async => _file.write((await _load()).map((e) => e.toJson()).toList());
 
@@ -360,12 +410,11 @@ class JsonSecretStore extends SecretStore {
   JsonSecretStore(this._file);
 
   final JsonFile _file;
-  Map<String, Map<String, String>>? _cache;
 
-  Future<Map<String, Map<String, String>>> _load() async => _cache ??= {
+  late final _load = _LoadOnce<Map<String, Map<String, String>>>(() async => {
         for (final e in (await _file.read() as Map? ?? const {}).entries)
           e.key as String: Map<String, String>.from(e.value as Map),
-      };
+      });
 
   @override
   Future<Map<String, String>?> read(String accountId) async {

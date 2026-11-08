@@ -129,6 +129,7 @@ Future<Map<String, dynamic>> tiktokCall(
   String accessToken, {
   Object? body,
   required String context,
+  bool makesPost = false,
 }) async {
   final headers = {
     'Authorization': 'Bearer $accessToken',
@@ -140,6 +141,9 @@ Future<Map<String, dynamic>> tiktokCall(
         ? await ctx.http.get(url, headers: headers, throwOnError: false)
         : await ctx.http.postJson(url, body ?? const <String, dynamic>{}, headers: headers, throwOnError: false);
   } on Object catch (e) {
+    // [makesPost]: a lost answer is for AdapterContext.creating to report, which
+    // cannot see it once it is a plain network error here.
+    if (makesPost && NeforumHttp.isTransportError(e) && !NeforumHttp.neverReachedServer(e)) rethrow;
     final err = networkErrorFor(e, context);
     if (err == null) rethrow;
     throw AdapterException(err);
@@ -179,7 +183,7 @@ PublishError mapTikTokError({
           raw: raw, statusCode: status);
     case 'scope_not_authorized':
       return PublishError.auth('TikTok did not grant the video.publish / video.upload permission; reconnect and tick every permission',
-          raw: raw, statusCode: status);
+          raw: raw, statusCode: status, notAllowed: true);
     case 'rate_limit_exceeded':
       return PublishError.quota('TikTok rate limit hit ($context)',
           raw: raw, statusCode: status, retryAfter: retryAfter ?? const Duration(minutes: 1));
@@ -241,7 +245,7 @@ PublishError? networkErrorFor(Object e, String context) {
   if (e is AdapterException) return e.error;
   if (e is HttpFailure) return e.toPublishError(context: context);
   if (e is http.ClientException || e is TimeoutException || isTransientIoError(e)) {
-    return PublishError.network('$context: network error ($e)');
+    return PublishError.network('$context: network error (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e));
   }
   return null;
 }

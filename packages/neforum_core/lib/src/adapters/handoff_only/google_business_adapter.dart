@@ -47,6 +47,7 @@ class GoogleBusinessAdapter extends HandoffOnlyAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'google_business',
     name: 'Google Business Profile',
+    shortName: 'Google Business',
     iconKey: 'google_business',
     homepage: 'https://business.google.com/',
     tiers: {PlatformTier.handoff},
@@ -77,6 +78,9 @@ class GoogleBusinessAdapter extends HandoffOnlyAdapter {
     setupGuide: 'docs/platforms/google_business.md',
     supportsLinkField: true,
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
 
   @override
   PlatformDescriptor get descriptor => _descriptor;

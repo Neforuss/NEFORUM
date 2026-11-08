@@ -1422,7 +1422,7 @@ class _RecordingHost extends FakeMediaHost {
   int? get maxBytes => _maxBytes;
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     _calls++;
     if (_calls == failAt) throw MediaHostException('Host is full', hostId: id);
     ttls.add(ttl);

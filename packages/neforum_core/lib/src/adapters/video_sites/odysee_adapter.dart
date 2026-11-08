@@ -73,6 +73,9 @@ class OdyseeAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override
@@ -223,18 +226,19 @@ sending the video to Odysee in the background: leave it open until the video pla
     final title = odyseeTitle(variant);
     final name = '${slugFor(title)}-${const Uuid().v4().substring(0, 6)}';
     final channelId = account.configString(cfgChannelId);
-    ctx.onProgress?.call('Publishing on Odysee (the LBRY app prepares the file)');
     try {
-      final res = await _call(ctx, daemon, 'publish', {
-        'name': name,
-        'bid': account.configString(cfgBid).isEmpty ? defaultBid : account.configString(cfgBid),
-        'file_path': media.path,
-        'title': title,
-        'description': odyseeDescription(variant),
-        if (variant.tags.isNotEmpty) 'tags': [for (final t in variant.tags.take(5)) t.replaceFirst('#', '').toLowerCase()],
-        if (channelId.isNotEmpty) 'channel_id': channelId,
-        'blocking': true,
-      }, timeout: const Duration(minutes: 30));
+      final res = await ctx.creating(
+          'Publishing on Odysee (the LBRY app prepares the file)',
+          () => _call(ctx, daemon, 'publish', {
+                'name': name,
+                'bid': account.configString(cfgBid).isEmpty ? defaultBid : account.configString(cfgBid),
+                'file_path': media.path,
+                'title': title,
+                'description': odyseeDescription(variant),
+                if (variant.tags.isNotEmpty) 'tags': [for (final t in variant.tags.take(5)) t.replaceFirst('#', '').toLowerCase()],
+                if (channelId.isNotEmpty) 'channel_id': channelId,
+                'blocking': true,
+              }, timeout: const Duration(minutes: 30), creates: true));
       final outputs = res is Map && res['outputs'] is List ? res['outputs'] as List : const <Object?>[];
       final out = outputs.whereType<Map<Object?, Object?>>().firstOrNull;
       final claimId = '${out?['claim_id'] ?? ''}';
@@ -256,6 +260,10 @@ sending the video to Odysee in the background: leave it open until the video pla
       return PublishResult.failure(PublishError.platform('Odysee (LBRY SDK) refused the upload: ${e.message}', raw: e.message));
     }
   }
+
+  /// One blocking request to the local LBRY app: words and elapsed time only.
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.opaque, steps: 1);
 
   @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) => videoSiteHandoff(
@@ -308,12 +316,14 @@ sending the video to Odysee in the background: leave it open until the video pla
   /// One JSON-RPC call to lbrynet: `{"method": ..., "params": ...}`; returns
   /// `result`.
   static Future<Object?> _call(AdapterContext ctx, Uri daemon, String method, Map<String, Object?> params,
-      {Duration timeout = const Duration(seconds: 20)}) async {
+      {Duration timeout = const Duration(seconds: 20), bool creates = false}) async {
     final NeforumResponse res;
     try {
       res = await ctx.http.send('POST', daemon, jsonBody: {'method': method, 'params': params}, throwOnError: false, timeout: timeout);
     } on Object catch (e) {
-      if (NeforumHttp.isTransportError(e)) throw const _SdkUnreachable();
+      // A publish the app may have taken is not the same as an app that is not
+      // running: that one is left for [AdapterContext.creating] to report.
+      if (NeforumHttp.isTransportError(e) && (!creates || NeforumHttp.neverReachedServer(e))) throw const _SdkUnreachable();
       rethrow;
     }
     if (!res.ok) throw _SdkError('HTTP ${res.statusCode}');

@@ -15,18 +15,14 @@ import '../platform_adapter.dart';
 /// Reads a media file, turning a missing or unreadable file into an
 /// [AdapterException] so `publish` can report it instead of throwing.
 Future<Uint8List> readBlogMedia(AdapterContext ctx, MediaAttachment m) async {
-  try {
-    return await ctx.readMedia(m);
-  } on Exception catch (e) {
-    throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-  }
+  return ctx.readMedia(m);
 }
 
 /// Last-resort mapping for an exception that escaped an adapter's helpers,
 /// so `publish` always returns a failure instead of throwing.
 PublishError unexpectedBlogError(String platform, Exception e) {
   if (e is HttpFailure) return e.toPublishError(context: platform);
-  if (NeforumHttp.isTransportError(e)) return PublishError.network('$platform: $e', raw: '$e');
+  if (NeforumHttp.isTransportError(e)) return PublishError.network('$platform: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e));
   return PublishError.platform('$platform: $e', raw: '$e');
 }
 

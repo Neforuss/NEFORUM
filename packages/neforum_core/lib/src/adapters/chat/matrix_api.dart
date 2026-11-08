@@ -35,7 +35,7 @@ class MatrixApiError implements Exception {
             'Reconnect the account.', raw: snippet, statusCode: statusCode);
       case 'M_FORBIDDEN':
         return PublishError.auth('$where: not allowed ($message). Check that the account may post in this room.',
-            raw: snippet, statusCode: statusCode);
+            raw: snippet, statusCode: statusCode, notAllowed: true);
       case 'M_LIMIT_EXCEEDED':
         return PublishError.quota('$where: rate limited by the homeserver',
             raw: snippet, statusCode: statusCode, retryAfter: retryAfter);
@@ -52,7 +52,7 @@ class MatrixApiError implements Exception {
       return PublishError.quota('$where: rate limited', raw: snippet, statusCode: statusCode, retryAfter: retryAfter);
     }
     if (statusCode == 401 || statusCode == 403) {
-      return PublishError.auth('$where: $message', raw: snippet, statusCode: statusCode);
+      return PublishError.auth('$where: $message', raw: snippet, statusCode: statusCode, notAllowed: statusCode == 403 ? true : null);
     }
     if (statusCode == 413) return PublishError.validation('$where: too large', raw: snippet, statusCode: statusCode);
     if (statusCode >= 500) {
@@ -102,10 +102,11 @@ class MatrixApi {
       _check(await _ctx.http.postJson(uri(segments), body, headers: _auth, throwOnError: false, method: 'PUT'));
 
   /// `POST /_matrix/media/v3/upload?filename=` with the raw bytes; returns
-  /// the `mxc://` content URI.
+  /// the `mxc://` content URI. Stored media is not a message: nothing shows in
+  /// the room until an event refers to it.
   Future<String> upload(Uint8List bytes, {required String contentType, required String fileName}) async {
     final res = await _ctx.http.putBytes(uri(['media', 'v3', 'upload'], {'filename': fileName}), bytes,
-        headers: {..._auth, 'Content-Type': contentType}, throwOnError: false, method: 'POST');
+        headers: {..._auth, 'Content-Type': contentType}, throwOnError: false, method: 'POST', retrySafe: true);
     final json = _check(res);
     final mxc = chatStr(json['content_uri']);
     if (mxc == null || !mxc.startsWith('mxc://')) {

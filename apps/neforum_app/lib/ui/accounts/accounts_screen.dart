@@ -37,6 +37,12 @@ class AccountsScreen extends ConsumerWidget {
         title: 'Your networks',
         subtitle: accounts.isEmpty ? 'Connect the places you post to.' : '${accounts.length} connected · $auto post automatically',
         actions: [
+          if (accounts.isNotEmpty)
+            OutlinedButton.icon(
+              onPressed: () => context.go(kSignInsPath),
+              icon: const Icon(Icons.event_rounded, size: 18),
+              label: const Text('Sign-ins'),
+            ),
           if (accounts.isNotEmpty) _CopyAllSetupsButton(accounts: [for (final tier in _tierOrder) ...accounts.where((a) => a.tier == tier)]),
           PrimaryAction(label: 'Add account', icon: Icons.add_rounded, onPressed: add, compact: context.isCompact),
         ],
@@ -112,6 +118,7 @@ class _CopyAllSetupsButtonState extends ConsumerState<_CopyAllSetupsButton> {
         travel: currentKeysTravel(ref),
         deviceLabel: ref.read(connectionDeviceLabelProvider),
         readTimeout: _CopyAllSetupsButton.readTimeout,
+        statuses: await ref.read(servicesProvider).signInStatusStore.all(),
       );
       await Clipboard.setData(ClipboardData(text: result.text));
       if (!mounted) return;

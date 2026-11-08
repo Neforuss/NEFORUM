@@ -1,3 +1,4 @@
+import '../../model/account.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/validation.dart';
@@ -21,6 +22,7 @@ class FurAffinityAdapter extends ArtHandoffAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'furaffinity',
     name: 'Fur Affinity',
+    shortName: 'Fur Aff.',
     iconKey: 'furaffinity',
     homepage: 'https://www.furaffinity.net/',
     tiers: {PlatformTier.handoff},
@@ -44,6 +46,9 @@ class FurAffinityAdapter extends ArtHandoffAdapter {
     setupGuide: 'docs/platforms/furaffinity.md',
     categories: {PlatformCategory.art},
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
 
   @override
   PlatformDescriptor get descriptor => _descriptor;

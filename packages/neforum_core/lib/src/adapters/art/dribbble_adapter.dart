@@ -132,6 +132,9 @@ class DribbbleAdapter extends PlatformAdapter {
   static const String uploadUrl = 'https://dribbble.com/uploads/new';
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.dribbble(account);
+
+  @override
   PlatformDescriptor get descriptor => dribbbleDescriptor;
 
   @override
@@ -286,7 +289,7 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
           if (user.canUploadShot != null) cfgCanUploadShot: user.canUploadShot,
         },
       ),
-      // Dribbble tokens do not expire and are never renewed, so the client
+      // Dribbble publishes no end date and has no renewal, so the client
       // secret is not kept.
       secrets: tokens.toSecrets(),
     );
@@ -325,7 +328,8 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
     return 'Dribbble sign-in failed.${said.isEmpty ? ' ${e.message}.' : said}';
   }
 
-  /// Dribbble tokens do not expire; a missing one means reconnecting.
+  /// Dribbble publishes no end date for its tokens; a missing one means
+  /// reconnecting.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -393,7 +397,7 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
     } on Object catch (e) {
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Dribbble ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Dribbble (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       return PublishResult.failure(PublishError.platform('Dribbble publish failed: $text', raw: text));
     }
@@ -416,14 +420,18 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
       return PublishResult.failure(
           PublishError.validation('${image.fileName ?? 'The image'} is larger than Dribbble\'s 8 MB limit'));
     }
-    ctx.progress('Uploading the shot');
-    final shotId = await DribbbleApi(ctx: ctx, accessToken: tokens.accessToken).createShot(
-      image,
-      bytes,
-      title: artworkTitle(variant),
-      description: artworkDescription(variant),
-      tags: variant.tags.take(DribbbleLimits.maxTags).toList(),
-    );
+    ctx.uploading(image, 'Uploading the shot');
+    // One POST that is also the post.
+    final shotId = await ctx.creating(
+        'Uploading the shot',
+        () => DribbbleApi(ctx: ctx, accessToken: tokens.accessToken).createShot(
+              image,
+              bytes,
+              title: artworkTitle(variant),
+              description: artworkDescription(variant),
+              tags: variant.tags.take(DribbbleLimits.maxTags).toList(),
+            ),
+        uploads: true);
     return PublishResult.ok(
       remoteId: shotId,
       remoteUrl: shotId == null ? account.profileUrl : DribbbleApi.shotUrl(shotId),
@@ -432,11 +440,7 @@ NEFORUM asks for `public` and `upload`: read your profile and create shots. Shot
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ------------------------------------------------------------- hand-off

@@ -45,7 +45,7 @@ NEFORUM checks the token (`/account/whoami`) or signs in (`m.login.password`), r
 - **Media**: every file is uploaded first (`POST /_matrix/media/v3/upload`). Then NEFORUM sends the text as one message and **each file as its own message** (`m.image` / `m.video`, with size, dimensions and duration). Up to 10 files per post.
 - **Mentions are switched off**: messages carry an empty `m.mentions`, so nobody is pinged by accident.
 - **View post** links use `https://matrix.to/#/<room>/<event>`.
-- If your server issues expiring tokens with a refresh token, NEFORUM renews them automatically (`/_matrix/client/v3/refresh`).
+- If your server issues expiring tokens with a refresh token, NEFORUM renews them when it posts (`/_matrix/client/v3/refresh`). NEFORUM does not ask for a refresh token: your homeserver decides how long a sign-in lasts.
 
 ## Limits
 

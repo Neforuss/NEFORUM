@@ -36,7 +36,7 @@ Want your devices to stay the same all the time instead of moving a file once? U
 - **Copy:** both devices keep the accounts.
 - **Move:** after saving the file, the accounts are switched off on this device, so nothing posts twice. When the other device has imported them, open **Settings > Data & privacy** here and choose **Remove them here** (or **Use them here again** if you changed your mind).
 
-**X and Tumblr can stay connected on only one device.** Every time they renew a sign-in they invalidate the previous one, so after a Copy, whichever device renews first ends the other's connection. Reconnect them on the device that should keep them, or use Move. This does not apply to X and Tumblr accounts connected with OAuth 1.0a keys, which are never renewed: see "Stay connected on several devices" in the [X](platforms/x.md) and [Tumblr](platforms/tumblr.md) guides.
+**X, Tumblr, TikTok, DeviantArt and Pixelfed can stay connected on only one device.** Every time they renew a sign-in they invalidate the previous one, so after a Copy, whichever device renews first ends the other's connection. Reconnect them on the device that should keep them, or use Move. This does not apply to X and Tumblr accounts connected with OAuth 1.0a keys, which are never renewed (X stops accepting those on 31 January 2027): see "Stay connected on several devices" in the [X](platforms/x.md) and [Tumblr](platforms/tumblr.md) guides.
 
 ### What is in the file
 
@@ -48,6 +48,7 @@ Want your devices to stay the same all the time instead of moving a file once? U
 | Drafts and scheduled posts | On |
 | Published post history | Off |
 | Photos and videos | Never (drafts arrive without them) |
+| Font files | Never. A style that names a font arrives; the other device draws the default font until it has that font, and offers one-tap download if the font came from the font list |
 
 Settings that belong to one device stay there: starting at sign-in, keeping NEFORUM in the tray, the browser extension and its paired browsers.
 

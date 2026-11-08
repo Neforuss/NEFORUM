@@ -142,6 +142,9 @@ class DiscordAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.discord(account);
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override
@@ -360,7 +363,7 @@ class DiscordAdapter extends PlatformAdapter {
       final msg = ids.isEmpty
           ? await _execute(url, payload, media, variant.sensitive, ctx, part, parts.length)
           : await chatSendWithFloodWait(
-              () => _execute(url, payload, media, variant.sensitive, ctx, part, parts.length), _discordFloodWait);
+              () => _execute(url, payload, media, variant.sensitive, ctx, part, parts.length), _discordFloodWait, sleep: ctx.wait);
       final msgId = chatId(msg['id']);
       if (msgId == null) throw const AdapterException(PublishError.platform('Discord did not return a message id'));
       sent.add(msgId);
@@ -384,7 +387,7 @@ class DiscordAdapter extends PlatformAdapter {
       bool spoiler, AdapterContext ctx, int part, int parts) async {
     final NeforumResponse res;
     if (media.isEmpty) {
-      res = await ctx.http.postJson(url, payload, throwOnError: false);
+      res = await ctx.creating(parts > 1 ? 'Sending part ${part + 1} of $parts' : 'Sending message', () => ctx.http.postJson(url, payload, throwOnError: false));
     } else {
       final files = <HttpFilePart>[];
       final attachments = <Map<String, Object?>>[];
@@ -403,9 +406,13 @@ class DiscordAdapter extends PlatformAdapter {
           if (alt.isNotEmpty) 'description': alt.length > discordMaxAltText ? alt.substring(0, discordMaxAltText) : alt,
         });
       }
-      ctx.progress('Uploading ${media.length} file${media.length == 1 ? '' : 's'}');
-      res = await ctx.http.multipart(url,
-          fields: {'payload_json': jsonEncode({...payload, 'attachments': attachments})}, files: files, throwOnError: false);
+      final label = 'Uploading ${media.length} file${media.length == 1 ? '' : 's'}';
+      ctx.uploadingAll(label);
+      // The upload is the message.
+      res = await ctx.creating(
+          label,
+          () => ctx.http.multipart(url, fields: {'payload_json': jsonEncode({...payload, 'attachments': attachments})}, files: files, throwOnError: false),
+          uploads: true);
     }
     if (!res.ok) throw AdapterException(discordError(res, parts > 1 ? 'Discord part ${part + 1}/$parts' : 'Discord'));
     final msg = res.jsonMap;

@@ -3,17 +3,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/publish_run_session.dart';
 import '../../state/settings.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/post_card.dart';
+import '../../widgets/publish_progress.dart';
 import '../../widgets/surfaces.dart';
+import '../compose/open_in_composer.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
+import '../shell/notification_prompt.dart';
 import 'target_chip.dart';
 
 enum _Filter { all, attention, failed, published }
@@ -70,7 +75,7 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
     final list = history.where(_matches).toList();
 
     void newPost() {
-      ref.read(composerProvider.notifier).reset();
+      startNewPostInComposer(context, ref);
       context.go(AppSection.compose.path);
     }
 
@@ -79,6 +84,7 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
         eyebrow: 'Activity',
         title: "Everything you've posted",
         actions: [
+          const NotificationsOffPill(),
           if (failedPosts.isNotEmpty)
             PopupMenuButton<int>(
               tooltip: 'More',
@@ -94,6 +100,10 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
             ),
         ],
       ),
+      // iOS can stop NEFORUM at any time when it is not in front. Elsewhere this
+      // only follows a crash or a closed window, and the post's own row says so.
+      if (Env.isIOS)
+        for (final p in history.where((p) => closedRunAccounts(p).isNotEmpty && !ref.watch(activePublishingProvider).containsKey(p.id))) ClosedRunBanner(post: p),
       const SizedBox(height: Space.xxl),
       ResponsiveGrid(minItemWidth: 200, spacing: Space.md, children: [
         _Stat(label: 'Posts this week', value: '${recent.length}', icon: Icons.edit_note_rounded, tone: Tone.accent, spark: _perDay(history, (p) => 1)),
@@ -170,6 +180,32 @@ class _ActivityScreenState extends ConsumerState<ActivityScreen> {
   }
 }
 
+/// A post whose run ended with its process. Continue is a tap with the app in
+/// front, so iOS may give new time, and it only sends what was left behind.
+class ClosedRunBanner extends ConsumerWidget {
+  const ClosedRunBanner({super.key, required this.post});
+
+  final Post post;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final surface = closedRunSurface(post, DateTime.now());
+    return Padding(
+      padding: const EdgeInsets.only(top: Space.md),
+      child: NfCard(
+        child: Row(children: [
+          Expanded(child: Text(surface.inAppNotice ?? '', style: context.text.bodyMedium)),
+          const SizedBox(width: Space.md),
+          FilledButton(
+            onPressed: () => ref.read(postActionsProvider).publishExisting(post.id, accountIds: closedRunAccounts(post)).then((_) {}, onError: (Object _) {}),
+            child: const Text('Continue'),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
 class _Footer extends ConsumerWidget {
   const _Footer({required this.post});
   final Post post;
@@ -182,6 +218,7 @@ class _Footer extends ConsumerWidget {
     final onlyFailed = retry.every((t) => t.status == TargetStatus.failed);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Wrap(spacing: Space.xs + 2, runSpacing: Space.xs + 2, children: [for (final t in post.targets) TargetChip(post: post, target: t)]),
+      PublishRunStatus(post: post, padding: const EdgeInsets.only(top: Space.md)),
       if (signal != null) ...[
         // Being published by this process right now.
         const SizedBox(height: Space.md),

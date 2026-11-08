@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -19,20 +20,33 @@ import 'tier_picker.dart';
 
 enum _Step { platform, tier, connect, done }
 
+/// One step of the flow, as its location says.
+typedef _Place = ({_Step step, String? platform, PlatformTier? tier, String? accountId});
+
 /// Platform › How to post › Connect.
+///
+/// Each step is a page of its own, so Back and Forward walk them: the step,
+/// platform and tier are in the location's [query], and nothing else. What was
+/// typed stays in [ConnectForm], which is gone once its step is left. The
+/// location never carries a key or a token.
 class AddAccountScreen extends ConsumerStatefulWidget {
-  const AddAccountScreen({super.key, this.initialPlatformId});
-  final String? initialPlatformId;
+  const AddAccountScreen({super.key, this.query = const {}});
+
+  /// `step`, `platform`, `tier`, `account`; `platform` alone starts at the
+  /// first step that platform still needs.
+  final Map<String, String> query;
 
   @override
   ConsumerState<AddAccountScreen> createState() => _AddAccountScreenState();
 }
 
 class _AddAccountScreenState extends ConsumerState<AddAccountScreen> {
-  _Step _step = _Step.platform;
-  String? _platform;
-  PlatformTier? _tier;
   ConnectedAccount? _connected;
+
+  /// Connected while this section was hidden: the result waits here, without
+  /// taking the user away from the page they went to.
+  bool _doneInPlace = false;
+
   bool _forward = true;
   final _scroll = ScrollController();
 
@@ -42,94 +56,114 @@ class _AddAccountScreenState extends ConsumerState<AddAccountScreen> {
     super.dispose();
   }
 
-  @override
-  void initState() {
-    super.initState();
-    final id = widget.initialPlatformId;
-    if (id != null && ref.read(registryProvider).byId(id) != null) _pickPlatform(id, animate: false);
+  _Place _placeOf(Map<String, String> query) {
+    const _Place start = (step: _Step.platform, platform: null, tier: null, accountId: null);
+    if (query['step'] == 'done') {
+      final id = query['account'];
+      final known = id != null && (_connected?.id == id || ref.read(accountByIdProvider(id)) != null);
+      return known ? (step: _Step.done, platform: null, tier: null, accountId: id) : start;
+    }
+    final platform = query['platform'];
+    final d = platform == null ? null : ref.read(registryProvider).descriptor(platform);
+    if (d == null) return start;
+    var tier = PlatformTier.values.asNameMap()[query['tier']];
+    if (d.tiers.length == 1) tier = d.tiers.single;
+    if (tier == null || !d.tiers.contains(tier)) return (step: _Step.tier, platform: platform, tier: null, accountId: null);
+    return (step: _Step.connect, platform: platform, tier: tier, accountId: null);
   }
 
-  void _go(_Step s, {bool forward = true}) {
-    setState(() {
-      _forward = forward;
-      _step = s;
-    });
+  @override
+  void didUpdateWidget(AddAccountScreen old) {
+    super.didUpdateWidget(old);
+    final before = _placeOf(old.query).step;
+    final now = _placeOf(widget.query).step;
+    if (before == now && mapEquals(old.query, widget.query)) return;
+    _doneInPlace = false;
+    _forward = now.index >= before.index;
     if (_scroll.hasClients) _scroll.animateTo(0, duration: Motion.medium, curve: Motion.standard);
   }
 
-  void _pickPlatform(String id, {bool animate = true}) {
-    final d = ref.read(registryProvider).descriptor(id)!;
-    _platform = id;
-    if (d.tiers.length == 1) {
-      _tier = d.tiers.single;
-      animate ? _go(_Step.connect) : _step = _Step.connect;
-    } else {
-      _tier = null;
-      animate ? _go(_Step.tier) : _step = _Step.tier;
-    }
+  static String _location(Map<String, String> query) => Uri(path: '${AppSection.accounts.path}/add', queryParameters: query.isEmpty ? null : query).toString();
+
+  String get _platformStep => _location(const {});
+
+  String _firstStepOf(String platform) {
+    final d = ref.read(registryProvider).descriptor(platform)!;
+    return d.tiers.length == 1
+        ? _location({'step': 'connect', 'platform': platform, 'tier': d.tiers.single.name})
+        : _location({'step': 'tier', 'platform': platform});
   }
 
-  void _back() {
-    switch (_step) {
+  void _onConnected(ConnectedAccount account) {
+    if (!mounted) return;
+    _connected = account;
+    if (!TickerMode.getValuesNotifier(context).value.enabled) {
+      setState(() => _doneInPlace = true);
+      return;
+    }
+    // The form was sent: Back goes to the step before it, not to it.
+    ref.read(navHistoryProvider).replaceNext();
+    context.go(_location({'step': 'done', 'account': account.id}));
+  }
+
+  void _back(_Place place) {
+    final history = ref.read(navHistoryProvider);
+    switch (place.step) {
       case _Step.platform:
-        context.go(AppSection.accounts.path);
+        history.stepBackTo(AppSection.accounts.path);
       case _Step.tier:
-        _go(_Step.platform, forward: false);
-      case _Step.connect:
-        final single = ref.read(registryProvider).descriptor(_platform!)!.tiers.length == 1;
-        _go(single ? _Step.platform : _Step.tier, forward: false);
       case _Step.done:
-        _go(_Step.platform, forward: false);
+        history.stepBackTo(_platformStep);
+      case _Step.connect:
+        final single = ref.read(registryProvider).descriptor(place.platform!)!.tiers.length == 1;
+        history.stepBackTo(single ? _platformStep : _firstStepOf(place.platform!));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    final d = _platform == null ? null : ref.watch(registryProvider).descriptor(_platform!);
+    final place = _placeOf(widget.query);
+    final step = _doneInPlace && place.step == _Step.connect ? _Step.done : place.step;
+    final d = place.platform == null ? null : ref.watch(registryProvider).descriptor(place.platform!);
+    final account = step != _Step.done ? null : (place.accountId == null ? null : ref.watch(accountByIdProvider(place.accountId!))) ?? _connected;
 
-    final Widget content = switch (_step) {
-      _Step.platform => PlatformPicker(onPick: _pickPlatform),
+    final Widget content = switch (step) {
+      _Step.platform => PlatformPicker(onPick: (id) => context.go(_firstStepOf(id))),
       _Step.tier => TierPicker(
           descriptor: d!,
-          onPick: (t) {
-            _tier = t;
-            _go(_Step.connect);
-          },
+          onPick: (t) => context.go(_location({'step': 'connect', 'platform': place.platform!, 'tier': t.name})),
         ),
       _Step.connect => ConnectForm(
-          key: ValueKey('$_platform/$_tier'),
-          platformId: _platform!,
-          tier: _tier!,
-          onConnected: (a) {
-            _connected = a;
-            _go(_Step.done);
-          },
+          key: ValueKey('${place.platform}/${place.tier}'),
+          platformId: place.platform!,
+          tier: place.tier!,
+          onConnected: _onConnected,
         ),
       _Step.done => _Success(
-          account: _connected!,
-          onAnother: () => _go(_Step.platform, forward: false),
-          onAnotherHere: () => _pickPlatform(_connected!.platformId),
+          account: account!,
+          onAnother: () => context.go(_platformStep),
+          onAnotherHere: () => context.go(_firstStepOf(account.platformId)),
         ),
     };
 
-    final title = switch (_step) {
+    final title = switch (step) {
       _Step.platform => 'Pick a platform',
       _Step.tier => 'How should NEFORUM post to ${d?.name}?',
       _Step.connect => '',
       _Step.done => '',
     };
 
-    return PageBody(controller: _scroll, maxWidth: _step == _Step.platform ? 1100 : Breakpoints.readable, children: [
+    return PageBody(controller: _scroll, maxWidth: step == _Step.platform ? 1100 : Breakpoints.readable, children: [
       Row(children: [
-        IconButton(onPressed: _back, tooltip: 'Back', icon: const Icon(Icons.arrow_back_rounded)),
+        IconButton(onPressed: () => _back(place), tooltip: 'Back', icon: const Icon(Icons.arrow_back_rounded)),
         const SizedBox(width: Space.sm),
-        Expanded(child: _Stepper(step: _step)),
+        Expanded(child: _Stepper(step: step)),
       ]),
       const SizedBox(height: Space.xl),
       if (title.isNotEmpty) ...[
         Text(title, style: context.isCompact ? context.text.headlineMedium : context.text.headlineLarge),
-        if (_step == _Step.platform) ...[
+        if (step == _Step.platform) ...[
           const SizedBox(height: Space.xs),
           Text('Every platform works: automatically through an API, or through hand-off when the API is closed to normal accounts.', style: context.text.bodyMedium?.copyWith(color: nf.textMuted)),
         ],
@@ -147,7 +181,7 @@ class _AddAccountScreenState extends ConsumerState<AddAccountScreen> {
           ),
         ),
         layoutBuilder: (current, previous) => Stack(alignment: Alignment.topCenter, children: [...previous, ?current]),
-        child: KeyedSubtree(key: ValueKey(_step), child: content),
+        child: KeyedSubtree(key: ValueKey(step), child: content),
       ),
     ]);
   }

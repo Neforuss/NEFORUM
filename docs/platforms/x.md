@@ -28,11 +28,11 @@ These steps set up your own X app (once, about 10 minutes).
 10. Press **Sign in with X**. Your browser opens X and asks you to authorise the app.
 11. Approve. NEFORUM shows your name and @handle.
 
-If you use NEFORUM on more than one device, connect with the four keys instead (next section): the browser sign-in stays connected on only one device.
+On more than one device, turn on **Settings > Sync**: it carries the renewed sign-in to your other devices. Without Sync the browser sign-in stays connected on only one device. The four keys in the next section work on several devices, but **X stops accepting them on 31 January 2027**.
 
 ## Steps: stay connected on several devices (OAuth 1.0a keys)
 
-These keys never expire, so every device can use the same four keys (see *Why OAuth 1.0a keys* below).
+Every device can use the same four keys, until **31 January 2027**, when X stops accepting OAuth 1.0a (see *Why OAuth 1.0a keys* below). NEFORUM warns you, and you reconnect by browser sign-in before then. NEFORUM does not use X's token exchange.
 
 1. Do steps 1 to 7 of *Steps*.
    - **App permissions** in **User authentication settings** must be **Read and write**. X asks for the callback and website fields there even if you only use keys.
@@ -81,13 +81,13 @@ NEFORUM keeps its own count of the posts it sends so it can warn you before X re
 
 ### Permissions
 
-NEFORUM asks X for these permissions: `tweet.read tweet.write users.read media.write offline.access`. `offline.access` lets NEFORUM renew the two-hour sign-in in the background, so you don't have to log in again every time.
+NEFORUM asks X for these permissions: `tweet.read tweet.write users.read media.write offline.access`. `offline.access` lets NEFORUM renew the two-hour sign-in when it posts, so you don't have to log in again every time.
 
 ### Why OAuth 1.0a keys
 
-The browser sign-in uses OAuth 2.0. It lasts two hours, and NEFORUM renews it with a refresh token. X hands out a new refresh token with every renewal and cancels the old one. When the same X account is on two devices (copied with **Settings → Move to another device**, or synced), the first device to renew cancels the other one's sign-in, and that device has to reconnect.
+The browser sign-in uses OAuth 2.0. It lasts two hours, and NEFORUM renews it with a refresh token when a post goes out. The refresh token lasts about 6 months, so an account you do not post to for about 6 months needs reconnecting. X hands out a new refresh token with every renewal and cancels the old one. When the same X account is on two devices (copied with **Settings → Move to another device**, or synced), the first device to renew cancels the other one's sign-in, and that device has to reconnect.
 
-OAuth 1.0a keys don't have this problem. An access token and secret made on your app's **Keys and tokens** page never expire and never change until you regenerate or revoke them (X: "These tokens do not expire but can be revoked by the user at any time"), so every device can use the same four keys. Posting works the same either way: as of October 2026, X's API reference lists OAuth 1.0a user context for every endpoint NEFORUM uses (posting and replies, photo and video upload with its status checks, alt text, and reading your profile). An account connected with keys is the same NEFORUM account as one connected in the browser.
+OAuth 1.0a keys don't have this problem, but **they end on 31 January 2027**: X's migration guide says requests signed with OAuth 1.0a stop working after that date, even though an older X page still says these tokens do not expire. Until then an access token and secret made on your app's **Keys and tokens** page do not change unless you regenerate or revoke them, so every device can use the same four keys. Posting works the same either way: as of October 2026, X's API reference lists OAuth 1.0a user context for every endpoint NEFORUM uses (posting and replies, photo and video upload with its status checks, alt text, and reading your profile). An account connected with keys is the same NEFORUM account as one connected in the browser.
 
 Good to know:
 
@@ -100,12 +100,12 @@ Good to know:
 
 - The Client ID is stored with the account settings, together with which way the account signs in.
 - The access token, the refresh token and the optional Client Secret are stored in your device's secret store. So are the four OAuth 1.0a keys.
-- X replaces the refresh token every time it is used. If NEFORUM reports that X "refused to renew the sign-in", reconnect the account. Keys are never renewed.
+- X replaces the refresh token every time it is used. If NEFORUM reports that X "refused to renew the sign-in", reconnect the account. Keys are never renewed, and stop working on 31 January 2027.
 - Removing a browser-connected account in NEFORUM revokes its token at X. Keys are left alone (see above).
 
 ### What gets posted
 
-- **Text:** up to 280 characters, counted the way X counts them. Most Latin, Greek and Cyrillic characters count as 1. Chinese, Japanese and Korean characters and every emoji count as 2. Every link counts as 23, however long it is. Longer text is split into a numbered **thread**: each part is posted as a reply to the one before it.
+- **Text:** up to 280 characters, counted the way X counts them. Most Latin, Greek and Cyrillic characters count as 1. Chinese, Japanese and Korean characters and every emoji count as 2, however many code points make the emoji. Every link counts as 23, however long it is. Longer text is split into a numbered **thread**: each part is posted as a reply to the one before it.
 - **Long posts:** posts over 280 characters only work if the posting account has X Premium. NEFORUM can't tell whether you have Premium, so it always splits long text into a thread.
 - **Media:** up to 4 photos (JPEG, PNG, WEBP or static GIF, 5 MB each), *or* 1 animated GIF (15 MB), *or* 1 video (MP4/MOV, up to 20 minutes and 8 GB, longer with Premium). You can't mix photos and video in one post. Media is attached to the first post of a thread.
 - **Alt text:** sent for every photo or GIF that has it, up to 1000 characters.
@@ -145,7 +145,8 @@ NEFORUM opens `https://x.com/intent/tweet?text=…&url=…`. That is X's documen
 - https://docs.x.com/resources/fundamentals/authentication/oauth-2-0/user-access-token
 - https://docs.x.com/resources/fundamentals/authentication/guides/v2-authentication-mapping (OAuth 1.0a user context for `POST /2/tweets` and `GET /2/users/me`)
 - https://docs.x.com/resources/fundamentals/authentication/oauth-1-0a/api-key-and-secret
-- https://docs.x.com/resources/fundamentals/authentication/oauth-1-0a/obtaining-user-access-tokens (OAuth 1.0a tokens do not expire)
+- https://docs.x.com/resources/fundamentals/authentication/oauth-1-0a/obtaining-user-access-tokens (an older page: OAuth 1.0a tokens do not expire)
+- https://docs.x.com/fundamentals/authentication/oauth-2-0/oauth-1-0a-token-exchange (OAuth 1.0a ends 2027-01-31; refresh tokens last about 6 months)
 - https://docs.x.com/resources/fundamentals/authentication/oauth-1-0a/authorizing-a-request
 - https://docs.x.com/resources/fundamentals/authentication/oauth-1-0a/creating-a-signature
 - API reference, each listing `OAuth2UserToken` and `UserToken` (OAuth 1.0a): https://docs.x.com/x-api/posts/create-post, https://docs.x.com/x-api/users/get-my-user, https://docs.x.com/x-api/media/upload-media, https://docs.x.com/x-api/media/initialize-media-upload, https://docs.x.com/x-api/media/append-media-upload, https://docs.x.com/x-api/media/finalize-media-upload, https://docs.x.com/x-api/media/get-media-upload-status, https://docs.x.com/x-api/media/create-media-metadata

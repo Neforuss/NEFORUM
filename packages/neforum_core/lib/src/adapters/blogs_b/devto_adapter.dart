@@ -49,6 +49,7 @@ class DevtoAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'devto',
     name: 'DEV Community',
+    shortName: 'DEV',
     iconKey: 'devto',
     homepage: 'https://dev.to',
     family: 'forem',
@@ -99,6 +100,9 @@ class DevtoAdapter extends PlatformAdapter {
     serverSideScheduling: false,
     supportsLinkField: false,
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.devTo(account);
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
@@ -305,9 +309,8 @@ class DevtoAdapter extends PlatformAdapter {
       if (blogStr(v.extra['series']) != null) 'series': blogStr(v.extra['series']),
       if (blogInt(v.extra['organizationId']) != null) 'organization_id': blogInt(v.extra['organizationId']),
     };
-    ctx.progress('Publishing the article on ${base.host}');
     final res = await guardBlog('DEV article',
-        () => ctx.http.postJson(base.replace(path: '/api/articles'), {'article': article}, headers: _headers(key)),
+        () => ctx.creating('Publishing the article on ${base.host}', () => ctx.http.postJson(base.replace(path: '/api/articles'), {'article': article}, headers: _headers(key))),
         mapHttp: (f) => devtoError(f, context: 'DEV article'));
     final json = res.jsonMap;
     final articleId = blogInt(json['id'])?.toString() ?? blogStr(json['id']);
@@ -329,9 +332,9 @@ class DevtoAdapter extends PlatformAdapter {
     final urls = <String>[];
     for (var i = 0; i < v.media.length; i++) {
       final m = v.media[i];
-      ctx.progress('Uploading image ${i + 1} of ${v.media.length} to ${host.name}');
+      ctx.uploading(m, 'Uploading image ${i + 1} of ${v.media.length} to ${host.name}');
       try {
-        final hosted = await host.upload(m, await ctx.readMedia(m));
+        final hosted = await host.upload(m, await ctx.readMedia(m), via: ctx.http);
         urls.add(hosted.url.toString());
       } on MediaHostException catch (e) {
         throw AdapterException(e.toPublishError());
@@ -396,12 +399,12 @@ PublishError devtoError(HttpFailure f, {required String context}) {
   return switch (status) {
     401 => PublishError.auth('$context: DEV rejected the API key; reconnect the account$detail',
         raw: base.raw, statusCode: status),
-    403 => PublishError.auth('$context: this API key may not do that$detail', raw: base.raw, statusCode: status),
+    403 => PublishError.auth('$context: this API key may not do that$detail', raw: base.raw, statusCode: status, notAllowed: true),
     422 => PublishError.validation('$context: DEV refused the article$detail', raw: base.raw, statusCode: status),
     429 => PublishError.quota('$context: DEV rate limit reached$detail',
         raw: base.raw, statusCode: status, retryAfter: f.response.retryAfter ?? const Duration(seconds: 30)),
     _ => message == null || status >= 500
         ? base
-        : PublishError(kind: base.kind, message: '${base.message}$detail', raw: base.raw, statusCode: status, retryable: base.retryable),
+        : PublishError(kind: base.kind, notAllowed: base.notAllowed, message: '${base.message}$detail', raw: base.raw, statusCode: status, retryable: base.retryable),
   };
 }

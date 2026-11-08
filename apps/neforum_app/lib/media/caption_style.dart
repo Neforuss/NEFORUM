@@ -173,7 +173,7 @@ class CaptionStyle {
         ? resolved.style(fontSize: fontSize, height: lineSpacing, color: color)
         : TextStyle(
             fontFamily: alias,
-            fontFamilyFallback: [resolved.family, ...resolved.fallback, ...kCaptionFontFallbacks],
+            fontFamilyFallback: [...captionFontSubsetAliases(customFont), resolved.family, ...resolved.fallback, ...kCaptionFontFallbacks],
             fontWeight: FontWeight.w400,
             fontSize: fontSize,
             height: lineSpacing,

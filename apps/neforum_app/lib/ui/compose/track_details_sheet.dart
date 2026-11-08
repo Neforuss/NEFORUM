@@ -9,6 +9,7 @@ import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
+import 'emoji_insert.dart';
 
 /// Opens the track details editor for the post's sound file [mediaId]: every
 /// detail the file's tags can carry, a cover, and the post text they make.
@@ -233,9 +234,11 @@ class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
       final own = d.of(_file);
       final fromFile = own.isNotEmpty && c.text.trim() == own.trim();
       final edited = c.text.trim() != own.trim();
+      // Emoji go in the words, not in a number.
+      Widget wrapped(Widget child) => d.isNumber ? child : EmojiTargetField(controller: c, onChanged: (_) => setState(() {}), isDefault: d == TrackDetail.title, child: child);
       return Padding(
         padding: const EdgeInsets.only(bottom: Space.sm),
-        child: TextField(
+        child: wrapped(TextField(
           key: ValueKey('track-${d.name}'),
           controller: c,
           onChanged: (_) => setState(() {}),
@@ -255,7 +258,7 @@ class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
                   )
                 : null,
           ),
-        ),
+        )),
       );
     }
 
@@ -308,7 +311,10 @@ class _TrackDetailsEditorState extends ConsumerState<TrackDetailsEditor> {
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.xl, Space.xxl, Space.xs),
-        child: Text('Track details', style: context.text.headlineSmall),
+        child: Row(children: [
+          Expanded(child: Text('Track details', style: context.text.headlineSmall)),
+          const EmojiButton(),
+        ]),
       ),
       if (_fileName case final name?)
         Padding(

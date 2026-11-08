@@ -136,9 +136,55 @@ final settingsProvider = NotifierProvider<SettingsNotifier, AppSettings>(Setting
 // Live publish progress
 // ---------------------------------------------------------------------------
 
-/// Progress of one target during a publish run.
-class TargetProgress {
-  const TargetProgress({required this.status, this.message});
+/// The clock the progress screens read elapsed time from.
+final publishClockProvider = Provider<Clock>((ref) => systemClock);
+
+/// The device's record of publish runs, which is how the screens tell a run in a
+/// background isolate from one that stopped.
+final publishJournalProvider = Provider<PublishJournal>((ref) => ref.watch(servicesProvider).publishJournal);
+
+/// The figures of every run this process is executing, by post: the composer's,
+/// a retry from a list, the scheduler's. A run in another isolate has none, since
+/// it can only report through files.
+class PublishProgressNotifier extends Notifier<Map<String, PostProgress>> {
+  final Map<String, PublishProgressTracker> _trackers = {};
+
+  @override
+  Map<String, PostProgress> build() => const {};
+
+  /// A run of [postId] starts. It has no figure until the tracker hears its plan,
+  /// so a run before it does not show through. [onChange] also hears every figure
+  /// (the keep-alive's notification), so one tracker serves both.
+  PublishProgressTracker begin(String postId, {void Function(PostProgress progress)? onChange}) {
+    late final PublishProgressTracker tracker;
+    tracker = PublishProgressTracker(
+      postId: postId,
+      clock: ref.read(publishClockProvider),
+      onChange: (p) {
+        if (identical(_trackers[postId], tracker)) state = {...state, postId: p};
+        onChange?.call(p);
+      },
+    );
+    _trackers[postId] = tracker;
+    if (state.containsKey(postId)) state = {...state}..remove(postId);
+    return tracker;
+  }
+
+  void end(String postId, PublishProgressTracker tracker) {
+    if (!identical(_trackers[postId], tracker)) return;
+    _trackers.remove(postId);
+    state = {...state}..remove(postId);
+  }
+}
+
+final publishProgressProvider = NotifierProvider<PublishProgressNotifier, Map<String, PostProgress>>(PublishProgressNotifier.new);
+
+/// The figures of [postId]'s run in this process, if one has them.
+final publishProgressOfProvider = Provider.family<PostProgress?, String>((ref, postId) => ref.watch(publishProgressProvider.select((runs) => runs[postId])));
+
+/// One network in the sheet before the run's plan is known, and after the run.
+class PublishRunRow {
+  const PublishRunRow({required this.status, this.message});
   final TargetStatus status;
   final String? message;
 }
@@ -156,7 +202,7 @@ class PublishRun {
 
   /// Null while the composer's post is still being saved.
   final String? postId;
-  final Map<String, TargetProgress> progress;
+  final Map<String, PublishRunRow> progress;
 
   /// Cancels this run (the progress sheet's Cancel button).
   final CancellationSignal cancellation;
@@ -170,7 +216,7 @@ class PublishRun {
   bool get preparing => postId == null && !done;
   bool get cancelling => cancellation.isCancelled && !done;
 
-  PublishRun copyWith({String? postId, Map<String, TargetProgress>? progress, bool? done, Post? result, String? error}) => PublishRun(
+  PublishRun copyWith({String? postId, Map<String, PublishRunRow>? progress, bool? done, Post? result, String? error}) => PublishRun(
         postId: postId ?? this.postId,
         progress: progress ?? this.progress,
         cancellation: cancellation,
@@ -196,15 +242,17 @@ class PublishRunNotifier extends Notifier<PublishRun?> {
     state = PublishRun(
       postId: postId,
       cancellation: signal,
-      progress: {for (final id in accountIds) id: const TargetProgress(status: TargetStatus.pending)},
+      progress: {for (final id in accountIds) id: const PublishRunRow(status: TargetStatus.pending)},
     );
     return signal;
   }
 
+  /// What happens to [accountId] before the run's plan: its smaller video copy.
+  /// From the plan on, [publishProgressProvider] has the row.
   void progress(String accountId, String message) {
     final s = state;
     if (s == null) return;
-    state = s.copyWith(progress: {...s.progress, accountId: TargetProgress(status: TargetStatus.publishing, message: message)});
+    state = s.copyWith(progress: {...s.progress, accountId: PublishRunRow(status: TargetStatus.publishing, message: message)});
   }
 
   void finish(Post post) {
@@ -213,7 +261,7 @@ class PublishRunNotifier extends Notifier<PublishRun?> {
     state = s.copyWith(
       done: true,
       result: post,
-      progress: {for (final t in post.targets) t.accountId: TargetProgress(status: t.status, message: t.result?.error?.message)},
+      progress: {for (final t in post.targets) t.accountId: PublishRunRow(status: t.status, message: t.result?.error?.message)},
     );
   }
 
@@ -262,6 +310,12 @@ class ActivePublishingNotifier extends Notifier<Map<String, CancellationSignal>>
 }
 
 final activePublishingProvider = NotifierProvider<ActivePublishingNotifier, Map<String, CancellationSignal>>(ActivePublishingNotifier.new);
+
+/// Asks the run publishing [postId] in this process to stop.
+void cancelPublishRun(Ref ref, String postId) {
+  ref.read(activePublishingProvider.notifier).cancel(postId);
+  if (ref.read(publishRunProvider)?.postId == postId) ref.read(publishRunProvider.notifier).cancel();
+}
 
 /// Bumps whenever something outside the repositories changed (e.g. a media
 /// host was reconfigured) so dependent widgets can refresh.

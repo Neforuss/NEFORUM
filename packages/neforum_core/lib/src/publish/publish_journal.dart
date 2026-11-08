@@ -8,14 +8,30 @@ import '../util/logger.dart';
 /// One publish run in progress on this device, as [PublishJournal] keeps it.
 @immutable
 class PublishJournalEntry {
-  const PublishJournalEntry({required this.postId, required this.owner, required this.startedAt, required this.heartbeatAt});
+  const PublishJournalEntry({
+    required this.postId,
+    required this.owner,
+    required this.startedAt,
+    required this.heartbeatAt,
+    this.inFlightCreate,
+    this.createdUnsaved = const {},
+    this.process,
+  });
 
   factory PublishJournalEntry.fromJson(String postId, Map<String, dynamic> json) => PublishJournalEntry(
         postId: postId,
         owner: json['owner'] as String,
         startedAt: DateTime.parse(json['startedAt'] as String),
         heartbeatAt: DateTime.parse(json['heartbeatAt'] as String),
+        inFlightCreate: _accountIn(json['inFlightCreate']),
+        createdUnsaved: {...?(json['createdUnsaved'] as List?)?.whereType<String>()},
+        process: json['process'] as String?,
       );
+
+  static String? _accountIn(Object? value) {
+    final id = value is Map ? value['accountId'] : null;
+    return id is String ? id : null;
+  }
 
   final String postId;
 
@@ -26,10 +42,30 @@ class PublishJournalEntry {
   /// The last time the run showed that it was still executing.
   final DateTime heartbeatAt;
 
+  /// The account whose request that makes a post is under way. If the run dies
+  /// with this set, the post may be live and nobody saw the answer.
+  final String? inFlightCreate;
+
+  /// The accounts with a post the network answered for, or a request that lost its
+  /// answer, whose result is not saved yet. If the run dies with one here, a retry
+  /// from the saved state would post it again. More than one when a save failed and
+  /// the run went on.
+  final Set<String> createdUnsaved;
+
+  /// The [PublishJournal.process] that wrote this entry. Null from a version that
+  /// did not note it, or a platform where it says nothing.
+  final String? process;
+
+  /// The accounts whose post may be live although the saved state does not say so.
+  Set<String> get outcomeUnknownAccounts => {?inFlightCreate, ...createdUnsaved};
+
   Map<String, dynamic> toJson() => {
         'owner': owner,
         'startedAt': startedAt.toUtc().toIso8601String(),
         'heartbeatAt': heartbeatAt.toUtc().toIso8601String(),
+        if (inFlightCreate != null) 'inFlightCreate': {'accountId': inFlightCreate},
+        if (createdUnsaved.isNotEmpty) 'createdUnsaved': createdUnsaved.toList(),
+        if (process != null) 'process': process,
       };
 }
 
@@ -46,7 +82,9 @@ class PublishJournalEntry {
 /// [PublishService.publish] records an entry when its run starts, refreshes
 /// it every [heartbeatInterval] and releases it once the outcome is saved.
 /// An entry whose heartbeat is older than [abandonedAfter] belongs to a run
-/// that ended without saving its outcome.
+/// that ended without saving its outcome. On a phone every isolate lives in one
+/// process, so an entry a previous process wrote ([process]) is abandoned at once:
+/// nothing that could still be running wrote it.
 ///
 /// Unreadable data counts as no entries: a run that is not on record is never
 /// recovered, which is the safe side, since nothing is then posted twice.
@@ -56,6 +94,7 @@ class PublishJournal {
     required Future<void> Function(Object data) write,
     String? owner,
     Clock? clock,
+    this.process,
     this.heartbeatInterval = const Duration(minutes: 1),
     this.abandonedAfter = const Duration(minutes: 10),
   })  : owner = owner ?? const Uuid().v4(),
@@ -64,13 +103,18 @@ class PublishJournal {
         _now = clock ?? systemClock;
 
   /// A journal kept in memory only (the demo workspace, tests).
-  factory PublishJournal.inMemory({String? owner, Clock? clock, Duration heartbeatInterval = const Duration(minutes: 1)}) {
+  factory PublishJournal.inMemory({String? owner, Clock? clock, String? process, Duration heartbeatInterval = const Duration(minutes: 1)}) {
     Object? data;
-    return PublishJournal(read: () async => data, write: (d) async => data = d, owner: owner, clock: clock, heartbeatInterval: heartbeatInterval);
+    return PublishJournal(read: () async => data, write: (d) async => data = d, owner: owner, clock: clock, process: process, heartbeatInterval: heartbeatInterval);
   }
 
   /// Identifies the runs of this process. Every isolate has its own.
   final String owner;
+
+  /// Names this OS process, for every isolate in it, where one process is all there
+  /// can be (Android, iOS). Null where another live process may share the folder (a
+  /// computer), and then only heartbeats tell.
+  final String? process;
 
   /// How often a run in progress refreshes its entry.
   final Duration heartbeatInterval;
@@ -118,6 +162,39 @@ class PublishJournal {
           owner: owner,
           startedAt: previous != null && previous.owner == owner ? previous.startedAt : now,
           heartbeatAt: now,
+          inFlightCreate: previous?.inFlightCreate,
+          createdUnsaved: previous?.createdUnsaved ?? const {},
+          process: process,
+        );
+        return true;
+      });
+
+  /// A request that can make a post is about to start for [accountId]. Written
+  /// before the request, so a kill during it leaves the mark.
+  Future<void> beginCreate(String postId, String accountId) => _changeEntry(postId, inFlight: accountId, created: (e) => e.createdUnsaved);
+
+  /// That request ended. [mayBeLive]: the network has the post, or the answer was
+  /// lost; the mark stays until the result is saved ([clearCreate]).
+  Future<void> endCreate(String postId, String accountId, {required bool mayBeLive}) =>
+      _changeEntry(postId, inFlight: null, created: (e) => mayBeLive ? {...e.createdUnsaved, accountId} : e.createdUnsaved);
+
+  /// The post's results are saved: the saved state now tells the truth about all of
+  /// its targets, since each save writes every result so far.
+  Future<void> clearCreate(String postId) => _changeEntry(postId, inFlight: null, created: (_) => const {});
+
+  Future<void> _changeEntry(String postId, {required String? inFlight, required Set<String> Function(PublishJournalEntry e) created}) => _change((runs) {
+        final e = runs[postId];
+        if (e == null) return false;
+        final after = created(e);
+        if (e.inFlightCreate == inFlight && e.createdUnsaved.length == after.length && e.createdUnsaved.containsAll(after)) return false;
+        runs[postId] = PublishJournalEntry(
+          postId: postId,
+          owner: e.owner,
+          startedAt: e.startedAt,
+          heartbeatAt: e.heartbeatAt,
+          inFlightCreate: inFlight,
+          createdUnsaved: after,
+          process: e.process,
         );
         return true;
       });
@@ -142,8 +219,14 @@ class PublishJournal {
     });
   }
 
-  /// Whether [entry]'s run has shown no sign of life for [abandonedAfter].
-  bool isAbandoned(PublishJournalEntry entry, {DateTime? now}) => (now ?? _now()).difference(entry.heartbeatAt) > abandonedAfter;
+  /// Whether [entry]'s run is over: a previous process wrote it, or it has shown no
+  /// sign of life for [abandonedAfter].
+  bool isAbandoned(PublishJournalEntry entry, {DateTime? now}) {
+    final mine = process;
+    final theirs = entry.process;
+    if (mine != null && theirs != null && mine != theirs) return true;
+    return (now ?? _now()).difference(entry.heartbeatAt) > abandonedAfter;
+  }
 
   /// Applies [change] to the entries as stored, one change at a time; the
   /// file is written only when [change] returns true.

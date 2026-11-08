@@ -4,30 +4,41 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../brand/neforum_logo.dart';
 import '../../platform/desktop.dart';
 import '../../platform/env.dart';
 import '../../platform/files_app_folder.dart';
+import '../../platform/notification_access.dart';
 import '../../platform/notifications.dart';
 import '../../platform/secure_secret_store.dart';
 import '../../platform/ui_bridge.dart';
 import '../../platform/update_check.dart';
 import '../../state/composer.dart';
 import '../../state/composer_draft.dart';
+import '../../state/notification_state.dart';
 import '../../state/providers.dart';
+import '../../state/publish_run_keeper.dart';
+import '../../state/publish_result_notices.dart';
+import '../../state/publish_run_session.dart';
 import '../../state/scheduler.dart';
 import '../../state/settings.dart' show NavigationChromeStyle;
 import '../../state/update_checks.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/buttons.dart';
+import '../accounts/sign_in_banner.dart';
+import '../../widgets/layout.dart';
+import '../compose/open_in_composer.dart';
 import '../handoff/handoff_sheet.dart';
 import '../root.dart';
 import '../router.dart';
 import '../settings/sync_section.dart';
 import 'app_backdrop.dart';
 import '../settings/updates_section.dart';
+import 'nav_input.dart';
+import 'notification_prompt.dart';
 import 'paste_code_dialog.dart';
 import 'see_through_chrome.dart';
 
@@ -43,10 +54,22 @@ class AppShell extends ConsumerStatefulWidget {
 
 class _AppShellState extends ConsumerState<AppShell> {
   StreamSubscription<NotificationIntent>? _intentSub;
+  late final AppLifecycleListener _publishWindow;
+
+  /// Back from the OS's settings (or anywhere): what the OS says now.
+  late final AppLifecycleListener _lifecycle;
+
+  Future<void> _rereadNotifications() async {
+    await ref.read(notificationAccessProvider.notifier).refresh();
+    if (mounted) await showUnseenResultsIfAny(context, ref);
+  }
 
   @override
   void initState() {
     super.initState();
+    _lifecycle = AppLifecycleListener(onResume: _rereadNotifications);
+    // A run going on outside the app is told when the window comes and goes.
+    _publishWindow = publishWindowListener(ref);
     UiBridge.instance = _ShellUiBridge();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(schedulerProvider).start();
@@ -60,17 +83,28 @@ class _AppShellState extends ConsumerState<AppShell> {
       // Linux: a desktop without a keyring is named at start, not at the
       // first post (see _KeyringBanner).
       if (Env.isLinux && !ref.read(isDemoProvider)) unawaited(SecureSecretStore.verifyAvailable());
-      // Update checks: asked once, then at most daily (never in the demo).
       final updates = ref.read(updateCheckProvider.notifier);
-      if (updates.applies && ref.read(settingsProvider).updateCheck == UpdateCheckMode.ask) {
-        unawaited(askAboutUpdateChecks(context, ref));
-      }
+      unawaited(_askFirstStartQuestions());
       updates.start();
       if (Env.isIOS) {
         FilesAppFolder.listenForOpened(_takeOpenedSyncFile);
         unawaited(_takeOpenedSyncFile());
       }
     });
+  }
+
+  /// One question at a time: notifications among the first things in setup
+  /// (once, with the OS prompt only on Turn on), then update checks (asked
+  /// once, then at most daily, never in the demo). Then what finished while
+  /// NEFORUM was closed, when the OS could not say.
+  Future<void> _askFirstStartQuestions() async {
+    await askAboutNotificationsOnFirstLaunch(context, ref);
+    if (!mounted) return;
+    final updates = ref.read(updateCheckProvider.notifier);
+    if (updates.applies && ref.read(settingsProvider).updateCheck == UpdateCheckMode.ask) {
+      await askAboutUpdateChecks(context, ref);
+    }
+    if (mounted) await showUnseenResultsIfAny(context, ref);
   }
 
   /// A .neforumsync file tapped in the Files app: Settings > Sync with that
@@ -102,8 +136,11 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void dispose() {
     _intentSub?.cancel();
+    _lifecycle.dispose();
+    _publishWindow.dispose();
     super.dispose();
   }
+
 
   void _go(AppSection s) {
     final i = AppSection.values.indexOf(s);
@@ -123,6 +160,21 @@ class _AppShellState extends ConsumerState<AppShell> {
         context.go('${AppSection.activity.path}/post/$postId');
         // Only the networks this reminder is for; later ones get their own.
         await ref.read(postActionsProvider).publishExisting(postId, retryFailed: false, dueTargetsOnly: true);
+      case OpenSignInsIntent():
+        context.go(kSignInsPath);
+      case RetryTargetIntent(:final postId, :final accountId):
+        context.go('${AppSection.activity.path}/post/$postId');
+        // The notification may be old: only a network still waiting for a retry.
+        final post = await ref.read(servicesProvider).posts.get(postId);
+        if (!notificationRetryAllowed(post, accountId) || ref.read(activePublishingProvider).containsKey(postId)) return;
+        try {
+          await ref.read(postActionsProvider).publishExisting(postId, accountIds: {accountId});
+        } on Object catch (e) {
+          // Activity shows the target's outcome.
+          debugPrint('Retry from a notification stopped: $e');
+        }
+      case OpenLinkIntent(:final link):
+        await launchUrl(link, mode: LaunchMode.externalApplication);
     }
   }
 
@@ -132,8 +184,8 @@ class _AppShellState extends ConsumerState<AppShell> {
         await DesktopIntegration.instance.showWindow();
       case TrayAction.compose:
         await DesktopIntegration.instance.showWindow();
-        ref.read(composerProvider.notifier).reset();
-        _go(AppSection.compose);
+        if (!mounted) return;
+        _newPost();
       case TrayAction.publishDue:
         await ref.read(schedulerProvider).runDue(interactive: true);
       case TrayAction.quit:
@@ -142,7 +194,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 
   void _newPost() {
-    ref.read(composerProvider.notifier).reset();
+    startNewPostInComposer(context, ref);
     _go(AppSection.compose);
   }
 
@@ -150,6 +202,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget build(BuildContext context) {
     final w = context.width;
     final nf = context.nf;
+    ref.listen(publishKeepAliveRefusedProvider, (_, _) => showToast(context, kPublishKeepAliveRefused, icon: Icons.info_outline_rounded));
     // Keeps the post being written across restarts.
     ref.watch(composerDraftKeeperProvider);
     final demo = ref.watch(isDemoProvider);
@@ -175,7 +228,9 @@ class _AppShellState extends ConsumerState<AppShell> {
     final body = Column(children: [
       if (demo) const _DemoBanner(),
       const _KeyringBanner(),
+      const _NotificationsBanner(),
       const UpdateBanner(),
+      const SignInBanner(),
       Expanded(child: widget.shell),
     ]);
 
@@ -286,7 +341,11 @@ class _Sidebar extends ConsumerWidget {
           child: NeforumWordmark(size: 32, showTagline: true, onChrome: true),
         ),
         SizedBox(height: dense ? Space.xxl : Space.x3),
-        PrimaryAction(label: 'New post', icon: Icons.add_rounded, onPressed: onNewPost, expand: true, onChrome: true, compact: dense),
+        Row(children: [
+          Expanded(child: PrimaryAction(label: 'New post', icon: Icons.add_rounded, onPressed: onNewPost, expand: true, onChrome: true, compact: dense)),
+          const SizedBox(width: Space.xs),
+          const _HistoryButtons(size: 36),
+        ]),
         SizedBox(height: dense ? Space.lg : Space.xxl),
         for (final s in AppSection.values) ...[
           _NavItem(
@@ -305,6 +364,40 @@ class _Sidebar extends ConsumerWidget {
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: Space.sm),
           child: Text('v$kAppVersion · Free & open source · GPL-3.0', style: context.text.bodySmall?.copyWith(color: nf.onChromeMuted, fontSize: 11)),
+        ),
+      ]),
+    );
+  }
+}
+
+/// Back and Forward through the pages visited, dimmed when there is nowhere
+/// to go. On the navigation chrome, so they are there on every page.
+class _HistoryButtons extends ConsumerWidget {
+  const _HistoryButtons({required this.size});
+  final double size;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final history = ref.watch(navHistoryProvider);
+    final keys = navShortcutLabels(desktop: Env.isDesktop);
+    return ListenableBuilder(
+      listenable: history,
+      builder: (context, _) => Row(mainAxisSize: MainAxisSize.min, children: [
+        ToolButton(
+          icon: Icons.arrow_back_rounded,
+          tooltip: keys == null ? 'Back' : 'Back (${keys.back})',
+          semanticLabel: 'Back',
+          size: size,
+          onChrome: true,
+          onPressed: history.canBack ? history.back : null,
+        ),
+        ToolButton(
+          icon: Icons.arrow_forward_rounded,
+          tooltip: keys == null ? 'Forward' : 'Forward (${keys.forward})',
+          semanticLabel: 'Forward',
+          size: size,
+          onChrome: true,
+          onPressed: history.canForward ? history.forward : null,
         ),
       ]),
     );
@@ -468,9 +561,19 @@ class _Rail extends StatelessWidget {
             ),
           ),
         ),
-        SizedBox(height: dense ? Space.lg : Space.xxl),
-        for (final s in AppSection.values)
-          _RailItem(section: s, selected: s == current, badge: badges[s] ?? 0, urgent: s == AppSection.activity, onTap: () => onSelect(s)),
+        SizedBox(height: dense ? Space.xs : Space.sm),
+        const _HistoryButtons(size: 34),
+        SizedBox(height: dense ? Space.xs : Space.sm),
+        // A short window (or a big zoom) scrolls the sections instead of
+        // cutting off the last one.
+        Expanded(
+          child: SingleChildScrollView(
+            child: Column(children: [
+              for (final s in AppSection.values)
+                _RailItem(section: s, selected: s == current, badge: badges[s] ?? 0, urgent: s == AppSection.activity, onTap: () => onSelect(s)),
+            ]),
+          ),
+        ),
       ]),
     );
   }
@@ -591,12 +694,50 @@ class _KeyringBanner extends StatelessWidget {
   }
 }
 
+/// D9: notifications are off. Over every section until closed, and back when a
+/// post finishes unseen or, on iOS, a post is scheduled that needs the
+/// reminder. Settings and the pill on Activity stay either way.
+class _NotificationsBanner extends ConsumerWidget {
+  const _NotificationsBanner();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final view = ref.watch(notificationAccessProvider);
+    final closedAt = ref.watch(settingsProvider.select((s) => s.notificationBannerClosedAt));
+    final atRisk = Env.isIOS ? ref.watch(scheduledPostsProvider).where((p) => p.needsDeviceAtSchedule).toList() : const <Post>[];
+    final neededAt = atRisk.isEmpty ? null : atRisk.map((p) => p.updatedAt).reduce((a, b) => a.isAfter(b) ? a : b);
+    if (!notificationBannerVisible(view, demo: ref.watch(isDemoProvider), closedAt: closedAt, reminderNeededAt: neededAt)) return const SizedBox.shrink();
+    final words = notificationBannerText(view, remindersAtRisk: atRisk.isNotEmpty);
+    final nf = context.nf;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.only(left: Space.lg, right: Space.xs, top: Space.xs, bottom: Space.xs),
+      decoration: BoxDecoration(color: words.urgent ? nf.dangerSoft : nf.warningSoft, border: Border(bottom: BorderSide(color: nf.border))),
+      child: Row(children: [
+        Icon(Icons.notifications_off_outlined, size: 16, color: words.urgent ? nf.danger : nf.warning),
+        const SizedBox(width: Space.sm),
+        Expanded(child: Text(words.text, style: context.text.bodySmall?.copyWith(color: nf.text))),
+        TextButton(
+          onPressed: () => turnOnNotifications(context, ref),
+          style: TextButton.styleFrom(foregroundColor: nf.text),
+          child: Text(words.action),
+        ),
+        IconButton(
+          tooltip: 'Hide this',
+          onPressed: () => closeNotificationsBanner(ref),
+          icon: const Icon(Icons.close_rounded, size: 18),
+        ),
+      ]),
+    );
+  }
+}
+
 /// UI implementation of [UiBridge] attached to the root navigator.
 class _ShellUiBridge implements UiBridge {
   BuildContext? get _ctx => rootNavigatorKey.currentContext;
 
   @override
-  bool get interactive => _ctx != null;
+  bool get interactive => _ctx != null && canShowUi(canRaiseWindow: Env.isDesktop, lifecycle: WidgetsBinding.instance.lifecycleState);
 
   @override
   Future<String?> askPaste(Uri authorizationUrl, Uri redirectUri) async {

@@ -25,7 +25,7 @@ You don't register anything. On a phone, servers that check redirect addresses r
 3. In NEFORUM, add **Micropub** and enter your blog address (`yourname.micro.blog` or your custom domain).
 4. Paste the token into **App token**.
 
-App tokens don't expire until you delete them.
+Micro.blog publishes no end date for app tokens. They stop working when you delete them.
 
 ## Ways to connect
 

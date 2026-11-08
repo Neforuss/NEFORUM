@@ -118,6 +118,21 @@ class BlueskyAdapter extends PlatformAdapter {
   );
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.bluesky(account);
+
+  @override
+  bool canReadSignIn(ConnectedAccount account) => account.tier == PlatformTier.openApi;
+
+  /// The session JWT's own `exp`, with no network. It dates the short-lived
+  /// token only: the app password signs in again, so the person has no date.
+  @override
+  Future<SignInServerRead?> readSignIn(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    final token = OAuthTokens.fromSecrets(secrets)?.accessToken;
+    final exp = token == null ? null : jwtExpiry(token);
+    return exp == null ? null : SignInServerRead(readAt: ctx.now(), accessExpiresAt: exp);
+  }
+
+  @override
   PlatformDescriptor get descriptor => _descriptor;
 
   @override
@@ -289,6 +304,7 @@ class BlueskyAdapter extends PlatformAdapter {
       return _sessionSecrets(s, password, secrets);
     } on HttpFailure catch (e) {
       final err = mapBlueskyFailure(e, now: ctx.now());
+      if (err.notAllowed == true) throw AdapterException(err);
       if (e.statusCode == 401 || err.kind == PublishErrorKind.auth) {
         throw AdapterException(PublishError.auth(
             'Bluesky no longer accepts the app password (revoked?). Create a new one and reconnect the account.',
@@ -380,7 +396,7 @@ class BlueskyAdapter extends PlatformAdapter {
     } on HttpFailure catch (e) {
       return PublishResult.failure(mapBlueskyFailure(e, now: ctx.now()));
     } on Exception catch (e) {
-      return PublishResult.failure(PublishError.network('Could not reach Bluesky: $e'));
+      return PublishResult.failure(PublishError.network('Could not reach Bluesky: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -438,7 +454,6 @@ class BlueskyAdapter extends PlatformAdapter {
     StrongRef? root = start > 0 ? await api.getPostRef(posted.first) : null;
     StrongRef? parent = start > 1 ? await api.getPostRef(posted.last) : root;
     for (var i = start; i < parts.length; i++) {
-      if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length} to Bluesky');
       final facets = BlueskyRichText.facets(parts[i], didsByHandle: dids);
       final record = <String, dynamic>{
         r'$type': 'app.bsky.feed.post',
@@ -451,7 +466,8 @@ class BlueskyAdapter extends PlatformAdapter {
         if (i > 0 && root != null && parent != null) 'reply': {'root': root.toJson(), 'parent': parent.toJson()},
       };
       try {
-        final ref = await api.createPost(did, record);
+        final ref = await ctx.creating(
+            parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length} to Bluesky' : 'Posting to Bluesky', () => api.createPost(did, record));
         root ??= ref;
         parent = ref;
         uris.add(ref.uri);
@@ -459,12 +475,10 @@ class BlueskyAdapter extends PlatformAdapter {
         if (uris.isEmpty) rethrow;
         // Earlier posts are live: they are recorded, and the next attempt
         // posts only the rest.
-        return PublishResult.partialFailure(
-          mapBlueskyFailure(e, now: ctx.now()).asResumableThread(postedIds: uris, total: parts.length),
-          remoteId: uris.first,
-          remoteUrl: _webUrlOf(account, uris.first),
-          threadRemoteIds: uris,
-        );
+        return _partial(mapBlueskyFailure(e, now: ctx.now()), account, uris, parts.length);
+      } on AdapterException catch (e) {
+        if (uris.isEmpty) rethrow;
+        return _partial(e.error, account, uris, parts.length);
       }
     }
     return PublishResult.ok(
@@ -475,15 +489,26 @@ class BlueskyAdapter extends PlatformAdapter {
     );
   }
 
+  PublishResult _partial(PublishError error, ConnectedAccount account, List<String> uris, int total) => PublishResult.partialFailure(
+        error.asResumableThread(postedIds: uris, total: total),
+        remoteId: uris.first,
+        remoteUrl: _webUrlOf(account, uris.first),
+        threadRemoteIds: uris,
+      );
+
   @override
   bool get resumesThreads => true;
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, variant.media.any((m) => m.isVideo) ? ProgressFamily.waitReported : ProgressFamily.direct);
 
   Future<Map<String, dynamic>> _mediaEmbed(
       List<MediaAttachment> media, BlueskyApi api, String did, AdapterContext ctx) async {
     final videos = media.where((m) => m.isVideo).toList();
     if (videos.isNotEmpty) {
       final v = videos.first;
-      ctx.progress('Uploading video to Bluesky');
+      ctx.uploading(v, 'Uploading video to Bluesky');
       final bytes = await ctx.readMedia(v);
       if (bytes.length > blueskyVideoMaxBytes) {
         throw AdapterException(PublishError.validation(
@@ -506,7 +531,7 @@ class BlueskyAdapter extends PlatformAdapter {
     final images = <Map<String, dynamic>>[];
     for (var i = 0; i < media.length; i++) {
       final m = media[i];
-      ctx.progress('Uploading image ${i + 1} of ${media.length} to Bluesky');
+      ctx.uploading(m, 'Uploading image ${i + 1} of ${media.length} to Bluesky');
       final bytes = await ctx.readMedia(m);
       if (bytes.length > blueskyImageMaxBytes) {
         throw AdapterException(PublishError.validation(

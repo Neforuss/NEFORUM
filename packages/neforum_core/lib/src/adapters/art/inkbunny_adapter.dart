@@ -78,6 +78,9 @@ class InkbunnyAdapter extends PlatformAdapter {
   static const extraScraps = 'inkbunnyScraps';
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.inkbunny(account);
+
+  @override
   PlatformDescriptor get descriptor => inkbunnyDescriptor;
 
   // ------------------------------------------------------------- connect
@@ -163,8 +166,9 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
     );
   }
 
-  /// The session id lasts until it is signed out; a missing one means
-  /// reconnecting.
+  /// Nothing to renew: Inkbunny's wiki says a session stays valid "for several
+  /// days after" its last use, and the password is not kept. A session that
+  /// ended surfaces when a post is refused; a missing one means reconnecting.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -225,7 +229,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
     } on Object catch (e) {
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Inkbunny ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Inkbunny (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       return PublishResult.failure(PublishError.platform('Inkbunny upload failed: $text', raw: text));
     }
@@ -248,26 +252,31 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
       files.add((variant.media[i], await _read(variant.media[i], ctx)));
     }
     final api = InkbunnyApi(ctx);
-    ctx.progress('Uploading to Inkbunny');
+    ctx.uploadingAll('Uploading to Inkbunny');
     final submissionId = await api.upload(sid, files);
 
-    ctx.progress('Filling in the submission');
+    // The upload stays hidden: this request is what makes it public.
     try {
-      await api.edit(editForm(sid, submissionId, variant));
+      await ctx.creating('Filling in the submission', () => api.edit(editForm(sid, submissionId, variant)));
     } on Exception catch (e) {
       final err = switch (e) {
+        AdapterException() => e.error,
         InkbunnyException() => InkbunnyApi.mapError(e, context: 'Finishing the Inkbunny submission'),
         HttpFailure() => e.toPublishError(context: 'Finishing the Inkbunny submission'),
         _ => NeforumHttp.isTransportError(e)
-            ? PublishError.network('Could not reach Inkbunny ($e)', raw: '$e')
+            ? PublishError.network('Could not reach Inkbunny (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e))
             : PublishError.platform('Inkbunny upload failed: $e', raw: '$e'),
       };
       // The files are uploaded but the submission is not public yet; a retry
       // would upload them again.
       return PublishResult.failure(PublishError(
         kind: err.kind,
-        message: '${err.message}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
-            'on inkbunny.net (${InkbunnyApi.submissionUrl(submissionId)}).',
+        notAllowed: err.notAllowed,
+        outcomeUnknown: err.outcomeUnknown,
+        message: err.outcomeUnknown == true
+            ? '${err.message} Your files are uploaded as submission $submissionId (${InkbunnyApi.submissionUrl(submissionId)}).'
+            : '${err.clause}. Your files are uploaded as submission $submissionId, which stays hidden: finish it '
+                'on inkbunny.net (${InkbunnyApi.submissionUrl(submissionId)}).',
         statusCode: err.statusCode,
         raw: err.raw,
       ));
@@ -305,11 +314,7 @@ NEFORUM signs in once, keeps only the session it gets back (in this device's sec
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ------------------------------------------------------------- hand-off

@@ -212,7 +212,7 @@ class ThreadsApi {
       if (!res.ok) return null;
       return res.jsonMap['permalink'] as String?;
     } on Exception catch (e) {
-      _log.debug('Could not read Threads permalink: $e');
+      _log.debug('Could not read Threads permalink (${e.runtimeType})');
       return null;
     }
   }
@@ -271,7 +271,8 @@ class ThreadsApi {
       final data = res.jsonMap['data'];
       return data is Map ? ThreadsTokenInfo.fromJson(Map<String, dynamic>.from(data)) : null;
     } on Exception catch (e) {
-      log?.debug('Threads debug_token failed: $e');
+      // The type only: the error's text can quote the address, token included.
+      log?.debug('Threads debug_token failed (${e.runtimeType})');
       return null;
     }
   }
@@ -295,12 +296,12 @@ class ThreadsApi {
 
 /// What `debug_token` says about a Threads user access token.
 class ThreadsTokenInfo {
-  const ThreadsTokenInfo({required this.isValid, this.expiresAt, this.issuedAt, this.scopes = const [], this.userId});
+  const ThreadsTokenInfo({required this.isValid, this.expiresAt, this.dataAccessExpiresAt, this.issuedAt, this.scopes = const [], this.userId});
 
   factory ThreadsTokenInfo.fromJson(Map<String, dynamic> j) {
     DateTime? time(Object? v) {
       final secs = v is int ? v : int.tryParse('${v ?? ''}');
-      // 0 means "does not expire" / unknown; neither gives NEFORUM a date.
+      // Meta does not define 0; it gives NEFORUM no date either way.
       return secs == null || secs <= 0 ? null : DateTime.fromMillisecondsSinceEpoch(secs * 1000, isUtc: true);
     }
 
@@ -308,6 +309,7 @@ class ThreadsTokenInfo {
     return ThreadsTokenInfo(
       isValid: j['is_valid'] != false,
       expiresAt: time(j['expires_at']),
+      dataAccessExpiresAt: time(j['data_access_expires_at']),
       issuedAt: time(j['issued_at']),
       scopes: scopes is List ? scopes.map((s) => '$s').toList() : const [],
       userId: j['user_id']?.toString(),
@@ -316,6 +318,10 @@ class ThreadsTokenInfo {
 
   final bool isValid;
   final DateTime? expiresAt;
+
+  /// When the permission grant behind the token ends. Refreshing extends it on
+  /// a public profile; Meta's pages disagree about a private one.
+  final DateTime? dataAccessExpiresAt;
   final DateTime? issuedAt;
 
   /// Granted permissions; empty when Meta did not list them.
@@ -379,7 +385,7 @@ PublishError threadsErrorFrom(HttpFailure f, {String? context}) {
     case ThreadsErrorCodes.permissionDenied:
       return PublishError.auth(
           '${prefix}Threads refused the permission ($metaMsg). Reconnect and allow threads_content_publish',
-          raw: raw, statusCode: status);
+          raw: raw, statusCode: status, notAllowed: true);
     case ThreadsErrorCodes.appRateLimit:
     case ThreadsErrorCodes.userRateLimit:
     case ThreadsErrorCodes.pageRateLimit:
@@ -399,16 +405,17 @@ PublishError threadsErrorFrom(HttpFailure f, {String? context}) {
   }
   if (code != null && code >= 200 && code < 300) {
     return PublishError.auth('${prefix}Missing Threads permission ($metaMsg); reconnect the account',
-        raw: raw, statusCode: status);
+        raw: raw, statusCode: status, notAllowed: true);
   }
   if (status == 429) {
     return PublishError.quota('${prefix}Threads rate limit reached', raw: raw, statusCode: status, retryAfter: f.response.retryAfter);
   }
   if (type == 'OAuthException' && (status == 401 || status == 403)) {
-    return PublishError.auth(msg, raw: raw, statusCode: status);
+    return PublishError.auth(msg, raw: raw, statusCode: status, notAllowed: base.notAllowed);
   }
   return PublishError(
     kind: base.kind,
+    notAllowed: base.notAllowed,
     message: msg,
     retryable: base.retryable,
     statusCode: status,

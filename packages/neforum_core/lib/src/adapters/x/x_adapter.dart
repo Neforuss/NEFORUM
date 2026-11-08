@@ -27,10 +27,10 @@ import 'x_api.dart';
 ///
 /// The API tier connects in one of two ways, chosen by what the user fills
 /// in: the four OAuth 1.0a keys from the app's "Keys and tokens" page (no
-/// browser; the keys never expire or change, so the account works on every
-/// device at once), or OAuth 2.0 + PKCE in the browser (renewed every two
-/// hours with a refresh token that X replaces each time, so only one device
-/// stays connected). Both give the same account id.
+/// browser, and every device can share them, until X retires OAuth 1.0a on
+/// 2027-01-31), or OAuth 2.0 + PKCE in the browser (renewed when a post finds
+/// the two-hour token ended, with a refresh token that X replaces each time, so
+/// without Sync only one device stays connected). Both give the same account id.
 class XAdapter extends PlatformAdapter {
   XAdapter();
 
@@ -71,6 +71,7 @@ class XAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'x',
     name: 'X (Twitter)',
+    shortName: 'X',
     iconKey: 'x',
     homepage: 'https://x.com',
     tiers: {PlatformTier.byokApi, PlatformTier.handoff},
@@ -137,7 +138,7 @@ class XAdapter extends PlatformAdapter {
   );
 
   /// Every OAuth 2.0 refresh returns a new refresh token and invalidates the
-  /// old one.
+  /// old one. A refresh token lasts about 6 months ([SignInPolicies.xOAuth2]).
   @override
   bool get rotatesRefreshTokens => true;
 
@@ -145,6 +146,9 @@ class XAdapter extends PlatformAdapter {
   @override
   bool rotatesRefreshTokensFor(ConnectedAccount account) =>
       account.tier == PlatformTier.byokApi && !usesOAuth1(account);
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.x(account);
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
@@ -163,7 +167,7 @@ Paste the four keys from the X developer portal (Keys and tokens: API Key and Se
    - Callback URI / Redirect URL: add **both** `$_desktopRedirect` and `$_mobileRedirect` exactly as written (no trailing slash; X does not accept `localhost`)
    - Website URL: any page about you or `https://github.com/Neforuss/NEFORUM`
 5. Save. Then either:
-   - **Keys (every device):** on the app's *Keys and tokens* page copy the **API Key and Secret**, and generate the **Access Token and Secret** (regenerate them if they were made before you chose Read and write: old ones stay read-only). Paste all four below and press **Connect**. No browser needed, and the keys never expire.
+   - **Keys (every device):** on the app's *Keys and tokens* page copy the **API Key and Secret**, and generate the **Access Token and Secret** (regenerate them if they were made before you chose Read and write: old ones stay read-only). Paste all four below and press **Connect**. No browser needed. X stops accepting these keys on 31 January 2027, so use browser sign-in if you can.
    - **Browser sign-in (one device):** copy the **OAuth 2.0 Client ID** from *Keys and tokens*, paste it below and press **Sign in with X**. Only if you chose *Web App* or *Automated App or Bot* instead of Native App, also paste the **Client Secret**. X replaces this sign-in every time NEFORUM renews it, so it stays connected on only one device.''';
 
   static const String _handoffIntro = '''
@@ -416,7 +420,8 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
-    // OAuth 1.0a keys never expire: nothing to renew, and nothing that could
+    // OAuth 1.0a keys cannot be renewed (X retires them on 2027-01-31, see
+    // SignInPolicies.xKeys): nothing to do here, and nothing that could
     // end the connection on another device.
     if (account.tier != PlatformTier.byokApi || usesOAuth1(account)) return null;
     final tokens = OAuthTokens.fromSecrets(secrets);
@@ -443,9 +448,9 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       // Only a rejected grant means "reconnect"; outages and 429s retry.
       throw AdapterException(e.toRefreshError('X'));
     } on TimeoutException catch (e) {
-      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: $e'));
+      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     } on ClientException catch (e) {
-      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: ${e.message}'));
+      throw AdapterException(PublishError.network('Could not reach X to renew the sign-in: ${e.message}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -557,13 +562,14 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       ];
       final replySettings = variant.extraAs<String>('replySettings');
       for (var i = start; i < parts.length; i++) {
-        if (parts.length > 1) ctx.progress('Posting part ${i + 1} of ${parts.length}');
-        final id = await api.createPost(
-          text: parts[i],
-          mediaIds: mediaIds[i],
-          inReplyTo: i == 0 ? null : ids.last,
-          replySettings: _replySettings.contains(replySettings) ? replySettings : null,
-        );
+        final id = await ctx.creating(
+            parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting to X',
+            () => api.createPost(
+                  text: parts[i],
+                  mediaIds: mediaIds[i],
+                  inReplyTo: i == 0 ? null : ids.last,
+                  replySettings: _replySettings.contains(replySettings) ? replySettings : null,
+                ));
         ids.add(id);
       }
     } on AdapterException catch (e) {
@@ -571,9 +577,9 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     } on HttpFailure catch (e) {
       return _partial(XApi.mapError(e, now: ctx.now()), ids, parts.length, urlOf);
     } on TimeoutException catch (e) {
-      return _partial(PublishError.network('X did not answer in time: $e'), ids, parts.length, urlOf);
+      return _partial(PublishError.network('X did not answer in time: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)), ids, parts.length, urlOf);
     } on ClientException catch (e) {
-      return _partial(PublishError.network('Could not reach X: ${e.message}'), ids, parts.length, urlOf);
+      return _partial(PublishError.network('Could not reach X: ${e.message}', raw: NeforumHttp.transportDetails(e)), ids, parts.length, urlOf);
     }
     return PublishResult.ok(
       remoteId: ids.first,
@@ -585,6 +591,10 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
 
   @override
   bool get resumesThreads => true;
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(
+      variant, variant.media.any((m) => m.isVideo || m.kind == MediaKind.gif) ? ProgressFamily.waitReported : ProgressFamily.direct);
 
   /// A thread that broke half-way must not be posted again from the start:
   /// the parts already on X would be refused as duplicates. Its live parts

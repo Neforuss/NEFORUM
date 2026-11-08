@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
+import 'font_catalog.dart' show kFontCatalogFile;
 import 'font_files.dart';
 
 /// The folders this device keeps installed fonts in: the system's and the
@@ -161,7 +164,8 @@ Future<String?> saveImportedFont(String? dataDir, String fileId, Uint8List bytes
   return path;
 }
 
-/// The imported fonts: (file id, path).
+/// The imported fonts: (file id, path). Only the folder's own files: the
+/// subfolder of downloaded fonts ([catalogFontsDirectory]) is not imported fonts.
 Future<List<(String, String)>> listImportedFonts(String? dataDir) async {
   final dir = importedFontsDirectory(dataDir);
   if (dir == null) return const [];
@@ -176,3 +180,217 @@ Future<List<(String, String)>> listImportedFonts(String? dataDir) async {
     return const [];
   }
 }
+
+// ---------------------------------------------------------------------------
+// Downloaded fonts (1.4): fonts/catalog/<id>@<version>/ with the font files,
+// the licence text and manifest.json. Everything a download leaves anywhere is
+// listed in deleteFontDownloadData.
+// ---------------------------------------------------------------------------
+
+/// The folder downloaded fonts are kept in.
+String? catalogFontsDirectory(String? dataDir) => dataDir == null ? null : p.join(dataDir, 'fonts', 'catalog');
+
+/// The small files the picker's rows are drawn in, newest use last.
+String? fontPreviewsDirectory(String? dataDir) => dataDir == null ? null : p.join(dataDir, 'font-previews');
+
+/// What the previews may take on disk; the least recently used go first.
+const int kFontPreviewCacheBytes = 20 * 1024 * 1024;
+
+const String _stagingPrefix = '.staging-';
+
+/// A folder or file name from a manifest, or null when it is anything else.
+String? _plainName(String name) => name.isEmpty || p.basename(name) != name || name.startsWith('.') ? null : name;
+
+/// The raw `manifest.json` of every downloaded font. A folder without a
+/// readable one, or a download that never finished, is left out.
+Future<List<Object?>> readCatalogManifests(String? dataDir) async {
+  final dir = catalogFontsDirectory(dataDir);
+  if (dir == null) return const [];
+  final out = <Object?>[];
+  try {
+    final d = Directory(dir);
+    if (!await d.exists()) return const [];
+    await for (final e in d.list(followLinks: false)) {
+      if (e is! Directory || p.basename(e.path).startsWith('.')) continue;
+      try {
+        out.add(jsonDecode(await File(p.join(e.path, 'manifest.json')).readAsString()));
+      } on Object {
+        // A folder without a readable manifest is not a font.
+      }
+    }
+  } on Object {
+    // The folder cannot be read: no downloaded fonts.
+  }
+  return out;
+}
+
+/// Keeps a downloaded font as `fonts/catalog/<folder>`, all at once: it is
+/// written to a staging folder and renamed, so a crash leaves either nothing
+/// or a whole font. [replacing] names older versions of it, removed afterwards.
+Future<void> saveCatalogFont(String? dataDir, String folder, Map<String, Uint8List> files, {Iterable<String> replacing = const []}) async {
+  final dir = catalogFontsDirectory(dataDir);
+  final name = _plainName(folder);
+  if (dir == null || name == null) throw ArgumentError('No place for the font $folder');
+  final root = Directory(dir);
+  await root.create(recursive: true);
+  await _removeOldStaging(root);
+  final staging = Directory(p.join(dir, '$_stagingPrefix${DateTime.now().microsecondsSinceEpoch}'));
+  await staging.create();
+  try {
+    for (final e in files.entries) {
+      final file = _plainName(e.key);
+      if (file == null) throw ArgumentError('Not a file name: ${e.key}');
+      await File(p.join(staging.path, file)).writeAsBytes(e.value, flush: true);
+    }
+    final target = Directory(p.join(dir, name));
+    if (await target.exists()) await target.delete(recursive: true);
+    await staging.rename(target.path);
+  } on Object {
+    try {
+      await staging.delete(recursive: true);
+    } on Object {
+      // Removed by the next download.
+    }
+    rethrow;
+  }
+  for (final old in replacing) {
+    if (old != name) await deleteCatalogFont(dataDir, old);
+  }
+}
+
+/// A staging folder more than an hour old is a download that died.
+Future<void> _removeOldStaging(Directory root) async {
+  final limit = DateTime.now().subtract(const Duration(hours: 1));
+  await for (final e in root.list(followLinks: false)) {
+    if (e is! Directory || !p.basename(e.path).startsWith(_stagingPrefix)) continue;
+    try {
+      if ((await e.stat()).modified.isBefore(limit)) await e.delete(recursive: true);
+    } on Object {
+      // Tried again next time.
+    }
+  }
+}
+
+/// Adds font files to a downloaded font. The manifest is replaced last, by a
+/// rename, so until then the font stays as it was and the new files are ignored.
+Future<void> addCatalogFontFiles(String? dataDir, String folder, Map<String, Uint8List> files, Uint8List manifest) async {
+  final dir = catalogFontsDirectory(dataDir);
+  final name = _plainName(folder);
+  if (dir == null || name == null) throw ArgumentError('No place for the font $folder');
+  final target = p.join(dir, name);
+  for (final e in files.entries) {
+    final file = _plainName(e.key);
+    if (file == null) throw ArgumentError('Not a file name: ${e.key}');
+    await File(p.join(target, file)).writeAsBytes(e.value, flush: true);
+  }
+  final next = File(p.join(target, '.manifest-next'));
+  await next.writeAsBytes(manifest, flush: true);
+  await next.rename(p.join(target, 'manifest.json'));
+}
+
+/// What [readCatalogFontFile] needs, sent to an isolate.
+class _CatalogFileRequest {
+  const _CatalogFileRequest(this.path, this.sha256);
+  final String path;
+  final String sha256;
+}
+
+Uint8List? _readVerified(_CatalogFileRequest r) {
+  try {
+    final bytes = File(r.path).readAsBytesSync();
+    if (sha256.convert(bytes).toString() != r.sha256) return null;
+    return bytes;
+  } on Object {
+    return null;
+  }
+}
+
+/// A downloaded font's file, off the UI isolate; null when it is gone or is
+/// no longer the file that was checked when it was downloaded.
+Future<Uint8List?> readCatalogFontFile(String? dataDir, String folder, String file, String sha256) async {
+  final dir = catalogFontsDirectory(dataDir);
+  final folderName = _plainName(folder), fileName = _plainName(file);
+  if (dir == null || folderName == null || fileName == null) return null;
+  final request = _CatalogFileRequest(p.join(dir, folderName, fileName), sha256);
+  return Isolate.run(() => _readVerified(request));
+}
+
+/// The licence text kept with a downloaded font; null when it cannot be read.
+Future<String?> readCatalogFontLicense(String? dataDir, String folder) async {
+  final dir = catalogFontsDirectory(dataDir);
+  final name = _plainName(folder);
+  if (dir == null || name == null) return null;
+  try {
+    return utf8.decode(await File(p.join(dir, name, 'LICENSE')).readAsBytes(), allowMalformed: true);
+  } on Object {
+    return null;
+  }
+}
+
+/// Removes one downloaded font.
+Future<void> deleteCatalogFont(String? dataDir, String folder) async {
+  final dir = catalogFontsDirectory(dataDir);
+  final name = _plainName(folder);
+  if (dir == null || name == null) return;
+  final d = Directory(p.join(dir, name));
+  if (await d.exists()) await d.delete(recursive: true);
+}
+
+/// Removes everything font downloads ever left in the data folder: the fonts
+/// with their licences, the saved list and the previews. Imported fonts stay:
+/// they are the user's own files.
+Future<void> deleteFontDownloadData(String? dataDir) async {
+  if (dataDir == null) return;
+  for (final dir in [catalogFontsDirectory(dataDir), fontPreviewsDirectory(dataDir)]) {
+    final d = Directory(dir!);
+    if (await d.exists()) await d.delete(recursive: true);
+  }
+  final list = File(p.join(dataDir, kFontCatalogFile));
+  if (await list.exists()) await list.delete();
+}
+
+/// The saved preview of family [id], marked as just used; null when there is none.
+Future<Uint8List?> readFontPreview(String? dataDir, String id) async {
+  final dir = fontPreviewsDirectory(dataDir);
+  final name = _plainName('$id.ttf');
+  if (dir == null || name == null) return null;
+  final file = File(p.join(dir, name));
+  try {
+    if (!await file.exists()) return null;
+    final bytes = await file.readAsBytes();
+    await file.setLastModified(DateTime.now());
+    return bytes;
+  } on Object {
+    return null;
+  }
+}
+
+/// Keeps the preview of family [id], then removes the least recently used
+/// ones until the folder fits [kFontPreviewCacheBytes].
+Future<void> saveFontPreview(String? dataDir, String id, Uint8List bytes, {int maxBytes = kFontPreviewCacheBytes}) async {
+  final dir = fontPreviewsDirectory(dataDir);
+  final name = _plainName('$id.ttf');
+  if (dir == null || name == null) return;
+  final d = Directory(dir);
+  await d.create(recursive: true);
+  await File(p.join(dir, name)).writeAsBytes(bytes, flush: true);
+  final saved = <(File, DateTime, int)>[];
+  await for (final e in d.list(followLinks: false)) {
+    if (e is! File) continue;
+    final stat = await e.stat();
+    saved.add((e, stat.modified, stat.size));
+  }
+  saved.sort((a, b) => a.$2.compareTo(b.$2));
+  var total = saved.fold<int>(0, (a, f) => a + f.$3);
+  for (final (file, _, size) in saved) {
+    if (total <= maxBytes) break;
+    if (p.basename(file.path) == name) continue;
+    await file.delete();
+    total -= size;
+  }
+}
+
+String _sha256Of(Uint8List bytes) => sha256.convert(bytes).toString();
+
+/// The SHA-256 of a font file, lowercase hex, off the UI isolate.
+Future<String> sha256OfFontFile(Uint8List bytes) => Isolate.run(() => _sha256Of(bytes));

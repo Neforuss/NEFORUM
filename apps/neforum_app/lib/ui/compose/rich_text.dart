@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
+import '../../media/emoji_text.dart';
 import '../../theme/tokens.dart';
 
 enum EntityKind { link, hashtag, mention }
@@ -37,7 +38,7 @@ List<InlineSpan> highlightSpans(String text, TextStyle base, NfColors nf, {Color
   final spans = <InlineSpan>[];
   var cursor = 0;
   for (final e in findEntities(text)) {
-    if (e.start > cursor) spans.add(TextSpan(text: text.substring(cursor, e.start)));
+    if (e.start > cursor) spans.addAll(_plainRuns(text.substring(cursor, e.start), base));
     final style = switch (e.kind) {
       EntityKind.link => base.copyWith(
           color: linkColor ?? nf.info,
@@ -50,9 +51,14 @@ List<InlineSpan> highlightSpans(String text, TextStyle base, NfColors nf, {Color
     spans.add(TextSpan(text: text.substring(e.start, e.end), style: style));
     cursor = e.end;
   }
-  if (cursor < text.length) spans.add(TextSpan(text: text.substring(cursor)));
+  if (cursor < text.length) spans.addAll(_plainRuns(text.substring(cursor), base));
   return spans;
 }
+
+/// [text] between entities: every character stays (a field's text must match
+/// its controller), and each emoji is in the emoji font, so a heart is in colour
+/// here as on the card.
+List<InlineSpan> _plainRuns(String text, TextStyle base) => emojiRuns(text, base) ?? [TextSpan(text: text)];
 
 /// A [TextEditingController] that colours hashtags, mentions and links as
 /// the user types. Falls back to plain rendering while an IME is composing

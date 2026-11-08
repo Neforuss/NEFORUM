@@ -48,6 +48,7 @@ class YouTubePostsAdapter extends HandoffOnlyAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'youtube_posts',
     name: 'YouTube Posts',
+    shortName: 'YT Posts',
     iconKey: 'youtube',
     homepage: 'https://www.youtube.com/',
     tiers: {PlatformTier.handoff},
@@ -85,6 +86,9 @@ class YouTubePostsAdapter extends HandoffOnlyAdapter {
       notes: 'Text polls, image polls (2 to 4 images with captions) and quizzes with one correct answer.',
     ),
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
 
   @override
   PlatformDescriptor get descriptor => _descriptor;

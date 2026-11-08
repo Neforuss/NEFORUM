@@ -22,7 +22,11 @@ class ClipboardChannel(private val activity: Activity) {
     private val io = Executors.newSingleThreadExecutor()
 
     fun register(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "neforum/clipboard").setMethodCallHandler { call, result -> handle(call, result) }
+        MethodChannel(messenger, NAME).setMethodCallHandler { call, result -> handle(call, result) }
+    }
+
+    companion object {
+        const val NAME = "neforum/clipboard"
     }
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {

@@ -21,7 +21,7 @@ import java.io.File
  */
 class ShareChannel(private val activity: Activity) {
     fun register(messenger: BinaryMessenger) {
-        MethodChannel(messenger, "neforum/share").setMethodCallHandler { call, result -> handle(call, result) }
+        MethodChannel(messenger, NAME).setMethodCallHandler { call, result -> handle(call, result) }
     }
 
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
@@ -76,6 +76,8 @@ class ShareChannel(private val activity: Activity) {
     }
 
     companion object {
+        const val NAME = "neforum/share"
+
         // The type of the share: text/plain without files; else the files'
         // own type when they all have one, else their family with a
         // wildcard subtype (all images, all videos), else any type.

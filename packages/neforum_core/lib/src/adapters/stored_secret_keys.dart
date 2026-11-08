@@ -1,3 +1,4 @@
+import '../model/sign_in_lifetime.dart';
 import 'art/inkbunny_adapter.dart';
 import 'bluesky/bluesky_adapter.dart';
 import 'facebook/facebook_adapter.dart';
@@ -56,4 +57,13 @@ abstract final class StoredSecretKeys {
 
   /// An Inkbunny session id.
   static const String sessionId = InkbunnyAdapter.secretSid;
+
+  /// Where `expires_at` came from.
+  static const String expiresAtSource = SignInSecretKeys.expiresAtSource;
+
+  /// Where `refresh_expires_at` came from.
+  static const String refreshExpiresSource = SignInSecretKeys.refreshExpiresSource;
+
+  /// The last time this sign-in was made or renewed.
+  static const String lastRenewedAt = SignInSecretKeys.lastRenewedAt;
 }

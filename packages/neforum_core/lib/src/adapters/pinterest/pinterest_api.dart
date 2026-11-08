@@ -117,8 +117,23 @@ class PinterestApi {
   // --------------------------------------------------------------- writes
 
   /// `POST /v5/pins`. Returns the new Pin's id.
-  Future<String> createPin(Map<String, Object?> body) async {
-    final res = await ctx.http.postJson(endpoint('pins'), body, headers: _auth);
+  ///
+  /// An inline image makes this POST an upload that is also the post
+  /// ([inlineImages]). If the body never went out whole, Pinterest cannot have
+  /// made the Pin. Once it has, a lost answer leaves that open, so it is not
+  /// retried.
+  Future<String> createPin(Map<String, Object?> body, {bool inlineImages = false}) async {
+    final NeforumResponse res;
+    try {
+      res = await ctx.creating('Creating the Pin', () => ctx.http.postJson(endpoint('pins'), body, headers: _auth), uploads: inlineImages);
+    } on AdapterException {
+      rethrow;
+    } on Exception catch (e) {
+      final trace = NeforumHttp.uploadTrace(e);
+      if (trace == null) rethrow;
+      throw AdapterException(
+          PublishError.network('${NeforumHttp.transportMessage(e)} This Pin was not created.', raw: NeforumHttp.transportDetails(e), uploadInterrupted: true));
+    }
     final id = res.jsonMap['id']?.toString();
     if (id == null || id.isEmpty) {
       throw AdapterException(PublishError.platform('Pinterest did not return a Pin id', raw: _snippet(res.body)));
@@ -166,7 +181,7 @@ class PinterestApi {
     }
 
     final bytes = await ctx.readMedia(video);
-    ctx.progress('Uploading video to Pinterest');
+    ctx.uploading(video, 'Uploading video to Pinterest');
     try {
       await ctx.http.multipart(
         Uri.parse(uploadUrl),
@@ -190,7 +205,7 @@ class PinterestApi {
               raw: _snippet(e.body), statusCode: e.statusCode, retryable: true));
     }
 
-    ctx.progress('Waiting for Pinterest to process the video');
+    ctx.serverWait('Waiting for Pinterest to process the video');
     for (var i = 0; i < videoPollAttempts; i++) {
       final res = await ctx.http.get(endpoint('media/$mediaId'), headers: _auth);
       final status = res.jsonMap['status'] as String?;
@@ -200,7 +215,7 @@ class PinterestApi {
             'Pinterest could not process the video (use MP4, H.264/H.265, 4 seconds to 5 minutes)',
             raw: _snippet(res.body)));
       }
-      if (videoPollInterval > Duration.zero) await Future<void>.delayed(videoPollInterval);
+      if (videoPollInterval > Duration.zero) await ctx.wait(videoPollInterval);
     }
     throw const AdapterException(PublishError.platform(
         'Pinterest is still processing the video; try publishing again in a few minutes',
@@ -245,7 +260,8 @@ class PinterestApi {
         return PublishError.auth(
             '$context: NEFORUM lacks a Pinterest permission ($detail). Reconnect Pinterest and allow every permission.',
             raw: raw,
-            statusCode: status);
+            statusCode: status,
+            notAllowed: true);
       }
       return PublishError.platform('$context: Pinterest refused the request ($detail)', raw: raw, statusCode: status);
     }

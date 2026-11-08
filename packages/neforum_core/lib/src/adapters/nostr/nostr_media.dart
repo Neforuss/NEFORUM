@@ -64,7 +64,7 @@ class NostrMediaUploader {
       final m = media[i];
       final label = m.noun;
       final where = host?.name ?? Uri.parse(nip96Server).host;
-      ctx.progress('Uploading $label ${i + 1} of ${media.length} to $where');
+      ctx.uploading(m, 'Uploading $label ${i + 1} of ${media.length} to $where');
       final bytes = await ctx.readMedia(m);
       out.add(host != null ? await _viaHost(m, bytes) : await _viaNip96(apiUrl!, m, bytes));
     }
@@ -81,7 +81,7 @@ class NostrMediaUploader {
     }
     try {
       // Nostr notes are permanent, so the link must not expire.
-      final hosted = await host.upload(m, bytes);
+      final hosted = await host.upload(m, bytes, via: ctx.http);
       if (hosted.expiresAt != null) {
         try {
           await host.delete(hosted);
@@ -97,7 +97,7 @@ class NostrMediaUploader {
     } on AdapterException {
       rethrow;
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('Upload to ${host.name} failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Upload to ${host.name} failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -129,7 +129,7 @@ class NostrMediaUploader {
       }
       throw AdapterException(mapNip96Failure(f, what));
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -167,7 +167,7 @@ class NostrMediaUploader {
     } on HttpFailure catch (f) {
       throw AdapterException(mapNip96Failure(f, 'Media upload'));
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('Media upload to ${Uri.parse(apiUrl).host} failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Media upload to ${Uri.parse(apiUrl).host} failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
     var body = r.jsonMap;
     if (r.statusCode == 202 || (body['processing_url'] is String && body['nip94_event'] == null)) {
@@ -181,8 +181,8 @@ class NostrMediaUploader {
       throw const AdapterException(PublishError.platform('Media server accepted the upload but gave no processing URL.'));
     }
     for (var i = 0; i < maxPolls; i++) {
-      await Future<void>.delayed(pollInterval);
-      ctx.progress('Waiting for the media server to process the upload');
+      ctx.serverWait('Waiting for the media server to process the upload');
+      await ctx.wait(pollInterval);
       final body = await _getJson(Uri.parse(processingUrl), 'Media processing',
           headers: {'Authorization': nip98Header(processingUrl, 'GET')});
       if (body['nip94_event'] is Map) return body;
@@ -242,6 +242,7 @@ PublishError mapNip96Failure(HttpFailure f, String what) {
   return switch (f.statusCode) {
     401 => PublishError.auth(
         '$what: $host rejected the signed NIP-98 authorisation$detail. Check that the device clock is correct.',
+        notAllowed: true,
         raw: raw,
         statusCode: 401),
     402 => PublishError.quota('$what: $host requires a paid plan for this upload$detail', raw: raw, statusCode: 402),

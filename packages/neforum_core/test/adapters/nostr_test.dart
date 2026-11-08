@@ -605,13 +605,20 @@ void main() {
     }
 
     test('relay verdicts are classified', () async {
-      expect((await relaysSay([rejectWith('rate-limited: slow down'), silent]))?.kind, PublishErrorKind.quota);
+      expect((await relaysSay([rejectWith('rate-limited: slow down')]))?.kind, PublishErrorKind.quota);
       expect((await relaysSay([rejectWith('invalid: bad sig')]))?.kind, PublishErrorKind.validation);
       expect((await relaysSay([rejectWith('restricted: paid relay')]))?.kind, PublishErrorKind.configuration);
       expect((await relaysSay([rejectWith('pow: difficulty 20')]))?.kind, PublishErrorKind.platform);
-      final net = await relaysSay([silent, null]);
-      expect(net?.kind, PublishErrorKind.network);
-      expect(net?.retryable, isTrue);
+      // A relay that never answered may have the note, and it signs anew on a retry.
+      for (final said in [
+        [silent, null],
+        [rejectWith('rate-limited: slow down'), silent],
+      ]) {
+        final net = await relaysSay(said);
+        expect(net?.kind, PublishErrorKind.network);
+        expect(net?.retryable, isFalse);
+        expect(net?.outcomeUnknown, isTrue);
+      }
     });
 
     test('a later thread part failing reports the live first part', () async {

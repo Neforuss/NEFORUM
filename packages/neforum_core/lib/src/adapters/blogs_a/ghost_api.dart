@@ -68,26 +68,35 @@ class GhostApi {
 
   Uri endpoint(String path, [Map<String, String>? query]) => joinPath(apiUrl, '/ghost/api/admin/$path', query);
 
-  Map<String, String> get _headers => {
-        'Accept-Version': ghostAcceptVersion,
-        'Accept': 'application/json',
-        if (key != null) 'Authorization': 'Ghost ${key!.token(ctx.now())}',
-      };
+  static const Map<String, String> _headers = {
+    'Accept-Version': ghostAcceptVersion,
+    'Accept': 'application/json',
+  };
+
+  /// A token for each try: one lives 5 minutes, and a re-sent upload can start
+  /// later than that.
+  HeaderSigner? get _sign {
+    final k = key;
+    return k == null ? null : () => {'Authorization': 'Ghost ${k.token(ctx.now())}'};
+  }
 
   Future<NeforumResponse> get(String path, [Map<String, String>? query]) =>
-      ctx.http.get(endpoint(path, query), headers: _headers);
+      ctx.http.get(endpoint(path, query), headers: _headers, signHeaders: _sign);
 
   Future<NeforumResponse> postJson(String path, Object body, [Map<String, String>? query]) =>
-      ctx.http.postJson(endpoint(path, query), body, headers: _headers);
+      ctx.http.postJson(endpoint(path, query), body, headers: _headers, signHeaders: _sign);
 
-  Future<NeforumResponse> delete(String path) => ctx.http.delete(endpoint(path), headers: _headers);
+  Future<NeforumResponse> delete(String path) => ctx.http.delete(endpoint(path), headers: _headers, signHeaders: _sign);
 
-  /// `POST images/upload/` (multipart `file`, `purpose=image`, `ref`).
+  /// `POST images/upload/` (multipart `file`, `purpose=image`, `ref`). A stored
+  /// file is not a post: nothing shows on the site until `posts/` is called.
   Future<NeforumResponse> uploadImage(Uint8List bytes, {required String fileName, required String contentType}) =>
       ctx.http.multipart(endpoint('images/upload/'),
           headers: _headers,
+          signHeaders: _sign,
           fields: {'purpose': 'image', 'ref': fileName},
-          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)]);
+          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType)],
+          retrySafe: true);
 
   /// `POST media/upload/` (multipart `file`, optional `thumbnail`, `ref`):
   /// audio and video, stored as uploaded. Answers `{media: [{url, ref}]}`,
@@ -95,8 +104,10 @@ class GhostApi {
   Future<NeforumResponse> uploadMedia(Uint8List bytes, {required String fileName, required String contentType, HttpFilePart? thumbnail}) =>
       ctx.http.multipart(endpoint('media/upload/'),
           headers: _headers,
+          signHeaders: _sign,
           fields: {'ref': fileName},
-          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType), ?thumbnail]);
+          files: [HttpFilePart(field: 'file', bytes: bytes, fileName: fileName, contentType: contentType), ?thumbnail],
+          retrySafe: true);
 }
 
 /// `(type, message, context)` of the first entry in Ghost's `errors` array.
@@ -130,7 +141,7 @@ PublishError mapGhostFailure(HttpFailure f, String what) {
         'If you deleted or regenerated the integration key, reconnect with the new one.', raw: raw, statusCode: status);
   }
   if (status == 403 || type == 'NoPermissionError') {
-    return PublishError.auth('$what: this Admin API key is not allowed to do that$suffix', raw: raw, statusCode: status);
+    return PublishError.auth('$what: this Admin API key is not allowed to do that$suffix', raw: raw, statusCode: status, notAllowed: true);
   }
   if (status == 404 || type == 'NotFoundError') {
     return PublishError.configuration('$what: ${f.url.host} has no Ghost Admin API at ${f.url.path}$suffix. '
@@ -154,7 +165,7 @@ Future<T> guardGhost<T>(String what, Future<T> Function() call) async {
   } on HttpFailure catch (f) {
     throw AdapterException(mapGhostFailure(f, what));
   } on Exception catch (e) {
-    throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+    throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
   }
 }
 

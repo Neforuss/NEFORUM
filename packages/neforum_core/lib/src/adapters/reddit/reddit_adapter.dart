@@ -68,6 +68,9 @@ class RedditAdapter extends PlatformAdapter {
   }
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.redditFor(account);
+
+  @override
   PlatformDescriptor get descriptor => redditDescriptor;
 
   static const String _apiIntro = '''
@@ -224,8 +227,9 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     );
   }
 
-  /// Access tokens last one hour. Reddit's refresh response carries no new
-  /// refresh token, so the stored one is kept (toSecrets merges).
+  /// Access tokens last one hour. Whether a refresh also returns a new refresh
+  /// token is not settled (Reddit's 2021 posts could not be read); either way
+  /// this works: toSecrets keeps the stored one or stores the new one.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -251,7 +255,7 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
       throw AdapterException(e.toRefreshError('Reddit'));
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
-        throw AdapterException(PublishError.network('Could not reach Reddit to renew the sign-in: $e'));
+        throw AdapterException(PublishError.network('Could not reach Reddit to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
       rethrow;
     }
@@ -367,7 +371,7 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     } on HttpFailure catch (e) {
       return PublishResult.failure(RedditApi.mapHttpError(e));
     } on Object catch (e) {
-      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Reddit: $e'));
+      if (NeforumHttp.isTransportError(e)) return PublishResult.failure(PublishError.network('Could not reach Reddit: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       if (e is FormatException) {
         return PublishResult.failure(PublishError.platform('Reddit sent a response NEFORUM did not understand: $e'));
       }
@@ -385,32 +389,30 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     Uri? leaseSocket;
     switch (kind) {
       case _Kind.self:
-        ctx.progress('Posting to $where');
-        sub = await api.submit({...common, 'kind': 'self', 'text': body});
+        sub = await ctx.creating('Posting to $where', () => api.submit({...common, 'kind': 'self', 'text': body}));
       case _Kind.link:
-        ctx.progress('Posting to $where');
-        sub = await api.submit({...common, 'kind': 'link', 'url': variant.link!.trim()});
+        sub = await ctx.creating('Posting to $where', () => api.submit({...common, 'kind': 'link', 'url': variant.link!.trim()}));
       case _Kind.image:
-        ctx.progress('Uploading image 1 of 1');
+        ctx.uploading(variant.media.first, 'Uploading image 1 of 1');
         final img = await _upload(api, variant.media.first, ctx);
         leaseSocket = img.websocketUrl;
-        ctx.progress('Posting to $where');
-        sub = await api.submit({...common, 'kind': 'image', 'url': img.url});
+        sub = await ctx.creating('Posting to $where', () => api.submit({...common, 'kind': 'image', 'url': img.url}));
       case _Kind.gallery:
         sub = await _gallery(api, variant, common, body, where, ctx);
       case _Kind.video:
-        ctx.progress('Uploading video');
+        ctx.uploading(variant.media.firstWhere((m) => m.isVideo), 'Uploading video');
         final video = await _upload(api, variant.media.firstWhere((m) => m.isVideo), ctx);
         leaseSocket = video.websocketUrl;
         ctx.progress('Uploading video thumbnail');
         final poster = await _uploadPoster(api, variant, ctx);
-        ctx.progress('Posting to $where');
-        sub = await api.submit({
-          ...common,
-          'kind': _extraBool(variant, const ['videogif']) ? 'videogif' : 'video',
-          'url': video.url,
-          'video_poster_url': poster.url,
-        });
+        sub = await ctx.creating(
+            'Posting to $where',
+            () => api.submit({
+                  ...common,
+                  'kind': _extraBool(variant, const ['videogif']) ? 'videogif' : 'video',
+                  'url': video.url,
+                  'video_poster_url': poster.url,
+                }));
     }
     if (sub.id == null && (kind == _Kind.image || kind == _Kind.video)) {
       sub = await _awaitMedia(sub, leaseSocket, ctx);
@@ -437,30 +439,38 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
     );
   }
 
+  /// One photo or a video gets processed after it is posted; a gallery does not.
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) {
+    final kind = _kindFor(variant);
+    return ProgressShape.forVariant(variant, kind == _Kind.image || kind == _Kind.video ? ProgressFamily.waitNoNumber : ProgressFamily.direct, steps: 1);
+  }
+
   Future<RedditSubmission> _gallery(RedditApi api, PostVariant variant, Map<String, String> common, String body,
       String where, AdapterContext ctx) async {
     final images = variant.media.where((m) => m.isImage).toList();
     final items = <Map<String, Object?>>[];
     for (var i = 0; i < images.length; i++) {
-      ctx.progress('Uploading image ${i + 1} of ${images.length}');
+      ctx.uploading(images[i], 'Uploading image ${i + 1} of ${images.length}');
       final up = await _upload(api, images[i], ctx);
       items.add({'media_id': up.assetId, 'caption': '', 'outbound_url': ''});
     }
-    ctx.progress('Posting to $where');
-    return api.submitGallery({
-      'api_type': 'json',
-      'sr': common['sr'],
-      'title': common['title'],
-      'items': items,
-      'nsfw': common['nsfw'] == 'true',
-      'spoiler': common['spoiler'] == 'true',
-      'sendreplies': common['sendreplies'] == 'true',
-      'show_error_list': true,
-      'validate_on_submit': true,
-      if (common['flair_id'] != null) 'flair_id': common['flair_id'],
-      if (common['flair_text'] != null) 'flair_text': common['flair_text'],
-      if (body.isNotEmpty) 'text': body,
-    });
+    return ctx.creating(
+        'Posting to $where',
+        () => api.submitGallery({
+              'api_type': 'json',
+              'sr': common['sr'],
+              'title': common['title'],
+              'items': items,
+              'nsfw': common['nsfw'] == 'true',
+              'spoiler': common['spoiler'] == 'true',
+              'sendreplies': common['sendreplies'] == 'true',
+              'show_error_list': true,
+              'validate_on_submit': true,
+              if (common['flair_id'] != null) 'flair_id': common['flair_id'],
+              if (common['flair_text'] != null) 'flair_text': common['flair_text'],
+              if (body.isNotEmpty) 'text': body,
+            }));
   }
 
   /// Image/video submissions return no id; Reddit reports the post on a
@@ -470,10 +480,14 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
   Future<RedditSubmission> _awaitMedia(RedditSubmission sub, Uri? leaseSocket, AdapterContext ctx) async {
     final ws = sub.websocketUrl ?? leaseSocket;
     if (ws == null) return sub;
-    ctx.progress('Waiting for Reddit to process the media');
+    ctx.serverWait('Waiting for Reddit to process the media');
     String? message;
     try {
-      message = await _socketReader(ws, mediaSocketTimeout);
+      final read = _socketReader(ws, mediaSocketTimeout);
+      final signal = ctx.cancellation;
+      // Cancel ends the wait, not the post: Reddit has it, so this reads as a socket
+      // that said nothing.
+      message = await (signal == null ? read : Future.any<String?>([read, signal.whenCancelled.then<String?>((_) => null)]));
     } on Object catch (e) {
       ctx.log.warn('Reddit media status socket failed; the post is probably still being created', e);
       return sub;
@@ -517,11 +531,7 @@ On phones, images and videos go through the share sheet to the Reddit app. On a 
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   Map<String, String> _commonFields(PostVariant v, String sr, String title) {

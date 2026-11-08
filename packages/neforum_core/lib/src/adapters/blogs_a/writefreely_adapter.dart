@@ -39,6 +39,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'writefreely',
     name: 'Write.as / WriteFreely',
+    shortName: 'Write.as',
     iconKey: 'writefreely',
     homepage: 'https://writefreely.org',
     family: 'writefreely',
@@ -77,6 +78,9 @@ class WriteFreelyAdapter extends PlatformAdapter {
     serverSideScheduling: false,
     supportsLinkField: false,
   );
+
+  @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.writeFreely(account);
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
@@ -341,14 +345,15 @@ class WriteFreelyAdapter extends PlatformAdapter {
       if (!anonymous) 'slug': ?slug,
     };
     final url = anonymous ? joinPath(instance, '/api/posts') : joinPath(instance, '/api/collections/$alias/posts');
-    ctx.progress('Publishing the post');
     final NeforumResponse r;
     try {
-      r = await ctx.http.postJson(url, payload, headers: _authHeaders(anonymous ? null : token));
+      r = await ctx.creating('Publishing the post', () => ctx.http.postJson(url, payload, headers: _authHeaders(anonymous ? null : token)));
+    } on AdapterException {
+      rethrow;
     } on HttpFailure catch (f) {
       throw AdapterException(mapWriteFreelyFailure(f, 'WriteFreely post'));
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('WriteFreely post failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('WriteFreely post failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
     final data = blogMap(r.jsonMap['data']);
     final postId = blogStr(data?['id']);
@@ -376,13 +381,13 @@ class WriteFreelyAdapter extends PlatformAdapter {
           'WriteFreely cannot store images. Configure a public media host in NEFORUM settings '
           '(or turn on Snap.as for a Write.as account), or remove the images.'));
     }
-    ctx.progress('Uploading image ${index + 1} of $total to ${useSnap ? 'Snap.as' : host!.name}');
+    ctx.uploading(m, 'Uploading image ${index + 1} of $total to ${useSnap ? 'Snap.as' : host!.name}');
     final bytes = await readBlogMedia(ctx, m);
     if (useSnap) return _snapAs(m, bytes, token, index, total, ctx);
     try {
-      return (await host!.upload(m, bytes)).url.toString();
+      return (await host!.upload(m, bytes, via: ctx.http)).url.toString();
     } on Object catch (e) {
-      throw AdapterException(PublishError.network('Upload to ${host!.name} failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('Upload to ${host!.name} failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -402,7 +407,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
     } on AdapterException {
       rethrow;
     } on Exception catch (e) {
-      throw AdapterException(PublishError.network('$what failed: $e', raw: '$e'));
+      throw AdapterException(PublishError.network('$what failed: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -467,7 +472,7 @@ PublishError mapWriteFreelyFailure(HttpFailure f, String what) {
     401 => PublishError.auth('$what: the access token is no longer valid$suffix. Reconnect the account.',
         raw: raw, statusCode: 401),
     // "You don't have permission to add to this collection." / "Account is silenced."
-    403 => PublishError.auth('$what: this account is not allowed to do that$suffix', raw: raw, statusCode: 403),
+    403 => PublishError.auth('$what: this account is not allowed to do that$suffix', raw: raw, statusCode: 403, notAllowed: true),
     429 => PublishError.quota(
         '$what: posting limit reached$suffix. Free Write.as accounts can only publish a few posts per day.',
         raw: raw,

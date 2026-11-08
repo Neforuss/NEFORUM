@@ -29,7 +29,7 @@ This guide sets up Flickr. By default NEFORUM hands your photos to Flickr's uplo
 
 Flickr only receives posts marked as artwork, with at least one image or video.
 
-Signing in uses OAuth 1.0a: NEFORUM gets a temporary token, you allow it on Flickr's authorization page, and NEFORUM swaps the temporary token for your own. That token never expires and never changes, so the account stays connected on every device you copy it to.
+Signing in uses OAuth 1.0a: NEFORUM gets a temporary token, you allow it on Flickr's authorization page, and NEFORUM swaps the temporary token for your own. That token is not renewed and does not change, so the account stays connected on every device you copy it to. Flickr's API pages publish no end date for it.
 
 Each file is uploaded on its own (`https://up.flickr.com/services/upload/`) and becomes its own Flickr photo; the files of one post share the title, description and tags.
 

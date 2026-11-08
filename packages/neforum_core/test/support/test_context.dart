@@ -145,7 +145,7 @@ class FakeMediaHost implements MediaHost {
   int? get maxBytes => null;
 
   @override
-  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl}) async {
+  Future<HostedMedia> upload(MediaAttachment media, Uint8List bytes, {Duration? ttl, NeforumHttp? via}) async {
     uploaded.add(media);
     return HostedMedia(hostId: id, url: Uri.parse('https://cdn.example.test/${media.id}'), deleteHandle: media.id);
   }

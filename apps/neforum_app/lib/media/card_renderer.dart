@@ -12,6 +12,7 @@ import 'aligned_text.dart';
 import 'caption_fonts.dart';
 import 'card_design.dart';
 import 'card_templates.dart' show cardShapeOf, cardTemplateById, kCardTemplatePictureAreas;
+import 'emoji_text.dart';
 import 'photo_composite.dart';
 import 'photo_pixels.dart';
 import 'render_parameters.dart' show stableHash;
@@ -178,6 +179,7 @@ class CardRenderInput {
 /// still-picture video of a sound file).
 Future<Uint8List> renderCardDesign(CardRenderInput input, {bool png = false}) async {
   final width = input.size.width.round(), height = input.size.height.round();
+  await EmojiSupport.prepare([...input.texts.values, for (final b in input.design.blocks) b.text].join(' '));
   final words = await rasterizeWordsLayer(width, height, (canvas) {
     CardDesignPainter(
       design: input.design,
@@ -449,7 +451,9 @@ class CardDesignPainter extends CustomPainter {
         : null;
     return TextStyle(
       fontFamily: alias ?? resolved.family,
-      fontFamilyFallback: alias == null ? [...resolved.fallback, ...kCaptionFontFallbacks] : [resolved.family, ...resolved.fallback, ...kCaptionFontFallbacks],
+      fontFamilyFallback: alias == null
+          ? [...resolved.fallback, ...kCaptionFontFallbacks]
+          : [...captionFontSubsetAliases(b.customFont), resolved.family, ...resolved.fallback, ...kCaptionFontFallbacks],
       fontWeight: weight,
       fontStyle: b.italic ? FontStyle.italic : FontStyle.normal,
       fontVariations: alias == null && resolved.variations.isNotEmpty ? [FontVariation('wght', b.weight.toDouble())] : null,
@@ -637,10 +641,7 @@ class _LaidText extends _LaidBlock {
 class _LaidSignature extends _LaidBlock {
   _LaidSignature(super.block, String words, TextStyle style, this.u)
       : word = TextPainter(
-          text: TextSpan(
-            text: words,
-            style: style.copyWith(fontFamily: block.customFont == null ? Fonts.display : style.fontFamily, fontWeight: FontWeight.w800, height: 1),
-          ),
+          text: emojiSpan(words, style.copyWith(fontFamily: block.customFont == null ? Fonts.display : style.fontFamily, fontWeight: FontWeight.w800, height: 1)),
           textDirection: TextDirection.ltr,
           maxLines: 1,
         )..layout();

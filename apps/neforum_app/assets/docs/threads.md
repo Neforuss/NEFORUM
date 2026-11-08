@@ -104,7 +104,7 @@ Status as of October 2026:
 - It asks Meta about it with `GET /v1.0/debug_token` (valid? which permissions? when does it expire?) and stops with a clear message if `threads_content_publish` is missing.
 - It keeps a long-lived token as it is. Tokens from the User Token Generator are long-lived, so **no Threads app secret is needed**.
 - Only if Meta reports a 1-hour token (for example one made with another tool) does NEFORUM ask for the **Threads app secret**, which it needs to swap the token for a 60-day one with `GET /access_token?grant_type=th_exchange_token`. If `debug_token` gives no answer, NEFORUM keeps the token as it is, unless you filled in the app secret: then it tries the swap first and keeps the pasted token if Meta refuses.
-- It stores the token and renews it automatically (see *Tokens*).
+- It stores the token and renews it when it posts (see *Tokens*).
 
 ### Why the sign-in page does not load
 
@@ -186,7 +186,7 @@ All numbers are from the Threads *Posts* guide and the *Troubleshooting* page:
 | Container status `EXPIRED` | "The container was not published within 24 hours". Try again. |
 | "The media with id … cannot be found" (Meta error 24, subcode 4279009, "Media Not Found"), or NEFORUM's "Threads hadn't finished preparing the post" | Threads was asked to publish a post it had not finished preparing. This can happen with text posts too, and even right after Meta reported a photo as ready. NEFORUM checks every post's status before publishing it (text posts usually pass on the first check), and if Threads still answers "not found" it waits 3, 10 and 30 seconds, checks the status again and tries again. If the message still reaches you, that post was not published (in a thread, the parts NEFORUM lists as posted stay live). Retrying a minute later usually works. If it keeps happening with photos or videos, Threads may be struggling to fetch them from your media host: see the [media hosting guide](../media-hosts.md). |
 | Other people do not see your posts | Meta's general App modes rule is that data created by an app in Development mode "can only be seen by role users". If that happens, **Publish** the app (left menu). As of October 2026 the only required item was a **Privacy policy URL**; an app icon and a data deletion URL were optional. You can enter NEFORUM's, `https://neforus.com/neforum/privacy/`, or your own: see [A privacy policy URL for your Meta app](../meta-privacy-policy.md). |
-| Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. Reconnect. |
+| Everything stopped after months of silence | Meta marks an app **Inactive** after 90 days with no logins, API calls or webhooks and invalidates its tokens. An admin must first restore the app in the App Dashboard, then reconnect. Permissions removed for disuse need approving again. |
 
 ## Where Meta's documentation disagrees
 

@@ -166,8 +166,8 @@ class InstagramApi {
     for (var i = 0; i < pollSchedule.length; i++) {
       final delay = pollSchedule[i];
       if (delay > Duration.zero) {
-        ctx.progress('Instagram is processing ${label ?? 'your media'}…');
-        await sleep(delay);
+        ctx.serverWait('Instagram is processing ${label ?? 'your media'}…');
+        await ctx.wait(delay, via: sleep);
       }
       final NeforumResponse res;
       try {
@@ -180,7 +180,7 @@ class InstagramApi {
       } on TimeoutException {
         throw AdapterException(PublishError.network('Timed out while $what'));
       } on http.ClientException catch (e) {
-        throw AdapterException(PublishError.network('Network error while $what: ${e.message}'));
+        throw AdapterException(PublishError.network('The connection failed while $what.', raw: NeforumHttp.transportDetails(e)));
       }
       final body = res.jsonMap;
       final code = _string(body['status_code']) ?? 'IN_PROGRESS';
@@ -204,9 +204,9 @@ class InstagramApi {
   }
 
   /// POST /{ig-user-id}/media_publish → published media id.
-  Future<String> publish(String igUserId, String token, String containerId) async {
+  Future<String> publish(String igUserId, String token, String containerId, {String label = 'Publishing to Instagram…'}) async {
     final res = await _guard('publishing the post',
-        () => ctx.http.postForm(graph('$igUserId/media_publish'), {'creation_id': containerId}, headers: _auth(token)));
+        () => ctx.creating(label, () => ctx.http.postForm(graph('$igUserId/media_publish'), {'creation_id': containerId}, headers: _auth(token))));
     final id = _string(res.jsonMap['id']);
     if (id == null) throw const AdapterException(PublishError.platform('Instagram returned no media id'));
     return id;
@@ -218,7 +218,7 @@ class InstagramApi {
       final res = await ctx.http.get(graph(mediaId, {'fields': 'permalink'}), headers: _auth(token));
       return _string(res.jsonMap['permalink']);
     } on Object catch (e) {
-      ctx.log.warn('Could not read the Instagram permalink for $mediaId', e);
+      ctx.log.warn('Could not read the Instagram permalink for $mediaId (${e.runtimeType})');
       return null;
     }
   }
@@ -233,7 +233,7 @@ class InstagramApi {
     } on TimeoutException {
       throw AdapterException(PublishError.network('Timed out while $what'));
     } on http.ClientException catch (e) {
-      throw AdapterException(PublishError.network('Network error while $what: ${e.message}'));
+      throw AdapterException(PublishError.network('The connection failed while $what.', raw: NeforumHttp.transportDetails(e)));
     }
   }
 
@@ -292,10 +292,10 @@ PublishError mapHttpFailure(HttpFailure f, {String? context}) {
     final flat = _text(body['error_message']);
     if (flat == null) return base;
     if (_text(body['error_type']) == 'OAuthException' && status < 500) {
-      return PublishError.auth('$prefix$flat', raw: raw, statusCode: status);
+      return PublishError.auth('$prefix$flat', raw: raw, statusCode: status, notAllowed: base.notAllowed);
     }
     return PublishError(
-        kind: base.kind, message: '$prefix$flat', raw: raw, statusCode: status, retryable: base.retryable, retryAfter: base.retryAfter);
+        kind: base.kind, notAllowed: base.notAllowed, message: '$prefix$flat', raw: raw, statusCode: status, retryable: base.retryable, retryAfter: base.retryAfter);
   }
   final e = Map<String, dynamic>.from(err);
   final code = _int(e['code']);
@@ -312,7 +312,7 @@ PublishError mapHttpFailure(HttpFailure f, {String? context}) {
     case 102: // session error
     case 10: // permission not granted
     case 200: // permission error
-      return PublishError.auth('$msg (reconnect your Instagram account)', raw: raw, statusCode: status);
+      return PublishError.auth('$msg (reconnect your Instagram account)', raw: raw, statusCode: status, notAllowed: code == 10 || code == 200 ? true : null);
     case 4: // app-level throttling
     case 17: // user-level throttling
     case 32:
@@ -328,13 +328,14 @@ PublishError mapHttpFailure(HttpFailure f, {String? context}) {
       return PublishError.validation(msg, raw: raw, statusCode: status);
   }
   if (type == 'OAuthException' && (status == 401 || status == 403)) {
-    return PublishError.auth(msg, raw: raw, statusCode: status);
+    return PublishError.auth(msg, raw: raw, statusCode: status, notAllowed: base.notAllowed);
   }
   if (status == 429) {
     return PublishError.quota(msg, raw: raw, statusCode: status, retryAfter: base.retryAfter ?? _bucRetryAfter(f.response.headers));
   }
   return PublishError(
     kind: base.kind,
+    notAllowed: base.notAllowed,
     message: msg,
     raw: raw,
     statusCode: status,
@@ -364,7 +365,7 @@ PublishError? _subcodeError(int sub, String msg, String? raw, int? status) {
           raw: raw, statusCode: status);
     case 2207050: // account restricted
       return PublishError.auth('$msg (open the Instagram app and complete the requested steps)',
-          raw: raw, statusCode: status);
+          raw: raw, statusCode: status, notAllowed: true);
     case 2207052: // media could not be fetched
       return PublishError(
           kind: PublishErrorKind.configuration,

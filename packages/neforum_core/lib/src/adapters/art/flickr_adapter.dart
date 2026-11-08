@@ -86,6 +86,9 @@ class FlickrAdapter extends PlatformAdapter {
   static const String uploadUrl = 'https://www.flickr.com/photos/upload/';
 
   @override
+  SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.flickr(account);
+
+  @override
   PlatformDescriptor get descriptor => flickrDescriptor;
 
   // ------------------------------------------------------------- connect
@@ -133,7 +136,7 @@ class FlickrAdapter extends PlatformAdapter {
 2. When Flickr has issued it, copy the **Key** and **Secret** into the fields below and click Connect.
 3. Flickr asks in the browser whether NEFORUM may upload to your account. Click **OK, I'll authorize it**.
 
-NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
+NEFORUM asks for `write`: upload photos. Flickr publishes no end date for the sign-in.''';
 
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
@@ -226,7 +229,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
     return 'Flickr sign-in failed: ${e.message}.';
   }
 
-  /// OAuth 1.0a tokens never expire and never change.
+  /// OAuth 1.0a tokens are not renewed. Flickr's API pages give them no end date.
   @override
   Future<Map<String, String>?> refreshSecrets(
       ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
@@ -270,7 +273,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
     } on Object catch (e) {
       final text = e.toString();
       if (NeforumHttp.isTransportError(e)) {
-        return PublishResult.failure(PublishError.network('Could not reach Flickr ($text)', raw: text));
+        return PublishResult.failure(PublishError.network('Could not reach Flickr (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e)));
       }
       return PublishResult.failure(PublishError.platform('Flickr upload failed: $text', raw: text));
     }
@@ -300,24 +303,28 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
     final ids = <String>[];
     final files = variant.media;
     for (var i = 0; i < files.length; i++) {
-      ctx.progress('Uploading ${files[i].isVideo ? 'video' : 'photo'} ${i + 1} of ${files.length}');
+      final label = 'Uploading ${files[i].isVideo ? 'video' : 'photo'} ${i + 1} of ${files.length}';
+      ctx.uploading(files[i], label);
       try {
         final bytes = await _read(files[i], ctx);
-        ids.add(await api.upload(files[i], bytes, fields));
+        // Each file is a post of its own as it arrives.
+        ids.add(await ctx.creating(label, () => api.upload(files[i], bytes, fields), uploads: true));
       } on Exception catch (e) {
         final error = switch (e) {
           FlickrException() => FlickrApi.mapUploadError(e, context: 'Uploading to Flickr'),
           AdapterException() => e.error,
           HttpFailure() => e.toPublishError(context: 'Uploading to Flickr'),
           _ => NeforumHttp.isTransportError(e)
-              ? PublishError.network('Could not reach Flickr ($e)', raw: '$e')
+              ? PublishError.network('Could not reach Flickr (${NeforumHttp.transportMessage(e)})', raw: NeforumHttp.transportDetails(e))
               : PublishError.platform('Flickr upload failed: $e', raw: '$e'),
         };
         if (ids.isEmpty) return PublishResult.failure(error);
         // Earlier files are on Flickr: a retry would upload them again.
         return PublishResult.failure(PublishError(
           kind: error.kind,
-          message: 'File ${i + 1} of ${files.length} failed: ${error.message}. The files already uploaded '
+          notAllowed: error.notAllowed,
+          outcomeUnknown: error.outcomeUnknown,
+          message: 'File ${i + 1} of ${files.length} failed: ${error.clause}. The files already uploaded '
               '(${ids.join(', ')}) stay on Flickr; upload the rest yourself.',
           statusCode: error.statusCode,
           raw: error.raw,
@@ -331,6 +338,10 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
       publishedAt: ctx.now(),
     );
   }
+
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) =>
+      ProgressShape.forVariant(variant, ProgressFamily.direct, steps: variant.media.length, interleaved: true);
 
   /// The upload fields every file of [v] gets: title, description, tags, who
   /// may see it, its safety level (the rating) and its content type.
@@ -363,11 +374,7 @@ NEFORUM asks for `write`: upload photos. The sign-in never expires.''';
   }
 
   static Future<Uint8List> _read(MediaAttachment m, AdapterContext ctx) async {
-    try {
-      return await ctx.readMedia(m);
-    } on Exception catch (e) {
-      throw AdapterException(PublishError.configuration('Could not read ${m.fileName ?? m.path}: $e'));
-    }
+    return ctx.readMedia(m);
   }
 
   // ------------------------------------------------------------- hand-off

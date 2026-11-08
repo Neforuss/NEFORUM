@@ -32,6 +32,13 @@ Each colour button shows its colour's hex code and opens the colour picker: swat
 
 The words' **Position** is one setting with the **Words** controls of the card's background photo (**Background: photo**): what you set in either shows in both. For the colour, both show what the card uses and the card follows the last change. **Automatic** (white or black, whichever reads on that photo), **White** and **Black** in the photo's controls are the photo's own: they go when the photo goes, so a colour picked for a light photo never stays on the plain card. **Other…** there, and the editor's words colour, are for every card; if one of those, or a handle colour, would be hard to read on the plain card once the photo is gone (or after picking another theme), the theme's colour comes back. The card's colour fills the room a whole photo leaves.
 
+### Emoji on a card
+
+An emoji on a card, on a caption or on the picture of a sound file is drawn in your device's own emoji font, in colour, on every card style, whatever font the words use. So what a card shows depends on the device that makes it: a device with an older emoji font cannot draw the newest emoji.
+
+- An emoji your device cannot draw is left off the picture, never drawn as a blank box or a "no glyph" tile. A message says which one. The text of the post keeps it, and it shows on the network for anyone whose device has it.
+- An emoji your device draws in pieces (Windows 10 draws a flag as two letters) stays on the picture as it draws here, and a message says so.
+
 ### Margins and place
 
 **Margins** is the room between the card's edges and everything on it, in pixels on a 1080 pixel wide card (92 is the usual). The footer with the signature moves in with it. **Position** puts the words at the top, the middle or the bottom of the room the card leaves them. On a full-screen card for TikTok, Snapchat or a story, the words and the handle still keep clear of the network's own buttons.
