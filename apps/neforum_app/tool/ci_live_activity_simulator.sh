@@ -140,11 +140,6 @@ xcrun simctl launch "$UDID" com.apple.Preferences
 sleep 4
 xcrun simctl io "$UDID" screenshot "$OUT/island-live.png"
 
-# Past the stale date. Nothing of NEFORUM's updates it from here on.
-REMAINING=$(( 50 - ( $(date +%s) - STARTED ) ))
-if [ "$REMAINING" -gt 0 ]; then sleep "$REMAINING"; fi
-xcrun simctl io "$UDID" screenshot "$OUT/island-stale.png"
-
 cat > "$OUT/read_text.swift" <<'SWIFT'
 import AppKit
 import Vision
@@ -159,10 +154,23 @@ for o in request.results ?? [] { print(o.topCandidates(1).first?.string ?? "") }
 SWIFT
 swiftc -o "$OUT/read_text" "$OUT/read_text.swift"
 "$OUT/read_text" "$OUT/island-live.png" | tee "$OUT/island-live.txt"
-"$OUT/read_text" "$OUT/island-stale.png" | tee "$OUT/island-stale.txt"
-
-# The island's small space holds "2/5" while live and "Paused" once stale.
+# The island's small space holds "2/5" while live.
 grep -q "2/5" "$OUT/island-live.txt" || { echo "The island did not show 2/5 while live"; exit 1; }
-grep -qi "Paused" "$OUT/island-stale.txt" || { echo "The island did not show Paused once stale"; exit 1; }
-if grep -q "2/5" "$OUT/island-stale.txt"; then echo "The stale island still shows its live words"; exit 1; fi
+
+# Past the 45 s stale date nothing of NEFORUM's updates it. iOS redraws a stale
+# activity with some delay (about 2 minutes once on CI), so the island is read
+# every 10 s for up to 5 minutes, and the delay is reported. It must say Paused
+# in the end and never keep its live words.
+REMAINING=$(( 50 - ( $(date +%s) - STARTED ) ))
+if [ "$REMAINING" -gt 0 ]; then sleep "$REMAINING"; fi
+stale=no
+for _ in $(seq 1 30); do
+  xcrun simctl io "$UDID" screenshot "$OUT/island-stale.png" > /dev/null
+  "$OUT/read_text" "$OUT/island-stale.png" > "$OUT/island-stale.txt"
+  if grep -qi "Paused" "$OUT/island-stale.txt" && ! grep -q "2/5" "$OUT/island-stale.txt"; then stale=yes; break; fi
+  sleep 10
+done
+cat "$OUT/island-stale.txt"
+echo "Paused showed $(( $(date +%s) - STARTED )) s after the last update (stale date 45 s)." | tee "$OUT/stale-delay.txt"
+[ "$stale" = yes ] || { echo "The island did not show Paused within 5 minutes of the stale date"; exit 1; }
 echo "Island live and stale both proved."
