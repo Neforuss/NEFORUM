@@ -12,7 +12,6 @@ import 'package:http/http.dart' as http;
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/instagram/instagram_adapter.dart';
 import 'package:neforum_core/src/adapters/threads/threads_adapter.dart';
-import 'package:neforum_core/src/adapters/youtube/youtube_adapter.dart';
 import 'package:test/test.dart';
 
 import '../support/test_context.dart';

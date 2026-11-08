@@ -467,7 +467,7 @@ void main() {
       }
 
       test('set right after the upload, with the image as the body; the details go in the upload', () async {
-        final (calls, ctx) = youtube(() => _json({'items': []}));
+        final (calls, ctx) = youtube(() => _json({'items': <Object>[]}));
         final res = await adapter.publish(
             _variant(extra: {'thumbnail': thumb, 'categoryId': '20', 'madeForKids': true, 'containsSyntheticMedia': true}), _byok(), _secrets, ctx);
         expect(res.success, isTrue, reason: '${res.error}');
