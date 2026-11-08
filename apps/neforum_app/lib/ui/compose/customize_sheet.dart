@@ -395,9 +395,10 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
 
   static String _placementHelp(PostPlacement p, String network) => switch (p) {
         PostPlacement.feed => 'A regular $network post with your caption.',
-        PostPlacement.story => 'A story without a caption: each photo or video becomes a frame, words only become a 9:16 text card.',
+        PostPlacement.story =>
+          'A story: each photo or video becomes a frame, words only become a 9:16 text card. A story has no caption field: with Caption on photo, your caption is written on its photo.',
         PostPlacement.feedAndStory =>
-          'The post with your caption, and the same photos or videos as a story (9:16, no caption) on the same account.',
+          'The post with your caption, and the same photos or videos as a story (9:16) on the same account. A story has no caption field: with Caption on photo, the story\'s photo gets your caption written on it too (Settings > Posting).',
       };
 
   static String _visLabel(PostVisibility v) => switch (v) {

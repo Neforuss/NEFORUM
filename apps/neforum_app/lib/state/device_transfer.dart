@@ -36,6 +36,7 @@ const Set<String> kExportableSettings = {
   'photoFit',
   'fillFramePlatforms',
   'captionPhotoPlatforms',
+  'captionOnStory', // 1.4.1: Instagram stories
   'defaultTargetIds',
   'publishedPostRetention',
   'timestampDisplay',

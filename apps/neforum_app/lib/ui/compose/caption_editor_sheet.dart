@@ -251,6 +251,14 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
             a.platformId == 'instagram' &&
             composer.selected.contains(a.id) &&
             placementOfExtra(composer.overrides[a.id]?.extra ?? const {}) == PostPlacement.story);
+    // 1.4.1: an Instagram account posting Post + Story: the story can get the
+    // caption on its photo too.
+    final postAndStory = !widget.defaults &&
+        networks.contains('instagram') &&
+        accounts.any((a) =>
+            a.platformId == 'instagram' &&
+            composer.selected.contains(a.id) &&
+            placementOfExtra(composer.overrides[a.id]?.extra ?? const {}) == PostPlacement.feedAndStory);
 
     Widget label(String text) => Padding(
           padding: const EdgeInsets.only(top: Space.lg, bottom: Space.sm),
@@ -290,6 +298,17 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
           title: Text('Write the caption on the ${registry.descriptor(id)?.name ?? id} photo', style: context.text.bodyMedium),
           value: captionOnPhotoFor(id, settings, composer.captionOnPhoto),
           onChanged: (on) => _setCaptionOn(id, on),
+        ),
+      if (postAndStory)
+        SwitchListTile(
+          key: const Key('caption-on-story'),
+          contentPadding: EdgeInsets.zero,
+          title: Text('Write it on the Instagram story too', style: context.text.bodyMedium),
+          subtitle: Text('A story has no caption field: its photo gets your caption, in the story\'s 9:16 frame.', style: context.text.bodySmall),
+          value: settings.captionOnStory,
+          onChanged: captionOnPhotoFor('instagram', settings, composer.captionOnPhoto)
+              ? (on) => ref.read(settingsProvider.notifier).update((x) => x.copyWith(captionOnStory: on))
+              : null,
         ),
       if (!widget.defaults) ...[
         label('Words on the photo'),

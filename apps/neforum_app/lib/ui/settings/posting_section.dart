@@ -80,6 +80,14 @@ class PostingSettingsSection extends ConsumerWidget {
             ),
         ]),
       ),
+      // 1.4.1: Instagram stories
+      SettingSwitch(
+        title: 'Write the caption on the Instagram story too',
+        description: 'For Post + Story on Instagram: a story has no caption field, so its photo gets your caption written on it '
+            'as well, in the story\'s 9:16 frame and the same style. Only when the caption goes on Instagram\'s photo.',
+        value: s.captionOnStory,
+        onChanged: (v) => n.update((x) => x.copyWith(captionOnStory: v)),
+      ),
       // 1.3: video
       SettingSwitch(
         title: 'Shrink videos that are too big for a network',

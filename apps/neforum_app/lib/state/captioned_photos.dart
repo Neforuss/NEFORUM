@@ -193,6 +193,80 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(mediaIds: [copy.id, ...ids.skip(1)])));
   }
 
+  // 1.4.1: Instagram Post + Story. A story has no caption field, so its first
+  // photo gets the caption written on it too, in the story's 9:16 frame
+  // (Settings: captionOnStory, on by default), unless the caption is off for
+  // Instagram on this post.
+  if (settings.captionOnStory) {
+    for (final original in post.targets) {
+      final t = p.targetFor(original.accountId)!;
+      final story = t.overrides.storyMediaIds;
+      if (story == null || story.isEmpty) continue;
+      final account = await s.accounts.get(t.accountId);
+      if (account == null || account.platformId != 'instagram' || !captionOnPhotoFor('instagram', settings, choices)) continue;
+      final adapter = s.registry.byId('instagram');
+      if (adapter == null) continue;
+      if (resolver.resolve(p, t, adapter.descriptorForAccount(account), account: account).placement != PostPlacement.feedAndStory) continue;
+      final first = p.media.where((m) => m.id == story.first).firstOrNull;
+      if (first == null || first.kind != MediaKind.image || first.isTextCard || first.mimeType == 'image/gif') continue;
+      final words = look.wordsFor(captionWords(p, t));
+      if (words.isEmpty) continue;
+      const frame = 9 / 16;
+      // In a block: the frame is made from the photo the user attached. On the
+      // photo: the story's copy fitted to 9:16, as the story shows it.
+      final source = block ? (p.media.where((m) => m.id == first.derivedFrom).firstOrNull ?? first) : first;
+      final params = <String, dynamic>{
+        'kind': RenderKind.caption,
+        'platform': 'instagram',
+        'story': true,
+        'style': look.toJson(),
+        'textHash': stableHash(words),
+        if (block) ...{'frameAspect': frame, 'fit': settings.photoFit.name, 'layout': kCaptionBlockLayoutVersion},
+        if (await fontMissing()) 'fontFallback': true,
+      };
+      final key = '${_captionKeyPrefix}instagram-story|${source.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
+      var copy = used[key] ?? pool[key];
+      if (copy == null) {
+        try {
+          final out = await renderCaptionedPhoto(
+            await s.media.read(source),
+            text: words,
+            font: look.font.resolve('instagram'),
+            platformId: 'instagram',
+            style: look,
+            frameAspect: block ? frame : null,
+            fit: settings.photoFit,
+          ).timeout(kRenderTimeLimit);
+          if (out != null) {
+            final made = await s.media.importBytes(out.bytes, fileName: _captionedName(source), mimeHint: 'image/jpeg');
+            copy = MediaAttachment(
+              id: made.id,
+              path: made.path,
+              mimeType: 'image/jpeg',
+              sizeBytes: made.sizeBytes,
+              width: out.width,
+              height: out.height,
+              fileName: made.fileName,
+              generated: true,
+              derivedFrom: first.derivedFrom ?? first.id,
+              fitKey: key,
+              renderParameters: params,
+            );
+          }
+        } on TimeoutException {
+          reportRenderWarning('Writing the caption on the Instagram story took too long, so the story goes without it. '
+              'To try again, open the post and save it again.');
+        } on Object catch (e) {
+          debugPrint('Could not write the caption on the story photo ${first.fileName ?? first.id}: $e');
+        }
+      }
+      if (copy == null) continue;
+      copy = copy.copyWith(altText: first.altText, clearAltText: first.altText == null);
+      used[key] = copy;
+      p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(storyMediaIds: [copy.id, ...story.skip(1)])));
+    }
+  }
+
   final keep = {for (final m in used.values) m.id};
   for (final m in pool.values) {
     if (!keep.contains(m.id)) await s.media.discard(m);
