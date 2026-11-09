@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.4.2" date="2026-11-08">
+      <description>
+        <p>NEFORUM starts on Linux systems without WebKitGTK. A sign-in component that NEFORUM uses only on phones and Macs needed it, so the app would not open where it was missing; on Linux, sign-in goes through your own browser, and the build no longer depends on WebKit at all.</p>
+      </description>
+    </release>
     <release version="1.4.1" date="2026-11-08">
       <description>
         <p>A fix update. The browser extension (1.1.4) has an I posted it button on the page, and it sees a post you make with the site's own Post button (TikTok), so the hand-off moves on to the next network. YouTube Posts' Attach puts the photo into the post box through its image button instead of the search bar. A caption in a block above a TikTok or Instagram photo takes only the room its words need, with the photo right under it, and centred words sit in the middle of the frame; the caption editor's preview keeps the network's shape. With Post + Story on Instagram, the story's photo gets the caption written on it too. Lemmy gets a sound file as a video that plays in the post, and NEFORUM checks the instance kept its sound. YouTube with your own keys is now called YouTube videos, says plainly that it uploads videos, and takes a category, made-for-kids and altered-content choices and a custom thumbnail; YouTube Posts takes a words-only post with the post's text card, or as text only. The Linux desktop entry passes the AppImage catalog's validator.</p>
