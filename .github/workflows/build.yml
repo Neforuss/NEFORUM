@@ -504,6 +504,16 @@ jobs:
           flutter build linux --release
           ls -l "build/linux/${{ matrix.arch }}/release/bundle"
           file "build/linux/${{ matrix.arch }}/release/bundle/NEFORUM"
+          # 1.4.2: nothing in the bundle may need WebKitGTK. It is not installed
+          # everywhere (the AppImage catalog's test system), and a missing one
+          # stopped NEFORUM from starting at all; Linux signs in without it.
+          bundle="build/linux/${{ matrix.arch }}/release/bundle"
+          for f in "$bundle/NEFORUM" "$bundle"/lib/*.so; do
+            if ldd "$f" | grep -Ei 'webkit|javascriptcore'; then
+              echo "::error::$f needs WebKitGTK: see linux/runner/webview_stub.cc"; exit 1
+            fi
+          done
+          ls -l "$bundle/lib/libdesktop_webview_window_plugin.so"
       # The real Linux build under an X server, with a Secret Service (GNOME
       # Keyring) on a private session bus: first run, every section, the
       # keyring, the demo workspace, a text card, the clipboard. Then the
