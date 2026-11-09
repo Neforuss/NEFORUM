@@ -74,6 +74,22 @@ set_target_properties(${BINARY_NAME}
 # them to the application.
 include(flutter/generated_plugins.cmake)
 
+# NEFORUM: desktop_webview_window (from flutter_web_auth_2, used for sign-in on
+# Android, iOS and macOS only) links WebKitGTK 4.1, so NEFORUM did not start on
+# a Linux system without it. Linux signs in through a loopback server instead,
+# so the bundle gets a stand-in library of the same name that only answers the
+# registration call (runner/webview_stub.cc), and needs no WebKit.
+if(TARGET desktop_webview_window_plugin)
+  add_library(neforum_webview_stub SHARED "runner/webview_stub.cc")
+  apply_standard_settings(neforum_webview_stub)
+  set_target_properties(neforum_webview_stub PROPERTIES
+    OUTPUT_NAME "desktop_webview_window_plugin"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/webview_stub")
+  add_dependencies(${BINARY_NAME} neforum_webview_stub)
+  list(REMOVE_ITEM PLUGIN_BUNDLED_LIBRARIES "$<TARGET_FILE:desktop_webview_window_plugin>")
+  list(APPEND PLUGIN_BUNDLED_LIBRARIES "$<TARGET_FILE:neforum_webview_stub>")
+endif()
+
 
 # === Installation ===
 # By default, "installing" just makes a relocatable bundle in the build
