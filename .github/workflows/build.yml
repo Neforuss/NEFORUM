@@ -74,6 +74,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          # Gradle's downloads (the Kotlin compiler comes from a GitHub release)
+          # are kept between runs: fewer chances for a download outage to fail a build.
+          cache: gradle
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -170,6 +173,9 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+          # Gradle's downloads (the Kotlin compiler comes from a GitHub release)
+          # are kept between runs: fewer chances for a download outage to fail a build.
+          cache: gradle
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -705,6 +711,8 @@ jobs:
           '
       - name: Package (tarball and AppImage)
         working-directory: apps/neforum_app
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           bundle="$PWD/build/linux/${{ matrix.arch }}/release/bundle"
@@ -722,10 +730,27 @@ jobs:
           # AppImage, with appimagetool and its runtime from pinned releases.
           tools="$RUNNER_TEMP/appimage-tools"
           mkdir -p "$tools"
-          curl -fsSL -o "$tools/appimagetool" \
-            "https://github.com/AppImage/appimagetool/releases/download/$APPIMAGETOOL_VERSION/appimagetool-${{ matrix.appimage-arch }}.AppImage"
-          curl -fsSL -o "$tools/runtime" \
-            "https://github.com/AppImage/type2-runtime/releases/download/$APPIMAGE_RUNTIME_VERSION/runtime-${{ matrix.appimage-arch }}"
+          # Through the GitHub API with the job's token, retried: anonymous
+          # release downloads timed out for an hour on 2026-11-09 (GitHub's
+          # "surge in anonymous users" incident) and failed the v1.4.2 tag run.
+          # The pinned hashes below still check every byte.
+          release_get() {
+            if ! command -v gh > /dev/null; then
+              curl -fsSL --retry 6 --retry-all-errors --retry-delay 20 -o "$4" "https://github.com/$1/releases/download/$2/$3"
+              return
+            fi
+            for attempt in 1 2 3 4 5 6; do
+              gh release download "$2" --repo "$1" --pattern "$3" --output "$4" --clobber && return 0
+              echo "release download $1 $3: attempt $attempt failed" >&2
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
+          raw_get() {
+            curl -fsSL --retry 6 --retry-all-errors --retry-delay 20 -H "Authorization: Bearer $GH_TOKEN" -o "$1" "$2"
+          }
+          release_get AppImage/appimagetool "$APPIMAGETOOL_VERSION" "appimagetool-${{ matrix.appimage-arch }}.AppImage" "$tools/appimagetool"
+          release_get AppImage/type2-runtime "$APPIMAGE_RUNTIME_VERSION" "runtime-${{ matrix.appimage-arch }}" "$tools/runtime"
           echo "${{ matrix.appimagetool-sha256 }}  $tools/appimagetool" | sha256sum -c -
           echo "${{ matrix.runtime-sha256 }}  $tools/runtime" | sha256sum -c -
           chmod +x "$tools/appimagetool"
@@ -745,9 +770,9 @@ jobs:
           # 1.4.0 failed the catalog on a .desktop key these older tools reject.
           # mimetype (libfile-mimeinfo-perl): the lint checks .DirIcon is a PNG with it, as the catalog does.
           sudo apt-get install -y desktop-file-utils appstream libfile-mimeinfo-perl > /dev/null
-          curl -fsSL -o "$tools/appdir-lint.sh" \
+          raw_get "$tools/appdir-lint.sh" \
             "https://raw.githubusercontent.com/AppImage/appimage.github.io/43bfa8028da03218288d73bbdf45fda2e18c98c5/code/appdir-lint.sh"
-          curl -fsSL -o "$tools/excludelist" \
+          raw_get "$tools/excludelist" \
             "https://raw.githubusercontent.com/AppImage/AppImages/15a64c20dc23a0154622ba25829364323903b6b5/excludelist"
           echo "835eb24ca7be3c7af028b6342aebe67f184759be2e54a865d246e6122535c476  $tools/appdir-lint.sh" | sha256sum -c -
           echo "50db0f894f34b169c47a5cbc0c17dbab61e9edebca5bc8269a1e6ac1bf4bdad9  $tools/excludelist" | sha256sum -c -
