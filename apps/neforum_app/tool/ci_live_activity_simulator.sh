@@ -37,6 +37,9 @@ xcrun simctl boot "$UDID" || true
 xcrun simctl bootstatus "$UDID" -b
 
 flutter build ios --simulator --debug --config-only -t integration_test/live_activity_probe.dart --dart-define=NEFORUM_MOBILE=true
+# Swift packages first (PDFium's xcframework is a GitHub release download),
+# retried on network failures only: one failed the v1.4.2 tag build.
+bash tool/retry_on_network.sh 4 xcodebuild -resolvePackageDependencies -workspace ios/Runner.xcworkspace -scheme Runner -derivedDataPath build/ios-simulator
 # Ad hoc signed, because the simulator will not load an extension with no signature.
 xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Debug \
   -sdk iphonesimulator -destination "id=$UDID" -derivedDataPath build/ios-simulator \

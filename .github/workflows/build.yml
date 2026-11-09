@@ -28,6 +28,9 @@ jobs:
         with:
           path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
           key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
+      - name: CI scripts - network retry cases
+        working-directory: apps/neforum_app
+        run: bash tool/retry_on_network_test.sh
       - name: Core - analyze and test
         working-directory: packages/neforum_core
         run: |
@@ -129,6 +132,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh android-arm android-arm64 android-x64 linux-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
+      # Gradle itself comes from a GitHub release (services.gradle.org redirects
+      # there): put it where the wrapper looks first, through the API, retried.
+      - name: Gradle for the wrapper (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tool/prefetch_gradle.sh || echo "::warning::Gradle prefetch failed; the wrapper will try its own download"
       - name: Build APK
         working-directory: apps/neforum_app
         run: |
@@ -206,6 +217,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh android-arm android-arm64 android-x64 linux-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
+      # Gradle itself comes from a GitHub release (services.gradle.org redirects
+      # there): put it where the wrapper looks first, through the API, retried.
+      - name: Gradle for the wrapper (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash tool/prefetch_gradle.sh || echo "::warning::Gradle prefetch failed; the wrapper will try its own download"
       - name: Build the probe (profile, AOT as shipped)
         working-directory: apps/neforum_app
         run: |
@@ -485,6 +504,8 @@ jobs:
           # only prepares the project and Xcode builds with signing off for
           # every target.
           flutter build ios --release --no-codesign --config-only --dart-define=NEFORUM_MOBILE=true
+          # Swift packages (PDFium's xcframework is a GitHub release download), retried on network failures only.
+          bash tool/retry_on_network.sh 4 xcodebuild -resolvePackageDependencies -workspace ios/Runner.xcworkspace -scheme Runner -derivedDataPath build/ios-unsigned
           xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release \
             -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/ios-unsigned \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" build
@@ -776,7 +797,8 @@ jobs:
             "https://raw.githubusercontent.com/AppImage/AppImages/15a64c20dc23a0154622ba25829364323903b6b5/excludelist"
           echo "835eb24ca7be3c7af028b6342aebe67f184759be2e54a865d246e6122535c476  $tools/appdir-lint.sh" | sha256sum -c -
           echo "50db0f894f34b169c47a5cbc0c17dbab61e9edebca5bc8269a1e6ac1bf4bdad9  $tools/excludelist" | sha256sum -c -
-          EXCLUDELIST="$tools/excludelist" bash "$tools/appdir-lint.sh" "$appdir"
+          # Retried only on a network failure: its link check fetches github.com.
+          EXCLUDELIST="$tools/excludelist" bash "$GITHUB_WORKSPACE/apps/neforum_app/tool/retry_on_network.sh" 4 bash "$tools/appdir-lint.sh" "$appdir"
           # --appimage-extract-and-run: CI runners have no FUSE.
           ARCH=${{ matrix.appimage-arch }} "$tools/appimagetool" --appimage-extract-and-run --no-appstream \
             --runtime-file "$tools/runtime" "$appdir" "$GITHUB_WORKSPACE/NEFORUM-${{ matrix.appimage-arch }}.AppImage"
