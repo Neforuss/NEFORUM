@@ -10,6 +10,7 @@ import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
+import '../../widgets/platform_site_link.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
@@ -189,6 +190,9 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
               Text('Connect ${d.name}', style: context.text.headlineMedium),
               const SizedBox(height: Space.xs),
               TierBadge(widget.tier, dense: false),
+              // 1.4.2: where to make an account first, for someone with none.
+              const SizedBox(height: Space.xs),
+              PlatformSiteLink(d, lead: 'No ${d.name} account yet?'),
             ]),
           ),
           if (d.setupGuide != null)
