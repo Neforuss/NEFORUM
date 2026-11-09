@@ -41,7 +41,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
     name: 'Write.as / WriteFreely',
     shortName: 'Write.as',
     iconKey: 'writefreely',
-    homepage: 'https://writefreely.org',
+    homepage: 'https://write.as', // the hosted WriteFreely, where an account is made
     family: 'writefreely',
     tiers: {PlatformTier.openApi, PlatformTier.handoff},
     defaultTier: PlatformTier.openApi,

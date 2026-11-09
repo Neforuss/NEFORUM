@@ -75,7 +75,7 @@
   <releases>
     <release version="1.4.2" date="2026-11-08">
       <description>
-        <p>NEFORUM starts on Linux systems without WebKitGTK. A sign-in component that NEFORUM uses only on phones and Macs needed it, so the app would not open where it was missing; on Linux, sign-in goes through your own browser, and the build no longer depends on WebKit at all.</p>
+        <p>NEFORUM starts on Linux systems without WebKitGTK. A sign-in component that NEFORUM uses only on phones and Macs needed it, so the app would not open where it was missing; on Linux, sign-in goes through your own browser, and the build no longer depends on WebKit at all. Adding an account shows each platform's own site, such as tumblr.com or facebook.com, to make an account there first, and the Write.as logo is sharp.</p>
       </description>
     </release>
     <release version="1.4.1" date="2026-11-08">

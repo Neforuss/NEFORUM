@@ -7,6 +7,7 @@ import '../../state/providers.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/layout.dart';
+import '../../widgets/platform_site_link.dart';
 import '../../widgets/surfaces.dart';
 
 /// The gallery's filters, in the order of their chips.
@@ -207,6 +208,10 @@ class _PlatformTileCard extends StatelessWidget {
             Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [for (final t in tiers) TierBadge(t)]),
             const SizedBox(height: Space.xs + 2),
             Text(d.accountRequirements, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.bodySmall?.copyWith(color: nf.textFaint, fontSize: 11.5)),
+            // 1.4.2: the platform's own site, for someone with no account
+            // there yet. Its tap opens the site, not the platform's setup.
+            const SizedBox(height: Space.xs),
+            PlatformSiteLink(d),
           ]),
         ),
       ]),

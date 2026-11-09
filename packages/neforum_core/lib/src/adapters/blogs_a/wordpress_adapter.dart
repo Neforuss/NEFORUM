@@ -54,7 +54,7 @@ class WordPressAdapter extends PlatformAdapter {
     id: 'wordpress',
     name: 'WordPress',
     iconKey: 'wordpress',
-    homepage: 'https://wordpress.org',
+    homepage: 'https://wordpress.com', // where an account is made; self-hosted sites work too
     family: 'wordpress',
     tiers: {PlatformTier.openApi, PlatformTier.handoff},
     defaultTier: PlatformTier.openApi,
