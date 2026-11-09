@@ -82,7 +82,13 @@ task_id() {
 api_level() { "$ADB" shell getprop ro.build.version.sdk | tr -d '\r'; }
 
 start_all() {
-  "$DART" run tool/android_background_probe/fake_mastodon.dart --port "$PORT" --log "$SERVER_LOG" --hold "$HOLD" &
+  # Run from a folder of its own: it needs only dart:io, and `dart run` inside the
+  # app package runs the app's build hooks first (PDFium and the NDK downloads),
+  # which on a cold runner took longer than the wait below (v1.4.1's tag run).
+  local server_dir
+  server_dir="$(mktemp -d)"
+  cp tool/android_background_probe/fake_mastodon.dart "$server_dir/" || fail "could not copy the fake server"
+  "$DART" "$server_dir/fake_mastodon.dart" --port "$PORT" --log "$SERVER_LOG" --hold "$HOLD" &
   SERVER_PID=$!
   local up=0
   until curl -fsS -X POST "http://127.0.0.1:$PORT/__mark?name=server-up" > /dev/null 2>&1; do
