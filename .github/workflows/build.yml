@@ -20,6 +20,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
       - name: Core - analyze and test
         working-directory: packages/neforum_core
         run: |
@@ -35,6 +43,16 @@ jobs:
           TZ=Australia/Lord_Howe dart test test/random_moment_real_zone_test.dart
       - name: Linux packages for the tray plugin's build hook
         run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh linux-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: App - analyze and test
         working-directory: apps/neforum_app
         run: |
@@ -61,6 +79,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
       - name: Linux packages for the tray plugin's build hook
         run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
       # Release signing key (docs/signing.md). Without these secrets the APKs
@@ -90,6 +116,16 @@ jobs:
           } > android/key.properties
           keytool -list -keystore android/app/neforum-release.jks -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" > /dev/null
           echo "Signing the APKs with the release key (alias $ANDROID_KEY_ALIAS)."
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh android-arm android-arm64 android-x64 linux-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Build APK
         working-directory: apps/neforum_app
         run: |
@@ -139,6 +175,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
       - name: Linux packages for the tray plugin's build hook
         run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
       - name: Enable KVM
@@ -146,6 +190,16 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh android-arm android-arm64 android-x64 linux-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Build the probe (profile, AOT as shipped)
         working-directory: apps/neforum_app
         run: |
@@ -184,6 +238,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
       - name: Card design goldens (recorded on Windows)
         working-directory: apps/neforum_app
         shell: pwsh
@@ -193,6 +255,16 @@ jobs:
         run: |
           flutter test test/card_design_test.dart
           if ($LASTEXITCODE -ne 0) { Write-Output '::warning::Card design goldens differ on the CI Windows runner'; exit $LASTEXITCODE }
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh win-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Integration test (real Windows build and plugins)
         working-directory: apps/neforum_app
         shell: pwsh
@@ -298,6 +370,24 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh mac-arm64 mac-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Build macOS
         working-directory: apps/neforum_app
         run: |
@@ -361,6 +451,24 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh mac-arm64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Build unsigned IPA
         working-directory: apps/neforum_app
         run: |
@@ -405,6 +513,24 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh mac-arm64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Start the activity, send the app away, read the island
         working-directory: apps/neforum_app
         run: |
@@ -430,8 +556,26 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
       - name: Linux packages for the tray plugin's build hook
         run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh linux-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Build web preview (demo workspace)
         working-directory: apps/neforum_app
         run: |
@@ -478,6 +622,14 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
       # Flutter publishes no SDK archive for Linux on arm64; the Git checkout of
       # the same release fetches the arm64 Dart SDK and engine itself.
       - name: Flutter SDK (arm64, from the release tag)
@@ -495,6 +647,16 @@ jobs:
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libstdc++-12-dev \
             libayatana-appindicator3-dev libsecret-1-dev libx11-dev libxi-dev libwebkit2gtk-4.1-dev libsoup-3.0-dev \
             xvfb xauth dbus-x11 gnome-keyring libgl1-mesa-dri file xdotool
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh linux-${{ matrix.arch }} || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Build Linux
         working-directory: apps/neforum_app
         run: |
@@ -620,12 +782,30 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+      # PDFium comes from a GitHub release download in pdfium_dart's build hook,
+      # which skips it when the library is already in the shared hook output: a
+      # 504 from GitHub's download server once failed six jobs of the v1.4.2 tag run.
+      - name: Cache PDFium (pdfium_dart build hook)
+        uses: actions/cache@v4
+        with:
+          path: apps/neforum_app/.dart_tool/hooks_runner/shared/pdfium_dart
+          key: pdfium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/neforum_app/pubspec.lock') }}
       - name: Linux packages for the tray plugin's build hook
         run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-3-dev libx11-dev libxi-dev
       - name: Extension tests
         run: node --test extensions/browser/test/background.test.mjs extensions/browser/test/content.test.mjs extensions/browser/test/main.test.mjs
       - name: Extension test pages in headless Chrome (real clicks)
         run: node extensions/browser/test/pages.mjs "$(command -v google-chrome || command -v chromium)"
+      # pdfium_dart's build hook downloads PDFium from a GitHub release address
+      # that answered 504 for an hour on 2026-11-09 (six failed jobs of the
+      # v1.4.2 tag run). This puts the libraries where the hook looks first,
+      # through the GitHub API with retries: see tool/prefetch_pdfium.sh.
+      - name: PDFium for the build hook (GitHub API, retried)
+        working-directory: apps/neforum_app
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: flutter pub get > /dev/null && bash tool/prefetch_pdfium.sh linux-x64 || echo "::warning::PDFium prefetch failed; the build hook will try its own download"
       - name: Build the Chrome and Firefox extensions
         working-directory: apps/neforum_app
         run: |
