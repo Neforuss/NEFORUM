@@ -7,7 +7,12 @@ The app is the server; the extension's background script is the only client.
 
 - HTTP on **127.0.0.1** only, on the first port it can open of **52772 to 52779**, then
   **41772 to 41779** (52771 is the OAuth loopback). The extension finds the app by calling
-  `GET /v1/hello` on each port in turn, in the same order (the port that answered last first).
+  `GET /v1/hello`, waiting up to 5 s for an answer: first on the port that answered last, alone;
+  otherwise on every port at once, taking the first in the same order that answers. That search
+  carries no token; only the port found to be NEFORUM gets it (a second hello, for `paired`). A
+  program on an earlier port that takes the connection but never answers delays the search by
+  those 5 s. Extensions before 1.1.4 asked one port after another and gave each 900 ms, so an app
+  busy for longer looked closed.
 - Why two ranges: 52772-52779 lie in Windows' dynamic port range (49152-65535), where Hyper-V
   (used by WSL, Docker and Windows Sandbox) reserves random blocks of ports at startup. Opening a
   reserved port fails with "access forbidden" (error 10013), so the app moves on, and the 4177x

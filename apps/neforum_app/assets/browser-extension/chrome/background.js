@@ -17,6 +17,14 @@ const PORTS = globalThis.NEFORUM_PORTS ?? [
   41772, 41773, 41774, 41775, 41776, 41777, 41778, 41779,
 ];
 
+/**
+ * How long a port gets to answer /v1/hello. Every port is asked at once, so
+ * this is also the longest a search can take; a NEFORUM that is busy for a
+ * moment is still found rather than taken for "not running". Tests set
+ * NEFORUM_HELLO_TIMEOUT_MS in their sandbox to try a short one.
+ */
+const HELLO_TIMEOUT_MS = globalThis.NEFORUM_HELLO_TIMEOUT_MS ?? 5000;
+
 /** Raw bytes per media chunk sent to a content script (base64 makes it ~1 MB). */
 const CHUNK = 768 * 1024;
 
@@ -39,24 +47,43 @@ function authHeaders(token) {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-/** Finds the app on its ports. Returns the hello body or null. */
+/** Asks one port for the app's hello. Returns its body, or null when nothing (or not NEFORUM) answered in time. */
+async function requestHello(port, token) {
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/v1/hello`, {
+      headers: authHeaders(token),
+      signal: AbortSignal.timeout(HELLO_TIMEOUT_MS),
+      cache: 'no-store',
+    });
+    if (!r.ok) return null;
+    const body = await r.json();
+    return body && body.app === 'NEFORUM' ? body : null;
+  } catch {
+    // Nothing on this port, or not NEFORUM.
+    return null;
+  }
+}
+
+/**
+ * Finds the app on its ports. Returns the hello body or null. The port that
+ * answered last is asked first, alone. Otherwise every port is asked at once,
+ * and the first in order that answers wins: Chromium on Windows takes about
+ * 2 s to give up on a closed loopback port, so asking one port after another
+ * would cost that much for every closed port ahead of the app's. That search
+ * goes without the token, which only the port found to be NEFORUM gets.
+ */
 async function findApp(token) {
-  const order = base ? [Number(new URL(base).port), ...PORTS.filter((p) => `${p}` !== new URL(base).port)] : PORTS;
-  for (const port of order) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}/v1/hello`, {
-        headers: authHeaders(token),
-        signal: AbortSignal.timeout(900),
-        cache: 'no-store',
-      });
-      if (!r.ok) continue;
-      const hello = await r.json();
-      if (hello && hello.app === 'NEFORUM') {
-        base = `http://127.0.0.1:${port}`;
-        return hello;
-      }
-    } catch {
-      // Nothing on this port (or not NEFORUM): try the next one.
+  if (base) {
+    const found = await requestHello(Number(new URL(base).port), token);
+    if (found) return found;
+  }
+  const answers = PORTS.map((port) => requestHello(port, null));
+  for (const [i, answer] of answers.entries()) {
+    if (!(await answer)) continue;
+    const found = token ? await requestHello(PORTS[i], token) : await answer;
+    if (found) {
+      base = `http://127.0.0.1:${PORTS[i]}`;
+      return found;
     }
   }
   base = null;
@@ -218,4 +245,4 @@ api.runtime.onConnect.addListener((port) => {
 });
 
 // For tests in Node (no effect in the browser).
-if (typeof module !== 'undefined') module.exports = { handlers, findApp, toBase64, browserName, BridgeError, PORTS };
+if (typeof module !== 'undefined') module.exports = { handlers, findApp, toBase64, browserName, BridgeError, PORTS, HELLO_TIMEOUT_MS };
