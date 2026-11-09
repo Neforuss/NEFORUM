@@ -220,6 +220,7 @@ class PublishResult {
     this.additionalRemoteIds = const [],
     this.seriesRemoteIds = const [],
     this.resumable = false,
+    this.notice,
   });
 
   factory PublishResult.ok({
@@ -229,6 +230,7 @@ class PublishResult {
     DateTime? publishedAt,
     List<String> additionalRemoteIds = const [],
     List<String> seriesRemoteIds = const [],
+    String? notice,
   }) =>
       PublishResult._(
         success: true,
@@ -238,6 +240,7 @@ class PublishResult {
         publishedAt: publishedAt,
         additionalRemoteIds: additionalRemoteIds,
         seriesRemoteIds: seriesRemoteIds,
+        notice: notice,
       );
 
   /// The platform accepted the post and holds it until [scheduledFor]
@@ -247,12 +250,14 @@ class PublishResult {
     required String remoteId,
     required DateTime scheduledFor,
     String? remoteUrl,
+    String? notice,
   }) =>
       PublishResult._(
         success: true,
         remoteId: remoteId,
         remoteUrl: remoteUrl,
         scheduledFor: scheduledFor,
+        notice: notice,
       );
 
   factory PublishResult.failure(PublishError error) =>
@@ -309,6 +314,7 @@ class PublishResult {
         additionalRemoteIds: (json['additionalRemoteIds'] as List? ?? const []).cast<String>(),
         seriesRemoteIds: (json['seriesRemoteIds'] as List? ?? const []).cast<String>(),
         resumable: json['resumable'] as bool? ?? false,
+        notice: json['notice'] as String?,
       );
 
   final bool success;
@@ -341,6 +347,10 @@ class PublishResult {
   /// remaining posts of a series) instead of everything again.
   final bool resumable;
 
+  /// Something about a post that went (or that the platform holds) which the
+  /// user should know (1.4.1: YouTube refused the custom thumbnail).
+  final String? notice;
+
   /// Every remote id this result stands for: [remoteId], the parts of a
   /// thread, [additionalRemoteIds] and the posts of a series, without
   /// repeats.
@@ -365,6 +375,7 @@ class PublishResult {
         publishedAt: scheduledFor ?? publishedAt,
         additionalRemoteIds: additionalRemoteIds,
         seriesRemoteIds: seriesRemoteIds,
+        notice: notice,
       );
 
   Map<String, dynamic> toJson() => {
@@ -379,6 +390,7 @@ class PublishResult {
         if (additionalRemoteIds.isNotEmpty) 'additionalRemoteIds': additionalRemoteIds,
         if (seriesRemoteIds.isNotEmpty) 'seriesRemoteIds': seriesRemoteIds,
         if (resumable) 'resumable': true,
+        if (notice != null) 'notice': notice,
       };
 
   @override

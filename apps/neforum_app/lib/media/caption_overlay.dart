@@ -112,56 +112,77 @@ EdgeInsets captionSafeArea(String platformId, double? aspect) =>
 /// about 1080 x 1920 anyway.
 const int kCaptionedMaxSide = 2160;
 
-/// Smallest and largest share of the frame's height a caption block takes.
-const double kCaptionBlockMinShare = 0.14;
+/// Largest share of the frame's room (between the network's top bar and its
+/// bottom lines) the words of a caption block take; longer words shrink, then
+/// are cut, to stay within it.
 const double kCaptionBlockMaxShare = 0.45;
+
+/// The layout of caption blocks: 1.4.1 sizes the band to the words and puts
+/// the photo right under them (`renderParameters` of the copies, so copies
+/// made with the 1.4.0 layout are made again).
+const int kCaptionBlockLayoutVersion = 2;
 
 /// Pixel size of a network frame of [aspect] (width / height): 1080 wide.
 Size captionFrameSize(double aspect) => Size(1080, (1080 / aspect).roundToDouble());
 
 /// Where a caption block and the content below it go in a frame
-/// ([CaptionPlacement.blockAbove]): a band across the top, as tall as the
-/// words need (between [kCaptionBlockMinShare] and [kCaptionBlockMaxShare] of
-/// the frame, the words shrinking or cut to stay within it), and the rest of
-/// the frame for the photo or video, which is scaled to fit there. On a
-/// full-screen frame the band reaches under the network's top bar and the
-/// words start below it.
+/// ([CaptionPlacement.blockAbove]).
+///
+/// The words take the height they need (at most [kCaptionBlockMaxShare] of
+/// the room, shrinking or cut to stay within it) and the frame's width less
+/// its margins, the same on both sides, so centred words sit in the middle of
+/// the frame: the network's side buttons are lower down, beside the photo.
+/// When the content's shape is known ([contentAspect], width / height) and it
+/// is shown whole, the photo or video comes right under the words, as wide
+/// as the frame allows, and the two are centred together in the room between
+/// the network's top bar and its bottom lines ([safe]): what is left over
+/// goes above and below them, never between the words and the picture. When
+/// the content is cut to fill ([crop]) or its shape is unknown, the words
+/// start under the top bar and the content fills the rest of the frame.
 class CaptionBlockLayout {
   CaptionBlockLayout._(this.frame, this.block, this.content, this._words, this._origin);
 
   factory CaptionBlockLayout.measure(
-      {required String text, required CaptionStyle style, required TextCardFont font, required Size frame, EdgeInsets safe = EdgeInsets.zero}) {
+      {required String text,
+      required CaptionStyle style,
+      required TextCardFont font,
+      required Size frame,
+      EdgeInsets safe = EdgeInsets.zero,
+      double? contentAspect,
+      bool crop = false}) {
     final u = frame.width / 1080;
     final margin = 56 * u;
     final padY = (style.padding * 0.6 + 28) * u;
-    final left = margin + safe.left * u;
-    final right = frame.width - margin - safe.right * u;
-    final safeTop = safe.top * u;
-    final maxW = math.max(10.0, right - left);
-    final minBlock = frame.height * kCaptionBlockMinShare;
-    final maxBlock = frame.height * kCaptionBlockMaxShare;
+    final top = math.min(safe.top * u, frame.height * 0.3);
+    final bottom = math.max(top + frame.height * 0.4, frame.height - safe.bottom * u);
+    final room = bottom - top;
+    final maxW = math.max(10.0, frame.width - margin * 2);
     final words = text.trim();
     final direction = Bidi.detectRtlDirectionality(words) ? TextDirection.rtl : TextDirection.ltr;
-    final lines = _fitWords(words, style, font, direction, u, maxW, math.max(40 * u, maxBlock - safeTop - padY * 2),
+    final lines = _fitWords(words, style, font, direction, u, maxW, math.max(40 * u, room * kCaptionBlockMaxShare - padY * 2),
         largest: 64, smallest: 34, step: 3);
-    final blockH = (safeTop + padY * 2 + lines.height).clamp(minBlock, maxBlock).toDouble();
-    final origin = Offset(
-      left + (maxW - lines.width) * alignmentAnchor(style.alignment, direction),
-      safeTop + (blockH - safeTop - lines.height) / 2,
-    );
-    return CaptionBlockLayout._(
-      frame,
-      Rect.fromLTWH(0, 0, frame.width, blockH),
-      Rect.fromLTWH(0, blockH, frame.width, frame.height - blockH),
-      lines,
-      origin,
-    );
+    final wordsH = lines.height + padY * 2;
+    final Rect content;
+    final double wordsTop;
+    if (crop || contentAspect == null || contentAspect <= 0) {
+      wordsTop = top;
+      content = Rect.fromLTRB(0, top + wordsH, frame.width, frame.height);
+    } else {
+      final pictureH = math.max(1.0, math.min(frame.width / contentAspect, room - wordsH));
+      wordsTop = top + math.max(0.0, (room - wordsH - pictureH) / 2);
+      content = Rect.fromLTWH(0, wordsTop + wordsH, frame.width, pictureH);
+    }
+    final origin = Offset(margin + (maxW - lines.width) * alignmentAnchor(style.alignment, direction), wordsTop + padY);
+    return CaptionBlockLayout._(frame, Rect.fromLTRB(0, 0, frame.width, content.top), content, lines, origin);
   }
 
   final Size frame;
 
-  /// The band holding the words.
+  /// Everything above the content: the words and the frame's top.
   final Rect block;
+
+  /// Where the words are drawn.
+  Rect get words => _origin & Size(_words.width, _words.height);
 
   /// The rest of the frame, for the photo or video.
   final Rect content;
@@ -178,7 +199,14 @@ class CaptionBlockLayout {
 /// with [paintBackground], the band's colour behind them too.
 class CaptionBlockPainter extends CustomPainter {
   /// Repaints when a caption font finishes loading ([captionFontsRevision]).
-  CaptionBlockPainter({required this.text, required this.font, required this.style, this.safe = EdgeInsets.zero, this.paintBackground = false})
+  CaptionBlockPainter(
+      {required this.text,
+      required this.font,
+      required this.style,
+      this.safe = EdgeInsets.zero,
+      this.paintBackground = false,
+      this.contentAspect,
+      this.crop = false})
       : super(repaint: captionFontsRevision);
 
   final String text;
@@ -189,9 +217,14 @@ class CaptionBlockPainter extends CustomPainter {
   final EdgeInsets safe;
   final bool paintBackground;
 
+  /// The photo's or video's shape and whether it is cut to fill
+  /// ([CaptionBlockLayout.measure]).
+  final double? contentAspect;
+  final bool crop;
+
   @override
   void paint(Canvas canvas, Size size) {
-    final layout = CaptionBlockLayout.measure(text: text, style: style, font: font, frame: size, safe: safe);
+    final layout = CaptionBlockLayout.measure(text: text, style: style, font: font, frame: size, safe: safe, contentAspect: contentAspect, crop: crop);
     if (paintBackground && style.background != CaptionBackground.none) canvas.drawRect(layout.block, Paint()..color = style.backgroundFill);
     layout.paintWords(canvas);
     layout.dispose();
@@ -199,7 +232,13 @@ class CaptionBlockPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CaptionBlockPainter old) =>
-      old.text != text || old.font != font || old.style != style || old.safe != safe || old.paintBackground != paintBackground;
+      old.text != text ||
+      old.font != font ||
+      old.style != style ||
+      old.safe != safe ||
+      old.paintBackground != paintBackground ||
+      old.contentAspect != contentAspect ||
+      old.crop != crop;
 }
 
 /// The photo in [bytes] with [text] written on it, as a JPEG. Null when the
@@ -234,7 +273,14 @@ Future<({Uint8List bytes, int width, int height})?> renderCaptionedPhoto(Uint8Li
   Rect? content;
   final words = await rasterizeWordsLayer(width, height, (canvas) {
     if (block) {
-      final layout = CaptionBlockLayout.measure(text: text, style: style, font: font, frame: size, safe: captionSafeArea(platformId, frameAspect));
+      final layout = CaptionBlockLayout.measure(
+          text: text,
+          style: style,
+          font: font,
+          frame: size,
+          safe: captionSafeArea(platformId, frameAspect),
+          contentAspect: px.width / px.height,
+          crop: fit == PhotoFitMode.crop);
       content = layout.content;
       layout.paintWords(canvas);
       layout.dispose();
@@ -368,9 +414,10 @@ class CaptionBlockOverlay {
 /// 9:16, Instagram 4:5, stories 9:16) on [platformId]: see
 /// [CaptionBlockOverlay]. The block is drawn in [CaptionBlockOverlay.backgroundArgb],
 /// so it matches the frame around the video; a style without a background
-/// gets black.
+/// gets black. [videoAspect]: the video's shape (width / height), so it comes
+/// right under the words ([CaptionBlockLayout]); null when it is not known.
 Future<CaptionBlockOverlay> renderCaptionBlockOverlay(
-    {required String text, required CaptionStyle style, required String platformId, required double frameAspect}) async {
+    {required String text, required CaptionStyle style, required String platformId, required double frameAspect, double? videoAspect}) async {
   final size = captionFrameSize(frameAspect);
   await EmojiSupport.prepare(text, usage: 'the caption on the video');
   final layout = CaptionBlockLayout.measure(
@@ -379,6 +426,7 @@ Future<CaptionBlockOverlay> renderCaptionBlockOverlay(
     font: style.font.resolve(platformId),
     frame: size,
     safe: captionSafeArea(platformId, frameAspect),
+    contentAspect: videoAspect,
   );
   final background = style.opaqueBackgroundArgb;
   final recorder = ui.PictureRecorder();

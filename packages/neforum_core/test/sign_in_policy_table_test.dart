@@ -82,7 +82,7 @@ const List<_Row> _table = [
   _Row('wordpress', 'WordPress', SignInLimit.none, SignInRenewal.notNeeded),
   _Row('writefreely', 'Write.as / WriteFreely', SignInLimit.none, SignInRenewal.notNeeded, config: {'instance': 'https://blog.example/'}),
   _Row('x', 'X (Twitter)', SignInLimit.date, SignInRenewal.onUse, disuse: 183, unverified: true, tier: _byok, config: {'authMode': 'oauth2'}),
-  _Row('youtube', 'YouTube', SignInLimit.date, SignInRenewal.onUse, disuse: 183, tier: _byok),
+  _Row('youtube', 'YouTube videos', SignInLimit.date, SignInRenewal.onUse, disuse: 183, tier: _byok),
   _Row.handoff('youtube_posts', 'YouTube Posts'),
 ];
 
@@ -213,7 +213,7 @@ void main() {
       final open = RegExp('conflict|not stated|not known|unread|may differ|still says');
       final rows = [..._docRows(doc, '## All 48 networks'), ..._docRows(doc, '## Where one network has more than one way')];
       final clauses = rows.where((c) => c[_h.status].startsWith('VERIFIED') && open.hasMatch(c[_h.status])).toList();
-      expect(clauses.map((c) => c[_h.name]), containsAll(['Pinterest', 'Threads', 'YouTube', 'Facebook', 'Misskey', 'Bluesky']), reason: 'the scan finds them');
+      expect(clauses.map((c) => c[_h.name]), containsAll(['Pinterest', 'Threads', 'YouTube videos', 'Facebook', 'Misskey', 'Bluesky']), reason: 'the scan finds them');
       for (final c in clauses) {
         expect(c[_h.status], contains('Settled by'), reason: c[_h.name]);
       }
@@ -226,7 +226,7 @@ void main() {
 
     test('YouTube: the 1 hour its dates work back from is cited to the Google page that states it', () {
       expect(SignInPolicies.youTube.accessLife, const Duration(hours: 1));
-      final cells = _docRows(doc, '## All 48 networks').firstWhere((c) => c[_h.name] == 'YouTube');
+      final cells = _docRows(doc, '## All 48 networks').firstWhere((c) => c[_h.name] == 'YouTube videos');
       expect(cells[_h.lifetime], startsWith('Token 1 hour'));
       expect(cells[_h.source], contains('(https://docs.cloud.google.com/docs/authentication/token-types)'), reason: 'the OAuth page says only "limited lifetimes"');
       expect(cells[_h.status], contains('token types page'), reason: 'the row says where the figure comes from');

@@ -10,10 +10,13 @@ export 'src/adapters/builtin_adapters.dart';
 export 'src/adapters/connect_spec.dart';
 export 'src/adapters/platform_adapter.dart';
 export 'src/adapters/stored_secret_keys.dart';
+// 1.4.1: the app's YouTube video options (thumbnail, categories).
+export 'src/adapters/youtube/youtube_adapter.dart' show YouTubeAdapter;
 export 'src/audio/audio_publishing.dart';
 export 'src/audio/audio_tag_reader.dart';
 export 'src/audio/audio_tag_writer.dart';
 export 'src/audio/audio_text_template.dart';
+export 'src/audio/video_sound.dart';
 export 'src/auth/auth_broker.dart';
 export 'src/auth/loopback_auth_broker_stub.dart' if (dart.library.io) 'src/auth/loopback_auth_broker.dart';
 export 'src/auth/oauth1.dart';

@@ -367,8 +367,16 @@ enum BrowserPostState {
   /// The extension pressed Post but could not see the post go out.
   pressed,
 
-  /// The extension pressed Post and the composer closed or emptied.
+  /// Post was pressed (by the extension, or by the user on the page) and the
+  /// composer closed or emptied, or the page moved on.
   confirmed,
+
+  /// The user clicked **I posted it** on the page's panel (1.4.1): a site
+  /// whose Post button the extension could not find or watch (TikTok).
+  user;
+
+  /// The post went up: seen ([confirmed]) or said so by the user ([user]).
+  bool get wentUp => this == confirmed || this == user;
 }
 
 /// Where automatic posting stands on the page (jobs with

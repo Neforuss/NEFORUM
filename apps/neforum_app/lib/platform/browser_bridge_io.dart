@@ -639,13 +639,24 @@ class IoBrowserBridge extends BrowserBridge {
       text: body['text'] == true,
       media: media is num ? media.toInt().clamp(0, 999) : 0,
       message: message.isEmpty ? null : message,
-      // Only a job that allowed it can be posted from the page.
-      posted: j.quickPost || j.autoPost ? BrowserPostState.values.asNameMap()[body['posted']] ?? BrowserPostState.none : BrowserPostState.none,
+      posted: _postState(body['posted'], j),
       automatic: j.autoPost ? _automaticState(body) : BrowserAutomaticState.none,
       browser: browser.label,
       at: _clock(),
     ));
     return _send(req, 204);
+  }
+
+  /// What a report's `posted` says about job [j]. `confirmed` (Post was
+  /// pressed and the composer closed: by the extension, or by the user on the
+  /// page while the extension watched) and `user` (the user clicked I posted
+  /// it on the page) count for every job: both mean the post went up, the
+  /// same as I posted it in NEFORUM. `pressed` (no sign it went) only for a
+  /// job the extension may post itself; for any other job it says nothing.
+  static BrowserPostState _postState(Object? raw, BrowserJob j) {
+    final state = BrowserPostState.values.asNameMap()[raw] ?? BrowserPostState.none;
+    if (state == BrowserPostState.pressed && !(j.quickPost || j.autoPost)) return BrowserPostState.none;
+    return state;
   }
 
   /// Where automatic posting stands, by a report on the automatic job: only

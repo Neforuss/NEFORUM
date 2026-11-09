@@ -100,7 +100,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     if (first.isVideo) {
       frame = videoFrameAspect(platform);
       if (frame == null) continue;
-      Map<String, dynamic> paramsWith({required bool fontFallback}) => {
+      Map<String, dynamic> paramsWith({required bool fontFallback, bool legacyLayout = false}) => {
             'kind': RenderKind.caption,
             'platform': platform,
             'style': look.toJson(),
@@ -108,6 +108,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
             'frameAspect': frame,
             'video': true,
             if (fontFallback) 'fontFallback': true, // 1.3: cards
+            if (!legacyLayout) 'layout': kCaptionBlockLayoutVersion, // 1.4.1: the video right under the words
           };
       String keyOf(Map<String, dynamic> params) => '$_captionKeyPrefix$platform|${first.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
       final fallback = await fontMissing();
@@ -117,8 +118,14 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
       if (copy == null && !composeVideos) {
         // Publishing never makes the copy again, so the one the save made is
         // used whether or not the caption font was here then or is here now.
-        final saved = keyOf(paramsWith(fontFallback: !fallback));
-        copy = used[saved] ?? pool[saved];
+        // A video saved before 1.4.1 keeps the block it was saved with.
+        for (final key in [
+          keyOf(paramsWith(fontFallback: !fallback)),
+          keyOf(paramsWith(fontFallback: fallback, legacyLayout: true)),
+          keyOf(paramsWith(fontFallback: !fallback, legacyLayout: true)),
+        ]) {
+          copy ??= used[key] ?? pool[key];
+        }
       }
       copy ??= composeVideos ? await _composeCaptionedVideo(s, first, words: words, style: look, platform: platform, frame: frame, key: key, params: params) : null;
       if (copy == null) continue;
@@ -136,6 +143,7 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
       'textHash': stableHash(words),
       'frameAspect': ?frame,
       if (frame != null) 'fit': settings.photoFit.name,
+      if (frame != null) 'layout': kCaptionBlockLayoutVersion, // 1.4.1: the photo right under the words
       if (await fontMissing()) 'fontFallback': true, // 1.3: cards
     };
     final key = '$_captionKeyPrefix$platform|${source.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
@@ -183,6 +191,80 @@ Future<Post> attachCaptionedPhotos(AppServices s, Post post, AppSettings setting
     copy = copy.copyWith(altText: first.altText, clearAltText: first.altText == null);
     used[key] = copy;
     p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(mediaIds: [copy.id, ...ids.skip(1)])));
+  }
+
+  // 1.4.1: Instagram Post + Story. A story has no caption field, so its first
+  // photo gets the caption written on it too, in the story's 9:16 frame
+  // (Settings: captionOnStory, on by default), unless the caption is off for
+  // Instagram on this post.
+  if (settings.captionOnStory) {
+    for (final original in post.targets) {
+      final t = p.targetFor(original.accountId)!;
+      final story = t.overrides.storyMediaIds;
+      if (story == null || story.isEmpty) continue;
+      final account = await s.accounts.get(t.accountId);
+      if (account == null || account.platformId != 'instagram' || !captionOnPhotoFor('instagram', settings, choices)) continue;
+      final adapter = s.registry.byId('instagram');
+      if (adapter == null) continue;
+      if (resolver.resolve(p, t, adapter.descriptorForAccount(account), account: account).placement != PostPlacement.feedAndStory) continue;
+      final first = p.media.where((m) => m.id == story.first).firstOrNull;
+      if (first == null || first.kind != MediaKind.image || first.isTextCard || first.mimeType == 'image/gif') continue;
+      final words = look.wordsFor(captionWords(p, t));
+      if (words.isEmpty) continue;
+      const frame = 9 / 16;
+      // In a block: the frame is made from the photo the user attached. On the
+      // photo: the story's copy fitted to 9:16, as the story shows it.
+      final source = block ? (p.media.where((m) => m.id == first.derivedFrom).firstOrNull ?? first) : first;
+      final params = <String, dynamic>{
+        'kind': RenderKind.caption,
+        'platform': 'instagram',
+        'story': true,
+        'style': look.toJson(),
+        'textHash': stableHash(words),
+        if (block) ...{'frameAspect': frame, 'fit': settings.photoFit.name, 'layout': kCaptionBlockLayoutVersion},
+        if (await fontMissing()) 'fontFallback': true,
+      };
+      final key = '${_captionKeyPrefix}instagram-story|${source.id}|${stableHash(words)}|${stableHash(jsonEncode(params))}';
+      var copy = used[key] ?? pool[key];
+      if (copy == null) {
+        try {
+          final out = await renderCaptionedPhoto(
+            await s.media.read(source),
+            text: words,
+            font: look.font.resolve('instagram'),
+            platformId: 'instagram',
+            style: look,
+            frameAspect: block ? frame : null,
+            fit: settings.photoFit,
+          ).timeout(kRenderTimeLimit);
+          if (out != null) {
+            final made = await s.media.importBytes(out.bytes, fileName: _captionedName(source), mimeHint: 'image/jpeg');
+            copy = MediaAttachment(
+              id: made.id,
+              path: made.path,
+              mimeType: 'image/jpeg',
+              sizeBytes: made.sizeBytes,
+              width: out.width,
+              height: out.height,
+              fileName: made.fileName,
+              generated: true,
+              derivedFrom: first.derivedFrom ?? first.id,
+              fitKey: key,
+              renderParameters: params,
+            );
+          }
+        } on TimeoutException {
+          reportRenderWarning('Writing the caption on the Instagram story took too long, so the story goes without it. '
+              'To try again, open the post and save it again.');
+        } on Object catch (e) {
+          debugPrint('Could not write the caption on the story photo ${first.fileName ?? first.id}: $e');
+        }
+      }
+      if (copy == null) continue;
+      copy = copy.copyWith(altText: first.altText, clearAltText: first.altText == null);
+      used[key] = copy;
+      p = p.withTarget(t.copyWith(overrides: t.overrides.copyWith(storyMediaIds: [copy.id, ...story.skip(1)])));
+    }
   }
 
   final keep = {for (final m in used.values) m.id};
@@ -273,7 +355,7 @@ Future<MediaAttachment?> _composeCaptionedVideo(AppServices s, MediaAttachment v
   if (out == null) return null;
   final made = MediaAttachment(id: id, path: out, mimeType: 'video/mp4', sizeBytes: 0);
   try {
-    final overlay = await renderCaptionBlockOverlay(text: words, style: style, platformId: platform, frameAspect: frame);
+    final overlay = await renderCaptionBlockOverlay(text: words, style: style, platformId: platform, frameAspect: frame, videoAspect: video.aspectRatio);
     await compositor.compose(
       inputPath: video.path,
       outputPath: out,

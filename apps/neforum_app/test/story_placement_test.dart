@@ -8,8 +8,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:neforum_app/media/caption_style.dart';
 import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/platform/storage.dart';
+import 'package:neforum_app/state/captioned_photos.dart';
 import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/fitted_photos.dart';
 import 'package:neforum_app/state/providers.dart';
@@ -94,6 +96,63 @@ void main() {
     expect(copiesLabel(PostPlacement.story, 2), 'Posted as a story of 3 frames');
   });
 
+  testWidgets('Post + Story with the caption on the photo: the story gets it written on its photo too (1.4.1)', (tester) async {
+    final (services, _) = await boot(tester);
+    await tester.runAsync(() => services.accounts.upsert(igApi));
+    final art = (await tester.runAsync(() => services.media.importBytes(
+          img.encodeJpg(img.Image(width: 300, height: 400)..clear(img.ColorRgb8(40, 120, 200))),
+          fileName: 'story.jpg',
+        )))!;
+    Post fresh() => Post(
+          id: 'p-story-caption',
+          text: 'Words for the story',
+          media: [art],
+          targets: [PostTarget(accountId: igApi.id, overrides: const PostOverrides(extra: _feedAndStory))],
+          createdAt: now,
+          updatedAt: now,
+        );
+    const on = AppSettings(captionPhotoPlatforms: ['instagram']);
+    Future<Post> make(AppSettings settings, {Map<String, bool> choices = const {}, Map<String, dynamic>? style}) async => (await tester.runAsync(() async {
+          final fitted = await attachFittedPhotos(services, fresh(), settings);
+          return attachCaptionedPhotos(services, fitted, settings, choices: choices, style: style);
+        }))!;
+    (MediaAttachment, MediaAttachment) copies(Post p) {
+      final o = p.targetFor(igApi.id)!.overrides;
+      return (p.media.singleWhere((m) => m.id == o.mediaIds!.single), p.media.singleWhere((m) => m.id == o.storyMediaIds!.single));
+    }
+
+    var post = await make(on);
+    final (feed, story) = copies(post);
+    expect(isCaptionedCopy(feed), isTrue);
+    expect(isCaptionedCopy(story), isTrue, reason: 'a story has no caption field: its photo gets the caption');
+    expect(story.id, isNot(feed.id));
+    expect(story.renderParameters!['story'], isTrue);
+    expect(story.aspectRatio, closeTo(9 / 16, 0.01), reason: 'the story\'s own 9:16 copy');
+    expect(story.derivedFrom, art.id);
+    final adapter = services.registry.byId('instagram')!;
+    final variant = const VariantResolver().resolve(post, post.targetFor(igApi.id)!, adapter.descriptor, account: igApi);
+    expect(variant.asStory().media.single.id, story.id, reason: 'the story posts the captioned photo');
+    expect(adapter.validate(variant, igApi).hasErrors, isFalse);
+    // As every save does: fitted again, then captioned again.
+    final again = (await tester.runAsync(() async => attachCaptionedPhotos(services, await attachFittedPhotos(services, post, on), on)))!;
+    expect(again.targetFor(igApi.id)!.overrides.storyMediaIds, [story.id], reason: 'made once, then kept');
+    expect(withoutFittedPhotos(again).targetFor(igApi.id)!.overrides.storyMediaIds, [art.id], reason: 'back to the photo the user attached');
+
+    // In a block above: the story is the whole 9:16 frame.
+    post = await make(on, style: const CaptionStyle(placement: CaptionPlacement.blockAbove).toJson());
+    final (_, framed) = copies(post);
+    expect((framed.width, framed.height), (1080, 1920));
+
+    // Off in Settings: the story keeps its plain copy, the post its caption.
+    post = await make(on.copyWith(captionOnStory: false));
+    final (feed2, story2) = copies(post);
+    expect((isCaptionedCopy(feed2), isCaptionedCopy(story2)), (true, false));
+
+    // The caption off for Instagram on this post: on neither.
+    post = await make(on, choices: const {'instagram': false});
+    final (feed3, story3) = copies(post);
+    expect((isCaptionedCopy(feed3), isCaptionedCopy(story3)), (false, false));
+  });
   testWidgets('Post + Story: the feed post gets a 4:5 copy of the photo, the story a 9:16 copy of its own', (tester) async {
     final (services, _) = await boot(tester);
     await tester.runAsync(() => services.accounts.upsert(igApi));

@@ -123,7 +123,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
 
   /// Automatic posting is under way: the page is the extension's until it
   /// posts or gives up, so nothing else opens or fills it in meanwhile.
-  bool get _automaticRunning => _automatic && _automaticProblem == null && _fill?.posted != BrowserPostState.confirmed;
+  bool get _automaticRunning => _automatic && _automaticProblem == null && !(_fill?.posted.wentUp ?? false);
 
   /// What an earlier automatic attempt left to check on this target (Post
   /// may have been pressed already): it is never posted automatically again.
@@ -154,7 +154,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   void _waitForExtension(Duration wait) {
     _automaticTimer?.cancel();
     _automaticTimer = Timer(wait, () {
-      if (!mounted || !_automatic || _fill?.posted == BrowserPostState.confirmed) return;
+      if (!mounted || !_automatic || (_fill?.posted.wentUp ?? false)) return;
       final r = _fill;
       if (r != null && r.automatic == BrowserAutomaticState.countdown) {
         // The countdown ran, and nothing came after it: Post may have been pressed.
@@ -187,7 +187,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final host = _hostOf(r);
     final message = r.message == null ? '' : ' ${_sentence(r.message!)}';
     final note = automaticHandoffNote(r, host);
-    if (r.posted == BrowserPostState.confirmed) {
+    if (r.posted.wentUp) {
       _automaticTimer?.cancel();
       // Perhaps from another page of the site: the page that claimed the job
       // must not post it a second time.
@@ -230,7 +230,7 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
       // Posted from the page (with the extension's shortcut, or by itself on
       // an automatic job), and the composer closed: this hand-off is done, so
       // move on (to the next one, if any).
-      if (r.posted == BrowserPostState.confirmed) {
+      if (r.posted.wentUp) {
         Future<void>.delayed(const Duration(milliseconds: 1600), () {
           if (mounted && _fill?.jobId == r.jobId) Navigator.pop(context, HandoffChoice.posted);
         });
@@ -311,11 +311,12 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
     final where = _openedIn == null ? '' : ' in ${_openedIn!.name}';
     final post = _job!.quickPost ? 'Check it, then press $_postKeys on the page (or Post).' : 'Check it and press Post.';
     final automatic = _job!.autoPost;
-    final problem = r?.posted == BrowserPostState.confirmed ? null : _automaticProblem;
+    final problem = (r?.posted.wentUp ?? false) ? null : _automaticProblem;
     final (IconData icon, Color color, String text) = problem != null
         ? (Icons.warning_amber_rounded, nf.warning, problem)
         : switch ((r?.status, r?.posted, r?.automatic)) {
             (_, BrowserPostState.confirmed, _) => (Icons.check_circle_rounded, nf.success, 'Posted on $host. Marking this hand-off as done…'),
+            (_, BrowserPostState.user, _) => (Icons.check_circle_rounded, nf.success, 'You marked it as posted on $host. Marking this hand-off as done…'),
             (_, BrowserPostState.pressed, _) => (Icons.info_outline_rounded, nf.info, 'Pressed Post on $host, but the page did not close the composer. Check it there; if the post went up, click I posted it.'),
             (null, _, _) => automatic
                 ? (Icons.extension_outlined, nf.info, 'Posting automatically: the NEFORUM extension$where is filling this in…')

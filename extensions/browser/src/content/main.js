@@ -14,7 +14,7 @@
   NF.main = true;
 
   const api = globalThis.browser ?? globalThis.chrome;
-  const { waitFor, findEditor, editableOf, insertText, attachFiles, setInputFiles, sleep, enabled, findPostButton, waitPosted, pressPost, visible } = NF.fill;
+  const { waitFor, findEditor, editableOf, insertText, attachFiles, setInputFiles, findFileInput, isSearchField, sleep, enabled, findPostButton, namesOf, waitPosted, pressPost, visible } = NF.fill;
 
   /** How long an automatic job's countdown lasts before Post is pressed. */
   const COUNTDOWN_SECONDS = 3;
@@ -58,11 +58,11 @@
     }
   }
 
-  /** The editable field the user clicked last (outside our panel). */
+  /** The editable field the user clicked last (outside our panel; never a search box). */
   let lastField = null;
   document.addEventListener('focusin', (e) => {
     const f = editableOf(e.target);
-    if (f) lastField = f;
+    if (f && !isSearchField(f)) lastField = f;
   }, true);
 
   /** Fetches the job's files as File objects, chunk by chunk. */
@@ -305,6 +305,38 @@
     return state;
   }
 
+  /**
+   * The panel's Attach: the files go where the composer takes them, the way
+   * a person would add them. The recipe's own way first (an image poll), then
+   * its photo option (YouTube's image button, whose file input takes them),
+   * then the composer's file input, a paste or a drop on the composer (never
+   * on a search box). When none takes them, the site's own file window opens
+   * (this runs from the user's click), so they can pick the files there.
+   * Returns how: 'options', 'input', 'paste', 'drop', 'picker', or null.
+   */
+  async function attachNow(job, list) {
+    const recipe = NF.recipeFor(job.platformId);
+    const root = recipe.root?.() ?? document;
+    const placed = await recipe.attach?.(list, job);
+    if (placed) return placed;
+    await recipe.beforeMedia?.();
+    const input = recipe.fileInput?.() ?? findFileInput(list, root);
+    if (input && setInputFiles(input, list)) {
+      await recipe.afterMedia?.();
+      return 'input';
+    }
+    const editor = lastEditor?.isConnected ? lastEditor : lastField?.isConnected ? lastField : findEditor(root);
+    const how = await attachFiles(list, { root, editor, prefer: recipe.prefer });
+    if (how) {
+      await recipe.afterMedia?.();
+      return how;
+    }
+    const picker = recipe.fileInput?.() ?? findFileInput(list, document) ?? document.querySelector('input[type="file"]:not([disabled])');
+    if (!picker) return null;
+    picker.click();
+    return 'picker';
+  }
+
   // ---- posting: the user's own key press or click, or an automatic job ------
 
   /** The job and panel on this page; [ready]: filling is over, posting may start. */
@@ -462,7 +494,7 @@
       panel.set('Posting…');
       pressPost(t.button);
       await confirmAfterPost(job, t.button);
-      const ok = await waitPosted({ button: t.button, editor: t.editor, text: job.text });
+      const ok = await waitPosted({ button: t.button, editor: t.editor, text: job.text, posted: NF.recipeFor(job.platformId).postedPattern ?? null });
       panel.done({
         headline: ok ? `Posted on ${job.platformName}.` : 'Pressed Post.',
         tone: ok ? 'ok' : 'warn',
@@ -544,12 +576,59 @@
     const target = locate(c.job);
     // No button found: leave the key to the site (some post on Ctrl+Enter themselves).
     if (!target) {
-      c.panel.set('Could not find this site\'s Post button: press it yourself.', 'warn');
+      c.panel.set(`Could not find ${c.job.platformName}'s Post button: press it on the page. NEFORUM moves on when it sees the post go; if it does not, click I posted it here.`, 'warn');
       return;
     }
     if (focusedElsewhere(target.scope)) return;
     swallow();
     postNow(target);
+  }, true);
+
+  // ---- the user's own Post, and "I posted it" ---------------------------------
+
+  /** Is [button] this job's Post button (the recipe's, or one that says Post)? */
+  function isPostButton(job, button) {
+    const recipe = NF.recipeFor(job.platformId);
+    if ((recipe.postSelectors ?? []).some((s) => button.matches(s) || button.closest(s) || button.querySelector(s))) return true;
+    const words = new Set((recipe.postWords ?? ['post', 'post now', 'publish']).map((w) => w.toLowerCase()));
+    if (namesOf(button).some((n) => words.has(n) || recipe.postPattern?.test(n))) return true;
+    return locate(job)?.button === button;
+  }
+
+  /** The post is up: done on the panel, once, and told to NEFORUM ([how]: 'confirmed' or 'user'). */
+  function markDone(job, panel, how) {
+    if (posted) return;
+    posted = true;
+    remember(`neforum-posted-${job.id}`, JSON.stringify({ from: location.href, at: Date.now() }));
+    remember(`neforum-reported-${job.id}`);
+    panel.done({
+      headline: how === 'user' ? `Marked as posted on ${job.platformName}.` : `Posted on ${job.platformName}.`,
+      tone: 'ok',
+      lines: ['NEFORUM moves on to the next network.'],
+    });
+    panel.setPost('done');
+    report(job, { posted: how });
+  }
+
+  /**
+   * The user pressed the site's Post button themselves (a real click): the
+   * extension pressed nothing, so it only watches. When the composer closes
+   * or the page says the post is up, NEFORUM is told, as after Post now.
+   */
+  let watching = false;
+  document.addEventListener('click', (e) => {
+    const c = current;
+    if (!e.isTrusted || !c?.ready || posted || posting || counting || watching) return;
+    const button = (e.composedPath?.() ?? [e.target]).find((n) => n?.matches?.('button, [role="button"], input[type="submit"]'));
+    if (!button || button.closest('#neforum-ext-panel') || !isPostButton(c.job, button)) return;
+    watching = true;
+    const { job, panel } = c;
+    const recipe = NF.recipeFor(job.platformId);
+    const editor = lastEditor?.isConnected ? lastEditor : null;
+    waitPosted({ button, editor, text: job.text, timeout: 60000, posted: recipe.postedPattern ?? null }).then((ok) => {
+      watching = false;
+      if (ok && current?.job.id === job.id) markDone(job, panel, 'confirmed');
+    });
   }, true);
 
   /** The newest job for this page (NEFORUM's "Fill in again" makes a new one). */
@@ -594,9 +673,20 @@
       attach: async () => {
         job = await latest(job);
         files ??= await loadMedia(job);
-        const how = await attachFiles(files, { root: document, editor: lastField ?? findEditor(document), prefer: NF.recipeFor(job.platformId).prefer });
-        if (how) attached = mediaKey(job);
-        panel.set(how ? 'Files added.' : 'Open the composer\'s photo or video option, then Attach again.', how ? 'ok' : 'warn');
+        const how = await attachNow(job, files);
+        if (how && how !== 'picker') attached = mediaKey(job);
+        panel.set(
+          how === 'picker'
+            ? `Choose ${files.length === 1 ? 'the file' : 'the files'} in the window that opened (NEFORUM's Save media to Downloads puts ${files.length === 1 ? 'it' : 'them'} in Downloads).`
+            : how
+              ? 'Files added.'
+              : 'Open the composer\'s photo or video option, then Attach again.',
+          how && how !== 'picker' ? 'ok' : 'warn',
+        );
+      },
+      markPosted: () => {
+        if (busy) return panel.set('Still filling in. Click I posted it again when it is done.', 'warn');
+        markDone(job, panel, 'user');
       },
       insertSnippet: async (text) => {
         const target = lastField;

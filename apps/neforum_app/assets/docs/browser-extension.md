@@ -40,7 +40,7 @@ The NEFORUM extension for Chrome and Firefox finishes hand-offs for you: it fill
 
 The extension works in Google Chrome and Mozilla Firefox, and in other Chromium browsers such as Microsoft Edge, Brave and Opera (from the Chrome version).
 
-When you click **Open** in a hand-off, NEFORUM gives the post to the extension and opens the platform's page. A small NEFORUM panel shows on the page while it works and says what was filled in. **Fill in again** repeats it. **Insert text** puts the text into the box you clicked last, and **Attach** adds the files again. Poll answers, tags, the other parts of a thread and other snippets each have **Copy** and **Insert**.
+When you click **Open** in a hand-off, NEFORUM gives the post to the extension and opens the platform's page. A small NEFORUM panel shows on the page while it works and says what was filled in. **Fill in again** repeats it. **Insert text** puts the text into the box you clicked last, and **Attach** adds the files again, through the composer's own photo button the way you would (never into a search box); when nothing on the page takes them, the site's file window opens for you to pick them. **I posted it** tells NEFORUM the post is up when it did not see it go, and NEFORUM moves on to the next network. Poll answers, tags, the other parts of a thread and other snippets each have **Copy** and **Insert**.
 
 ### What it fills in
 
@@ -48,9 +48,9 @@ When you click **Open** in a hand-off, NEFORUM gives the post to the extension a
 |---|---|
 | X, Bluesky, Threads | The composer link carries the first part; the extension adds the photos or videos, then adds a post for each other part of a thread and fills it in. |
 | Mastodon (your server) | Click the extension's icon, then **Fill in this page**: it adds the files. Mastodon's composer holds one post, so the other parts of a thread are in the panel to post as replies. |
-| YouTube Posts | Opens the post box on your channel's Posts tab, types the text, adds images after choosing the image option, or chooses the poll, quiz or image poll option, fills in the answers (one image per answer for an image poll), marks the correct quiz answer and adds the explanation. |
+| YouTube Posts | Opens the post box on your channel's Posts tab, types the text, adds images through the post box's image button (no file window opens), or chooses the poll, quiz or image poll option, fills in the answers (one image per answer for an image poll), marks the correct quiz answer and adds the explanation. |
 | YouTube (video upload) | `youtube.com/upload` opens YouTube Studio's upload window: the extension adds the video, replaces the file name YouTube puts in the title with your title, and fills in the description and the tags. You answer "made for kids" and publish. |
-| TikTok Studio | Uploads the photos or video, then replaces the file name TikTok puts in the caption with your caption. |
+| TikTok Studio | Uploads the photos or video, then replaces the file name TikTok puts in the caption with your caption. When you press TikTok's Post yourself, NEFORUM sees the post go up and moves on; if it does not, click **I posted it** on the panel. |
 | Instagram (web) | Create > Post, uploads the files, goes through the two Next screens and types the caption. |
 | Substack Notes | Opens "What's on your mind?" (or Create > Note), types the text and adds the images. |
 | Facebook | Opens "What's on your mind?" when needed, types the text and adds the media. |
@@ -71,8 +71,8 @@ When the page is filled in, the panel shows **Post now** and says "press Ctrl+En
 - **Typing somewhere else on the page** (a search box, a chat) keeps Ctrl+Enter for that box: the extension only reacts when you're in the composer or nowhere in particular.
 - **Once per hand-off.** Pressing again, or reloading the page, does not post a second time.
 - **Facebook's Next screen** is gone through for you when it appears before Post. A confirmation some sites show after Post (Flickr's "Upload", Itaku's rating check) is answered too, unless you pressed **Esc** or **Stop** after Post: then it is yours to answer.
-- **When the post went out** (the composer closed or emptied), NEFORUM marks the hand-off as posted and moves on to the next one. If the page gave no sign, the hand-off says so, and you click **I posted it** once you've checked.
-- If the extension can't find the Post button, it leaves Ctrl+Enter to the site (X, Bluesky and Mastodon post on Ctrl+Enter themselves) and tells you to press Post.
+- **When the post went out** (the composer closed or emptied, the page moved on, or the site said so), NEFORUM marks the hand-off as posted and moves on to the next one. That goes for the site's own Post button too, when you press it yourself: the extension presses nothing then, it only watches. If the page gave no sign, the hand-off says so, and you click **I posted it** (on the page's panel or in NEFORUM) once you've checked.
+- If the extension can't find the Post button, it leaves Ctrl+Enter to the site (X, Bluesky and Mastodon post on Ctrl+Enter themselves) and tells you to press Post. NEFORUM moves on when it sees the post go, or when you click **I posted it** on the panel.
 
 ### Automatic posting
 

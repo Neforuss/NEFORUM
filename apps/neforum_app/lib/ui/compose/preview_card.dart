@@ -314,7 +314,14 @@ class _Visual extends ConsumerWidget {
                 Icon(Icons.add_photo_alternate_outlined, color: nf.textFaint, size: 30),
                 const SizedBox(height: Space.sm),
                 Text(
-                  p.descriptor.media.requiresMedia ? '${p.descriptor.name} needs a photo or video' : 'Add a photo or video',
+                  // 1.4.1: what the network takes, said as it is.
+                  p.descriptor.media.requiresMedia
+                      ? p.descriptor.media.maxImages == 0
+                          ? '${p.descriptor.name} uploads a video: add one'
+                          : p.descriptor.media.maxVideos == 0
+                              ? '${p.descriptor.name} needs a photo'
+                              : '${p.descriptor.name} needs a photo or video'
+                      : 'Add a photo or video',
                   textAlign: TextAlign.center,
                   style: context.text.bodySmall?.copyWith(color: nf.textFaint),
                 ),
@@ -334,10 +341,9 @@ class _Visual extends ConsumerWidget {
                         text: captionStyle.wordsFor(captionWords(_previewPost(ref), p.target)),
                         style: captionStyle,
                         fit: settings.photoFit,
-                      ),
-                      Align(
-                        alignment: const Alignment(0, 0.35),
-                        child: Icon(Icons.play_circle_outline_rounded, size: w * 0.18, color: Colors.white70),
+                        frameAspect: blockFrame,
+                        // Where the video plays, as the saved video has it.
+                        contentAspect: first.aspectRatio,
                       ),
                     ]),
                   ),
@@ -354,6 +360,7 @@ class _Visual extends ConsumerWidget {
                       text: captionStyle.wordsFor(captionWords(_previewPost(ref), p.target)),
                       style: captionStyle,
                       fit: settings.photoFit,
+                      frameAspect: blockFrame,
                     ),
                   ),
                 )

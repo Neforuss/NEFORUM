@@ -734,13 +734,16 @@ Set<String> referencedFileNames(Iterable<Object?> documents) {
 
 /// The cover pictures of [post]'s sound files: those the files carry
 /// ([MediaAttachment.audioTags]) and those the user chose for them
-/// ([Post.audioDetails]). They are media files of their own, not in
-/// [Post.media].
+/// ([Post.audioDetails]), and its YouTube videos' custom thumbnails. They are
+/// media files of their own, not in [Post.media].
 List<String> audioCoverPaths(Post post) => [
       for (final m in post.media)
         if (m.audioTags?.coverPath case final path? when path.isNotEmpty) path,
       for (final edits in post.audioDetails.values)
         if (edits.coverPath case final path? when path.isNotEmpty) path,
+      // 1.4.1: a YouTube video's custom thumbnail, kept with its target.
+      for (final t in post.targets)
+        if (t.overrides.extra[YouTubeAdapter.thumbnailKey] case {'path': final String path} when path.isNotEmpty) path,
     ];
 
 /// Paths of the files in [files] that no name in [referenced] matches and

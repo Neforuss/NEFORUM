@@ -41,7 +41,7 @@ Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
     final m = sound[i];
     ctx.uploading(m, 'Uploading sound file ${i + 1} of ${sound.length} to ${host.name}');
     final bytes = await ctx.readMedia(m);
-    final url = await _hostPermanently(host, m, bytes, platform, ctx);
+    final url = await hostPermanently(host, m, bytes, platform, ctx);
     links.add(markdown ? '[${audioLinkLabel(m)}]($url)' : url);
   }
   // The photos and videos stay in the parts they go with.
@@ -117,7 +117,10 @@ String audioLinkLabel(MediaAttachment m) {
   return title.isEmpty ? 'Listen ($format)' : '$title ($format)';
 }
 
-Future<String> _hostPermanently(MediaHost host, MediaAttachment m, Uint8List bytes, String platform, AdapterContext ctx) async {
+/// Puts [m] ([bytes]) on the media [host] for a link that lasts, for a
+/// [platform] post. Throws [AdapterException] when it is too big for the host,
+/// the upload fails, or the host only makes temporary links.
+Future<String> hostPermanently(MediaHost host, MediaAttachment m, Uint8List bytes, String platform, AdapterContext ctx) async {
   final max = host.maxBytes;
   if (max != null && bytes.length > max) {
     throw AdapterException(PublishError.validation('${m.fileName ?? 'The sound file'} is larger than ${host.name} accepts.'));

@@ -196,25 +196,66 @@ void main() {
   });
 
   group('caption block above the photo', () {
-    test('as tall as the words need, within 14% to 45% of the frame; the content gets the rest', () {
-      const frame = Size(1080, 1920);
-      final short = CaptionBlockLayout.measure(text: 'Hi', style: const CaptionStyle(placement: CaptionPlacement.blockAbove), font: TextCardFont.original, frame: frame);
-      expect(short.block.height, closeTo(1920 * kCaptionBlockMinShare, 0.5));
-      expect(short.content, Rect.fromLTWH(0, short.block.height, 1080, 1920 - short.block.height));
-      short.dispose();
+    // A caption about as long as the one on the TikTok photo that came out
+    // with a hole between the words and the picture (NEFORUM 1.4.0).
+    final caption = List.filled(5, 'finally finished the series I started years ago, and it feels great.').join(' ');
+    const centre = CaptionStyle(placement: CaptionPlacement.blockAbove, alignment: TextCardAlignment.center);
+    const tiktok = Size(1080, 1920);
 
+    test('TikTok, 16:9 photo: the photo comes right under the words, and the two are centred between the top bar and the bottom lines', () {
+      final safe = fullScreenSafeArea('tiktok');
+      final l = CaptionBlockLayout.measure(text: caption, style: centre, font: TextCardFont.original, frame: tiktok, safe: safe, contentAspect: 16 / 9);
+      final padY = (centre.padding * 0.6 + 28);
+      expect(l.content.top - l.words.bottom, closeTo(padY, 0.5), reason: 'no empty band between the words and the photo');
+      expect(l.content.height, closeTo(1080 / (16 / 9), 0.5), reason: 'the photo as wide as the frame');
+      expect(l.block.bottom, l.content.top);
+      final above = l.words.top - padY - safe.top;
+      final below = 1920 - safe.bottom - l.content.bottom;
+      expect(above, closeTo(below, 1), reason: 'what is left over goes above and below, evenly');
+      expect(above, greaterThan(0));
+      l.dispose();
+    });
+
+    test('centred words sit in the middle of the frame: the side buttons are not beside the words (1.4.0 pulled them left)', () {
+      final l = CaptionBlockLayout.measure(text: caption, style: centre, font: TextCardFont.original, frame: tiktok, safe: fullScreenSafeArea('tiktok'), contentAspect: 16 / 9);
+      expect((l.words.left + l.words.right) / 2, closeTo(540, 1));
+      expect(l.words.bottom, lessThan(1920 * 0.5), reason: 'above TikTok\'s like and comment buttons');
+      l.dispose();
+    });
+
+    test('short words take a short band; long ones at most 45% of the room, shrinking or cut', () {
+      final safe = fullScreenSafeArea('tiktok');
+      final short = CaptionBlockLayout.measure(text: 'Hi', style: centre, font: TextCardFont.original, frame: tiktok, safe: safe, contentAspect: 1);
+      expect(short.words.height, lessThan(120));
+      expect(short.content.top - short.words.bottom, lessThan(60));
+      short.dispose();
       final long = CaptionBlockLayout.measure(
-        text: List.filled(80, 'words that go on').join(' '),
-        style: const CaptionStyle(placement: CaptionPlacement.blockAbove),
-        font: TextCardFont.original,
-        frame: frame,
-        safe: fullScreenSafeArea('tiktok'),
-      );
-      expect(long.block.height, lessThanOrEqualTo(1920 * kCaptionBlockMaxShare + 0.5));
-      expect(long.block.height, greaterThan(short.block.height));
+          text: List.filled(80, 'words that go on').join(' '), style: centre, font: TextCardFont.original, frame: tiktok, safe: safe, contentAspect: 1);
+      final room = 1920 - safe.top - safe.bottom;
+      expect(long.words.height, lessThanOrEqualTo(room * kCaptionBlockMaxShare + 0.5));
+      expect(long.content.bottom, lessThanOrEqualTo(1920 - safe.bottom + 0.5), reason: 'the photo stays above the bottom lines');
       long.dispose();
     });
 
+    test('cut to fill, or a shape not known: the words under the top bar, the content down to the bottom of the frame', () {
+      final safe = fullScreenSafeArea('tiktok');
+      for (final l in [
+        CaptionBlockLayout.measure(text: caption, style: centre, font: TextCardFont.original, frame: tiktok, safe: safe, contentAspect: 16 / 9, crop: true),
+        CaptionBlockLayout.measure(text: caption, style: centre, font: TextCardFont.original, frame: tiktok, safe: safe),
+      ]) {
+        expect(l.words.top, closeTo(safe.top + centre.padding * 0.6 + 28, 0.5));
+        expect(l.content.bottom, 1920);
+        expect(l.content.top, l.block.bottom);
+        l.dispose();
+      }
+    });
+
+    test('Instagram 4:5 has no buttons over the photo: the pair is centred in the whole frame', () {
+      final l = CaptionBlockLayout.measure(text: 'Blue square', style: centre, font: TextCardFont.original, frame: const Size(1080, 1350), contentAspect: 1);
+      final padY = centre.padding * 0.6 + 28;
+      expect(l.words.top - padY, closeTo(1350 - l.content.bottom, 1));
+      l.dispose();
+    });
     testWidgets('for a video: a transparent full-frame PNG with the block, the content rectangle and the frame colour', (tester) async {
       final overlay = (await tester.runAsync(() => renderCaptionBlockOverlay(
             text: 'New drop this Friday',
@@ -225,7 +266,7 @@ void main() {
       expect((overlay.frameWidth, overlay.frameHeight), (1080, 1920));
       expect(overlay.backgroundArgb, 0xFFFF0000);
       expect(overlay.contentRect.bottom, 1920);
-      expect(overlay.contentRect.top, greaterThan(1920 * kCaptionBlockMinShare - 1));
+      expect(overlay.contentRect.top, greaterThan(240), reason: 'the words are under TikTok\'s top bar');
       final png = img.decodePng(overlay.png)!;
       expect((png.width, png.height), (1080, 1920));
       final block = png.getPixel(20, 20);
@@ -972,6 +1013,10 @@ void main() {
       await settle(tester);
       expect(CaptionStyle.fromJson(c.read(composerProvider).captionStyle).placement, CaptionPlacement.blockAbove);
       expect(find.byType(CaptionBlockFrame), findsWidgets);
+      // 1.4.1: the editor's preview is TikTok's 9:16 frame, as the post's
+      // preview is (1.4.0 stretched it, so the two laid the words out apart).
+      final inEditor = tester.getSize(find.descendant(of: find.byType(CaptionEditorSheet), matching: find.byType(CaptionBlockFrame)).first);
+      expect(inEditor.width / inEditor.height, closeTo(9 / 16, 0.01), reason: 'editor preview $inEditor');
 
       await tester.enterText(find.byKey(const Key('caption-words')), 'Out now');
       await tester.ensureVisible(find.byKey(const Key('caption-background-solid')));

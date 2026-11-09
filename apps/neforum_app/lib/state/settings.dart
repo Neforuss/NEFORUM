@@ -156,6 +156,7 @@ class AppSettings {
     this.photoFit = PhotoFitMode.pad,
     this.fillFramePlatforms = const ['tiktok', 'instagram'],
     this.captionPhotoPlatforms = const [],
+    this.captionOnStory = true,
     this.movedAccountIds = const [],
     this.movedAt,
     this.syncProviderId,
@@ -241,6 +242,7 @@ class AppSettings {
         photoFit: PhotoFitMode.values.asNameMap()[j['photoFit']] ?? PhotoFitMode.pad,
         fillFramePlatforms: (j['fillFramePlatforms'] as List? ?? const ['tiktok', 'instagram']).cast<String>(),
         captionPhotoPlatforms: (j['captionPhotoPlatforms'] as List? ?? const []).cast<String>(),
+        captionOnStory: j['captionOnStory'] as bool? ?? true,
         movedAccountIds: (j['movedAccountIds'] as List? ?? const []).cast<String>(),
         movedAt: DateTime.tryParse('${j['movedAt'] ?? ''}'),
         syncProviderId: j['syncProviderId'] as String?,
@@ -379,6 +381,11 @@ class AppSettings {
   final List<String> captionPhotoPlatforms;
 
   bool captionOnPhoto(String platformId) => captionPhotoPlatforms.contains(platformId);
+
+  /// Instagram Post + Story (1.4.1): the story's first photo gets the caption
+  /// written on it too, as the post's does, when the caption goes on
+  /// Instagram's photo. A story has no caption field of its own.
+  final bool captionOnStory;
 
   /// Accounts exported with "Move to another device" (Move): switched off
   /// here until the user confirms the other device has them. Device-only.
@@ -609,6 +616,7 @@ class AppSettings {
     PhotoFitMode? photoFit,
     List<String>? fillFramePlatforms,
     List<String>? captionPhotoPlatforms,
+    bool? captionOnStory,
     List<String>? movedAccountIds,
     DateTime? movedAt,
     bool clearMoved = false,
@@ -696,6 +704,7 @@ class AppSettings {
         photoFit: photoFit ?? this.photoFit,
         fillFramePlatforms: fillFramePlatforms ?? this.fillFramePlatforms,
         captionPhotoPlatforms: captionPhotoPlatforms ?? this.captionPhotoPlatforms,
+        captionOnStory: captionOnStory ?? this.captionOnStory,
         movedAccountIds: clearMoved ? const [] : (movedAccountIds ?? this.movedAccountIds),
         movedAt: clearMoved ? null : (movedAt ?? this.movedAt),
         syncProviderId: clearSync ? null : (syncProviderId ?? this.syncProviderId),
@@ -781,6 +790,7 @@ class AppSettings {
         'photoFit': photoFit.name,
         'fillFramePlatforms': fillFramePlatforms,
         'captionPhotoPlatforms': captionPhotoPlatforms,
+        'captionOnStory': captionOnStory,
         if (movedAccountIds.isNotEmpty) 'movedAccountIds': movedAccountIds,
         if (movedAt != null) 'movedAt': movedAt!.toIso8601String(),
         if (syncProviderId != null) 'syncProviderId': syncProviderId,

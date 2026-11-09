@@ -117,16 +117,21 @@ The file's bytes with its `Content-Type`. `404` for an unknown or expired job or
 ### `POST /v1/job/<id>/result` (token)
 
 What the extension managed to do, so the app's hand-off sheet can say so.
-Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed", "automatic": "countdown" | "stopped" | "manual", "page": "<page id>"}`.
+Body `{"status": "filled" | "partial" | "failed", "text": true, "media": 2, "message": "...", "posted": "confirmed" | "pressed" | "user", "automatic": "countdown" | "stopped" | "manual", "page": "<page id>"}`.
 `204`. The job stays available until it expires, so the user can fill the page in again. The
 extension may report more than once for a job (after filling in, then after posting). `404` when
 the job is no longer the app's (the hand-off was closed, replaced or has expired): the app did not
 take the report, and the extension says so on the page.
 
-`posted` (optional, only for jobs with `quickPost` or `autoPost`): Post was pressed, by the user's
-shortcut or by automatic posting. `confirmed` means the composer closed or emptied afterwards (or
-the page moved on), and the app then marks the hand-off as posted; `pressed` means Post was pressed
-but the page gave no sign. The app ignores `posted` for jobs with neither flag. When pressing Post
+`posted` (optional): the post went up, or Post was pressed. `confirmed` means Post was pressed, by
+the user's shortcut, by automatic posting, or by the user's own click on the site's Post button
+(extension 1.4.1, which watches that click but presses nothing), and the composer closed or
+emptied afterwards, the page moved on, or the page said so (a recipe's `postedPattern`, such as
+TikTok's "Your video has been uploaded"). `user` (extension 1.4.1) means the user clicked the
+panel's **I posted it**, for a site whose Post button the extension could not find or see go.
+For both the app marks the hand-off as posted and moves on, for any job. `pressed` (only for jobs
+with `quickPost` or `autoPost`; the app ignores it for others) means the extension pressed Post
+but the page gave no sign. When pressing Post
 loaded a new page before the extension could report (a form sent the classic way), the next page
 of the site in that tab reports it once: `confirmed` when its address differs from the page Post
 was pressed on, else `pressed`.

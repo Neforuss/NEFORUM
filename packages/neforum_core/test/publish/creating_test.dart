@@ -14,7 +14,6 @@ import 'package:neforum_core/src/adapters/bluesky/bluesky_adapter.dart';
 import 'package:neforum_core/src/adapters/chat/discord_adapter.dart';
 import 'package:neforum_core/src/adapters/mastodon/mastodon_adapter.dart';
 import 'package:neforum_core/src/adapters/tiktok/tiktok_adapter.dart';
-import 'package:neforum_core/src/adapters/youtube/youtube_adapter.dart';
 import 'package:test/test.dart';
 
 import '../support/test_context.dart';

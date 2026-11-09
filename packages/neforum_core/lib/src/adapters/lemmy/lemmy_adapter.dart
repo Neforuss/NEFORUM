@@ -1,3 +1,4 @@
+import '../../audio/video_sound.dart';
 import '../../auth/jwt.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
@@ -71,8 +72,14 @@ class LemmyAdapter extends PlatformAdapter {
           'up to 50000 characters. The link goes into the post\'s own URL field. No hashtags; NSFW is a flag.',
     ),
     media: MediaRules(
-      // Sound goes as a link to the file on the media host.
+      // Sound goes as a still-picture video uploaded to the instance (1.4.1),
+      // at 1 frame a second: pict-rs takes at most 900 frames by default, so
+      // up to 15 minutes. A longer track, or a device that cannot make the
+      // video, sends a link to the file on the media host.
       audioAsLink: true,
+      audioAsVideoWhenPossible: true,
+      audioVideoFrameRate: 1,
+      audioVideoMaxFrames: 900,
       maxImages: 1,
       maxVideos: 1,
       allowsMixedImageVideo: false,
@@ -494,7 +501,11 @@ class LemmyAdapter extends PlatformAdapter {
     String? alt;
     if (variant.hasMedia) {
       final m = variant.media.first;
-      imageUrl = (await _upload(api, m, ctx)).toString();
+      final uploaded = await _upload(api, m, ctx);
+      imageUrl = uploaded.url.toString();
+      // 1.4.1: a track as a still-picture video. pict-rs drops the sound of
+      // uploaded videos unless the instance allows it: read the upload back.
+      if (_isSoundVideo(m)) imageUrl = await _withSound(api, m, uploaded, ctx);
       alt = _clip(m.altText?.trim(), lemmyAltMax);
     }
 
@@ -559,14 +570,45 @@ class LemmyAdapter extends PlatformAdapter {
     return (c['id'] as num).toInt();
   }
 
-  Future<Uri> _upload(LemmyApi api, MediaAttachment m, AdapterContext ctx) async {
+  Future<({Uri url, String? deleteToken, String? file})> _upload(LemmyApi api, MediaAttachment m, AdapterContext ctx) async {
     ctx.uploading(m, 'Uploading ${m.isVideo ? 'video' : 'image'} 1 of 1');
     final bytes = await ctx.readMedia(m);
-    return guardLemmy('Lemmy image upload', () => api.uploadImage(
+    return guardLemmy('Lemmy image upload', () => api.uploadMedia(
           bytes: bytes,
           fileName: m.fileName ?? '${m.id}.${_ext(m.mimeType)}',
           contentType: m.mimeType,
         ));
+  }
+
+  /// A video NEFORUM made of a sound file (one still picture for the track).
+  static bool _isSoundVideo(MediaAttachment m) => m.isVideo && m.generated && m.renderParameters?['kind'] == 'audioVideo';
+
+  /// The link the post shows for the still-picture video [m], uploaded as
+  /// [uploaded]: that upload, when the instance kept its sound (or it cannot
+  /// be told). When the instance dropped the sound, the silent upload is
+  /// deleted and the video goes on the user's media host instead, linked from
+  /// the post; with no media host the post is not made, and the error says why.
+  Future<String> _withSound(LemmyApi api, MediaAttachment m, ({Uri url, String? deleteToken, String? file}) uploaded, AdapterContext ctx) async {
+    bool? sound;
+    try {
+      sound = videoHasSound(await ctx.http.download(uploaded.url));
+    } on Object catch (e) {
+      ctx.log.warn('Could not read the uploaded video back to check its sound: $e');
+    }
+    if (sound != false) return uploaded.url.toString();
+    final host = uploaded.url.host;
+    ctx.log.warn('$host removed the sound from the uploaded video');
+    if (uploaded.deleteToken != null && uploaded.file != null && !await api.deleteUpload(uploaded.deleteToken!, uploaded.file!)) {
+      ctx.log.warn('Could not delete the silent upload on $host');
+    }
+    final mediaHost = ctx.mediaHost;
+    if (mediaHost == null) {
+      throw AdapterException(PublishError.configuration(
+          '$host removes the sound from uploaded videos, so the track would not play there. '
+          'Set up a media host in Settings > Media hosting, and NEFORUM links the video with its sound instead.'));
+    }
+    ctx.uploading(m, 'Uploading the video to ${mediaHost.name}, with its sound');
+    return hostPermanently(mediaHost, m, await ctx.readMedia(m), 'Lemmy', ctx);
   }
 
   int? _languageId(PostVariant v, ConnectedAccount account) {

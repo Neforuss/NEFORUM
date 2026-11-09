@@ -108,6 +108,10 @@ class VideoCompositionException implements Exception {
   String toString() => 'VideoCompositionException($code): $message';
 }
 
+/// Frames per second of a still-picture video ([VideoCompositor.renderAudioVideo]),
+/// a rate every network accepts.
+const int kStillFrameRate = 30;
+
 /// Burns a caption block into a video for TikTok and Instagram: re-encodes it
 /// as an H.264/AAC MP4 of a fixed frame (9:16, 4:5...) filled with a
 /// background colour, with the video scaled into a content rectangle (aspect
@@ -326,7 +330,8 @@ class VideoCompositor {
   /// Writes an H.264/AAC MP4 at [outputPath] that shows [imagePng] (the
   /// whole [frameWidth] x [frameHeight] frame) for the full length of the
   /// sound file at [audioPath], with that sound. This is how an audio track
-  /// reaches networks that only take video.
+  /// reaches networks that only take video. [frameRate] (1 to 60 frames per
+  /// second): fewer for a network that counts an upload's frames (Lemmy).
   Future<void> renderAudioVideo({
     required String audioPath,
     required String outputPath,
@@ -334,6 +339,7 @@ class VideoCompositor {
     required int frameWidth,
     required int frameHeight,
     int audioBitsPerSecond = 256000,
+    int frameRate = kStillFrameRate,
     void Function(double progress)? onProgress,
   }) {
     var problem = _outputProblem(audioPath, outputPath, '.mp4');
@@ -345,6 +351,7 @@ class VideoCompositor {
     if (imagePng.length < _pngSignature.length || !listEquals(imagePng.sublist(0, _pngSignature.length), _pngSignature)) {
       problem ??= 'The picture must be a PNG image.';
     }
+    if (frameRate < 1 || frameRate > 60) problem ??= 'The frame rate must be from 1 to 60 frames per second.';
     if (problem != null) return Future<void>.error(VideoCompositionException('invalid', problem));
     return _enqueue('audioVideo', {
       'audioPath': audioPath,
@@ -353,6 +360,7 @@ class VideoCompositor {
       'frameWidth': frameWidth,
       'frameHeight': frameHeight,
       'audioBitrate': audioBitsPerSecond,
+      'frameRate': frameRate,
     }, onProgress);
   }
 

@@ -60,8 +60,8 @@ Generated from the code on 2026-10-25.
 | WordPress | Auto, Hand-off | Yes | No limit | 20 images or 5 videos | - | Yes | [wordpress.md](platforms/wordpress.md) |
 | Write.as / WriteFreely | Auto, Hand-off | Yes | No limit | 20 images, needs media host for API | - | - | [writefreely.md](platforms/writefreely.md) |
 | X (Twitter) | Your keys, Hand-off | Yes | 280 weighted (links = 23), threads | 4 images or 1 video | 100/15 min, 10000/day, 500/month | - | [x.md](platforms/x.md) |
-| YouTube | Your keys, Hand-off | Yes | 5000 bytes | 1 video (required) | 100/day | Yes | [youtube.md](platforms/youtube.md) |
 | YouTube Posts | Hand-off | Yes | No limit | 10 images | - | - | [youtube_posts.md](platforms/youtube_posts.md) |
+| YouTube videos | Your keys, Hand-off | Yes | 5000 bytes | 1 video (required) | 100/day | Yes | [youtube.md](platforms/youtube.md) |
 
 ## Cost and account notes
 
@@ -295,7 +295,7 @@ Generated from the code on 2026-10-25.
 - **Account:** Any X account works. Automatic posting needs your own X developer app (created at console.x.com, no review) with credits on it; hand-off needs only the X app or website.
 - **Cost and limits:** Since February 2026 new X developer accounts are pay-per-use with no free tier: each post costs about $0.015, or $0.20 if it contains a link, paid from credits you buy at console.x.com. Hand-off is free because you press Post yourself.
 
-### YouTube
+### YouTube videos
 
 - **Account:** A Google account with a YouTube channel. "Your own API keys" also needs a free Google Cloud project with an OAuth client that you create yourself (about 10 minutes); hand-off only needs the YouTube app or website.
 - **Cost and limits:** Free: Google gives every project 100 uploads a day and sells no paid plan. Uploads from a project Google has not audited (yours) may be locked to PRIVATE by YouTube; if that happens, use hand-off for public videos.

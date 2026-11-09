@@ -296,6 +296,11 @@ class _TargetRowState extends ConsumerState<_TargetRow> {
                 const SizedBox(height: Space.xs + 2),
                 Text(t.handoffNote!, style: context.text.bodySmall?.copyWith(color: nf.warning)),
               ],
+              // 1.4.1: something about a post that went (YouTube refused the thumbnail).
+              if (t.result?.notice case final notice? when err == null) ...[
+                const SizedBox(height: Space.xs + 2),
+                Text(notice, style: context.text.bodySmall?.copyWith(color: nf.warning)),
+              ],
               if (err != null) ...[
                 const SizedBox(height: Space.xs + 2),
                 Text(err.message, style: context.text.bodySmall?.copyWith(color: nf.danger)),

@@ -14,7 +14,6 @@ import 'package:neforum_core/src/adapters/misskey/misskey_adapter.dart';
 import 'package:neforum_core/src/adapters/threads/threads_adapter.dart';
 import 'package:neforum_core/src/adapters/video_sites/odysee_adapter.dart';
 import 'package:neforum_core/src/adapters/x/x_adapter.dart';
-import 'package:neforum_core/src/adapters/youtube/youtube_adapter.dart';
 import 'package:test/test.dart';
 
 import '../support/test_context.dart';

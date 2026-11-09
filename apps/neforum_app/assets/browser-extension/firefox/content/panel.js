@@ -87,7 +87,8 @@
 
   /**
    * Shows the panel for [job]. [actions] = { fill, insertText, attach,
-   * insertSnippet(text), post, stop }. Returns { set, done, setPost, close }.
+   * insertSnippet(text), post, stop, markPosted }. Returns { set, done,
+   * setPost, close }.
    */
   function mount(job, actions) {
     document.getElementById('neforum-ext-panel')?.remove();
@@ -112,6 +113,11 @@
     const postBtn = el('button', { class: 'a primary', hidden: '', title: `Press the site's Post button (${NF.postKeys})`, onclick: (e) => e.isTrusted && actions.post?.() },
       'Post now ', el('kbd', {}, NF.postKeys));
     const stopBtn = el('button', { class: 'a', hidden: '', title: 'Nothing is posted (Esc does the same)', onclick: (e) => e.isTrusted && actions.stop?.() }, 'Stop');
+    // The post went up and NEFORUM did not see it (a site whose Post button
+    // the extension cannot find): NEFORUM marks it as posted and moves on.
+    // Only a real click counts, as for Post now.
+    const postedBtn = el('button', { class: 'a', hidden: '', title: 'Tell NEFORUM the post is up, so it moves on to the next network', onclick: (e) => e.isTrusted && actions.markPosted?.() },
+      'I posted it');
     const fillBtn = el('button', { class: 'a primary', onclick: () => actions.fill() }, 'Fill in again');
     const note = el('div', { class: 'note' },
       job.autoPost === true
@@ -129,6 +135,7 @@
         el('div', { class: 'row' },
           postBtn,
           stopBtn,
+          postedBtn,
           fillBtn,
           job.text ? el('button', { class: 'a', title: 'Into the box you clicked last', onclick: () => actions.insertText() }, 'Insert text') : '',
           job.media?.length ? el('button', { class: 'a', onclick: () => actions.attach() }, job.media.length === 1 ? 'Attach file' : `Attach ${job.media.length} files`) : ''),
@@ -151,11 +158,14 @@
       },
       /**
        * The Post now part: 'off' (not offered), 'ready' (Post now shown),
-       * 'busy' (counting down, waiting or posting: Stop shown), 'done' (posted).
+       * 'busy' (counting down, waiting or posting: Stop shown), 'done'
+       * (posted). I posted it shows once the page is filled in ('off' or
+       * 'ready'), until the post is done.
        */
       setPost(state) {
         postBtn.hidden = state !== 'ready';
         stopBtn.hidden = state !== 'busy';
+        postedBtn.hidden = state === 'busy' || state === 'done';
         fillBtn.className = state === 'ready' ? 'a' : 'a primary';
         fillBtn.hidden = state === 'busy' || state === 'done';
         if (state === 'done') note.textContent = 'Posted from this page. NEFORUM marks the hand-off as done.';

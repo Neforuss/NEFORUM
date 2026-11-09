@@ -158,7 +158,8 @@ Future<Post> attachAudioRenditions(AppServices s, Post post, AppSettings setting
           made = await _standardCopy(s, post, source, format, pool, used, render: canRender);
         } else if (route == AudioRoute.video) {
           final picture = _pictureFor(list, byId);
-          final video = await _video(s, p, t, source, picture, d.id, pool, used, render: canRender, design: design, fit: settings.photoFit);
+          final video = await _video(s, p, t, source, picture, d.id, pool, used,
+              render: canRender, design: design, fit: settings.photoFit, frameRate: d.media.audioVideoFrameRate);
           made = video?.$1;
           if (video != null && video.$2 && picture != null) consumed.add(picture.$1);
         }
@@ -349,7 +350,7 @@ const String _photoDrawnKey = 'photoDrawn';
 /// fit photos ([fit]).
 Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget target, MediaAttachment source, (String, MediaAttachment)? picture,
     String platformId, Map<String, MediaAttachment> pool, Map<String, MediaAttachment> used,
-    {required bool render, CardDesign? design, required PhotoFitMode fit}) async {
+    {required bool render, CardDesign? design, required PhotoFitMode fit, int? frameRate}) async {
   final (width, height) = audioVideoFrame(platformId);
   final photo = picture?.$2;
   // The track's details as it goes out, with their cover, for the picture.
@@ -388,6 +389,8 @@ Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget tar
     // the picture to the frame (Instagram's grid lost its sides): they have
     // no "fit" and are made again.
     if (design == null && (photo != null || coverPath != null)) 'fit': fit.name,
+    // 1.4.1: a network that counts the frames (Lemmy) gets a video of its own.
+    'fps': ?frameRate,
   };
   final key = 'audio|${source.id}|${stableHash(jsonEncode(params))}';
   final reused = used[key] ?? pool[key];
@@ -426,7 +429,8 @@ Future<(MediaAttachment, bool)?> _video(AppServices s, Post post, PostTarget tar
       png = fitted ??
           await renderAudioCardPng(width: width, height: height, title: title, subtitle: words, details: details, tags: tags, cover: cover, fit: fit);
     }
-    await VideoCompositor.instance.renderAudioVideo(audioPath: source.path, outputPath: out, imagePng: png, frameWidth: width, frameHeight: height);
+    await VideoCompositor.instance.renderAudioVideo(
+        audioPath: source.path, outputPath: out, imagePng: png, frameWidth: width, frameHeight: height, frameRate: frameRate ?? kStillFrameRate);
     final video = used[key] = MediaAttachment(
       id: id,
       path: out,

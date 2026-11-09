@@ -1,6 +1,6 @@
 # YouTube Posts setup guide
 
-This guide connects **YouTube Posts**, the text, image, poll and quiz posts on your channel's **Posts** tab (called the Community tab until 2025; for videos and Shorts, connect **YouTube** instead, you can have both). NEFORUM copies your text and opens YouTube for you to post; on a computer with the NEFORUM browser extension, it can also post for you automatically once you turn that on.
+This guide connects **YouTube Posts**, the text, image, poll and quiz posts on your channel's **Posts** tab (called the Community tab until 2025; for videos and Shorts, connect **YouTube videos** instead, you can have both). NEFORUM copies your text and opens YouTube for you to post; on a computer with the NEFORUM browser extension, it can also post for you automatically once you turn that on.
 
 ## Steps
 
@@ -102,3 +102,10 @@ From YouTube Help, "Create a post":
 - YouTube Help, feature access and advanced features: https://support.google.com/youtube/answer/9890437
 - YouTube Data API reference (no posts resource): https://developers.google.com/youtube/v3/docs
 - YouTube Data API revision history (30 April 2024: channel discussions removed): https://developers.google.com/youtube/v3/revision_history
+
+## A post with words only (1.4.1)
+
+YouTube Posts takes the words alone or with an image, so a post with words and no photo can go either way:
+
+- **By default** it gets the post's **text card** when NEFORUM makes one for another network of the post (Instagram, TikTok, or the card on every network). The extension adds the card through the post box's image button. When no other network gets a card, the words go alone.
+- **Customize > YouTube Posts options > A post with words only** chooses for this post: **With a text card** (even when no other network gets one) or **Text only** (never a card).

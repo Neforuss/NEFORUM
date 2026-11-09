@@ -34,15 +34,27 @@ function standInApp(job) {
  * insertions, the panel's lines) and the user's controls: the panel's
  * buttons and the keyboard.
  */
-function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose', session = new Map(), dialog = null, onPress = null }) {
+function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose', session = new Map(), dialog = null, onPress = null, posted = async () => true, noButton = false, fileInput = null, pickerInput = null }) {
   const pressed = [];
   const inserted = [];
   const statuses = [];
   const listeners = {};
+  const docListeners = {};
+  const attachCalls = [];
+  const setFiles = [];
   let onMessage = null;
   let actions = null;
   const editor = { isConnected: true };
-  const button = { label: 'Post' };
+  /** A stand-in element: [names] is what it says (its label, its text). */
+  const element = (names, extra = {}) => ({
+    names,
+    isConnected: true,
+    matches: (sel) => /button/.test(sel),
+    closest: () => null,
+    querySelector: () => null,
+    ...extra,
+  });
+  const button = element(['post'], { label: 'Post' });
   const panel = {
     set: (text) => statuses.push(text),
     done: ({ headline }) => statuses.push(headline),
@@ -64,12 +76,21 @@ function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose',
       inserted.push({ el, text, options });
       return 'paste';
     },
-    attachFiles: async () => 'input',
-    setInputFiles: () => true,
+    attachFiles: async (files, options) => {
+      attachCalls.push(options);
+      return null;
+    },
+    setInputFiles: (input, files) => {
+      setFiles.push({ input, files });
+      return true;
+    },
+    findFileInput: () => fileInput,
+    isSearchField: (el) => !!el?.search,
+    namesOf: (el) => el.names ?? [],
     sleep: () => new Promise((r) => setImmediate(r)),
     enabled: () => true,
-    findPostButton: ({ root }) => ({ button: dialog && root === dialog ? dialog.button : button, scope: { contains: () => true } }),
-    waitPosted: async () => true,
+    findPostButton: ({ root }) => (noButton ? null : { button: dialog && root === dialog ? dialog.button : button, scope: { contains: () => true } }),
+    waitPosted: (options) => posted(options),
     pressPost: (b) => {
       pressed.push(b);
       onPress?.(b);
@@ -91,11 +112,23 @@ function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose',
         return { ok: false, error: 'Unknown request.' };
       },
       onMessage: { addListener: (f) => (onMessage = f) },
+      // The job's files, one chunk each.
+      connect() {
+        let listener = null;
+        return {
+          onMessage: { addListener: (f) => (listener = f) },
+          onDisconnect: { addListener() {} },
+          postMessage: () => setImmediate(() => listener({ data: Buffer.from('photo').toString('base64'), done: true, type: 'image/png' })),
+          disconnect() {},
+        };
+      },
     },
   };
   const url = new URL(href);
   const sandbox = {
     console,
+    atob,
+    File,
     setTimeout,
     clearTimeout,
     setImmediate,
@@ -108,7 +141,13 @@ function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose',
     chrome,
     location: { host: url.host, href, pathname: url.pathname },
     sessionStorage: { getItem: (k) => session.get(k) ?? null, setItem: (k, v) => session.set(k, String(v)) },
-    document: { readyState: 'complete', addEventListener() {}, activeElement: null, querySelectorAll: () => (dialog ? [dialog] : []) },
+    document: {
+      readyState: 'complete',
+      addEventListener: (type, listener) => (docListeners[type] = listener),
+      activeElement: null,
+      querySelectorAll: () => (dialog ? [dialog] : []),
+      querySelector: (sel) => (/input\[type="file"\]/.test(sel) ? pickerInput : null),
+    },
     addEventListener: (type, listener) => (listeners[type] = listener),
     alert() {},
     NEFORUM_EXT: {
@@ -129,11 +168,17 @@ function loadPage({ app, recipe = {}, href = 'https://www.example.test/compose',
   vm.runInContext(SOURCE, sandbox, { filename: 'main.js' });
   return {
     start: () => onMessage({ type: 'fillNow' }),
-    /** The user presses [key] on the page (a real key press). */
-    press: (key) => listeners.keydown({ key, isTrusted: true, repeat: false, isComposing: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false }),
+    /** The user presses [key] on the page (a real key press); [ctrl]: with Ctrl. */
+    press: (key, { ctrl = false } = {}) =>
+      listeners.keydown({ key, isTrusted: true, repeat: false, isComposing: false, ctrlKey: ctrl, metaKey: false, altKey: false, shiftKey: false, preventDefault() {}, stopImmediatePropagation() {} }),
+    /** A click on [target] ([trusted]: the user's own; a script's is not). */
+    click: (target, { trusted = true } = {}) => docListeners.click({ isTrusted: trusted, target, composedPath: () => [target] }),
     /** The panel's buttons, once it is shown. */
     actions: () => actions,
+    element,
     button,
+    attachCalls,
+    setFiles,
     pressed,
     inserted,
     statuses,
@@ -295,4 +340,100 @@ test('NEFORUM did not take a report: the page says so', async () => {
   const says = 'NEFORUM did not take this report: That hand-off has expired. If the post went up, mark it as posted in NEFORUM.';
   await until(() => page.statuses.includes(says), 'the warning');
   assert.equal(page.pressed.length, 1);
+});
+
+const handOff = (extra = {}) => automaticJob({ autoPost: false, quickPost: false, ...extra });
+
+test('I posted it: NEFORUM is told the post is up, once, for a job the extension may not post (TikTok)', async () => {
+  const app = standInApp(handOff({ platformId: 'tiktok', platformName: 'TikTok' }));
+  const page = loadPage({ app, noButton: true });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  page.actions().markPosted();
+  await until(() => app.state.reports.length === 2, 'the posted report');
+  assert.equal(app.state.reports[1].posted, 'user');
+  assert.ok(page.statuses.includes('Marked as posted on TikTok.'));
+  assert.equal(page.pressed.length, 0, 'nothing is pressed on the page');
+  page.actions().markPosted();
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(app.state.reports.length, 2, 'a second click says nothing more');
+  // A reload of the page does not offer it again: the post is done there.
+  assert.ok(page.session.has('neforum-posted-j_1'));
+});
+
+test('Ctrl+Enter where the Post button cannot be found: the panel points at I posted it', async () => {
+  const app = standInApp(handOff({ quickPost: true, platformId: 'tiktok', platformName: 'TikTok' }));
+  const page = loadPage({ app, noButton: true });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  page.press('Enter', { ctrl: true });
+  assert.ok(page.statuses.some((s) => /Could not find TikTok's Post button: press it on the page\..*I posted it/.test(s)));
+  assert.equal(page.pressed.length, 0);
+});
+
+test('the user presses the site\'s own Post: watched, and reported once the post went (confirmed)', async () => {
+  const app = standInApp(handOff({ platformId: 'tiktok', platformName: 'TikTok' }));
+  let seen = null;
+  const page = loadPage({ app, noButton: true, recipe: { postSelectors: [], postWords: ['post'], postedPattern: /uploaded/ }, posted: async (o) => ((seen = o), true) });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  // A script's click, or a click on another button, is not the user posting.
+  page.click(page.button, { trusted: false });
+  page.click(page.element(['discard']));
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(app.state.reports.length, 1);
+  page.click(page.button);
+  await until(() => app.state.reports.length === 2, 'the posted report');
+  assert.equal(app.state.reports[1].posted, 'confirmed');
+  assert.equal(seen.button, page.button, 'the button the user pressed is watched');
+  assert.deepEqual(seen.posted, /uploaded/, 'with what the site says once a post is up');
+  assert.equal(page.pressed.length, 0, 'the extension pressed nothing');
+});
+
+test('the user presses Post but the page never shows the post go: nothing is reported (I posted it stays)', async () => {
+  const app = standInApp(handOff());
+  const page = loadPage({ app, recipe: { postWords: ['post'] }, posted: async () => false });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  page.click(page.button);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(app.state.reports.length, 1);
+  page.actions().markPosted();
+  await until(() => app.state.reports.length === 2, 'the I posted it report');
+  assert.equal(app.state.reports[1].posted, 'user');
+});
+
+test('Attach: the recipe\'s photo option and its file input, never a paste into another field', async () => {
+  const media = [{ index: 0, name: 'photo.png', mimeType: 'image/png', size: 5, kind: 'image' }];
+  const input = { kind: 'post box input' };
+  const steps = [];
+  const recipe = {
+    beforeMedia: async () => steps.push('image option'),
+    fileInput: () => (steps.includes('image option') ? input : null),
+    afterMedia: async () => steps.push('after'),
+  };
+  const app = standInApp(handOff({ media }));
+  const page = loadPage({ app, recipe });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  page.setFiles.length = 0;
+  steps.length = 0;
+  await page.actions().attach();
+  assert.deepEqual(steps, ['image option', 'after']);
+  assert.equal(page.setFiles.length, 1);
+  assert.equal(page.setFiles[0].input, input, 'the post box\'s own input');
+  assert.equal(page.attachCalls.length, 0, 'neither the fill nor Attach pasted or dropped them anywhere');
+  assert.ok(page.statuses.includes('Files added.'));
+});
+
+test('Attach where nothing takes the files: the site\'s file window opens for the user to pick them', async () => {
+  const media = [{ index: 0, name: 'photo.png', mimeType: 'image/png', size: 5, kind: 'image' }];
+  let opened = 0;
+  const app = standInApp(handOff({ media }));
+  const page = loadPage({ app, pickerInput: { click: () => opened++ } });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  await page.actions().attach();
+  assert.equal(opened, 1, 'the site\'s file input is opened, from the user\'s click on Attach');
+  assert.ok(page.statuses.some((s) => /^Choose the file in the window that opened/.test(s)));
 });

@@ -272,7 +272,26 @@ class LemmyApi {
 
   /// `POST {instance}/pictrs/image` (multipart `images[]`) and returns the
   /// public URL of the stored image.
-  Future<Uri> uploadImage({required Uint8List bytes, required String fileName, required String contentType}) async {
+  Future<Uri> uploadImage({required Uint8List bytes, required String fileName, required String contentType}) async =>
+      (await uploadMedia(bytes: bytes, fileName: fileName, contentType: contentType)).url;
+
+  /// `GET /pictrs/image/delete/<token>/<file>` (Lemmy 0.19's pict-rs proxy):
+  /// removes an upload this account made. Best effort: false when the
+  /// instance did not take it.
+  Future<bool> deleteUpload(String token, String file) async {
+    try {
+      final r = await ctx.http.send('GET', instance.replace(path: '/pictrs/image/delete/$token/$file'),
+          headers: {..._auth, if (jwt != null) 'Cookie': 'jwt=$jwt'});
+      return r.statusCode >= 200 && r.statusCode < 300;
+    } on Object {
+      return false;
+    }
+  }
+
+  /// [uploadImage], with what deletes the upload again (Lemmy 0.19 hands a
+  /// delete token and the file's name; null on Lemmy 1.0).
+  Future<({Uri url, String? deleteToken, String? file})> uploadMedia(
+      {required Uint8List bytes, required String fileName, required String contentType}) async {
     final r = await ctx.http.send(
       'POST',
       instance.replace(path: '/pictrs/image'),
@@ -288,10 +307,11 @@ class LemmyApi {
     final j = r.jsonMap;
     // Lemmy 1.0 style response.
     final direct = j['image_url'];
-    if (direct is String && direct.isNotEmpty) return Uri.parse(direct);
+    if (direct is String && direct.isNotEmpty) return (url: Uri.parse(direct), deleteToken: null, file: null);
     final files = j['files'];
     final first = files is List && files.isNotEmpty ? files.first : null;
     final file = first is Map ? first['file'] : null;
+    final token = first is Map ? first['delete_token'] : null;
     if (j['msg'] != 'ok' || file is! String || file.isEmpty) {
       final msg = j['msg'];
       throw AdapterException(PublishError.validation(
@@ -299,7 +319,7 @@ class LemmyApi {
           raw: r.body.length > 600 ? r.body.substring(0, 600) : r.body,
           statusCode: r.statusCode));
     }
-    return instance.replace(path: '/pictrs/image/$file');
+    return (url: instance.replace(path: '/pictrs/image/$file'), deleteToken: token is String && token.isNotEmpty ? token : null, file: file);
   }
 
   /// `POST /api/v3/user/logout`: invalidates the JWT on the server.

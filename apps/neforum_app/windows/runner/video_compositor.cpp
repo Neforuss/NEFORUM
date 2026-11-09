@@ -979,13 +979,13 @@ class StillVideoWriter {
   }
 
  private:
-  // Platforms take 30 frames per second everywhere; a frame that never
-  // changes costs almost nothing after the first.
-  static constexpr UINT32 kFrameRate = 30;
+  // 30 frames per second unless asked (StillVideoRequest::frame_rate); a
+  // frame that never changes costs almost nothing after the first.
+  UINT32 FrameRate() const { return request_.frame_rate >= 1 && request_.frame_rate <= 60 ? request_.frame_rate : 30; }
   // A key frame every 10 seconds.
-  static constexpr UINT32 kKeyFrameInterval = 300;
+  UINT32 KeyFrameInterval() const { return FrameRate() * 10; }
 
-  static LONGLONG FrameTime(int64_t frame) { return frame * kTicksPerSecond / kFrameRate; }
+  LONGLONG FrameTime(int64_t frame) const { return frame * kTicksPerSecond / FrameRate(); }
 
   bool Fail(const char* code, std::string message) {
     code_ = code;
@@ -1028,17 +1028,17 @@ class StillVideoWriter {
     if (FAILED(hr)) return Fail("audioVideo", WithCode("NEFORUM could not create the new video file.", hr));
 
     ComPtr<IMFMediaType> h264;
-    hr = CreateH264Type(width, height, kFrameRate, 1, 2000000, &h264);
+    hr = CreateH264Type(width, height, FrameRate(), 1, 2000000, &h264);
     if (SUCCEEDED(hr)) hr = writer_->AddStream(h264.Get(), &sink_video_);
     ComPtr<IMFMediaType> rgb;
-    if (SUCCEEDED(hr)) hr = CreateRgbInputType(width, height, kFrameRate, 1, &rgb);
+    if (SUCCEEDED(hr)) hr = CreateRgbInputType(width, height, FrameRate(), 1, &rgb);
     // Constant quality: the repeated frames shrink to almost nothing, where
     // a bitrate would be spent on them anyway.
     ComPtr<IMFAttributes> parameters;
     if (SUCCEEDED(hr)) hr = MFCreateAttributes(&parameters, 3);
     if (SUCCEEDED(hr)) hr = parameters->SetUINT32(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_Quality);
     if (SUCCEEDED(hr)) hr = parameters->SetUINT32(CODECAPI_AVEncCommonQuality, 70);
-    if (SUCCEEDED(hr)) hr = parameters->SetUINT32(CODECAPI_AVEncMPVGOPSize, kKeyFrameInterval);
+    if (SUCCEEDED(hr)) hr = parameters->SetUINT32(CODECAPI_AVEncMPVGOPSize, KeyFrameInterval());
     if (SUCCEEDED(hr)) hr = writer_->SetInputMediaType(sink_video_, rgb.Get(), parameters.Get());
     if (FAILED(hr)) return Fail("audioVideo", WithCode("Windows has no H.264 encoder for this frame size.", hr));
 
@@ -1803,6 +1803,8 @@ void VideoCompositor::HandleMethodCall(
     request.frame_width = static_cast<int>(IntField(*args, "frameWidth"));
     request.frame_height = static_cast<int>(IntField(*args, "frameHeight"));
     request.audio_bitrate = BitrateField(*args, "audioBitrate");
+    const int64_t rate = IntField(*args, "frameRate");
+    request.frame_rate = rate >= 1 && rate <= 60 ? static_cast<uint32_t>(rate) : 30;
     Start(std::move(result), IntField(*args, "id"),
           [this, request = std::move(request)](Job& job, const Progress& progress) {
             if (!RenderStillVideoFile(request, progress, closing_, &job.error_code, &job.error_message)) return;

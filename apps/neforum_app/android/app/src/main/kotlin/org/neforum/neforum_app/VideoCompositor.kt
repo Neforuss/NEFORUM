@@ -379,6 +379,8 @@ class VideoCompositor(private val context: Context, messenger: BinaryMessenger) 
         val output = call.argument<String>("outputPath").orEmpty()
         val videoBitrate = int("videoBitrate")
         val audioBitrate = int("audioBitrate")
+        // Fewer frames for a network that counts them (Lemmy's pict-rs).
+        val frameRate = int("frameRate").let { if (it in 1..60) it else STILL_FRAME_RATE }
         val maxSide = int("maxSide")
         val id = call.argument<Number>("id")?.toLong() ?: 0L
         if (input.isEmpty() || output.isEmpty() || input == output || videoBitrate <= 0 || maxSide !in 16..4096) {
@@ -438,6 +440,8 @@ class VideoCompositor(private val context: Context, messenger: BinaryMessenger) 
         val width = int("frameWidth")
         val height = int("frameHeight")
         val audioBitrate = int("audioBitrate")
+        // Fewer frames for a network that counts them (Lemmy's pict-rs).
+        val frameRate = int("frameRate").let { if (it in 1..60) it else STILL_FRAME_RATE }
         val id = call.argument<Number>("id")?.toLong() ?: 0L
         val frameOk = width in 16..4096 && height in 16..4096 && width % 2 == 0 && height % 2 == 0
         if (!frameOk || png == null || png.isEmpty() || audio.isEmpty() || output.isEmpty() || audio == output) {
@@ -480,7 +484,7 @@ class VideoCompositor(private val context: Context, messenger: BinaryMessenger) 
                         .setImageDurationMs(durationMs)
                         .build(),
                 )
-                    .setFrameRate(STILL_FRAME_RATE)
+                    .setFrameRate(frameRate)
                     .setEffects(
                         Effects(
                             emptyList<AudioProcessor>(),

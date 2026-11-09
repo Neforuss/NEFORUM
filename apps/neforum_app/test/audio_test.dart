@@ -416,6 +416,16 @@ void main() {
       expect(preview.notes.single.message, contains('plays in the post'));
     });
 
+    test('Lemmy (1.4.1) gets a still-picture video too, while it fits its 900 frames at 1 a second; a longer track a link', () {
+      expect(audioRouteFor(rules('lemmy'), _mp3, AudioQuality.standard, canMakeVideo: true), AudioRoute.video);
+      expect(audioRouteFor(rules('lemmy'), _mp3, AudioQuality.standard), AudioRoute.original, reason: 'no video on this device: the link');
+      final long = MediaAttachment(id: 'long', path: '/tmp/long.mp3', mimeType: AudioMimeTypes.mp3, sizeBytes: 10, durationMs: 15 * 60 * 1000 + 1000, audioCodec: AudioCodecs.mp3);
+      expect(audioRouteFor(rules('lemmy'), long, AudioQuality.standard, canMakeVideo: true), AudioRoute.original);
+      final preview = previewAudio([_mp3], _mp3, registry.byId('lemmy')!.descriptor, AudioQuality.standard, canRenderVideo: true);
+      expect(preview.media.single.mimeType, 'video/mp4');
+      expect(preview.notes.single.message, contains('plays in the post'));
+    });
+
     test('without a converter the original goes where it is taken', () {
       expect(audioRouteFor(rules('telegram'), _flac, AudioQuality.standard), AudioRoute.original);
       final preview = previewAudio([_flac], _flac, registry.byId('telegram')!.descriptor, AudioQuality.standard);
@@ -536,6 +546,37 @@ void main() {
       expect(post.targetFor('dc')!.overrides.mediaIds, isNull);
       expect(post.media.where(isAudioRendition).map((m) => m.id), [video.id]);
       expect(File(copy.path).existsSync(), isFalse, reason: 'an unused copy is deleted');
+    });
+
+    testWidgets('Lemmy (1.4.1): a still-picture video of its own at 1 frame a second, apart from the 30 a second of others', (tester) async {
+      final dir = (await tester.runAsync(() => Directory.systemTemp.createTemp('neforum-audio-lemmy')))!;
+      addTearDown(() => tester.runAsync(() => dir.delete(recursive: true)));
+      late AppServices s;
+      late MediaAttachment track;
+      final accounts = [
+        for (final (id, platform) in const [('lm', 'lemmy'), ('tb', 'tumblr')])
+          ConnectedAccount(id: id, platformId: platform, tier: PlatformTier.handoff, displayName: id, createdAt: DateTime(2026, 11, 8)),
+      ];
+      await tester.runAsync(() async {
+        s = await AppServices.create(demo: true, storage: await openAppStorage(overrideDir: dir.path));
+        for (final a in accounts) {
+          await s.accounts.upsert(a);
+        }
+        track = await s.media.importBytes(wav(seconds: 1), fileName: 'Master.wav');
+      });
+      final now = DateTime(2026, 11, 8);
+      var post = Post(id: 'p-lemmy', text: 'New single', media: [track], targets: [for (final a in accounts) PostTarget(accountId: a.id)], createdAt: now, updatedAt: now);
+      await tester.runAsync(() async => post = await attachAudioRenditions(s, post, s.settings));
+
+      final videos = calls.where((c) => c.$1 == 'audioVideo').map((c) => c.$2).toList();
+      expect(videos.map((v) => v['frameRate']).toSet(), {1, 30}, reason: 'Lemmy\'s pict-rs counts frames; Tumblr gets the usual rate');
+      final lemmy = post.media.singleWhere((m) => m.id == post.targetFor('lm')!.overrides.mediaIds!.single);
+      final tumblr = post.media.singleWhere((m) => m.id == post.targetFor('tb')!.overrides.mediaIds!.single);
+      expect((lemmy.isVideo, tumblr.isVideo), (true, true));
+      expect(lemmy.id, isNot(tumblr.id), reason: 'one video each: their frame rates differ');
+      expect(lemmy.renderParameters!['fps'], 1);
+      expect(tumblr.renderParameters!.containsKey('fps'), isFalse, reason: 'videos made before 1.4.1 are reused as they are');
+      expect(lemmy.renderParameters!['kind'], 'audioVideo', reason: 'the Lemmy adapter knows it by this');
     });
 
     Future<(AppServices, MediaAttachment, MediaAttachment)> workspace(WidgetTester tester, List<ConnectedAccount> accounts) async {

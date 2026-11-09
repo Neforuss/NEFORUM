@@ -23,6 +23,10 @@ abstract final class YouTubeEndpoints {
       'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status'
       '${notifySubscribers ? '' : '&notifySubscribers=false'}');
 
+  /// `thumbnails.set`: the image is the whole body (image/jpeg or image/png),
+  /// about 50 quota units; any of the upload scopes authorizes it.
+  static Uri thumbnailSet(String videoId) => Uri.https('www.googleapis.com', '/upload/youtube/v3/thumbnails/set', {'videoId': videoId});
+
   /// `videos.delete` (HTTP 204 on success, 50 quota units).
   static Uri video(String id) => Uri.https('www.googleapis.com', '/youtube/v3/videos', {'id': id});
 }

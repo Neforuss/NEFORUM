@@ -42,7 +42,7 @@ bool automaticPostingAppliesTo(AppServices s, ConnectedAccount account, Iterable
 /// there is nothing to check: the post was confirmed, or [r] came from
 /// another page.
 String? automaticHandoffNote(BrowserFillResult r, String host) {
-  if (r.posted == BrowserPostState.confirmed) return null;
+  if (r.posted.wentUp) return null;
   if (r.posted == BrowserPostState.pressed) return 'Post was pressed on $host, but the post was not seen going up. Check the page before you post it again.';
   final message = r.message == null ? '' : ' ${_sentence(r.message!)}';
   return switch (r.automatic) {
@@ -236,7 +236,7 @@ class AutomaticHandoff {
       if (reportedOn == null || r.jobId != reportedOn.id) return;
       final host = bareHost(r.host).isEmpty ? bareHost(url.host) : bareHost(r.host);
       // A post counts from any page of the site.
-      if (r.posted == BrowserPostState.confirmed) return finish(const _Attempt(_Outcome.posted));
+      if (r.posted.wentUp) return finish(const _Attempt(_Outcome.posted));
       if (r.posted == BrowserPostState.pressed) return finish(_Attempt(_Outcome.unconfirmed, automaticHandoffNote(r, host)));
       // Another page filled the job in (another tab, a reload): the page that
       // posts it reports for itself, and is still waited for.

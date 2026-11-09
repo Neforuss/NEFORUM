@@ -87,20 +87,33 @@
   }
 
   /**
+   * Is [el] a site's search box (YouTube's at the top of every page), never a
+   * post's field? Its type or role says so, or its name or label, or the
+   * search form or bar it sits in.
+   */
+  function isSearchField(el) {
+    if (!el?.matches) return false;
+    if (el.matches('input[type="search"], [role="searchbox"], [role="combobox"]')) return true;
+    if (el.closest('[role="search"], form[role="search"], ytd-searchbox, yt-searchbox, form[action*="search" i], form[action*="results" i]')) return true;
+    const names = [el.getAttribute('name'), el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].filter(Boolean).join(' ');
+    return /search/i.test(names);
+  }
+
+  /**
    * The composer's text field: the focused one if it is editable, otherwise
    * the best visible candidate under [root] (labelled like a post box, then
-   * the biggest).
+   * the biggest). Search boxes never count.
    */
   function findEditor(root = document, hint = /what.?s on your mind|what.?s happening|write|caption|post|note|share|say|text|message|description|start a thread/i) {
     // Only a focused field itself counts (the page body is not a field).
     const ae = document.activeElement;
     const active = ae && (ae.matches?.('textarea, input') || ae.isContentEditable) ? editableOf(ae) : null;
-    if (active && visible(active) && root.contains(active)) return active;
+    if (active && visible(active) && root.contains(active) && !isSearchField(active)) return active;
     const seen = new Set();
     const candidates = [];
     for (const el of root.querySelectorAll(EDITABLE)) {
       const e = editableOf(el);
-      if (!e || seen.has(e) || !visible(e) || e.closest('[aria-hidden="true"]')) continue;
+      if (!e || seen.has(e) || !visible(e) || e.closest('[aria-hidden="true"]') || isSearchField(e)) continue;
       if (e.matches('input') && (e.readOnly || e.disabled)) continue;
       seen.add(e);
       const r = e.getBoundingClientRect();
@@ -415,19 +428,49 @@
         const input = findFileInput(files, root) ?? findFileInput(files, document);
         if (input && setInputFiles(input, files)) return 'input';
       }
+      // A search box is never the place for a post's files (nor focused for them).
+      const own = editor && !isSearchField(editor) ? editor : null;
       if (way === 'paste') {
-        const target = editor ?? findEditor(root);
+        const target = own ?? findEditor(root);
         if (target) {
           target.focus({ preventScroll: true });
           if (firePaste(target, dataTransferOf(files))) return 'paste';
         }
       }
       if (way === 'drop') {
-        const zone = editor ?? findEditor(root) ?? findByText('div, section, label', /drag|drop|upload|select (files|video|photo)/i, root);
+        const zone = own ?? findEditor(root) ?? findByText('div, section, label', /drag|drop|upload|select (files|video|photo)/i, root);
         if (zone && dropOn(zone, files)) return 'drop';
       }
     }
     return null;
+  }
+
+  /**
+   * Presses a composer's photo button ([button]) the way a person would and
+   * returns the file input it opens, without the file window: a site's photo
+   * button opens its hidden file input with a click, which is stopped here
+   * (the files go straight into that input instead). The input may also just
+   * appear under [root]. Null when neither happens within [timeout] ms.
+   */
+  async function pressForFileInput(button, { root = document, timeout = 2500 } = {}) {
+    if (!button) return null;
+    let opened = null;
+    const stop = (e) => {
+      // The input itself, also inside a shadow root.
+      const t = e.composedPath?.()[0] ?? e.target;
+      if (t instanceof HTMLInputElement && t.type === 'file') {
+        e.preventDefault();
+        opened = t;
+      }
+    };
+    document.addEventListener('click', stop, true);
+    try {
+      press(button);
+      return await waitFor(() => opened ?? root.querySelector('input[type="file"]:not([disabled])'), { timeout, interval: 100 });
+    } finally {
+      // Only while waiting: a file window the user (or Attach) opens later opens.
+      document.removeEventListener('click', stop, true);
+    }
   }
 
   // ---- form fields, found by the words that label them --------------------
@@ -655,16 +698,32 @@
     return nearest(hits, from, root);
   }
 
+  /** Does the page say, in a short line of its own, something matching [pattern] ("Your video has been uploaded")? */
+  function pageSays(pattern) {
+    if (!pattern) return false;
+    for (const el of document.querySelectorAll('[role="alert"], [role="status"], [role="dialog"], [aria-live], div, span, p, h1, h2, h3')) {
+      if (el.childElementCount > 3 || !visible(el)) continue;
+      const t = norm(el.textContent);
+      if (t && t.length <= 160 && pattern.test(t)) return true;
+    }
+    return false;
+  }
+
   /**
    * After Post was pressed: did the post go? Yes when the page moved on, the
-   * composer closed, or the editor emptied (inline composers stay open).
+   * composer closed, the editor emptied (inline composers stay open), or the
+   * page says so ([posted]: the site's own words, "Your video has been
+   * uploaded"; for a composer that stays open after posting).
    */
-  async function waitPosted({ button, editor = null, text = '', timeout = 25000 }) {
+  async function waitPosted({ button, editor = null, text = '', timeout = 25000, posted = null }) {
     const from = location.href;
     const end = Date.now() + timeout;
+    // Words the page showed before the press prove nothing.
+    const words = posted && !pageSays(posted) ? posted : null;
     while (Date.now() < end) {
       await sleep(250);
       if (location.href !== from) return true;
+      if (pageSays(words)) return true;
       const buttonGone = !button.isConnected || !visible(button);
       const editorGone = !editor || !editor.isConnected || !visible(editor);
       if (buttonGone && editorGone) return true;
@@ -680,8 +739,8 @@
   const pressPost = (button) => press(button);
 
   NF.fill = {
-    sleep, visible, waitFor, label, findByText, press, findEditor, editableOf, hasText, holdsAlready, insertText, attachFiles, findFileInput, setInputFiles, dropOn, firePaste, accepts,
-    enabled, findPostButton, waitPosted, pressPost,
+    sleep, visible, waitFor, label, findByText, press, findEditor, editableOf, isSearchField, hasText, holdsAlready, insertText, attachFiles, findFileInput, setInputFiles, dropOn, firePaste, accepts,
+    pressForFileInput, enabled, findPostButton, namesOf, waitPosted, pageSays, pressPost,
     norm, contentOf, restAfter, labelsOf, fieldLabel, findField, findGroup, setChecked, chooseOption, choose, insertTags, pressKey,
   };
 })();
