@@ -1,15 +1,18 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import '../../audio/audio_publishing.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
+import '../../model/paragraph_media.dart' show ParagraphMediaStyle;
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
+import '../../text/text_counter.dart';
 import '../../text/text_splitter.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
@@ -120,6 +123,8 @@ class DiscordAdapter extends PlatformAdapter {
       audioMimeTypes: AudioMimeTypes.all,
       keepsAudioBytes: true,
       audioWithOtherMedia: true,
+      // 1.4.3: each linked paragraph with its files, as messages in a row.
+      paragraphMedia: ParagraphMediaStyle.sections,
     ),
     defaultQuotas: [
       QuotaRule(
@@ -263,7 +268,9 @@ class DiscordAdapter extends PlatformAdapter {
       issues.add(ValidationIssue.error('media.too_many',
           '${variant.media.length} files; Discord allows $discordMaxFiles per message', field: 'media'));
     }
-    final total = variant.media.fold<int>(0, (s, m) => s + m.sizeBytes);
+    // The 25 MB cap is per message: with linked paragraphs each message
+    // carries its own files.
+    final total = discordMessages(variant).fold<int>(0, (most, m) => math.max(most, m.media.fold<int>(0, (s, x) => s + x.sizeBytes)));
     if (total > discordRequestMaxBytes) {
       issues.add(ValidationIssue.error('media.total_too_large',
           'Files add up to ${(total / (1024 * 1024)).toStringAsFixed(1)} MB; Discord takes 25 MB per message',
@@ -288,6 +295,13 @@ class DiscordAdapter extends PlatformAdapter {
   }
 
   // ---------------------------------------------------------------- publish
+
+  /// Linked paragraphs go out as messages one after another, each with its
+  /// own files.
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => variant.hasParagraphMedia
+      ? ProgressShape.forVariant(variant, ProgressFamily.direct, steps: discordMessages(variant).length, interleaved: true)
+      : super.progressShape(variant, account);
 
   @override
   Future<PublishResult> publish(
@@ -326,8 +340,11 @@ class DiscordAdapter extends PlatformAdapter {
     if (variant.media.length > discordMaxFiles) {
       throw const AdapterException(PublishError.validation('Discord takes at most 10 files per message'));
     }
-    var parts = (variant.isThread ? variant.threadParts : [variant.text]).where((p) => p.trim().isNotEmpty).toList();
-    if (parts.isEmpty) parts.add('');
+    // The messages: the parts, the files with the first; or (1.4.3) each
+    // linked paragraph followed by its files.
+    final messages = discordMessages(variant);
+    var parts = [for (final m in messages) m.text];
+    var files = [for (final m in messages) m.media];
     // "Mention @everyone": exactly one message may notify the channel, the
     // first that names @everyone or @here. Without one, the post gets an
     // @everyone line at the top.
@@ -335,7 +352,12 @@ class DiscordAdapter extends PlatformAdapter {
     if (variant.extra['mentionEveryone'] == true) {
       mentionAt = parts.indexWhere(_everyoneOrHere.hasMatch);
       if (mentionAt < 0) {
-        parts = [...discordWithEveryone(parts.first), ...parts.skip(1)];
+        final first = discordWithEveryone(parts.first);
+        parts = [...first, ...parts.skip(1)];
+        // The first message's files go with its first piece; a linked
+        // paragraph's follow its words, so with its last piece.
+        final none = [for (var i = 1; i < first.length; i++) const <MediaAttachment>[]];
+        files = variant.hasParagraphMedia ? [...none, ...files] : [files.first, ...none, ...files.skip(1)];
         mentionAt = 0;
       }
     }
@@ -356,7 +378,7 @@ class DiscordAdapter extends PlatformAdapter {
       };
       final query = {'wait': 'true', if (threadId != null) 'thread_id': threadId};
       final url = hook.url.replace(queryParameters: query);
-      final media = i == 0 ? variant.media : const <MediaAttachment>[];
+      final media = files[i];
       final part = i;
       // Later messages sit out a short rate-limit wait instead of leaving
       // the post half finished.
@@ -419,6 +441,44 @@ class DiscordAdapter extends PlatformAdapter {
     if (msg.isEmpty) throw const AdapterException(PublishError.platform('Discord returned no message'));
     return msg;
   }
+}
+
+/// The messages [v] goes out as on Discord, in order. Without linked
+/// paragraphs: one message per part (the text cut to 2000 characters, as
+/// the thread parts are), the files with the first. With them (1.4.3): each
+/// section's words ([PostVariant.paragraphSections]) cut to 2000
+/// characters, its files with the last piece, so they show right under its
+/// words; 10 files to a message.
+List<({String text, List<MediaAttachment> media})> discordMessages(PostVariant v) {
+  if (!v.hasParagraphMedia) {
+    final parts = (v.isThread ? v.threadParts : [v.text]).where((p) => p.trim().isNotEmpty).toList();
+    if (parts.isEmpty) parts.add('');
+    return [
+      for (var i = 0; i < parts.length; i++) (text: parts[i], media: i == 0 ? v.media : const <MediaAttachment>[]),
+    ];
+  }
+  const rules = TextRules(maxLength: discordMaxContent, counting: CountingRule.utf16);
+  final out = <({String text, List<MediaAttachment> media})>[];
+  for (final s in v.paragraphSections) {
+    final text = s.text.trim();
+    final pieces = text.isEmpty
+        ? <String>[]
+        : [
+            for (final p in TextCounter.fits(text, rules) ? [text] : TextSplitter.split(text, rules, numbering: false))
+              if (p.trim().isNotEmpty) p.trim(),
+          ];
+    final groups = [
+      for (var i = 0; i < s.media.length; i += discordMaxFiles) s.media.sublist(i, math.min(i + discordMaxFiles, s.media.length)),
+    ];
+    for (var i = 0; i < pieces.length; i++) {
+      out.add((text: pieces[i], media: i == pieces.length - 1 && groups.isNotEmpty ? groups.first : const <MediaAttachment>[]));
+    }
+    for (final g in pieces.isEmpty ? groups : groups.skip(1)) {
+      out.add((text: '', media: g));
+    }
+  }
+  if (out.isEmpty) out.add((text: '', media: const <MediaAttachment>[]));
+  return out;
 }
 
 /// How long Discord asked to wait when [e] is a 429 answer.

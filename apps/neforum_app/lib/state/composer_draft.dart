@@ -182,5 +182,7 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
               if (e.value is int) '${e.key}': e.value as int,
           }
         : p.mediaParts,
+    // 1.4.3: kept by the composer's own paragraph numbers, like the post's.
+    paragraphMedia: p.paragraphMedia,
   );
 }

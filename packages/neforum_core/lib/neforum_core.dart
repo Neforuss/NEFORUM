@@ -31,6 +31,7 @@ export 'src/model/artwork.dart';
 export 'src/model/audio.dart';
 export 'src/model/audio_tags.dart';
 export 'src/model/media.dart';
+export 'src/model/paragraph_media.dart';
 export 'src/model/photo_fit.dart';
 export 'src/model/platform_descriptor.dart';
 export 'src/model/poll.dart';

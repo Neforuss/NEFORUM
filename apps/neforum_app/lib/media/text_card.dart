@@ -227,7 +227,13 @@ String textCardText(Post post, PostTarget target) {
         for (final p in post.parts)
           if (p.trim().isNotEmpty) p.trimRight(),
       ].join('\n\n');
-  final lines = written.trim().split('\n');
+  return withoutTrailingTagsAndLinks(written);
+}
+
+/// [text] without its trailing lines that are only hashtags or links (those
+/// belong in the caption); a text that is nothing else keeps its first line.
+String withoutTrailingTagsAndLinks(String text) {
+  final lines = text.trim().split('\n');
   final tagOrLink = RegExp(r'^(\s*(#[\p{L}\p{N}_]+|https?://\S+)\s*)+$', unicode: true);
   while (lines.length > 1 && (lines.last.trim().isEmpty || tagOrLink.hasMatch(lines.last))) {
     lines.removeLast();

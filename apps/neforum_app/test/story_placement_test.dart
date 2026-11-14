@@ -153,6 +153,58 @@ void main() {
     final (feed3, story3) = copies(post);
     expect((isCaptionedCopy(feed3), isCaptionedCopy(story3)), (false, false));
   });
+  testWidgets('paragraphs linked to photos (1.4.3): each section\'s words go on the photo and the story frame that opens it', (tester) async {
+    final (services, _) = await boot(tester);
+    await tester.runAsync(() => services.accounts.upsert(igApi));
+    Future<MediaAttachment> photo(String name, int shade) async => (await tester.runAsync(() => services.media.importBytes(
+          img.encodeJpg(img.Image(width: 300, height: 400)..clear(img.ColorRgb8(shade, 100, 200))),
+          fileName: name,
+        )))!;
+    final one = await photo('one.jpg', 10);
+    final two = await photo('two.jpg', 80);
+    final three = await photo('three.jpg', 160);
+    // Paragraph 2 is about photos two and three, attached before photo one.
+    Post fresh({ParagraphMediaLinks? links}) => Post(
+          id: 'p-paragraphs',
+          text: 'Intro.\n\nAbout one.\n\nAbout two and three.\n\n#trip',
+          media: [two, three, one],
+          paragraphMedia: links ?? {1: [one.id], 2: [two.id, three.id]},
+          targets: [PostTarget(accountId: igApi.id, overrides: const PostOverrides(extra: _feedAndStory))],
+          createdAt: now,
+          updatedAt: now,
+        );
+    const on = AppSettings(captionPhotoPlatforms: ['instagram']);
+    Future<Post> make(Post post) async => (await tester.runAsync(() async => attachCaptionedPhotos(services, await attachFittedPhotos(services, post, on), on)))!;
+    final post = await make(fresh());
+    final adapter = services.registry.byId('instagram')!;
+    final variant = const VariantResolver().resolve(post, post.targetFor(igApi.id)!, adapter.descriptor, account: igApi);
+    String? words(MediaAttachment m) => isCaptionedCopy(m) ? m.renderParameters!['textHash'] as String : null;
+
+    // The carousel follows the paragraphs: one, then two and three.
+    expect([for (final m in variant.media) m.derivedFrom], [one.id, two.id, three.id]);
+    expect([for (final m in variant.media) words(m)], [stableHash('Intro.\n\nAbout one.'), stableHash('About two and three.'), null],
+        reason: 'the photo that opens each section carries its words; the hashtags stay in the caption');
+    expect(variant.text, 'Intro.\n\nAbout one. (1/3)\n\nAbout two and three. (2-3/3)\n\n#trip');
+
+    // The story too, frame by frame, in its 9:16 copies.
+    final frames = variant.asStory().media;
+    expect([for (final m in frames) m.derivedFrom], [one.id, two.id, three.id]);
+    expect([for (final m in frames) words(m)], [stableHash('Intro.\n\nAbout one.'), stableHash('About two and three.'), null]);
+    expect([for (final m in frames) m.renderParameters?['story']], [true, true, null]);
+    expect(adapter.validate(variant, igApi).hasErrors, isFalse);
+
+    // A saved post reads as "caption on photo" again, though its first
+    // photo (two) is not the one with the first words.
+    expect(captionChoicesOfPost(post, (_) => 'instagram'), {'instagram': true});
+
+    // Without links: the whole caption on the first photo, as before.
+    final plain = await make(fresh(links: const {}));
+    final plainVariant = const VariantResolver().resolve(plain, plain.targetFor(igApi.id)!, adapter.descriptor, account: igApi);
+    expect([for (final m in plainVariant.media) m.derivedFrom], [two.id, three.id, one.id]);
+    expect([for (final m in plainVariant.media) words(m)], [stableHash('Intro.\n\nAbout one.\n\nAbout two and three.'), null, null]);
+    await done(tester);
+  });
+
   testWidgets('Post + Story: the feed post gets a 4:5 copy of the photo, the story a 9:16 copy of its own', (tester) async {
     final (services, _) = await boot(tester);
     await tester.runAsync(() => services.accounts.upsert(igApi));
