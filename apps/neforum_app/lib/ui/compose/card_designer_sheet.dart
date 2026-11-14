@@ -241,7 +241,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
         borderRadius: Radii.rMd,
         child: DecoratedBox(
           position: DecorationPosition.foreground,
-          decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+          decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.hairline)),
           child: CardDesignView(key: const Key('card-designer-preview'), request: _request(design)!),
         ),
       );
@@ -364,7 +364,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
           child: Container(
             width: 132,
             padding: const EdgeInsets.all(Space.xs),
-            decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1)),
+            decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: selected ? nf.accent : nf.hairline, width: selected ? 2 : 1)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
               ClipRRect(
                 borderRadius: Radii.rSm,
@@ -802,7 +802,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
                 decoration: BoxDecoration(
                   color: a == value ? nf.accentSoft : null,
                   borderRadius: Radii.rXs,
-                  border: Border.all(color: a == value ? nf.accent : nf.border),
+                  border: Border.all(color: a == value ? nf.accent : nf.hairline),
                 ),
                 alignment: Alignment(a.x * 2 - 1, a.y * 2 - 1) * 0.6,
                 child: Container(width: 8, height: 8, decoration: BoxDecoration(color: a == value ? nf.accent : nf.textFaint, shape: Radii.circleShape)),

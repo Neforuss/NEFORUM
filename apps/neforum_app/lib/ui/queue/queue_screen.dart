@@ -264,7 +264,7 @@ class _AgendaRow extends ConsumerWidget {
           left: timeW + nodeW / 2 - 1,
           top: Space.lg + 11,
           bottom: 0,
-          child: Container(width: 2, color: nf.border),
+          child: Container(width: 2, color: nf.hairline),
         ),
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SizedBox(

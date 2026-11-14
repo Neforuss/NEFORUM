@@ -131,7 +131,7 @@ class PostDetailScreen extends ConsumerWidget {
           padding: EdgeInsets.zero,
           child: Column(children: [
             for (var i = 0; i < targets.length; i++) ...[
-              if (i > 0) Divider(height: 1, color: nf.border),
+              if (i > 0) Divider(height: 1, color: nf.hairline),
               _TargetRow(post: post, target: targets[i]),
             ],
           ]),

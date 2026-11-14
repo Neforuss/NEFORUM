@@ -82,6 +82,7 @@ class NeforumApp extends ConsumerWidget {
           chrome: settings.navigationChrome,
           density: settings.interfaceDensity,
           highContrast: highContrast,
+          seamless: settings.seamlessSurfaces,
         );
     // Above MaterialApp there is no MediaQuery yet: the platform's own flag.
     final reduceMotion = WidgetsBinding.instance.platformDispatcher.accessibilityFeatures.disableAnimations;

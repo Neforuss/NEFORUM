@@ -226,7 +226,7 @@ class PlatformTile extends StatelessWidget {
             foregroundDecoration: BoxDecoration(
               borderRadius: corners,
               shape: shape,
-              border: Border.all(color: Theme.of(context).extension<NfColors>()?.border ?? const Color(0x1F000000), width: 0.5),
+              border: Border.all(color: Theme.of(context).extension<NfColors>()?.hairline ?? const Color(0x1F000000), width: 0.5),
             ),
             decoration: BoxDecoration(
               borderRadius: corners,

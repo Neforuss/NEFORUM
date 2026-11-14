@@ -231,6 +231,8 @@ class NfColors extends ThemeExtension<NfColors> {
     required this.scrim,
     required this.brandGradient,
     required this.isDark,
+    required this.hairline,
+    this.seamless = false,
   });
 
   /// Window background.
@@ -245,8 +247,30 @@ class NfColors extends ThemeExtension<NfColors> {
   /// Wells: text fields, media trays, code.
   final Color surfaceSunken;
   final Color surfaceHover;
+
+  /// The line around a surface: cards, sections, tiles, panels, side panels,
+  /// menus, dialogs, banners. Transparent in seamless mode ([withSeamless]),
+  /// so a box drawn with it simply has no outline there (the space it takes
+  /// stays, nothing moves).
   final Color border;
+
+  /// Edges of controls (checkboxes, swatches, rings, dashed drop zones) and
+  /// the hover outline of buttons. Stays in seamless mode.
   final Color borderStrong;
+
+  /// A line that carries meaning and stays in seamless mode: dividers
+  /// between rows, rules, table lines, connector lines, the edge of a text
+  /// field, a chip, an outlined button, a picture. The color [border] has
+  /// outside seamless mode.
+  final Color hairline;
+
+  /// Settings → Appearance → Seamless: surfaces have no outline ([border] is
+  /// transparent), and are told apart by their fill alone.
+  final bool seamless;
+
+  /// The outline of a surface under the pointer: [borderStrong], or none in
+  /// seamless mode (the fill still changes to [surfaceHover]).
+  Color get borderHover => seamless ? border : borderStrong;
   final Color text;
   final Color textMuted;
   final Color textFaint;
@@ -332,6 +356,7 @@ class NfColors extends ThemeExtension<NfColors> {
       surfaceSunken: const Color(0xFFEFEBF6),
       surfaceHover: const Color(0xFFF8F6FC),
       border: const Color(0xFFE4DFEE),
+      hairline: const Color(0xFFE4DFEE),
       borderStrong: const Color(0xFFCDC5DD),
       text: const Color(0xFF170B2B),
       textMuted: const Color(0xFF5F5674),
@@ -378,6 +403,7 @@ class NfColors extends ThemeExtension<NfColors> {
       surfaceSunken: const Color(0xFF100C19),
       surfaceHover: const Color(0xFF1B1526),
       border: const Color(0xFF2A2338),
+      hairline: const Color(0xFF2A2338),
       borderStrong: const Color(0xFF3B3250),
       text: const Color(0xFFF4F1FA),
       textMuted: const Color(0xFFADA5C0),
@@ -503,14 +529,18 @@ class NfColors extends ThemeExtension<NfColors> {
   /// Stronger text and borders, for the system's high contrast setting:
   /// muted text reaches WCAG AAA (7:1) on the page and on cards, faint text
   /// AA (4.5:1), and borders 3:1, so every edge of a control shows. Status
-  /// colors reach AA on their own tints (the pills).
+  /// colors reach AA on their own tints (the pills). The outlines of
+  /// surfaces stay off in seamless mode; the edges of controls ([hairline],
+  /// [borderStrong]) take the stronger colors.
   NfColors withHighContrast() => NfColors(
         bg: bg,
         surface: surface,
         surfaceRaised: surfaceRaised,
         surfaceSunken: surfaceSunken,
         surfaceHover: surfaceHover,
-        border: isDark ? const Color(0xFF7A7094) : const Color(0xFF857D99),
+        border: seamless ? border : (isDark ? const Color(0xFF7A7094) : const Color(0xFF857D99)),
+        hairline: isDark ? const Color(0xFF7A7094) : const Color(0xFF857D99),
+        seamless: seamless,
         borderStrong: isDark ? const Color(0xFFA49BBD) : const Color(0xFF5B5270),
         text: isDark ? const Color(0xFFFFFFFF) : const Color(0xFF0B0418),
         textMuted: isDark ? const Color(0xFFDCD6E8) : const Color(0xFF3A3150),
@@ -547,6 +577,62 @@ class NfColors extends ThemeExtension<NfColors> {
         isDark: isDark,
       );
 
+  /// Seamless mode (Settings → Appearance → Seamless): no outline around
+  /// cards, sections, tiles, panels, side panels, menus and dialogs, and no
+  /// line between the navigation chrome and the page. [border] and
+  /// [chromeBorder] become transparent; [hairline] (dividers, text fields,
+  /// chips, pictures), [borderStrong] (controls) and every accent outline of
+  /// a selected or focused item stay.
+  ///
+  /// Call it last, after [withHighContrast] and the chrome styles, which set
+  /// [chromeBorder].
+  NfColors withSeamless() {
+    final none = border.withValues(alpha: 0);
+    return NfColors(
+      bg: bg,
+      surface: surface,
+      surfaceRaised: surfaceRaised,
+      surfaceSunken: surfaceSunken,
+      surfaceHover: surfaceHover,
+      border: none,
+      hairline: hairline,
+      seamless: true,
+      borderStrong: borderStrong,
+      text: text,
+      textMuted: textMuted,
+      textFaint: textFaint,
+      accent: accent,
+      accentFill: accentFill,
+      accentSoft: accentSoft,
+      onAccent: onAccent,
+      highlight: highlight,
+      onHighlight: onHighlight,
+      chrome: chrome,
+      chromeRaised: chromeRaised,
+      onChrome: onChrome,
+      onChromeMuted: onChromeMuted,
+      chromeBorder: chromeBorder.withValues(alpha: 0),
+      chromeAccent: chromeAccent,
+      onChromeAccent: onChromeAccent,
+      chromeSelected: chromeSelected,
+      chromeUrgent: chromeUrgent,
+      onChromeUrgent: onChromeUrgent,
+      chromeActionGradient: chromeActionGradient,
+      success: success,
+      successSoft: successSoft,
+      warning: warning,
+      warningSoft: warningSoft,
+      danger: danger,
+      dangerSoft: dangerSoft,
+      info: info,
+      infoSoft: infoSoft,
+      shadow: shadow,
+      scrim: scrim,
+      brandGradient: brandGradient,
+      isDark: isDark,
+    );
+  }
+
   NfColors _withChrome({
     required Color chrome,
     required Color chromeRaised,
@@ -567,6 +653,8 @@ class NfColors extends ThemeExtension<NfColors> {
         surfaceSunken: surfaceSunken,
         surfaceHover: surfaceHover,
         border: border,
+        hairline: hairline,
+        seamless: seamless,
         borderStrong: borderStrong,
         text: text,
         textMuted: textMuted,
@@ -625,6 +713,8 @@ class NfColors extends ThemeExtension<NfColors> {
       surfaceSunken: l(surfaceSunken, other.surfaceSunken),
       surfaceHover: l(surfaceHover, other.surfaceHover),
       border: l(border, other.border),
+      hairline: l(hairline, other.hairline),
+      seamless: t < 0.5 ? seamless : other.seamless,
       borderStrong: l(borderStrong, other.borderStrong),
       text: l(text, other.text),
       textMuted: l(textMuted, other.textMuted),

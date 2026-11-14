@@ -160,7 +160,7 @@ class PublishProgressSheet extends ConsumerWidget {
             shrinkWrap: true,
             padding: const EdgeInsets.symmetric(horizontal: Space.lg),
             itemCount: rowIds.length,
-            separatorBuilder: (_, _) => Divider(height: 1, color: nf.border, indent: 60),
+            separatorBuilder: (_, _) => Divider(height: 1, color: nf.hairline, indent: 60),
             itemBuilder: (context, i) {
               final id = rowIds[i];
               final account = ref.watch(accountByIdProvider(id));

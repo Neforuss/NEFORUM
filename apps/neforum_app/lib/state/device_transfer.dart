@@ -49,6 +49,7 @@ const Set<String> kExportableSettings = {
   'navigationChrome',
   'customAccentColor',
   'interfaceDensity',
+  'seamlessSurfaces', // 1.4.3: appearance
   'advanceHandoffOnReturn',
   'artworkMaturity',
   'artworkDisallowAiTraining',

@@ -1,5 +1,7 @@
 // Renders every screen of the demo workspace at phone, tablet and desktop
 // sizes, in light and dark, and fails on any exception or layout overflow.
+// 1.4.3: again in seamless mode at phone and desktop width, where no card
+// and no navigation edge may keep an outline.
 
 import 'dart:io';
 
@@ -11,11 +13,15 @@ import 'package:go_router/go_router.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
+import 'package:neforum_app/theme/tokens.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
 
+import 'seamless_checks.dart';
+
 class _MemoryStorage implements AppStorage {
-  final Map<String, Object> _json = {};
+  _MemoryStorage([Map<String, Object>? settings]) : _json = {'settings.json': ?settings};
+  final Map<String, Object> _json;
   final Map<String, Uint8List> _media = {};
 
   @override
@@ -59,47 +65,84 @@ Future<void> _loadFonts() async {
 const _routes = ['/compose', '/queue', '/activity', '/activity/post/demo-post-2', '/accounts', '/accounts/add', '/settings'];
 const _sizes = {'small phone': Size(360, 640), 'phone': Size(360, 740), 'tablet': Size(900, 700), 'desktop': Size(1440, 900), 'wide': Size(2200, 1200)};
 
+/// Opens every route of the demo workspace at [size] in [brightness], with
+/// [settings] saved beforehand, and fails on any error. [check] runs on each
+/// route once it is drawn.
+Future<void> _renderAll(
+  WidgetTester tester,
+  MapEntry<String, Size> size,
+  Brightness brightness, {
+  Map<String, Object>? settings,
+  void Function(String route)? check,
+}) async {
+  tester.view.physicalSize = size.value;
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+  tester.platformDispatcher.platformBrightnessTestValue = brightness;
+  addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+
+  final services = await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(settings)));
+
+  await tester.pumpWidget(ProviderScope(
+    overrides: [servicesProvider.overrideWithValue(services!)],
+    child: const NeforumApp(),
+  ));
+  await tester.pump(const Duration(milliseconds: 300));
+
+  final router = ProviderScope.containerOf(tester.element(find.byType(MaterialApp))).read(routerProvider);
+  final errors = <FlutterErrorDetails>[];
+  final previous = FlutterError.onError;
+  FlutterError.onError = errors.add;
+  try {
+    for (final route in _routes) {
+      router.go(route);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 600));
+      if (errors.isNotEmpty) {
+        debugPrint('---- $route at ${size.key} ----\n${errors.first}');
+        fail('${errors.length} error(s) on $route at ${size.key}: ${errors.first.exceptionAsString()}');
+      }
+      check?.call(route);
+    }
+  } finally {
+    FlutterError.onError = previous;
+  }
+  expect(find.byType(GoRouter, skipOffstage: false), findsNothing);
+
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(seconds: 1));
+}
+
 void main() {
   setUpAll(_loadFonts);
 
   for (final brightness in [Brightness.dark, Brightness.light]) {
     for (final size in _sizes.entries) {
       testWidgets('all screens render at ${size.key} (${brightness.name})', (tester) async {
-        tester.view.physicalSize = size.value;
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        tester.platformDispatcher.platformBrightnessTestValue = brightness;
-        addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+        await _renderAll(tester, size, brightness);
+      });
+    }
+  }
 
-        final services = await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage()));
-
-        await tester.pumpWidget(ProviderScope(
-          overrides: [servicesProvider.overrideWithValue(services!)],
-          child: const NeforumApp(),
-        ));
-        await tester.pump(const Duration(milliseconds: 300));
-
-        final router = ProviderScope.containerOf(tester.element(find.byType(MaterialApp))).read(routerProvider);
-        final errors = <FlutterErrorDetails>[];
-        final previous = FlutterError.onError;
-        FlutterError.onError = errors.add;
-        try {
-          for (final route in _routes) {
-            router.go(route);
-            await tester.pump();
-            await tester.pump(const Duration(milliseconds: 600));
-            if (errors.isNotEmpty) {
-              debugPrint('---- $route at ${size.key} ----\n${errors.first}');
-              fail('${errors.length} error(s) on $route at ${size.key}: ${errors.first.exceptionAsString()}');
-            }
-          }
-        } finally {
-          FlutterError.onError = previous;
-        }
-        expect(find.byType(GoRouter, skipOffstage: false), findsNothing);
-
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump(const Duration(seconds: 1));
+  // 1.4.3: seamless mode, with the navigation in the page's colors (the style
+  // with an edge for it to remove), on a phone and on a desktop in both
+  // themes: every screen renders, and no card and no navigation edge keeps
+  // an outline.
+  for (final brightness in [Brightness.dark, Brightness.light]) {
+    for (final size in _sizes.entries.where((e) => e.key == 'phone' || e.key == 'desktop')) {
+      testWidgets('all screens render seamless at ${size.key} (${brightness.name})', (tester) async {
+        await _renderAll(
+          tester,
+          size,
+          brightness,
+          settings: {'seamlessSurfaces': true, 'navigationChrome': 'theme'},
+          check: (route) {
+            final nf = Theme.of(tester.element(find.byType(Scaffold).first)).extension<NfColors>()!;
+            expect(nf.seamless, isTrue, reason: route);
+            expect(visibleCardOutlines(tester), isEmpty, reason: '$route at ${size.key}');
+            expect(visibleChromeEdges(tester, nf), isEmpty, reason: '$route at ${size.key}');
+          },
+        );
       });
     }
   }

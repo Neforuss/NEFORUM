@@ -552,7 +552,7 @@ class _AccountCellState extends State<AccountCell> {
                 borderRadius: Radii.rXs,
                 // Mostly chosen is the usual picture: chosen cells stay quiet,
                 // so the ones left out are what the eye finds.
-                border: Border.all(width: _cellBorder, color: sel ? nf.accent.withValues(alpha: 0.45) : (_hover && enabled ? nf.borderStrong : nf.border)),
+                border: Border.all(width: _cellBorder, color: sel ? nf.accent.withValues(alpha: 0.45) : (_hover && enabled ? nf.borderHover : nf.border)),
               ),
               // Drawn over the cell, so that the name does not move.
               foregroundDecoration: _focused ? BoxDecoration(borderRadius: Radii.rXs, border: Border.all(color: nf.accent, width: 2)) : null,

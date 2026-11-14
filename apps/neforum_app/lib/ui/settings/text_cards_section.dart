@@ -57,7 +57,7 @@ class TextCardSettingsSection extends ConsumerWidget {
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                   borderRadius: Radii.rMd,
-                  border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1),
+                  border: Border.all(color: selected ? nf.accent : nf.hairline, width: selected ? 2 : 1),
                 ),
                 child: ClipRRect(
                   borderRadius: Radii.rSm,

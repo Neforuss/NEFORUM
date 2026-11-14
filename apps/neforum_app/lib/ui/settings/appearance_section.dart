@@ -104,6 +104,13 @@ class AppearanceSettingsSection extends ConsumerWidget {
           showSelectedIcon: false,
         ),
       ),
+      SettingSwitch(
+        key: const Key('seamless-surfaces'),
+        title: 'Seamless',
+        description: 'No lines around cards, panels, menus and dialogs. Text fields, buttons and selected items keep theirs.',
+        value: s.seamlessSurfaces,
+        onChanged: (v) => n.update((x) => x.copyWith(seamlessSurfaces: v)),
+      ),
       const _Background(),
       if (Env.isMobile) const _TextSize(),
       SettingSwitch(

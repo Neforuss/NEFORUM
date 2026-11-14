@@ -173,6 +173,7 @@ class AppSettings {
     this.navigationChrome = NavigationChromeStyle.brand,
     this.customAccentColor,
     this.interfaceDensity = InterfaceDensity.comfortable,
+    this.seamlessSurfaces = false, // 1.4.3: appearance
     this.mobileTextScale = 1,
     this.collapsedSettingsSections = const [],
     this.targetPickerFolded = false,
@@ -265,6 +266,7 @@ class AppSettings {
         navigationChrome: NavigationChromeStyle.values.asNameMap()[j['navigationChrome']] ?? NavigationChromeStyle.brand,
         customAccentColor: j['customAccentColor'] as int?,
         interfaceDensity: InterfaceDensity.values.asNameMap()[j['interfaceDensity']] ?? InterfaceDensity.comfortable,
+        seamlessSurfaces: j['seamlessSurfaces'] == true, // 1.4.3: appearance
         mobileTextScale: validTextScale(j['mobileTextScale']),
         collapsedSettingsSections: (j['collapsedSettingsSections'] as List? ?? const []).cast<String>(),
         targetPickerFolded: j['targetPickerFolded'] as bool? ?? false,
@@ -446,6 +448,12 @@ class AppSettings {
   final int? customAccentColor;
 
   final InterfaceDensity interfaceDensity;
+
+  /// 1.4.3: Settings → Appearance → Seamless. Cards, sections, tiles, panels,
+  /// menus, dialogs and the navigation's edge have no outline; text fields,
+  /// chips, buttons, dividers and selected items keep theirs
+  /// (`NfColors.withSeamless`). Travels with the other appearance settings.
+  final bool seamlessSurfaces;
 
   /// Phones and tablets: text size, 1 = the system size. Device-only.
   final double mobileTextScale;
@@ -676,6 +684,7 @@ class AppSettings {
     NavigationChromeStyle? navigationChrome,
     int? customAccentColor,
     InterfaceDensity? interfaceDensity,
+    bool? seamlessSurfaces,
     double? mobileTextScale,
     List<String>? collapsedSettingsSections,
     bool? targetPickerFolded,
@@ -769,6 +778,7 @@ class AppSettings {
         navigationChrome: navigationChrome ?? this.navigationChrome,
         customAccentColor: customAccentColor ?? this.customAccentColor,
         interfaceDensity: interfaceDensity ?? this.interfaceDensity,
+        seamlessSurfaces: seamlessSurfaces ?? this.seamlessSurfaces,
         mobileTextScale: mobileTextScale ?? this.mobileTextScale,
         collapsedSettingsSections: collapsedSettingsSections ?? this.collapsedSettingsSections,
         targetPickerFolded: targetPickerFolded ?? this.targetPickerFolded,
@@ -858,6 +868,7 @@ class AppSettings {
         'navigationChrome': navigationChrome.name,
         if (customAccentColor != null) 'customAccentColor': customAccentColor,
         'interfaceDensity': interfaceDensity.name,
+        'seamlessSurfaces': seamlessSurfaces, // 1.4.3: appearance
         if (mobileTextScale != 1) 'mobileTextScale': mobileTextScale,
         if (collapsedSettingsSections.isNotEmpty) 'collapsedSettingsSections': collapsedSettingsSections,
         if (targetPickerFolded) 'targetPickerFolded': targetPickerFolded,
