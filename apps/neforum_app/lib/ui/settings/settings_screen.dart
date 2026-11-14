@@ -382,11 +382,11 @@ class _SectionBar extends StatelessWidget {
                     onSelected: (_) => onJump(s.title),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
-                    side: BorderSide(color: s.title == current ? nf.accent : nf.border),
-                    labelStyle: context.text.labelMedium?.copyWith(
-                      color: s.title == current ? nf.accent : nf.textMuted,
-                      fontWeight: s.title == current ? FontWeight.w700 : FontWeight.w500,
-                    ),
+                    // 1.4.3: the section in view is filled (the theme's
+                    // selected chip); no check mark, so chips keep their
+                    // width while the page scrolls.
+                    showCheckmark: false,
+                    labelStyle: TextStyle(fontWeight: s.title == current ? FontWeight.w700 : FontWeight.w500),
                   ),
                 ),
             ]),

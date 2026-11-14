@@ -67,6 +67,9 @@ const Set<String> kExportableSettings = {
   // preference, not a pairing: phones ignore it.
   'browserQuickPost',
   'browserOpenInFirst',
+  // 1.4.3: colours
+  'navigationChromeColor',
+  'navigationChromeTint',
 };
 
 /// 1.3.5: the settings that stay on the device, each with why. Together with
@@ -124,6 +127,8 @@ const Map<String, Object?> kSettingDefaultsLeftOut = {
   'textCardDesign': <String, Object?>{},
   'audioCardDesign': <String, Object?>{},
   'cardPresets': <Object?>[],
+  'navigationChromeColor': null, // 1.4.3: colours
+  'navigationChromeTint': null, // 1.4.3: colours
 };
 
 /// 1.3.5: every shared setting of [s] with its value, defaults included, as

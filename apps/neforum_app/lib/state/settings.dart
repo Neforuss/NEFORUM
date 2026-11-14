@@ -69,6 +69,10 @@ double validNavigationChromeBlur(Object? blur) {
   return blur.toDouble().clamp(0, kMaxNavigationChromeBlur);
 }
 
+/// 1.4.3: colours. A stored color that can be used: an int, made opaque;
+/// null otherwise.
+int? validOpaqueColor(Object? color) => color is int ? (color | 0xFF000000) & 0xFFFFFFFF : null;
+
 /// What happens to a post once every network has it (published, handed off
 /// or skipped).
 enum PublishedPostRetention {
@@ -118,6 +122,10 @@ enum NavigationChromeStyle {
   /// (AppSettings.navigationChromeOpacity, navigationChromeBlur), with the
   /// theme's text colors kept readable over it.
   transparent,
+
+  /// 1.4.3: colours. A color the user picks
+  /// (AppSettings.navigationChromeColor), with white or ink labels.
+  custom,
 }
 
 enum InterfaceDensity { comfortable, compact }
@@ -204,6 +212,9 @@ class AppSettings {
     // 1.3.1: sidebar
     this.navigationChromeOpacity = 0,
     this.navigationChromeBlur = 0,
+    // 1.4.3: colours
+    this.navigationChromeColor,
+    this.navigationChromeTint,
     this.audioTextTemplate = kDefaultAudioTextTemplate, // 1.3.1: audio tags
     this.textCardCustomFont = const {}, // 1.3.1: cards
     this.textCardDesign = const {}, // 1.3.1: cards
@@ -292,6 +303,9 @@ class AppSettings {
         // 1.3.1: sidebar
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
         navigationChromeBlur: validNavigationChromeBlur(j['navigationChromeBlur']),
+        // 1.4.3: colours
+        navigationChromeColor: validOpaqueColor(j['navigationChromeColor']),
+        navigationChromeTint: validOpaqueColor(j['navigationChromeTint']),
         audioTextTemplate: j['audioTextTemplate'] as String? ?? kDefaultAudioTextTemplate, // 1.3.1: audio tags
         textCardCustomFont: Map<String, dynamic>.from(j['textCardCustomFont'] as Map? ?? const {}), // 1.3.1: cards
         textCardDesign: Map<String, dynamic>.from(j['textCardDesign'] as Map? ?? const {}), // 1.3.1: cards
@@ -550,6 +564,17 @@ class AppSettings {
   /// navigation chrome: 0 (sharp) to [kMaxNavigationChromeBlur].
   final double navigationChromeBlur;
 
+  /// 1.4.3: colours. ARGB of the navigation chrome the user picked for
+  /// [NavigationChromeStyle.custom]; null until one is picked (the chrome is
+  /// then NEFORUM purple). NEFORUM darkens it only as far as its labels need.
+  final int? navigationChromeColor;
+
+  /// 1.4.3: colours. ARGB of the tint over what shows through the see-through
+  /// navigation chrome, in place of the theme's surface color; null for the
+  /// surface color. NEFORUM moves it toward the surface only as far as the
+  /// labels need.
+  final int? navigationChromeTint;
+
   /// 1.3.1: audio tags. The post text "Use track details as the text" writes
   /// from a track's details ([renderAudioText]): `{artist} – {title}` and
   /// the other tokens of [audioTextTokens].
@@ -667,6 +692,10 @@ class AppSettings {
     // 1.3.1: sidebar
     double? navigationChromeOpacity,
     double? navigationChromeBlur,
+    // 1.4.3: colours
+    int? navigationChromeColor,
+    int? navigationChromeTint,
+    bool clearNavigationChromeTint = false,
     String? audioTextTemplate, // 1.3.1: audio tags
     Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
@@ -752,6 +781,9 @@ class AppSettings {
         // 1.3.1: sidebar
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
         navigationChromeBlur: navigationChromeBlur ?? this.navigationChromeBlur,
+        // 1.4.3: colours
+        navigationChromeColor: navigationChromeColor ?? this.navigationChromeColor,
+        navigationChromeTint: clearNavigationChromeTint ? null : (navigationChromeTint ?? this.navigationChromeTint),
         audioTextTemplate: audioTextTemplate ?? this.audioTextTemplate, // 1.3.1: audio tags
         textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
         textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
@@ -838,6 +870,9 @@ class AppSettings {
         // 1.3.1: sidebar
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,
         if (navigationChromeBlur != 0) 'navigationChromeBlur': navigationChromeBlur,
+        // 1.4.3: colours
+        if (navigationChromeColor != null) 'navigationChromeColor': navigationChromeColor,
+        if (navigationChromeTint != null) 'navigationChromeTint': navigationChromeTint,
         'audioTextTemplate': audioTextTemplate, // 1.3.1: audio tags
         if (textCardCustomFont.isNotEmpty) 'textCardCustomFont': textCardCustomFont, // 1.3.1: cards
         if (textCardDesign.isNotEmpty) 'textCardDesign': textCardDesign, // 1.3.1: cards

@@ -16,6 +16,7 @@ import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart' show showToast;
+import '../../widgets/selection_marks.dart' show swatchCheck;
 import 'emoji_insert.dart';
 import 'font_download_sheet.dart';
 import 'font_picker_sheet.dart';
@@ -281,6 +282,8 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
                     shape: Radii.circleShape,
                     border: Border.all(color: c == selected ? nf.accent : nf.borderStrong, width: c == selected ? 3 : 1),
                   ),
+                  // 1.4.3: not by the ring alone.
+                  child: c == selected ? swatchCheck(Color(c)) : null,
                 ),
               ),
             ),
@@ -404,7 +407,8 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
             message: '${a.label}: ${a.description}',
             child: ChoiceChip(
               key: Key('caption-alignment-${a.name}'),
-              avatar: Icon(a.icon, size: 16),
+              // The check takes the icon's place while it is chosen.
+              avatar: _style.alignment == a ? null : Icon(a.icon, size: 16),
               label: Text(a.label),
               selected: _style.alignment == a,
               onSelected: (_) => _apply(_style.copyWith(alignment: a)),
@@ -423,7 +427,6 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
         if (_style.customFont case final custom?)
           ChoiceChip(
             key: const Key('caption-custom-font'),
-            avatar: const Icon(Icons.font_download_outlined, size: 16),
             label: Text(custom.family),
             selected: true,
             onSelected: (_) => _pickFont(platform),
@@ -450,14 +453,14 @@ class _CaptionEditorSheetState extends ConsumerState<CaptionEditorSheet> {
       Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
         FilterChip(
           key: const Key('caption-bold'),
-          avatar: const Icon(Icons.format_bold_rounded, size: 16),
+          avatar: _style.bold ? null : const Icon(Icons.format_bold_rounded, size: 16),
           label: const Text('Bold'),
           selected: _style.bold,
           onSelected: (v) => _apply(_style.copyWith(bold: v)),
         ),
         FilterChip(
           key: const Key('caption-shadow'),
-          avatar: const Icon(Icons.blur_on_rounded, size: 16),
+          avatar: _style.shadow ? null : const Icon(Icons.blur_on_rounded, size: 16),
           label: const Text('Shadow'),
           selected: _style.shadow,
           onSelected: (v) => _apply(_style.copyWith(shadow: v)),

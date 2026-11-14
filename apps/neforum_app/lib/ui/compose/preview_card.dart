@@ -32,6 +32,7 @@ import '../../widgets/buttons.dart';
 import '../../widgets/char_ring.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
+import '../../widgets/selection_marks.dart';
 import '../../widgets/surfaces.dart';
 import 'caption_editor_sheet.dart';
 import 'card_background_sheet.dart';
@@ -1180,7 +1181,6 @@ class _PhotoOptions extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final nf = context.nf;
     final id = platform.id;
     final settings = ref.watch(settingsProvider);
     final frame = fullFrameAspect(id, variant);
@@ -1194,7 +1194,7 @@ class _PhotoOptions extends ConsumerWidget {
           tooltip: captionOn
               ? 'Your caption is written on the first photo; tap to change how, or to turn it off'
               : 'Write your caption on the first photo, in ${platform.name}\'s own font, or in a block above it',
-          leading: Icon(Icons.subtitles_outlined, size: 14, color: captionOn ? nf.accent : nf.textFaint),
+          leading: const Icon(Icons.subtitles_outlined),
           onTap: () {
             if (!captionOn) {
               ref.read(composerProvider.notifier).setCaptionOnPhoto(id, true);
@@ -1206,10 +1206,10 @@ class _PhotoOptions extends ConsumerWidget {
       if (cardPhoto != null)
         _optionPill(
           context,
-          selected: false,
+          selected: null,
           label: 'Text card on this photo',
           tooltip: 'Set your words large on a card, with this photo blurred behind them',
-          leading: Icon(Icons.text_fields_rounded, size: 14, color: nf.textFaint),
+          leading: const Icon(Icons.text_fields_rounded),
           onTap: () => ref.read(composerProvider.notifier).setTextCardBackground(TextCardBackground(photo: cardPhoto!).toJson()),
         ),
       if (frame != null)
@@ -1220,7 +1220,7 @@ class _PhotoOptions extends ConsumerWidget {
           tooltip: fills
               ? 'Photos are fitted to ${platform.name}\'s whole ${PhotoFit.ratioLabel(frame)} frame (Settings > Photos sets how); tap to leave their shape'
               : 'Fit photos to ${platform.name}\'s whole ${PhotoFit.ratioLabel(frame)} frame, so nothing is cut off',
-          leading: Icon(Icons.fit_screen_outlined, size: 14, color: fills ? nf.accent : nf.textFaint),
+          leading: const Icon(Icons.fit_screen_outlined),
           onTap: () => ref.read(settingsProvider.notifier).update((x) => x.copyWith(
                 fillFramePlatforms: fills ? x.fillFramePlatforms.where((p) => p != id).toList() : {...x.fillFramePlatforms, id}.toList(),
               )),
@@ -1239,7 +1239,6 @@ class _VideoCaptionOption extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final nf = context.nf;
     final id = platform.id;
     return _optionPill(
       context,
@@ -1248,7 +1247,7 @@ class _VideoCaptionOption extends ConsumerWidget {
       tooltip: captionOn
           ? 'Your caption is in a block above the video, which NEFORUM puts in ${platform.name}\'s 9:16 frame; tap to change it, or to turn it off'
           : 'Put your caption in a block above the video, in ${platform.name}\'s 9:16 frame',
-      leading: Icon(Icons.subtitles_outlined, size: 14, color: captionOn ? nf.accent : nf.textFaint),
+      leading: const Icon(Icons.subtitles_outlined),
       onTap: () {
         final composer = ref.read(composerProvider.notifier);
         final settings = ref.read(settingsProvider);
@@ -1266,32 +1265,11 @@ class _VideoCaptionOption extends ConsumerWidget {
   }
 }
 
-/// A small toggle pill, as under text cards.
+/// A small toggle pill, as under text cards (1.4.3: [OptionPill], filled
+/// and checked while on). A null [selected] is a plain action.
 Widget _optionPill(BuildContext context,
-    {required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) {
-  final nf = context.nf;
-  return Tooltip(
-    message: tooltip ?? label,
-    child: InkWell(
-      borderRadius: Radii.rPill,
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: Motion.fast,
-        padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2, vertical: Space.xs + 1),
-        decoration: BoxDecoration(
-          color: selected ? nf.accentSoft : Colors.transparent,
-          borderRadius: Radii.rPill,
-          border: Border.all(color: selected ? nf.accent : nf.border),
-        ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          leading,
-          const SizedBox(width: Space.xs + 2),
-          Text(label, style: context.text.labelSmall?.copyWith(color: selected ? nf.text : nf.textMuted)),
-        ]),
-      ),
-    ),
-  );
-}
+        {required bool? selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) =>
+    OptionPill(selected: selected, leading: leading, label: label, onTap: onTap, tooltip: tooltip);
 
 /// Under a text card: black-on-white or white-on-black, the font, the
 /// alignment, the NEFORUM signature and the @handle on or off for this
@@ -1419,28 +1397,9 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    Widget pill({Key? key, required bool selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) => Tooltip(
-          key: key,
-          message: tooltip ?? label,
-          child: InkWell(
-            borderRadius: Radii.rPill,
-            onTap: onTap,
-            child: AnimatedContainer(
-              duration: Motion.fast,
-              padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2, vertical: Space.xs + 1),
-              decoration: BoxDecoration(
-                color: selected ? nf.accentSoft : Colors.transparent,
-                borderRadius: Radii.rPill,
-                border: Border.all(color: selected ? nf.accent : nf.border),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                leading,
-                const SizedBox(width: Space.xs + 2),
-                Text(label, style: context.text.labelSmall?.copyWith(color: selected ? nf.text : nf.textMuted)),
-              ]),
-            ),
-          ),
-        );
+    // 1.4.3: clear selected state. A null [selected] is a plain action.
+    Widget pill({Key? key, required bool? selected, required Widget leading, required String label, required VoidCallback? onTap, String? tooltip}) =>
+        OptionPill(key: key, selected: selected, leading: leading, label: label, onTap: onTap, tooltip: tooltip);
 
     // A colour of the card's own (1.3.5) is neither theme; picking one puts
     // the theme's colours back.
@@ -1481,8 +1440,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
                   fontWeight: f.resolve(master ? null : widget.platform.id).weight,
                   fontVariations: f.resolve(master ? null : widget.platform.id).variations,
                   fontSize: 12,
-                  height: 1,
-                  color: nf.text)),
+                  height: 1)),
           onTap: () {
             ref.read(composerProvider.notifier).setTextCardFont(f);
             final s = ref.read(settingsProvider);
@@ -1504,7 +1462,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         selected: designed,
         label: designed ? 'Design: ${cardTemplateLabel(widget.design!)}' : 'Design card…',
         tooltip: 'Templates, backgrounds, gradients, patterns, a framed photo and every text block, with any font',
-        leading: Icon(Icons.palette_outlined, size: 14, color: designed ? nf.accent : nf.textFaint),
+        leading: const Icon(Icons.palette_outlined),
         onTap: () => showCardDesignerSheet(context, kind: CardKind.text),
       ),
       // The classic card's own choices; a design sets all of them itself.
@@ -1516,7 +1474,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         selected: widget.customFont != null,
         label: widget.customFont?.family ?? 'More fonts…',
         tooltip: 'Set the words in a font installed on this device, or in a font file you import',
-        leading: Icon(Icons.font_download_outlined, size: 14, color: widget.customFont != null ? nf.accent : nf.textFaint),
+        leading: const Icon(Icons.font_download_outlined),
         onTap: () async {
           final choice = await showFontChoiceSheet(context,
               current: FontChoice(widget.font, widget.customFont), platformId: widget.platform.id, title: 'Text card font');
@@ -1559,9 +1517,9 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
             ),
         ],
         child: pill(
-          selected: false,
+          selected: null,
           label: widget.alignment.label,
-          leading: Icon(widget.alignment.icon, size: 14, color: nf.textMuted),
+          leading: Icon(widget.alignment.icon),
           onTap: null,
         ),
       ),
@@ -1574,8 +1532,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           false => master ? 'Plain cards: tap to add the NEFORUM signature on every network' : 'Plain card: tap to add the NEFORUM signature',
           null => 'On some networks only: tap to put the NEFORUM signature on every network',
         },
-        leading: Icon(mixedIcon(branded, Icons.verified_rounded, Icons.do_not_disturb_on_outlined),
-            size: 14, color: branded == true ? nf.accent : nf.textFaint),
+        leading: Icon(mixedIcon(branded, Icons.verified_rounded, Icons.do_not_disturb_on_outlined)),
         onTap: () {
           final on = branded != true;
           final composer = ref.read(composerProvider.notifier);
@@ -1599,8 +1556,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           false => master ? 'Tap to put your handle on every card' : 'Tap to put your handle (${widget.byline}) on the card',
           null => 'On some networks only: tap to put your handle on every card',
         },
-        leading: Icon(mixedIcon(showsHandle, Icons.alternate_email_rounded, Icons.alternate_email_rounded),
-            size: 14, color: showsHandle == true ? nf.accent : nf.textFaint),
+        leading: Icon(mixedIcon(showsHandle, Icons.alternate_email_rounded, Icons.alternate_email_rounded)),
         onTap: () {
           final on = showsHandle != true;
           final composer = ref.read(composerProvider.notifier);
@@ -1623,7 +1579,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           false => 'Only the card goes to $where: tap to post your text with it',
           null => 'Some networks get the card alone: tap to post your text with the card everywhere',
         },
-        leading: Icon(mixedIcon(withText, Icons.notes_rounded, Icons.image_outlined), size: 14, color: withText == true ? nf.accent : nf.textFaint),
+        leading: Icon(mixedIcon(withText, Icons.notes_rounded, Icons.image_outlined)),
         onTap: () {
           final on = withText != true;
           final composer = ref.read(composerProvider.notifier);
@@ -1636,7 +1592,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
         selected: background != null,
         label: background == null ? 'Background: colour' : 'Background: photo',
         tooltip: 'A plain colour, or your words over a photo',
-        leading: Icon(background == null ? Icons.format_color_fill_rounded : Icons.image_outlined, size: 14, color: background != null ? nf.accent : nf.textFaint),
+        leading: Icon(background == null ? Icons.format_color_fill_rounded : Icons.image_outlined),
         onTap: () => showCardBackgroundSheet(
           context,
           CardLook(
@@ -1659,16 +1615,16 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           selected: !widget.style.isClassic,
           label: 'Text & @handle…',
           tooltip: 'Your own @handle on the card, its size and corner, and the size, colours, line spacing, place and margins of the words',
-          leading: Icon(Icons.tune_rounded, size: 14, color: !widget.style.isClassic ? nf.accent : nf.textFaint),
+          leading: const Icon(Icons.tune_rounded),
           onTap: () => _showTextCardStyleSheet(context, accountId: widget.accountId!),
         ),
       // Each network saves its own card, at its own shape.
       if (!master) Builder(
         builder: (bc) => pill(
-          selected: false,
+          selected: null,
           label: _saving ? 'Saving…' : 'Save image',
           tooltip: 'Save this card as a JPEG (Downloads on a computer, the share sheet on a phone)',
-          leading: Icon(Icons.download_rounded, size: 14, color: nf.textMuted),
+          leading: const Icon(Icons.download_rounded),
           onTap: _saving || widget.text.isEmpty ? null : () => _save(bc),
         ),
       ),

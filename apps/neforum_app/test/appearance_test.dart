@@ -218,12 +218,15 @@ void main() {
     // The see-through style has its own tests: test/see_through_navigation_test.dart.
     for (final style in NavigationChromeStyle.values.where((s) => s != NavigationChromeStyle.transparent)) {
       testWidgets('${style.name}: sidebar, rail and tab bar', (tester) async {
-        await _pumpApp(tester, size: const Size(1440, 900), settings: {'navigationChrome': style.name}, route: '/queue');
+        // 1.4.3: colours. The color of "Your own color", which the other
+        // styles leave alone.
+        await _pumpApp(tester, size: const Size(1440, 900), settings: {'navigationChrome': style.name, 'navigationChromeColor': 0xFF225588}, route: '/queue');
         final nf = _nf(tester);
         final expected = switch (style) {
           NavigationChromeStyle.brand => Brand.night,
           NavigationChromeStyle.theme => nf.surface,
           NavigationChromeStyle.accent => AccentChoice.neforum.light,
+          NavigationChromeStyle.custom => const Color(0xFF225588),
           NavigationChromeStyle.transparent => throw StateError('tested elsewhere'),
         };
         expect(nf.chrome, expected);
@@ -297,7 +300,7 @@ void main() {
 
     testWidgets('picked in Settings from a hex code', (tester) async {
       final c = await _pumpApp(tester, size: const Size(1440, 900));
-      await tester.tap(find.byTooltip('Choose your own color'));
+      await tester.tap(find.byKey(const Key('accent-custom-color')));
       await _settle(tester);
       expect(find.text('Your accent color'), findsWidgets);
       await tester.enterText(find.widgetWithText(TextField, 'Hex color'), '#12');

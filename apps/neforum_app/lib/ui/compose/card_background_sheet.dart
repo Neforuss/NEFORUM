@@ -19,6 +19,7 @@ import '../../theme/tokens.dart';
 import '../../widgets/color_swatch_field.dart';
 import '../../widgets/layout.dart' show showToast;
 import '../../widgets/media_thumb.dart';
+import '../../widgets/selection_marks.dart';
 import '../settings/appearance_section.dart' show hexColor;
 import 'card_colour_dialog.dart';
 
@@ -185,7 +186,8 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           child: Container(
             padding: const EdgeInsets.all(2),
             decoration: BoxDecoration(borderRadius: Radii.rSm, border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1)),
-            child: MediaThumb(m, size: 64, showAltTag: false),
+            // 1.4.3: clear selected state, a check on the chosen photo.
+            child: SelectionBadged(selected: selected, inset: 3, size: 18, child: MediaThumb(m, size: 64, showAltTag: false)),
           ),
         ),
       );
@@ -362,7 +364,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
         ),
         FilterChip(
           key: const Key('card-background-flip'),
-          avatar: const Icon(Icons.flip_rounded, size: 16),
+          avatar: current.flipHorizontal ? null : const Icon(Icons.flip_rounded, size: 16),
           label: const Text('Mirror'),
           selected: current.flipHorizontal,
           onSelected: (v) => _edit((b) => b.copyWith(flipHorizontal: v)),

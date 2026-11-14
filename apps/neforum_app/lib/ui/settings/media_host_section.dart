@@ -256,7 +256,8 @@ class _HostEditorState extends ConsumerState<_HostEditor> {
               }),
               padding: const EdgeInsets.all(Space.md),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(o.name, style: context.text.labelLarge),
+                // Clear of the check on the chosen card.
+                Padding(padding: const EdgeInsets.only(right: Space.lg), child: Text(o.name, style: context.text.labelLarge)),
                 const SizedBox(height: Space.xs),
                 Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
                   if (o.temporary) const StatusPill('Temporary links', tone: Tone.info, dense: true),

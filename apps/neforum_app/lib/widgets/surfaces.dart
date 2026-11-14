@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
+import 'selection_marks.dart' show SelectionCheckBadge;
 
 /// The basic container of the app: a surface with a hairline border.
 /// Hover and press feedback when [onTap] is set.
@@ -11,6 +12,7 @@ class NfCard extends StatefulWidget {
     this.padding = const EdgeInsets.all(Space.lg),
     this.onTap,
     this.selected = false,
+    this.selectionBadge = true,
     this.color,
     this.borderColor,
     this.radius,
@@ -23,7 +25,11 @@ class NfCard extends StatefulWidget {
   /// Three quarters of it with the compact density.
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
+  /// 1.4.3: clear selected state. A selected card has a 2px accent border
+  /// and, unless [selectionBadge] is false (the card shows its own mark, a
+  /// radio button), a check in its top-right corner.
   final bool selected;
+  final bool selectionBadge;
   final Color? color;
   final Color? borderColor;
 
@@ -58,12 +64,18 @@ class _NfCardState extends State<NfCard> {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: widget.radius ?? Radii.rLg,
-        border: Border.all(color: border, width: widget.selected ? 1.5 : 1),
+        border: Border.all(color: border, width: widget.selected ? 2 : 1),
         boxShadow: widget.elevated ? nf.elevation1 : null,
       ),
       clipBehavior: widget.clip ? Clip.antiAlias : Clip.none,
       child: widget.child,
     );
+    if (widget.selected && widget.selectionBadge) {
+      content = Stack(children: [
+        content,
+        const Positioned(top: Space.xs + 2, right: Space.xs + 2, child: SelectionCheckBadge(size: 18)),
+      ]);
+    }
 
     if (!interactive) return content;
 

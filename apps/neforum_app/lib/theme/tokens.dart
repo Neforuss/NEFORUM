@@ -435,8 +435,13 @@ class NfColors extends ThemeExtension<NfColors> {
   /// The chrome in the accent color (a deeper shade in the dark theme), with
   /// white or ink content, whichever reads better on it. An accent on which
   /// neither passes WCAG AA is darkened until white does.
-  NfColors withAccentChrome() {
-    var fill = isDark ? Color.lerp(accentFill, Colors.black, 0.3)! : accentFill;
+  NfColors withAccentChrome() => withColorChrome(isDark ? Color.lerp(accentFill, Colors.black, 0.3)! : accentFill);
+
+  /// 1.4.3: colours. The chrome in [color] (Settings > Appearance >
+  /// Navigation bar > Your own color), the same in both themes, with white or
+  /// ink content as in [withAccentChrome]. Transparency is ignored.
+  NfColors withColorChrome(Color color) {
+    var fill = color.withValues(alpha: 1);
     var content = readableOn(fill);
     if (contrastRatio(content, fill) < 4.5) {
       fill = accentShadesOf(fill).light;
@@ -483,10 +488,13 @@ class NfColors extends ThemeExtension<NfColors> {
   ///
   /// Call it after [withHighContrast], so the labels take the stronger text
   /// colors that the cover is measured for.
-  NfColors withTransparentChrome() {
+  ///
+  /// 1.4.3: colours. [tint] covers it in place of the [surface], moved toward
+  /// the surface as far as the labels need ([seeThroughTint]).
+  NfColors withTransparentChrome({Color? tint}) {
     final themed = withThemeChrome();
     return themed._withChrome(
-      chrome: surface.withValues(alpha: 0),
+      chrome: (tint == null ? surface : seeThroughTint(tint)).withValues(alpha: 0),
       chromeRaised: themed.chromeRaised,
       onChrome: themed.onChrome,
       onChromeMuted: themed.onChromeMuted,
@@ -498,6 +506,29 @@ class NfColors extends ThemeExtension<NfColors> {
       onChromeUrgent: themed.onChromeUrgent,
       chromeActionGradient: themed.chromeActionGradient,
     );
+  }
+
+  /// 1.4.3: colours. The see-through chrome's cover in [tint], opaque: the
+  /// tint moved toward the [surface] until the chrome's labels ([text] and
+  /// [textMuted]) keep WCAG AA (4.5:1) on it, and on every mix of it with
+  /// the page ([bg]) that shows when its opacity is below 100% and there is
+  /// no picture. Mixes of two colors can be darker than both, so each one is
+  /// checked.
+  Color seeThroughTint(Color tint) {
+    final base = tint.withValues(alpha: 1);
+    bool passes(Color cover) {
+      for (var mix = 0; mix <= 10; mix++) {
+        final shown = Color.lerp(bg, cover, mix / 10)!;
+        if (contrastRatio(text, shown) < 4.5 || contrastRatio(textMuted, shown) < 4.5) return false;
+      }
+      return true;
+    }
+
+    for (var step = 0; step < 25; step++) {
+      final c = Color.lerp(base, surface, step / 25)!;
+      if (passes(c)) return c;
+    }
+    return surface;
   }
 
   /// Stronger text and borders, for the system's high contrast setting:

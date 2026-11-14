@@ -171,6 +171,8 @@ AppSettings populatedSettings() => AppSettings(
       textCardEveryNetwork: true,
       navigationChromeOpacity: 0.5,
       navigationChromeBlur: 8,
+      navigationChromeColor: 0xFF225588, // 1.4.3: colours
+      navigationChromeTint: 0xFFEEDDCC, // 1.4.3: colours
       audioTextTemplate: '{title}',
       textCardCustomFont: const {'family': 'Fake Sans', 'source': 'installed'},
       textCardDesign: const {'background': 'gradient', 'radius': 0.1},

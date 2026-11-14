@@ -23,7 +23,9 @@ enum ChromePlacement {
 ///
 /// What lies behind shows through: the background picture, frosted by
 /// [blur] (logical pixels), or the page color when there is no picture.
-/// Over it lies the theme's surface color at [opacity] or more: as much as
+/// Over it lies the theme's surface color (1.4.3: or the user's tint, see
+/// `NfColors.seeThroughTint`), the opaque [NfColors.chrome], at [opacity]
+/// or more: as much as
 /// the chrome's labels ([NfColors.onChrome] and [NfColors.onChromeMuted])
 /// need to keep WCAG AA contrast (4.5:1; 7:1 with the system's high
 /// contrast setting) on the part of the picture under the chrome, measured

@@ -37,6 +37,8 @@ class _TierPickerState extends State<TierPicker> {
       for (final t in tiers) ...[
         NfCard(
           selected: _tier == t,
+          // Its radio button marks the choice.
+          selectionBadge: false,
           onTap: () => setState(() => _tier = t),
           padding: const EdgeInsets.all(Space.lg),
           child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
