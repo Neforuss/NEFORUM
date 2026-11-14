@@ -21,6 +21,7 @@ class TextCounter {
             urlWeight: rules.urlWeight ?? 23,
             mentionCountsDomain: rules.mentionCountsDomain,
           ),
+        CountingRule.codePoints => codePoints(text),
       };
 
   /// Remaining characters, or `null` when the platform has no limit.
@@ -32,6 +33,10 @@ class TextCounter {
   static int graphemes(String text) => text.characters.length;
 
   static int utf8Bytes(String text) => utf8.encode(text).length;
+
+  /// One per code point, as JavaScript's `[...text].length` counts: a
+  /// surrogate pair is one, a combining mark or an emoji joiner is one more.
+  static int codePoints(String text) => text.runes.length;
 
   /// twitter-text v3 weighted length (scaled back to "characters"), counted
   /// after NFC as X does. Latin, Latin-1, Latin Extended, Greek, Cyrillic, ...

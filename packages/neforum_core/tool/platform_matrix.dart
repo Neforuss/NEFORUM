@@ -41,16 +41,21 @@ void main(List<String> args) {
       CountingRule.utf8Bytes => 'bytes',
       CountingRule.weightedX => 'weighted (links = 23)',
       CountingRule.codePointsWithUrlWeight => 'characters (links = ${t.urlWeight ?? 23})',
+      CountingRule.codePoints => 'characters',
     };
     return '${t.maxLength} $rule${t.supportsThreads ? ', threads' : ''}';
   }
 
   String media(MediaRules m) {
     if (!m.supportsAnyMedia) return 'Text only';
-    final parts = <String>[
-      if (m.maxImages > 0) '${m.maxImages} image${m.maxImages == 1 ? '' : 's'}',
-      if (m.maxVideos > 0) '${m.maxVideos} video${m.maxVideos == 1 ? '' : 's'}',
-    ];
+    // One limit for both kinds together (Parler: 4 photos and videos).
+    final together = m.allowsMixedImageVideo && m.maxImages > 0 && m.maxImages == m.maxVideos;
+    final parts = together
+        ? ['${m.maxImages} images and videos']
+        : <String>[
+            if (m.maxImages > 0) '${m.maxImages} image${m.maxImages == 1 ? '' : 's'}',
+            if (m.maxVideos > 0) '${m.maxVideos} video${m.maxVideos == 1 ? '' : 's'}',
+          ];
     return '${parts.join(' or ')}${m.requiresMedia ? ' (required)' : ''}${m.requiresPublicMediaUrl ? ', needs media host for API' : ''}';
   }
 

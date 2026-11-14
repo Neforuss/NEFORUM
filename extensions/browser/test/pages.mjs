@@ -11,7 +11,16 @@
 //   - the user's own click on a site's Post is watched and reported
 //     (posted: confirmed), the decoy Post is never pressed;
 //   - I posted it reports posted: user;
-//   - a text-only YouTube Posts job puts the words in and no file anywhere.
+//   - a text-only YouTube Posts job puts the words in and no file anywhere;
+//   - Parler (1.4.3): the text reaches the page's own state, the photo goes
+//     once into the file input Parler empties, an automatic job presses the
+//     form's Post and never the sidebar's, and a closed composer is opened;
+//   - Locals (1.4.3): Regular Post (or Create, Regular Post) opens the
+//     composer, the title and text are typed (the page's own state holds
+//     them), a photo goes in through Locals' paste handler, Publish waits
+//     for the upload and is pressed only for an automatic job, a video that
+//     a drop does not attach leaves the fill partial and unpublished, and
+//     the news feed (no composer) says where to go.
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -190,6 +199,93 @@ const scenarios = {
     assert.equal(await evaluate(cdp, 'window.postClicks'), 1, 'the user pressed Post once; the extension pressed nothing');
     assert.equal(await evaluate(cdp, 'window.untrustedClicks'), 0);
     assert.equal(await evaluate(cdp, 'window.decoyClicks'), 0);
+  },
+
+  async 'Parler (1.4.3): the text goes in as typing, the photo once into the input Parler empties, and an automatic job presses the form\'s Post'(cdp, base) {
+    await open(cdp, `${base}/test/pages/parler.html?p=parler&auto=1`);
+    await until(cdp, 'window.result().submits.length >= 1', 'the automatic Post', 20000);
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.submits.length, 1, 'posted once');
+    assert.equal(r.submits[0].text, 'Hello from NEFORUM #test', 'the page\'s own state holds the text, not only the field');
+    assert.deepEqual(r.submits[0].files, ['card.png'], 'the photo went in once, although Parler empties its input');
+    assert.equal(r.clears, 1, 'one change event: no second try through the generic way');
+    assert.equal(r.sidebarClicks, 0, 'the sidebar\'s Post (which opens a composer) was never pressed');
+  },
+
+  async 'Parler (1.4.3): a closed composer is opened from the sidebar and filled, not posted'(cdp, base) {
+    await open(cdp, `${base}/test/pages/parler.html?p=parler&closed=1&qp=0`);
+    await until(cdp, 'window.__results.length >= 1', 'the fill report');
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.open, true, 'the composer opened');
+    assert.equal(r.sidebarClicks, 1);
+    assert.equal(r.text, 'Hello from NEFORUM #test');
+    assert.equal(r.shown, r.text, 'what the field shows is what the page holds');
+    assert.deepEqual(r.files, ['card.png']);
+    assert.equal(r.postDisabled, false, 'Post is ready for the user');
+    assert.equal(r.submits.length, 0, 'nothing was posted');
+    const report = await evaluate(cdp, 'window.__results[0]');
+    assert.equal(report.status, 'filled');
+  },
+
+  async 'Locals (1.4.3): Regular Post opens the composer, the title and text are typed in, the photo pasted in, nothing published'(cdp, base) {
+    await open(cdp, `${base}/test/pages/locals.html?p=locals&title=1&qp=0`);
+    await until(cdp, 'window.__results.length >= 1', 'the fill report', 25000);
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.open, true, 'the composer opened');
+    assert.equal(r.regularClicks, 1, 'from the card\'s Regular Post (its inner element, where the click handler is)');
+    assert.equal(r.title, 'A title for supporters', 'Solid saw the title (a bubbling input event)');
+    assert.equal(r.shownTitle, r.title);
+    assert.equal(r.text, 'Hello supporters Second line from NEFORUM', 'the editor\'s own text');
+    assert.equal(r.lines, 2, 'two paragraphs');
+    assert.equal(r.pastedTexts, 0, 'typed, not pasted: Locals\' paste handler is for photos');
+    assert.deepEqual(r.files, ['card.png'], 'the photo went in once, through Locals\' paste handler');
+    assert.equal(r.mediaClicks, 0, 'no media button pressed (each opens the file window)');
+    assert.equal(r.publishDisabled, false, 'Publish is ready for the user');
+    const report = await evaluate(cdp, 'window.__results[0]');
+    assert.equal(report.status, 'filled', report.message);
+    await sleep(1500);
+    assert.equal((await evaluate(cdp, 'window.result()')).submits.length, 0, 'nothing was published');
+  },
+
+  async 'Locals (1.4.3): an automatic job waits for the upload, then publishes once and sees the composer close'(cdp, base) {
+    await open(cdp, `${base}/test/pages/locals.html?p=locals&auto=1&upload=7000`);
+    await until(cdp, 'window.result().submits.length >= 1', 'the automatic Publish', 30000);
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.submits.length, 1, 'published once');
+    const s = r.submits[0];
+    assert.equal(s.uploading, false, 'not while the photo was still uploading');
+    assert.ok(r.uploadDoneAt && s.at >= r.uploadDoneAt, 'after the upload ended');
+    assert.equal(s.text.replace(/\s+/g, ' '), 'Hello supporters Second line from NEFORUM', 'the text Publish sent');
+    assert.deepEqual(s.files, ['card.png']);
+    assert.equal(s.supportersOnly, false, '"Only for Supporters" left as Locals sets it');
+    await until(cdp, 'window.__results.some((x) => x.posted)', 'the posted report');
+    assert.deepEqual(await evaluate(cdp, 'window.__results.filter((x) => x.posted).map((x) => x.posted)'), ['confirmed'], 'the composer closed');
+  },
+
+  async 'Locals (1.4.3): a video is not taken by a drop, so the fill is partial and an automatic job does not publish'(cdp, base) {
+    await open(cdp, `${base}/test/pages/locals.html?p=locals&auto=1&video=1&stub=0`);
+    await until(cdp, 'window.__results.length >= 1', 'the fill report', 25000);
+    const report = await evaluate(cdp, 'window.__results[0]');
+    assert.equal(report.status, 'partial');
+    assert.equal(report.automatic, 'manual', 'not posted automatically');
+    assert.match(report.message, /only from its own buttons.*clip\.mp4/);
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.createClicks, 1, 'opened from the header\'s Create menu');
+    assert.equal(r.text, 'Hello supporters Second line from NEFORUM');
+    assert.deepEqual(r.files, [], 'the page took no file');
+    assert.ok(r.drops >= 1, 'a drop was tried');
+    assert.equal(r.mediaClicks, 0, 'no media button pressed');
+    await sleep(4500);
+    assert.equal((await evaluate(cdp, 'window.result()')).submits.length, 0, 'Publish never pressed');
+  },
+
+  async 'Locals (1.4.3): the news feed has no composer: nothing filled in, the panel says where to go'(cdp, base) {
+    await open(cdp, `${base}/test/pages/locals.html?p=locals&news=1&qp=0`);
+    await until(cdp, 'window.__results.length >= 1', 'the fill report', 25000);
+    const report = await evaluate(cdp, 'window.__results[0]');
+    assert.equal(report.status, 'failed');
+    assert.match(report.message, /open your community's feed/);
+    assert.equal((await evaluate(cdp, 'window.result()')).open, false);
   },
 
   async 'I posted it reports posted: user'(cdp, base) {

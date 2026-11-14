@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NEFORUM",
   "short_name": "NEFORUM",
-  "version": "1.1.4",
+  "version": "1.1.6",
   "description": "Fills in NEFORUM hand-offs on each site (text, threads, polls, photos, videos, artwork). You post, or turn on automatic posting.",
   "homepage_url": "https://neforus.com/neforum/",
   "browser_specific_settings": {
@@ -35,7 +35,8 @@
         "https://web.whatsapp.com/*", "https://business.google.com/*", "https://www.snapchat.com/*",
         "https://www.behance.net/*", "https://www.artstation.com/*", "https://cara.app/*", "https://www.pixiv.net/*", "https://itaku.ee/*",
         "https://www.newgrounds.com/*", "https://www.furaffinity.net/*", "https://www.weasyl.com/*", "https://ko-fi.com/*", "https://artfol.app/*",
-        "https://500px.com/*", "https://web.500px.com/*", "https://dribbble.com/*", "https://www.flickr.com/*"
+        "https://500px.com/*", "https://web.500px.com/*", "https://dribbble.com/*", "https://www.flickr.com/*",
+        "https://app.parler.com/*", "https://locals.com/*"
       ],
       "js": ["content/fill.js", "content/recipes.js", "content/panel.js", "content/main.js"],
       "run_at": "document_idle"

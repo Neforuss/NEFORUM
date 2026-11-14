@@ -22,6 +22,10 @@
 //   title(), titleFor(job), replaceTitle
 //   mediaFirst, fileInput(), prefer, beforeMedia(), afterMedia()
 //   attach(files, job)     adds the files itself (null: the generic way)
+//   attachOnly             attach is the only way: no generic way after it
+//   mediaHelp(files)       what to tell the user when the files did not go in
+//   typeFirst              the text goes in as typing first, a paste only after
+//   busy()                 true while the site is still uploading: Post waits
 //   addPart(index)         adds part [index] of a thread; returns its field
 //   fields(job, files)     fills the site's own fields; returns
 //                          { lines, problems, title } (title: filled it)
@@ -416,6 +420,80 @@
       prefer: ['paste', 'input', 'drop'],
     },
 
+    // Parler (app.parler.com/compose): the composer is a dialog over the feed
+    // with one plain textarea in form#compose-form (React keeps its value, so
+    // the text goes in as typing), a hidden file input for photos, GIFs and
+    // videos, and a Post button outside the form, tied to it by form=.
+    parler: {
+      async open() {
+        // /compose opens the composer as the app starts.
+        if (await waitFor(parlerForm, { timeout: 4000 })) return;
+        // Elsewhere, the sidebar's Post button (no link) opens the same one.
+        await openWith(() => findByText('button, [role="button"]', /^\s*post\s*$/i), { timeout: 6000 });
+      },
+      root: () => parlerForm()?.closest('[role="dialog"]') ?? dialog() ?? document,
+      editor: () => waitFor(() => parlerForm()?.querySelector('textarea') ?? null, { timeout: 8000 }),
+      fileInput: () => parlerFileInput(),
+      // Parler reads the files in its change handler and then empties the
+      // input, so they cannot be read back from it afterwards: count them as
+      // the handler sees them. Read back, the input looks empty, and the fill
+      // would call the files missing and try another way.
+      async attach(files) {
+        const input = parlerFileInput();
+        if (!input) return null;
+        let seen = -1;
+        const count = () => (seen = input.files?.length ?? 0);
+        input.addEventListener('change', count, { capture: true, once: true });
+        setInputFiles(input, files);
+        input.removeEventListener('change', count, { capture: true });
+        return seen === files.length ? 'input' : null;
+      },
+      prefer: ['paste', 'drop'],
+      postSelectors: ['button[type="submit"][form="compose-form"]'],
+      postWords: ['post'],
+    },
+
+    // Locals (locals.com/<community>/feed): "Regular Post" opens a dialog
+    // with a title field (input#post-craft-title, SolidJS reads it from a
+    // bubbling input event) and a TipTap editor (plain text and mentions).
+    // Photos go in as a paste on the editor, which Locals' own paste handler
+    // attaches; video, sound and PDF only through its media buttons, which
+    // open the file window at once, so a drop is tried and otherwise the
+    // user adds them. Publish is button#add-pin-modal-btn, greyed out while
+    // the post is empty, and it waits for the uploads to end. "Only for
+    // Supporters" stays as Locals sets it.
+    locals: {
+      async open() {
+        if (localsEditor()) return;
+        // The community feed's "Start a Post" card, else the header's Create menu.
+        let item = await waitFor(localsRegularPost, { timeout: 6000 });
+        if (!item) {
+          const create = findByText('button[aria-haspopup="dialog"], button', /^\s*create\s*$/i);
+          if (create) {
+            press(create);
+            item = await waitFor(localsRegularPost, { timeout: 3000 });
+          }
+        }
+        if (!item) throw new Error(LOCALS_NO_COMPOSER);
+        press(item);
+        if (!(await waitFor(localsEditor, { timeout: 8000 }))) throw new Error('The Locals post did not open: click Regular Post, then Fill in again.');
+      },
+      root: () => localsDialog() ?? document,
+      title: () => waitFor(localsTitle, { timeout: 6000 }),
+      editor: () => waitFor(localsEditor, { timeout: 8000 }),
+      // Locals' own paste handler is for photos: the text goes in as typing.
+      typeFirst: true,
+      attach: (files) => attachLocals(files),
+      attachOnly: true,
+      mediaHelp: (files) =>
+        files.every(isImage)
+          ? `Locals did not take the ${files.length === 1 ? 'photo' : 'photos'}: click its photo button under the post and choose ${files.length === 1 ? 'it' : 'them'} (NEFORUM's Save media to Downloads puts ${files.length === 1 ? 'it' : 'them'} in Downloads), or drag ${files.length === 1 ? 'it' : 'them'} in.`
+          : `Locals takes a video, sound or PDF file only from its own buttons: click the right one under the post and choose ${files.map((f) => f.name).join(', ')} (NEFORUM's Save media to Downloads puts it in Downloads), or drag it in.`,
+      busy: () => localsUploading(),
+      postSelectors: ['button#add-pin-modal-btn'],
+      postWords: ['publish'],
+    },
+
     tiktok: {
       // TikTok Studio: upload first, then the caption box appears with the
       // file name in it, which the caption replaces.
@@ -661,6 +739,126 @@
       afterPostWords: ['upload'],
     }),
   };
+
+  // ---- Parler -------------------------------------------------------------------
+
+  /** Parler's composer form, while the composer is open (its text field on screen). */
+  const parlerForm = () => {
+    const form = document.getElementById('compose-form');
+    return form && visible(form.querySelector('textarea') ?? form) ? form : null;
+  };
+
+  /** The composer's file input (hidden; the "Attach media" button opens it). */
+  const parlerFileInput = () =>
+    parlerForm()?.querySelector('input[type="file"]') ??
+    (parlerForm()?.closest('[role="dialog"]') ?? document).querySelector('input[type="file"]:not([disabled])');
+
+  // ---- Locals -------------------------------------------------------------------
+
+  const LOCALS_NO_COMPOSER =
+    "No Locals post composer here (the news feed has none): open your community's feed (locals.com/your community/feed), then Fill in again.";
+
+  const isImage = (f) => /^image\//i.test(f.type ?? '');
+
+  /** The "Create a Post" dialog: the dialog that holds the title field or the editor. */
+  const localsDialog = () =>
+    [...document.querySelectorAll('[role="dialog"]')].find((d) => visible(d) && d.querySelector('#post-craft-title, .ProseMirror[contenteditable="true"]')) ?? null;
+
+  /** The post's text editor (TipTap). */
+  const localsEditor = () => {
+    const e = localsDialog()?.querySelector('.tiptap.ProseMirror[contenteditable="true"], .ProseMirror[contenteditable="true"]');
+    return e && visible(e) ? e : null;
+  };
+
+  /** The optional title field. */
+  const localsTitle = () => {
+    const t = localsDialog()?.querySelector('#post-craft-title');
+    return t && visible(t) ? t : null;
+  };
+
+  /**
+   * "Regular Post": the element right around the words (a plain div whose
+   * click handler the page runs as the click bubbles up, so the press must
+   * start inside it, not on a wrapper around it). Found from the page's
+   * text, not by reading the text of every element of a long feed.
+   */
+  const localsRegularPost = () => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const el = n.parentElement;
+      if (/^\s*regular post\s*$/i.test(n.nodeValue) && el && visible(el)) return el;
+    }
+    return null;
+  };
+
+  /**
+   * How many things in the dialog show an attached file (thumbnails,
+   * players, Uppy's file rows), outside the text editor, and the dialog's
+   * text: Locals shows a file it took this way.
+   */
+  function localsAttachments(dialog) {
+    if (!dialog) return { count: 0, text: '' };
+    const editor = dialog.querySelector('.ProseMirror');
+    const shown = [...dialog.querySelectorAll('img, video, audio, canvas, .uppy-Dashboard-Item, [data-uppy-file-id], [style*="background-image"]')].filter(
+      (el) => !editor?.contains(el),
+    );
+    return { count: shown.length, text: NF.fill.norm(dialog.textContent) };
+  }
+
+  /**
+   * Attaches [files] to the open Locals post: photos as a paste on the
+   * editor (Locals' paste handler takes images), anything else into the
+   * uploader's file input when the user opened one, else as a drop on it or
+   * the editor. Counts only what the dialog then shows: null when nothing
+   * new appears, so the fill says "partly" and the user adds them.
+   */
+  async function attachLocals(files) {
+    const dialog = localsDialog();
+    const editor = localsEditor();
+    if (!dialog || !editor || !files.length) return null;
+    const before = localsAttachments(dialog);
+    let how;
+    if (files.every(isImage)) {
+      editor.focus({ preventScroll: true });
+      const data = new DataTransfer();
+      for (const f of files) data.items.add(f);
+      NF.fill.firePaste(editor, data);
+      how = 'paste';
+    } else {
+      const input = dialog.querySelector('input[type="file"]:not([disabled])');
+      if (input) {
+        setInputFiles(input, files);
+        how = 'input';
+      } else {
+        NF.fill.dropOn(dialog.querySelector('.uppy-Dashboard-AddFiles, .uppy-DragDrop-container, .uppy-Dashboard-inner') ?? editor, files);
+        how = 'drop';
+      }
+    }
+    const shown = await waitFor(
+      () => {
+        const now = localsAttachments(localsDialog() ?? dialog);
+        const named = files.every((f) => !before.text.includes(f.name) && now.text.includes(f.name));
+        return now.count >= before.count + files.length || named;
+      },
+      { timeout: 8000, interval: 200 },
+    );
+    return shown ? how : null;
+  }
+
+  /** Is the open Locals post still uploading a file (Uppy's status bar, a progress bar short of its end)? */
+  function localsUploading() {
+    const dialog = localsDialog();
+    if (!dialog) return false;
+    if (dialog.querySelector('.uppy-StatusBar.is-uploading, .uppy-StatusBar.is-preprocessing, .uppy-StatusBar.is-postprocessing, .uppy-Dashboard-Item.is-inprogress, [aria-busy="true"]')) return true;
+    for (const bar of dialog.querySelectorAll('[role="progressbar"], progress')) {
+      if (!visible(bar)) continue;
+      const now = Number(bar.getAttribute('aria-valuenow') ?? bar.getAttribute('value'));
+      const max = Number(bar.getAttribute('aria-valuemax') ?? bar.getAttribute('max') ?? 100) || 100;
+      // A bar without a value is one that keeps going.
+      if (!(now >= max)) return true;
+    }
+    return false;
+  }
 
   // ---- YouTube Posts: polls and quizzes ---------------------------------------
 

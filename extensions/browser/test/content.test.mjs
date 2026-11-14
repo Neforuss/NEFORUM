@@ -18,9 +18,9 @@ function loadContent(globals = {}) {
   return sandbox.NEFORUM_EXT;
 }
 
-/** Loads recipes.js over stand-in page helpers ([fill]), to run a recipe's own steps. */
-function loadRecipes(fill) {
-  const sandbox = { console, setTimeout, clearTimeout, NEFORUM_EXT: { fill } };
+/** Loads recipes.js over stand-in page helpers ([fill]), to run a recipe's own steps ([globals]: stand-ins such as document). */
+function loadRecipes(fill, globals = {}) {
+  const sandbox = { console, setTimeout, clearTimeout, ...globals, NEFORUM_EXT: { fill } };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(readFileSync(new URL('../src/content/recipes.js', import.meta.url), 'utf8'), sandbox, { filename: 'recipes.js' });
@@ -177,6 +177,45 @@ test('every art and portfolio site has a recipe that fills its form and knows ho
   assert.ok(!recipes.flickr.postPattern.test('upload settings'));
 });
 
+test('Parler: files count as its change handler sees them, before it empties the input; Post is the form\'s own button', async () => {
+  const listeners = new Set();
+  const input = {
+    files: [],
+    addEventListener: (type, f) => type === 'change' && listeners.add(f),
+    removeEventListener: (type, f) => listeners.delete(f),
+  };
+  const textarea = { tag: 'textarea' };
+  const form = { querySelector: (s) => (/file/.test(s) ? input : /textarea/.test(s) ? textarea : null), closest: () => null };
+  let pageTakesFiles = true;
+  const recipes = loadRecipes(
+    {
+      visible: (el) => el === textarea,
+      waitFor: async (find) => find(),
+      // Like Parler: the change handler reads the files, then empties the input.
+      setInputFiles(el, files) {
+        if (!pageTakesFiles) return false;
+        el.files = files;
+        for (const f of [...listeners]) f();
+        el.files = [];
+        return el.files.length === files.length;
+      },
+    },
+    { document: { getElementById: (id) => (id === 'compose-form' ? form : null), querySelector: () => null } },
+  );
+  const parler = recipes.parler;
+  const files = [{ name: 'a.png' }, { name: 'b.mp4' }];
+  assert.equal(await parler.attach(files), 'input', 'taken, although the input reads empty afterwards');
+  assert.equal(input.files.length, 0);
+  assert.equal(listeners.size, 0, 'the counting listener is gone');
+  pageTakesFiles = false;
+  assert.equal(await parler.attach(files), null, 'not taken: the generic way may try');
+  assert.equal(parler.fileInput(), input);
+  assert.equal(await parler.editor(), textarea);
+  assert.deepEqual([...parler.postSelectors], ['button[type="submit"][form="compose-form"]']);
+  assert.equal(parler.manualPublish, undefined, 'an automatic job may post');
+  assert.ok(!parler.prefer.includes('input'), 'the input is the recipe\'s own way; the fallbacks are paste and drop');
+});
+
 test('sites where posting needs the user stay manual even for automatic jobs', () => {
   const { recipes } = loadContent();
   for (const id of ['reddit', 'whatsapp', 'youtube']) assert.ok(recipes[id].manualPublish, id);
@@ -189,15 +228,97 @@ test('tags: the job\'s list, else the Tags snippet', () => {
   assert.deepEqual([...tagsOf({ snippets: [] })], []);
 });
 
-test('manifests: version 1.1.4 in both, the same pages, art sites and YouTube Studio included', () => {
+/**
+ * A stand-in Locals page for recipes.locals: the "Create a Post" dialog
+ * (after Regular Post is pressed when [closed]), with progress [bars] and
+ * Uppy's status bar while [uppy] says it is uploading.
+ */
+function localsPage({ closed = false, regular = true, bars = [], uppy = null } = {}) {
+  const pressed = [];
+  let open = !closed;
+  const editor = { kind: 'editor' };
+  const title = { kind: 'title' };
+  const dialog = {
+    querySelector(s) {
+      if (/post-craft-title/.test(s) && !/ProseMirror/.test(s)) return title;
+      if (/ProseMirror/.test(s)) return editor;
+      if (/uppy-StatusBar/.test(s)) return uppy ? { uppy } : null;
+      return null;
+    },
+    querySelectorAll: (s) => (/progressbar/.test(s) ? bars : []),
+  };
+  // The page's text: "Regular Post" inside the element with the handler,
+  // which sits in a wrapper that says the same.
+  const inner = { kind: 'Regular Post' };
+  const texts = [{ nodeValue: 'Start a Post', parentElement: { kind: 'card' } }, ...(regular ? [{ nodeValue: ' Regular Post ', parentElement: inner }] : []), { nodeValue: 'Article', parentElement: {} }];
+  const document = {
+    body: {},
+    querySelectorAll: (s) => (/role="dialog"/.test(s) ? (open ? [dialog] : []) : []),
+    querySelector: () => null,
+    createTreeWalker(root, show) {
+      assert.equal(show, 4, 'text nodes');
+      let i = 0;
+      return { nextNode: () => texts[i++] ?? null };
+    },
+  };
+  const fill = {
+    visible: () => true,
+    waitFor: async (find) => find(),
+    findByText: () => null,
+    norm: (s) => String(s ?? '').replace(/\s+/g, ' ').trim(),
+    press(el) {
+      pressed.push(el);
+      if (el === inner) open = true;
+    },
+  };
+  return { recipes: loadRecipes(fill, { document, NodeFilter: { SHOW_TEXT: 4 } }), pressed, inner, editor, title };
+}
+
+test('Locals: Regular Post is pressed where its handler is, then the title and editor are the dialog\'s own', async () => {
+  const page = localsPage({ closed: true });
+  const locals = page.recipes.locals;
+  await locals.open();
+  assert.deepEqual(page.pressed, [page.inner], 'the element right around the words, not a wrapper');
+  assert.equal(await locals.editor(), page.editor);
+  assert.equal(await locals.title(), page.title);
+  // Open already: nothing is pressed.
+  const ready = localsPage();
+  await ready.recipes.locals.open();
+  assert.deepEqual(ready.pressed, []);
+  // The news feed: no Regular Post and no Create menu.
+  await assert.rejects(localsPage({ closed: true, regular: false }).recipes.locals.open(), /open your community's feed \(locals\.com\/your community\/feed\)/);
+});
+
+test('Locals: Publish is its own button, typed text, the recipe\'s attach alone, and Publish waits for the uploads', () => {
+  const bar = (attrs) => ({ getAttribute: (n) => attrs[n] ?? null });
+  const { locals } = localsPage().recipes;
+  assert.deepEqual([...locals.postSelectors], ['button#add-pin-modal-btn']);
+  assert.deepEqual([...locals.postWords], ['publish']);
+  assert.equal(locals.typeFirst, true, 'Locals\' paste handler is for photos');
+  assert.equal(locals.attachOnly, true, 'no generic way after it: a drop or an emptied Uppy input would mislead');
+  assert.equal(locals.manualPublish, undefined, 'an automatic job may publish (NEFORUM decides whether one is)');
+  assert.equal(locals.mediaFirst, undefined, 'title and text first, then the photos');
+  assert.match(locals.mediaHelp([{ name: 'a.png', type: 'image/png' }]), /^Locals did not take the photo: click its photo button/);
+  assert.match(locals.mediaHelp([{ name: 'clip.mp4', type: 'video/mp4' }]), /only from its own buttons.*choose clip\.mp4/);
+  assert.equal(locals.busy(), false, 'nothing uploading');
+  assert.equal(localsPage({ bars: [bar({ 'aria-valuenow': '40', 'aria-valuemax': '100' })] }).recipes.locals.busy(), true, 'a bar at 40%');
+  assert.equal(localsPage({ bars: [bar({ 'aria-valuenow': '100', 'aria-valuemax': '100' })] }).recipes.locals.busy(), false, 'a full bar');
+  assert.equal(localsPage({ bars: [bar({})] }).recipes.locals.busy(), true, 'a bar without a value keeps going');
+  assert.equal(localsPage({ uppy: 'uploading' }).recipes.locals.busy(), true, 'Uppy\'s status bar says it uploads');
+  assert.equal(localsPage({ closed: true }).recipes.locals.busy(), false, 'no post open');
+});
+
+test('manifests: version 1.1.6 in both, the same pages, art sites, YouTube Studio, Parler and Locals included', () => {
   const chrome = manifest('chrome');
   const firefox = manifest('firefox');
-  assert.equal(chrome.version, '1.1.4');
+  assert.equal(chrome.version, '1.1.6');
   assert.equal(firefox.version, chrome.version);
   assert.deepEqual(firefox.content_scripts, chrome.content_scripts);
   assert.ok(chrome.description.length <= 132, 'the Chrome Web Store limit');
   const matches = chrome.content_scripts[0].matches;
   for (const [id, host] of Object.entries(ART_SITES)) assert.ok(matches.includes(`https://${host}/*`), `${id}: ${host}`);
   assert.ok(matches.includes('https://studio.youtube.com/*'));
+  assert.ok(matches.includes('https://app.parler.com/*'), 'the Parler composer: app.parler.com/compose');
+  assert.ok(matches.includes('https://locals.com/*'), 'the Locals composer: locals.com/<community>/feed');
   assert.deepEqual(chrome.host_permissions, ['http://127.0.0.1/*'], 'still only the app on this computer');
 });

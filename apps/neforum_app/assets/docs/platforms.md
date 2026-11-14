@@ -38,6 +38,7 @@ Generated from the code on 2026-10-25.
 | Ko-fi | Hand-off | Yes | No limit | 8 images (required) | - | - | [kofi.md](platforms/kofi.md) |
 | Lemmy | Auto, Hand-off | Yes | 50000 characters | 1 image or 1 video | 6/10 min | - | [lemmy.md](platforms/lemmy.md) |
 | LinkedIn | Your keys, Hand-off | Yes | 3000 characters | 20 images or 1 video | 150/day | - | [linkedin.md](platforms/linkedin.md) |
+| Locals | Hand-off | Yes | 15000 characters | 10 images or 1 video | - | - | [locals.md](platforms/locals.md) |
 | Mastodon | Auto, Hand-off | Yes | 500 characters (links = 23), threads | 4 images or 1 video | 300/5 min, 1000/day | Yes | [mastodon.md](platforms/mastodon.md) |
 | Matrix | Auto | Yes | No limit | 10 images or 10 videos | 12/1 min | - | [matrix.md](platforms/matrix.md) |
 | Micropub (IndieWeb / Micro.blog) | Auto | Yes | No limit | 10 images or 1 video | - | - | [micropub.md](platforms/micropub.md) |
@@ -45,6 +46,7 @@ Generated from the code on 2026-10-25.
 | Newgrounds | Hand-off | Yes | No limit | 100 images (required) | - | - | [newgrounds.md](platforms/newgrounds.md) |
 | Nostr | Auto, Hand-off | Yes | No limit | 20 images or 20 videos | - | - | [nostr.md](platforms/nostr.md) |
 | Odysee | Auto, Hand-off | Yes | 5000 characters | 1 image or 1 video (required) | - | - | [odysee.md](platforms/odysee.md) |
+| Parler | Hand-off | Yes | 300 characters | 4 images and videos | - | - | [parler.md](platforms/parler.md) |
 | Pinterest | Your keys, Hand-off | Hand-off only | 800 characters | 5 images or 1 video (required) | 300/day, 1000/day | - | [pinterest.md](platforms/pinterest.md) |
 | Pixelfed | Auto, Hand-off | Yes | 500 characters | 4 images (required) | 1000/day | - | [pixelfed.md](platforms/pixelfed.md) |
 | pixiv | Hand-off | Yes | No limit | 100 images (required) | - | - | [pixiv.md](platforms/pixiv.md) |
@@ -186,6 +188,11 @@ Generated from the code on 2026-10-25.
 - **Account:** A normal LinkedIn profile is enough. For automatic posting you create a free LinkedIn developer app, which must be linked to a LinkedIn company Page you administer (creating a Page is free).
 - **Cost and limits:** Free. LinkedIn allows about 150 API calls per member per day, and you must reconnect every 60 days because LinkedIn sign-ins expire and cannot be renewed automatically.
 
+### Locals
+
+- **Account:** A Locals account that can post in a community: its creator or team, or a supporter where the community lets members post. NEFORUM never signs in to Locals.
+- **Cost and limits:** Free. Locals has no public posting API, so NEFORUM copies your post and opens your community on locals.com, where the NEFORUM browser extension can fill it in; you click Publish.
+
 ### Mastodon
 
 - **Account:** Any normal account on a Mastodon-compatible server (Mastodon, Pleroma, Akkoma, GoToSocial, Friendica, Pixelfed, Mitra). You only type your server address and approve NEFORUM in the browser.
@@ -220,6 +227,11 @@ Generated from the code on 2026-10-25.
 
 - **Account:** Automatic: the LBRY desktop app on this computer, signed in with your Odysee account, and a little LBC for the deposit. Hand-off: any Odysee account.
 - **Cost and limits:** Free apart from a tiny LBC deposit per upload (0.001 LBC by default), which you get back if you remove the video. No developer keys.
+
+### Parler
+
+- **Account:** Any Parler account. NEFORUM never signs in to Parler; you post from app.parler.com or the Parler app.
+- **Cost and limits:** Free. Parler has no public posting API, so NEFORUM copies your post and opens Parler's composer; you click Post.
 
 ### Pinterest
 

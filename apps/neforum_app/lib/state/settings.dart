@@ -21,7 +21,7 @@ const kAutomaticPostingPlatforms = {
   'x', 'bluesky', 'threads', 'linkedin', 'facebook', 'youtube_posts', 'youtube', 'substack', //
   'tiktok', 'instagram', 'pinterest', 'reddit', 'tumblr', 'whatsapp', 'google_business', 'snapchat', //
   'behance', 'artstation', 'cara', 'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', //
-  'kofi', 'artfol', 'fivehundredpx', 'dribbble', 'flickr',
+  'kofi', 'artfol', 'fivehundredpx', 'dribbble', 'flickr', 'parler',
 };
 
 /// A stored phone text size that can be used: 0.85 to 1.5, 1 otherwise.

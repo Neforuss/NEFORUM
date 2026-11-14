@@ -27,13 +27,13 @@ Every connected account uses one of these. You can connect the same platform mor
 |---|---|---|
 | **Auto** | Posts automatically through the platform's open API. No developer keys, no fees, no review. | Mastodon and the fediverse, Pixelfed, Bluesky, Nostr, Misskey, Lemmy, Matrix, Telegram, Discord, WordPress, Ghost, EmDash, DEV, Micropub, Inkbunny |
 | **Your keys** | Posts automatically through the official API, using a developer app you create once. NEFORUM tracks the platform's quota and warns you before you hit it. | X, Threads, LinkedIn, YouTube, Reddit, Pinterest, Tumblr, Facebook Pages, Instagram professional accounts, TikTok, Hashnode, DeviantArt, Dribbble, Flickr |
-| **Hand-off** | NEFORUM prepares everything: caption on the clipboard, photos in the share sheet, the composer opened with your text. You tap Post. | Any personal account anywhere: Instagram, TikTok, Facebook profiles, YouTube Posts, Snapchat, WhatsApp, Google Business Profile, Substack Notes, the art sites without an API (Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol, 500px), and every platform above when you'd rather not set up keys |
+| **Hand-off** | NEFORUM prepares everything: caption on the clipboard, photos in the share sheet, the composer opened with your text. You tap Post. | Any personal account anywhere: Instagram, TikTok, Facebook profiles, YouTube Posts, Snapchat, WhatsApp, Google Business Profile, Substack Notes, Parler, Locals, the art sites without an API (Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol, 500px), and every platform above when you'd rather not set up keys |
 
 If an API account runs out of quota (for example X's monthly cap), NEFORUM can fall back to hand-off for that post instead of failing.
 
 On a computer a hand-off is click here, paste there: NEFORUM opens the right page (a prefilled composer where the network has one, your channel's Posts tab on YouTube, the photo upload on TikTok), with your text already copied. Each photo has a **Copy photo** button, so you add it with Ctrl+V (⌘V on a Mac) wherever the composer takes pasted pictures, and **Copy next** hands out the text, any poll answers and each photo in turn. Websites don't let other apps type into them or drop files on them, so the paste itself stays yours, unless you add the browser extension. On a phone, after you paste one part in the other app and come back to NEFORUM, the next part is already copied for you; on Android, **Share** opens the network's own app directly.
 
-**NEFORUM browser extension (Chrome and Firefox).** Pair it once in Settings → Browser extension, and **Open** in a hand-off fills in the post on the platform's page: text, poll answers, photos and videos, on YouTube Posts (polls and quizzes included), TikTok Studio, Instagram, Substack, Facebook, X, Bluesky, Threads, LinkedIn, Pinterest, the art sites and more, thread parts included. You check it and press Post. Or turn on **Post automatically** in Settings → Browser extension: the extension then presses Post itself after a three-second countdown you can stop, also for scheduled posts while NEFORUM runs on your computer. It stays off for X, LinkedIn and Snapchat unless you include them, because their terms forbid scripted posting, and sites that need your own choice (a Reddit community, a WhatsApp recipient, a Behance cover) are filled in for you to finish. It talks only to NEFORUM on your computer. See [docs/browser-extension.md](docs/browser-extension.md).
+**NEFORUM browser extension (Chrome and Firefox).** Pair it once in Settings → Browser extension, and **Open** in a hand-off fills in the post on the platform's page: text, poll answers, photos and videos, on YouTube Posts (polls and quizzes included), TikTok Studio, Instagram, Substack, Parler, Locals, Facebook, X, Bluesky, Threads, LinkedIn, Pinterest, the art sites and more, thread parts included. You check it and press Post. Or turn on **Post automatically** in Settings → Browser extension: the extension then presses Post itself after a three-second countdown you can stop, also for scheduled posts while NEFORUM runs on your computer. It stays off for X, LinkedIn and Snapchat unless you include them, because their terms forbid scripted posting, and sites that need your own choice (a Reddit community, a WhatsApp recipient, a Behance cover) are filled in for you to finish. It talks only to NEFORUM on your computer. See [docs/browser-extension.md](docs/browser-extension.md).
 
 ### Text cards for photo-only networks
 
@@ -113,14 +113,14 @@ Turn on **Artwork** under Post to, and the post goes only to your art sites (Dev
 
 ## Supported platforms
 
-49 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
+51 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
 
 - **Open networks:** Mastodon and compatible servers (Pleroma, Akkoma, GoToSocial, Friendica, Pixelfed, Mitra), Bluesky, Misskey / Sharkey / Firefish / Iceshrimp, Nostr, Lemmy, Matrix
-- **Big platforms:** X, Threads, Facebook, LinkedIn, Reddit, Tumblr
+- **Big platforms:** X, Threads, Facebook, LinkedIn, Reddit, Tumblr, Parler (hand-off)
 - **Photo and video:** Instagram, TikTok, YouTube Posts (text and image posts on your channel's Posts tab), Pinterest, Snapchat
 - **Video sites:** YouTube (videos and Shorts), Odysee (automatic through the LBRY desktop app, or hand-off), Rumble, BitChute
 - **Messaging:** Telegram channels and groups, Discord (webhooks), WhatsApp
-- **Blogs and newsletters:** WordPress, Ghost, EmDash, WriteFreely / Write.as, Micropub (IndieWeb, Micro.blog), DEV, Hashnode, Substack Notes
+- **Blogs and newsletters:** WordPress, Ghost, EmDash, WriteFreely / Write.as, Micropub (IndieWeb, Micro.blog), DEV, Hashnode, Substack Notes, Locals (hand-off)
 - **Business:** Google Business Profile
 - **Art and portfolios:** DeviantArt, Dribbble, Pixelfed, Flickr and Inkbunny automatically; Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol and 500px by hand-off
 

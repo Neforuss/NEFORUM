@@ -1,5 +1,5 @@
 // U8a: one row per adapter in builtinAdapters(), and the same facts in
-// docs/sign-in-lifetimes.md. A 50th adapter fails here twice: once for having
+// docs/sign-in-lifetimes.md. A 52nd adapter fails here twice: once for having
 // no row, and once at compile time for having no signInPolicyFor.
 
 import 'dart:io';
@@ -60,6 +60,7 @@ const List<_Row> _table = [
   _Row.handoff('kofi', 'Ko-fi'),
   _Row('lemmy', 'Lemmy', SignInLimit.none, SignInRenewal.notNeeded),
   _Row('linkedin', 'LinkedIn', SignInLimit.date, SignInRenewal.never, tier: _byok),
+  _Row.handoff('locals', 'Locals'),
   _Row('mastodon', 'Mastodon', SignInLimit.none, SignInRenewal.notNeeded, config: {'software': 'mastodon'}),
   _Row('matrix', 'Matrix', SignInLimit.undocumented, SignInRenewal.onUse, config: {'authMethod': 'password'}),
   _Row('micropub', 'Micropub (IndieWeb / Micro.blog)', SignInLimit.undocumented, SignInRenewal.onUse, config: {'authMethod': 'indieauth'}),
@@ -67,6 +68,7 @@ const List<_Row> _table = [
   _Row.handoff('newgrounds', 'Newgrounds'),
   _Row('nostr', 'Nostr', SignInLimit.none, SignInRenewal.notNeeded, early: false),
   _Row.handoff('odysee', 'Odysee'),
+  _Row.handoff('parler', 'Parler'),
   _Row('pinterest', 'Pinterest', SignInLimit.date, SignInRenewal.onUse, disuse: 60, tier: _byok),
   _Row('pixelfed', 'Pixelfed', SignInLimit.date, SignInRenewal.onUse, disuse: 400, unverified: true),
   _Row.handoff('pixiv', 'pixiv'),
@@ -157,10 +159,10 @@ void main() {
   final adapters = {for (final a in builtinAdapters()) a.id: a};
   final doc = File('../../docs/sign-in-lifetimes.md').readAsStringSync();
 
-  test('one row per adapter: a 50th adapter fails here', () {
+  test('one row per adapter: a 52nd adapter fails here', () {
     expect(_table.map((r) => r.id).toSet(), adapters.keys.toSet());
-    expect(_table, hasLength(49));
-    expect(adapters, hasLength(49));
+    expect(_table, hasLength(51));
+    expect(adapters, hasLength(51));
   });
 
   for (final r in _table) {
@@ -195,9 +197,9 @@ void main() {
   });
 
   group('docs/sign-in-lifetimes.md', () {
-    test('its 49 rows are the 49 adapters, each dated and matching the policy', () {
-      final rows = _docRows(doc, '## All 49 networks');
-      expect(rows, hasLength(49));
+    test('its 51 rows are the 51 adapters, each dated and matching the policy', () {
+      final rows = _docRows(doc, '## All 51 networks');
+      expect(rows, hasLength(51));
       expect(rows.map((c) => c[_h.name]).toSet(), adapters.values.map((a) => a.descriptor.name).toSet());
       for (final r in _table) {
         final cells = rows.firstWhere((c) => c[_h.name] == r.name);
@@ -215,7 +217,7 @@ void main() {
 
     test('a VERIFIED row with an open clause says what would settle it, and Still open lists it', () {
       final open = RegExp('conflict|not stated|not known|unread|may differ|still says');
-      final rows = [..._docRows(doc, '## All 49 networks'), ..._docRows(doc, '## Where one network has more than one way')];
+      final rows = [..._docRows(doc, '## All 51 networks'), ..._docRows(doc, '## Where one network has more than one way')];
       final clauses = rows.where((c) => c[_h.status].startsWith('VERIFIED') && open.hasMatch(c[_h.status])).toList();
       expect(clauses.map((c) => c[_h.name]), containsAll(['Pinterest', 'Threads', 'YouTube videos', 'Facebook', 'Misskey', 'Bluesky']), reason: 'the scan finds them');
       for (final c in clauses) {
@@ -230,7 +232,7 @@ void main() {
 
     test('YouTube: the 1 hour its dates work back from is cited to the Google page that states it', () {
       expect(SignInPolicies.youTube.accessLife, const Duration(hours: 1));
-      final cells = _docRows(doc, '## All 49 networks').firstWhere((c) => c[_h.name] == 'YouTube videos');
+      final cells = _docRows(doc, '## All 51 networks').firstWhere((c) => c[_h.name] == 'YouTube videos');
       expect(cells[_h.lifetime], startsWith('Token 1 hour'));
       expect(cells[_h.source], contains('(https://docs.cloud.google.com/docs/authentication/token-types)'), reason: 'the OAuth page says only "limited lifetimes"');
       expect(cells[_h.status], contains('token types page'), reason: 'the row says where the figure comes from');
@@ -239,7 +241,7 @@ void main() {
     test('a VERIFIED early revocation clause cites the page that states it, and no clause stands with no page', () {
       const appStates = '(https://developers.facebook.com/documentation/development/create-an-app/app-dashboard/app-states)';
       const permissions = '(https://developers.facebook.com/documentation/development/permissions)';
-      final rows = _docRows(doc, '## All 49 networks');
+      final rows = _docRows(doc, '## All 51 networks');
       List<String> row(String name) => rows.firstWhere((c) => c[_h.name] == name);
       for (final (name, pages) in [
         ('Facebook', [appStates, permissions]),
