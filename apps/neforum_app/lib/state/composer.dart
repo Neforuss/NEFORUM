@@ -19,6 +19,7 @@ import '../platform/notifications.dart';
 import '../platform/publish_host.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
+import 'automatic_targets.dart';
 import 'card_designs.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
@@ -76,6 +77,8 @@ class ComposerState {
     this.audioCardDesign, // 1.3.1: cards
     this.textCardStyle = TextCardStyle.classic, // 1.3.5: cards
     this.textCardDesignBeforeEdits, // 1.3.5: cards
+    this.automaticTargets = false, // 1.4.3: Automatic only
+    this.targetChoices = const {}, // 1.4.3: Automatic only
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -188,6 +191,22 @@ class ComposerState {
     return sound == null ? null : (sound.audioTags ?? AudioTags.none).overriddenBy(audioDetails[mediaId]);
   }
 
+  /// 1.4.3: why [account] cannot take this post ([automaticSkipReason]),
+  /// with its own version of the words and its own choice of files; null
+  /// when it can.
+  String? skipReasonFor(ConnectedAccount account, AdapterRegistry registry, AppSettings settings) {
+    final adapter = registry.byId(account.platformId);
+    if (adapter == null) return null;
+    final own = overrides[account.id];
+    final ids = own?.mediaIds;
+    return automaticSkipReason(
+      adapter.descriptorForAccount(account),
+      media: ids == null ? media : media.where((m) => ids.contains(m.id)),
+      hasWords: (own?.text ?? joinedParts).trim().isNotEmpty,
+      textCards: settings.textCards,
+    );
+  }
+
   /// The track details the first sound file ([audio]) goes out with; null
   /// without a sound file.
   AudioTags? get effectiveAudioTags {
@@ -233,6 +252,18 @@ class ComposerState {
   /// opened or saved. "Reset handle and words" puts it back, however often
   /// the editor is folded or rebuilt, and the composer's draft keeps it.
   final Map<String, dynamic>? textCardDesignBeforeEdits;
+
+  /// 1.4.3: the targets came from "Automatic only" and follow the post: the
+  /// automatic accounts whose rules take it are added as it changes (a video
+  /// added brings YouTube videos and Odysee), and the ones NEFORUM added go
+  /// again when the rules no longer take it. See [targetChoices].
+  final bool automaticTargets;
+
+  /// 1.4.3: while [automaticTargets], how each account came to be in or out
+  /// of the post: added by NEFORUM, or ticked or unticked by hand. Hand
+  /// choices are kept as they are; an account without an entry was left
+  /// out by Automatic only and comes in once its rules take the post.
+  final Map<String, TargetChoice> targetChoices;
 
   /// [audioCardDesign], or the Settings default; null for the classic card.
   CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
@@ -308,6 +339,8 @@ class ComposerState {
     bool clearTextCardDesign = false,
     bool clearTextCardDesignBeforeEdits = false,
     bool clearEditingPostId = false,
+    bool? automaticTargets, // 1.4.3: Automatic only
+    Map<String, TargetChoice>? targetChoices, // 1.4.3: Automatic only
   }) =>
       ComposerState(
         editingPostId: clearEditingPostId ? null : (editingPostId ?? this.editingPostId),
@@ -347,6 +380,8 @@ class ComposerState {
         textCardStyle: textCardStyle ?? this.textCardStyle, // 1.3.5: cards
         textCardDesignBeforeEdits:
             clearTextCardDesignBeforeEdits ? null : (textCardDesignBeforeEdits ?? this.textCardDesignBeforeEdits), // 1.3.5: cards
+        automaticTargets: automaticTargets ?? this.automaticTargets, // 1.4.3: Automatic only
+        targetChoices: targetChoices ?? this.targetChoices, // 1.4.3: Automatic only
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -513,6 +548,41 @@ class ComposerNotifier extends Notifier<ComposerState> {
     final post = posts.where((p) => p.id == id).firstOrNull;
     if (post?.status == PostStatus.publishing || isEditablePost(post)) return;
     state = state.copyWith(clearEditingPostId: true);
+  }
+
+  /// Every change goes through here: while the targets follow the post
+  /// ([ComposerState.automaticTargets]), a change of its words or files
+  /// brings the targets along ([_followingPost]).
+  @override
+  set state(ComposerState value) => super.state = _followingPost(value);
+
+  /// 1.4.3: [s] with its targets brought in line with its post while they
+  /// follow it: an automatic account without a choice of its own is added
+  /// once its rules take the post, and one NEFORUM added goes when they no
+  /// longer do. Accounts ticked or unticked by hand stay as they are. [s]
+  /// itself when nothing changes.
+  ComposerState _followingPost(ComposerState s) {
+    if (!s.automaticTargets) return s;
+    final registry = ref.read(registryProvider);
+    final settings = ref.read(settingsProvider);
+    final selected = {...s.selected};
+    final choices = {...s.targetChoices};
+    var changed = false;
+    for (final a in automaticTargetCandidates(ref.read(accountListProvider), registry, artwork: s.isArtwork)) {
+      final choice = choices[a.id];
+      if (choice == TargetChoice.ticked || choice == TargetChoice.unticked) continue;
+      final fits = s.skipReasonFor(a, registry, settings) == null;
+      if (fits && !selected.contains(a.id)) {
+        selected.add(a.id);
+        choices[a.id] = TargetChoice.automatic;
+        changed = true;
+      } else if (!fits && choice == TargetChoice.automatic) {
+        selected.remove(a.id);
+        choices.remove(a.id);
+        changed = true;
+      }
+    }
+    return changed ? s.copyWith(selected: selected, targetChoices: choices) : s;
   }
 
   /// Art sites are left out: they only receive artwork (artwork_targets.dart).
@@ -755,6 +825,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
       editingPostId: state.editingPostId,
       visibility: state.visibility,
       selected: state.selected,
+      // Targets that follow the post follow the new one.
+      automaticTargets: state.automaticTargets,
+      targetChoices: state.targetChoices,
       scheduledAt: state.scheduledAt,
       overrides: {
         for (final e in state.overrides.entries)
@@ -793,6 +866,10 @@ class ComposerNotifier extends Notifier<ComposerState> {
       editingPostId: state.editingPostId,
       visibility: ref.read(settingsProvider).defaultVisibility,
       selected: state.selected,
+      // Targets that follow the post follow the empty one: the accounts
+      // NEFORUM added for its video go with it.
+      automaticTargets: state.automaticTargets,
+      targetChoices: state.targetChoices,
       scheduledAt: state.scheduledAt,
       // The times per network are part of the schedule.
       overrides: {
@@ -885,13 +962,51 @@ class ComposerNotifier extends Notifier<ComposerState> {
         media: [for (final m in state.media) m.id == mediaId ? m.copyWith(altText: alt, clearAltText: alt.isEmpty) : m],
       );
 
+  /// Ticks or unticks [accountId] by hand. While the targets follow the post
+  /// the choice is kept: NEFORUM never takes away an account ticked by hand,
+  /// nor adds back one unticked by hand.
   void toggleAccount(String accountId) {
     final s = {...state.selected};
-    if (!s.remove(accountId)) s.add(accountId);
-    state = state.copyWith(selected: s);
+    final on = !s.remove(accountId);
+    if (on) s.add(accountId);
+    state = state.copyWith(
+      selected: s,
+      targetChoices: state.automaticTargets ? {...state.targetChoices, accountId: on ? TargetChoice.ticked : TargetChoice.unticked} : null,
+    );
   }
 
-  void selectAccounts(Iterable<String> ids) => state = state.copyWith(selected: ids.toSet());
+  /// Exactly [ids], chosen as a whole: the targets no longer follow the post.
+  void selectAccounts(Iterable<String> ids) =>
+      state = state.copyWith(selected: ids.toSet(), automaticTargets: false, targetChoices: const {});
+
+  /// "Automatic only": the automatic accounts whose rules take the post as it
+  /// is ([automaticSkipReason]); the others are left out, with the reason on
+  /// their cell. From then on the targets follow the post
+  /// ([ComposerState.automaticTargets]).
+  ///
+  /// With [among] (the accounts the picker's filter shows) only those are
+  /// chosen again, and the others stay as they are, as if set by hand.
+  void selectAutomatic({Iterable<String>? among}) {
+    final scope = among?.toSet();
+    final registry = ref.read(registryProvider);
+    final settings = ref.read(settingsProvider);
+    final accounts = ref.read(accountListProvider);
+    final selected = <String>{};
+    final choices = <String, TargetChoice>{};
+    if (scope != null) {
+      selected.addAll(state.selected.difference(scope));
+      for (final a in accounts) {
+        if (!scope.contains(a.id)) choices[a.id] = selected.contains(a.id) ? TargetChoice.ticked : TargetChoice.unticked;
+      }
+    }
+    for (final a in automaticTargetCandidates(accounts, registry, artwork: state.isArtwork)) {
+      if (scope != null && !scope.contains(a.id)) continue;
+      if (state.skipReasonFor(a, registry, settings) != null) continue;
+      selected.add(a.id);
+      choices[a.id] = TargetChoice.automatic;
+    }
+    state = state.copyWith(selected: selected, automaticTargets: true, targetChoices: choices);
+  }
 
   void setOverride(String accountId, PostOverrides o) =>
       state = state.copyWith(overrides: {...state.overrides, accountId: o});
@@ -967,13 +1082,17 @@ class ComposerNotifier extends Notifier<ComposerState> {
   }
 
   /// Starts over with the same targets. Kept art sites keep artwork mode on,
-  /// with the artwork details back at their defaults.
+  /// with the artwork details back at their defaults. Kept targets that
+  /// follow the post (Automatic only) follow the next one, with the choices
+  /// made by hand.
   void reset({bool keepTargets = true}) {
     final fresh = _fresh();
     state = fresh.copyWith(
       selected: keepTargets ? state.selected : fresh.selected,
       artwork: keepTargets && state.isArtwork ? newArtworkDetails(ref.read(settingsProvider)) : null,
       revision: state.revision + 1,
+      automaticTargets: keepTargets && state.automaticTargets,
+      targetChoices: keepTargets ? state.targetChoices : const {},
     );
   }
 
@@ -1022,6 +1141,24 @@ class ComposerNotifier extends Notifier<ComposerState> {
 }
 
 final composerProvider = NotifierProvider<ComposerNotifier, ComposerState>(ComposerNotifier.new);
+
+/// 1.4.3: while the targets follow the post (Automatic only), why each
+/// automatic account left out cannot take the post ("Needs a video"), by
+/// account id, for its cell in "Post to". Empty otherwise.
+final automaticSkipReasonsProvider = Provider<Map<String, String>>((ref) {
+  // Only what the reasons depend on: not every letter typed.
+  final on = ref.watch(composerProvider.select((c) => c.automaticTargets
+      ? (c.selected, c.media, c.overrides, c.joinedParts.trim().isNotEmpty, c.isArtwork)
+      : null));
+  if (on == null) return const {};
+  final c = ref.read(composerProvider);
+  final registry = ref.watch(registryProvider);
+  final settings = ref.watch(settingsProvider);
+  return {
+    for (final a in automaticTargetCandidates(ref.watch(accountListProvider), registry, artwork: c.isArtwork))
+      if (!c.selected.contains(a.id)) a.id: ?c.skipReasonFor(a, registry, settings),
+  };
+});
 
 /// Live per-target previews of what each platform will receive.
 final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {

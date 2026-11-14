@@ -84,6 +84,7 @@ const youtubeDescriptor = PlatformDescriptor(
   setupGuide: 'docs/platforms/youtube.md',
   serverSideScheduling: true,
   supportsLinkField: false,
+  categories: {PlatformCategory.video},
 );
 
 /// The loopback redirect the desktop broker listens on.
