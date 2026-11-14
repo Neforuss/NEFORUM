@@ -10,25 +10,44 @@ import 'handoff_common.dart';
 
 /// Locals (locals.com, owned by Rumble) via hand-off.
 ///
-/// Locals has no public posting API. Posts are written in a community, on its
-/// website (`name.locals.com`) or in the Locals app, by its creator and team
-/// or by supporters where the community allows member posts. NEFORUM copies
-/// the post and opens the community the account was connected with.
+/// Locals has no public posting API. Posts are written in a community, on
+/// its feed at `locals.com/<community>/feed` or in the Locals app, by its
+/// creator and team or by supporters where the community allows member
+/// posts. NEFORUM copies the post and opens the community the account was
+/// connected with, where the NEFORUM browser extension fills in Locals'
+/// composer (the "Regular Post" dialog).
 ///
-/// Limits from Locals' help centre ("How do I upload videos, podcasts and
-/// photos?", updated 2024-04-03, and "How do I leave a post on the Locals
-/// app?"): up to 10 photos per post; video and sound up to 5 minutes and
-/// under 200 MB for members, by the community's plan for creators; Publish
-/// needs at least 10 characters in the app. No character limit is published.
+/// Limits read from Locals' composer while signed in (2026-11-13): the body
+/// counter stops at 15,000 characters, the title field at 255; the
+/// community's settings allow 10 photos of up to 20 MB per post (another
+/// community showed 5), or one video, one sound file or one PDF, never two
+/// kinds together. Earlier, from the help centre ("How do I upload videos,
+/// podcasts and photos?", updated 2024-04-03, and "How do I leave a post on
+/// the Locals app?"): video and sound up to 5 minutes and under 200 MB for
+/// members; Publish needs at least 10 characters in the app.
 class LocalsAdapter extends HandoffOnlyAdapter {
-  /// Where NEFORUM goes when the account has no community: the signed-in feed.
-  static const String feedUrl = 'https://locals.com/feed';
+  /// Where NEFORUM goes when the account has no community: the signed-in
+  /// news feed (posts from the communities you follow; it has no composer).
+  static const String feedUrl = 'https://locals.com/_/feed';
 
   /// Android package of the Locals.com app (linked from locals.com).
   static const String androidPackage = 'com.locals.localsapp';
 
-  /// "You can upload up to 10 photos in one post."
+  /// The composer's counter: "0/15,000".
+  static const int maxTextLength = 15000;
+
+  /// The title field's `maxlength`.
+  static const int titleMax = 255;
+
+  /// The community's `post_photo_limit` (and "You can upload up to 10
+  /// photos in one post." in the help centre).
   static const int maxImages = 10;
+
+  /// Another community's `post_photo_limit`: the cap is set per community.
+  static const int smallCommunityMaxImages = 5;
+
+  /// `limits.content.photo`: 20 MB a photo.
+  static const int imageMaxBytes = 20 * 1024 * 1024;
 
   /// Members: "5 min duration and below 200MBs". Creators' limits depend on
   /// the community's plan, so these are warnings, not errors.
@@ -38,8 +57,12 @@ class LocalsAdapter extends HandoffOnlyAdapter {
   /// The Locals app keeps Publish greyed out below 10 characters.
   static const int minTextLength = 10;
 
-  /// Config key: the community's name, as in `name.locals.com`.
+  /// Config key: the community, as in its address `locals.com/<community>`.
   static const String communityKey = 'community';
+
+  /// First parts of locals.com paths that are Locals' own pages, never a
+  /// community (`locals.com/_/feed`, `locals.com/legacy/profile`).
+  static const Set<String> _reservedPaths = {'_', 'legacy', 'feed', 'login', 'signup', 'register', 'settings', 'search', 'www'};
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'locals',
@@ -49,33 +72,38 @@ class LocalsAdapter extends HandoffOnlyAdapter {
     tiers: {PlatformTier.handoff},
     defaultTier: PlatformTier.handoff,
     text: TextRules(
-      // Locals publishes no character limit for posts.
-      maxLength: null,
+      maxLength: maxTextLength,
       counting: CountingRule.utf16,
-      notes: 'Locals publishes no character limit for posts. The Locals app needs at least 10 characters before '
-          'Publish works. Articles (with a title and a cover) are a separate kind of post you write on Locals.',
+      titleSupported: true,
+      titleMax: titleMax,
+      notes: 'Up to 15,000 characters, plain text (no bold, links or lists), and an optional title of up to 255. '
+          'The Locals app needs at least 10 characters before Publish works. Articles (with a cover) are a separate '
+          'kind of post you write on Locals.',
     ),
     media: MediaRules(
       maxImages: maxImages,
-      // Locals does not say how many videos a post takes, or whether photos
-      // and video mix; NEFORUM allows one video or one sound file, alone.
+      imageMaxBytes: imageMaxBytes,
+      // One video, one sound file or one PDF, alone: Locals' composer takes
+      // one kind of media per post.
       maxVideos: 1,
+      allowsMixedImageVideo: false,
       imageMimeTypes: {'image/jpeg', 'image/png', 'image/gif', 'image/webp'},
       videoMimeTypes: {
         'video/mpeg', 'video/mp4', 'video/ogg', 'video/quicktime', 'video/webm', //
-        'video/x-ms-wmv', 'video/x-flv', 'video/3gpp', 'video/3gpp2',
+        'video/x-ms-wmv', 'video/x-flv', 'video/3gpp', 'video/3gpp2', 'video/x-msvideo', 'video/x-m4v',
       },
       maxAudios: 1,
       audioMimeTypes: {AudioMimeTypes.mp3, AudioMimeTypes.m4a, AudioMimeTypes.wav},
-      notes: 'Up to 10 photos (JPEG, PNG, GIF, WebP) per post. Videos and sound files: up to 5 minutes and under '
-          '200 MB for members, by the community\'s plan for creators. Locals does not say whether a post takes '
-          'more than one video or photos with a video, so NEFORUM sends one video alone (unverified).',
+      audioWithOtherMedia: false,
+      notes: 'Up to 10 photos (JPEG, PNG, GIF, WebP; 20 MB each) per post; some communities allow 5. Or one video, '
+          'one sound file or one PDF, on its own: one kind of media per post. Videos and sound files: up to 5 '
+          'minutes and under 200 MB for members, by the community\'s plan for creators. NEFORUM does not send PDFs.',
     ),
     personalAccountOk: true,
     accountRequirements: 'A Locals account that can post in a community: its creator or team, or a supporter '
         'where the community lets members post. NEFORUM never signs in to Locals.',
     apiCostSummary: 'Free. Locals has no public posting API, so NEFORUM copies your post and opens your '
-        'community on locals.com; you click Publish.',
+        'community on locals.com, where the NEFORUM browser extension can fill it in; you click Publish.',
     setupGuide: 'docs/platforms/locals.md',
   );
 
@@ -90,35 +118,48 @@ class LocalsAdapter extends HandoffOnlyAdapter {
 **Locals works by hand-off only.** There is nothing to create or sign in to.
 
 Locals has **no public API for posting**, so NEFORUM does not post for you. When you publish, NEFORUM copies your text
-and opens your community on locals.com (or the Locals app on Android). Click **Write a Post**, press Ctrl+V (⌘V on a
-Mac), add your photos or video and click **Publish**.
+and opens your community's feed on locals.com (or the Locals app on Android). With the NEFORUM browser extension, the
+post is filled in for you; otherwise click **Regular Post**, press Ctrl+V (⌘V on a Mac), add your photos or video and
+click **Publish**.
 
 Only a community's creator and team, and supporters in communities that allow member posts, can post on Locals. Enter
 your **community** below so NEFORUM opens the right one.''';
 
-  /// [input] as a community name (`name` of `name.locals.com`), or null
-  /// when empty. Takes the name, the host or a link to any page of it.
+  /// [input] as a community (the `name` of `locals.com/name`), or null when
+  /// empty. Takes the name, a link to any page of the community
+  /// (`locals.com/name/feed`) or its older address `name.locals.com`.
   /// Throws [ConnectException] for anything else.
   static String? parseCommunity(String? input) {
     var s = (input ?? '').trim().toLowerCase();
     if (s.isEmpty) return null;
     s = s.replaceFirst(RegExp(r'^[a-z][a-z0-9+.-]*://'), '');
-    s = s.split(RegExp(r'[/?#]')).first;
-    if (s.endsWith('.locals.com')) s = s.substring(0, s.length - '.locals.com'.length);
-    if (s.startsWith('www.')) s = s.substring(4);
-    if (!RegExp(r'^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$').hasMatch(s) || s == 'www') {
+    final parts = s.split(RegExp(r'[?#]')).first.split('/');
+    final host = parts.first;
+    String name;
+    if (host == 'locals.com' || host == 'www.locals.com') {
+      // locals.com/name/feed: the first part of the path.
+      name = parts.length > 1 ? parts[1] : '';
+    } else if (host.endsWith('.locals.com')) {
+      name = host.substring(0, host.length - '.locals.com'.length);
+      if (name.startsWith('www.')) name = name.substring(4);
+    } else {
+      // Just the name (a path after it, "name/feed", is the community's page).
+      name = host;
+    }
+    if (!RegExp(r'^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?$').hasMatch(name) || _reservedPaths.contains(name)) {
       throw const ConnectException(
-        'Enter the community as it is in its address: for name.locals.com, enter name.',
+        'Enter the community as it is in its address: for locals.com/name, enter name.',
         field: communityKey,
       );
     }
-    return s;
+    return name;
   }
 
-  /// The community page of [account], or null when it has none.
+  /// The community feed of [account] (where Locals' composer is), or null
+  /// when it has none.
   static String? communityUrl(ConnectedAccount? account) {
     final c = account?.config[communityKey];
-    return c is String && c.isNotEmpty ? 'https://$c.locals.com/' : null;
+    return c is String && c.isNotEmpty ? 'https://locals.com/$c/feed' : null;
   }
 
   @override
@@ -136,9 +177,9 @@ your **community** below so NEFORUM opens the right one.''';
             key: communityKey,
             label: 'Community',
             required: false,
-            placeholder: 'name.locals.com',
-            help: 'Optional. The community you post in, as in its address (name.locals.com). Empty: NEFORUM opens '
-                'your Locals feed and you go to the community yourself.',
+            placeholder: 'locals.com/name',
+            help: 'Optional. The community you post in, as in its address (locals.com/name): enter name, or paste the '
+                'link. Empty: NEFORUM opens your Locals news feed and you go to the community yourself.',
           ),
         ],
       ),
@@ -154,8 +195,8 @@ your **community** below so NEFORUM opens the right one.''';
     final labelled = (input['label'] ?? '').trim().isNotEmpty;
     return ConnectResult(
       account: a.copyWith(
-        displayName: labelled ? null : '$community.locals.com',
-        profileUrl: 'https://$community.locals.com/',
+        displayName: labelled ? null : 'locals.com/$community',
+        profileUrl: 'https://locals.com/$community/feed',
         config: {...a.config, communityKey: community},
       ),
     );
@@ -170,6 +211,15 @@ your **community** below so NEFORUM opens the right one.''';
         'locals.text_too_short',
         'The Locals app needs at least $minTextLength characters before you can publish',
         field: 'text',
+      ));
+    }
+    final photos = variant.media.where((m) => m.isImage).length;
+    if (photos > smallCommunityMaxImages && photos <= maxImages) {
+      issues.add(const ValidationIssue.warning(
+        'locals.photo_limit_varies',
+        'Some Locals communities take only $smallCommunityMaxImages photos per post; if yours does, keep '
+            '$smallCommunityMaxImages and post the others separately',
+        field: 'media',
       ));
     }
     final big = variant.media.where((m) =>
@@ -189,17 +239,20 @@ your **community** below so NEFORUM opens the right one.''';
   @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
     final text = handoffFullText(variant);
+    final title = (variant.title ?? '').trim();
     final hasMedia = variant.media.isNotEmpty;
     final community = communityUrl(account);
     final steps = [
       community == null
-          ? 'Your Locals feed opens (sign in if asked): go to the community you post in.'
-          : 'Your community opens on locals.com (sign in if asked).',
-      '${text.isEmpty ? 'Click **Write a Post**' : 'Click **Write a Post** and press Ctrl+V (⌘V on a Mac): your text is on '
-          'the clipboard'}. In the app: My Communities, then **+**.',
+          ? 'Your Locals news feed opens (sign in if asked). It has no composer: open your community\'s feed '
+              '(locals.com/your community/feed).'
+          : 'Your community\'s feed opens on locals.com (sign in if asked).',
+      '${text.isEmpty ? 'Click **Regular Post**' : 'Click **Regular Post** and press Ctrl+V (⌘V on a Mac) in the post: your '
+          'text is on the clipboard'}. In the app: My Communities, then **+**.',
+      if (title.isNotEmpty) 'Copy the **Title** from here into **Title:**.',
       if (hasMedia)
-        'Add your photos, video or sound under **Add Content**: click **Save media to Downloads** here, then pick '
-            'them on Locals. Keep the page open until the upload ends.',
+        'Add your photos, video or sound with the buttons under the post: click **Save media to Downloads** here, '
+            'then pick them on Locals. Keep the page open until the upload ends.',
       'Click **Publish**.',
     ];
     return HandoffPlan(
@@ -211,9 +264,11 @@ your **community** below so NEFORUM opens the right one.''';
       shareFiles: variant.media,
       androidPackage: androidPackage,
       desktopUrl: community ?? feedUrl,
+      snippets: [if (title.isNotEmpty) HandoffSnippet('Title', title)],
       instructions: [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n'),
       mediaNote: 'Locals has no posting API and no link that fills in a post, so your text is on the clipboard'
-          '${hasMedia ? ' and you add the media yourself' : ''}.',
+          '${hasMedia ? ' and you add the media yourself' : ''}. With the NEFORUM browser extension, the post is '
+          'filled in for you.',
     );
   }
 }

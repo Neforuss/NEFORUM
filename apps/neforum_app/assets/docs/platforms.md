@@ -37,7 +37,7 @@ Generated from the code on 2026-10-25.
 | Ko-fi | Hand-off | Yes | No limit | 8 images (required) | - | - | [kofi.md](platforms/kofi.md) |
 | Lemmy | Auto, Hand-off | Yes | 50000 characters | 1 image or 1 video | 6/10 min | - | [lemmy.md](platforms/lemmy.md) |
 | LinkedIn | Your keys, Hand-off | Yes | 3000 characters | 20 images or 1 video | 150/day | - | [linkedin.md](platforms/linkedin.md) |
-| Locals | Hand-off | Yes | No limit | 10 images or 1 video | - | - | [locals.md](platforms/locals.md) |
+| Locals | Hand-off | Yes | 15000 characters | 10 images or 1 video | - | - | [locals.md](platforms/locals.md) |
 | Mastodon | Auto, Hand-off | Yes | 500 characters (links = 23), threads | 4 images or 1 video | 300/5 min, 1000/day | Yes | [mastodon.md](platforms/mastodon.md) |
 | Matrix | Auto | Yes | No limit | 10 images or 10 videos | 12/1 min | - | [matrix.md](platforms/matrix.md) |
 | Micropub (IndieWeb / Micro.blog) | Auto | Yes | No limit | 10 images or 1 video | - | - | [micropub.md](platforms/micropub.md) |
@@ -185,7 +185,7 @@ Generated from the code on 2026-10-25.
 ### Locals
 
 - **Account:** A Locals account that can post in a community: its creator or team, or a supporter where the community lets members post. NEFORUM never signs in to Locals.
-- **Cost and limits:** Free. Locals has no public posting API, so NEFORUM copies your post and opens your community on locals.com; you click Publish.
+- **Cost and limits:** Free. Locals has no public posting API, so NEFORUM copies your post and opens your community on locals.com, where the NEFORUM browser extension can fill it in; you click Publish.
 
 ### Mastodon
 

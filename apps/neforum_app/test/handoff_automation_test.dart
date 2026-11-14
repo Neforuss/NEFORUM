@@ -185,10 +185,14 @@ void main() {
     expect(kAutomationRestrictedPlatforms, isNot(contains('parler')), reason: 'its terms only forbid automation that puts excessive demand on it');
     final on = AppSettings.fromJson(const AppSettings().copyWith(automaticHandoffPosting: true).toJson());
     expect(on.postsHandoffAutomatically('parler'), isTrue);
-    // Locals: its composer could not be studied, so the extension does not run there.
+    // Locals (1.4.3): the extension fills in the community's feed, but posts
+    // there only when the user presses Publish (or Post now): Locals' terms
+    // could not be checked, so it does not post automatically.
     final locals = registry.require('locals');
     final account = ConnectedAccount(id: 'l', platformId: 'locals', tier: PlatformTier.handoff, displayName: 'l', createdAt: DateTime.utc(2026), config: const {'community': 'mycommunity'});
-    expect(automaticHandoffPage(locals.buildHandoff(const PostVariant(text: 'Hello supporters'), account: account)!), isNull);
+    expect(automaticHandoffPage(locals.buildHandoff(const PostVariant(text: 'Hello supporters'), account: account)!), Uri.parse('https://locals.com/mycommunity/feed'));
+    expect(extensionFillsPage(Uri.parse('https://locals.com/_/feed')), isTrue, reason: 'the news feed: the extension says to open the community');
+    expect(kAutomaticPostingPlatforms, isNot(contains('locals')));
     expect(on.postsHandoffAutomatically('locals'), isFalse);
   });
 

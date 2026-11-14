@@ -451,38 +451,54 @@ void main() {
     final a = LocalsAdapter();
     final acct = _acct('locals');
 
-    test('descriptor: the limits from Locals\' help centre', () {
+    test('descriptor: the limits read from Locals\' composer', () {
       final d = a.descriptor;
       expect((d.id, d.name, d.homepage), ('locals', 'Locals', 'https://locals.com/'));
-      expect(d.text.maxLength, isNull, reason: 'Locals publishes no character limit');
+      expect(d.text.maxLength, 15000, reason: 'the composer\'s counter: 0/15,000');
+      expect(d.text.counting, CountingRule.utf16);
+      expect((d.text.titleSupported, d.text.titleRequired, d.text.titleMax), (true, false, 255), reason: 'input#post-craft-title, maxlength 255, optional');
       expect(d.media.maxImages, 10);
+      expect(d.media.imageMaxBytes, 20 * 1024 * 1024);
       expect(d.media.maxVideos, 1);
       expect(d.media.allowsMixedImageVideo, isFalse);
+      expect(d.media.audioWithOtherMedia, isFalse, reason: 'one kind of media per post');
       expect(d.media.imageMimeTypes, {'image/jpeg', 'image/png', 'image/gif', 'image/webp'});
-      expect(d.media.videoMimeTypes, containsAll(['video/mp4', 'video/quicktime', 'video/webm', 'video/mpeg', 'video/x-ms-wmv', 'video/3gpp']));
+      expect(d.media.videoMimeTypes, containsAll(['video/mp4', 'video/quicktime', 'video/webm', 'video/mpeg', 'video/x-ms-wmv', 'video/3gpp', 'video/x-msvideo', 'video/x-m4v']));
       expect(d.media.maxAudios, 1);
       expect(d.media.audioMimeTypes, {AudioMimeTypes.mp3, AudioMimeTypes.m4a, AudioMimeTypes.wav});
       expect(d.media.videoMaxBytes, isNull, reason: 'creators\' limits depend on their plan: a warning, not an error');
       expect(d.media.videoMaxSeconds, isNull);
+      expect(d.media.notes, allOf(contains('some communities allow 5'), contains('PDF')));
     });
 
-    test('parseCommunity takes the name, the host or a link', () {
-      for (final input in ['mycommunity', 'MyCommunity', 'mycommunity.locals.com', 'https://mycommunity.locals.com/', 'https://mycommunity.locals.com/post/123/hello?x=1', '  mycommunity.locals.com/feed  ']) {
+    test('parseCommunity takes the name, a locals.com link or the older name.locals.com', () {
+      for (final input in [
+        'mycommunity', 'MyCommunity', 'locals.com/mycommunity', 'https://locals.com/mycommunity/feed', 'https://www.locals.com/MyCommunity/post/123/hello?x=1', //
+        'locals.com/mycommunity#top', 'mycommunity/feed', 'mycommunity.locals.com', 'https://mycommunity.locals.com/', 'https://mycommunity.locals.com/post/123/hello?x=1', //
+        '  mycommunity.locals.com/feed  ',
+      ]) {
         expect(LocalsAdapter.parseCommunity(input), 'mycommunity', reason: input);
       }
       expect(LocalsAdapter.parseCommunity('my-community-2'), 'my-community-2');
+      expect(LocalsAdapter.parseCommunity('https://locals.com/my_community/feed'), 'my_community', reason: 'a path may hold an underscore');
       expect(LocalsAdapter.parseCommunity(''), isNull);
       expect(LocalsAdapter.parseCommunity(null), isNull);
-      for (final bad in ['locals.com', 'www.locals.com', 'https://example.org/x', 'my community', '-bad', 'a_b']) {
+      for (final bad in [
+        'locals.com', 'www.locals.com', 'https://locals.com/', 'https://locals.com/_/feed', 'locals.com/legacy/profile', 'locals.com/feed', //
+        'https://example.org/x', 'my community', '-bad', '_', 'www',
+      ]) {
         expect(() => LocalsAdapter.parseCommunity(bad), throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'community')), reason: bad);
       }
     });
 
     test('connect(): the community becomes the account\'s page and, without a label, its name', () async {
-      final r = await a.connect(PlatformTier.handoff, {'community': 'https://mycommunity.locals.com/'}, _noHttp([]));
+      final r = await a.connect(PlatformTier.handoff, {'community': 'https://locals.com/mycommunity/feed'}, _noHttp([]));
       expect(r.account.config, {'community': 'mycommunity'});
-      expect(r.account.displayName, 'mycommunity.locals.com');
-      expect(r.account.profileUrl, 'https://mycommunity.locals.com/');
+      expect(r.account.displayName, 'locals.com/mycommunity');
+      expect(r.account.profileUrl, 'https://locals.com/mycommunity/feed');
+      final older = await a.connect(PlatformTier.handoff, {'community': 'mycommunity.locals.com'}, _noHttp([]));
+      expect(older.account.config, {'community': 'mycommunity'});
+      expect(older.account.profileUrl, 'https://locals.com/mycommunity/feed');
       final labelled = await a.connect(PlatformTier.handoff, {'label': 'Shop', 'community': 'mycommunity'}, _noHttp([]));
       expect(labelled.account.displayName, 'Shop');
       expect(labelled.account.config, {'label': 'Shop', 'community': 'mycommunity'});
@@ -490,28 +506,38 @@ void main() {
           throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'community')));
     });
 
-    test('hand-off opens the community, else the feed, and the Locals app on Android', () async {
+    test('hand-off opens the community\'s feed (where the composer is), else the news feed, and the Locals app on Android', () async {
       final community = (await a.connect(PlatformTier.handoff, {'community': 'mycommunity'}, _noHttp([]))).account;
       final plan = a.buildHandoff(const PostVariant(text: 'Hello supporters'), account: community)!;
       expect(plan.preferred, HandoffMethod.manual);
-      expect(plan.desktopUrl, 'https://mycommunity.locals.com/');
+      expect(plan.desktopUrl, 'https://locals.com/mycommunity/feed');
       expect(plan.androidPackage, 'com.locals.localsapp');
       expect(plan.clipboardText, 'Hello supporters');
-      expect(plan.instructions, contains('**Write a Post**'));
+      expect(plan.snippets, isEmpty);
+      expect(plan.instructions, contains('**Regular Post**'));
       expect(plan.instructions.split('\n'), hasLength(3));
       expect(plan.instructions, endsWith('3. Click **Publish**.'));
+      // An account connected before 1.4.3 keeps its community: the new address is built from it.
+      final older = ConnectedAccount(id: 'l', platformId: 'locals', tier: PlatformTier.handoff, displayName: 'mycommunity.locals.com', createdAt: DateTime.utc(2026), config: const {'community': 'mycommunity'});
+      expect(a.buildHandoff(const PostVariant(text: 'Hello supporters'), account: older)!.desktopUrl, 'https://locals.com/mycommunity/feed');
       final feed = a.buildHandoff(const PostVariant(text: 'Hello supporters'), account: acct)!;
-      expect(feed.desktopUrl, 'https://locals.com/feed');
-      expect(feed.instructions, startsWith('1. Your Locals feed opens'));
-      expect(a.buildHandoff(const PostVariant(text: 'Hello supporters'))!.desktopUrl, 'https://locals.com/feed');
+      expect(feed.desktopUrl, 'https://locals.com/_/feed');
+      expect(feed.instructions, startsWith('1. Your Locals news feed opens'));
+      expect(feed.instructions, contains('open your community\'s feed'));
+      expect(a.buildHandoff(const PostVariant(text: 'Hello supporters'))!.desktopUrl, 'https://locals.com/_/feed');
       final media = a.buildHandoff(PostVariant(text: 'Pics', media: [fakeImage()]), account: community)!;
       expect(media.instructions.split('\n'), hasLength(4));
-      expect(media.instructions, contains('**Add Content**'));
+      expect(media.instructions, contains('**Save media to Downloads**'));
+      final titled = a.buildHandoff(const PostVariant(text: 'Hello supporters', title: 'News'), account: community)!;
+      expect([for (final s in titled.snippets) (s.label, s.text)], [('Title', 'News')]);
+      expect(titled.instructions.split('\n'), hasLength(4));
+      expect(titled.instructions, contains('**Title**'));
+      expect(titled.clipboardText, 'Hello supporters', reason: 'the title is not pasted into the post');
     });
 
     test('validate(): 10 photos, one video alone, the 10-character minimum and the members\' media limit', () {
       final ten = [for (var i = 0; i < 10; i++) fakeImage(id: 'i$i')];
-      expect(a.validate(PostVariant(text: 'Ten photos here', media: ten), acct), isEmpty);
+      expect(_codes(a.validate(PostVariant(text: 'Ten photos here', media: ten), acct)), ['locals.photo_limit_varies']);
       expect(_codes(a.validate(PostVariant(text: 'Eleven photos', media: [...ten, fakeImage(id: 'x')]), acct)), contains('media.too_many_images'));
       expect(_codes(a.validate(PostVariant(text: 'Photo and video', media: [fakeImage(), fakeVideo()]), acct)), contains('media.mixed'));
       final short = a.validate(const PostVariant(text: 'Hi there'), acct);
@@ -526,6 +552,22 @@ void main() {
       expect(a.validate(PostVariant(text: 'A short video for you', media: [fakeVideo(durationMs: 300000)]), acct), isEmpty);
       const sound = MediaAttachment(id: 's', path: '/tmp/s.mp3', mimeType: 'audio/mpeg', sizeBytes: 4 * 1024 * 1024, durationMs: 420000);
       expect(_codes(a.validate(const PostVariant(text: 'A long track for you', media: [sound]), acct)), contains('locals.member_media_limit'));
+      expect(_codes(a.validate(PostVariant(text: 'A track and a photo', media: [sound, fakeImage()]), acct)), contains('media.audio_mixed'), reason: 'one kind of media per post');
+    });
+
+    test('validate(): 15,000 characters, a 255-character title, 20 MB photos, and a warning above the 5 photos some communities allow', () {
+      expect(a.validate(PostVariant(text: 'x' * 15000), acct), isEmpty);
+      expect(_codes(a.validate(PostVariant(text: 'x' * 15001), acct)), contains('text.too_long'));
+      expect(a.validate(PostVariant(text: 'Hello supporters', title: 't' * 255), acct), isEmpty);
+      expect(_codes(a.validate(PostVariant(text: 'Hello supporters', title: 't' * 256), acct)), ['title.too_long']);
+      expect(_codes(a.validate(PostVariant(text: 'A big photo', media: [fakeImage(sizeBytes: 20 * 1024 * 1024 + 1)]), acct)), contains('media.image_too_large'));
+      final five = [for (var i = 0; i < 5; i++) fakeImage(id: 'i$i')];
+      expect(a.validate(PostVariant(text: 'Five photos here', media: five), acct), isEmpty);
+      final six = a.validate(PostVariant(text: 'Six photos here', media: [...five, fakeImage(id: 'x')]), acct);
+      expect(_codes(six), ['locals.photo_limit_varies']);
+      expect(six.single.severity, IssueSeverity.warning, reason: 'the account\'s community may take 10');
+      final eleven = [for (var i = 0; i < 11; i++) fakeImage(id: 'i$i')];
+      expect(_codes(a.validate(PostVariant(text: 'Eleven photos', media: eleven), acct)), isNot(contains('locals.photo_limit_varies')), reason: 'the error says it already');
     });
   });
 

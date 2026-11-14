@@ -154,7 +154,8 @@
     const recipe = NF.recipeFor(job.platformId);
     const root = () => recipe.root?.() ?? document;
     const parts = partsOf(job);
-    const done = { text: true, media: 0, title: !job.title, problems: [], notes: [] };
+    // Nothing is in until it went in (a composer that would not open fills nothing).
+    const done = { text: !job.text, media: 0, title: !job.title, problems: [], notes: [] };
     let titleExpected = false;
     try {
       panel.set('Opening the composer…');
@@ -177,7 +178,7 @@
           return;
         }
         lastEditor = editor;
-        done.text = !!(await insertText(editor, text, { replace: !!recipe.replaceText || refill }));
+        done.text = !!(await insertText(editor, text, { replace: !!recipe.replaceText || refill, typeFirst: !!recipe.typeFirst }));
         if (!done.text) done.problems.push('The text box did not take the text: click into it, then Insert text (or paste with Ctrl+V).');
       };
 
@@ -204,18 +205,22 @@
           attached = mediaKey(job);
           return;
         }
-        await recipe.beforeMedia?.();
-        await sleep(300);
         let how = null;
-        const input = recipe.fileInput?.();
-        if (input && setInputFiles(input, files)) how = 'input';
-        if (!how) how = await attachFiles(files, { root: root(), editor: findEditor(root()), prefer: recipe.prefer });
+        // attachOnly: the recipe's own way is the only one (another could
+        // add the files a second time, or say so without adding them).
+        if (!recipe.attachOnly) {
+          await recipe.beforeMedia?.();
+          await sleep(300);
+          const input = recipe.fileInput?.();
+          if (input && setInputFiles(input, files)) how = 'input';
+          if (!how) how = await attachFiles(files, { root: root(), editor: findEditor(root()), prefer: recipe.prefer });
+        }
         if (how) {
           done.media = files.length;
           attached = mediaKey(job);
           await recipe.afterMedia?.();
         } else {
-          done.problems.push('Could not add the files here: use Attach again after opening the media option, or drag them in from NEFORUM\'s Save media to Downloads.');
+          done.problems.push(recipe.mediaHelp?.(files) ?? 'Could not add the files here: use Attach again after opening the media option, or drag them in from NEFORUM\'s Save media to Downloads.');
         }
       };
 
@@ -310,8 +315,9 @@
    * a person would add them. The recipe's own way first (an image poll), then
    * its photo option (YouTube's image button, whose file input takes them),
    * then the composer's file input, a paste or a drop on the composer (never
-   * on a search box). When none takes them, the site's own file window opens
-   * (this runs from the user's click), so they can pick the files there.
+   * on a search box); for an attachOnly recipe, its own way alone. When none
+   * takes them, the site's own file window opens (this runs from the user's
+   * click), so they can pick the files there.
    * Returns how: 'options', 'input', 'paste', 'drop', 'picker', or null.
    */
   async function attachNow(job, list) {
@@ -319,17 +325,19 @@
     const root = recipe.root?.() ?? document;
     const placed = await recipe.attach?.(list, job);
     if (placed) return placed;
-    await recipe.beforeMedia?.();
-    const input = recipe.fileInput?.() ?? findFileInput(list, root);
-    if (input && setInputFiles(input, list)) {
-      await recipe.afterMedia?.();
-      return 'input';
-    }
-    const editor = lastEditor?.isConnected ? lastEditor : lastField?.isConnected ? lastField : findEditor(root);
-    const how = await attachFiles(list, { root, editor, prefer: recipe.prefer });
-    if (how) {
-      await recipe.afterMedia?.();
-      return how;
+    if (!recipe.attachOnly) {
+      await recipe.beforeMedia?.();
+      const input = recipe.fileInput?.() ?? findFileInput(list, root);
+      if (input && setInputFiles(input, list)) {
+        await recipe.afterMedia?.();
+        return 'input';
+      }
+      const editor = lastEditor?.isConnected ? lastEditor : lastField?.isConnected ? lastField : findEditor(root);
+      const how = await attachFiles(list, { root, editor, prefer: recipe.prefer });
+      if (how) {
+        await recipe.afterMedia?.();
+        return how;
+      }
     }
     const picker = recipe.fileInput?.() ?? findFileInput(list, document) ?? document.querySelector('input[type="file"]:not([disabled])');
     if (!picker) return null;
@@ -416,6 +424,10 @@
     if (!automatic) stopRequested = false;
     panel.setPost('busy');
     const stopped = () => stopRequested;
+    // Pressable, and the site's uploads are over (a recipe's busy(): Locals
+    // may not grey Publish out while a file is still uploading).
+    const recipe = NF.recipeFor(job.platformId);
+    const ready = (button) => enabled(button) && !recipe.busy?.();
     /** True while NEFORUM still has this page post the automatic job; otherwise says so and stops. */
     const stillAutomatic = async () => {
       if (!automatic) return true;
@@ -443,12 +455,12 @@
     try {
       let t = target ?? locate(job);
       for (let step = 0; step < 3 && t; step++) {
-        if (!enabled(t.button)) {
+        if (!ready(t.button)) {
           panel.set(`Waiting for ${job.platformName} to be ready (an upload may still be running)… Esc stops.`);
           t = await waitFor(() => {
             if (stopped()) return 'stop';
             const again = locate(job);
-            return again && enabled(again.button) ? again : null;
+            return again && ready(again.button) ? again : null;
           }, { timeout: 180000, interval: 300 });
           if (t === 'stop' || !t) {
             panel.set(t ? 'Stopped. Nothing was posted.' : 'The Post button stayed greyed out. Check the page, then press Post yourself.', 'warn');

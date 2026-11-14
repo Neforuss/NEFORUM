@@ -532,7 +532,7 @@ const List<String> kExtensionPageHosts = [
   'www.behance.net', 'www.artstation.com', 'cara.app', 'www.pixiv.net', 'itaku.ee', //
   'www.newgrounds.com', 'www.furaffinity.net', 'www.weasyl.com', 'ko-fi.com', 'artfol.app', //
   '500px.com', 'web.500px.com', 'dribbble.com', 'www.flickr.com', //
-  'app.parler.com',
+  'app.parler.com', 'locals.com',
 ];
 
 /// Does the extension fill in the page at [url] by itself: do its content
