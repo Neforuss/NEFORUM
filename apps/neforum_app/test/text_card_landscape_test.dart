@@ -19,6 +19,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
+import 'package:neforum_app/media/card_design.dart';
+import 'package:neforum_app/media/card_renderer.dart';
+import 'package:neforum_app/media/card_templates.dart';
 import 'package:neforum_app/media/text_card.dart';
 import 'package:neforum_app/platform/storage.dart';
 import 'package:neforum_app/state/composer.dart';
@@ -484,6 +487,72 @@ void main() {
       expect(c.read(composerProvider).textCardStyle.shape, TextCardShape.landscape);
       expect(c.read(composerProvider).overrides.values.every((o) => !o.extra.containsKey(kEmphasisMarkupKey)), isTrue);
       await finish(tester);
+    });
+
+    // 1.4.3 integration: a card made with the Card designer draws the
+    // emphasis too, so the words of networks without Markdown lose the
+    // asterisks with a design as they do with the classic card.
+    testWidgets('a designed card: bold leaves the words of networks without Markdown too', (tester) async {
+      final (_, c) = await boot(tester);
+      final accounts = await compose(tester, c, 'Write **once**, post *everywhere*.', ['instagram', 'reddit']);
+      c.read(composerProvider.notifier).setTextCardDesign(kCardTemplates.first.design(CardKind.text));
+      await settle(tester);
+      expect(c.read(composerProvider).textDesign(c.read(settingsProvider)), isNotNull, reason: 'the cards are designed');
+      expect(preview(c, accounts['instagram']!).variant.text, startsWith('Write once, post everywhere.'));
+      expect(preview(c, accounts['reddit']!).variant.text, startsWith('Write **once**, post *everywhere*.'), reason: 'Reddit takes Markdown');
+
+      final post = (await tester.runAsync(() => c.read(postActionsProvider).saveDraft()))!;
+      expect(post.targets.every((t) => t.overrides.extra[kEmphasisMarkupKey] == true), isTrue);
+      final registry = builtinRegistry();
+      String sent(String platform) =>
+          const VariantResolver().resolve(post, post.targetFor(accounts[platform]!.id)!, registry.descriptor(platform)!).text;
+      expect(sent('instagram'), startsWith('Write once, post everywhere.'));
+      expect(sent('reddit'), startsWith('Write **once**, post *everywhere*.'));
+      await finish(tester);
+    });
+
+    test('a design that does not show the post\'s words draws no emphasis', () {
+      final design = kCardTemplates.first.design(CardKind.text);
+      expect(designedCardDrawsEmphasis(design, 'Write **once**'), isTrue);
+      expect(designedCardDrawsEmphasis(design, 'Write once'), isFalse);
+      final hidden = design.copyWith(blocks: [
+        for (final b in design.blocks) b.role == CardBlockRole.postText ? b.copyWith(visible: false) : b,
+      ]);
+      expect(designedCardDrawsEmphasis(hidden, 'Write **once**'), isFalse);
+    });
+
+    testWidgets('a designed card draws **bold** as bold words, never as asterisks', (tester) async {
+      final design = kCardTemplates.first.design(CardKind.text);
+      const size = Size(540, 675);
+      // The rightmost dark pixel of the words' line, and the picture.
+      Future<(int, img.Image)> draw(String words) async {
+        final bytes = (await tester.runAsync(() => renderCardDesign(
+              CardRenderInput(design: design, size: size, texts: {CardBlockRole.postText: words, CardBlockRole.handle: '', CardBlockRole.signature: ''}),
+              png: true,
+            )))!;
+        final image = img.decodePng(bytes)!;
+        var right = -1;
+        for (var y = 0; y < image.height; y++) {
+          for (var x = 0; x < image.width; x++) {
+            final p = image.getPixel(x, y);
+            if (p.r + p.g + p.b < 200 && x > right) right = x;
+          }
+        }
+        return (right, image);
+      }
+
+      final (plainRight, plain) = await draw('Write once now');
+      final (boldRight, bold) = await draw('Write **once** now');
+      expect(plainRight, greaterThan(0), reason: 'the words are drawn');
+      // Bold is a little wider; four asterisks would be far wider.
+      expect(boldRight - plainRight, inInclusiveRange(0, 10), reason: 'no asterisks drawn');
+      var differ = 0;
+      for (var y = 0; y < plain.height; y++) {
+        for (var x = 0; x < plain.width; x++) {
+          if (plain.getPixel(x, y) != bold.getPixel(x, y)) differ++;
+        }
+      }
+      expect(differ, greaterThan(0), reason: 'the word is drawn bold');
     });
   });
 

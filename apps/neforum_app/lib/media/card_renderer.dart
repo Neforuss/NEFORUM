@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart' show Bidi;
+import 'package:neforum_core/neforum_core.dart' show EmphasisRun, hasEmphasis;
 
 import '../brand/neforum_logo.dart';
 import '../theme/tokens.dart';
@@ -16,6 +17,7 @@ import 'emoji_text.dart';
 import 'photo_composite.dart';
 import 'photo_pixels.dart';
 import 'render_parameters.dart' show stableHash;
+import 'text_card.dart' show TextCardPainter;
 import 'text_card_background.dart';
 import 'waveform.dart';
 
@@ -174,6 +176,13 @@ class CardRenderInput {
   /// The sound's levels (0 to 1) for the waveform layer.
   final List<double>? waveform;
 }
+
+/// 1.4.3: whether a card made with [design] draws **bold** or *italic* in
+/// the post's words [text]: it shows them ([CardBlockRole.postText]) and they
+/// have emphasis. The post then goes to networks without Markdown without
+/// the asterisks, as with a classic card (kEmphasisMarkupKey).
+bool designedCardDrawsEmphasis(CardDesign design, String text) =>
+    hasEmphasis(text) && design.blocks.any((b) => b.role == CardBlockRole.postText && b.visible);
 
 /// Renders [input] as a JPEG (quality 92), or a PNG with [png] (for the
 /// still-picture video of a sound file).
@@ -485,13 +494,21 @@ class CardDesignPainter extends CustomPainter {
     final maxHeight = fitHeight ?? frame.height * b.maxHeight;
     final rtl = Bidi.detectRtlDirectionality(words);
     if (b.role == CardBlockRole.signature) return _LaidSignature(b, words, _style(b, b.size * u, u), u);
-    AlignedText make(double fs, int? lines) => AlignedText(
-          words,
-          style: _style(b, fs, u),
-          alignment: b.alignment,
-          direction: rtl ? TextDirection.rtl : TextDirection.ltr,
-          maxLines: lines,
-        )..layout(width, fill: true);
+    // 1.4.3: **bold** and *italic* in the post's words are drawn, as on the
+    // classic card, never as asterisks (designedCardDrawsEmphasis).
+    final emphasis = b.role == CardBlockRole.postText && hasEmphasis(words);
+    TextStyle Function(EmphasisRun run)? emphasisOf(TextStyle base) => emphasis ? (run) => TextCardPainter.emphasised(base, run) : null;
+    AlignedText make(double fs, int? lines) {
+      final style = _style(b, fs, u);
+      return AlignedText(
+        words,
+        style: style,
+        alignment: b.alignment,
+        direction: rtl ? TextDirection.rtl : TextDirection.ltr,
+        maxLines: lines,
+        emphasis: emphasisOf(style),
+      )..layout(width, fill: true);
+    }
     final limit = b.maxLines > 0 ? b.maxLines : null;
     var lines = limit;
     var fs = b.size * u;
@@ -515,19 +532,21 @@ class CardDesignPainter extends CustomPainter {
     }
     AlignedText? outline;
     if (b.outlineWidth > 0) {
+      final stroke = _style(b, fs, u).copyWith(
+        foreground: Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = b.outlineWidth * 2 * u
+          ..strokeJoin = StrokeJoin.round
+          ..color = Color(b.outlineColor),
+        color: null,
+      );
       outline = AlignedText(
         words,
-        style: _style(b, fs, u).copyWith(
-          foreground: Paint()
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = b.outlineWidth * 2 * u
-            ..strokeJoin = StrokeJoin.round
-            ..color = Color(b.outlineColor),
-          color: null,
-        ),
+        style: stroke,
         alignment: b.alignment,
         direction: rtl ? TextDirection.rtl : TextDirection.ltr,
         maxLines: lines,
+        emphasis: emphasisOf(stroke),
       )..layout(width, fill: true);
     }
     return _LaidText(b, text, outline, width, fs);

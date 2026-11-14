@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../media/caption_fonts.dart';
 import '../media/card_design.dart';
 import '../media/card_design_edits.dart' show designWithHandle;
+import '../media/card_renderer.dart' show designedCardDrawsEmphasis;
 import '../media/render_parameters.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -407,7 +408,8 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
       }
       made[key] = card;
       used.add(card.id);
-      if (cardDesign == null && hasEmphasis(text)) emphasis = true;
+      // A designed card draws it too, when it shows the post's words.
+      if (cardDesign == null ? hasEmphasis(text) : designedCardDrawsEmphasis(cardDesign, text)) emphasis = true;
       return card;
     }
 
