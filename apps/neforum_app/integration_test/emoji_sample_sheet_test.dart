@@ -260,6 +260,15 @@ void main() {
     search.controller!.text = 'face';
     search.onChanged!('face');
     await _settle(t);
+    // 1.4.3: search also matches CLDR keywords, so "face" finds far more emoji
+    // and the grid builds only the rows on screen. Scroll to a newer face.
+    await t.scrollUntilVisible(
+      find.byIcon(Icons.image_not_supported_outlined).first,
+      220,
+      scrollable: find.descendant(of: find.byType(GridView), matching: find.byType(Scrollable)).first,
+      maxScrolls: 200,
+    );
+    await _settle(t);
     expect(find.byIcon(Icons.image_not_supported_outlined), findsWidgets, reason: 'newer faces show the plain icon on this Windows');
     await _saveWidget(t, shot, path('emoji_sheet_search'));
     expect(t.takeException(), isNull);
