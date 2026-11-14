@@ -452,10 +452,20 @@ class ComposerNotifier extends Notifier<ComposerState> {
       final style = _readableOn(state.textCardStyle, next);
       if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
     });
+    // 1.4.3: cards. An empty new post follows a shape or layout changed in
+    // Settings > Text cards; a post being written or edited keeps its own.
+    ref.listen(settingsProvider.select((s) => s.newTextCardStyle), (prev, next) {
+      if (prev == next || !state.isEmpty || state.editingPostId != null) return;
+      final style = state.textCardStyle.copyWith(shape: next.shape, layout: next.layout);
+      if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
+    });
     final settings = ref.read(settingsProvider);
     return ComposerState(
       visibility: settings.defaultVisibility,
       selected: _defaultTargets(ref.read(accountListProvider)),
+      // 1.4.3: cards. A new post's card starts with the shape and layout
+      // Settings > Text cards picked.
+      textCardStyle: settings.newTextCardStyle,
     );
   }
 
@@ -969,7 +979,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final settings = ref.watch(settingsProvider);
   final resolver = VariantResolver(settings.resolverOptions);
   final now = DateTime.now();
-  final post = c.toPost(id: 'preview', status: PostStatus.draft, now: now);
+  var post = c.toPost(id: 'preview', status: PostStatus.draft, now: now);
   final background = TextCardBackground.tryParse(c.textCardBackground);
   // One of the post's photos as the cards' background: the card takes its
   // place on image-only networks.
@@ -1011,7 +1021,20 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
         break;
       }
     }
-  }  final out = <TargetPreview>[];
+  }
+  // 1.4.3: cards. **Bold** and *italic* drawn on the classic card leave the
+  // words of networks without Markdown, as they will when the post is saved
+  // (attachTextCards, withCardEmphasis).
+  final cardChosen = post.targets.any((t) => c.selected.contains(t.accountId) && textCardChoiceOf(t.overrides.extra) == TextCardChoice.card);
+  final emphasisOnCard = settings.textCards &&
+      cardDesign == null &&
+      (postMakesCard || cardChosen) &&
+      post.targets.any((t) => c.selected.contains(t.accountId) && hasEmphasis(textCardText(post, t)));
+  post = withCardEmphasis(post, marked: emphasisOnCard);
+  // 1.4.3: cards. The classic card's shape; a design draws at each
+  // network's own.
+  final cardShape = cardDesign == null ? c.textCardStyle.shape : TextCardShape.automatic;
+  final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
     final adapter = registry.byId(a.platformId);
@@ -1048,7 +1071,9 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             // previews draw the network's own @handle without it).
             byline: c.textCardStyle.handle,
             style: c.textCardStyle,
-          ).copyWith(altText: textCardAltText(textCardText(post, target)));
+            // 1.4.3: cards. The picture this network gets for the shape.
+            size: textCardFrameFor(adapter, a, variant, settings, story: story, shape: cardShape),
+          ).copyWith(altText: textCardAltText(textCardText(post, target), attribution: cardDesign == null ? c.textCardStyle.attribution : null));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
         // feed post of Post + Story too; its story keeps a story card.

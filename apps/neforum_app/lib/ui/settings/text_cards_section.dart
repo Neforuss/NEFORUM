@@ -230,6 +230,35 @@ class TextCardSettingsSection extends ConsumerWidget {
               ),
           ]),
         ),
+        // 1.4.3: cards. The shape and layout new posts' cards start with.
+        SettingRow(
+          title: 'Shape and layout',
+          description: "Each network's own shape, square, or landscape (16:9, or 1.91:1, the widest Instagram, Facebook and LinkedIn show whole). "
+              'A network that shows pictures full screen, such as TikTok or a story, gets its own frame with your card whole inside it. '
+              'A quote card sets your words on a card with rounded corners. You can also switch them per post in the text card editor.',
+          enabled: s.textCards,
+          below: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+              for (final shape in TextCardShape.values)
+                ChoiceChip(
+                  key: Key('text-card-shape-${shape.name}'),
+                  label: Text(shape.label),
+                  selected: s.textCardShape == shape,
+                  onSelected: !s.textCards ? null : (_) => n.update((x) => x.copyWith(textCardShape: shape)),
+                ),
+            ]),
+            const SizedBox(height: Space.sm),
+            Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+              for (final layout in TextCardLayout.values)
+                ChoiceChip(
+                  key: Key('text-card-layout-${layout.name}'),
+                  label: Text(layout.label),
+                  selected: s.textCardLayout == layout,
+                  onSelected: !s.textCards ? null : (_) => n.update((x) => x.copyWith(textCardLayout: layout)),
+                ),
+            ]),
+          ]),
+        ),
         SettingRow(
           title: 'Caption on photos',
           description: 'How your caption is written on TikTok and Instagram photos: on the photo or in a block above it, '

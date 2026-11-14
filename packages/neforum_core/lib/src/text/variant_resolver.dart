@@ -11,6 +11,7 @@ import '../model/post.dart';
 import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/validation.dart';
+import 'emphasis.dart';
 import 'media_packer.dart';
 import 'network_text_transforms.dart';
 import 'text_counter.dart';
@@ -64,6 +65,15 @@ class ResolverOptions {
 /// any other media the key has no effect.
 const String kTextCardOnlyKey = 'textCardOnly';
 
+/// [PostOverrides.extra] key (1.4.3): `true` on every target of a post whose
+/// text card draws **bold** and *italic* written in its words
+/// ([parseEmphasis]). Networks without Markdown ([TextRules.supportsMarkdown]
+/// false) then get the words without those asterisks ([stripEmphasis]), so
+/// the markers made for the card never show as stray asterisks in a caption.
+/// Networks with Markdown get the words as written. Absent: the words go as
+/// written everywhere.
+const String kEmphasisMarkupKey = 'emphasisMarkup';
+
 /// Turns the master [Post] into the [PostVariant] for one target.
 class VariantResolver {
   const VariantResolver([this.options = const ResolverOptions()]);
@@ -96,10 +106,15 @@ class VariantResolver {
     // text and replaces all of them. writtenIndex maps each part of the post
     // to the written part that takes its media: an empty part's media goes
     // with the part before it (or the first one).
-    // Each piece of the user's text as this network gets it
-    // (NetworkTextTransforms: kaomoji kept whole on Markdown networks, never
-    // normalized). The draft itself is never changed.
-    String adapt(String s) => NetworkTextTransforms.adapt(s, d);
+    // 1.4.3: the asterisks that make a text card's words bold or italic
+    // leave the words of a network without Markdown.
+    final plainEmphasis = o.extra[kEmphasisMarkupKey] == true && !t.supportsMarkdown;
+    String words(String s) => plainEmphasis ? stripEmphasis(s) : s;
+    // Each piece of the user's text as this network gets it: card emphasis
+    // stripped where it can't show, then NetworkTextTransforms (kaomoji kept
+    // whole on Markdown networks, never normalized). The draft itself is
+    // never changed.
+    String adapt(String s) => NetworkTextTransforms.adapt(words(s), d);
     final written = <String>[];
     final writtenIndex = <int>[];
     if (o.text == null) {
@@ -243,9 +258,10 @@ class VariantResolver {
     if (t.titleSupported && (title == null || title.trim().isEmpty) && t.titleRequired) {
       // Derive a title from the first line so Reddit/Lemmy/blog posts work
       // without a separate field. From the text as written: a title is plain
-      // text, so it gets no Markdown escapes.
+      // text, so it gets no Markdown escapes (card emphasis asterisks are
+      // still dropped where the network shows no Markdown).
       final firstPart = o.text ?? post.parts.where((p) => p.trim().isNotEmpty).firstOrNull;
-      final firstLine = (firstPart ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
+      final firstLine = words(firstPart ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
       if (firstLine.isNotEmpty) {
         title = t.titleMax != null && firstLine.length > t.titleMax! ? '${_cutToUnits(firstLine, t.titleMax! - 1)}…' : firstLine;
         issues.add(ValidationIssue.info('title.derived', 'Title taken from the first line for ${d.name}', field: 'title'));

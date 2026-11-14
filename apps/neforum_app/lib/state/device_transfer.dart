@@ -70,6 +70,8 @@ const Set<String> kExportableSettings = {
   // 1.4.3: symbols. The starred characters are a choice like a theme; the
   // recent ones stay on the device (emojiRecents).
   'characterFavourites',
+  'textCardShape', // 1.4.3: cards
+  'textCardLayout', // 1.4.3: cards
 };
 
 /// 1.3.5: the settings that stay on the device, each with why. Together with

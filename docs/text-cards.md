@@ -9,10 +9,21 @@ When a post is only words, the networks that need an image (Instagram, Pinterest
 3. Type the handle you want in **Handle on every card**, for example `@neforum.app`. The empty field shows each network's own handle; what you type replaces it on every card, and the line under the field names the handles it replaces. Tap the reset button in the field, or clear it, to go back to each network's own handle.
 4. Tap **Style the words and the handle** to unfold the rest (it says what is already set, and starts unfolded on a card you restyled). Under **Handle**, set its **Size**, its **Place** (Automatic, Bottom left, Bottom centre, Bottom right, Top left, Top centre, Top right) and its **Colour**.
 5. Under **Words**, set the **Size** of the words (with the slider, or a step at a time with the smaller and larger buttons beside it), the **Line spacing**, the **Position** (Top, Middle or Bottom), the **Colours** of the words and of the card, and the **Margins**.
-6. Every change shows at once on the master card and on every network's preview. **Reset handle and words** puts the card back.
-7. Save, schedule or publish. Every network's card is made with these choices when the post is saved.
+6. Under **Card**, pick the **Shape**: **Network's own** (4:5 on Instagram, 9:16 on TikTok, square elsewhere), **Square 1:1**, **Landscape 16:9** or **Landscape 1.91:1**. Pick the **Layout**: **Full card**, or **Quote card** for your words on a card with rounded corners. Type an **Attribution under the words** if you want one, such as `- Ada Lovelace`. To make some words bold, put two asterisks around them in your post, like `**this**`; one asterisk on each side makes them italic.
+7. Every change shows at once on the master card and on every network's preview. **Reset handle and words** puts the card back, and keeps its shape and layout.
+8. Save, schedule or publish. Every network's card is made with these choices when the post is saved.
 
 ## How it works
+
+### Shape and layout
+
+The shape is the same on every network that shows the picture whole. Instagram's feed, Facebook and LinkedIn show pictures from 4:5 up to 1.91:1, so both landscapes go to them as they are. TikTok and stories show pictures full screen: they get a 9:16 picture with your card whole inside it, clear of their buttons, and the note under that network's preview says so. TikTok gets the landscape card as it is when **Fill the whole frame** is off for TikTok in Settings > Posting. Snapchat always gets the 9:16 frame. A network that takes neither landscape gets room added around the card, never a card cut to fit. Settings > Text cards sets the shape and layout new posts start with; changing them in the editor changes them there too. A card design draws at each network's own shape.
+
+A quote card sets your words in regular weight on a card with rounded corners, with room around it in a slightly darker shade of the card's colour (lighter on a dark card), or your background photo when there is one. The card keeps its colour over the photo.
+
+### Bold, italic and the attribution
+
+Words between two asterisks, `**like this**`, are bold on the card; between single asterisks, `*like this*`, italic; between three, both. The asterisks never show on the card. Asterisks with spaces around them (`5 * 3`) or inside a word stay as they are, and emphasis never runs past a blank line. Networks that read Markdown (Reddit, Lemmy, Discord, Telegram and the blogs) get your words as written; the others get them without those asterisks, so a caption never shows them. A blank line between paragraphs leaves a line of space on the card. The attribution goes under the words in bold, at their size and lined up with them; the words make room for it, so it is never cut off. It is part of the card's description too.
 
 ### Your @handle
 
@@ -49,7 +60,7 @@ When a design draws the cards (one picked with **Design card…**, or the defaul
 
 ### What stays per network
 
-The handle and the look are the post's, the same on every card. Each network keeps its own shape, its signature on or off, **Show @handle** on or off and **Post text too**. The master editor lists what differs between the networks and **Make them match** sets those the same.
+The handle and the look are the post's, the same on every card. Each network keeps its own shape (unless the card has one, see **Shape and layout**), its signature on or off, **Show @handle** on or off and **Post text too**. The master editor lists what differs between the networks and **Make them match** sets those the same.
 
 ### Saved with the post
 

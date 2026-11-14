@@ -179,6 +179,8 @@ AppSettings populatedSettings() => AppSettings(
       cardPresets: const [
         {'name': 'Fake preset', 'design': {'background': 'solid'}},
       ],
+      textCardShape: TextCardShape.landscape, // 1.4.3: cards
+      textCardLayout: TextCardLayout.panel, // 1.4.3: cards
     );
 
 /// A second setup, different from both the defaults and [populatedSettings]
