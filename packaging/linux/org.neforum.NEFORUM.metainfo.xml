@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.4.3" date="2026-11-14">
+      <description>
+        <p>Two new networks, Parler and Locals, and a new account type for EmDash blogs. The emoji panel gains symbols, kaomoji and text styles. Text cards can be horizontal, with bold words and an attribution line. You choose the order your accounts publish in, each network shows its own options (Telegram first), sign-ins renew themselves, and X posts take up to 20 photos and videos. A post is no longer recorded as sent when it was not, a slow Nostr relay no longer fails a post, and the AppImage updates itself from Settings.</p>
+      </description>
+    </release>
     <release version="1.4.2" date="2026-11-08">
       <description>
         <p>NEFORUM starts on Linux systems without WebKitGTK. A sign-in component that NEFORUM uses only on phones and Macs needed it, so the app would not open where it was missing; on Linux, sign-in goes through your own browser, and the build no longer depends on WebKit at all. Adding an account shows each platform's own site, such as tumblr.com or facebook.com, to make an account there first, and the Write.as logo is sharp.</p>
