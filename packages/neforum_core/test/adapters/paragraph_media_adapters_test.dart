@@ -10,6 +10,7 @@ import 'package:neforum_core/src/adapters/chat/telegram_adapter.dart';
 import 'package:neforum_core/src/adapters/facebook/facebook_adapter.dart';
 import 'package:neforum_core/src/adapters/instagram/instagram_adapter.dart';
 import 'package:neforum_core/src/adapters/linkedin/linkedin_adapter.dart';
+import 'package:neforum_core/src/adapters/network_options.dart';
 import 'package:neforum_core/src/adapters/tumblr/tumblr_adapter.dart';
 import 'package:test/test.dart';
 
@@ -104,6 +105,51 @@ void main() {
       final album = multipartFieldsOf(calls.single);
       expect([album['file0'], album['file1'], album['file2']], ['<c.jpg>', '<a.jpg>', '<b.jpg>']);
       expect(((jsonDecode(album['media']!) as List).first as Map)['caption'], _text);
+    });
+
+    // 1.4.3 integration with the declared Telegram options: they reach every
+    // message of a post sent paragraph by paragraph.
+    test('the post\'s Telegram options go with every paragraph message', () async {
+      final v = _resolve(
+          adapter,
+          _post(
+              overrides: const PostOverrides(extra: {
+            kTelegramSilent: true,
+            kTelegramProtectContent: true,
+            kTelegramCaptionAbove: true,
+            kTelegramSpoilerMedia: ['b'],
+            kTelegramNoLinkPreview: true,
+            kTelegramPin: true,
+          })),
+          account);
+      expect(adapter.validate(v, account).hasErrors, isFalse);
+      final (res, calls) = await publish(v);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(calls.map(_path), ['sendPhoto', 'sendMediaGroup', 'sendMessage', 'pinChatMessage']);
+      for (final c in calls.take(2)) {
+        final f = multipartFieldsOf(c);
+        expect((f['disable_notification'], f['protect_content']), ('true', 'true'), reason: _path(c));
+      }
+      expect(multipartFieldsOf(calls[0])['show_caption_above_media'], 'true');
+      expect(multipartFieldsOf(calls[0]).containsKey('has_spoiler'), isFalse, reason: 'photo a was not picked');
+      final items = (jsonDecode(multipartFieldsOf(calls[1])['media']!) as List).cast<Map<String, dynamic>>();
+      expect([for (final i in items) i['has_spoiler'] == true], [true, false], reason: 'only photo b behind a spoiler');
+      expect(items[0]['show_caption_above_media'], isTrue);
+      final words = bodyOf(calls[2]);
+      expect((words['disable_notification'], words['protect_content']), (true, true));
+      expect(words['link_preview_options'], {'is_disabled': true});
+      expect(bodyOf(calls[3])['message_id'], 10, reason: 'the first message is pinned');
+    });
+
+    test('"One message per file" splits each paragraph\'s album too', () async {
+      final v = _resolve(adapter, _post(overrides: const PostOverrides(extra: {kTelegramMediaGrouping: 'separate'})), account);
+      expect(adapter.validate(v, account).hasErrors, isFalse);
+      final (res, calls) = await publish(v);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(calls.map(_path), ['sendPhoto', 'sendPhoto', 'sendPhoto', 'sendMessage']);
+      expect(multipartFieldsOf(calls[1])['caption'], 'Second place, with two views.');
+      expect(multipartFieldsOf(calls[2]).containsKey('caption'), isFalse);
+      expect(adapter.progressShape(v, account).steps, 4);
     });
 
     test('a hand-off account ignores the links', () {
