@@ -552,7 +552,7 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       if (XMediaCapacity.fitsClassicPost(v.media)) return null;
       return ValidationIssue.info(
           'x.media_thread',
-          'X refused more than ${XMediaCapacity.classicPhotos} photos, or photos with a video, in one post for this '
+          'X refused more than ${XMediaCapacity.classicPhotos} photos, more than one video, or photos with a video, in one post for this '
               'account; sent as a thread. NEFORUM tries one post again in $wait day${wait == 1 ? '' : 's'}.',
           field: 'media');
     }

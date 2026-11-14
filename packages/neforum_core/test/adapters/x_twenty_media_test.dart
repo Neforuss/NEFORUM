@@ -220,9 +220,17 @@ void main() {
       final issues = checked(v, a);
       expect(issues.hasErrors, isFalse);
       expect(issues.singleWhere((i) => i.code == 'x.media_thread').message,
-          'X refused more than 4 photos, or photos with a video, in one post for this account; sent as a thread. NEFORUM '
-          'tries one post again in 5 days.');
+          'X refused more than 4 photos, more than one video, or photos with a video, in one post for this account; sent '
+          'as a thread. NEFORUM tries one post again in 5 days.');
       expect(issues.map((i) => i.code), isNot(contains('x.media_one_post')));
+    });
+
+    test('two videos are a large post too, and the line names that case', () {
+      final a = _account(extra: _record('refused', now.subtract(const Duration(days: 2))));
+      final v = plan([_video(0), _video(1)], a);
+      expect([for (var i = 0; i < v.threadParts.length; i++) v.mediaOfPart(i).length], [1, 1], reason: 'one video per post');
+      final line = checked(v, a).singleWhere((i) => i.code == 'x.media_thread').message;
+      expect(line, contains('more than one video'));
     });
 
     test('media that fits a classic post needs no line', () {
