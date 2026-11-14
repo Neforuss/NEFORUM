@@ -272,6 +272,10 @@ Future<void> disconnectAccount(BuildContext context, WidgetRef ref, ConnectedAcc
   if (settings.defaultTargetIds.contains(a.id)) {
     await ref.read(settingsProvider.notifier).update((x) => x.copyWith(defaultTargetIds: x.defaultTargetIds.where((id) => id != a.id).toList()));
   }
+  // 1.4.3: its remembered Post / Story goes with it.
+  if (settings.defaultPlacements.containsKey(a.id)) {
+    await ref.read(settingsProvider.notifier).update((x) => x.copyWith(defaultPlacements: {...x.defaultPlacements}..remove(a.id)));
+  }
   if (ref.read(composerProvider).selected.contains(a.id)) ref.read(composerProvider.notifier).toggleAccount(a.id);
   if (!context.mounted) return;
   if (stillHeld > 0) {
