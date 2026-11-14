@@ -6,6 +6,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../../brand/platform_brand.dart';
 import '../../state/providers.dart';
 import '../../state/publishing_order.dart';
+import '../../state/settings.dart';
 import '../../state/shrunk_videos.dart';
 import '../../theme/tokens.dart';
 import '../compose/publishing_order_sheet.dart';
@@ -124,6 +125,19 @@ class PostingSettingsSection extends ConsumerWidget {
         onChanged: canShrink ? (v) => n.update((x) => x.copyWith(shrinkOversizedVideos: v)) : null,
       ),
       SettingSwitch(title: 'Number thread parts', description: 'Adds (1/3), (2/3)… to each part.', value: s.threadNumbering, onChanged: (v) => n.update((x) => x.copyWith(threadNumbering: v))),
+      // 1.4.3: thread media
+      SettingChoice<ThreadMediaLayout>(
+        key: const Key('thread-media-layout'),
+        title: 'Media in a thread',
+        description: 'X, Bluesky, Mastodon and Misskey post each part with its own media. Other networks get all of it on the '
+            'first post. Switching keeps every photo and video in the part it is in.',
+        value: s.threadMediaLayout,
+        onChanged: (v) => n.update((x) => x.copyWith(threadMediaLayout: v)),
+        options: const [
+          (ThreadMediaLayout.perPart, 'Media for each part', 'Every part of a thread has its own Add media, and you swipe through each part\'s media under it.'),
+          (ThreadMediaLayout.singleTray, 'One media tray for the post', 'Everything is added under the first part. The Part chip on each item moves it to another part.'),
+        ],
+      ),
       SettingSwitch(title: 'Add my hashtags to the text', description: 'Where the network has no separate tags field.', value: s.appendHashtags, onChanged: (v) => n.update((x) => x.copyWith(appendHashtags: v))),
       SettingSwitch(title: 'Add my link to the text', description: 'Where the network has no link field and the link is not in the text yet.', value: s.appendLink, onChanged: (v) => n.update((x) => x.copyWith(appendLink: v))),
       SettingSwitch(

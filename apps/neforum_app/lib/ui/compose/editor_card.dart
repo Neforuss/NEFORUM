@@ -6,6 +6,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/settings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
@@ -20,6 +21,13 @@ import 'media_tray.dart';
 import 'poll_sheet.dart';
 import 'rich_text.dart';
 import 'track_details_sheet.dart';
+
+/// 1.4.3: thread media. Whether the composer gives every part of the post
+/// its own tray and "Add media": the post is a thread and Settings > Posting
+/// > Media in a thread is on "Media for each part". Otherwise one tray under
+/// the first part holds everything.
+bool mediaPerPart(ComposerState c, AppSettings settings) =>
+    c.additionalParts.isNotEmpty && settings.threadMediaLayout == ThreadMediaLayout.perPart;
 
 /// The writing surface: optional title, content warning, the text itself,
 /// attachments and the formatting toolbar. Accepts dropped files.
@@ -91,6 +99,10 @@ class _EditorCardState extends ConsumerState<EditorCard> {
     // Artwork always has a title: it becomes the work's title on art sites.
     final showTitle = _showTitle || (titleUseful && (c.isArtwork || previews.any((p) => p.descriptor.text.titleRequired)));
     final pollNetworks = [for (final p in previews) if (p.descriptor.polls != null) p.descriptor];
+    // 1.4.3: thread media. In a thread with media per part, this editor's
+    // tray holds the first part's media only; each later part has its own.
+    final perPart = mediaPerPart(c, ref.watch(settingsProvider));
+    final ownMedia = perPart ? c.mediaOfPart(0) : c.media;
 
     final card = NfCard(
       padding: EdgeInsets.zero,
@@ -229,10 +241,10 @@ class _EditorCardState extends ConsumerState<EditorCard> {
                 ),
             ]),
           ),
-        if (c.media.isNotEmpty)
-          const Padding(
-            padding: EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.lg, Space.sm),
-            child: MediaTray(),
+        if (ownMedia.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.lg, Space.sm),
+            child: MediaTray(part: perPart ? 0 : null),
           ),
         if (c.audio != null) ...[
           const Padding(
@@ -246,6 +258,7 @@ class _EditorCardState extends ConsumerState<EditorCard> {
         ],
         Divider(height: 1, color: nf.border),
         _Toolbar(
+          mediaCount: ownMedia.length,
           onMedia: () => pickAndAttachMedia(context, ref),
           onDocument: () => pickDocumentForThread(context, ref),
           onLink: () => _editLink(context),
@@ -479,27 +492,35 @@ class _ThreadPartEditorsState extends ConsumerState<ThreadPartEditors> {
   /// keeps what was written since, until the post is replaced.
   void _remove(int index) {
     final notifier = ref.read(composerProvider.notifier);
-    final text = ref.read(composerProvider).additionalParts[index - 1];
+    final before = ref.read(composerProvider);
+    final text = before.additionalParts[index - 1];
+    // Its media goes with the part before it, and back with Undo.
+    final media = [for (final m in before.mediaOfPart(index)) m.id];
     // Drop this part's own field, so the fields after it keep their focus.
     _retire(_parts.removeAt(index - 1));
     notifier.removePart(index);
     setState(() {});
     final revision = ref.read(composerProvider).revision;
     _undo = _UndoOffer.show(context, 'Part ${index + 1} removed', Icons.delete_outline_rounded,
-        applies: (c) => c.revision == revision, undo: () => _putBack(notifier, index, text, revision));
+        applies: (c) => c.revision == revision, undo: () => _putBack(notifier, index, text, revision, media));
   }
 
-  /// Undo of [_remove]: part [index] comes back with [text], unless the post
-  /// was replaced after [revision].
-  void _putBack(ComposerNotifier notifier, int index, String text, int revision) {
+  /// Undo of [_remove]: part [index] comes back with [text] and its [media],
+  /// unless the post was replaced after [revision].
+  void _putBack(ComposerNotifier notifier, int index, String text, int revision, List<String> media) {
     if (mounted && ref.read(composerProvider).revision == revision) {
       // Its own field goes back first, so the fields after it keep their
       // focus.
       _parts.insert((index - 1).clamp(0, _parts.length), _PartField()..controller.text = text);
       setState(() {});
     }
-    notifier.undoRemovePart(index, text, revision: revision);
+    notifier.undoRemovePart(index, text, revision: revision, mediaIds: media);
   }
+
+  /// 1.4.3: thread media. Moves part [index] (1 or more) to [to] (0 is the
+  /// first part), with its words and media. The fields take the new words
+  /// from the revision the move bumps.
+  void _move(int index, int to) => ref.read(composerProvider.notifier).movePart(index, to);
 
   @override
   Widget build(BuildContext context) {
@@ -520,6 +541,8 @@ class _ThreadPartEditorsState extends ConsumerState<ThreadPartEditors> {
           field: _parts[i],
           onChanged: (v) => ref.read(composerProvider.notifier).setPart(i + 1, v),
           onRemove: () => _remove(i + 1),
+          onMoveUp: () => _move(i + 1, i),
+          onMoveDown: i + 1 < count ? () => _move(i + 1, i + 2) : null,
         ),
       ],
       if (showAdd)
@@ -556,11 +579,25 @@ class _ThreadConnector extends StatelessWidget {
 /// The editor of thread part [index] (1 or more; the first part is the main
 /// editor).
 class _PartEditor extends ConsumerWidget {
-  const _PartEditor({super.key, required this.index, required this.field, required this.onChanged, required this.onRemove});
+  const _PartEditor({
+    super.key,
+    required this.index,
+    required this.field,
+    required this.onChanged,
+    required this.onRemove,
+    required this.onMoveUp,
+    required this.onMoveDown,
+  });
   final int index;
   final _PartField field;
   final ValueChanged<String> onChanged;
   final VoidCallback onRemove;
+
+  /// 1.4.3: moves this part one place up (part 2 becomes the first part).
+  final VoidCallback onMoveUp;
+
+  /// 1.4.3: moves this part one place down; null for the last part.
+  final VoidCallback? onMoveDown;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -568,16 +605,42 @@ class _PartEditor extends ConsumerWidget {
     final c = ref.watch(composerProvider);
     final text = index - 1 < c.additionalParts.length ? c.additionalParts[index - 1] : '';
     final budget = _partBudget(text, ref);
+    final perPart = mediaPerPart(c, ref.watch(settingsProvider));
+    final own = c.mediaOfPart(index);
+    final number = index + 1;
     return NfCard(
       padding: const EdgeInsets.fromLTRB(Space.xl, Space.sm, Space.md, Space.md),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Row(children: [
           Icon(Icons.subdirectory_arrow_right_rounded, size: 16, color: nf.textFaint),
           const SizedBox(width: Space.xs),
-          Expanded(child: Text('Part ${index + 1}', style: context.text.labelMedium?.copyWith(color: nf.textMuted))),
+          Expanded(child: Text('Part $number', style: context.text.labelMedium?.copyWith(color: nf.textMuted))),
           CharRing(used: budget.used, max: budget.max, parts: budget.parts, size: 20, alwaysShowCount: true),
           const SizedBox(width: Space.xs),
-          ToolButton(icon: Icons.close_rounded, tooltip: 'Remove part ${index + 1}', size: 32, onPressed: onRemove),
+          if (perPart)
+            ToolButton(
+              key: ValueKey('part-add-media-$index'),
+              icon: Icons.add_photo_alternate_outlined,
+              tooltip: 'Add photos, videos or sound to part $number',
+              size: 32,
+              badge: own.isEmpty ? null : '${own.length}',
+              onPressed: () => pickAndAttachMedia(context, ref, part: index),
+            ),
+          ToolButton(
+            key: ValueKey('part-move-up-$index'),
+            icon: Icons.arrow_upward_rounded,
+            tooltip: 'Move part $number up',
+            size: 32,
+            onPressed: onMoveUp,
+          ),
+          ToolButton(
+            key: ValueKey('part-move-down-$index'),
+            icon: Icons.arrow_downward_rounded,
+            tooltip: 'Move part $number down',
+            size: 32,
+            onPressed: onMoveDown,
+          ),
+          ToolButton(icon: Icons.close_rounded, tooltip: 'Remove part $number', size: 32, onPressed: onRemove),
         ]),
         EmojiTargetField(
           controller: field.controller,
@@ -602,9 +665,15 @@ class _PartEditor extends ConsumerWidget {
             ),
           ),
         ),
-        // The attachments that go with this part (moved with the part chip
-        // on each attachment above).
-        if ([for (final m in c.media) if (c.partOfMedia(m.id) == index) m] case final own when own.isNotEmpty) ...[
+        // 1.4.3: thread media. Media per part: this part's own tray, to
+        // swipe through, reorder and add to.
+        if (perPart && own.isNotEmpty) ...[
+          const SizedBox(height: Space.sm),
+          MediaTray(part: index),
+        ]
+        // One tray for the post: the attachments that go with this part
+        // (moved with the Part chip on each attachment in that tray).
+        else if (own.isNotEmpty) ...[
           const SizedBox(height: Space.sm),
           Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
             for (final m in own)
@@ -644,6 +713,7 @@ class _PartEditor extends ConsumerWidget {
 
 class _Toolbar extends ConsumerWidget {
   const _Toolbar({
+    required this.mediaCount,
     required this.onMedia,
     required this.onDocument,
     required this.onLink,
@@ -657,6 +727,9 @@ class _Toolbar extends ConsumerWidget {
     this.pollTooltip = 'Poll or quiz',
   });
 
+  /// The attachments the media button adds to: the first part's, or the
+  /// post's when it has one tray.
+  final int mediaCount;
   final VoidCallback onMedia;
   final VoidCallback onDocument;
   final VoidCallback onLink;
@@ -689,7 +762,7 @@ class _Toolbar extends ConsumerWidget {
                 tooltip: 'Add photos, videos or sound',
                 onPressed: onMedia,
                 size: s,
-                badge: c.media.isEmpty ? null : '${c.media.length}',
+                badge: mediaCount == 0 ? null : '$mediaCount',
               ),
               EmojiButton(size: s, showBudget: true),
               ToolButton(icon: Icons.description_outlined, tooltip: 'Make a thread from a document (PDF, Word, EPUB, Markdown, text, web page)', onPressed: onDocument, size: s),

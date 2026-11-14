@@ -130,6 +130,19 @@ enum NavigationChromeStyle {
 
 enum InterfaceDensity { comfortable, compact }
 
+/// 1.4.3: thread media. Where the composer adds the photos, videos and sound
+/// of a thread. Either way each attachment keeps the part it goes with
+/// (ComposerState.mediaParts), so switching loses nothing and a post looks
+/// the same on a phone and a computer.
+enum ThreadMediaLayout {
+  /// Every part has its own "Add media" and its own tray.
+  perPart,
+
+  /// One tray under the first part for the whole post; a Part chip on each
+  /// attachment picks the part it goes with.
+  singleTray,
+}
+
 /// Everything the user can change in Settings. Persisted as settings.json.
 @immutable
 class AppSettings {
@@ -226,6 +239,7 @@ class AppSettings {
     this.textCardLayout = TextCardLayout.full, // 1.4.3: cards
     this.publishingOrder = const [], // 1.4.3: publishing order
     this.defaultPlacements = const {}, // 1.4.3: story placement
+    this.threadMediaLayout = ThreadMediaLayout.perPart, // 1.4.3: thread media
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -323,6 +337,7 @@ class AppSettings {
         textCardLayout: TextCardLayout.values.asNameMap()[j['textCardLayout']] ?? TextCardLayout.full, // 1.4.3: cards
         publishingOrder: [for (final id in j['publishingOrder'] as List? ?? const []) if (id is String) id], // 1.4.3: publishing order
         defaultPlacements: validDefaultPlacements(j['defaultPlacements']), // 1.4.3: story placement
+        threadMediaLayout: ThreadMediaLayout.values.asNameMap()[j['threadMediaLayout']] ?? ThreadMediaLayout.perPart, // 1.4.3: thread media
       );
 
   final ThemeMode themeMode;
@@ -648,6 +663,10 @@ class AppSettings {
   /// stored. See lib/state/story_placements.dart.
   final Map<String, String> defaultPlacements;
 
+  /// 1.4.3: thread media. Each part of a thread with its own "Add media", or
+  /// one tray for the whole post.
+  final ThreadMediaLayout threadMediaLayout;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -756,6 +775,7 @@ class AppSettings {
     TextCardLayout? textCardLayout, // 1.4.3: cards
     List<String>? publishingOrder, // 1.4.3: publishing order
     Map<String, String>? defaultPlacements, // 1.4.3: story placement
+    ThreadMediaLayout? threadMediaLayout, // 1.4.3: thread media
   }) =>
       AppSettings(
         textCardShape: textCardShape ?? this.textCardShape, // 1.4.3: cards
@@ -850,6 +870,7 @@ class AppSettings {
         cardPresets: cardPresets ?? this.cardPresets, // 1.3.1: cards
         publishingOrder: publishingOrder ?? this.publishingOrder, // 1.4.3: publishing order
         defaultPlacements: defaultPlacements ?? this.defaultPlacements, // 1.4.3: story placement
+        threadMediaLayout: threadMediaLayout ?? this.threadMediaLayout, // 1.4.3: thread media
       );
 
   Map<String, dynamic> toJson() => {
@@ -945,6 +966,7 @@ class AppSettings {
         'textCardLayout': textCardLayout.name, // 1.4.3: cards
         'publishingOrder': publishingOrder, // 1.4.3: publishing order
         if (defaultPlacements.isNotEmpty) 'defaultPlacements': defaultPlacements, // 1.4.3: story placement
+        'threadMediaLayout': threadMediaLayout.name, // 1.4.3: thread media
       };
 }
 

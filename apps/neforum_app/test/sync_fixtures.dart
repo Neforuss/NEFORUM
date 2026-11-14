@@ -186,6 +186,7 @@ AppSettings populatedSettings() => AppSettings(
       textCardLayout: TextCardLayout.panel, // 1.4.3: cards
       publishingOrder: const ['acct-2', 'acct-1'], // 1.4.3
       defaultPlacements: const {'acct-1': 'feedAndStory', 'acct-2': 'story'}, // 1.4.3
+      threadMediaLayout: ThreadMediaLayout.singleTray, // 1.4.3: thread media
     );
 
 /// A second setup, different from both the defaults and [populatedSettings]
