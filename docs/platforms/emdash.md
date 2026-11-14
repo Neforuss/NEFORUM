@@ -59,11 +59,11 @@ To revoke access, open **Settings > API Tokens** and revoke the `NEFORUM` token.
   - `-` and `1.` lists (nested by indenting), `>` quotes, fenced code blocks, `---` breaks;
   - a line that is only `![alt](https://...)` becomes a picture.
 - **HTML is never run.** Tags like `<b>` are shown as text. Only `http`, `https`, `mailto` and site links (`/...`) are linked; anything else stays plain text.
-- **Photos** go to the EmDash media library with their alt text (`POST /_emdash/api/media`). The **first photo is the featured image**. The others are placed after the text. Set the per-network option `featuredImage: false` to put every photo in the text instead. Accepted types are JPEG, PNG, GIF and WebP.
+- **Photos** go to the EmDash media library with their alt text (`POST /_emdash/api/media`). The **first photo is the featured image**. The others are placed after the text. Turn off **First photo as the featured image** (under **More options** in the post's **Customize** sheet) to put every photo in the text instead. Accepted types are JPEG, PNG, GIF and WebP.
 - **Videos** (MP4, WebM, MOV) go to the media library too and play in the post.
 - **Tags** go into the **Tags** taxonomy. A tag that matches an existing tag by its slug or name uses it; a new one is made. If the site has no Tags taxonomy, the post goes out without tags and NEFORUM says so.
-- **Status**: `published` or `draft`, as set for the account. You can override it per post with the option `status`. A draft links to its page in the EmDash admin.
-- **Other options**: `excerpt` (the post's excerpt) and `slug` (the post's address).
+- **Status**: `published` or `draft`, as set for the account. You can override it per post with **Publish as** in the post's **Customize** sheet, or keep a choice for every post from the account. A draft links to its page in the EmDash admin.
+- **More options** in the **Customize** sheet: **Excerpt** (the post's excerpt) and **Address (slug)** (the post's address).
 - **Address**: the post is at `https://your-site/posts/<slug>`. The slug is made from the title the way EmDash makes one.
 
 ### A retry never posts twice

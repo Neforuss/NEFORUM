@@ -1049,6 +1049,24 @@ const List<PostOption> wordPressOptions = [
   _rawHtmlFormat,
 ];
 
+/// 1.4.3 (integration): EmDash, which reads the same blog keys as
+/// WordPress and Ghost.
+const List<PostOption> emdashOptions = [
+  PostOption(
+    key: 'status',
+    label: 'Publish as',
+    kind: PostOptionKind.choice,
+    choices: [PostOptionChoice('published', 'Published'), PostOptionChoice('draft', 'Draft')],
+    defaultLabel: 'As the account is set',
+    scope: PostOptionScope.postOrAccount,
+    tiers: _api,
+    apiField: 'status',
+  ),
+  _excerpt,
+  _slug,
+  _featuredImage,
+];
+
 const List<PostOption> ghostOptions = [
   PostOption(
     key: 'status',

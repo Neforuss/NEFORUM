@@ -18,6 +18,7 @@ import '../../text/portable_text.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'blog_common.dart';
 import 'emdash_api.dart';
@@ -91,6 +92,7 @@ class EmDashAdapter extends PlatformAdapter {
     setupGuide: 'docs/platforms/emdash.md',
     serverSideScheduling: false,
     supportsLinkField: false,
+    options: emdashOptions,
   );
 
   @override

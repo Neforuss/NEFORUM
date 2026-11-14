@@ -7,7 +7,7 @@ enum MarkdownDialect {
   none,
 
   /// CommonMark and its relatives (Reddit, Lemmy, DEV, Hashnode, WriteFreely,
-  /// Micropub servers) and Discord's Markdown: a backslash before any ASCII
+  /// Micropub servers, EmDash) and Discord's Markdown: a backslash before any ASCII
   /// punctuation character shows that character as it is.
   commonMark,
 
@@ -47,6 +47,9 @@ abstract final class NetworkTextTransforms {
     'writefreely': MarkdownDialect.commonMark,
     'micropub': MarkdownDialect.commonMark,
     'discord': MarkdownDialect.commonMark,
+    // EmDash: NEFORUM's Markdown to Portable Text (portable_text.dart) takes
+    // CommonMark's backslash escapes before ASCII punctuation.
+    'emdash': MarkdownDialect.commonMark,
     'telegram': MarkdownDialect.chat,
     'matrix': MarkdownDialect.chat,
     'misskey': MarkdownDialect.mfm,
