@@ -198,6 +198,14 @@ class ComposerState {
   /// The part [mediaId] goes with.
   int partOfMedia(String mediaId) => mediaParts[mediaId] ?? 0;
 
+  /// 1.4.3: thread media. The attachments of thread part [part] (0 is the
+  /// first), in the post's order. A part number past the last part counts as
+  /// the last part, as the Part chip shows it.
+  List<MediaAttachment> mediaOfPart(int part) => [
+        for (final m in media)
+          if (partOfMedia(m.id).clamp(0, additionalParts.length) == part) m,
+      ];
+
   /// 1.3.1: cards. The installed or imported font of the text card's words
   /// (CaptionFont.toJson); an empty map for the built-in [textCardFont],
   /// null = the Settings default.
@@ -676,6 +684,33 @@ class ComposerNotifier extends Notifier<ComposerState> {
         for (final e in mediaParts.entries) e.key: e.value >= from ? e.value + by : e.value,
       };
 
+  /// 1.4.3: thread media. Moves thread part [from] to position [to] (both
+  /// from 0, the first part included), with its words and its media: every
+  /// attachment stays with the part it was in. The editors take the new
+  /// order from the revision this bumps. Out-of-range moves do nothing.
+  void movePart(int from, int to) {
+    final texts = [state.text, ...state.additionalParts];
+    if (from < 0 || from >= texts.length || to < 0 || to >= texts.length || from == to) return;
+    // order[new position] = old position.
+    final order = [for (var i = 0; i < texts.length; i++) i]
+      ..removeAt(from)
+      ..insert(to, from);
+    final positionOf = {for (var i = 0; i < order.length; i++) order[i]: i};
+    final last = texts.length - 1;
+    final mediaParts = <String, int>{};
+    for (final id in {for (final m in state.media) m.id, ...state.mediaParts.keys}) {
+      final moved = positionOf[state.partOfMedia(id).clamp(0, last)]!;
+      if (moved > 0) mediaParts[id] = moved;
+    }
+    final reordered = [for (final i in order) texts[i]];
+    state = state.copyWith(
+      text: reordered.first,
+      additionalParts: reordered.skip(1).toList(),
+      mediaParts: mediaParts,
+      revision: state.revision + 1,
+    );
+  }
+
   /// Puts attachment [mediaId] in thread part [part] (0 is the first).
   void setMediaPart(String mediaId, int part) {
     final parts = {...state.mediaParts};
@@ -721,11 +756,18 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// was written since. [revision] is the one [removePart] left; once the
   /// post was replaced (published, scheduled, loaded, reset or cleared) the
   /// undo is void and nothing changes. Returns whether the part is back.
-  bool undoRemovePart(int index, String text, {required int revision}) {
+  /// [mediaIds], the attachments the part had, go back into it (1.4.3);
+  /// those removed since stay removed.
+  bool undoRemovePart(int index, String text, {required int revision, List<String> mediaIds = const []}) {
     if (index < 1 || state.revision != revision) return false;
     final at = (index - 1).clamp(0, state.additionalParts.length);
     final parts = [...state.additionalParts]..insert(at, text);
-    state = state.copyWith(additionalParts: parts, mediaParts: _shiftParts(state.mediaParts, from: at + 1, by: 1));
+    final attached = {for (final m in state.media) m.id};
+    state = state.copyWith(additionalParts: parts, mediaParts: {
+      ..._shiftParts(state.mediaParts, from: at + 1, by: 1),
+      for (final id in mediaIds)
+        if (attached.contains(id)) id: at + 1,
+    });
     return true;
   }
 
@@ -781,7 +823,34 @@ class ComposerNotifier extends Notifier<ComposerState> {
     state = state.copyWith(overrides: overrides);
   }
 
-  void addMedia(Iterable<MediaAttachment> items) => state = state.copyWith(media: [...state.media, ...items]);
+  /// Attaches [items] to thread part [part] (0, the first, by default; a
+  /// part past the last goes to the last).
+  void addMedia(Iterable<MediaAttachment> items, {int part = 0}) {
+    final added = items.toList();
+    if (added.isEmpty) return;
+    final into = part.clamp(0, state.additionalParts.length);
+    state = state.copyWith(
+      media: [...state.media, ...added],
+      mediaParts: into == 0 ? null : {...state.mediaParts, for (final m in added) m.id: into},
+    );
+  }
+
+  /// 1.4.3: thread media. Moves an attachment within the tray of thread part
+  /// [part]: [from] and [to] are positions among that part's own media
+  /// ([ComposerState.mediaOfPart]; [to] already adjusted for the removed
+  /// item, as ReorderableListView.onReorderItem reports it). The media of
+  /// the other parts keeps its place.
+  void moveMediaInPart(int part, int from, int to) {
+    final own = state.mediaOfPart(part);
+    if (from < 0 || from >= own.length) return;
+    final reordered = [...own];
+    reordered.insert(to.clamp(0, own.length - 1), reordered.removeAt(from));
+    final slots = {for (final m in own) m.id};
+    var next = 0;
+    state = state.copyWith(media: [
+      for (final m in state.media) slots.contains(m.id) ? reordered[next++] : m,
+    ]);
+  }
 
   /// The user's track details over the own tags of the sound file
   /// [mediaId]; null or empty goes back to the file's tags. Each sound file

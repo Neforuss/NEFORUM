@@ -67,6 +67,9 @@ const Set<String> kExportableSettings = {
   // preference, not a pairing: phones ignore it.
   'browserQuickPost',
   'browserOpenInFirst',
+  // 1.4.3: thread media. How the composer adds a thread's media; the post
+  // itself is the same either way.
+  'threadMediaLayout',
 };
 
 /// 1.3.5: the settings that stay on the device, each with why. Together with

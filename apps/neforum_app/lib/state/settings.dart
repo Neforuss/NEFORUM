@@ -122,6 +122,19 @@ enum NavigationChromeStyle {
 
 enum InterfaceDensity { comfortable, compact }
 
+/// 1.4.3: thread media. Where the composer adds the photos, videos and sound
+/// of a thread. Either way each attachment keeps the part it goes with
+/// (ComposerState.mediaParts), so switching loses nothing and a post looks
+/// the same on a phone and a computer.
+enum ThreadMediaLayout {
+  /// Every part has its own "Add media" and its own tray.
+  perPart,
+
+  /// One tray under the first part for the whole post; a Part chip on each
+  /// attachment picks the part it goes with.
+  singleTray,
+}
+
 /// Everything the user can change in Settings. Persisted as settings.json.
 @immutable
 class AppSettings {
@@ -209,6 +222,7 @@ class AppSettings {
     this.textCardDesign = const {}, // 1.3.1: cards
     this.audioCardDesign = const {}, // 1.3.1: cards
     this.cardPresets = const [], // 1.3.1: cards
+    this.threadMediaLayout = ThreadMediaLayout.perPart, // 1.4.3: thread media
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -297,6 +311,7 @@ class AppSettings {
         textCardDesign: Map<String, dynamic>.from(j['textCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         audioCardDesign: Map<String, dynamic>.from(j['audioCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         cardPresets: [for (final p in j['cardPresets'] as List? ?? const []) if (p is Map) Map<String, dynamic>.from(p)], // 1.3.1: cards
+        threadMediaLayout: ThreadMediaLayout.values.asNameMap()[j['threadMediaLayout']] ?? ThreadMediaLayout.perPart, // 1.4.3: thread media
       );
 
   final ThemeMode themeMode;
@@ -574,6 +589,10 @@ class AppSettings {
   /// 1.3.1: cards. Designs the user saved under a name (CardPreset.toJson).
   final List<Map<String, dynamic>> cardPresets;
 
+  /// 1.4.3: thread media. Each part of a thread with its own "Add media", or
+  /// one tray for the whole post.
+  final ThreadMediaLayout threadMediaLayout;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -672,6 +691,7 @@ class AppSettings {
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
     Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
     List<Map<String, dynamic>>? cardPresets, // 1.3.1: cards
+    ThreadMediaLayout? threadMediaLayout, // 1.4.3: thread media
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -757,6 +777,7 @@ class AppSettings {
         textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
         audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
         cardPresets: cardPresets ?? this.cardPresets, // 1.3.1: cards
+        threadMediaLayout: threadMediaLayout ?? this.threadMediaLayout, // 1.4.3: thread media
       );
 
   Map<String, dynamic> toJson() => {
@@ -843,5 +864,6 @@ class AppSettings {
         if (textCardDesign.isNotEmpty) 'textCardDesign': textCardDesign, // 1.3.1: cards
         if (audioCardDesign.isNotEmpty) 'audioCardDesign': audioCardDesign, // 1.3.1: cards
         if (cardPresets.isNotEmpty) 'cardPresets': cardPresets, // 1.3.1: cards
+        'threadMediaLayout': threadMediaLayout.name, // 1.4.3: thread media
       };
 }

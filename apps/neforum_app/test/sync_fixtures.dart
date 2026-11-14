@@ -178,6 +178,7 @@ AppSettings populatedSettings() => AppSettings(
       cardPresets: const [
         {'name': 'Fake preset', 'design': {'background': 'solid'}},
       ],
+      threadMediaLayout: ThreadMediaLayout.singleTray, // 1.4.3: thread media
     );
 
 /// A second setup, different from both the defaults and [populatedSettings]

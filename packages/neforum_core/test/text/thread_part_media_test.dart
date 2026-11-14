@@ -233,5 +233,79 @@ void main() {
       expect(((created[0]['embed'] as Map)['images'] as List), hasLength(1));
       expect(((created[1]['embed'] as Map)['images'] as List), hasLength(2));
     });
+
+    // 1.4.3: thread media. The phone composer puts media in every part; these
+    // two networks post each part with its own as well.
+    test('Mastodon attaches each status its own media', () async {
+      final adapter = builtinRegistry().byId('mastodon')!;
+      final account = fakeAccount('mastodon', config: const {
+        'instance': 'https://mastodon.example',
+        'domain': 'mastodon.example',
+        'software': 'mastodon',
+        'maxCharacters': 500,
+        'maxMediaAttachments': 4,
+        'descriptionLimit': 1500,
+      });
+      final post = _post(['One', 'Two', 'Three'], [_image('a'), _image('b1'), _image('b2'), _image('c')], {'b1': 1, 'b2': 1, 'c': 2});
+      final v = const VariantResolver(ResolverOptions(threadNumbering: false))
+          .resolve(post, post.targets.single, adapter.descriptorForAccount(account), account: account);
+      expect(v.mediaPartIndexes, [0, 1, 1, 2]);
+      var media = 0;
+      var statuses = 0;
+      final posted = <List<String>>[];
+      final ctx = testContext(handler: (r) async {
+        if (r.url.path == '/api/v2/media') {
+          media++;
+          return http.Response('{"id":"M$media","url":"https://mastodon.example/m/$media"}', 200, headers: jsonHeaders);
+        }
+        if (r.url.path == '/api/v1/statuses') {
+          statuses++;
+          // Repeated media_ids[] keys, in order.
+          posted.add([
+            for (final pair in r.body.split('&'))
+              if (Uri.decodeQueryComponent(pair.split('=').first) == 'media_ids[]') Uri.decodeQueryComponent(pair.split('=').last),
+          ]);
+          return http.Response('{"id":"S$statuses","url":"https://mastodon.example/@a/S$statuses"}', 200, headers: jsonHeaders);
+        }
+        return http.Response('{"error":"Not found"}', 404, headers: jsonHeaders);
+      });
+      final res = await adapter.publish(v, account, const {'access_token': 'tok', 'token_type': 'Bearer'}, ctx);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(posted, [
+        ['M1'],
+        ['M2', 'M3'],
+        ['M4'],
+      ]);
+    });
+
+    test('Misskey attaches each note its own files', () async {
+      final adapter = builtinRegistry().byId('misskey')!;
+      final account = fakeAccount('misskey', config: const {
+        'instance': 'https://misskey.example',
+        'host': 'misskey.example',
+        'maxNoteTextLength': 3000,
+      });
+      final post = _post(['One', 'Two', 'Three'], [_image('a'), _image('c1'), _image('c2')], {'c1': 2, 'c2': 2});
+      final v = const VariantResolver(ResolverOptions(threadNumbering: false))
+          .resolve(post, post.targets.single, adapter.descriptorForAccount(account), account: account);
+      expect(v.mediaPartIndexes, [0, 2, 2]);
+      var files = 0;
+      var notes = 0;
+      final created = <Map<String, dynamic>>[];
+      final ctx = testContext(handler: (r) async {
+        if (r.url.path == '/api/drive/files/create') return http.Response('{"id":"F${++files}"}', 200, headers: jsonHeaders);
+        if (r.url.path == '/api/notes/create') {
+          created.add(bodyOf(r));
+          return http.Response('{"createdNote":{"id":"N${++notes}"}}', 200, headers: jsonHeaders);
+        }
+        return http.Response('{}', 404, headers: jsonHeaders);
+      });
+      final res = await adapter.publish(v, account, const {'access_token': 'TOKEN123'}, ctx);
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(created, hasLength(3));
+      expect(created[0]['fileIds'], ['F1']);
+      expect(created[1].containsKey('fileIds'), isFalse);
+      expect(created[2]['fileIds'], ['F2', 'F3']);
+    });
   });
 }
