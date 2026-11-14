@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 import '../../platform/env.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
+import '../../theme/selection_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
@@ -189,12 +190,14 @@ class _DayCell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = selected ? Colors.white : (today ? nf.accent : nf.text);
+    // 1.4.3: the selected fill keeps its white text readable in the dark
+    // theme too, where the plain accent is too light for it.
+    final fg = selected ? nf.onSelectedFill : (today ? nf.accent : nf.text);
     return Tooltip(
       message: '${DateFormat.MMMMEEEEd().format(day)}: ${count == 0 ? 'nothing scheduled' : '$count scheduled'}',
       child: Material(
-        color: selected ? nf.accent : nf.surface,
-        shape: RoundedRectangleBorder(borderRadius: Radii.rMd, side: BorderSide(color: selected ? nf.accent : (today ? nf.accent.withValues(alpha: 0.5) : nf.border))),
+        color: selected ? nf.selectedFill : nf.surface,
+        shape: RoundedRectangleBorder(borderRadius: Radii.rMd, side: BorderSide(color: selected ? nf.selectedFill : (today ? nf.accent.withValues(alpha: 0.5) : nf.border))),
         child: InkWell(
           borderRadius: Radii.rMd,
           onTap: onTap,
@@ -264,7 +267,7 @@ class _AgendaRow extends ConsumerWidget {
           left: timeW + nodeW / 2 - 1,
           top: Space.lg + 11,
           bottom: 0,
-          child: Container(width: 2, color: nf.border),
+          child: Container(width: 2, color: nf.hairline),
         ),
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         SizedBox(

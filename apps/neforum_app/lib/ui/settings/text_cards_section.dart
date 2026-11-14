@@ -12,6 +12,7 @@ import '../../media/text_card.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
+import '../../widgets/selection_marks.dart';
 import '../compose/caption_editor_sheet.dart';
 import '../compose/card_designer_sheet.dart';
 import '../compose/font_picker_sheet.dart';
@@ -57,18 +58,22 @@ class TextCardSettingsSection extends ConsumerWidget {
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                   borderRadius: Radii.rMd,
-                  border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1),
+                  border: Border.all(color: selected ? nf.accent : nf.hairline, width: selected ? 2 : 1),
                 ),
-                child: ClipRRect(
-                  borderRadius: Radii.rSm,
-                  child: TextCardView(
-                      text: 'One app, one message, every platform.',
-                      theme: theme,
-                      font: font,
-                      customFont: custom,
-                      aspect: 4 / 5,
-                      byline: '@you',
-                      alignment: s.textCardAlignment),
+                // 1.4.3: clear selected state, a check on the chosen one.
+                child: SelectionBadged(
+                  selected: selected,
+                  child: ClipRRect(
+                    borderRadius: Radii.rSm,
+                    child: TextCardView(
+                        text: 'One app, one message, every platform.',
+                        theme: theme,
+                        font: font,
+                        customFont: custom,
+                        aspect: 4 / 5,
+                        byline: '@you',
+                        alignment: s.textCardAlignment),
+                  ),
                 ),
               ),
               const SizedBox(height: Space.xs + 2),
@@ -222,12 +227,42 @@ class TextCardSettingsSection extends ConsumerWidget {
                 message: a.description,
                 child: ChoiceChip(
                   key: Key('text-card-alignment-${a.name}'),
-                  avatar: Icon(a.icon, size: 16),
+                  // The check takes the icon's place while it is chosen.
+                  avatar: s.textCardAlignment == a ? null : Icon(a.icon, size: 16),
                   label: Text(a.label),
                   selected: s.textCardAlignment == a,
                   onSelected: !s.textCards ? null : (_) => n.update((x) => x.copyWith(textCardAlignment: a)),
                 ),
               ),
+          ]),
+        ),
+        // 1.4.3: cards. The shape and layout new posts' cards start with.
+        SettingRow(
+          title: 'Shape and layout',
+          description: "Each network's own shape, square, or landscape (16:9, or 1.91:1, the widest Instagram, Facebook and LinkedIn show whole). "
+              'A network that shows pictures full screen, such as TikTok or a story, gets its own frame with your card whole inside it. '
+              'A quote card sets your words on a card with rounded corners. You can also switch them per post in the text card editor.',
+          enabled: s.textCards,
+          below: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+              for (final shape in TextCardShape.values)
+                ChoiceChip(
+                  key: Key('text-card-shape-${shape.name}'),
+                  label: Text(shape.label),
+                  selected: s.textCardShape == shape,
+                  onSelected: !s.textCards ? null : (_) => n.update((x) => x.copyWith(textCardShape: shape)),
+                ),
+            ]),
+            const SizedBox(height: Space.sm),
+            Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+              for (final layout in TextCardLayout.values)
+                ChoiceChip(
+                  key: Key('text-card-layout-${layout.name}'),
+                  label: Text(layout.label),
+                  selected: s.textCardLayout == layout,
+                  onSelected: !s.textCards ? null : (_) => n.update((x) => x.copyWith(textCardLayout: layout)),
+                ),
+            ]),
           ]),
         ),
         SettingRow(

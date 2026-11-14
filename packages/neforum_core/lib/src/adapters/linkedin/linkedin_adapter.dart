@@ -5,6 +5,7 @@ import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/paragraph_media.dart';
 import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart';
@@ -16,6 +17,7 @@ import '../../text/text_counter.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'linkedin_api.dart';
 
@@ -60,6 +62,7 @@ class LinkedInAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor linkedInDescriptor = PlatformDescriptor(
     id: 'linkedin',
+    options: linkedInOptions,
     name: 'LinkedIn',
     iconKey: 'linkedin',
     homepage: 'https://www.linkedin.com',
@@ -93,6 +96,8 @@ class LinkedInAdapter extends PlatformAdapter {
       videoMimeTypes: {'video/mp4'},
       supportsAltText: true,
       requiresPublicMediaUrl: false,
+      // 1.4.3: images in the order of their paragraphs, numbered in the text.
+      paragraphMedia: ParagraphMediaStyle.markers,
       notes: 'JPG, PNG or GIF (GIF up to 250 frames), fewer than 36,152,320 pixels; 1 image, or 2 to 20 images '
           'as a multi-image post. One MP4 video, 3 s to 30 min, 75 KB to 500 MB. Images and video cannot be mixed.',
     ),

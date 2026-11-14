@@ -14,6 +14,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'art_api_common.dart';
 import 'inkbunny_api.dart';
@@ -30,6 +31,7 @@ abstract final class InkbunnyLimits {
 /// Static description of Inkbunny.
 const PlatformDescriptor inkbunnyDescriptor = PlatformDescriptor(
   id: 'inkbunny',
+  options: inkbunnyOptions,
   name: 'Inkbunny',
   iconKey: 'inkbunny',
   homepage: 'https://inkbunny.net',

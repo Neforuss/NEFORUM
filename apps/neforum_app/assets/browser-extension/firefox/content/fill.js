@@ -289,10 +289,12 @@
   /**
    * Puts [text] into [el]. With [replace] the field's current text goes
    * (TikTok prefills the file name). [fieldOnly]: whether the text is in
-   * already is judged by [el] alone (see holdsAlready). Returns the method
-   * that worked, 'already', or null.
+   * already is judged by [el] alone (see holdsAlready). [typeFirst]: a rich
+   * editor gets the text as typing first and a paste only when typing did
+   * nothing (Locals, whose own paste handler is for its photos). Returns the
+   * method that worked, 'already', or null.
    */
-  async function insertText(el, text, { replace = false, fieldOnly = false } = {}) {
+  async function insertText(el, text, { replace = false, fieldOnly = false, typeFirst = false } = {}) {
     if (!el || !text) return null;
     const scope = composerOf(el);
     if (!replace) {
@@ -302,7 +304,7 @@
       // short one for none of it (and put it in a second time).
       const have = contentOf(el);
       const rest = have && have !== norm(text) ? restAfter(text, have) : null;
-      if (rest !== null) return norm(rest) ? insertText(el, rest, { fieldOnly }) : 'already';
+      if (rest !== null) return norm(rest) ? insertText(el, rest, { fieldOnly, typeFirst }) : 'already';
     }
     if (!replace && holdsAlready(el, text, { fieldOnly })) return 'already';
     // Exactly this text already, over the composer's blocks: nothing to replace.
@@ -317,7 +319,8 @@
     }
 
     // Rich editors: a paste first (they all turn pasted plain text into
-    // paragraphs), then typing commands, then a raw beforeinput. Each try
+    // paragraphs), then typing commands (the other way round with
+    // [typeFirst]), then a raw beforeinput. Each try
     // waits for the editor to show the text, so nothing goes in twice.
     // Editors such as Draft.js learn about a new selection only from the
     // selectionchange event that follows it, so wait a moment after selecting.
@@ -325,7 +328,14 @@
       replace ? selectAll(el) : placeCaretAtEnd(el);
       await sleep(80);
     };
-    if (replace && contentOf(el)) {
+    if (replace && contentOf(el) && typeFirst) {
+      // Typing over a selection that spans paragraphs leaves an empty one
+      // behind in some editors: clear the field, then type.
+      await select();
+      document.execCommand('delete');
+      await sleep(150);
+      if (contentOf(el)) return null;
+    } else if (replace && contentOf(el)) {
       await select();
       const data = new DataTransfer();
       data.setData('text/plain', text);
@@ -352,20 +362,26 @@
       return true;
     };
 
-    await select();
-    const data = new DataTransfer();
-    data.setData('text/plain', text);
-    // An editor that took the paste (preventDefault) may apply it a moment later.
-    const taken = firePaste(el, data);
-    if (await settle(taken ? 3000 : 400)) return 'paste';
-
-    await select();
-    const lines = text.split('\n');
-    lines.forEach((line, i) => {
-      if (i > 0) document.execCommand('insertParagraph');
-      if (line) document.execCommand('insertText', false, line);
-    });
-    if (await settle(800)) return 'insertText';
+    const paste = async () => {
+      await select();
+      const data = new DataTransfer();
+      data.setData('text/plain', text);
+      // An editor that took the paste (preventDefault) may apply it a moment later.
+      const taken = firePaste(el, data);
+      return settle(taken ? 3000 : 400);
+    };
+    const type = async () => {
+      await select();
+      const lines = text.split('\n');
+      lines.forEach((line, i) => {
+        if (i > 0) document.execCommand('insertParagraph');
+        if (line) document.execCommand('insertText', false, line);
+      });
+      return settle(800);
+    };
+    for (const way of typeFirst ? ['insertText', 'paste'] : ['paste', 'insertText']) {
+      if (await (way === 'paste' ? paste() : type())) return way;
+    }
 
     placeCaretAtEnd(el);
     el.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true, composed: true }));

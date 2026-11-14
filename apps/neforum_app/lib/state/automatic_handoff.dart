@@ -92,8 +92,9 @@ typedef _Page = ({ConnectedAccount account, HandoffPlan plan, Uri url, PlatformD
 /// computer with automatic posting on (Settings > Browser extension > Post
 /// automatically) and a paired browser.
 ///
-/// One target at a time, since the bridge holds one job: NEFORUM opens the
-/// page in the browser, the extension fills it in, counts down and presses
+/// One target at a time, in the publishing order, since the bridge holds one
+/// job: NEFORUM opens the page in the browser, the extension fills it in,
+/// counts down and presses
 /// Post, and once it confirms the post the target is marked handed off.
 /// Anything else leaves the target waiting, with the usual "Time to post"
 /// notification; when the page was filled in (Post pressed without a sign
@@ -140,7 +141,8 @@ class AutomaticHandoff {
     var posted = 0;
     // Hand-offs this run would have posted automatically, had it not been cancelled.
     final cancelled = <String>[];
-    for (final target in post.targets) {
+    // 1.4.3: in the user's publishing order, as the run went.
+    for (final target in await publisher.targetsInPublishingOrder(post)) {
       // A note means Post may have been pressed already: the user finishes it.
       if (target.status != TargetStatus.awaitingHandoff || target.handoffNote != null) continue;
       final account = await _s.accounts.get(target.accountId);

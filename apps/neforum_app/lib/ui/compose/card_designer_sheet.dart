@@ -16,6 +16,7 @@ import '../../state/settings.dart' show TextCardAlignment;
 import '../../theme/tokens.dart';
 import '../../widgets/color_swatch_field.dart';
 import '../../widgets/layout.dart' show showToast;
+import '../../widgets/selection_marks.dart';
 import 'card_background_sheet.dart';
 import 'card_design_view.dart';
 import 'emoji_insert.dart';
@@ -241,7 +242,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
         borderRadius: Radii.rMd,
         child: DecoratedBox(
           position: DecorationPosition.foreground,
-          decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+          decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.hairline)),
           child: CardDesignView(key: const Key('card-designer-preview'), request: _request(design)!),
         ),
       );
@@ -364,9 +365,12 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
           child: Container(
             width: 132,
             padding: const EdgeInsets.all(Space.xs),
-            decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: selected ? nf.accent : nf.border, width: selected ? 2 : 1)),
+            decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: selected ? nf.accent : nf.hairline, width: selected ? 2 : 1)),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-              ClipRRect(
+              // 1.4.3: clear selected state, a check on the chosen one.
+              SelectionBadged(
+                selected: selected,
+                child: ClipRRect(
                 borderRadius: Radii.rSm,
                 child: request == null
                     ? AspectRatio(
@@ -381,6 +385,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
                         request: _thumbnail(request),
                         delay: Duration.zero,
                       ),
+                ),
               ),
               const SizedBox(height: Space.xs),
               Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelMedium),
@@ -628,7 +633,9 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
         ChoiceChip(
           key: Key('card-block-$i'),
           label: Text(_blockName(d, i)),
-          avatar: d.blocks[i].visible ? null : Icon(Icons.visibility_off_outlined, size: 14, color: nf.textFaint),
+          // 1.4.3: a hidden block keeps its mark while chosen (the check
+          // goes over it), in the chip's own icon color.
+          avatar: d.blocks[i].visible ? null : const Icon(Icons.visibility_off_outlined, size: 14),
           selected: i == index,
           onSelected: (_) => setState(() => _block = i),
         ),
@@ -722,7 +729,8 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
             message: a.description,
             child: ChoiceChip(
               key: Key('card-block-alignment-${a.name}'),
-              avatar: Icon(a.icon, size: 16),
+              // The check takes the icon's place while it is chosen.
+              avatar: b.alignment == a ? null : Icon(a.icon, size: 16),
               label: Text(a.label),
               selected: b.alignment == a,
               onSelected: (_) => set((x) => x.copyWith(alignment: a)),
@@ -802,7 +810,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
                 decoration: BoxDecoration(
                   color: a == value ? nf.accentSoft : null,
                   borderRadius: Radii.rXs,
-                  border: Border.all(color: a == value ? nf.accent : nf.border),
+                  border: Border.all(color: a == value ? nf.accent : nf.hairline),
                 ),
                 alignment: Alignment(a.x * 2 - 1, a.y * 2 - 1) * 0.6,
                 child: Container(width: 8, height: 8, decoration: BoxDecoration(color: a == value ? nf.accent : nf.textFaint, shape: Radii.circleShape)),
@@ -889,7 +897,7 @@ class _CardDesignerSheetState extends ConsumerState<CardDesignerSheet> {
               padding: const EdgeInsets.only(right: Space.xs),
               child: ChoiceChip(
                 key: Key('card-designer-group-${g.name}'),
-                avatar: Icon(g.icon, size: 16),
+                avatar: _group == g ? null : Icon(g.icon, size: 16),
                 label: Text(g.label),
                 selected: _group == g,
                 onSelected: (_) => setState(() => _group = g),

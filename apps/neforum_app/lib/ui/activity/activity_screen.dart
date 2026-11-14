@@ -7,6 +7,7 @@ import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../state/publish_run_session.dart';
+import '../../state/publishing_order.dart';
 import '../../state/settings.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
@@ -213,11 +214,13 @@ class _Footer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final signal = ref.watch(activePublishingProvider)[post.id];
-    final waiting = post.targets.where((t) => t.status == TargetStatus.awaitingHandoff).toList();
-    final retry = post.targets.where(needsRetry).toList();
+    // 1.4.3: the networks in the publishing order, as a run takes them.
+    final targets = ref.watch(publishingSequenceProvider).targets(post.targets);
+    final waiting = targets.where((t) => t.status == TargetStatus.awaitingHandoff).toList();
+    final retry = targets.where(needsRetry).toList();
     final onlyFailed = retry.every((t) => t.status == TargetStatus.failed);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Wrap(spacing: Space.xs + 2, runSpacing: Space.xs + 2, children: [for (final t in post.targets) TargetChip(post: post, target: t)]),
+      Wrap(spacing: Space.xs + 2, runSpacing: Space.xs + 2, children: [for (final t in targets) TargetChip(post: post, target: t)]),
       PublishRunStatus(post: post, padding: const EdgeInsets.only(top: Space.md)),
       if (signal != null) ...[
         // Being published by this process right now.

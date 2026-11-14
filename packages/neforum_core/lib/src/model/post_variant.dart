@@ -2,6 +2,7 @@ import 'package:meta/meta.dart';
 
 import 'artwork.dart';
 import 'media.dart';
+import 'paragraph_media.dart';
 import 'poll.dart';
 import 'post.dart';
 import 'post_placement.dart';
@@ -35,6 +36,7 @@ class PostVariant {
     this.mediaPartIndexes = const [],
     this.seriesPosts = const [],
     this.postedThreadIds = const [],
+    this.paragraphMedia = const {},
   });
 
   /// Body text. When the post was split into a thread this is the first part.
@@ -104,6 +106,24 @@ class PostVariant {
   /// replying to the last one, and reports every id. Empty: a new thread.
   final List<String> postedThreadIds;
 
+  /// 1.4.3: the post's paragraph-to-media links ([Post.paragraphMedia]) as
+  /// this network uses them: paragraphs of [text] ([ParagraphMedia.split]),
+  /// files of [media]. Only set for a single post, written in the main text,
+  /// on a network that shows the links ([MediaRules.paragraphMedia]). Empty:
+  /// the post goes out as it always did.
+  final ParagraphMediaLinks paragraphMedia;
+
+  /// Whether the adapter shows this post section by section
+  /// ([paragraphSections]).
+  bool get hasParagraphMedia => paragraphMedia.isNotEmpty && !isThread;
+
+  /// The post as its reader goes through it: each linked paragraph (with
+  /// the paragraphs before it that are linked to nothing) followed by its
+  /// files ([ParagraphMedia.sections]). One section with all of [text] and
+  /// [media] when the post has no links.
+  List<ParagraphSection> get paragraphSections =>
+      hasParagraphMedia ? ParagraphMedia.sections(text, paragraphMedia, media) : [ParagraphSection(text.trim(), media)];
+
   bool get isArtwork => artwork != null;
 
   /// The posts this variant makes on its network as a series: this one,
@@ -163,6 +183,7 @@ class PostVariant {
     List<int>? mediaPartIndexes,
     List<PostVariant>? seriesPosts,
     List<String>? postedThreadIds,
+    ParagraphMediaLinks? paragraphMedia,
     bool clearLink = false,
   }) =>
       PostVariant(
@@ -189,6 +210,9 @@ class PostVariant {
             (media == null || media.length == this.media.length ? this.mediaPartIndexes : const []),
         seriesPosts: seriesPosts ?? this.seriesPosts,
         postedThreadIds: postedThreadIds ?? this.postedThreadIds,
+        // By media id: a file replaced by a copy made from it keeps its
+        // paragraph, and one left out simply has none.
+        paragraphMedia: paragraphMedia ?? this.paragraphMedia,
       );
 
   /// This variant without the media items [test] matches. Every other item

@@ -10,6 +10,7 @@ import '../../state/providers.dart';
 import '../../state/publish_progress_view.dart';
 import '../../state/publish_run_session.dart';
 import '../../state/publish_run_surface.dart';
+import '../../state/publishing_order.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
@@ -128,7 +129,9 @@ class PublishProgressSheet extends ConsumerWidget {
     final retryIds = post == null ? const <String>{} : post.targets.where(needsRetry).map((t) => t.accountId).toSet();
     // Once the plan is known its members are the rows: a network this run leaves
     // alone has no row to look busy in.
-    final rowIds = live != null ? [for (final t in live.targets) t.accountId] : [for (final e in targets) e.key];
+    // In the publishing order (1.4.3): the plan has it, and so do the rows before and after it.
+    final sequence = ref.watch(publishingSequenceProvider);
+    final rowIds = live != null ? [for (final t in live.targets) t.accountId] : sequence.accountIds([for (final e in targets) e.key]);
     final liveRows = {for (final t in live?.targets ?? const <TargetProgress>[]) t.accountId: t};
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -157,7 +160,7 @@ class PublishProgressSheet extends ConsumerWidget {
             shrinkWrap: true,
             padding: const EdgeInsets.symmetric(horizontal: Space.lg),
             itemCount: rowIds.length,
-            separatorBuilder: (_, _) => Divider(height: 1, color: nf.border, indent: 60),
+            separatorBuilder: (_, _) => Divider(height: 1, color: nf.hairline, indent: 60),
             itemBuilder: (context, i) {
               final id = rowIds[i];
               final account = ref.watch(accountByIdProvider(id));
@@ -190,7 +193,7 @@ class PublishProgressSheet extends ConsumerWidget {
               onPressed: () async {
                 final actions = ref.read(postActionsProvider);
                 Post? last;
-                for (final t in post.targets.where((t) => t.status == TargetStatus.awaitingHandoff)) {
+                for (final t in sequence.targets(post.targets).where((t) => t.status == TargetStatus.awaitingHandoff)) {
                   last = await actions.runHandoff(post.id, t.accountId);
                 }
                 // The last hand-off can complete the post, which may then be

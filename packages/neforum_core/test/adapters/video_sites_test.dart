@@ -27,6 +27,17 @@ void main() {
       }
     });
 
+    test('YouTube videos, Rumble, Odysee and BitChute are video sites; YouTube Posts and the feeds are not', () {
+      final r = builtinRegistry();
+      for (final id in ['youtube', 'rumble', 'odysee', 'bitchute']) {
+        expect(r.descriptor(id)!.categories, {PlatformCategory.video}, reason: id);
+        expect(r.descriptor(id)!.isVideoPlatform, isTrue, reason: id);
+        expect(r.descriptor(id)!.isArtPlatform, isFalse, reason: id);
+      }
+      final videoSites = [for (final a in r.all) if (a.descriptor.isVideoPlatform) a.descriptor.id];
+      expect(videoSites, unorderedEquals(['youtube', 'rumble', 'odysee', 'bitchute']));
+    });
+
     test('the title is the post title, else its first line, cut to the limit', () {
       expect(videoTitle(const PostVariant(text: 'body', title: 'My video'), max: 100), 'My video');
       expect(videoTitle(const PostVariant(text: 'First line\nmore'), max: 100), 'First line');

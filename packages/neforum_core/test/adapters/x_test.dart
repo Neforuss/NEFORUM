@@ -30,7 +30,7 @@ Map<String, String> _secrets({DateTime? expiresAt, String? refresh = 'rt-old', S
     };
 
 void main() {
-  final adapter = XAdapter();
+  final adapter = XAdapter(clock: () => testNow);
 
   group('descriptor', () {
     final d = adapter.descriptor;
@@ -261,10 +261,12 @@ void main() {
           isNot(contains('media.image_too_large')));
     });
 
-    test('five images and mixed media are errors', () {
+    test('five images and mixed media are errors where X refused large posts, and on the classic descriptor', () {
       final five = [for (var i = 0; i < 5; i++) fakeImage(id: 'i$i')];
-      expect(codes(PostVariant(text: 'x', media: five)), contains('media.too_many_images'));
-      expect(codes(PostVariant(text: 'x', media: [fakeImage(), fakeVideo()])), contains('media.mixed'));
+      final refused = _apiAccount(config: {..._apiAccount().config, 'largeMediaPosts': {'result': 'refused', 'at': testNow.toIso8601String()}});
+      expect(codes(PostVariant(text: 'x', media: five), refused), contains('media.too_many_images'));
+      expect(codes(PostVariant(text: 'x', media: [fakeImage(), fakeVideo()]), refused), contains('media.mixed'));
+      expect(RulesValidator.validate(PostVariant(text: 'x', media: five), adapter.descriptor).map((i) => i.code), contains('media.too_many_images'));
     });
 
     test('links trigger a cost notice on the API tier only', () {

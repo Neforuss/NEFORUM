@@ -21,7 +21,7 @@ const kAutomaticPostingPlatforms = {
   'x', 'bluesky', 'threads', 'linkedin', 'facebook', 'youtube_posts', 'youtube', 'substack', //
   'tiktok', 'instagram', 'pinterest', 'reddit', 'tumblr', 'whatsapp', 'google_business', 'snapchat', //
   'behance', 'artstation', 'cara', 'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', //
-  'kofi', 'artfol', 'fivehundredpx', 'dribbble', 'flickr',
+  'kofi', 'artfol', 'fivehundredpx', 'dribbble', 'flickr', 'parler',
 };
 
 /// A stored phone text size that can be used: 0.85 to 1.5, 1 otherwise.
@@ -68,6 +68,10 @@ double validNavigationChromeBlur(Object? blur) {
   if (blur is! num || !blur.isFinite) return 0;
   return blur.toDouble().clamp(0, kMaxNavigationChromeBlur);
 }
+
+/// 1.4.3: colours. A stored color that can be used: an int, made opaque;
+/// null otherwise.
+int? validOpaqueColor(Object? color) => color is int ? (color | 0xFF000000) & 0xFFFFFFFF : null;
 
 /// What happens to a post once every network has it (published, handed off
 /// or skipped).
@@ -118,9 +122,26 @@ enum NavigationChromeStyle {
   /// (AppSettings.navigationChromeOpacity, navigationChromeBlur), with the
   /// theme's text colors kept readable over it.
   transparent,
+
+  /// 1.4.3: colours. A color the user picks
+  /// (AppSettings.navigationChromeColor), with white or ink labels.
+  custom,
 }
 
 enum InterfaceDensity { comfortable, compact }
+
+/// 1.4.3: thread media. Where the composer adds the photos, videos and sound
+/// of a thread. Either way each attachment keeps the part it goes with
+/// (ComposerState.mediaParts), so switching loses nothing and a post looks
+/// the same on a phone and a computer.
+enum ThreadMediaLayout {
+  /// Every part has its own "Add media" and its own tray.
+  perPart,
+
+  /// One tray under the first part for the whole post; a Part chip on each
+  /// attachment picks the part it goes with.
+  singleTray,
+}
 
 /// Everything the user can change in Settings. Persisted as settings.json.
 @immutable
@@ -173,6 +194,7 @@ class AppSettings {
     this.navigationChrome = NavigationChromeStyle.brand,
     this.customAccentColor,
     this.interfaceDensity = InterfaceDensity.comfortable,
+    this.seamlessSurfaces = false, // 1.4.3: appearance
     this.mobileTextScale = 1,
     this.collapsedSettingsSections = const [],
     this.targetPickerFolded = false,
@@ -195,6 +217,7 @@ class AppSettings {
     this.fontDownloads = FontDownloadMode.ask, // 1.4: fonts
     this.emojiRecents = const [], // 1.4: emoji
     this.emojiSkinTone = 0, // 1.4: emoji
+    this.characterFavourites = const [], // 1.4.3: symbols
     // 1.4: notifications
     this.notificationPromptAt,
     this.notificationOsAskedAt,
@@ -204,11 +227,19 @@ class AppSettings {
     // 1.3.1: sidebar
     this.navigationChromeOpacity = 0,
     this.navigationChromeBlur = 0,
+    // 1.4.3: colours
+    this.navigationChromeColor,
+    this.navigationChromeTint,
     this.audioTextTemplate = kDefaultAudioTextTemplate, // 1.3.1: audio tags
     this.textCardCustomFont = const {}, // 1.3.1: cards
     this.textCardDesign = const {}, // 1.3.1: cards
     this.audioCardDesign = const {}, // 1.3.1: cards
     this.cardPresets = const [], // 1.3.1: cards
+    this.textCardShape = TextCardShape.automatic, // 1.4.3: cards
+    this.textCardLayout = TextCardLayout.full, // 1.4.3: cards
+    this.publishingOrder = const [], // 1.4.3: publishing order
+    this.defaultPlacements = const {}, // 1.4.3: story placement
+    this.threadMediaLayout = ThreadMediaLayout.perPart, // 1.4.3: thread media
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -260,6 +291,7 @@ class AppSettings {
         navigationChrome: NavigationChromeStyle.values.asNameMap()[j['navigationChrome']] ?? NavigationChromeStyle.brand,
         customAccentColor: j['customAccentColor'] as int?,
         interfaceDensity: InterfaceDensity.values.asNameMap()[j['interfaceDensity']] ?? InterfaceDensity.comfortable,
+        seamlessSurfaces: j['seamlessSurfaces'] == true, // 1.4.3: appearance
         mobileTextScale: validTextScale(j['mobileTextScale']),
         collapsedSettingsSections: (j['collapsedSettingsSections'] as List? ?? const []).cast<String>(),
         targetPickerFolded: j['targetPickerFolded'] as bool? ?? false,
@@ -283,6 +315,7 @@ class AppSettings {
         fontDownloads: FontDownloadMode.values.asNameMap()[j['fontDownloads']] ?? FontDownloadMode.ask, // 1.4: fonts
         emojiRecents: [for (final e in j['emojiRecents'] as List? ?? const []) if (e is String) e], // 1.4: emoji
         emojiSkinTone: ((j['emojiSkinTone'] as num?)?.toInt() ?? 0).clamp(0, 5), // 1.4: emoji
+        characterFavourites: [for (final e in j['characterFavourites'] as List? ?? const []) if (e is String && e.isNotEmpty) e], // 1.4.3: symbols
         // 1.4: notifications
         notificationPromptAt: DateTime.tryParse('${j['notificationPromptAt'] ?? ''}'),
         notificationOsAskedAt: DateTime.tryParse('${j['notificationOsAskedAt'] ?? ''}'),
@@ -292,11 +325,19 @@ class AppSettings {
         // 1.3.1: sidebar
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
         navigationChromeBlur: validNavigationChromeBlur(j['navigationChromeBlur']),
+        // 1.4.3: colours
+        navigationChromeColor: validOpaqueColor(j['navigationChromeColor']),
+        navigationChromeTint: validOpaqueColor(j['navigationChromeTint']),
         audioTextTemplate: j['audioTextTemplate'] as String? ?? kDefaultAudioTextTemplate, // 1.3.1: audio tags
         textCardCustomFont: Map<String, dynamic>.from(j['textCardCustomFont'] as Map? ?? const {}), // 1.3.1: cards
         textCardDesign: Map<String, dynamic>.from(j['textCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         audioCardDesign: Map<String, dynamic>.from(j['audioCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         cardPresets: [for (final p in j['cardPresets'] as List? ?? const []) if (p is Map) Map<String, dynamic>.from(p)], // 1.3.1: cards
+        textCardShape: TextCardShape.values.asNameMap()[j['textCardShape']] ?? TextCardShape.automatic, // 1.4.3: cards
+        textCardLayout: TextCardLayout.values.asNameMap()[j['textCardLayout']] ?? TextCardLayout.full, // 1.4.3: cards
+        publishingOrder: [for (final id in j['publishingOrder'] as List? ?? const []) if (id is String) id], // 1.4.3: publishing order
+        defaultPlacements: validDefaultPlacements(j['defaultPlacements']), // 1.4.3: story placement
+        threadMediaLayout: ThreadMediaLayout.values.asNameMap()[j['threadMediaLayout']] ?? ThreadMediaLayout.perPart, // 1.4.3: thread media
       );
 
   final ThemeMode themeMode;
@@ -437,6 +478,12 @@ class AppSettings {
 
   final InterfaceDensity interfaceDensity;
 
+  /// 1.4.3: Settings → Appearance → Seamless. Cards, sections, tiles, panels,
+  /// menus, dialogs and the navigation's edge have no outline; text fields,
+  /// chips, buttons, dividers and selected items keep theirs
+  /// (`NfColors.withSeamless`). Travels with the other appearance settings.
+  final bool seamlessSurfaces;
+
   /// Phones and tablets: text size, 1 = the system size. Device-only.
   final double mobileTextScale;
 
@@ -516,6 +563,11 @@ class AppSettings {
   /// 1.4: the skin tone the emoji sheet shows: 0 for the default, 1 to 5.
   final int emojiSkinTone;
 
+  /// 1.4.3: symbols. The emoji, symbols and kaomoji the user starred in the
+  /// character panel, newest first: one set shared by its tabs. It travels
+  /// with Sync and "Move to another device", like the other choices.
+  final List<String> characterFavourites;
+
   /// 1.4: when the explanation screen about notifications was shown here. It
   /// is shown once. Saying Not now spends nothing with the OS. Device-only.
   final DateTime? notificationPromptAt;
@@ -550,6 +602,17 @@ class AppSettings {
   /// navigation chrome: 0 (sharp) to [kMaxNavigationChromeBlur].
   final double navigationChromeBlur;
 
+  /// 1.4.3: colours. ARGB of the navigation chrome the user picked for
+  /// [NavigationChromeStyle.custom]; null until one is picked (the chrome is
+  /// then NEFORUM purple). NEFORUM darkens it only as far as its labels need.
+  final int? navigationChromeColor;
+
+  /// 1.4.3: colours. ARGB of the tint over what shows through the see-through
+  /// navigation chrome, in place of the theme's surface color; null for the
+  /// surface color. NEFORUM moves it toward the surface only as far as the
+  /// labels need.
+  final int? navigationChromeTint;
+
   /// 1.3.1: audio tags. The post text "Use track details as the text" writes
   /// from a track's details ([renderAudioText]): `{artist} – {title}` and
   /// the other tokens of [audioTextTokens].
@@ -573,6 +636,36 @@ class AppSettings {
 
   /// 1.3.1: cards. Designs the user saved under a name (CardPreset.toJson).
   final List<Map<String, dynamic>> cardPresets;
+
+  /// 1.4.3: cards. The shape new posts' classic text cards start with
+  /// ([TextCardShape.automatic]: each network's own). Each post can change
+  /// it in the text card editor.
+  final TextCardShape textCardShape;
+
+  /// 1.4.3: cards. Whether new posts' classic text cards start as a quote
+  /// card ([TextCardLayout.panel]) or the whole card.
+  final TextCardLayout textCardLayout;
+
+  /// 1.4.3: cards. The style a new post's classic text card starts with:
+  /// [textCardShape] and [textCardLayout], everything else as the classic
+  /// card has it.
+  TextCardStyle get newTextCardStyle => TextCardStyle(shape: textCardShape, layout: textCardLayout);
+  /// 1.4.3: the order posts go out to the user's accounts, as account ids
+  /// (inPublishingOrder): automatic accounts first and hand-offs after them,
+  /// each group in this order. An account it does not list yet, such as one
+  /// connected since, goes last in its group. Empty: the order the accounts
+  /// were connected in.
+  final List<String> publishingOrder;
+
+  /// 1.4.3: story placement. Post, Story or Post + Story as last chosen in the
+  /// composer, by account id (a [PostPlacement] name). New posts start with
+  /// it on accounts that can post a story; the feed (the default) is not
+  /// stored. See lib/state/story_placements.dart.
+  final Map<String, String> defaultPlacements;
+
+  /// 1.4.3: thread media. Each part of a thread with its own "Add media", or
+  /// one tray for the whole post.
+  final ThreadMediaLayout threadMediaLayout;
 
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
@@ -635,6 +728,7 @@ class AppSettings {
     NavigationChromeStyle? navigationChrome,
     int? customAccentColor,
     InterfaceDensity? interfaceDensity,
+    bool? seamlessSurfaces,
     double? mobileTextScale,
     List<String>? collapsedSettingsSections,
     bool? targetPickerFolded,
@@ -658,6 +752,7 @@ class AppSettings {
     FontDownloadMode? fontDownloads, // 1.4: fonts
     List<String>? emojiRecents, // 1.4: emoji
     int? emojiSkinTone, // 1.4: emoji
+    List<String>? characterFavourites, // 1.4.3: symbols
     // 1.4: notifications
     DateTime? notificationPromptAt,
     DateTime? notificationOsAskedAt,
@@ -667,13 +762,24 @@ class AppSettings {
     // 1.3.1: sidebar
     double? navigationChromeOpacity,
     double? navigationChromeBlur,
+    // 1.4.3: colours
+    int? navigationChromeColor,
+    int? navigationChromeTint,
+    bool clearNavigationChromeTint = false,
     String? audioTextTemplate, // 1.3.1: audio tags
     Map<String, dynamic>? textCardCustomFont, // 1.3.1: cards
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
     Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
     List<Map<String, dynamic>>? cardPresets, // 1.3.1: cards
+    TextCardShape? textCardShape, // 1.4.3: cards
+    TextCardLayout? textCardLayout, // 1.4.3: cards
+    List<String>? publishingOrder, // 1.4.3: publishing order
+    Map<String, String>? defaultPlacements, // 1.4.3: story placement
+    ThreadMediaLayout? threadMediaLayout, // 1.4.3: thread media
   }) =>
       AppSettings(
+        textCardShape: textCardShape ?? this.textCardShape, // 1.4.3: cards
+        textCardLayout: textCardLayout ?? this.textCardLayout, // 1.4.3: cards
         themeMode: themeMode ?? this.themeMode,
         accent: accent ?? this.accent,
         overflow: overflow ?? this.overflow,
@@ -721,6 +827,7 @@ class AppSettings {
         navigationChrome: navigationChrome ?? this.navigationChrome,
         customAccentColor: customAccentColor ?? this.customAccentColor,
         interfaceDensity: interfaceDensity ?? this.interfaceDensity,
+        seamlessSurfaces: seamlessSurfaces ?? this.seamlessSurfaces,
         mobileTextScale: mobileTextScale ?? this.mobileTextScale,
         collapsedSettingsSections: collapsedSettingsSections ?? this.collapsedSettingsSections,
         targetPickerFolded: targetPickerFolded ?? this.targetPickerFolded,
@@ -743,6 +850,7 @@ class AppSettings {
         fontDownloads: fontDownloads ?? this.fontDownloads, // 1.4: fonts
         emojiRecents: emojiRecents ?? this.emojiRecents, // 1.4: emoji
         emojiSkinTone: emojiSkinTone ?? this.emojiSkinTone, // 1.4: emoji
+        characterFavourites: characterFavourites ?? this.characterFavourites, // 1.4.3: symbols
         // 1.4: notifications
         notificationPromptAt: notificationPromptAt ?? this.notificationPromptAt,
         notificationOsAskedAt: notificationOsAskedAt ?? this.notificationOsAskedAt,
@@ -752,11 +860,17 @@ class AppSettings {
         // 1.3.1: sidebar
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
         navigationChromeBlur: navigationChromeBlur ?? this.navigationChromeBlur,
+        // 1.4.3: colours
+        navigationChromeColor: navigationChromeColor ?? this.navigationChromeColor,
+        navigationChromeTint: clearNavigationChromeTint ? null : (navigationChromeTint ?? this.navigationChromeTint),
         audioTextTemplate: audioTextTemplate ?? this.audioTextTemplate, // 1.3.1: audio tags
         textCardCustomFont: textCardCustomFont ?? this.textCardCustomFont, // 1.3.1: cards
         textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
         audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
         cardPresets: cardPresets ?? this.cardPresets, // 1.3.1: cards
+        publishingOrder: publishingOrder ?? this.publishingOrder, // 1.4.3: publishing order
+        defaultPlacements: defaultPlacements ?? this.defaultPlacements, // 1.4.3: story placement
+        threadMediaLayout: threadMediaLayout ?? this.threadMediaLayout, // 1.4.3: thread media
       );
 
   Map<String, dynamic> toJson() => {
@@ -807,6 +921,7 @@ class AppSettings {
         'navigationChrome': navigationChrome.name,
         if (customAccentColor != null) 'customAccentColor': customAccentColor,
         'interfaceDensity': interfaceDensity.name,
+        'seamlessSurfaces': seamlessSurfaces, // 1.4.3: appearance
         if (mobileTextScale != 1) 'mobileTextScale': mobileTextScale,
         if (collapsedSettingsSections.isNotEmpty) 'collapsedSettingsSections': collapsedSettingsSections,
         if (targetPickerFolded) 'targetPickerFolded': targetPickerFolded,
@@ -829,6 +944,7 @@ class AppSettings {
         'fontDownloads': fontDownloads.name, // 1.4: fonts
         if (emojiRecents.isNotEmpty) 'emojiRecents': emojiRecents, // 1.4: emoji
         if (emojiSkinTone != 0) 'emojiSkinTone': emojiSkinTone, // 1.4: emoji
+        if (characterFavourites.isNotEmpty) 'characterFavourites': characterFavourites, // 1.4.3: symbols
         // 1.4: notifications
         if (notificationPromptAt != null) 'notificationPromptAt': notificationPromptAt!.toUtc().toIso8601String(),
         if (notificationOsAskedAt != null) 'notificationOsAskedAt': notificationOsAskedAt!.toUtc().toIso8601String(),
@@ -838,10 +954,30 @@ class AppSettings {
         // 1.3.1: sidebar
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,
         if (navigationChromeBlur != 0) 'navigationChromeBlur': navigationChromeBlur,
+        // 1.4.3: colours
+        if (navigationChromeColor != null) 'navigationChromeColor': navigationChromeColor,
+        if (navigationChromeTint != null) 'navigationChromeTint': navigationChromeTint,
         'audioTextTemplate': audioTextTemplate, // 1.3.1: audio tags
         if (textCardCustomFont.isNotEmpty) 'textCardCustomFont': textCardCustomFont, // 1.3.1: cards
         if (textCardDesign.isNotEmpty) 'textCardDesign': textCardDesign, // 1.3.1: cards
         if (audioCardDesign.isNotEmpty) 'audioCardDesign': audioCardDesign, // 1.3.1: cards
         if (cardPresets.isNotEmpty) 'cardPresets': cardPresets, // 1.3.1: cards
+        'textCardShape': textCardShape.name, // 1.4.3: cards
+        'textCardLayout': textCardLayout.name, // 1.4.3: cards
+        'publishingOrder': publishingOrder, // 1.4.3: publishing order
+        if (defaultPlacements.isNotEmpty) 'defaultPlacements': defaultPlacements, // 1.4.3: story placement
+        'threadMediaLayout': threadMediaLayout.name, // 1.4.3: thread media
       };
+}
+
+/// 1.4.3: story placement. The stored [AppSettings.defaultPlacements] that
+/// can be used: account ids with the name of a story placement. Anything
+/// else (the feed, which is the default, an unknown name, a value that is
+/// not text) is left out.
+Map<String, String> validDefaultPlacements(Object? raw) {
+  if (raw is! Map) return const {};
+  return {
+    for (final e in raw.entries)
+      if ((e.key, PostPlacement.tryParse(e.value)) case (final String id, final PostPlacement p) when p != PostPlacement.feed) id: p.name,
+  };
 }

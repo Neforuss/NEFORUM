@@ -14,6 +14,7 @@ import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../audio_links.dart' show audioCoverUploadPart, mayRetryWithoutThumbnail;
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'blog_common.dart';
 import 'ghost_api.dart';
@@ -43,6 +44,7 @@ class GhostAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'ghost',
+    options: ghostOptions,
     name: 'Ghost',
     iconKey: 'ghost',
     homepage: 'https://ghost.org',

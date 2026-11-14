@@ -80,8 +80,11 @@ class NeforumApp extends ConsumerWidget {
           customAccent: settings.customAccentColor,
           corners: settings.cornerStyle,
           chrome: settings.navigationChrome,
+          chromeColor: settings.navigationChromeColor,
+          chromeTint: settings.navigationChromeTint,
           density: settings.interfaceDensity,
           highContrast: highContrast,
+          seamless: settings.seamlessSurfaces,
         );
     // Above MaterialApp there is no MediaQuery yet: the platform's own flag.
     final reduceMotion = WidgetsBinding.instance.platformDispatcher.accessibilityFeatures.disableAnimations;

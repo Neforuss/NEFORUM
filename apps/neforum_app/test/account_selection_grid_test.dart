@@ -1029,8 +1029,14 @@ void main() {
 
       await t.tap(find.widgetWithText(TextButton, 'Automatic only'));
       await _settle(t);
+      // 1.4.3: of the enabled automatic accounts, the ones that can take the
+      // post: an empty post has no video for YouTube videos, nor words for
+      // Pinterest's text card.
       final auto = accounts.where((a) => a.enabled && a.tier != PlatformTier.handoff).map((a) => a.id).toSet();
-      expect(c.read(composerProvider).selected, auto);
+      expect(c.read(composerProvider).selected, auto.difference(const {'acct-youtube', 'acct-pinterest'}));
+      expect(_entry(t, 'acct-youtube').skipReason, 'Needs a video');
+      expect(_entry(t, 'acct-pinterest').skipReason, 'Needs a photo or video');
+      expect(_entry(t, 'acct-lemmy').skipReason, isNull, reason: 'disabled, not left out by Automatic only');
       await _end(t);
     });
 
@@ -1751,5 +1757,83 @@ void main() {
     });
 
     testWidgets('a tablet', (t) => check(t, const Size(900, 700)));
+  });
+
+  // 1.4.3: Automatic only picks the automatic accounts whose rules take the
+  // post, and the ones it leaves out say why on their cell.
+  group('Automatic only by the post', () {
+    const video = MediaAttachment(id: 'clip', path: 'mem://clip.mp4', mimeType: 'video/mp4', sizeBytes: 4096, fileName: 'clip.mp4');
+    List<ConnectedAccount> five() => [_account('mastodon'), _account('bluesky'), _account('youtube'), _account('odysee'), _account('pinterest')];
+    Finder reason(String id) => find.byKey(ValueKey('account-cell-reason-$id'));
+
+    for (final scale in const [1.0, 1.5]) {
+      testWidgets('a words-only post leaves out the video sites, each cell says why, and the height still holds, text x$scale', (t) async {
+        final c = await _boot(t, accounts: five(), size: const Size(360, 900), textScale: scale);
+        c.read(composerProvider.notifier).setText('Hello everyone');
+        await t.tap(find.widgetWithText(TextButton, 'Automatic only'));
+        await _settle(t);
+        expect(c.read(composerProvider).selected, {'acct-mastodon', 'acct-bluesky', 'acct-pinterest'}, reason: 'Pinterest gets the words as a text card');
+        expect(t.widget<AccountCell>(_cell('acct-youtube')).tile, isFalse, reason: 'names, with room for the reason');
+        for (final id in const ['acct-youtube', 'acct-odysee']) {
+          expect(t.widget<Text>(reason(id)).data, 'Needs a video', reason: id);
+          expect(find.descendant(of: _cell(id), matching: find.text('Needs a video')), findsOneWidget, reason: id);
+          expect(_entry(t, id).semanticLabel, endsWith('left out, needs a video'));
+          expect(_entry(t, id).tooltip, contains('Left out by Automatic only: Needs a video'));
+        }
+        expect(reason('acct-mastodon'), findsNothing);
+
+        // The form is decided from a sum: the reason is in it.
+        final grid = find.byType(AccountSelectionGrid);
+        final widget = t.widget<AccountSelectionGrid>(grid);
+        expect(accountGridHeight(t.element(grid), widget.entries, t.getSize(grid).width, widget.form), moreOrLessEquals(t.getSize(grid).height, epsilon: 0.5));
+        await _end(t);
+      });
+    }
+
+    testWidgets('a left-out account can still be chosen; a video brings the others in, and taking it away takes them out again', (t) async {
+      final c = await _boot(t, accounts: five(), size: const Size(360, 900));
+      final n = c.read(composerProvider.notifier)..setText('Watch this');
+      await t.tap(find.widgetWithText(TextButton, 'Automatic only'));
+      await _settle(t);
+
+      await t.tap(_cell('acct-youtube'));
+      await _settle(t);
+      expect(c.read(composerProvider).selected, contains('acct-youtube'));
+      expect(reason('acct-youtube'), findsNothing);
+      expect(reason('acct-odysee'), findsOneWidget);
+
+      n.addMedia(const [video]);
+      await _settle(t);
+      expect(c.read(composerProvider).selected, containsAll(const ['acct-youtube', 'acct-odysee']));
+      expect(reason('acct-odysee'), findsNothing);
+
+      n.removeMedia(video.id);
+      await _settle(t);
+      expect(c.read(composerProvider).selected, isNot(contains('acct-odysee')), reason: 'NEFORUM added it, NEFORUM takes it away');
+      expect(c.read(composerProvider).selected, contains('acct-youtube'), reason: 'ticked by hand');
+      expect(reason('acct-odysee'), findsOneWidget);
+      await _end(t);
+    });
+
+    testWidgets('on a computer the chip says why after its name', (t) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+      try {
+        final c = await _boot(t, accounts: five(), size: const Size(1440, 900));
+        c.read(composerProvider.notifier).setText('Hello everyone');
+        await t.tap(find.widgetWithText(TextButton, 'Automatic only'));
+        await _settle(t);
+        Finder chip(String id) => find.byWidgetPredicate((w) => w is AccountChip && w.account.id == id);
+        expect(t.widget<AccountChip>(chip('acct-youtube')).skipReason, 'Needs a video');
+        expect(t.widget<AccountChip>(chip('acct-mastodon')).skipReason, isNull);
+        expect(find.descendant(of: chip('acct-odysee'), matching: find.textContaining('Needs a video')), findsOneWidget);
+        await t.tap(chip('acct-odysee'));
+        await _settle(t);
+        expect(c.read(composerProvider).selected, contains('acct-odysee'), reason: 'still selectable');
+        expect(find.descendant(of: chip('acct-odysee'), matching: find.textContaining('Needs a video')), findsNothing);
+        await _end(t);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
   });
 }

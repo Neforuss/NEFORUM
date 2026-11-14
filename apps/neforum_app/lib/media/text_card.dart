@@ -132,12 +132,63 @@ Size textCardSize(String platformId, {bool story = false}) => story
         _ => const Size(1080, 1080),
       };
 
+/// 1.4.3: cards. The pixel size of the picture [platformId] gets for a card
+/// of [shape]: the card's own size ([TextCardShape.size]) where the network
+/// shows it whole, else a frame the network takes with the whole card drawn
+/// inside it ([TextCardPainter.cardRect]). Never a card cut to fit.
+///
+/// - Each network's own shape ([TextCardShape.automatic]) is [textCardSize],
+///   as before.
+/// - A [story] is always the full-screen 9:16 frame, and so is Snapchat.
+///   TikTok is too while Settings fit its photos to the whole frame
+///   ([fillsFrame], Settings > Posting); without that TikTok gets the card
+///   as it is and shows it whole on black, as it does such photos.
+/// - A network whose photo rules refuse the shape ([minAspect] to
+///   [maxAspect], width / height, from `PlatformAdapter.photoFit`) gets the
+///   nearest shape they take, the card with room added around it, as
+///   "Fit photos" adds borders to a photo. Instagram's feed takes 0.8 to
+///   1.91, so both landscapes go to it as they are.
+Size textCardFrameSize(String platformId,
+    {bool story = false, TextCardShape shape = TextCardShape.automatic, bool fillsFrame = true, double? minAspect, double? maxAspect}) {
+  final own = textCardSize(platformId, story: story);
+  final card = shape.size;
+  if (card == null || story) return own;
+  final fullScreen = own.width / own.height < 0.62;
+  if (fullScreen && (platformId != 'tiktok' || fillsFrame)) return own;
+  final r = card.width / card.height;
+  if (minAspect != null && r < minAspect - PhotoFit.aspectTolerance) return Size((card.height * minAspect).roundToDouble(), card.height);
+  if (maxAspect != null && r > maxAspect + PhotoFit.aspectTolerance) return Size(card.width, (card.width / maxAspect).roundToDouble());
+  return card;
+}
+
+/// 1.4.3: cards. What [network] gets when its picture ([frame], from
+/// [textCardFrameSize]) is not the card's [shape]: "TikTok gets a 9:16
+/// picture with your 16:9 card whole inside it". Null when the network gets
+/// the card as it is, or the card is each network's own shape.
+String? textCardFrameNote(String network, TextCardShape shape, Size frame) {
+  final aspect = shape.aspect;
+  if (aspect == null || frame.height <= 0) return null;
+  final framed = frame.width / frame.height;
+  if ((framed - aspect).abs() <= 0.02) return null;
+  return '$network gets a ${PhotoFit.ratioLabel(framed)} picture with your ${PhotoFit.ratioLabel(aspect)} card whole inside it';
+}
+
 /// The safe area of [platformId]'s card: only full-screen (9:16) cards
-/// (TikTok, Snapchat, stories) have the network's buttons over them.
-EdgeInsets textCardSafeArea(String platformId, {bool story = false}) {
-  final s = textCardSize(platformId, story: story);
+/// (TikTok, Snapchat, stories) have the network's buttons over them. [size]
+/// (1.4.3) is the card's when it is not the network's own
+/// ([textCardFrameSize]).
+EdgeInsets textCardSafeArea(String platformId, {bool story = false, Size? size}) {
+  final s = size ?? textCardSize(platformId, story: story);
   return s.width / s.height < 0.62 ? fullScreenSafeArea(platformId) : EdgeInsets.zero;
 }
+
+/// 1.4.3: cards. The colour around a card drawn inside a larger frame, or
+/// around a quote card ([TextCardLayout.panel]) without a background photo:
+/// the card's own colour, a little darker for a light card and a little
+/// lighter for a dark one, so the card's edge shows without a second
+/// colour to choose.
+Color textCardSurroundColour(Color card) =>
+    card.computeLuminance() > 0.5 ? Color.lerp(card, const Color(0xFF000000), 0.09)! : Color.lerp(card, const Color(0xFFFFFFFF), 0.14)!;
 
 /// The size a card or placeholder [m] was made at; [textCardSize] for cards
 /// that do not record it.
@@ -227,7 +278,13 @@ String textCardText(Post post, PostTarget target) {
         for (final p in post.parts)
           if (p.trim().isNotEmpty) p.trimRight(),
       ].join('\n\n');
-  final lines = written.trim().split('\n');
+  return withoutTrailingTagsAndLinks(written);
+}
+
+/// [text] without its trailing lines that are only hashtags or links (those
+/// belong in the caption); a text that is nothing else keeps its first line.
+String withoutTrailingTagsAndLinks(String text) {
+  final lines = text.trim().split('\n');
   final tagOrLink = RegExp(r'^(\s*(#[\p{L}\p{N}_]+|https?://\S+)\s*)+$', unicode: true);
   while (lines.length > 1 && (lines.last.trim().isEmpty || tagOrLink.hasMatch(lines.last))) {
     lines.removeLast();
@@ -236,8 +293,12 @@ String textCardText(Post post, PostTarget target) {
 }
 
 /// Alt text for a card: the card's own words (platform alt limits are
-/// around 1,000 characters).
-String textCardAltText(String text) => text.length <= 1000 ? text : '${text.substring(0, 999)}…';
+/// around 1,000 characters), without the asterisks that make some of them
+/// bold or italic, and (1.4.3) the [attribution] under them.
+String textCardAltText(String text, {String? attribution}) {
+  final words = [stripEmphasis(text), ?attribution].join('\n');
+  return words.length <= 1000 ? words : '${words.substring(0, 999)}…';
+}
 
 /// [safe]: the card keeps clear of a network's buttons ([fullScreenSafeArea]).
 /// The name still carries the markers cards had before 1.2.0, which helps
@@ -335,7 +396,9 @@ bool isTextCardPlaceholder(MediaAttachment m) => m.path.startsWith(kTextCardPlac
 
 /// What the composer's previews and checks see in place of the real card.
 /// [byline] (1.3.5) is the @handle the card will show, recorded like a saved
-/// card's when [showsHandle]; [style] is the post's [TextCardStyle].
+/// card's when [showsHandle]; [style] is the post's [TextCardStyle]. [size]
+/// (1.4.3) is the picture's when the card's shape is not the network's own
+/// ([textCardFrameSize]).
 MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     {bool branded = true,
     TextCardFont font = TextCardFont.original,
@@ -346,8 +409,9 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
     CaptionFont? customFont,
     CardDesign? design,
     String? byline,
-    TextCardStyle style = TextCardStyle.classic}) {
-  final s = textCardSize(platformId, story: story);
+    TextCardStyle style = TextCardStyle.classic,
+    Size? size}) {
+  final s = size ?? textCardSize(platformId, story: story);
   return MediaAttachment(
     id: story ? 'textcard-$platformId-story' : 'textcard-$platformId',
     path: '$kTextCardPlaceholder${theme.name}${branded ? '' : ':plain'}${font.marker.isEmpty ? '' : ':${font.marker}'}',
@@ -365,7 +429,7 @@ MediaAttachment textCardPlaceholder(String platformId, TextCardTheme theme,
       alignment: alignment,
       showsHandle: showsHandle,
       byline: byline,
-      safe: textCardSafeArea(platformId, story: story) != EdgeInsets.zero,
+      safe: textCardSafeArea(platformId, story: story, size: s) != EdgeInsets.zero,
       background: background,
       customFont: customFont,
       design: design,
@@ -446,9 +510,14 @@ class TextCardPainter extends CustomPainter {
 
   /// The words' style at [fontSize]: [font], or the loaded [customFont] with
   /// [font] and the [kCaptionFontFallbacks] for what it lacks.
+  /// On a quote card (1.4.3) the words are set in regular weight, the way a
+  /// quote is printed, so that **bold** words stand out.
   TextStyle _wordsStyle(double fontSize, Color color) {
     final alias = registeredCaptionFontAlias(customFont);
-    if (alias == null) return font.style(fontSize: fontSize, height: style.lineSpacing, color: color);
+    if (alias == null) {
+      final words = font.style(fontSize: fontSize, height: style.lineSpacing, color: color);
+      return style.layout == TextCardLayout.panel ? _weighted(words, FontWeight.w400) : words;
+    }
     return TextStyle(
       fontFamily: alias,
       fontFamilyFallback: [...captionFontSubsetAliases(customFont), font.family, ...font.fallback, ...kCaptionFontFallbacks],
@@ -481,12 +550,58 @@ class TextCardPainter extends CustomPainter {
   /// A photo behind the words instead of the theme's plain colour.
   final TextCardBackdrop? backdrop;
 
-  /// The words' colour: the style's, else the photo's text colour, else the
-  /// theme's.
-  Color get _foreground => style.textColorOr(backdrop?.foreground ?? theme.foreground);
+  /// [s] at [weight], a variable font's weight axis too.
+  static TextStyle _weighted(TextStyle s, FontWeight weight) => s.fontWeight == weight
+      ? s
+      : s.copyWith(fontWeight: weight, fontVariations: [
+          for (final v in s.fontVariations ?? const <FontVariation>[]) v.axis == 'wght' ? FontVariation('wght', weight.value.toDouble()) : v,
+        ]);
 
-  /// Where everything but the words goes on a card of [size], worked out the
-  /// same way for painting and for [measureWords].
+  /// 1.4.3: cards. [base] with [run]'s emphasis: bold a clear step heavier
+  /// than the words, italic slanted.
+  static TextStyle emphasised(TextStyle base, EmphasisRun run) {
+    var s = base;
+    if (run.bold) {
+      final w = (base.fontWeight ?? FontWeight.w400).value;
+      s = _weighted(s, w <= 500 ? FontWeight.w700 : (w < 700 ? FontWeight.w800 : FontWeight.w900));
+    }
+    if (run.italic) s = s.copyWith(fontStyle: FontStyle.italic);
+    return s;
+  }
+
+  /// The words' colour on a card over [over]: the style's, else the photo's
+  /// text colour, else the theme's.
+  Color _foregroundOver(TextCardBackdrop? over) => style.textColorOr(over?.foreground ?? theme.foreground);
+
+  /// 1.4.3: cards. Where the card itself goes in a picture of [size], and
+  /// how round its corners are; null when the card is the whole picture, as
+  /// cards always were. A card is drawn inside the picture when the picture
+  /// is not the card's shape (a 16:9 card in TikTok's 9:16 frame,
+  /// [textCardFrameSize]) or it is a quote card ([TextCardLayout.panel]):
+  /// whole, as large as fits inside the network's [safe] area with room
+  /// around it, on [textCardSurroundColour] or the background photo.
+  ({Rect rect, double radius})? cardRect(Size size) {
+    final s = style;
+    final aspect = s.shape.aspect;
+    final inset = aspect != null && (size.width / size.height - aspect).abs() > 0.02;
+    final panel = s.layout == TextCardLayout.panel;
+    if (!inset && !panel) return null;
+    final u = math.min(size.width, size.height) / 1080;
+    final room = (panel ? s.margin / 2 : 40.0) * u;
+    final box = Rect.fromLTRB(safe.left * u + room, safe.top * u + room, size.width - safe.right * u - room, size.height - safe.bottom * u - room);
+    var rect = box;
+    if (inset && box.width > 0 && box.height > 0) {
+      final w = math.min(box.width, box.height * aspect);
+      final h = w / aspect;
+      rect = Rect.fromCenter(center: box.center, width: w, height: h);
+    }
+    return (rect: rect, radius: panel ? 40 * math.min(rect.width, rect.height) / 1080 : 0.0);
+  }
+
+  /// Where everything but the words goes on a card of [size] with [safe]
+  /// and words of [fg], worked out the same way for painting and for
+  /// [measureWords]. Measurements scale with the card's shorter side: the
+  /// width of every card before 1.4.3, the height of a landscape one.
   ({
     double u,
     double pad,
@@ -502,12 +617,11 @@ class TextCardPainter extends CustomPainter {
     double top,
     double areaW,
     TextPainter Function(double room) handleLaidOut,
-  }) _geometry(Size size) {
-    final u = size.width / 1080;
+  }) _geometry(Size size, EdgeInsets safe, Color fg) {
+    final u = math.min(size.width, size.height) / 1080;
     final w = size.width;
     final h = size.height;
     final s = style;
-    final fg = _foreground;
     final pad = s.margin * u;
     final safeTop = safe.top * u, safeRight = safe.right * u, safeBottom = safe.bottom * u;
     final rule = branded ? 14 * u : 0.0;
@@ -554,24 +668,69 @@ class TextCardPainter extends CustomPainter {
     );
   }
 
+  /// Largest size of the words, in pixels at 1080 on the card's shorter side:
+  /// short words are set this large.
+  static const double maxWordsSize = 104;
+
+  /// Smallest size of the words: longer words are cut rather than set
+  /// smaller.
+  static const double minWordsSize = 30;
+
+  /// 1.4.3: cards. The space between the words and the attribution line, as
+  /// a share of the words' size (the attribution is set at that size).
+  static const double attributionGap = 0.8;
+
   /// The words set as large as fits in [areaW] x [areaH] (never smaller than
-  /// 30 px at 1080 wide), then at the style's size: [fitted] is the size at
-  /// 100%, [fs] the size drawn. The caller disposes of [words].
-  ({AlignedText words, double fs, double fitted}) _fitWords(double u, double areaW, double areaH, Color fg) {
+  /// [minWordsSize]), then at the style's size: [fitted] is the size at
+  /// 100%, [fs] the size drawn. With an attribution (1.4.3) its line and the
+  /// space above it ([gap]) are kept free under the words first. The caller
+  /// disposes of [words] and [attribution].
+  ({AlignedText words, double fs, double fitted, TextPainter? attribution, double gap}) _fitWords(double u, double areaW, double areaH, Color fg) {
     final s = style;
     final rtl = Bidi.detectRtlDirectionality(text);
+    // 1.4.3: cards. **Bold** and *italic* in the words; words without them
+    // are laid out exactly as before.
+    final marked = hasEmphasis(text);
     AlignedText layout(double fs, {int? maxLines}) => AlignedText(
           text,
           style: _wordsStyle(fs, fg),
           alignment: alignment,
           direction: rtl ? TextDirection.rtl : TextDirection.ltr,
           maxLines: maxLines,
+          emphasis: marked ? (run) => emphasised(_wordsStyle(fs, fg), run) : null,
         )..layout(areaW, fill: true);
 
-    var fs = 104 * u;
-    final minFs = 30 * u;
+    // 1.4.3: cards. The attribution, in the words' font, in bold.
+    final by = s.attribution;
+    TextPainter? attributionAt(double size) {
+      if (by == null || areaW <= 0) return null;
+      final byRtl = Bidi.detectRtlDirectionality(by);
+      return TextPainter(
+        text: emojiSpan(by, emphasised(_wordsStyle(size, fg), const EmphasisRun('', bold: true)).copyWith(height: 1.25)),
+        textDirection: byRtl ? TextDirection.rtl : TextDirection.ltr,
+        textAlign: alignment == TextCardAlignment.center ? TextAlign.center : (alignment == TextCardAlignment.right ? TextAlign.end : TextAlign.start),
+        maxLines: 2,
+        ellipsis: '…',
+      )..layout(maxWidth: areaW);
+    }
+
+    // The attribution is set at the words' size, [attributionGap] of it
+    // under them: the room it takes at each size the words are tried at.
+    final reserved = <double, double>{};
+    double reserve(double fs) => by == null
+        ? 0
+        : reserved.putIfAbsent(fs, () {
+            final a = attributionAt(fs);
+            final h = a == null ? 0.0 : a.height + fs * attributionGap;
+            a?.dispose();
+            return h;
+          });
+    bool tooTall(AlignedText words, double fs) => words.height + reserve(fs) > areaH;
+
+    var fs = maxWordsSize * u;
+    final minFs = minWordsSize * u;
     var words = layout(fs);
-    while (words.height > areaH && fs > minFs) {
+    while (tooTall(words, fs) && fs > minFs) {
       words.dispose();
       fs = math.max(minFs, fs - 4 * u);
       words = layout(fs);
@@ -587,7 +746,7 @@ class TextCardPainter extends CustomPainter {
     } else if (scale > 1) {
       var larger = fs * scale;
       var grown = layout(larger);
-      while (grown.height > areaH && larger > fitted) {
+      while (tooTall(grown, larger) && larger > fitted) {
         grown.dispose();
         larger = math.max(fitted, larger - 4 * u);
         grown = layout(larger);
@@ -596,12 +755,37 @@ class TextCardPainter extends CustomPainter {
       words = grown;
       fs = larger;
     }
-    if (words.height > areaH) {
-      final lines = math.max(1, (areaH / (fs * s.lineSpacing)).floor());
+    if (tooTall(words, fs)) {
+      final lines = math.max(1, (math.max(0.0, areaH - reserve(fs)) / (fs * s.lineSpacing)).floor());
       words.dispose();
       words = layout(fs, maxLines: lines);
     }
-    return (words: words, fs: fs, fitted: fitted);
+    return (words: words, fs: fs, fitted: fitted, attribution: attributionAt(fs), gap: by == null ? 0.0 : fs * attributionGap);
+  }
+
+  /// 1.4.3: cards. Where the words (laid out [words.height] high) and the
+  /// attribution under them go in the room from [top] to [top] + [areaH],
+  /// [areaW] wide from [pad]: together, at the style's position, the
+  /// attribution lined up with the words.
+  ({Offset words, Offset? attribution, double height}) _placeWords(
+      double pad, double top, double areaW, double areaH, AlignedText words, TextPainter? attribution, double gap) {
+    final height = words.height + (attribution == null ? 0 : gap + attribution.height);
+    final position = style.textPosition ?? backdrop?.background.textPosition ?? TextCardTextPosition.center;
+    // The middle is worked out as before 1.3, so those cards stay the same.
+    final origin = Offset(
+        pad, position == TextCardTextPosition.center ? top + (areaH - height) / 2 : top + math.max(0.0, areaH - height) * position.anchor);
+    if (attribution == null) return (words: origin, attribution: null, height: height);
+    final start = attribution.textDirection == TextDirection.rtl ? 1.0 : 0.0;
+    final anchor = switch (alignment) {
+      TextCardAlignment.center => 0.5,
+      TextCardAlignment.right => 1 - start,
+      _ => start,
+    };
+    return (
+      words: origin,
+      attribution: Offset(pad + (areaW - attribution.width) * anchor, origin.dy + words.height + gap),
+      height: height,
+    );
   }
 
   /// 1.3.5: cards. How large the words come out on a card of [size], in
@@ -610,16 +794,58 @@ class TextCardPainter extends CustomPainter {
   /// editor can say when a larger size changes nothing ("already as large as
   /// fits").
   ({double fitted, double drawn}) measureWords(Size size) {
-    final g = _geometry(size);
+    final m = describe(size);
+    return (fitted: m.fitted, drawn: m.drawn);
+  }
+
+  /// 1.4.3: cards. How a picture of [size] is laid out, in its own pixels:
+  /// where the card goes when it is drawn inside the picture ([card], null
+  /// for the whole picture, [cardRadius] its corners), the words' block
+  /// ([words], the lines' ink in [lines]) and the attribution under them
+  /// ([attribution]), the words' size in pixels ([fontSize]) and, at 1080 on
+  /// the card's shorter side, at the classic 100% ([fitted]) and drawn
+  /// ([drawn]), and whether words were cut to fit ([cut]). Worked out
+  /// exactly as [paint] does.
+  ({
+    Rect? card,
+    double cardRadius,
+    double fontSize,
+    double fitted,
+    double drawn,
+    Rect words,
+    Rect lines,
+    List<LineMetrics> lineMetrics,
+    Rect? attribution,
+    bool cut,
+  }) describe(Size size) {
+    final frame = cardRect(size);
+    final at = frame?.rect.topLeft ?? Offset.zero;
+    final cardSize = frame?.rect.size ?? size;
+    final g = _geometry(cardSize, frame == null ? safe : EdgeInsets.zero, _foregroundOver(frame == null ? backdrop : null));
     var top = g.top;
     if (g.handleOnTop && g.areaW > 40 * g.u) {
       final author = g.handleLaidOut(g.areaW);
       top += author.height + 40 * g.u;
       author.dispose();
     }
-    final fit = _fitWords(g.u, g.areaW, math.max(0.0, g.bottom - top), _foreground);
+    final areaH = math.max(0.0, g.bottom - top);
+    final fit = _fitWords(g.u, g.areaW, areaH, _foregroundOver(frame == null ? backdrop : null));
+    final place = _placeWords(g.pad, top, g.areaW, areaH, fit.words, fit.attribution, fit.gap);
+    final out = (
+      card: frame?.rect,
+      cardRadius: frame?.radius ?? 0.0,
+      fontSize: fit.fs,
+      fitted: fit.fitted / g.u,
+      drawn: fit.fs / g.u,
+      words: (place.words & Size(fit.words.width, fit.words.height)).shift(at),
+      lines: fit.words.lineBounds.shift(place.words + at),
+      lineMetrics: fit.words.lineMetrics,
+      attribution: fit.attribution == null ? null : (place.attribution! & fit.attribution!.size).shift(at),
+      cut: fit.words.didExceedMaxLines,
+    );
     fit.words.dispose();
-    return (fitted: fit.fitted / g.u, drawn: fit.fs / g.u);
+    fit.attribution?.dispose();
+    return out;
   }
 
   // Every measurement below is the 1.3.4 one with the style's factor applied
@@ -628,17 +854,43 @@ class TextCardPainter extends CustomPainter {
   // (text_card_style_test.dart).
   @override
   void paint(Canvas canvas, Size size) {
-    final g = _geometry(size);
+    final frame = cardRect(size);
+    if (frame == null) {
+      _paintCard(canvas, size, safe, backdrop);
+      return;
+    }
+    // 1.4.3: cards. The card inside a larger picture, or a quote card: the
+    // photo or the surround colour around it, the card itself drawn whole,
+    // on its own colour, clear of the network's buttons.
+    final cardColor = style.backgroundColorOr(theme.background);
+    if (backdrop != null) {
+      backdrop!.paint(canvas, Offset.zero & size, size.width / 1080, cardColor: cardColor);
+    } else {
+      canvas.drawRect(Offset.zero & size, Paint()..color = textCardSurroundColour(cardColor));
+    }
+    canvas.save();
+    canvas.translate(frame.rect.left, frame.rect.top);
+    if (frame.radius > 0) canvas.clipRRect(RRect.fromRectAndRadius(Offset.zero & frame.rect.size, Radius.circular(frame.radius)));
+    _paintCard(canvas, frame.rect.size, EdgeInsets.zero, null);
+    canvas.restore();
+  }
+
+  /// The card on a canvas of [size]: [safe] is the network's buttons' room,
+  /// [over] the photo behind the words, if any.
+  void _paintCard(Canvas canvas, Size size, EdgeInsets safe, TextCardBackdrop? over) {
+    final fg = _foregroundOver(over);
+    final g = _geometry(size, safe, fg);
     final u = g.u;
     final w = size.width;
     final s = style;
-    final fg = _foreground;
     final cardColor = s.backgroundColorOr(theme.background);
     final pad = g.pad;
     final safeRight = g.safeRight;
 
-    if (backdrop != null) {
-      backdrop!.paint(canvas, Offset.zero & size, u, cardColor: cardColor);
+    if (over != null) {
+      // The photo is placed by the picture's width, as composeTextCard
+      // places it in a saved card.
+      over.paint(canvas, Offset.zero & size, w / 1080, cardColor: cardColor);
     } else {
       canvas.drawRect(Offset.zero & size, Paint()..color = cardColor);
     }
@@ -716,22 +968,24 @@ class TextCardPainter extends CustomPainter {
     final areaH = math.max(0.0, bottom - top);
     final fit = _fitWords(u, areaW, areaH, fg);
     final words = fit.words;
-    final position = s.textPosition ?? backdrop?.background.textPosition ?? TextCardTextPosition.center;
-    // The middle is worked out as before 1.3, so those cards stay the same.
-    final origin = Offset(
-        pad,
-        position == TextCardTextPosition.center
-            ? top + (areaH - words.height) / 2
-            : top + math.max(0.0, areaH - words.height) * position.anchor);
-    if (backdrop?.background.textBox ?? false) {
+    final attribution = fit.attribution;
+    final place = _placeWords(pad, top, areaW, areaH, words, attribution, fit.gap);
+    final origin = place.words;
+    if (over?.background.textBox ?? false) {
       // A soft box behind the words, so they read over a busy photo.
-      final box = words.lineBounds.shift(origin).inflate(30 * u);
+      var ink = words.lineBounds.shift(origin);
+      if (attribution != null) ink = ink.expandToInclude(place.attribution! & attribution.size);
+      final box = ink.inflate(30 * u);
       final lightWords = fg.computeLuminance() > 0.5;
       canvas.drawRRect(RRect.fromRectAndRadius(box, Radius.circular(24 * u)),
           Paint()..color = lightWords ? const Color(0x8C000000) : const Color(0xB3FFFFFF));
     }
     words.paint(canvas, origin);
     words.dispose();
+    if (attribution != null) {
+      attribution.paint(canvas, place.attribution!);
+      attribution.dispose();
+    }
   }
 
   @override
@@ -818,7 +1072,7 @@ Future<Uint8List> renderTextCardJpeg(
     TextCardStyle style = TextCardStyle.classic}) async {
   final width = size.width.round();
   final height = size.height.round();
-  await EmojiSupport.prepare('$text ${byline == null ? '' : style.bylineFor(byline)}');
+  await EmojiSupport.prepare('$text ${byline == null ? '' : style.bylineFor(byline)} ${style.attribution ?? ''}');
   // A preview's engine image is never drawn here: only the photo's pixels.
   final photo = backdrop?.pixels;
   final words = await rasterizeWordsLayer(width, height, (canvas) {

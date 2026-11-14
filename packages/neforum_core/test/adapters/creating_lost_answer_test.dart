@@ -46,6 +46,8 @@ const Map<String, Object?> _answer = {
     'publication': {'id': 'pub'},
     'publishPost': {'post': {'id': '1', 'url': 'https://x.example/1'}},
     'createImageUpload': {'url': 'https://upload.example/i', 'fields': <String, String>{}, 'key': 'k'},
+    // EmDash: an uploaded file and a created draft.
+    'item': {'id': '1', 'url': '/_emdash/api/media/file/1.jpg', 'slug': 'a-title', 'status': 'draft'},
   },
   'status': 'FINISHED',
   'status_code': 'FINISHED',
@@ -126,6 +128,9 @@ final List<_Case> _cases = [
   _Case('discord', const {'guildId': 'g', 'channelId': 'c'}, const {'webhook_url': 'https://discord.com/api/webhooks/123456/abcdefghijklmnopqrstuvwxyz'}, _text, tier: PlatformTier.byokApi),
   _Case('wordpress', const {'restBase': 'https://blog.example/wp-json/', 'username': 'u', 'site': 'https://blog.example'}, const {'app_password': 'p', 'username': 'u', 'application_password': 'p'}, _text),
   _Case('ghost', const {'apiUrl': 'https://blog.example.com', 'site': 'https://blog.example.com/'}, const {'admin_api_key': 'abcdef012345:00112233445566778899aabbccddeeff'}, _text),
+  _Case('emdash', const {'site': 'https://blog.example'}, const {'access_token': 'ec_pat_abcdefghijklmnopqrstuvwxyz'}, _text),
+  _Case('emdash', const {'site': 'https://blog.example'}, const {'access_token': 'ec_pat_abcdefghijklmnopqrstuvwxyz'}, _photo, what: ' photo'),
+  _Case('emdash', const {'site': 'https://blog.example', 'defaultStatus': 'draft'}, const {'access_token': 'ec_pat_abcdefghijklmnopqrstuvwxyz'}, _text, what: ' draft'),
   _Case('writefreely', const {'instance': 'https://write.as', 'anonymous': true}, const {}, _text),
   _Case('micropub', const {'micropubEndpoint': 'https://alice.example/micropub'}, const {'access_token': 't'}, _text),
   _Case('devto', const {'instance': 'https://dev.to', 'username': 'u'}, const {'access_token': 'k', 'token_type': 'Bearer'}, _text),
@@ -181,7 +186,7 @@ void main() {
       });
     }
 
-    test('the table holds 29 of the 30: Nostr posts over a socket and has its own test', () {
+    test('the table holds 30 of the 31: Nostr posts over a socket and has its own test', () {
       final api = {for (final a in builtinAdapters()) if (a.descriptor.tiers.any((t) => t != PlatformTier.handoff)) a.id};
       expect(api.difference({for (final c in _cases) c.id}), {'nostr'});
     });

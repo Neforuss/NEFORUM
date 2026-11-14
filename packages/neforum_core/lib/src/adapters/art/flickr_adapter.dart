@@ -16,6 +16,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'art_api_common.dart';
 import 'flickr_api.dart';
@@ -33,6 +34,7 @@ abstract final class FlickrLimits {
 /// Static description of Flickr.
 const PlatformDescriptor flickrDescriptor = PlatformDescriptor(
   id: 'flickr',
+  options: flickrOptions,
   name: 'Flickr',
   iconKey: 'flickr',
   homepage: 'https://www.flickr.com',
@@ -87,6 +89,11 @@ class FlickrAdapter extends PlatformAdapter {
 
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.flickr(account);
+
+  /// The Key and Secret are kept with the OAuth 1.0a keys the sign-in made.
+  @override
+  Map<String, String> get reconnectFieldSources =>
+      const {'apiKey': OAuth1Credentials.keyConsumerKey, 'apiSecret': OAuth1Credentials.keyConsumerSecret};
 
   @override
   PlatformDescriptor get descriptor => flickrDescriptor;

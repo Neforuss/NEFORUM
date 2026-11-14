@@ -20,7 +20,7 @@ The Standard copy is an MP3 where the device has an MP3 encoder (Windows). Phone
 
 ### Video-only networks
 
-X, Bluesky, Instagram, Threads, Facebook, TikTok, YouTube, LinkedIn, Pinterest, Rumble and BitChute take no sound files. NEFORUM makes a video for each of them when you save: one still picture for the whole track, with the sound at 256 kbit/s AAC.
+X, Bluesky, Instagram, Threads, Facebook, TikTok, YouTube, LinkedIn, Pinterest, Rumble, BitChute and Parler take no sound files. NEFORUM makes a video for each of them when you save: one still picture for the whole track, with the sound at 256 kbit/s AAC.
 
 - **Picture:** the post's first photo, else the track's cover art, shown whole: fitted to the frame the way *Settings > Posting > When a photo does not fit a network* says (on a blur of its own colours, or filled with its colours). A square cover in Instagram's 9:16 frame keeps its sides, also in the profile grid, which shows the middle of a Reel. Only **Crop it to fit** cuts the picture to fill the frame. Without a photo or cover, a card with the track's title (the post title, else the file name), the post's first words, and the file type and length, on the NEFORUM purple.
 - **Frame:** 1080 x 1920 on TikTok and Instagram (Reels), 1920 x 1080 on YouTube (an upright or square video would become a Short), 1080 x 1080 elsewhere.
@@ -43,7 +43,8 @@ Nostr, Lemmy, Reddit, DEV, Hashnode, Micropub, WriteFreely and Tumblr get a **li
 | WordPress | media library plus an audio block | MP3, M4A, WAV, Ogg, FLAC (no AIFF) | your host's upload limit | yes |
 | Ghost | media upload plus a player in an HTML card | MP3, WAV, Ogg, M4A (no FLAC or AIFF) | your Ghost setup | yes |
 | Odysee | published from the file, never re-encoded | MP3, M4A, Ogg, WAV, FLAC | none (read from disk) | yes |
-| X, Bluesky, Instagram, Threads, Facebook, TikTok, YouTube, LinkedIn, Pinterest, Rumble, BitChute | still-picture video made by NEFORUM | any | the network's video limits | no (it is a video) |
+| Locals | sound file in the post, added by you on Locals (hand-off), on its own | MP3, M4A, WAV | 5 minutes and under 200 MB for members; creators: by the community's plan | not stated |
+| X, Bluesky, Instagram, Threads, Facebook, TikTok, YouTube, LinkedIn, Pinterest, Rumble, BitChute, Parler | still-picture video made by NEFORUM | any | the network's video limits | no (it is a video) |
 | Nostr | link with an `imeta` tag, on the NIP-96 server or media host | any the server takes | the server's | depends on the server |
 | Lemmy, Reddit, DEV, Hashnode, Micropub, WriteFreely, Tumblr | link on your media host | any | the host's | yes, on the host |
 | Snapchat, WhatsApp, Substack Notes, Google Business Profile, art sites | left out (the post goes without it) | none | | |

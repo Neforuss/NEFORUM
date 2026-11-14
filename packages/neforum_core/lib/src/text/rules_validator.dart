@@ -2,6 +2,7 @@ import 'package:characters/characters.dart';
 
 import '../model/audio.dart';
 import '../model/media.dart';
+import '../model/paragraph_media.dart';
 import '../model/platform_descriptor.dart';
 import '../model/poll.dart';
 import '../model/post_variant.dart';
@@ -20,7 +21,11 @@ class RulesValidator {
 
     // --- text -----------------------------------------------------------
     final parts = v.isThread ? v.threadParts : [v.text];
-    if (t.maxLength != null) {
+    // A post sent section by section (paragraphs linked to their files) on a
+    // network with threads is cut into messages of the right length by the
+    // adapter.
+    final cutBySections = v.hasParagraphMedia && m.paragraphMedia == ParagraphMediaStyle.sections && t.supportsThreads;
+    if (t.maxLength != null && !cutBySections) {
       for (var i = 0; i < parts.length; i++) {
         final n = TextCounter.count(parts[i], t);
         if (n > t.maxLength!) {
@@ -83,6 +88,11 @@ class RulesValidator {
         }
         if (groupVideos > m.maxVideos) {
           issues.add(ValidationIssue.error('media.too_many_videos', '$groupVideos videos$where; ${d.name} allows ${m.maxVideos}', field: 'media'));
+        }
+        final maxItems = m.maxItems;
+        if (maxItems != null && groupImages + groupVideos > maxItems) {
+          issues.add(ValidationIssue.error(
+              'media.too_many', '${groupImages + groupVideos} photos and videos$where; ${d.name} allows $maxItems', field: 'media'));
         }
         if (groupImages > 0 && groupVideos > 0 && !m.allowsMixedImageVideo) {
           issues.add(ValidationIssue.error('media.mixed', '${d.name} cannot mix images and video in one post', field: 'media'));

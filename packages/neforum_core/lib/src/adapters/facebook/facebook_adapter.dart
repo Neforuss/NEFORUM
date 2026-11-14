@@ -76,6 +76,10 @@ class FacebookAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.facebookFor(account);
 
+  /// A reconnect picks the same Page as before, by its id.
+  @override
+  Map<String, String> get reconnectFieldSources => const {'page': cfgPageId};
+
   @override
   bool canReadSignIn(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
 

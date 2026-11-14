@@ -21,6 +21,8 @@ int _fewestPosts(List<MediaAttachment> media, MediaRules rules) {
     final videos = group.where((m) => m.isVideo).length;
     final images = group.length - videos;
     if (videos > rules.maxVideos || images > rules.maxImages) return false;
+    if (rules.maxItems != null && group.length > rules.maxItems!) return false;
+    if (rules.gifAlone && group.length > 1 && group.any((m) => m.kind == MediaKind.gif)) return false;
     return rules.allowsMixedImageVideo || videos == 0 || images == 0;
   }
 
@@ -57,13 +59,22 @@ void main() {
           maxImages: 1 + random.nextInt(10),
           maxVideos: 1 + random.nextInt(4),
           allowsMixedImageVideo: random.nextBool(),
+          // 1.4.3: X's 20 of any mix, and its GIF alone.
+          maxItems: random.nextBool() ? null : 1 + random.nextInt(12),
+          gifAlone: random.nextInt(3) == 0,
         );
         final media = [
-          for (var i = 0; i < random.nextInt(41); i++) random.nextInt(4) == 0 ? _video(i) : _photo(i),
+          for (var i = 0; i < random.nextInt(41); i++)
+            switch (random.nextInt(8)) {
+              0 || 1 => _video(i),
+              2 => fakeImage(id: 'g$i', mimeType: 'image/gif'),
+              _ => _photo(i),
+            },
         ];
         final groups = packMediaIntoPosts(media, rules);
-        final reason = 'round $round: ${rules.maxImages} photos/${rules.maxVideos} videos, mixed ${rules.allowsMixedImageVideo}, '
-            '${media.map((m) => m.isVideo ? 'v' : 'p').join()}';
+        final reason = 'round $round: ${rules.maxImages} photos/${rules.maxVideos} videos/${rules.maxItems} items, '
+            'mixed ${rules.allowsMixedImageVideo}, GIF alone ${rules.gifAlone}, '
+            '${media.map((m) => m.isVideo ? 'v' : m.kind == MediaKind.gif ? 'g' : 'p').join()}';
         expect([for (final g in groups) ...g], media, reason: '$reason: every file once, in order');
         expect(groups.every((g) => g.isNotEmpty), isTrue, reason: reason);
         for (final g in groups) {
@@ -71,6 +82,8 @@ void main() {
           expect(videos, lessThanOrEqualTo(rules.maxVideos), reason: reason);
           expect(g.length - videos, lessThanOrEqualTo(rules.maxImages), reason: reason);
           if (!rules.allowsMixedImageVideo) expect(videos == 0 || videos == g.length, isTrue, reason: '$reason: not mixed');
+          if (rules.maxItems != null) expect(g.length, lessThanOrEqualTo(rules.maxItems!), reason: reason);
+          if (rules.gifAlone && g.any((m) => m.kind == MediaKind.gif)) expect(g, hasLength(1), reason: '$reason: GIF alone');
         }
         expect(groups.length, _fewestPosts(media, rules), reason: '$reason: the fewest posts');
       }
@@ -79,6 +92,12 @@ void main() {
     test('twenty photos on X: five posts of four', () {
       final groups = packMediaIntoPosts([for (var i = 0; i < 20; i++) _photo(i)], const MediaRules(maxImages: 4, maxVideos: 1));
       expect(groups.map((g) => g.length), [4, 4, 4, 4, 4]);
+    });
+
+    test('20 of any mix per post (X since 1.4.3): 45 photos and videos are posts of 20, 20 and 5', () {
+      final media = [for (var i = 0; i < 45; i++) i.isOdd ? _video(i) : _photo(i)];
+      const rules = MediaRules(maxImages: 20, maxVideos: 20, maxItems: 20, allowsMixedImageVideo: true);
+      expect(packMediaIntoPosts(media, rules).map((g) => g.length), [20, 20, 5]);
     });
 
     test('photos and videos that do not mix: each video gets a post of its own, the photos around it stay together', () {
@@ -120,7 +139,12 @@ void main() {
         final perPost = m.maxImages;
         final posts = (20 / perPost).ceil();
         final threaded = d.text.supportsThreads && m.mediaPerThreadPart;
-        if (threaded) {
+        if (posts == 1) {
+          // All twenty in one post (X since 1.4.3).
+          expect(v.threadParts, isEmpty);
+          expect(v.seriesPosts, isEmpty);
+          expect(v.media, photos);
+        } else if (threaded) {
           expect(v.threadParts, hasLength(posts), reason: 'a thread of $posts posts');
           expect([for (var i = 0; i < posts; i++) ...v.mediaOfPart(i)], photos, reason: 'in order');
           expect(v.seriesPosts, isEmpty);

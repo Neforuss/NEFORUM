@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
+import 'selection_marks.dart' show SelectionCheckBadge;
 
-/// The basic container of the app: a surface with a hairline border.
-/// Hover and press feedback when [onTap] is set.
+/// The basic container of the app: a surface with a hairline border ([NfColors.border],
+/// none in seamless mode, where only a selected card or a [borderColor] keeps
+/// an outline). Hover and press feedback when [onTap] is set.
 class NfCard extends StatefulWidget {
   const NfCard({
     super.key,
@@ -11,6 +13,7 @@ class NfCard extends StatefulWidget {
     this.padding = const EdgeInsets.all(Space.lg),
     this.onTap,
     this.selected = false,
+    this.selectionBadge = true,
     this.color,
     this.borderColor,
     this.radius,
@@ -23,7 +26,11 @@ class NfCard extends StatefulWidget {
   /// Three quarters of it with the compact density.
   final EdgeInsetsGeometry padding;
   final VoidCallback? onTap;
+  /// 1.4.3: clear selected state. A selected card has a 2px accent border
+  /// and, unless [selectionBadge] is false (the card shows its own mark, a
+  /// radio button), a check in its top-right corner.
   final bool selected;
+  final bool selectionBadge;
   final Color? color;
   final Color? borderColor;
 
@@ -48,7 +55,7 @@ class _NfCardState extends State<NfCard> {
     final interactive = widget.onTap != null;
     final border = widget.selected
         ? nf.accent
-        : widget.borderColor ?? (interactive && _hover ? nf.borderStrong : nf.border);
+        : widget.borderColor ?? (interactive && _hover ? nf.borderHover : nf.border);
     final bg = widget.color ?? (widget.selected ? nf.accentSoft : (interactive && _hover ? nf.surfaceHover : nf.surface));
 
     Widget content = AnimatedContainer(
@@ -58,12 +65,18 @@ class _NfCardState extends State<NfCard> {
       decoration: BoxDecoration(
         color: bg,
         borderRadius: widget.radius ?? Radii.rLg,
-        border: Border.all(color: border, width: widget.selected ? 1.5 : 1),
+        border: Border.all(color: border, width: widget.selected ? 2 : 1),
         boxShadow: widget.elevated ? nf.elevation1 : null,
       ),
       clipBehavior: widget.clip ? Clip.antiAlias : Clip.none,
       child: widget.child,
     );
+    if (widget.selected && widget.selectionBadge) {
+      content = Stack(children: [
+        content,
+        const Positioned(top: Space.xs + 2, right: Space.xs + 2, child: SelectionCheckBadge(size: 18)),
+      ]);
+    }
 
     if (!interactive) return content;
 
@@ -92,7 +105,8 @@ class _NfCardState extends State<NfCard> {
   }
 }
 
-/// A recessed area (media tray, code block, drop zone).
+/// A recessed area (media tray, code block, drop zone). Its outline goes in
+/// seamless mode, its fill and a dashed or highlighted edge stay.
 class NfWell extends StatelessWidget {
   const NfWell({super.key, required this.child, this.padding = const EdgeInsets.all(Space.md), this.radius, this.dashed = false, this.highlight = false});
 
@@ -149,7 +163,8 @@ class _DashedBorderPainter extends CustomPainter {
   bool shouldRepaint(_DashedBorderPainter old) => old.color != color;
 }
 
-/// Thin labelled divider: `──── Label ────`.
+/// Thin labelled divider: `──── Label ────`. A rule that carries meaning:
+/// it stays in seamless mode ([NfColors.hairline]).
 class LabeledDivider extends StatelessWidget {
   const LabeledDivider(this.label, {super.key});
   final String label;
@@ -158,12 +173,12 @@ class LabeledDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final nf = context.nf;
     return Row(children: [
-      Expanded(child: Divider(color: nf.border)),
+      Expanded(child: Divider(color: nf.hairline)),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: Space.md),
         child: Text(label.toUpperCase(), style: context.text.labelSmall?.copyWith(color: nf.textFaint, letterSpacing: 1.2)),
       ),
-      Expanded(child: Divider(color: nf.border)),
+      Expanded(child: Divider(color: nf.hairline)),
     ]);
   }
 }

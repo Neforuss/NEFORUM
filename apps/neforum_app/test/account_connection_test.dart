@@ -426,6 +426,12 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
         'Sign-in method: Browser sign-in (IndieAuth)'],
     ),
     _Real(
+      _acct('emdash', PlatformTier.openApi, {'site': 'https://emdash.example', 'siteTitle': 'Robin Writes', 'version': '1.5.0', 'defaultStatus': 'draft'}),
+      oauth(type: 'personal-access-token'),
+      keys: ['Access token'],
+      show: ['Site address: https://emdash.example', 'Site name: Robin Writes', 'Publish as: Draft'],
+    ),
+    _Real(
       _acct('devto', PlatformTier.openApi, {'base': 'https://dev.example', 'userId': 5, 'username': 'robin'}),
       oauth(type: 'api-key'),
       keys: ['Access token'],
@@ -1492,6 +1498,19 @@ Connected: 2026-10-12''');
       await tester.pump();
       expect(c.read(accountByIdProvider('m2'))?.enabled, isFalse);
       expect(find.descendant(of: card, matching: find.text('Server address')), findsOneWidget, reason: 'still open after a toggle');
+      await _unmount(tester);
+    });
+
+    testWidgets("1.4.3: the card's Reconnect is one prominent button; in the demo it shows the connect flow", (tester) async {
+      final account = _account('mastodon', PlatformTier.openApi, {'instance': 'https://mastodon.example'}, id: 'm3').copyWith(lastError: 'Token revoked');
+      final (c, _) = await _pumpAccounts(tester, accounts: [(account, {OAuthTokens.keyAccessToken: _Fakes().next()})], keepDemoAccounts: false);
+      final button = find.byKey(const ValueKey('reconnect-m3'));
+      expect(button, findsOneWidget);
+      expect(tester.widget(button), isA<FilledButton>());
+      await _tap(tester, button);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+      await tester.pump();
+      expect(c.read(routerProvider).state.uri.toString(), '/accounts/add?platform=mastodon');
       await _unmount(tester);
     });
 

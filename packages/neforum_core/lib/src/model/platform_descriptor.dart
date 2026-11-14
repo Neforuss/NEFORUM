@@ -1,6 +1,10 @@
 import 'package:meta/meta.dart';
 
 import 'audio.dart' show AudioMimeTypes;
+import 'paragraph_media.dart' show ParagraphMediaStyle;
+import 'post_option.dart';
+
+export 'post_option.dart';
 
 /// How a platform can be reached by NEFORUM.
 ///
@@ -59,6 +63,11 @@ enum CountingRule {
   /// Code points (runes), with every URL counted as [TextRules.urlWeight].
   /// Mastodon.
   codePointsWithUrlWeight,
+
+  /// One per code point (rune), links included at their full length: an
+  /// emoji outside the Basic Multilingual Plane counts 1, not 2. Parler's
+  /// web composer counts this way (a `for...of` loop over the text).
+  codePoints,
 }
 
 /// Text constraints and features for one platform.
@@ -143,10 +152,21 @@ class MediaRules {
     this.audioAsVideoWhenPossible = false,
     this.audioVideoFrameRate,
     this.audioVideoMaxFrames,
+    this.maxItems,
+    this.gifAlone = false,
+    this.paragraphMedia = ParagraphMediaStyle.none,
   });
 
   final int maxImages;
   final int maxVideos;
+
+  /// Most photos and videos together in one post, where that is less than
+  /// [maxImages] plus [maxVideos] (X: 20 of any mix). Null: no limit beyond
+  /// the two.
+  final int? maxItems;
+
+  /// An animated GIF goes in a post of its own (X).
+  final bool gifAlone;
   final bool requiresMedia;
   final bool allowsMixedImageVideo;
   final int? imageMaxBytes;
@@ -208,6 +228,11 @@ class MediaRules {
   /// Most frames a video upload may have (pict-rs: 900 by default); null for
   /// no limit. A track too long for it at [audioVideoFrameRate] goes as a link.
   final int? audioVideoMaxFrames;
+
+  /// How the network shows a post whose paragraphs are linked to its photos
+  /// and videos ([Post.paragraphMedia]); [ParagraphMediaStyle.none] gets the
+  /// post as it always did.
+  final ParagraphMediaStyle paragraphMedia;
 
   /// Whether a still-picture video of a track [durationMs] long fits
   /// [audioVideoMaxFrames] (an unknown length is tried).
@@ -279,6 +304,12 @@ class QuotaRule {
 enum PlatformCategory {
   /// Art portfolio and gallery sites (DeviantArt, ArtStation, Behance, ...).
   art,
+
+  /// Video sites (YouTube videos, Odysee, Rumble, BitChute): a post goes
+  /// there for its video. Some take a picture or a sound file as an upload
+  /// too, but a post without a video is not what they are for, so the
+  /// composer's "Automatic only" leaves them out until the post has one.
+  video,
 }
 
 /// Everything the UI and the publishing pipeline need to know about one
@@ -305,6 +336,7 @@ class PlatformDescriptor {
     this.family,
     this.polls,
     this.categories = const {},
+    this.options = const [],
   });
 
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
@@ -360,6 +392,24 @@ class PlatformDescriptor {
   /// A portfolio or gallery site for artwork: it only receives artwork posts
   /// ([Post.artwork]).
   bool get isArtPlatform => categories.contains(PlatformCategory.art);
+
+  /// A video site ([PlatformCategory.video]).
+  bool get isVideoPlatform => categories.contains(PlatformCategory.video);
+
+  /// Every `PostVariant.extra` key the adapter reads, declared once: the
+  /// options the user sets per post or per account, and the keys NEFORUM
+  /// sets itself ([PostOptionSurface.internal]). The app draws the customize
+  /// sheet from them, and `post_options_declared_test.dart` fails when an
+  /// adapter reads a key that is not here.
+  final List<PostOption> options;
+
+  /// The option declared under [key] (or with [key] as an alias).
+  PostOption? option(String key) =>
+      options.where((o) => o.key == key).firstOrNull ?? options.where((o) => o.aliases.contains(key)).firstOrNull;
+
+  /// The options an account on [tier] can set, in their declared order.
+  List<PostOption> userOptionsFor(PlatformTier tier) =>
+      [for (final o in options) if (o.isUserFacing && o.appliesTo(tier)) o];
 
   bool supportsTier(PlatformTier t) => tiers.contains(t);
 

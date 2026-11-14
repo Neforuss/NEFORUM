@@ -4,6 +4,7 @@ import 'artwork.dart';
 import 'audio.dart';
 import 'audio_tags.dart';
 import 'media.dart';
+import 'paragraph_media.dart';
 import 'poll.dart';
 import 'publish_result.dart';
 
@@ -285,6 +286,7 @@ class Post {
     this.audioQuality = AudioQuality.standard,
     this.audioDetails = const {},
     this.mediaParts = const {},
+    this.paragraphMedia = const {},
   });
 
   /// Times are stored in UTC and come back in local time, so that day and
@@ -322,6 +324,7 @@ class Post {
           for (final e in (json['mediaParts'] as Map? ?? const {}).entries)
             if (e.value is int) '${e.key}': e.value as int,
         },
+        paragraphMedia: ParagraphMedia.fromJson(json['paragraphMedia']),
       );
 
   final String id;
@@ -382,6 +385,17 @@ class Post {
   /// media in every post of a thread ([MediaRules.mediaPerThreadPart]), get
   /// all the media on their one post or on the first part, as before.
   final Map<String, int> mediaParts;
+
+  /// 1.4.3: which paragraph of [text] refers to which photos and videos, by
+  /// paragraph number ([ParagraphMedia.split]) and media id. Optional: empty
+  /// (the default) is a post without links. Only a single long post uses
+  /// them (no [additionalParts]); networks that show them
+  /// ([MediaRules.paragraphMedia]) put each paragraph with its files, the
+  /// rest get the post as before.
+  final ParagraphMediaLinks paragraphMedia;
+
+  /// The links of [paragraphMedia] the networks use: none on a thread.
+  bool get hasParagraphMedia => paragraphMedia.isNotEmpty && additionalParts.isEmpty;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -514,6 +528,7 @@ class Post {
     AudioQuality? audioQuality,
     Map<String, AudioTags>? audioDetails,
     Map<String, int>? mediaParts,
+    ParagraphMediaLinks? paragraphMedia,
     bool clearScheduledAt = false,
     bool clearTitle = false,
     bool clearLink = false,
@@ -542,6 +557,7 @@ class Post {
         audioQuality: audioQuality ?? this.audioQuality,
         audioDetails: audioDetails ?? this.audioDetails,
         mediaParts: mediaParts ?? this.mediaParts,
+        paragraphMedia: paragraphMedia ?? this.paragraphMedia,
       );
 
   /// Replaces the target with the same account id.
@@ -578,6 +594,7 @@ class Post {
               if (!e.value.isEmpty) e.key: e.value.toJson(),
           },
         if (mediaParts.isNotEmpty) 'mediaParts': mediaParts,
+        if (paragraphMedia.isNotEmpty) 'paragraphMedia': ParagraphMedia.toJson(paragraphMedia),
       };
 }
 

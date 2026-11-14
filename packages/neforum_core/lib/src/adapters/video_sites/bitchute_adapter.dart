@@ -58,6 +58,7 @@ class BitChuteAdapter extends HandoffOnlyAdapter {
     apiCostSummary: 'Free. BitChute uploads only through its website, so NEFORUM prepares the upload and you publish '
         'it there.',
     setupGuide: 'docs/platforms/bitchute.md',
+    categories: {PlatformCategory.video},
   );
 
   @override

@@ -42,7 +42,7 @@ Treat the webhook URL like a password: anyone who has it can post in the channel
 - **Other mentions don't ping.** Role and user mentions in cross-posted text show as text but don't ping anyone. The later messages of a long post never ping, and with @everyone turned off, `@everyone` and `@here` in your text show as text only.
 - **Text** uses Discord's own Markdown (`**bold**`, `*italic*`, `` `code` ``, `> quote`) and is sent as written. Posts longer than 2000 characters are sent as several messages in a row. If Discord asks NEFORUM to wait up to 10 seconds between them, NEFORUM waits and carries on. If a later message still fails, the earlier ones stay posted and NEFORUM does **not** retry on its own (that would post them twice); the error lists what is already live.
 - **Media**: up to 10 images/videos per message, uploaded together with the text. Alt text is sent as the attachment description (max 1024 characters). Media marked **sensitive** is sent as a spoiler.
-- **Link previews**: Discord previews every link. Set `disableLinkPreview: true` in the per-network options to turn that off.
+- **Link previews**: Discord previews every link. Turn on **No link preview** in the post's **Customize** sheet to turn that off.
 - **View post** links have the form `https://discord.com/channels/<server>/<channel>/<message>`.
 
 ## Limits

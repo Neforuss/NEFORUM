@@ -9,6 +9,7 @@ import '../../state/update_checks.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
 import '../activity/time_format.dart';
+import 'appimage_update_dialog.dart';
 import 'setting_row.dart';
 
 /// Exactly what an update check sends and receives, in the one-time question
@@ -42,6 +43,29 @@ Future<void> askAboutUpdateChecks(BuildContext context, WidgetRef ref) async {
 
 /// Opens the download page in the browser.
 Future<void> openDownloadPage() => launchUrl(Uri.parse(kDownloadPageUrl), mode: LaunchMode.externalApplication);
+
+/// NEFORUM can install [release] itself: it runs as an AppImage and the
+/// release has one for this computer on GitHub.
+bool installsItself(WidgetRef ref, LatestRelease release) => ref.watch(appImageSelfUpdateProvider)?.downloadFor(release) != null;
+
+/// The update button's label: Update now where NEFORUM installs the release
+/// itself, Download (the download page) everywhere else.
+String updateButtonLabel(WidgetRef ref, LatestRelease release) => installsItself(ref, release) ? 'Update now' : 'Download';
+
+/// The update button: an AppImage updates itself (after asking), anything
+/// else opens the download page.
+Future<void> getUpdate(BuildContext context, WidgetRef ref, LatestRelease release) async {
+  final updater = ref.read(appImageSelfUpdateProvider);
+  if (updater == null || updater.downloadFor(release) == null) {
+    await openDownloadPage();
+    return;
+  }
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => AppImageUpdateDialog(release: release, updater: updater, openDownloadPage: openDownloadPage),
+  );
+}
 
 class UpdateSettingsSection extends ConsumerWidget {
   const UpdateSettingsSection({super.key});
@@ -79,7 +103,11 @@ class UpdateSettingsSection extends ConsumerWidget {
         stackOnCompact: true,
         trailing: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
           if (available != null)
-            FilledButton.icon(onPressed: openDownloadPage, icon: const Icon(Icons.open_in_new_rounded, size: 18), label: const Text('Download')),
+            FilledButton.icon(
+              onPressed: () => getUpdate(context, ref, available),
+              icon: Icon(installsItself(ref, available) ? Icons.system_update_alt_rounded : Icons.open_in_new_rounded, size: 18),
+              label: Text(updateButtonLabel(ref, available)),
+            ),
           OutlinedButton(
             onPressed: status.checking ? null : () => _checkNow(context, ref),
             child: Text(status.checking ? 'Checking…' : 'Check now'),
@@ -139,13 +167,19 @@ class UpdateBanner extends ConsumerWidget {
                   content: SingleChildScrollView(child: SelectableText(notes)),
                   actions: [
                     TextButton(onPressed: () => Navigator.of(c).pop(), child: const Text('Close')),
-                    FilledButton(onPressed: openDownloadPage, child: const Text('Download')),
+                    FilledButton(
+                      onPressed: () {
+                        Navigator.of(c).pop();
+                        getUpdate(context, ref, release);
+                      },
+                      child: Text(updateButtonLabel(ref, release)),
+                    ),
                   ],
                 ),
               ),
               child: const Text('Notes'),
             ),
-          FilledButton(onPressed: openDownloadPage, child: const Text('Download')),
+          FilledButton(onPressed: () => getUpdate(context, ref, release), child: Text(updateButtonLabel(ref, release))),
           IconButton(
             tooltip: critical ? 'Hide until the next start' : 'Hide for this version',
             onPressed: () => ref.read(updateCheckProvider.notifier).dismiss(),

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../theme/app_theme.dart' show monoStyle;
 import '../theme/tokens.dart';
 import 'color_wheel.dart';
+import 'selection_marks.dart' show swatchCheck;
 
 /// Colours offered as swatches for colours the user picks for pictures (ARGB).
 const List<int> kPictureColorSwatches = [
@@ -19,9 +20,9 @@ const List<int> kPictureColorSwatches = [
 ];
 
 /// Picks an opaque colour for a picture (a card's tint or gradient): a row of
-/// swatches plus a hex field. Every colour choice in the card background
-/// editor goes through this one widget, so a fuller picker (a colour wheel)
-/// can replace its body later without touching the editor.
+/// swatches, "Custom colour" for any colour on the [ColorWheel], and a hex
+/// field. Every colour choice in the card editors goes through this one
+/// widget.
 class ColorSwatchField extends StatefulWidget {
   const ColorSwatchField({super.key, required this.value, required this.onChanged, required this.label, this.swatches = kPictureColorSwatches});
 
@@ -82,12 +83,16 @@ class _ColorSwatchFieldState extends State<ColorSwatchField> {
                 shape: Radii.circleShape,
                 border: Border.all(color: c == current ? nf.accent : nf.borderStrong, width: c == current ? 3 : 1),
               ),
+              // 1.4.3: not by the ring alone.
+              child: c == current ? swatchCheck(Color(c), size: 12) : null,
             ),
           ),
         ),
-      IconButton(
-        tooltip: 'More colours',
-        icon: const Icon(Icons.palette_outlined),
+      // 1.4.3: colours. Named, so the wheel is easy to find.
+      TextButton.icon(
+        key: const Key('color-swatch-field-wheel'),
+        icon: const Icon(Icons.palette_outlined, size: 18),
+        label: const Text('Custom colour'),
         onPressed: () async {
           final picked = await _pickOnWheel(context, Color(current), widget.label);
           if (picked != null) widget.onChanged(picked.toARGB32() | 0xFF000000);

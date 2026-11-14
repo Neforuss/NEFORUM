@@ -1,9 +1,11 @@
 import '../../model/media.dart';
+import '../../model/paragraph_media.dart';
 import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_placement.dart';
 import '../../model/post_variant.dart';
 import '../../model/validation.dart';
+import '../network_options.dart';
 
 /// Static facts about Instagram, taken from the Instagram Platform docs
 /// (content publishing guide, IG User Media reference, error-code reference;
@@ -34,6 +36,7 @@ class InstagramRules {
 
   static const PlatformDescriptor descriptor = PlatformDescriptor(
     id: 'instagram',
+    options: instagramOptions,
     name: 'Instagram',
     iconKey: 'instagram',
     homepage: 'https://www.instagram.com/',
@@ -74,6 +77,9 @@ class InstagramRules {
       videoMimeTypes: {'video/mp4', 'video/quicktime'},
       supportsAltText: true,
       requiresPublicMediaUrl: true,
+      // 1.4.3: carousel items (and story frames) in the order of their
+      // paragraphs, numbered in the caption.
+      paragraphMedia: ParagraphMediaStyle.markers,
       notes: 'One photo, one video (posted as a Reel) or a carousel of 2-10 items. The API takes JPEG only, '
           'up to 8 MB, aspect ratio 4:5 to 1.91:1. Reels: MP4/MOV, 3 s to 15 min, up to 300 MB. '
           'Story videos: 3-60 s, up to 100 MB.',

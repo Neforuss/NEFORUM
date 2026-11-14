@@ -12,6 +12,7 @@ import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
 import '../media/font_catalog.dart' show FontDownloadMode;
 import '../media/card_design.dart';
 import '../media/card_design_edits.dart' show designWithHandle;
+import '../media/card_renderer.dart' show designedCardDrawsEmphasis;
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -19,6 +20,7 @@ import '../platform/notifications.dart';
 import '../platform/publish_host.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
+import 'automatic_targets.dart';
 import 'card_designs.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
@@ -32,6 +34,7 @@ import 'publish_run_surface.dart';
 import 'scheduler.dart';
 import 'settings.dart';
 import 'shrunk_videos.dart';
+import 'story_placements.dart';
 import 'text_cards.dart';
 
 const _uuid = Uuid();
@@ -76,6 +79,9 @@ class ComposerState {
     this.audioCardDesign, // 1.3.1: cards
     this.textCardStyle = TextCardStyle.classic, // 1.3.5: cards
     this.textCardDesignBeforeEdits, // 1.3.5: cards
+    this.automaticTargets = false, // 1.4.3: Automatic only
+    this.targetChoices = const {}, // 1.4.3: Automatic only
+    this.paragraphMedia = const {}, // 1.4.3
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -188,6 +194,22 @@ class ComposerState {
     return sound == null ? null : (sound.audioTags ?? AudioTags.none).overriddenBy(audioDetails[mediaId]);
   }
 
+  /// 1.4.3: why [account] cannot take this post ([automaticSkipReason]),
+  /// with its own version of the words and its own choice of files; null
+  /// when it can.
+  String? skipReasonFor(ConnectedAccount account, AdapterRegistry registry, AppSettings settings) {
+    final adapter = registry.byId(account.platformId);
+    if (adapter == null) return null;
+    final own = overrides[account.id];
+    final ids = own?.mediaIds;
+    return automaticSkipReason(
+      adapter.descriptorForAccount(account),
+      media: ids == null ? media : media.where((m) => ids.contains(m.id)),
+      hasWords: (own?.text ?? joinedParts).trim().isNotEmpty,
+      textCards: settings.textCards,
+    );
+  }
+
   /// The track details the first sound file ([audio]) goes out with; null
   /// without a sound file.
   AudioTags? get effectiveAudioTags {
@@ -197,6 +219,34 @@ class ComposerState {
 
   /// The part [mediaId] goes with.
   int partOfMedia(String mediaId) => mediaParts[mediaId] ?? 0;
+
+  /// 1.4.3: thread media. The attachments of thread part [part] (0 is the
+  /// first), in the post's order. A part number past the last part counts as
+  /// the last part, as the Part chip shows it.
+  List<MediaAttachment> mediaOfPart(int part) => [
+        for (final m in media)
+          if (partOfMedia(m.id).clamp(0, additionalParts.length) == part) m,
+      ];
+  /// 1.4.3: which paragraph of [text] refers to which photos and videos
+  /// ([Post.paragraphMedia]); empty (the default) for none. Kept while the
+  /// user types: the links move with their paragraphs.
+  final ParagraphMediaLinks paragraphMedia;
+
+  /// The paragraphs of [text], as the links count them.
+  List<String> get paragraphs => ParagraphMedia.split(text);
+
+  /// The files a paragraph can be linked to: the user's photos and videos.
+  List<MediaAttachment> get linkableMedia => [for (final m in media) if (!m.generated && (m.isImage || m.isVideo)) m];
+
+  /// Whether linking paragraphs to media makes sense: one long post (no
+  /// thread) of two paragraphs or more, with a photo or video.
+  bool get canLinkParagraphs => additionalParts.isEmpty && linkableMedia.isNotEmpty && paragraphs.length > 1;
+
+  /// [paragraphMedia] for the post [toPost] builds: only paragraphs that
+  /// exist and files still attached.
+  ParagraphMediaLinks get postParagraphMedia => paragraphMedia.isEmpty
+      ? const {}
+      : ParagraphMedia.normalized(paragraphMedia, paragraphs: paragraphs.length, mediaIds: {for (final m in linkableMedia) m.id});
 
   /// 1.3.1: cards. The installed or imported font of the text card's words
   /// (CaptionFont.toJson); an empty map for the built-in [textCardFont],
@@ -234,6 +284,18 @@ class ComposerState {
   /// the editor is folded or rebuilt, and the composer's draft keeps it.
   final Map<String, dynamic>? textCardDesignBeforeEdits;
 
+  /// 1.4.3: the targets came from "Automatic only" and follow the post: the
+  /// automatic accounts whose rules take it are added as it changes (a video
+  /// added brings YouTube videos and Odysee), and the ones NEFORUM added go
+  /// again when the rules no longer take it. See [targetChoices].
+  final bool automaticTargets;
+
+  /// 1.4.3: while [automaticTargets], how each account came to be in or out
+  /// of the post: added by NEFORUM, or ticked or unticked by hand. Hand
+  /// choices are kept as they are; an account without an entry was left
+  /// out by Automatic only and comes in once its rules take the post.
+  final Map<String, TargetChoice> targetChoices;
+
   /// [audioCardDesign], or the Settings default; null for the classic card.
   CardDesign? audioDesign(AppSettings settings) => effectiveCardDesign(audioCardDesign, settings.audioCardDesign);
 
@@ -257,8 +319,15 @@ class ComposerState {
       (title ?? '').trim().isEmpty &&
       (link ?? '').trim().isEmpty;
 
-  /// Something that clearing or replacing the post would lose.
-  bool get hasContent => !isEmpty || additionalParts.isNotEmpty || poll != null || contentWarning != null || tags.isNotEmpty || overrides.isNotEmpty;
+  /// Something that clearing or replacing the post would lose. Post / Story
+  /// alone is not: it stays, and a new post starts with it (1.4.3).
+  bool get hasContent =>
+      !isEmpty ||
+      additionalParts.isNotEmpty ||
+      poll != null ||
+      contentWarning != null ||
+      tags.isNotEmpty ||
+      overrides.values.any((o) => !withoutPlacement(o).isEmpty);
 
   ComposerState copyWith({
     String? editingPostId,
@@ -307,9 +376,13 @@ class ComposerState {
     Map<String, dynamic>? textCardDesignBeforeEdits, // 1.3.5: cards
     bool clearTextCardDesign = false,
     bool clearTextCardDesignBeforeEdits = false,
+    bool clearEditingPostId = false,
+    bool? automaticTargets, // 1.4.3: Automatic only
+    Map<String, TargetChoice>? targetChoices, // 1.4.3: Automatic only
+    ParagraphMediaLinks? paragraphMedia, // 1.4.3
   }) =>
       ComposerState(
-        editingPostId: editingPostId ?? this.editingPostId,
+        editingPostId: clearEditingPostId ? null : (editingPostId ?? this.editingPostId),
         text: text ?? this.text,
         title: clearTitle ? null : (title ?? this.title),
         link: clearLink ? null : (link ?? this.link),
@@ -346,6 +419,9 @@ class ComposerState {
         textCardStyle: textCardStyle ?? this.textCardStyle, // 1.3.5: cards
         textCardDesignBeforeEdits:
             clearTextCardDesignBeforeEdits ? null : (textCardDesignBeforeEdits ?? this.textCardDesignBeforeEdits), // 1.3.5: cards
+        automaticTargets: automaticTargets ?? this.automaticTargets, // 1.4.3: Automatic only
+        targetChoices: targetChoices ?? this.targetChoices, // 1.4.3: Automatic only
+        paragraphMedia: paragraphMedia ?? this.paragraphMedia, // 1.4.3
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -397,6 +473,7 @@ class ComposerState {
       artwork: artwork,
       audioQuality: audioQuality,
       mediaParts: postMediaParts,
+      paragraphMedia: postParagraphMedia,
       audioDetails: {
         for (final e in audioDetails.entries)
           if (!e.value.isEmpty && media.any((m) => m.id == e.key && m.isAudio && !m.generated)) e.key: e.value,
@@ -410,6 +487,26 @@ class ComposerState {
       ],
     ).withScheduleFromTargets();
   }
+}
+
+/// Whether the composer may still save over [post] as the post it edits: a draft
+/// or a scheduled post. A post that went out, is going out or failed in a run
+/// belongs to that run: its targets hold what each network answered, and words
+/// written over it are a new post. Saved over it instead, they would keep those
+/// answers (see [PostActions]), go to no network and be recorded as posted with
+/// the earlier post's links.
+bool isEditablePost(Post? post) => post != null && (post.status == PostStatus.draft || post.status == PostStatus.scheduled);
+
+/// The composer's edited post went out between the moment Publish was pressed
+/// and the moment its words were saved. Nothing was saved or sent; pressing
+/// Publish again posts the words as a new post.
+class EditedPostPublishedException implements Exception {
+  const EditedPostPublishedException();
+
+  String get message => 'This post went out while you were editing it, so your changes were not saved over it. Press Publish again to post them as a new post.';
+
+  @override
+  String toString() => message;
 }
 
 /// `PostOverrides.extra` key of a Discord target's "Mention @everyone"
@@ -438,7 +535,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
     // arrive, unless the user already started choosing.
     ref.listen(accountListProvider, (prev, next) {
       if ((prev == null || prev.isEmpty) && next.isNotEmpty && state.selected.isEmpty && state.isEmpty) {
-        state = state.copyWith(selected: _defaultTargets(next));
+        final selected = _defaultTargets(next);
+        state = state.copyWith(selected: selected, overrides: _withRememberedPlacements(state.overrides, selected, accounts: next));
       }
     });
     // 1.3.5 round 5: a post with no theme of its own follows Settings > Text
@@ -452,10 +550,91 @@ class ComposerNotifier extends Notifier<ComposerState> {
       final style = _readableOn(state.textCardStyle, next);
       if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
     });
+    // 1.4.3: cards. An empty new post follows a shape or layout changed in
+    // Settings > Text cards; a post being written or edited keeps its own.
+    ref.listen(settingsProvider.select((s) => s.newTextCardStyle), (prev, next) {
+      if (prev == next || !state.isEmpty || state.editingPostId != null) return;
+      final style = state.textCardStyle.copyWith(shape: next.shape, layout: next.layout);
+      if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
+    });
+    // 1.4.3: the post being edited went out (a run outside the composer while
+    // NEFORUM was in the background, another device) or was deleted: the words
+    // stay, as a new post.
+    ref.listen<AsyncValue<List<Post>>>(postsProvider, (_, next) {
+      final posts = next.value;
+      if (posts != null) _forgetPostThatWentOut(posts);
+    });
+    return _fresh();
+  }
+
+  /// An empty post with the default targets.
+  ComposerState _fresh() {
     final settings = ref.read(settingsProvider);
+    final selected = _defaultTargets(ref.read(accountListProvider));
     return ComposerState(
       visibility: settings.defaultVisibility,
-      selected: _defaultTargets(ref.read(accountListProvider)),
+      selected: selected,
+      // 1.4.3: a new post starts with each account's remembered Post / Story.
+      overrides: _withRememberedPlacements(const {}, selected),
+      // 1.4.3: cards. A new post's card starts with the shape and layout
+      // Settings > Text cards picked.
+      textCardStyle: settings.newTextCardStyle,
+    );
+  }
+
+  /// Stops editing the saved post once [posts] say it can no longer be edited
+  /// ([isEditablePost]) or is gone. Everything written stays; publishing or
+  /// saving then makes a new post instead of writing over that post's record.
+  /// A post being published is left to [PostActions], which decides when the
+  /// words are saved (its run may be this composer's own).
+  void _forgetPostThatWentOut(List<Post> posts) {
+    final id = state.editingPostId;
+    if (id == null) return;
+    final post = posts.where((p) => p.id == id).firstOrNull;
+    if (post?.status == PostStatus.publishing || isEditablePost(post)) return;
+    state = state.copyWith(clearEditingPostId: true);
+  }
+
+  /// Every change goes through here: while the targets follow the post
+  /// ([ComposerState.automaticTargets]), a change of its words or files
+  /// brings the targets along ([_followingPost]).
+  @override
+  set state(ComposerState value) => super.state = _followingPost(value);
+
+  /// 1.4.3: [s] with its targets brought in line with its post while they
+  /// follow it: an automatic account without a choice of its own is added
+  /// once its rules take the post, and one NEFORUM added goes when they no
+  /// longer do. Accounts ticked or unticked by hand stay as they are. [s]
+  /// itself when nothing changes.
+  ComposerState _followingPost(ComposerState s) {
+    if (!s.automaticTargets) return s;
+    final registry = ref.read(registryProvider);
+    final settings = ref.read(settingsProvider);
+    final selected = {...s.selected};
+    final choices = {...s.targetChoices};
+    final added = <String>[];
+    var changed = false;
+    for (final a in automaticTargetCandidates(ref.read(accountListProvider), registry, artwork: s.isArtwork)) {
+      final choice = choices[a.id];
+      if (choice == TargetChoice.ticked || choice == TargetChoice.unticked) continue;
+      final fits = s.skipReasonFor(a, registry, settings) == null;
+      if (fits && !selected.contains(a.id)) {
+        selected.add(a.id);
+        added.add(a.id);
+        choices[a.id] = TargetChoice.automatic;
+        changed = true;
+      } else if (!fits && choice == TargetChoice.automatic) {
+        selected.remove(a.id);
+        choices.remove(a.id);
+        changed = true;
+      }
+    }
+    if (!changed) return s;
+    // An account this adds starts with its remembered Post / Story (1.4.3).
+    return s.copyWith(
+      selected: selected,
+      overrides: added.isEmpty ? null : _withRememberedPlacements(s.overrides, added),
+      targetChoices: choices,
     );
   }
 
@@ -463,7 +642,46 @@ class ComposerNotifier extends Notifier<ComposerState> {
   Set<String> _defaultTargets(List<ConnectedAccount> accounts) =>
       defaultPostTargets(accounts, ref.read(registryProvider), ref.read(settingsProvider));
 
-  void setText(String v) => state = state.copyWith(text: v);
+  /// 1.4.3: [overrides] with the remembered Post / Story of each of [ids] that
+  /// has no placement of its own ([withRememberedPlacements]).
+  Map<String, PostOverrides> _withRememberedPlacements(Map<String, PostOverrides> overrides, Iterable<String> ids, {List<ConnectedAccount>? accounts}) =>
+      withRememberedPlacements(overrides, ids, accounts ?? ref.read(accountListProvider), ref.read(registryProvider), ref.read(settingsProvider));
+
+  /// 1.4.3: Post, Story or Post + Story for [accountId] on this post, chosen
+  /// on its preview. The choice is remembered for the account: the next new
+  /// post starts with it ([AppSettings.defaultPlacements]).
+  void setPlacement(String accountId, PostPlacement placement) {
+    final current = state.overrides[accountId] ?? const PostOverrides();
+    final next = current.copyWith(extra: extraWithPlacement(current.extra, placement));
+    state = state.copyWith(overrides: next.isEmpty ? ({...state.overrides}..remove(accountId)) : {...state.overrides, accountId: next});
+    final remembered = ref.read(settingsProvider).defaultPlacements;
+    final updated = withRememberedPlacement(remembered, accountId, placement);
+    if (!mapEquals(remembered, updated)) {
+      unawaited(ref.read(settingsProvider.notifier).update((s) => s.copyWith(defaultPlacements: withRememberedPlacement(s.defaultPlacements, accountId, placement))));
+    }
+  }
+
+  /// The main text. Paragraph links move along with their paragraphs.
+  void setText(String v) => state = state.copyWith(
+        text: v,
+        paragraphMedia: state.paragraphMedia.isEmpty ? null : ParagraphMedia.remap(state.text, v, state.paragraphMedia),
+      );
+
+  /// 1.4.3: links file [mediaId] to paragraph [paragraph] (from 0) of the
+  /// text, or unlinks it when it already is. A file belongs to one paragraph:
+  /// linking it here takes it from the paragraph it had. A paragraph's files
+  /// keep the order of the attachments.
+  void toggleParagraphMedia(int paragraph, String mediaId) {
+    final own = state.paragraphMedia[paragraph] ?? const <String>[];
+    final ids = own.contains(mediaId) ? own.where((id) => id != mediaId).toSet() : {...own, mediaId};
+    final order = [for (final m in state.media) m.id];
+    state = state.copyWith(
+      paragraphMedia: ParagraphMedia.link(state.paragraphMedia, paragraph, [for (final id in order) if (ids.contains(id)) id]),
+    );
+  }
+
+  /// 1.4.3: removes every paragraph link.
+  void clearParagraphMedia() => state = state.copyWith(paragraphMedia: const {});
 
   /// Replaces the text programmatically (editor fields resync).
   void prefill(String text) => state = state.copyWith(text: text, revision: state.revision + 1);
@@ -676,6 +894,33 @@ class ComposerNotifier extends Notifier<ComposerState> {
         for (final e in mediaParts.entries) e.key: e.value >= from ? e.value + by : e.value,
       };
 
+  /// 1.4.3: thread media. Moves thread part [from] to position [to] (both
+  /// from 0, the first part included), with its words and its media: every
+  /// attachment stays with the part it was in. The editors take the new
+  /// order from the revision this bumps. Out-of-range moves do nothing.
+  void movePart(int from, int to) {
+    final texts = [state.text, ...state.additionalParts];
+    if (from < 0 || from >= texts.length || to < 0 || to >= texts.length || from == to) return;
+    // order[new position] = old position.
+    final order = [for (var i = 0; i < texts.length; i++) i]
+      ..removeAt(from)
+      ..insert(to, from);
+    final positionOf = {for (var i = 0; i < order.length; i++) order[i]: i};
+    final last = texts.length - 1;
+    final mediaParts = <String, int>{};
+    for (final id in {for (final m in state.media) m.id, ...state.mediaParts.keys}) {
+      final moved = positionOf[state.partOfMedia(id).clamp(0, last)]!;
+      if (moved > 0) mediaParts[id] = moved;
+    }
+    final reordered = [for (final i in order) texts[i]];
+    state = state.copyWith(
+      text: reordered.first,
+      additionalParts: reordered.skip(1).toList(),
+      mediaParts: mediaParts,
+      revision: state.revision + 1,
+    );
+  }
+
   /// Puts attachment [mediaId] in thread part [part] (0 is the first).
   void setMediaPart(String mediaId, int part) {
     final parts = {...state.mediaParts};
@@ -699,6 +944,9 @@ class ComposerNotifier extends Notifier<ComposerState> {
       editingPostId: state.editingPostId,
       visibility: state.visibility,
       selected: state.selected,
+      // Targets that follow the post follow the new one.
+      automaticTargets: state.automaticTargets,
+      targetChoices: state.targetChoices,
       scheduledAt: state.scheduledAt,
       overrides: {
         for (final e in state.overrides.entries)
@@ -721,27 +969,40 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// was written since. [revision] is the one [removePart] left; once the
   /// post was replaced (published, scheduled, loaded, reset or cleared) the
   /// undo is void and nothing changes. Returns whether the part is back.
-  bool undoRemovePart(int index, String text, {required int revision}) {
+  /// [mediaIds], the attachments the part had, go back into it (1.4.3);
+  /// those removed since stay removed.
+  bool undoRemovePart(int index, String text, {required int revision, List<String> mediaIds = const []}) {
     if (index < 1 || state.revision != revision) return false;
     final at = (index - 1).clamp(0, state.additionalParts.length);
     final parts = [...state.additionalParts]..insert(at, text);
-    state = state.copyWith(additionalParts: parts, mediaParts: _shiftParts(state.mediaParts, from: at + 1, by: 1));
+    final attached = {for (final m in state.media) m.id};
+    state = state.copyWith(additionalParts: parts, mediaParts: {
+      ..._shiftParts(state.mediaParts, from: at + 1, by: 1),
+      for (final id in mediaIds)
+        if (attached.contains(id)) id: at + 1,
+    });
     return true;
   }
 
   /// Empties the post: every part, media, title, link, poll, content
   /// warning, tags and per-network versions. Keeps the targets, the schedule,
-  /// artwork mode and which saved post is being edited.
+  /// each network's Post / Story (1.4.3), artwork mode and which saved post
+  /// is being edited.
   void clearPost() {
     state = ComposerState(
       editingPostId: state.editingPostId,
       visibility: ref.read(settingsProvider).defaultVisibility,
       selected: state.selected,
+      // Targets that follow the post follow the empty one: the accounts
+      // NEFORUM added for its video go with it.
+      automaticTargets: state.automaticTargets,
+      targetChoices: state.targetChoices,
       scheduledAt: state.scheduledAt,
       // The times per network are part of the schedule.
       overrides: {
         for (final e in state.overrides.entries)
-          if (e.value.scheduledAt != null) e.key: PostOverrides(scheduledAt: e.value.scheduledAt),
+          if (e.value.scheduledAt != null || hasOwnPlacement(e.value))
+            e.key: placementOnly(e.value).copyWith(scheduledAt: e.value.scheduledAt),
       },
       artwork: state.artwork,
       revision: state.revision + 1,
@@ -781,7 +1042,34 @@ class ComposerNotifier extends Notifier<ComposerState> {
     state = state.copyWith(overrides: overrides);
   }
 
-  void addMedia(Iterable<MediaAttachment> items) => state = state.copyWith(media: [...state.media, ...items]);
+  /// Attaches [items] to thread part [part] (0, the first, by default; a
+  /// part past the last goes to the last).
+  void addMedia(Iterable<MediaAttachment> items, {int part = 0}) {
+    final added = items.toList();
+    if (added.isEmpty) return;
+    final into = part.clamp(0, state.additionalParts.length);
+    state = state.copyWith(
+      media: [...state.media, ...added],
+      mediaParts: into == 0 ? null : {...state.mediaParts, for (final m in added) m.id: into},
+    );
+  }
+
+  /// 1.4.3: thread media. Moves an attachment within the tray of thread part
+  /// [part]: [from] and [to] are positions among that part's own media
+  /// ([ComposerState.mediaOfPart]; [to] already adjusted for the removed
+  /// item, as ReorderableListView.onReorderItem reports it). The media of
+  /// the other parts keeps its place.
+  void moveMediaInPart(int part, int from, int to) {
+    final own = state.mediaOfPart(part);
+    if (from < 0 || from >= own.length) return;
+    final reordered = [...own];
+    reordered.insert(to.clamp(0, own.length - 1), reordered.removeAt(from));
+    final slots = {for (final m in own) m.id};
+    var next = 0;
+    state = state.copyWith(media: [
+      for (final m in state.media) slots.contains(m.id) ? reordered[next++] : m,
+    ]);
+  }
 
   /// The user's track details over the own tags of the sound file
   /// [mediaId]; null or empty goes back to the file's tags. Each sound file
@@ -809,6 +1097,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       audioDetails: state.audioDetails.containsKey(mediaId) ? ({...state.audioDetails}..remove(mediaId)) : null,
       media: state.media.where((m) => m.id != mediaId).toList(),
       mediaParts: {...state.mediaParts}..remove(mediaId),
+      paragraphMedia: ParagraphMedia.withoutMedia(state.paragraphMedia, mediaId),
       overrides: {
         for (final e in state.overrides.entries)
           e.key: e.value.mediaIds == null ? e.value : e.value.copyWith(mediaIds: e.value.mediaIds!.where((x) => x != mediaId).toList()),
@@ -822,25 +1111,90 @@ class ComposerNotifier extends Notifier<ComposerState> {
     final list = [...state.media];
     final item = list.removeAt(from);
     list.insert(to.clamp(0, list.length), item);
-    state = state.copyWith(media: list);
+    // A paragraph's files follow the attachments' order.
+    final order = {for (final (i, m) in list.indexed) m.id: i};
+    state = state.copyWith(media: list, paragraphMedia: {
+      for (final e in state.paragraphMedia.entries) e.key: [...e.value]..sort((a, b) => (order[a] ?? 0).compareTo(order[b] ?? 0)),
+    });
   }
 
   void setAltText(String mediaId, String alt) => state = state.copyWith(
         media: [for (final m in state.media) m.id == mediaId ? m.copyWith(altText: alt, clearAltText: alt.isEmpty) : m],
       );
 
+  /// Ticks or unticks [accountId] by hand. While the targets follow the post
+  /// the choice is kept: NEFORUM never takes away an account ticked by hand,
+  /// nor adds back one unticked by hand.
+  ///
+  /// An account added to the post starts with its remembered Post / Story
+  /// (1.4.3), unless this post already chose one for it.
   void toggleAccount(String accountId) {
     final s = {...state.selected};
-    if (!s.remove(accountId)) s.add(accountId);
-    state = state.copyWith(selected: s);
+    final on = !s.remove(accountId);
+    if (on) s.add(accountId);
+    state = state.copyWith(
+      selected: s,
+      overrides: on ? _withRememberedPlacements(state.overrides, [accountId]) : null,
+      targetChoices: state.automaticTargets ? {...state.targetChoices, accountId: on ? TargetChoice.ticked : TargetChoice.unticked} : null,
+    );
   }
 
-  void selectAccounts(Iterable<String> ids) => state = state.copyWith(selected: ids.toSet());
+  /// Exactly [ids], chosen as a whole: the targets no longer follow the post.
+  /// See [toggleAccount] for the accounts this adds.
+  void selectAccounts(Iterable<String> ids) {
+    final selected = ids.toSet();
+    state = state.copyWith(
+      selected: selected,
+      overrides: _withRememberedPlacements(state.overrides, selected.difference(state.selected)),
+      automaticTargets: false,
+      targetChoices: const {},
+    );
+  }
+
+  /// "Automatic only": the automatic accounts whose rules take the post as it
+  /// is ([automaticSkipReason]); the others are left out, with the reason on
+  /// their cell. From then on the targets follow the post
+  /// ([ComposerState.automaticTargets]).
+  ///
+  /// With [among] (the accounts the picker's filter shows) only those are
+  /// chosen again, and the others stay as they are, as if set by hand.
+  void selectAutomatic({Iterable<String>? among}) {
+    final scope = among?.toSet();
+    final registry = ref.read(registryProvider);
+    final settings = ref.read(settingsProvider);
+    final accounts = ref.read(accountListProvider);
+    final selected = <String>{};
+    final choices = <String, TargetChoice>{};
+    if (scope != null) {
+      selected.addAll(state.selected.difference(scope));
+      for (final a in accounts) {
+        if (!scope.contains(a.id)) choices[a.id] = selected.contains(a.id) ? TargetChoice.ticked : TargetChoice.unticked;
+      }
+    }
+    for (final a in automaticTargetCandidates(accounts, registry, artwork: state.isArtwork)) {
+      if (scope != null && !scope.contains(a.id)) continue;
+      if (state.skipReasonFor(a, registry, settings) != null) continue;
+      selected.add(a.id);
+      choices[a.id] = TargetChoice.automatic;
+    }
+    state = state.copyWith(
+      selected: selected,
+      // An account this adds starts with its remembered Post / Story (1.4.3).
+      overrides: _withRememberedPlacements(state.overrides, selected.difference(state.selected)),
+      automaticTargets: true,
+      targetChoices: choices,
+    );
+  }
 
   void setOverride(String accountId, PostOverrides o) =>
       state = state.copyWith(overrides: {...state.overrides, accountId: o});
 
-  void clearOverride(String accountId) => state = state.copyWith(overrides: {...state.overrides}..remove(accountId));
+  /// Back to the main post for [accountId]. Its Post / Story stays: it is
+  /// chosen on the preview, not by customizing (1.4.3).
+  void clearOverride(String accountId) {
+    final kept = placementOnly(state.overrides[accountId] ?? const PostOverrides());
+    state = state.copyWith(overrides: kept.isEmpty ? ({...state.overrides}..remove(accountId)) : {...state.overrides, accountId: kept});
+  }
 
   /// Loads an existing post into the composer (edit draft / reschedule).
   /// Generated text cards stay out of the editor; they are rebuilt on save.
@@ -892,6 +1246,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardEveryNetwork: textCardEveryNetworkOfPost(post),
         textCardWithText: textCardWithTextOfPost(post, platformOf),
         mediaParts: p.mediaParts,
+        paragraphMedia: p.paragraphMedia, // 1.4.3
         audioDetails: p.audioDetails,
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
         textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
@@ -902,16 +1257,29 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   /// Puts back a post that was being written when NEFORUM closed
   /// (composer_draft.dart).
-  void restore(ComposerState kept) => state = kept.copyWith(revision: state.revision + 1);
+  /// The post it edited may have gone out since it was kept: it then comes back
+  /// as a new post.
+  void restore(ComposerState kept) {
+    state = kept.copyWith(revision: state.revision + 1);
+    final posts = ref.read(postsProvider).value;
+    if (posts != null) _forgetPostThatWentOut(posts);
+  }
 
   /// Starts over with the same targets. Kept art sites keep artwork mode on,
-  /// with the artwork details back at their defaults.
+  /// with the artwork details back at their defaults. Kept targets that
+  /// follow the post (Automatic only) follow the next one, with the choices
+  /// made by hand.
   void reset({bool keepTargets = true}) {
-    final fresh = build();
+    final fresh = _fresh();
+    final selected = keepTargets ? state.selected : fresh.selected;
     state = fresh.copyWith(
-      selected: keepTargets ? state.selected : fresh.selected,
+      selected: selected,
+      // 1.4.3: the new post starts with each account's remembered Post / Story.
+      overrides: _withRememberedPlacements(const {}, selected),
       artwork: keepTargets && state.isArtwork ? newArtworkDetails(ref.read(settingsProvider)) : null,
       revision: state.revision + 1,
+      automaticTargets: keepTargets && state.automaticTargets,
+      targetChoices: keepTargets ? state.targetChoices : const {},
     );
   }
 
@@ -950,6 +1318,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardEveryNetwork: state.textCardEveryNetwork,
       textCardWithText: state.textCardWithText,
       mediaParts: state.mediaParts,
+      paragraphMedia: state.paragraphMedia, // 1.4.3
       audioDetails: state.audioDetails,
       textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
       textCardDesign: state.textCardDesign, // 1.3.1: cards
@@ -961,6 +1330,24 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
 final composerProvider = NotifierProvider<ComposerNotifier, ComposerState>(ComposerNotifier.new);
 
+/// 1.4.3: while the targets follow the post (Automatic only), why each
+/// automatic account left out cannot take the post ("Needs a video"), by
+/// account id, for its cell in "Post to". Empty otherwise.
+final automaticSkipReasonsProvider = Provider<Map<String, String>>((ref) {
+  // Only what the reasons depend on: not every letter typed.
+  final on = ref.watch(composerProvider.select((c) => c.automaticTargets
+      ? (c.selected, c.media, c.overrides, c.joinedParts.trim().isNotEmpty, c.isArtwork)
+      : null));
+  if (on == null) return const {};
+  final c = ref.read(composerProvider);
+  final registry = ref.watch(registryProvider);
+  final settings = ref.watch(settingsProvider);
+  return {
+    for (final a in automaticTargetCandidates(ref.watch(accountListProvider), registry, artwork: c.isArtwork))
+      if (!c.selected.contains(a.id)) a.id: ?c.skipReasonFor(a, registry, settings),
+  };
+});
+
 /// Live per-target previews of what each platform will receive.
 final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final c = ref.watch(composerProvider);
@@ -969,7 +1356,7 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   final settings = ref.watch(settingsProvider);
   final resolver = VariantResolver(settings.resolverOptions);
   final now = DateTime.now();
-  final post = c.toPost(id: 'preview', status: PostStatus.draft, now: now);
+  var post = c.toPost(id: 'preview', status: PostStatus.draft, now: now);
   final background = TextCardBackground.tryParse(c.textCardBackground);
   // One of the post's photos as the cards' background: the card takes its
   // place on image-only networks.
@@ -1011,7 +1398,25 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
         break;
       }
     }
-  }  final out = <TargetPreview>[];
+  }
+  // 1.4.3: cards. **Bold** and *italic* drawn on the classic card leave the
+  // words of networks without Markdown, as they will when the post is saved
+  // (attachTextCards, withCardEmphasis).
+  final cardChosen = post.targets.any((t) => c.selected.contains(t.accountId) && textCardChoiceOf(t.overrides.extra) == TextCardChoice.card);
+  // A designed card draws it as well, when it shows the post's words.
+  final design = cardDesign;
+  final emphasisOnCard = settings.textCards &&
+      (postMakesCard || cardChosen) &&
+      post.targets.any((t) {
+        if (!c.selected.contains(t.accountId)) return false;
+        final words = textCardText(post, t);
+        return design == null ? hasEmphasis(words) : designedCardDrawsEmphasis(design, words);
+      });
+  post = withCardEmphasis(post, marked: emphasisOnCard);
+  // 1.4.3: cards. The classic card's shape; a design draws at each
+  // network's own.
+  final cardShape = cardDesign == null ? c.textCardStyle.shape : TextCardShape.automatic;
+  final out = <TargetPreview>[];
   for (final a in accounts) {
     if (!c.selected.contains(a.id)) continue;
     final adapter = registry.byId(a.platformId);
@@ -1048,7 +1453,9 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
             // previews draw the network's own @handle without it).
             byline: c.textCardStyle.handle,
             style: c.textCardStyle,
-          ).copyWith(altText: textCardAltText(textCardText(post, target)));
+            // 1.4.3: cards. The picture this network gets for the shape.
+            size: textCardFrameFor(adapter, a, variant, settings, story: story, shape: cardShape),
+          ).copyWith(altText: textCardAltText(textCardText(post, target), attribution: cardDesign == null ? c.textCardStyle.attribution : null));
       if (feedCard && c.textCardWithText[d.id] == false) {
         // The card alone: resolved again with it, as publishing will. The
         // feed post of Post + Story too; its story keeps a story card.
@@ -1259,17 +1666,38 @@ class PostActions {
   /// two never overwrite each other.
   final Map<String, Future<void>> _delegations = {};
 
-  /// Saves the composer's post with [status], under [id] when given.
+  /// The saved post the composer edits, while the composer may still save over
+  /// it ([isEditablePost]). Null for a new post, and for one that went out, is
+  /// going out, failed in a run or was deleted since it was opened: its record is
+  /// that run's, and words written over it are a new post.
+  Future<Post?> _editedPost(ComposerState c) async {
+    final id = c.editingPostId;
+    if (id == null) return null;
+    final post = await ref.read(servicesProvider).posts.get(id);
+    return isEditablePost(post) ? post : null;
+  }
+
+  /// Saves the composer's post with [status]: over the post it edits while that
+  /// can still be edited ([_editedPost]), otherwise as a new post, under [id]
+  /// when given. Throws [EditedPostPublishedException], and saves nothing, when
+  /// [id] is the edited post's and that post went out since [id] was chosen.
   Future<Post> _save(PostStatus status, {String? id}) async {
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
     final now = DateTime.now();
-    final existing = c.editingPostId == null ? null : await s.posts.get(c.editingPostId!);
+    final edited = await _editedPost(c);
+    final postId = id ?? edited?.id ?? _uuid.v7();
+    if (edited == null && postId == c.editingPostId && await s.posts.get(postId) != null) throw const EditedPostPublishedException();
+    // Only the post being edited is saved over, and only its own outcomes stay.
+    final existing = edited?.id == postId ? edited : null;
     if (existing != null) await _releaseHeld(existing.id);
-    var post = c.toPost(id: id ?? c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
+    var post = c.toPost(id: postId, status: status, now: now, createdAt: existing?.createdAt);
     // Networks that already have an edited post (the earlier times of a post
     // with a time per network) keep their outcome, so they never get it twice.
+    // Never those of a post that went out: the new words would go nowhere and be
+    // recorded as posted with that post's links.
     final current = existing == null ? null : await s.posts.get(existing.id);
+    if (existing != null && !isEditablePost(current)) throw const EditedPostPublishedException();
     if (current != null) {
       post = post.copyWith(targets: [
         for (final t in post.targets)
@@ -1366,10 +1794,10 @@ class PostActions {
   /// to go has a time that has passed: the scheduler would send it at once. A
   /// composer can hold such a time for as long as its draft stays open.
   Future<Post> schedule() async {
-    final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
-    final editing = c.editingPostId;
-    final existing = editing == null ? null : await s.posts.get(editing);
+    // A post that went out since it was opened is scheduled as a new one, every
+    // network included ([_save]).
+    final existing = await _editedPost(c);
     final now = ref.read(scheduleClockProvider)();
     for (final id in c.selected) {
       if (existing?.targetFor(id)?.isDone ?? false) continue;
@@ -1391,15 +1819,27 @@ class PostActions {
   /// The run is on record in the publish journal before the post is saved
   /// as publishing, so a NEFORUM that closes before the run starts leaves a
   /// post that recovery can settle.
+  ///
+  /// The post's id is the edited post's only while that post can still be
+  /// edited ([isEditablePost]). Words written over a post that went out since it
+  /// was opened are a new post: saved over it, they would keep its networks'
+  /// outcomes, go to no network and be recorded as posted with its links.
   Future<Post> publishNow() async {
     final run = ref.read(publishRunProvider.notifier);
     run.prepare();
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
-    final id = c.editingPostId ?? _uuid.v7();
+    final guess = c.editingPostId ?? _uuid.v7();
     // At once, while the app is on screen: it is the one time Android lets it begin.
-    final keeper = ref.read(publishRunKeeperProvider)..begin(id);
+    final keeper = ref.read(publishRunKeeperProvider)..begin(guess);
+    var id = guess;
     try {
+      if (c.editingPostId != null && await _editedPost(c) == null) {
+        id = _uuid.v7();
+        // The new post's hold first, so the keep-alive never lapses between them.
+        keeper.begin(id);
+        unawaited(keeper.end(guess));
+      }
       try {
         await s.publishJournal.record(id);
       } on Object catch (e) {
@@ -1482,7 +1922,8 @@ class PostActions {
       if (post == null) return out;
       final bytes = post.media.fold<int>(0, (sum, m) => sum + m.sizeBytes);
       final now = DateTime.now();
-      for (final t in post.targets) {
+      // 1.4.3: listed in the publishing order, as the run goes.
+      for (final t in await s.publisher().targetsInPublishingOrder(post)) {
         if (t.isDone || (accountIds != null && !accountIds.contains(t.accountId)) || (dueTargetsOnly && !post.isTargetDue(t, now))) continue;
         final a = await s.accounts.get(t.accountId);
         final d = a == null ? null : s.registry.descriptor(a.platformId);
@@ -1517,7 +1958,11 @@ class PostActions {
     final run = ref.read(publishRunProvider.notifier);
     final due = post;
     final now = DateTime.now();
-    final starting = accountIds ?? {for (final t in due.targets) if (!dueTargetsOnly || due.isTargetDue(t, now)) t.accountId};
+    // 1.4.3: in the publishing order, so the sheet's rows are in it before the plan.
+    final inOrder = await s.publisher().targetsInPublishingOrder(due);
+    final starting = accountIds == null
+        ? {for (final t in inOrder) if (!dueTargetsOnly || due.isTargetDue(t, now)) t.accountId}
+        : {for (final t in inOrder) if (accountIds.contains(t.accountId)) t.accountId, ...accountIds};
     run.start(postId, starting);
     // What the last run said about these networks is out of date now.
     await NotificationService.instance.cancelResults(postId, starting);

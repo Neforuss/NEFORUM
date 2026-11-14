@@ -145,6 +145,7 @@ AppSettings populatedSettings() => AppSettings(
       navigationChrome: NavigationChromeStyle.transparent,
       customAccentColor: 0xFF336699,
       interfaceDensity: InterfaceDensity.compact,
+      seamlessSurfaces: true, // 1.4.3
       mobileTextScale: 1.2,
       collapsedSettingsSections: const ['sync'],
       targetPickerFolded: true,
@@ -161,6 +162,7 @@ AppSettings populatedSettings() => AppSettings(
       fontDownloads: FontDownloadMode.on,
       emojiRecents: const ['\u{1F600}'],
       emojiSkinTone: 3,
+      characterFavourites: const ['★', '¯\\_(ツ)_/¯'], // 1.4.3: symbols
       notificationPromptAt: DateTime.utc(2026, 11, 1),
       notificationOsAskedAt: DateTime.utc(2026, 11, 2),
       notificationHintShownAt: DateTime.utc(2026, 11, 3),
@@ -171,6 +173,8 @@ AppSettings populatedSettings() => AppSettings(
       textCardEveryNetwork: true,
       navigationChromeOpacity: 0.5,
       navigationChromeBlur: 8,
+      navigationChromeColor: 0xFF225588, // 1.4.3: colours
+      navigationChromeTint: 0xFFEEDDCC, // 1.4.3: colours
       audioTextTemplate: '{title}',
       textCardCustomFont: const {'family': 'Fake Sans', 'source': 'installed'},
       textCardDesign: const {'background': 'gradient', 'radius': 0.1},
@@ -178,6 +182,11 @@ AppSettings populatedSettings() => AppSettings(
       cardPresets: const [
         {'name': 'Fake preset', 'design': {'background': 'solid'}},
       ],
+      textCardShape: TextCardShape.landscape, // 1.4.3: cards
+      textCardLayout: TextCardLayout.panel, // 1.4.3: cards
+      publishingOrder: const ['acct-2', 'acct-1'], // 1.4.3
+      defaultPlacements: const {'acct-1': 'feedAndStory', 'acct-2': 'story'}, // 1.4.3
+      threadMediaLayout: ThreadMediaLayout.singleTray, // 1.4.3: thread media
     );
 
 /// A second setup, different from both the defaults and [populatedSettings]

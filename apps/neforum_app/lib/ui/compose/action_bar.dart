@@ -74,7 +74,7 @@ class ComposerActionBar extends ConsumerWidget {
                 onPressed: busy ? null : onSchedule,
                 tooltip: 'Schedule',
                 icon: const Icon(Icons.schedule_rounded),
-                style: IconButton.styleFrom(side: BorderSide(color: nf.border), minimumSize: const Size(44, 44)),
+                style: IconButton.styleFrom(side: BorderSide(color: nf.hairline), minimumSize: const Size(44, 44)),
               )
             : PillButton(label: 'Schedule', icon: Icons.schedule_rounded, onPressed: busy ? null : onSchedule))
         : InputChip(

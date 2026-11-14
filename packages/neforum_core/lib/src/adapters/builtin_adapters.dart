@@ -15,6 +15,7 @@ import 'art/newgrounds_adapter.dart';
 import 'art/pixelfed_adapter.dart';
 import 'art/pixiv_adapter.dart';
 import 'art/weasyl_adapter.dart';
+import 'blogs_a/emdash_adapter.dart';
 import 'blogs_a/ghost_adapter.dart';
 import 'blogs_a/wordpress_adapter.dart';
 import 'blogs_a/writefreely_adapter.dart';
@@ -27,6 +28,8 @@ import 'chat/matrix_adapter.dart';
 import 'chat/telegram_adapter.dart';
 import 'facebook/facebook_adapter.dart';
 import 'handoff_only/google_business_adapter.dart';
+import 'handoff_only/locals_adapter.dart';
+import 'handoff_only/parler_adapter.dart';
 import 'handoff_only/snapchat_adapter.dart';
 import 'handoff_only/substack_adapter.dart';
 import 'handoff_only/whatsapp_adapter.dart';
@@ -65,6 +68,7 @@ List<PlatformAdapter> builtinAdapters() => [
       LinkedInAdapter(),
       RedditAdapter(),
       TumblrAdapter(),
+      ParlerAdapter(),
       // Photo & video
       InstagramAdapter(),
       TikTokAdapter(),
@@ -83,11 +87,13 @@ List<PlatformAdapter> builtinAdapters() => [
       // Blogs & newsletters
       WordPressAdapter(),
       GhostAdapter(),
+      EmDashAdapter(),
       WriteFreelyAdapter(),
       MicropubAdapter(),
       DevtoAdapter(),
       HashnodeAdapter(),
       SubstackAdapter(),
+      LocalsAdapter(),
       // Business
       GoogleBusinessAdapter(),
       // Art and portfolios (posting through an API)

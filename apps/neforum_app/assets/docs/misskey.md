@@ -59,10 +59,10 @@ Tokens from either sign-in method never expire. To revoke one, go to **Settings 
 
 - **Text** is MFM, Misskey's Markdown-like format. `#tags` and `@user@host` mentions are linked automatically. URLs count at their full length.
 - **Content warning** (`cw`): up to 100 characters.
-- **Visibility**: Public → `public`, Unlisted → `home`, Followers → `followers`, Private → `specified`. A `specified` note can only be seen by you and the people you mention. Add `visibleUserIds` in the per-network options to send it to specific users. If your role can't post publicly, NEFORUM sends the note as `home`.
+- **Visibility**: Public → `public`, Unlisted → `home`, Followers → `followers`, Private → `specified`. A `specified` note can only be seen by you and the people you mention. If your role can't post publicly, NEFORUM sends the note as `home`.
 - **Media**: up to 16 files per note, and images and videos can be mixed. Each file is uploaded to your Drive first (`drive/files/create`). Alt text goes in the file comment (max 512 characters). The "sensitive" switch marks the uploaded files as sensitive.
-- **Long posts** become a thread. Each part is a reply to the one before it. Media goes on the first part.
-- **Per-network options** (`extra`): `localOnly: true` keeps the note on your server and doesn't federate it. You can also set `replyId`, `channelId`, `visibleUserIds`, `reactionAcceptance`, and `visibility` to override the mapping.
+- **Long posts** become a thread. Each part is a reply to the one before it. Each part's media goes on that part's note, so a thread with photos in every part arrives the way you wrote it.
+- **Misskey options** (the post's **Customize** sheet): **This server only** keeps the note on your server and doesn't federate it. **Who can see it** overrides the mapping above. Under **More options**, **Reactions** limits which reactions the note takes and **Channel ID** posts it in a channel.
 
 ### Hand-off
 

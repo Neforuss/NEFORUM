@@ -15,6 +15,7 @@ import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
 import '../router.dart';
 import 'guide_sheet.dart';
+import 'reconnect_action.dart';
 
 /// Every connected account by when its sign-in ends and who has to act. Reads
 /// the status file only: opening this page raises no keychain prompt, apart from
@@ -54,7 +55,8 @@ class _SignInsScreenState extends ConsumerState<SignInsScreen> {
     }
   }
 
-  void _reconnect(SignInRow r) => context.go('${AppSection.accounts.path}/add?platform=${r.account.platformId}');
+  /// 1.4.3: one tap, with the keys and app already saved ([reconnectAccount]).
+  Future<void> _reconnect(SignInRow r) => _during(r.account.id, () => reconnectAccount(context, ref, r.account));
 
   Future<void> _renew(SignInRow r) => _during(r.account.id, () async {
         final s = ref.read(servicesProvider);
@@ -144,7 +146,7 @@ class _SignInsScreenState extends ConsumerState<SignInsScreen> {
               padding: EdgeInsets.zero,
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 for (final (i, r) in groups[g]!.indexed) ...[
-                  if (i > 0) Divider(height: 1, color: context.nf.border),
+                  if (i > 0) Divider(height: 1, color: context.nf.hairline),
                   _SignInRowView(
                     key: ValueKey('sign-in-row-${r.account.id}'),
                     row: r,

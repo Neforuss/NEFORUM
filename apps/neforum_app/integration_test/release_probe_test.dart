@@ -346,10 +346,13 @@ void main() {
       ..selectAccounts([for (final a in dump) a.id]);
     await pumpFor(1500);
     final dumpPreviews = {for (final p in c.read(composerPreviewsProvider)) p.descriptor.id: p.variant};
-    for (final id in ['x', 'bluesky', 'mastodon']) {
+    for (final id in ['bluesky', 'mastodon']) {
       expect(dumpPreviews[id]!.threadParts, hasLength(5), reason: '$id: a thread of five');
       expect(dumpPreviews[id]!.media, hasLength(20), reason: '$id: every photo');
     }
+    // 1.4.3: an X account that has not refused it takes all twenty in one post.
+    expect(dumpPreviews['x']!.threadParts.length, lessThanOrEqualTo(1), reason: 'x: one post of twenty');
+    expect(dumpPreviews['x']!.media, hasLength(20), reason: 'x: every photo');
     expect(dumpPreviews['telegram']!.seriesPosts, hasLength(1), reason: 'Telegram: two albums of ten');
     // The previews are long with twenty photos each: scroll to Telegram's.
     if (find.byType(PreviewPane).evaluate().isEmpty && find.textContaining('Preview (').evaluate().isNotEmpty) {

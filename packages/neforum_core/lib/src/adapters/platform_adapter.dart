@@ -12,6 +12,7 @@ import '../publish/publish_progress.dart';
 import '../text/rules_validator.dart';
 import 'adapter_context.dart';
 import 'connect_spec.dart';
+import 'reconnect_input.dart';
 
 export '../model/sign_in_lifetime.dart';
 export '../publish/publish_progress.dart' show ProgressFamily, ProgressShape, ProgressSlot;
@@ -59,6 +60,28 @@ abstract class PlatformAdapter {
   Future<Map<String, String>?> refreshSecrets(
           ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
       null;
+
+  /// The connect form's answers that sign [account] in again through the
+  /// browser with what its first sign-in stored (the server, the person's own
+  /// developer app ID and secret, a board), so a revoked or ended sign-in
+  /// comes back with one tap: the platform's consent page, and nothing typed.
+  /// Never a token or a password: those fields stay empty, so [connect] takes
+  /// the browser route.
+  ///
+  /// Null when that is impossible: no browser sign-in for this tier, keys that
+  /// were pasted rather than signed in for, or something the first sign-in did
+  /// not keep. The app then opens the connect form.
+  ///
+  /// [redirect] is where this device's browser sign-in comes back to now. A
+  /// platform that registered the previous address with the app it made for
+  /// NEFORUM (Mastodon) reuses that app only when the two match.
+  Map<String, String>? reconnectInput(ConnectedAccount account, Map<String, String> secrets, {Uri? redirect}) =>
+      browserReconnectInput(connectSpecs, account, secrets, sources: reconnectFieldSources);
+
+  /// Form field -> the config or key name [connect] stored its value under,
+  /// for [reconnectInput], where the name is not the field's own written
+  /// another way ("client_id" and "clientId" match by themselves).
+  Map<String, String> get reconnectFieldSources => const {};
 
   /// The documented facts about how long [account]'s sign-in lasts, from
   /// [SignInPolicies]. No default on purpose: a new adapter has to answer, and
@@ -121,6 +144,12 @@ abstract class PlatformAdapter {
     final d = descriptorForAccount(account);
     return PhotoFit.fromRules(d.media).copyWith(label: d.name);
   }
+
+  /// The options the user can set for a post through [account]: the
+  /// descriptor's ([PlatformDescriptor.options]) for the account's tier.
+  /// An adapter drops the ones the account cannot use (a channel has no
+  /// topics).
+  List<PostOption> postOptionsFor(ConnectedAccount account) => descriptorForAccount(account).userOptionsFor(account.tier);
 
   /// Whether [account] can place a post as a story as well as in the feed
   /// ([PostPlacement], read from `PostVariant.extra`). The composer then

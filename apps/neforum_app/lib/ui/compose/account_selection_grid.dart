@@ -158,8 +158,10 @@ double _cellHeight(BuildContext context, AccountEntry e, AccountGridForm form, d
   if (form != AccountGridForm.names) {
     return math.max(kAccountCellMinHeight, frame + (e.handle == null ? _tileFaceSize + Space.xxs + _stateIconSize : _faceSize + Space.xxs + handle));
   }
-  final name = _measure(context, e.label, _nameStyle(context), maxLines: 2, maxWidth: cell - 2 * _cellPaddingX - 2 * _cellBorder).height;
-  return math.max(kAccountCellMinHeight, frame + _faceSize + Space.xxs + name + handle);
+  final inner = cell - 2 * _cellPaddingX - 2 * _cellBorder;
+  final name = _measure(context, e.label, _nameStyle(context), maxLines: 2, maxWidth: inner).height;
+  final reason = e.skipReason == null ? 0.0 : _measure(context, e.skipReason!, _handleStyle(context), maxLines: 2, maxWidth: inner).height;
+  return math.max(kAccountCellMinHeight, frame + _faceSize + Space.xxs + name + handle + reason);
 }
 
 const double _faceSize = 18;
@@ -214,6 +216,7 @@ class AccountEntry {
     this.handle,
     this.identity,
     this.artSite = false,
+    this.skipReason,
   });
 
   final ConnectedAccount account;
@@ -240,6 +243,11 @@ class AccountEntry {
   /// until then it is neither chosen nor left out.
   final bool artSite;
 
+  /// Why "Automatic only" left this account out ("Needs a video"): the
+  /// post as it is does not fit its rules. It stays selectable; the cell
+  /// shows the reason under the name.
+  final String? skipReason;
+
   bool get disabled => onTap == null;
 
   /// [query] in lower case is in anything that names this account.
@@ -254,7 +262,9 @@ class AccountEntry {
           ? 'art site, choosing it turns on Artwork'
           : selected
               ? 'posting'
-              : 'left out';
+              : skipReason == null
+                  ? 'left out'
+                  : 'left out, ${skipReason!.toLowerCase()}';
 
   /// Whether this account goes out with the post. A disabled account can still
   /// be in the selection, from an old draft, and publishing skips it.
@@ -269,7 +279,8 @@ class AccountEntry {
     if (disabled) return identity == null ? '$platformName is disabled in Accounts' : '$platformName · $identity is disabled in Accounts';
     final who = identity ?? _nameOfAccount(account);
     return '$platformName${who.isEmpty ? '' : ' · $who'}\n${tierShortLabel(account.tier)}: ${tierDescription(account.tier)}'
-        '${artSite ? '\nArt site: choosing it turns on Artwork' : ''}';
+        '${artSite ? '\nArt site: choosing it turns on Artwork' : ''}'
+        '${skipReason == null ? '' : '\nLeft out by Automatic only: $skipReason'}';
   }
 }
 
@@ -541,7 +552,7 @@ class _AccountCellState extends State<AccountCell> {
                 borderRadius: Radii.rXs,
                 // Mostly chosen is the usual picture: chosen cells stay quiet,
                 // so the ones left out are what the eye finds.
-                border: Border.all(width: _cellBorder, color: sel ? nf.accent.withValues(alpha: 0.45) : (_hover && enabled ? nf.borderStrong : nf.border)),
+                border: Border.all(width: _cellBorder, color: sel ? nf.accent.withValues(alpha: 0.45) : (_hover && enabled ? nf.borderHover : nf.border)),
               ),
               // Drawn over the cell, so that the name does not move.
               foregroundDecoration: _focused ? BoxDecoration(borderRadius: Radii.rXs, border: Border.all(color: nf.accent, width: 2)) : null,
@@ -576,6 +587,16 @@ class _AccountCellState extends State<AccountCell> {
                           ),
                         ),
                       ?handle,
+                      // A tile has no room for words: its tooltip and screen
+                      // readers carry the reason.
+                      if (!widget.tile && e.skipReason != null)
+                        Text(
+                          e.skipReason!,
+                          key: ValueKey('account-cell-reason-${e.account.id}'),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: _handleStyle(context)?.copyWith(color: nf.textMuted),
+                        ),
                     ]),
             ),
           ),

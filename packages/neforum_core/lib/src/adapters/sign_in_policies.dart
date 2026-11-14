@@ -301,6 +301,19 @@ abstract final class SignInPolicies {
   );
   static SignInPolicy ghost(ConnectedAccount account) => _api(account, ghostPolicy);
 
+  /// EmDash personal access tokens (read from EmDash 1.5's source on
+  /// 2026-11-13): a token made with "No expiry" has no end date; one made
+  /// with 7 days to 1 year ends then, and only an admin can read that date,
+  /// so NEFORUM cannot show it.
+  static const SignInPolicy emDashPolicy = SignInPolicy(
+    limit: SignInLimit.none,
+    renewal: SignInRenewal.notNeeded,
+    earlyRevocationPossible: true,
+    sourceUrl: 'https://github.com/emdash-cms/emdash/blob/main/packages/core/src/api/handlers/api-tokens.ts',
+    note: 'Unless you gave the token an end date when you made it.',
+  );
+  static SignInPolicy emDash(ConnectedAccount account) => _api(account, emDashPolicy);
+
   static const SignInPolicy writeFreelySelfHosted = SignInPolicy(
     limit: SignInLimit.none,
     renewal: SignInRenewal.notNeeded,

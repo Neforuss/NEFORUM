@@ -49,6 +49,7 @@ const Set<String> kExportableSettings = {
   'navigationChrome',
   'customAccentColor',
   'interfaceDensity',
+  'seamlessSurfaces', // 1.4.3: appearance
   'advanceHandoffOnReturn',
   'artworkMaturity',
   'artworkDisallowAiTraining',
@@ -67,6 +68,22 @@ const Set<String> kExportableSettings = {
   // preference, not a pairing: phones ignore it.
   'browserQuickPost',
   'browserOpenInFirst',
+  // 1.4.3: symbols. The starred characters are a choice like a theme; the
+  // recent ones stay on the device (emojiRecents).
+  'characterFavourites',
+  'textCardShape', // 1.4.3: cards
+  'textCardLayout', // 1.4.3: cards
+  // 1.4.3: the order posts go out to the accounts, which travel too.
+  'publishingOrder',
+  // 1.4.3: story placement. Post / Story / Post + Story as last chosen for
+  // each account, which travels with the accounts.
+  'defaultPlacements',
+  // 1.4.3: colours
+  'navigationChromeColor',
+  'navigationChromeTint',
+  // 1.4.3: thread media. How the composer adds a thread's media; the post
+  // itself is the same either way.
+  'threadMediaLayout',
 };
 
 /// 1.3.5: the settings that stay on the device, each with why. Together with
@@ -124,6 +141,10 @@ const Map<String, Object?> kSettingDefaultsLeftOut = {
   'textCardDesign': <String, Object?>{},
   'audioCardDesign': <String, Object?>{},
   'cardPresets': <Object?>[],
+  'characterFavourites': <Object?>[], // 1.4.3: symbols
+  'defaultPlacements': <String, Object?>{}, // 1.4.3: story placement
+  'navigationChromeColor': null, // 1.4.3: colours
+  'navigationChromeTint': null, // 1.4.3: colours
 };
 
 /// 1.3.5: every shared setting of [s] with its value, defaults included, as
@@ -131,6 +152,27 @@ const Map<String, Object?> kSettingDefaultsLeftOut = {
 Map<String, Object?> syncedSettings(AppSettings s) {
   final j = s.toJson();
   return {for (final k in kExportableSettings) k: j.containsKey(k) ? j[k] : kSettingDefaultsLeftOut[k]};
+}
+
+/// A shared setting's [value] (as the sync file carries it, under [key]) with
+/// the account ids that sync merged into another ([ids]: old id to kept id)
+/// changed to the kept one: the default targets, and since 1.4.3 the
+/// remembered Post / Story of each account. Unchanged values come back as
+/// they are.
+Object? remapSettingAccountIds(String key, Object? value, Map<String, String> ids) {
+  if (key == 'defaultTargetIds' && value is List && value.any(ids.containsKey)) {
+    return [...{for (final id in value) ids[id] ?? id}];
+  }
+  if (key == 'defaultPlacements' && value is Map && value.keys.any(ids.containsKey)) {
+    // The kept account's own choice wins over the merged copy's.
+    return {
+      for (final e in value.entries)
+        if (!ids.containsKey(e.key)) e.key: e.value,
+      for (final e in value.entries)
+        if (ids.containsKey(e.key) && !value.containsKey(ids[e.key])) ids[e.key]: e.value,
+    };
+  }
+  return value;
 }
 
 Map<String, dynamic> exportableSettings(AppSettings s) => {

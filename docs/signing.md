@@ -9,7 +9,7 @@ NEFORUM is signed only through free routes: no Apple Developer Program and no Go
 | Android APKs | NEFORUM's own release key | A keystore in GitHub secrets |
 | Firefox extension | Signed by Mozilla (AMO, unlisted channel) | AMO API credentials |
 | Chrome extension | Signed by the Chrome Web Store when published there | A Chrome Web Store listing ([chrome-web-store.md](chrome-web-store.md)) |
-| Linux tarball and AppImage | Attestation and SHA256SUMS; Flathub signs its own repository | Nothing |
+| Linux tarball and AppImage | Attestation and SHA256SUMS (the AppImage checks it when it updates itself); Flathub signs its own repository | Nothing |
 | macOS and iOS | Ad-hoc only (no Apple account) | Not covered |
 
 ## Repository secrets and variables
@@ -188,6 +188,34 @@ Chrome signs extensions itself when they are installed from the Chrome Web Store
 ## Linux
 
 The tarball and the AppImage are not signed with a key of their own: they carry the build provenance attestation and their SHA-256 in `SHA256SUMS`. AppImage's optional GPG signature (`appimagetool --sign`) would need a GPG key in CI secrets; it is not set up. Flathub signs its repository itself ([packaging/flatpak](../packaging/flatpak/org.neforum.NEFORUM.yml)); NEFORUM turns its own update check off inside a Flatpak.
+
+### AppImage updates
+
+The AppImage updates itself, in two ways.
+
+**Update now in NEFORUM.** When the update check finds a newer version and NEFORUM runs as an AppImage (the AppImage runtime sets `$APPIMAGE`), the Download button in Settings > Updates and in the update banner reads **Update now**. After the user confirms, NEFORUM:
+
+1. Takes the AppImage for this processor from `latest.json` (`linux-x64-appimage` or `linux-arm64-appimage`). It installs only a file of this project's GitHub releases (`https://github.com/Neforuss/NEFORUM/releases/download/<tag>/<file>`); any other address gets the download page instead.
+2. Downloads it into a hidden file next to the AppImage (`.NEFORUM-x86_64.AppImage.<version>.part`), so the last step stays on one file system. The request is the update check's: a fixed User-Agent, no cookies, nothing about the device. Redirects are followed only over https.
+3. Checks its SHA-256 against `latest.json`, which `tool/make_latest_json.dart` builds from the release's `SHA256SUMS`. The file comes from GitHub and the checksum from neforus.com, so a changed file has to get past both sites.
+4. Gives it the old AppImage's permissions plus execute, and renames it over the old AppImage. The rename is atomic: the AppImage is either the old file or the new one, never half of each. The running copy keeps its mount, so nothing breaks while it closes.
+5. Starts a small `/bin/sh` helper that waits until this NEFORUM has exited (at most 30 seconds), then runs the new AppImage, and quits. NEFORUM is one instance per user session, so the new copy has to start after the old one is gone.
+
+Any failure (no AppImage for this processor, a folder NEFORUM cannot write to such as `/opt`, a full disk, a broken download, a checksum mismatch, a failed rename) removes the partial file, leaves the old AppImage as it was, says why, and offers the download page. The code is `apps/neforum_app/lib/platform/appimage_update_io.dart`, tested in `apps/neforum_app/test/appimage_update_test.dart`.
+
+**AppImage update tools.** CI builds each AppImage with update information (`appimagetool -u`):
+
+```
+gh-releases-zsync|<owner>|<repo>|latest|NEFORUM-x86_64.AppImage.zsync
+```
+
+and publishes `NEFORUM-x86_64.AppImage.zsync` and `NEFORUM-aarch64.AppImage.zsync` next to the AppImages. AppImageUpdate, AppImageLauncher and other tools that read it find the newest published GitHub release and download only the blocks that changed. `latest` is GitHub's latest release, so a draft is never offered. CI checks that the update information is in the AppImage and that each `.zsync` points at its AppImage by a relative name and carries its SHA-1. Read it from a downloaded AppImage with:
+
+```bash
+./NEFORUM-x86_64.AppImage --appimage-updateinformation
+```
+
+Between neforus.com publishing a new `latest.json` and the GitHub release leaving draft, Update now gets a 404 from GitHub and offers the download page; once the release is published it works.
 
 ## macOS and iOS
 

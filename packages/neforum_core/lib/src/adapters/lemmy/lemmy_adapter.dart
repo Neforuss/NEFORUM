@@ -13,6 +13,7 @@ import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../audio_links.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'lemmy_api.dart';
 
@@ -51,6 +52,7 @@ class LemmyAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'lemmy',
+    options: lemmyOptions,
     name: 'Lemmy',
     iconKey: 'lemmy',
     homepage: 'https://join-lemmy.org',

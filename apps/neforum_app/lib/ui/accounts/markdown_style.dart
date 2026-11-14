@@ -38,9 +38,9 @@ MarkdownStyleSheet neforumMarkdown(BuildContext context, {bool small = false}) {
     blockquotePadding: const EdgeInsets.fromLTRB(Space.md, Space.sm, Space.md, Space.sm),
     tableHead: body.copyWith(fontWeight: FontWeight.w700),
     tableBody: body,
-    tableBorder: TableBorder.all(color: nf.border),
+    tableBorder: TableBorder.all(color: nf.hairline),
     tableCellsPadding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs + 2),
-    horizontalRuleDecoration: BoxDecoration(border: Border(top: BorderSide(color: nf.border))),
+    horizontalRuleDecoration: BoxDecoration(border: Border(top: BorderSide(color: nf.hairline))),
   );
 }
 

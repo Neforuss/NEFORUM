@@ -83,6 +83,8 @@ const Map<String, PlatformBrand> platformBrands = {
   'nostr': PlatformBrand(color: Color(0xFF8E30EB), monogram: 'N'),
   'wordpress': PlatformBrand(color: Color(0xFF21759B), icon: FontAwesomeIcons.wordpress),
   'ghost': PlatformBrand(color: Color(0xFF15171A), darkColor: Color(0xFF30343B), icon: FontAwesomeIcons.ghost),
+  // The orange of EmDash's mark.
+  'emdash': PlatformBrand(color: Color(0xFFF6821F), onColor: Color(0xFF111111), monogram: 'Ed'),
   'writefreely': PlatformBrand(color: Color(0xFF3C4A57), darkColor: Color(0xFF52657A), monogram: 'Wf'),
   'micropub': PlatformBrand(color: Color(0xFFE85D0C), icon: FontAwesomeIcons.rss),
   'devto': PlatformBrand(color: Color(0xFF0A0A0A), darkColor: Color(0xFF2B2B2B), icon: FontAwesomeIcons.dev),
@@ -94,6 +96,10 @@ const Map<String, PlatformBrand> platformBrands = {
   'rumble': PlatformBrand(color: Color(0xFF85C742), onColor: Color(0xFF111111), monogram: 'R'),
   'odysee': PlatformBrand(color: Color(0xFFE50054), icon: FontAwesomeIcons.odysee),
   'bitchute': PlatformBrand(color: Color(0xFFEF4137), monogram: 'B'),
+  // The red of Parler's own icon (parler.com/icons/parler-social.svg).
+  'parler': PlatformBrand(color: Color(0xFFE50038), monogram: 'P'),
+  // The dark dots of Locals' icon (locals.com/assets/logo/logo-on-light-bg.svg).
+  'locals': PlatformBrand(color: Color(0xFF080808), darkColor: Color(0xFF2A2A2A), monogram: 'Lo'),
   // Art and portfolios (posting through an API)
   'deviantart': PlatformBrand(color: Color(0xFF00E59B), onColor: Color(0xFF06070D), icon: FontAwesomeIcons.deviantart),
   'dribbble': PlatformBrand(color: Color(0xFFEA4C89), icon: FontAwesomeIcons.dribbble),
@@ -139,7 +145,7 @@ const Set<String> _platformIcons = {
   'reddit', 'telegram', 'discord', 'matrix', 'tumblr', 'lemmy', 'misskey', 'nostr', 'wordpress', 'ghost', //
   'writefreely', 'micropub', 'devto', 'hashnode', 'snapchat', 'whatsapp', 'google_business', 'substack', 'rumble', //
   'odysee', 'bitchute', 'deviantart', 'dribbble', 'pixelfed', 'flickr', 'inkbunny', 'behance', 'artstation', 'cara', //
-  'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', 'kofi', 'artfol', 'fivehundredpx',
+  'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', 'kofi', 'artfol', 'fivehundredpx', 'emdash', 'parler', 'locals',
 };
 
 /// Platforms shown with another platform's icon: YouTube's Posts tab is
@@ -226,7 +232,7 @@ class PlatformTile extends StatelessWidget {
             foregroundDecoration: BoxDecoration(
               borderRadius: corners,
               shape: shape,
-              border: Border.all(color: Theme.of(context).extension<NfColors>()?.border ?? const Color(0x1F000000), width: 0.5),
+              border: Border.all(color: Theme.of(context).extension<NfColors>()?.hairline ?? const Color(0x1F000000), width: 0.5),
             ),
             decoration: BoxDecoration(
               borderRadius: corners,

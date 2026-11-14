@@ -790,7 +790,8 @@ jobs:
           # and hash, with this Ubuntu's desktop-file-validate and appstreamcli:
           # 1.4.0 failed the catalog on a .desktop key these older tools reject.
           # mimetype (libfile-mimeinfo-perl): the lint checks .DirIcon is a PNG with it, as the catalog does.
-          sudo apt-get install -y desktop-file-utils appstream libfile-mimeinfo-perl > /dev/null
+          # zsync: zsyncmake, for the .zsync file AppImage updaters read (below).
+          sudo apt-get install -y desktop-file-utils appstream libfile-mimeinfo-perl zsync > /dev/null
           raw_get "$tools/appdir-lint.sh" \
             "https://raw.githubusercontent.com/AppImage/appimage.github.io/43bfa8028da03218288d73bbdf45fda2e18c98c5/code/appdir-lint.sh"
           raw_get "$tools/excludelist" \
@@ -799,16 +800,38 @@ jobs:
           echo "50db0f894f34b169c47a5cbc0c17dbab61e9edebca5bc8269a1e6ac1bf4bdad9  $tools/excludelist" | sha256sum -c -
           # Retried only on a network failure: its link check fetches github.com.
           EXCLUDELIST="$tools/excludelist" bash "$GITHUB_WORKSPACE/apps/neforum_app/tool/retry_on_network.sh" 4 bash "$tools/appdir-lint.sh" "$appdir"
+          # Update information (-u): AppImageUpdate, AppImageLauncher and other
+          # AppImage updaters find the newest release's .zsync with
+          # it and download only the changed blocks. NEFORUM's own Update now
+          # (lib/platform/appimage_update_io.dart) downloads the whole file.
+          name="NEFORUM-${{ matrix.appimage-arch }}.AppImage"
+          update_information="gh-releases-zsync|${GITHUB_REPOSITORY%%/*}|${GITHUB_REPOSITORY#*/}|latest|$name.zsync"
           # --appimage-extract-and-run: CI runners have no FUSE.
           ARCH=${{ matrix.appimage-arch }} "$tools/appimagetool" --appimage-extract-and-run --no-appstream \
-            --runtime-file "$tools/runtime" "$appdir" "$GITHUB_WORKSPACE/NEFORUM-${{ matrix.appimage-arch }}.AppImage"
-          ls -l "$GITHUB_WORKSPACE"/neforum-linux-*.tar.gz "$GITHUB_WORKSPACE"/NEFORUM-*.AppImage
+            -u "$update_information" --runtime-file "$tools/runtime" "$appdir" "$GITHUB_WORKSPACE/$name"
+          cd "$GITHUB_WORKSPACE"
+          # The runtime prints its .upd_info section; objcopy reads it if not.
+          embedded=$( ("./$name" --appimage-updateinformation 2> /dev/null || true) | tr -d '\0')
+          if [ -z "$embedded" ]; then
+            objcopy -O binary --only-section=.upd_info "$name" "$RUNNER_TEMP/upd_info"
+            embedded=$(tr -d '\0' < "$RUNNER_TEMP/upd_info")
+          fi
+          if [ "$embedded" != "$update_information" ]; then
+            echo "::error::$name carries the update information '$embedded', not '$update_information'"; exit 1
+          fi
+          # Made here, from the finished file, whether or not appimagetool made
+          # one: the URL inside stays relative (the file next to it in the release).
+          zsyncmake -u "$name" -o "$name.zsync" "$name"
+          grep -aqx "URL: $name" "$name.zsync" || { echo "::error::$name.zsync does not point at $name"; exit 1; }
+          grep -aqx "SHA-1: $(sha1sum "$name" | cut -d' ' -f1)" "$name.zsync" || { echo "::error::$name.zsync does not describe $name"; exit 1; }
+          ls -l neforum-linux-*.tar.gz NEFORUM-*.AppImage NEFORUM-*.AppImage.zsync
       - uses: actions/upload-artifact@v4
         with:
           name: neforum-linux-${{ matrix.arch }}
           path: |
             neforum-linux-${{ matrix.arch }}.tar.gz
             NEFORUM-${{ matrix.appimage-arch }}.AppImage
+            NEFORUM-${{ matrix.appimage-arch }}.AppImage.zsync
 
   # The browser extension: its tests, AMO's linter on the Firefox build, and
   # (with AMO credentials, docs/signing.md) a Firefox build signed by Mozilla

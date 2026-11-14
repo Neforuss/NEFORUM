@@ -1,6 +1,6 @@
 // Every API adapter's post call goes through the one place that knows what a lost
 // answer means. A grep over the source, because the point is that nobody can add a
-// post call beside it and forget: a 31st API adapter fails here until it is listed.
+// post call beside it and forget: a 32nd API adapter fails here until it is listed.
 
 import 'dart:io';
 
@@ -33,6 +33,7 @@ const Map<String, String> _postCallIn = {
   'discord': 'chat/discord_adapter.dart',
   'wordpress': 'blogs_a/wordpress_adapter.dart',
   'ghost': 'blogs_a/ghost_adapter.dart',
+  'emdash': 'blogs_a/emdash_adapter.dart',
   'writefreely': 'blogs_a/writefreely_adapter.dart',
   'micropub': 'blogs_b/micropub_adapter.dart',
   'devto': 'blogs_b/devto_adapter.dart',
@@ -46,11 +47,11 @@ const Map<String, String> _postCallIn = {
 String _source(String path) => File('lib/src/adapters/$path').readAsStringSync();
 
 void main() {
-  test('the list holds every adapter that can post through an API, all 30', () {
+  test('the list holds every adapter that can post through an API, all 31', () {
     final api = {for (final a in builtinAdapters()) if (a.descriptor.tiers.any((t) => t != PlatformTier.handoff)) a.id};
     expect(api, _postCallIn.keys.toSet());
-    expect(api, hasLength(30));
-    expect(builtinAdapters().length - api.length, 18, reason: 'the rest are hand-off only and refuse to publish');
+    expect(api, hasLength(31));
+    expect(builtinAdapters().length - api.length, 20, reason: 'the rest are hand-off only and refuse to publish');
   });
 
   for (final entry in _postCallIn.entries) {

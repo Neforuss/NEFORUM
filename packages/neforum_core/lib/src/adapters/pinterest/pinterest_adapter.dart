@@ -77,6 +77,19 @@ class PinterestAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.pinterestFor(account);
 
+  /// The same board, and the loopback host the person registered, read back
+  /// from the address the first sign-in used.
+  @override
+  Map<String, String> get reconnectFieldSources => const {'board': cfgBoardId};
+
+  @override
+  Map<String, String>? reconnectInput(ConnectedAccount account, Map<String, String> secrets, {Uri? redirect}) {
+    final out = super.reconnectInput(account, secrets, redirect: redirect);
+    final host = Uri.tryParse(account.configString(cfgRedirectUri))?.host;
+    if (out != null && (host == 'localhost' || host == '127.0.0.1')) out['redirectHost'] = host!;
+    return out;
+  }
+
   @override
   PlatformDescriptor get descriptor => pinterestDescriptor;
 

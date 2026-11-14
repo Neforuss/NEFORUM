@@ -6,6 +6,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/text_card.dart';
 import '../platform/storage.dart';
+import 'automatic_targets.dart';
 import 'composer.dart';
 import 'providers.dart';
 import 'settings.dart';
@@ -132,6 +133,8 @@ Map<String, dynamic> composerDraftToJson(ComposerState c) => {
       if (c.audioCardDesign != null) 'audioCardDesign': c.audioCardDesign, // 1.3.1: cards
       if (!c.textCardStyle.isClassic) 'textCardStyle': c.textCardStyle.toJson(), // 1.3.5: cards
       if (c.textCardDesignBeforeEdits != null) 'textCardDesignBeforeEdits': c.textCardDesignBeforeEdits, // 1.3.5: cards
+      if (c.automaticTargets) 'automaticTargets': true, // 1.4.3: Automatic only
+      if (c.targetChoices.isNotEmpty) 'targetChoices': {for (final e in c.targetChoices.entries) e.key: e.value.name}, // 1.4.3: Automatic only
     };
 
 /// Null when [j] holds no post (cleared, or from a newer NEFORUM).
@@ -182,5 +185,13 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
               if (e.value is int) '${e.key}': e.value as int,
           }
         : p.mediaParts,
+    automaticTargets: j['automaticTargets'] == true, // 1.4.3: Automatic only
+    targetChoices: j['targetChoices'] is Map // 1.4.3: Automatic only
+        ? {
+            for (final e in (j['targetChoices'] as Map).entries) '${e.key}': ?TargetChoice.values.asNameMap()[e.value],
+          }
+        : const {},
+    // 1.4.3: kept by the composer's own paragraph numbers, like the post's.
+    paragraphMedia: p.paragraphMedia,
   );
 }

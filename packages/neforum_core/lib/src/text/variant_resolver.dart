@@ -6,12 +6,15 @@ import 'package:meta/meta.dart';
 import '../audio/audio_publishing.dart';
 import '../model/account.dart';
 import '../model/media.dart';
+import '../model/paragraph_media.dart';
 import '../model/platform_descriptor.dart';
 import '../model/post.dart';
 import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/validation.dart';
+import 'emphasis.dart';
 import 'media_packer.dart';
+import 'network_text_transforms.dart';
 import 'text_counter.dart';
 import 'text_splitter.dart';
 import 'url_detector.dart';
@@ -63,6 +66,15 @@ class ResolverOptions {
 /// any other media the key has no effect.
 const String kTextCardOnlyKey = 'textCardOnly';
 
+/// [PostOverrides.extra] key (1.4.3): `true` on every target of a post whose
+/// text card draws **bold** and *italic* written in its words
+/// ([parseEmphasis]). Networks without Markdown ([TextRules.supportsMarkdown]
+/// false) then get the words without those asterisks ([stripEmphasis]), so
+/// the markers made for the card never show as stray asterisks in a caption.
+/// Networks with Markdown get the words as written. Absent: the words go as
+/// written everywhere.
+const String kEmphasisMarkupKey = 'emphasisMarkup';
+
 /// Turns the master [Post] into the [PostVariant] for one target.
 class VariantResolver {
   const VariantResolver([this.options = const ResolverOptions()]);
@@ -81,30 +93,59 @@ class VariantResolver {
     // Generated media (text cards) only goes where a target asks for it.
     // Sound files (and the copies made from them) carry the tags they go out
     // with: the file's own under the user's edits.
-    final chosen = post.withEffectiveAudioTags(o.mediaIds == null
+    var chosen = post.withEffectiveAudioTags(o.mediaIds == null
         ? post.media.where((m) => !m.generated).toList()
         : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)]);
     // The story's own copies (Post + Story), checked by the adapter.
     final storyIds = o.storyMediaIds;
-    final storyMedia = storyIds == null ? const <MediaAttachment>[] : [for (final id in storyIds) ...post.media.where((m) => m.id == id)];
+    var storyMedia = storyIds == null ? const <MediaAttachment>[] : [for (final id in storyIds) ...post.media.where((m) => m.id == id)];
     // The text card alone: no text, so no thread and no length to check.
     final cardOnly = o.extra[kTextCardOnlyKey] == true && chosen.isNotEmpty && chosen.every((m) => m.isTextCard);
+
+    // ---- paragraph-to-media links (1.4.3) -------------------------------
+    // Only for a single post written in the main text (no per-network
+    // version, no thread, not the card alone) on a network that shows them.
+    // A post section by section is several messages: only for accounts that
+    // post themselves, never a hand-off. The files then go in the order of
+    // their paragraphs.
+    final paragraphStyle = d.media.paragraphMedia;
+    final links = paragraphStyle == ParagraphMediaStyle.none ||
+            !post.hasParagraphMedia ||
+            post.text.trim().isEmpty ||
+            o.text != null ||
+            cardOnly ||
+            (paragraphStyle == ParagraphMediaStyle.sections && account != null && !account.tier.isAutomatic)
+        ? const <int, List<String>>{}
+        : ParagraphMedia.present(ParagraphMedia.normalized(post.paragraphMedia, paragraphs: ParagraphMedia.split(post.text).length), chosen);
+    if (links.isNotEmpty) {
+      chosen = ParagraphMedia.ordered(chosen, links);
+      storyMedia = ParagraphMedia.ordered(storyMedia, post.paragraphMedia);
+    }
 
     // ---- text ----------------------------------------------------------
     // The parts the user wrote ([Post.parts]). A per-network version is one
     // text and replaces all of them. writtenIndex maps each part of the post
     // to the written part that takes its media: an empty part's media goes
     // with the part before it (or the first one).
+    // 1.4.3: the asterisks that make a text card's words bold or italic
+    // leave the words of a network without Markdown.
+    final plainEmphasis = o.extra[kEmphasisMarkupKey] == true && !t.supportsMarkdown;
+    String words(String s) => plainEmphasis ? stripEmphasis(s) : s;
+    // Each piece of the user's text as this network gets it: card emphasis
+    // stripped where it can't show, then NetworkTextTransforms (kaomoji kept
+    // whole on Markdown networks, never normalized). The draft itself is
+    // never changed.
+    String adapt(String s) => NetworkTextTransforms.adapt(words(s), d);
     final written = <String>[];
     final writtenIndex = <int>[];
     if (o.text == null) {
       for (final p in post.parts) {
-        if (p.trim().isNotEmpty) written.add(p.trimRight());
+        if (p.trim().isNotEmpty) written.add(adapt(p.trimRight()));
         writtenIndex.add(written.isEmpty ? 0 : written.length - 1);
       }
     }
     final canThread = t.supportsThreads && (account == null || account.tier.isAutomatic);
-    var text = (o.text ?? written.join('\n\n')).trimRight();
+    var text = (o.text == null ? written.join('\n\n') : adapt(o.text!)).trimRight();
     final link = o.link ?? post.link;
     final tags = post.tags.where((x) => x.trim().isNotEmpty).map(_cleanTag).toList();
 
@@ -150,7 +191,10 @@ class VariantResolver {
         issues.add(ValidationIssue.info('text.parts_joined', '${d.name} gets the ${written.length} parts as one post', field: 'text'));
       }
     }
-    if (!cardOnly && threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
+    // A network that sends a linked post section by section cuts each
+    // section to its own messages, so the text is not made a thread here.
+    final bySections = links.isNotEmpty && paragraphStyle == ParagraphMediaStyle.sections && t.supportsThreads;
+    if (!cardOnly && !bySections && threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
       final n = TextCounter.count(text, t);
       switch (options.overflow) {
         case OverflowStrategy.threadOrError:
@@ -233,12 +277,36 @@ class VariantResolver {
       }
     }
 
+    // ---- paragraph-to-media links ----------------------------------------
+    // The links of the files this post carries (a series takes the rest).
+    var paragraphMedia = const <int, List<String>>{};
+    if (links.isNotEmpty && threadParts.isEmpty) {
+      paragraphMedia = ParagraphMedia.present(links, media);
+      if (paragraphMedia.isNotEmpty && paragraphStyle == ParagraphMediaStyle.markers && media.length > 1) {
+        final marked = ParagraphMedia.withMarkers(text, paragraphMedia, media);
+        if (t.maxLength == null || TextCounter.fits(marked, t) || !TextCounter.fits(text, t)) {
+          text = marked;
+          issues.add(ValidationIssue.info('media.paragraphs',
+              '${d.name} gets the photos and videos in the order of their paragraphs, each paragraph ending with their numbers', field: 'media'));
+        } else {
+          issues.add(ValidationIssue.info('media.paragraph_numbers',
+              '${d.name} gets the photos and videos in the order of their paragraphs; the numbers after each paragraph would make the text too long, so they are left out',
+              field: 'media'));
+        }
+      } else if (paragraphMedia.isNotEmpty && paragraphStyle == ParagraphMediaStyle.sections) {
+        issues.add(ValidationIssue.info('media.paragraphs', '${d.name} gets each linked paragraph followed by its photos and videos', field: 'media'));
+      }
+    }
+
     // ---- title ---------------------------------------------------------
     var title = o.title ?? post.title;
     if (t.titleSupported && (title == null || title.trim().isEmpty) && t.titleRequired) {
       // Derive a title from the first line so Reddit/Lemmy/blog posts work
-      // without a separate field.
-      final firstLine = (o.text ?? written.firstOrNull ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
+      // without a separate field. From the text as written: a title is plain
+      // text, so it gets no Markdown escapes (card emphasis asterisks are
+      // still dropped where the network shows no Markdown).
+      final firstPart = o.text ?? post.parts.where((p) => p.trim().isNotEmpty).firstOrNull;
+      final firstLine = words(firstPart ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
       if (firstLine.isNotEmpty) {
         title = t.titleMax != null && firstLine.length > t.titleMax! ? '${_cutToUnits(firstLine, t.titleMax! - 1)}…' : firstLine;
         issues.add(ValidationIssue.info('title.derived', 'Title taken from the first line for ${d.name}', field: 'title'));
@@ -253,9 +321,13 @@ class VariantResolver {
     }
 
     // ---- extra ---------------------------------------------------------
+    // The account's remembered options, then this post's. Each is moved to
+    // its declared key first, so an option saved under an older key
+    // ([PostOption.aliases]) still counts, and a post's choice under the old
+    // key still beats the account's under the new one.
     final extra = <String, dynamic>{
-      if (account != null) ...(account.config['postDefaults'] as Map?)?.cast<String, dynamic>() ?? const {},
-      ...o.extra,
+      if (account != null) ...canonicalOptionKeys(d.options, (account.config['postDefaults'] as Map?)?.cast<String, dynamic>() ?? const {}),
+      ...canonicalOptionKeys(d.options, o.extra),
     };
 
     // ---- series --------------------------------------------------------
@@ -328,6 +400,7 @@ class VariantResolver {
       storyMedia: storyMedia,
       mediaPartIndexes: mediaPartIndexes,
       seriesPosts: series,
+      paragraphMedia: paragraphMedia,
     );
   }
 

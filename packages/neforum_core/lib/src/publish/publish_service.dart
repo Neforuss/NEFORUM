@@ -31,6 +31,7 @@ import 'cancellation_signal.dart';
 import 'publish_journal.dart';
 import 'publish_pause_signal.dart';
 import 'publish_progress.dart';
+import 'publishing_order.dart';
 import 'schedule_hold_plan.dart';
 
 /// What happened when the environment tried to execute a [HandoffPlan].
@@ -83,6 +84,7 @@ class PublishOptions {
     this.fallbackToHandoffOnQuota = true,
     this.maxAttempts = 3,
     this.retryBackoffBase = const Duration(minutes: 2),
+    this.renewalRetryDelays = const [Duration(seconds: 2), Duration(seconds: 6)],
   });
 
   /// When an API tier hits its quota, hand the post to the user instead of
@@ -90,6 +92,12 @@ class PublishOptions {
   final bool fallbackToHandoffOnQuota;
   final int maxAttempts;
   final Duration retryBackoffBase;
+
+  /// 1.4.3: a sign-in renewal that failed for a passing reason (no network,
+  /// the platform's token endpoint down) is tried again after each of these
+  /// waits before the attempt gives up. It still never counts as a refused
+  /// sign-in: the post then waits for its next attempt ([retryBackoffBase]).
+  final List<Duration> renewalRetryDelays;
 }
 
 /// Result of [PublishService.renewSignIn].
@@ -211,12 +219,15 @@ class PublishService {
     this.secretsCoordinator,
     this.journal,
     this.signInOutcomes,
+    this.publishingOrder,
     Clock? clock,
     Logger? log,
     Future<Uint8List> Function(MediaAttachment media)? readMedia,
+    Future<void> Function(Duration wait)? sleep,
   })  : _now = clock ?? systemClock,
         _log = log ?? Logger('publish'),
-        _readMedia = readMedia;
+        _readMedia = readMedia,
+        _sleep = sleep ?? Future<void>.delayed;
 
   final AdapterRegistry registry;
   final AccountRepository accounts;
@@ -248,9 +259,18 @@ class PublishService {
   /// Told how each post went, so a sign-in's last confirmed time and its daily
   /// server read stay current without a keychain read per card.
   final SignInOutcomes? signInOutcomes;
+
+  /// 1.4.3: the user's publishing order, account ids (see [inPublishingOrder]),
+  /// read as each run starts. Null keeps the order the post lists its targets in
+  /// within each group.
+  final List<String> Function()? publishingOrder;
   final Clock _now;
   final Logger _log;
   final Future<Uint8List> Function(MediaAttachment media)? _readMedia;
+
+  /// Waits between renewal tries ([PublishOptions.renewalRetryDelays]);
+  /// replaced in tests.
+  final Future<void> Function(Duration wait) _sleep;
 
   AdapterContext context({
     void Function(String message)? onProgress,
@@ -260,6 +280,8 @@ class PublishService {
     String? networkName,
     CreateRecorder? createRecorder,
     PublishPauseSignal? pause,
+    Future<void> Function(Map<String, Object?> changes)? onAccountConfig,
+    Future<PostVariant?> Function(ConnectedAccount account)? replan,
   }) =>
       AdapterContext(
         http: http,
@@ -275,6 +297,8 @@ class PublishService {
         networkName: networkName,
         createRecorder: createRecorder,
         pause: pause,
+        onAccountConfig: onAccountConfig,
+        replan: replan,
       );
 
   // ---------------------------------------------------------------------
@@ -333,12 +357,14 @@ class PublishService {
   /// carries it. The run stays on record in [journal] until its outcome is
   /// saved.
   ///
-  /// When [interactive], automatic targets go first and hand-offs after them, so
-  /// a sheet waiting for the person never holds up a network that needs nobody.
+  /// Automatic targets go first and hand-offs after them, so a sheet waiting for
+  /// the person never holds up a network that needs nobody. Each group goes in
+  /// the user's [publishingOrder] ([targetsInPublishingOrder]), in the
+  /// background as well.
   ///
-  /// [onPlan] hears the run's targets once, before anything is sent. [onEvent]
-  /// hears what each target is doing, and [onOutcome] how it ended, as soon as it
-  /// has ended and including targets this run leaves alone. A
+  /// [onPlan] hears the run's targets once, in that order, before anything is
+  /// sent. [onEvent] hears what each target is doing, and [onOutcome] how it
+  /// ended, as soon as it has ended and including targets this run leaves alone. A
   /// [PublishProgressTracker] turns these into figures. While [pause] is paused no
   /// request that makes a post starts.
   Future<Post> publish(
@@ -365,8 +391,8 @@ class PublishService {
 
       TargetOutcome? turnOf(PostTarget t) =>
           _turnOf(post, t, interactive: interactive, onlyAccountIds: onlyAccountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
-      if (onPlan != null) onPlan(await _planRun(post, turnOf));
-      final order = await _runOrder(post, interactive: interactive);
+      final order = await targetsInPublishingOrder(post);
+      if (onPlan != null) onPlan(await _planRun(post, order, turnOf));
       final later = <_LaterHandoff>[];
       for (final target in order) {
         final turn = turnOf(target);
@@ -510,29 +536,27 @@ class PublishService {
         TargetStatus.pending || TargetStatus.publishing || TargetStatus.failed => TargetOutcome.failed,
       };
 
-  /// The order of a run: automatic targets first and hand-offs after them when
-  /// someone is there to do them. Otherwise nothing waits, and the order stays.
-  Future<List<PostTarget>> _runOrder(Post post, {required bool interactive}) async {
-    if (!interactive) return post.targets;
-    final automatic = <PostTarget>[];
-    final handoffs = <PostTarget>[];
+  /// The targets of [post] in the order a run takes them: automatic targets
+  /// first and hand-offs after them, each group in [publishingOrder]
+  /// ([inPublishingOrder]). The progress sheet, Activity and automatic hand-off
+  /// posting list them the same way.
+  Future<List<PostTarget>> targetsInPublishingOrder(Post post) async {
+    final known = <String, ConnectedAccount?>{};
     for (final t in post.targets) {
-      PlatformTier? tier;
       try {
-        tier = (await accounts.get(t.accountId))?.tier;
+        known[t.accountId] = await accounts.get(t.accountId);
       } on Object catch (e) {
         // The target itself reports what is wrong with it when its turn comes.
         _log.debug('Could not read the account of ${t.accountId}: $e');
       }
-      (tier == PlatformTier.handoff ? handoffs : automatic).add(t);
     }
-    return [...automatic, ...handoffs];
+    return inPublishingOrder(post.targets, accountIdOf: (t) => t.accountId, accountOf: (id) => known[id], order: publishingOrder?.call());
   }
 
-  /// Fixes the run's members and how each will go.
-  Future<PublishRunPlan> _planRun(Post post, TargetOutcome? Function(PostTarget t) turnOf) async {
+  /// Fixes the run's members and how each will go, in the run's [order].
+  Future<PublishRunPlan> _planRun(Post post, List<PostTarget> order, TargetOutcome? Function(PostTarget t) turnOf) async {
     final targets = <PlannedTarget>[];
-    for (final t in post.targets) {
+    for (final t in order) {
       var outcome = turnOf(t);
       if (outcome == null && _inBackoff(t)) outcome = TargetOutcome.notThisRun;
       var name = t.accountId;
@@ -807,8 +831,37 @@ class PublishService {
   /// [now]: renew even if the keys have time left ("Renew now"). On a rotating
   /// platform it takes its turn like any due renewal: it retires the keys the
   /// other devices hold.
+  ///
+  /// 1.4.3: a renewal that failed for a passing reason ([_renewalMayPass]) is
+  /// tried again after each of [PublishOptions.renewalRetryDelays], reading
+  /// the stored keys afresh each time (a sync may have brought new ones). Only
+  /// the platform refusing the keys themselves comes back as a refusal.
+  ///
+  /// Not on a platform that rotates refresh tokens: a renewal whose answer was
+  /// lost may have spent the token already, and replaying a spent one at once
+  /// can make the platform revoke the whole sign-in. Those wait for the post's
+  /// next attempt, when the sync coordinator has had time to bring the keys.
   Future<(Map<String, String>?, PublishError?)> _freshSecrets(
       ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {bool again = true, bool now = false}) async {
+    final delays = adapter.rotatesRefreshTokensFor(account) ? const <Duration>[] : options.renewalRetryDelays;
+    for (var tried = 0;; tried++) {
+      final out = await _freshSecretsOnce(account, adapter, ctx, again: again, now: now);
+      final error = out.$2;
+      if (error == null || !_renewalMayPass(error) || tried >= delays.length) return out;
+      // The trace: the kind and the wait, never the error text (it can quote a
+      // token endpoint's answer).
+      _log.info('Renewing the ${adapter.descriptor.name} sign-in failed (${error.kind.name}); trying again in ${delays[tried].inSeconds}s');
+      await _sleep(delays[tried]);
+    }
+  }
+
+  /// A renewal failure worth another try in a moment: no network, a timeout,
+  /// the platform's own outage. A rate limit is not: trying again at once only
+  /// extends it, so that waits for the post's next attempt.
+  static bool _renewalMayPass(PublishError e) => e.retryable && e.kind != PublishErrorKind.quota && e.kind != PublishErrorKind.auth;
+
+  Future<(Map<String, String>?, PublishError?)> _freshSecretsOnce(
+      ConnectedAccount account, PlatformAdapter adapter, AdapterContext ctx, {required bool again, required bool now}) async {
     final secretMap = await secrets.read(account.id) ?? const <String, String>{};
     // A renewal carries when it happened and where its dates came from, inside
     // the same map, so they travel with the keys in one sync record.
@@ -875,18 +928,33 @@ class PublishService {
       return (null, _cancelledError);
     } on HttpFailure catch (e) {
       // A 5xx/429 from the token endpoint is the platform having a bad
-      // moment, not a revoked login.
-      final err = e.statusCode >= 500 || e.statusCode == 429
-          ? e.toPublishError(context: '${adapter.descriptor.name} sign-in renewal')
+      // moment, not a revoked login. So are 408 (the request timed out) and
+      // 425 (too early): only the platform refusing the keys means reconnect.
+      final passing = e.statusCode >= 500 || e.statusCode == 429 || e.statusCode == 408 || e.statusCode == 425;
+      final err = passing
+          ? _passingRenewalError(e.toPublishError(context: '${adapter.descriptor.name} sign-in renewal'), adapter)
           : PublishError.auth('Could not renew the ${adapter.descriptor.name} sign-in (HTTP ${e.statusCode}); reconnect the account', raw: e.body, statusCode: e.statusCode);
       return (null, err);
     } on Object catch (e) {
       if (NeforumHttp.isTransportError(e)) {
         return (null, PublishError.network('Could not reach ${adapter.descriptor.name} to renew the sign-in: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
       }
-      return (null, PublishError.auth('Could not refresh credentials (${e.runtimeType})'));
+      // 1.4.3: an answer NEFORUM could not read (a maintenance page where the
+      // token was expected) or any other surprise says nothing about the keys:
+      // only the platform refusing them does, and adapters say that as an
+      // auth error. Before, this counted as a refused sign-in and asked for a
+      // reconnect that was not needed. The type only: the text can quote a key.
+      return (null, PublishError.network('Could not renew the ${adapter.descriptor.name} sign-in (${e.runtimeType}); will retry'));
     }
   }
+
+  /// [e], from a token endpoint having a bad moment, as an error the post
+  /// retries: [HttpFailure.toPublishError] calls a 5xx a platform error that
+  /// is not always retryable, and a renewal that failed that way must never
+  /// end the post's tries.
+  static PublishError _passingRenewalError(PublishError e, PlatformAdapter adapter) => e.retryable
+      ? e
+      : PublishError.network('${adapter.descriptor.name} could not renew the sign-in right now (${e.message}); will retry', raw: e.raw, statusCode: e.statusCode);
 
   /// The keys stored for [account] now (a sync may have replaced [fallback]) when
   /// the adapter was renewing them only early, else `null`.
@@ -1002,6 +1070,16 @@ class PublishService {
       networkName: adapter.descriptor.name,
       createRecorder: journal == null ? null : _JournalCreateRecorder(journal, post.id, target.accountId, log),
       pause: pause,
+      onAccountConfig: (changes) => _updateAccountConfig(account.id, changes),
+      replan: (changed) async {
+        final again = resolver.resolve(post, target, adapter.descriptorForAccount(changed), account: changed);
+        final problems = [
+          ...again.issues,
+          ...adapter.validate(again, changed),
+          for (final s in again.seriesPosts) ...adapter.validate(s, changed),
+        ];
+        return problems.hasErrors ? null : again;
+      },
     );
 
     final PostVariant variant;
@@ -1043,7 +1121,7 @@ class PublishService {
     // A renewal cut short by the user is not a broken sign-in.
     if (cancelled()) return _cancel(attempt);
     if (freshSecrets == null) return _fail(attempt, secretError!, account: account);
-    final secretMap = freshSecrets;
+    var secretMap = freshSecrets;
 
     // An attempt that broke off after some posts went live, recorded well
     // enough to finish: only what is missing goes out now.
@@ -1089,6 +1167,28 @@ class PublishService {
             publishedAt: earlier.publishedAt,
           )
         : await _attempt(adapter, firstVariant, account, secretMap, ctx, log);
+    if (!firstDone && _refusedBeforeAnythingWentLive(result) && !cancelled()) {
+      // 1.4.3: the network refused a sign-in NEFORUM thought was still good
+      // (the token ended early, or the session was dropped). The keys it holds
+      // can often sign in again by themselves: a refresh token, Bluesky's app
+      // password. One renewal, then one more try; only if the platform refuses
+      // that too is the account shown as needing a reconnect.
+      final (renewed, renewError) = await _freshSecrets(account, adapter, context(onProgress: onProgress, log: log), now: true);
+      if (renewed != null && !_sameKeys(renewed, secretMap)) {
+        log.info('${account.displayName}: the sign-in was refused; renewed it with the stored keys and trying once more');
+        secretMap = renewed;
+        if (!cancelled()) result = await _attempt(adapter, firstVariant, account, secretMap, ctx, log);
+      } else if (renewError != null && renewError.retryable && renewError.kind != PublishErrorKind.auth) {
+        // The renewal could not reach the platform: whether the sign-in still
+        // works is not known yet, so the post waits for its next attempt
+        // instead of asking for a reconnect. A rate limit on the renewal is
+        // not the post's quota, so it never hands the post off.
+        log.warn('${account.displayName}: the sign-in was refused and could not be renewed right now (${renewError.kind.name})');
+        result = PublishResult.failure(renewError.kind == PublishErrorKind.quota
+            ? PublishError.network(renewError.message, raw: renewError.raw, statusCode: renewError.statusCode, retryAfter: renewError.retryAfter)
+            : renewError);
+      }
+    }
     if (result.success && result.remoteUrl == null && earlier?.remoteUrl != null) {
       // A finished thread keeps the address of its first post, made earlier.
       result = PublishResult.ok(
@@ -1317,6 +1417,12 @@ class PublishService {
     return t.copyWith(status: retry ? TargetStatus.pending : TargetStatus.failed, result: PublishResult.failure(error));
   }
 
+  /// [r] is the network refusing the sign-in ([refusesSignIn]) with nothing
+  /// live and no request whose outcome is unknown: trying again cannot post
+  /// anything twice.
+  static bool _refusedBeforeAnythingWentLive(PublishResult r) =>
+      !r.success && !r.isHeldByPlatform && refusesSignIn(r.error) && r.allRemoteIds.isEmpty && r.error!.outcomeUnknown != true;
+
   static bool _sameKeys(Map<String, String> a, Map<String, String> b) =>
       a.length == b.length && a.entries.every((e) => b[e.key] == e.value);
 
@@ -1331,6 +1437,38 @@ class PublishService {
     final stored = await accounts.get(accountId);
     if (stored == null || stored.lastError == message) return;
     await accounts.upsert(message == null ? stored.copyWith(clearLastError: true) : stored.copyWith(lastError: message));
+  }
+
+  /// [AdapterContext.onAccountConfig]: [changes] merged into the config of the
+  /// account as stored now (null removes a key), for the reason
+  /// [_setLastError] gives. Nothing is written when nothing changes.
+  Future<void> _updateAccountConfig(String accountId, Map<String, Object?> changes) async {
+    final stored = await accounts.get(accountId);
+    if (stored == null) return;
+    final config = {...stored.config};
+    for (final e in changes.entries) {
+      if (e.value == null) {
+        config.remove(e.key);
+      } else {
+        config[e.key] = e.value;
+      }
+    }
+    if (_sameJson(config, stored.config)) return;
+    await accounts.upsert(stored.copyWith(config: config));
+  }
+
+  static bool _sameJson(Object? a, Object? b) {
+    if (a is Map && b is Map) {
+      return a.length == b.length && a.keys.every((k) => b.containsKey(k) && _sameJson(a[k], b[k]));
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_sameJson(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
   }
 
   /// Runs [step] and only logs when it fails.

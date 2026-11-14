@@ -17,6 +17,7 @@ import '../../widgets/surfaces.dart';
 import '../root.dart';
 import '../router.dart';
 import 'account_selection_grid.dart';
+import 'publishing_order_sheet.dart';
 
 /// Turns artwork mode on or off.
 ///
@@ -63,6 +64,9 @@ class TargetPicker extends ConsumerWidget {
   /// The Artwork switch, for tests.
   static const artworkSwitchKey = ValueKey('target-picker-artwork');
 
+  /// 1.4.3: the button that opens the publishing order, for tests.
+  static const publishingOrderKey = ValueKey('target-picker-publishing-order');
+
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -72,6 +76,8 @@ class TargetPicker extends ConsumerWidget {
     final artwork = ref.watch(composerProvider.select((c) => c.artwork));
     final notifier = ref.read(composerProvider.notifier);
     final registry = ref.watch(registryProvider);
+    // Accounts that Automatic only left out, with why.
+    final skipped = ref.watch(automaticSkipReasonsProvider);
 
     if (accounts.isEmpty) {
       // Still reading the accounts: show nothing rather than "connect your first".
@@ -99,7 +105,6 @@ class TargetPicker extends ConsumerWidget {
 
     // The quick choices never mix art sites with the others.
     final choosable = shown.where((a) => a.enabled && (artworkMode || !art.contains(a.id)));
-    final auto = choosable.where((a) => a.tier != PlatformTier.handoff).map((a) => a.id);
 
     if (grid) {
       final ordered = orderedForAccountGrid(shown, (a) => !artworkMode && art.contains(a.id));
@@ -124,10 +129,12 @@ class TargetPicker extends ConsumerWidget {
               selected: selected.contains(a.id),
               artSite: !artworkMode && art.contains(a.id),
               onTap: onTapOf(a),
+              skipReason: skipped[a.id],
             ),
         ],
         selected: selected,
         onSelect: notifier.selectAccounts,
+        onSelectAutomatic: (among) => notifier.selectAutomatic(among: among),
         artworkSwitch: art.isNotEmpty || artworkMode ? _ArtworkSwitch(on: artworkMode, full: true, onChanged: (v) => setArtworkMode(ref, on: v)) : null,
         artworkOptions: artwork == null ? null : _ArtworkOptions(details: artwork, onChanged: notifier.setArtwork, touch: true),
       );
@@ -142,6 +149,7 @@ class TargetPicker extends ConsumerWidget {
           selected: selected.contains(a.id),
           artSite: !artworkMode && art.contains(a.id),
           onTap: onTapOf(a),
+          skipReason: skipped[a.id],
         ),
     ];
 
@@ -153,8 +161,10 @@ class TargetPicker extends ConsumerWidget {
         Text('${shown.where((a) => selected.contains(a.id)).length} of ${shown.length}', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
       ]),
       Row(mainAxisSize: MainAxisSize.min, children: [
+        // 1.4.3: publishing order. First, so the quick choices keep their places.
+        _PublishingOrderButton(selected: selected),
         _QuickFilter('All', () => notifier.selectAccounts(choosable.map((a) => a.id))),
-        _QuickFilter('Automatic only', () => notifier.selectAccounts(auto)),
+        _QuickFilter('Automatic only', () => notifier.selectAutomatic()),
         _QuickFilter('None', () => notifier.selectAccounts(const [])),
       ]),
     ]);
@@ -187,6 +197,7 @@ class _AccountGridSection extends ConsumerStatefulWidget {
     required this.availableHeight,
     required this.selected,
     required this.onSelect,
+    required this.onSelectAutomatic,
     required this.artworkSwitch,
     required this.artworkOptions,
   });
@@ -198,6 +209,9 @@ class _AccountGridSection extends ConsumerStatefulWidget {
   /// Everything chosen for the post, shown here or not.
   final Set<String> selected;
   final ValueChanged<Iterable<String>> onSelect;
+
+  /// "Automatic only", among the accounts the filter shows (null: all).
+  final ValueChanged<Set<String>?> onSelectAutomatic;
   final Widget? artworkSwitch;
   final Widget? artworkOptions;
 
@@ -287,10 +301,8 @@ class _AccountGridSectionState extends ConsumerState<_AccountGridSection> {
     // The quick choices never mix art sites with the others. While filtering
     // they act on the matches and leave the other accounts as they are.
     final choosable = shown.where((e) => e.counted && !e.disabled);
-    void pick(Iterable<String> ids) {
-      final matched = {for (final e in shown) if (e.counted) e.account.id};
-      widget.onSelect(filtering ? {...widget.selected.difference(matched), ...ids} : ids);
-    }
+    final matched = {for (final e in shown) if (e.counted) e.account.id};
+    void pick(Iterable<String> ids) => widget.onSelect(filtering ? {...widget.selected.difference(matched), ...ids} : ids);
 
     return LayoutBuilder(builder: (context, box) {
       final width = box.maxWidth;
@@ -324,7 +336,7 @@ class _AccountGridSectionState extends ConsumerState<_AccountGridSection> {
         ),
         Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
           _QuickFilter('All', () => pick(choosable.map((e) => e.account.id)), tight: tight),
-          _QuickFilter('Automatic only', () => pick(choosable.where((e) => e.account.tier != PlatformTier.handoff).map((e) => e.account.id)), tight: tight),
+          _QuickFilter('Automatic only', () => widget.onSelectAutomatic(filtering ? matched : null), tight: tight),
           // Its label starts at its own edge when tight.
           if (tight) const SizedBox(width: Space.xs),
           _QuickFilter('None', () => pick(const []), tight: tight),
@@ -525,6 +537,25 @@ class _QuickFilter extends StatelessWidget {
       );
 }
 
+/// 1.4.3: opens the publishing order, with the accounts of this post marked.
+/// Wider windows: beside the quick choices. Phones have [PublishingOrderLink]
+/// under the post, since the account grid's header keeps its room for the
+/// accounts.
+class _PublishingOrderButton extends StatelessWidget {
+  const _PublishingOrderButton({required this.selected});
+
+  final Set<String> selected;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        key: TargetPicker.publishingOrderKey,
+        tooltip: 'Publishing order',
+        onPressed: () => showPublishingOrder(context, inPost: selected),
+        icon: Icon(Icons.swap_vert_rounded, size: 20, color: context.nf.textMuted),
+        style: IconButton.styleFrom(minimumSize: const Size.square(30), padding: const EdgeInsets.all(Space.xs + 1), tapTargetSize: MaterialTapTargetSize.shrinkWrap, visualDensity: VisualDensity.compact),
+      );
+}
+
 /// Selectable account chip: avatar, name, tier glyph.
 class AccountChip extends StatefulWidget {
   const AccountChip({
@@ -535,6 +566,7 @@ class AccountChip extends StatefulWidget {
     required this.onTap,
     this.showAccountName = false,
     this.artSite = false,
+    this.skipReason,
   });
 
   final ConnectedAccount account;
@@ -547,6 +579,10 @@ class AccountChip extends StatefulWidget {
 
   /// An art site outside artwork mode: choosing it turns artwork mode on.
   final bool artSite;
+
+  /// Why "Automatic only" left it out ("Needs a video"), shown after its
+  /// name; it can still be chosen.
+  final String? skipReason;
 
   @override
   State<AccountChip> createState() => _AccountChipState();
@@ -566,6 +602,7 @@ class _AccountChipState extends State<AccountChip> {
       message: enabled
           ? '${widget.platformName} · ${a.handle ?? a.displayName}\n${tierShortLabel(a.tier)}: ${tierDescription(a.tier)}'
               '${widget.artSite ? '\nArt site: choosing it turns on Artwork' : ''}'
+              '${widget.skipReason == null ? '' : '\nLeft out by Automatic only: ${widget.skipReason}'}'
           : '${widget.platformName} is disabled in Accounts',
       child: MouseRegion(
         cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.forbidden,
@@ -576,7 +613,7 @@ class _AccountChipState extends State<AccountChip> {
           child: Semantics(
             button: true,
             selected: sel,
-            label: '${widget.platformName} ${a.displayName}',
+            label: '${widget.platformName} ${a.displayName}${widget.skipReason == null ? '' : ', ${widget.skipReason}'}',
             child: AnimatedContainer(
               duration: Motion.fast,
               curve: Motion.standard,
@@ -585,7 +622,7 @@ class _AccountChipState extends State<AccountChip> {
               decoration: BoxDecoration(
                 color: sel ? nf.accentSoft : (_hover && enabled ? nf.surfaceHover : nf.surface),
                 borderRadius: Radii.rPill,
-                border: Border.all(color: sel ? nf.accent : (_hover ? nf.borderStrong : nf.border), width: sel ? 1.5 : 1),
+                border: Border.all(color: sel ? nf.accent : (_hover ? nf.borderHover : nf.border), width: sel ? 1.5 : 1),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 // Profile photo when known; otherwise the platform's mark is
@@ -596,12 +633,15 @@ class _AccountChipState extends State<AccountChip> {
                   PlatformTile(a.platformId, size: 28, circle: true, dimmed: !enabled || !sel),
                 const SizedBox(width: Space.sm),
                 ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 190),
+                  // Room for the reason after the name, so it is not cut off.
+                  constraints: BoxConstraints(maxWidth: widget.skipReason == null ? 190 : 290),
                   child: Text.rich(
                     TextSpan(children: [
                       TextSpan(text: widget.platformName),
                       if (widget.showAccountName)
                         TextSpan(text: ' · ${a.handle ?? a.displayName}', style: TextStyle(color: nf.textFaint, fontWeight: FontWeight.w500)),
+                      if (widget.skipReason != null)
+                        TextSpan(text: ' · ${widget.skipReason}', style: TextStyle(color: nf.textFaint, fontWeight: FontWeight.w400)),
                     ]),
                     overflow: TextOverflow.ellipsis,
                     style: context.text.labelMedium?.copyWith(color: sel ? nf.text : nf.textMuted),

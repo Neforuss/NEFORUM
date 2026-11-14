@@ -1,6 +1,6 @@
 # How long each sign-in lasts
 
-Every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in. Everything here was read from the vendor's own pages or source code on **2026-11-06**. Vendors change these rules: check the source link if a date looks wrong.
+Every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in. Everything here was read from the vendor's own pages or source code on **2026-11-06** (EmDash, added in 1.4.3: **2026-11-13**). Vendors change these rules: check the source link if a date looks wrong.
 
 **NEFORUM renews only when a post goes out.** There is no background job. So "Renews when NEFORUM posts" also means that an account you stop posting to can run out.
 
@@ -11,7 +11,7 @@ Words used in the Status column:
 
 A date in NEFORUM reads "at the latest" where the *Known early revocation* column says something can end the sign-in first, and "about" where NEFORUM worked it out from a documented rule.
 
-## All 48 networks
+## All 51 networks
 
 | Network | How long it lasts | Renews itself | When a person must act | Known early revocation | Source | Date read | Status |
 |---|---|---|---|---|---|---|---|
@@ -26,6 +26,7 @@ A date in NEFORUM reads "at the latest" where the *Known early revocation* colum
 | DeviantArt | Token 1 hour, its renewal key 3 months | Yes, when NEFORUM posts | About 3 months with no post | Yes: `POST /oauth2/revoke` or removing the app | [DeviantArt authentication](https://deviantart.readme.io/docs/authentication) | 2026-11-06 | UNVERIFIED whether a renewal restarts the 3 months or issues a new key: the docs' example returns the same value. Settled by comparing two refresh answers on a live account |
 | Discord | No published limit on webhook addresses | Not needed | When someone deletes the webhook | Yes: anyone with Manage Webhooks in the server, or anyone holding the address | [Discord webhooks](https://docs.discord.com/developers/resources/webhook) | 2026-11-06 | UNVERIFIED. The page is silent. Settled by a Discord statement |
 | Dribbble | No published limit | Not needed | When you revoke it | Yes: "can be revoked by users at any time" | [Dribbble OAuth](https://developer.dribbble.com/v2/oauth/) | 2026-11-06 | UNVERIFIED. The page is silent. Settled by a Dribbble statement |
+| EmDash | No end date for a token made with "No expiry". A token given 7 days to 1 year ends then, and only an admin can see that date | Not needed | When the token ends or is revoked | Yes: revoking it in Settings > API Tokens | [EmDash source](https://github.com/emdash-cms/emdash/blob/main/packages/core/src/api/handlers/api-tokens.ts) | 2026-11-13 | VERIFIED |
 | Facebook | Page token: no published end date. The 60-day user token behind it only serves while connecting | Not needed | After Meta ends it. An Inactive Meta app must be restored in the App Dashboard first, then reconnect | Yes: password change or logout, removed app, app Inactive after 90 days, a permission unused for 90 days | [Meta long-lived tokens](https://developers.facebook.com/docs/facebook-login/guides/access-tokens/get-long-lived/), [Meta app states](https://developers.facebook.com/documentation/development/create-an-app/app-dashboard/app-states), [Meta permissions](https://developers.facebook.com/documentation/development/permissions) | 2026-11-06 | VERIFIED. Meta's pages conflict: the Pages overview says Page tokens have an expiration time, and the tokens page warns lifetimes may change. Settled by inspecting one Page token and watching it |
 | Flickr | No published limit (OAuth 1.0a) | Not needed | When you revoke it | Yes: only a forum reply says so, the formal docs are silent | [Flickr auth](https://www.flickr.com/services/api/auth.oauth.html) | 2026-11-06 | UNVERIFIED. Settled by a Flickr statement |
 | Fur Affinity | No connection: hand-off only | Not applicable | Never in NEFORUM | Not applicable | NEFORUM's code: `art/furaffinity_adapter.dart` | 2026-11-06 | VERIFIED. No connection that expires |
@@ -38,6 +39,7 @@ A date in NEFORUM reads "at the latest" where the *Known early revocation* colum
 | Ko-fi | No connection: hand-off only | Not applicable | Never in NEFORUM | Not applicable | NEFORUM's code: `art/kofi_adapter.dart` | 2026-11-06 | VERIFIED. No connection that expires |
 | Lemmy | No end date on 0.19. On 1.0 one week unless the login asks to stay, which NEFORUM 1.4 does | Not needed | After logging out or a new password. An account connected before 1.4 on a 1.0 server: at its date | Yes: logging out, a password change | [Lemmy claims.rs](https://raw.githubusercontent.com/LemmyNet/lemmy/1.0.0-beta.3/crates/api/api_utils/src/claims.rs) | 2026-11-06 | VERIFIED in source, for 0.19.21 and 1.0.0-beta.3. 0.19's `Login` struct ignores the extra field |
 | LinkedIn | 60 days. Partner apps: a renewal key lasting one fixed year from the grant. An account connected before 1.4 shows no date for it: the grant date was not stored | No | Every 60 days. Reconnect before it ends: the consent screen is skipped only while the token is still valid | Yes: a different scope ends earlier tokens, the member revoking, LinkedIn at any time | [LinkedIn 3-legged OAuth](https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow), [LinkedIn refresh tokens](https://learn.microsoft.com/en-us/linkedin/shared/authentication/programmatic-refresh-tokens) | 2026-11-06 | VERIFIED |
+| Locals | No connection: hand-off only | Not applicable | Never in NEFORUM | Not applicable | NEFORUM's code: `handoff_only/locals_adapter.dart` | 2026-11-06 | VERIFIED. No connection that expires |
 | Mastodon | No limit: tokens have no end and no refresh | Not needed | Only after revocation | Yes: revoking the app, a password change | [Mastodon doorkeeper.rb](https://raw.githubusercontent.com/mastodon/mastodon/main/config/initializers/doorkeeper.rb) | 2026-11-06 | VERIFIED for `main` and 5.0.0-beta.1. A date the server sends is shown whatever this says |
 | Matrix | Your homeserver decides (`expires_in_ms`) | Yes, when NEFORUM posts, if the server issued a refresh token | When the server ends the session. The password is not kept | Yes: logging out, ending the device | [Matrix client-server API](https://spec.matrix.org/latest/client-server-api/) | 2026-11-06 | VERIFIED |
 | Micropub (IndieWeb / Micro.blog) | Your site decides. `expires_in` is optional | Yes, when NEFORUM posts, if your site gave a refresh token | When renewal fails, or at the end with no refresh token | Yes: the revocation endpoint, you at your site | [IndieAuth spec](https://indieauth.spec.indieweb.org/) | 2026-11-06 | VERIFIED |
@@ -45,6 +47,7 @@ A date in NEFORUM reads "at the latest" where the *Known early revocation* colum
 | Newgrounds | No connection: hand-off only | Not applicable | Never in NEFORUM | Not applicable | NEFORUM's code: `art/newgrounds_adapter.dart` | 2026-11-06 | VERIFIED. No connection that expires |
 | Nostr | None: a key signs each post, no token exists | Not needed | Never by time | None. A relay can refuse a post, which ends nothing | [NIP-01](https://raw.githubusercontent.com/nostr-protocol/nips/master/01.md) | 2026-11-06 | VERIFIED |
 | Odysee | No connection: NEFORUM stores nothing, it posts through the LBRY app on this device | Not applicable | When the LBRY app is closed or signed out | Not applicable | NEFORUM's code: `video_sites/odysee_adapter.dart` | 2026-11-06 | VERIFIED no NEFORUM credential |
+| Parler | No connection: hand-off only | Not applicable | Never in NEFORUM | Not applicable | NEFORUM's code: `handoff_only/parler_adapter.dart` | 2026-11-06 | VERIFIED. No connection that expires |
 | Pinterest | Token 30 days, its renewal key 60 days from the last renewal | Yes, when NEFORUM posts (once the last renewal is 7 days old) | 60 days with no renewal | Yes: removing the app | [Pinterest authentication](https://developers.pinterest.com/docs/getting-started/set-up-authentication-and-authorization/) | 2026-11-06 | VERIFIED. Whether the old key still works after a renewal is not stated. Settled by refreshing a test token twice and trying the first key again |
 | Pixelfed | Token 365 days, its renewal key 400 days, on defaults. Your server can change both | Yes, when NEFORUM posts (within 30 days of the token's end, taking turns with your other devices through Sync) | No post before the renewal key ends | Yes: you or your server | [Pixelfed instance.php](https://raw.githubusercontent.com/pixelfed/pixelfed/dev/config/instance.php) | 2026-11-06 | UNVERIFIED that the server sends `expires_in`. Defaults and rotation are in source. Settled by one live sign-in |
 | pixiv | No connection: hand-off only | Not applicable | Never in NEFORUM | Not applicable | NEFORUM's code: `art/pixiv_adapter.dart` | 2026-11-06 | VERIFIED. No connection that expires |
@@ -107,6 +110,15 @@ A notification goes out at 10:00 on these days before the date, and when the dat
 - A banner above every section shows anything at 14 days or fewer, ended or refused. Closing it holds until the next of those days.
 - A refused sign-in raises one notification until it works again, whether or not **Tell me how each post went** is on.
 - Scheduling or rescheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that already holds the post still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so. A network that is only about to be asked can say no, so that warning asks first too, and if it does say no the queue says the post misses it.
+
+## When a sign-in stops working
+
+NEFORUM reconnects by itself wherever the keys it already holds allow it, and asks you only when they do not:
+
+- **A renewal that fails for a passing reason** (no connection, the network's sign-in server down, an answer NEFORUM could not read) is tried again a few seconds later, then with the post's own retries. It never shows the account as disconnected. Networks that replace their renewal key each time (X, Tumblr, TikTok, Pixelfed, DeviantArt) wait for the post's next try instead, so a key that may already be spent is not sent twice.
+- **A post the network refuses although the sign-in had time left** gets one renewal with the stored keys (a renewal key, or Bluesky's app password), then one more try.
+- **Keys the network no longer accepts** (a renewal key revoked or run out, a password change, the app removed) need your approval in the browser, and NEFORUM says so once. **Reconnect**, on the account, on the sign-ins page and on the refused post, is one tap: it opens the network's approval page with the app keys and settings you entered before, and keeps the account's options. NEFORUM never stores or reuses your password for a network that signs in through the browser.
+- **Pasted keys and bot tokens** that were revoked need new ones, so Reconnect opens the connect form for that network.
 
 ## Still open
 

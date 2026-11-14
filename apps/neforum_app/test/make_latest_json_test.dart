@@ -2,6 +2,7 @@
 // that the app's update check reads what it writes.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:neforum_app/platform/appimage_update.dart';
 import 'package:neforum_app/platform/update_check.dart';
 
 import '../tool/make_latest_json.dart';
@@ -41,7 +42,15 @@ void main() {
     expect(keys['neforum-linux-x64.tar.gz'], 'linux-x64-tarball');
     expect(keys['neforum-extension-firefox-1.1.1.xpi'], 'extension-firefox');
     expect(downloadKey('neforum-extension-firefox-1.1.1.zip'), 'extension-firefox');
-    for (final other in ['SHA256SUMS', 'latest.json', 'NEFORUM-Setup-1.3.0.exe.intoto.jsonl', 'notes.md']) {
+    for (final other in [
+      'SHA256SUMS',
+      'latest.json',
+      'NEFORUM-Setup-1.3.0.exe.intoto.jsonl',
+      'notes.md',
+      // For AppImage updaters (the update information CI embeds), not a download.
+      'NEFORUM-x86_64.AppImage.zsync',
+      'NEFORUM-aarch64.AppImage.zsync',
+    ]) {
       expect(downloadKey(other), isNull, reason: other);
     }
   });
@@ -71,6 +80,13 @@ void main() {
     expect(release.downloads, hasLength(_releaseFiles.length), reason: 'latest.json itself is not a download');
     expect(release.downloads['windows-installer']!.url, 'https://github.com/Neforuss/NEFORUM/releases/download/v1.3.0/NEFORUM-Setup-1.3.0.exe');
     expect(release.downloads['windows-installer']!.sha256, sums['NEFORUM-Setup-1.3.0.exe']);
+
+    // The AppImage updates itself from exactly these entries.
+    for (final abi in ['linux_x64', 'linux_arm64']) {
+      final appImage = release.downloads[appImageDownloadKey(abi)]!;
+      expect(isReleaseDownloadUrl(appImage.url), isTrue, reason: appImage.url);
+    }
+    expect(release.downloads['linux-x64-appimage']!.sha256, sums['NEFORUM-x86_64.AppImage']);
   });
 
   test('critical releases, long notes, and refusals', () {

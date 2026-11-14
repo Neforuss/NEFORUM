@@ -1,12 +1,13 @@
 import 'dart:async';
 
-import 'package:flutter/painting.dart' show EdgeInsets;
+import 'package:flutter/painting.dart' show EdgeInsets, Size;
 import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/caption_fonts.dart';
 import '../media/card_design.dart';
 import '../media/card_design_edits.dart' show designWithHandle;
+import '../media/card_renderer.dart' show designedCardDrawsEmphasis;
 import '../media/render_parameters.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -104,9 +105,38 @@ Post withTextCardChoices(Post post,
 PostOverrides withoutTextCardChoices(PostOverrides o) {
   // 1.3.1: cards. The card designs are the composer's choices too.
   o = withoutCardDesigns(o);
-  return o.extra.containsKey(kTextCardEveryNetworkKey) || o.extra.containsKey(kTextCardOnlyKey) || o.extra.containsKey(kTextCardStyleKey)
-      ? o.copyWith(extra: {...o.extra}..remove(kTextCardEveryNetworkKey)..remove(kTextCardOnlyKey)..remove(kTextCardStyleKey))
-      : o;
+  // 1.4.3: cards. So is the emphasis the card draws ([withCardEmphasis]).
+  const keys = [kTextCardEveryNetworkKey, kTextCardOnlyKey, kTextCardStyleKey, kEmphasisMarkupKey];
+  return keys.any(o.extra.containsKey) ? o.copyWith(extra: {...o.extra}..removeWhere((k, _) => keys.contains(k))) : o;
+}
+
+/// 1.4.3: cards. [post] with [kEmphasisMarkupKey] on every target when
+/// [marked] (a text card of the post draws **bold** or *italic* words
+/// written in it), so networks without Markdown get those words without the
+/// asterisks; without the key otherwise, so every asterisk goes as written.
+Post withCardEmphasis(Post post, {required bool marked}) {
+  if (post.targets.every((t) => (t.overrides.extra[kEmphasisMarkupKey] == true) == marked)) return post;
+  return post.copyWith(targets: [
+    for (final t in post.targets)
+      t.copyWith(
+        overrides: t.overrides.copyWith(
+          extra: marked ? {...t.overrides.extra, kEmphasisMarkupKey: true} : ({...t.overrides.extra}..remove(kEmphasisMarkupKey)),
+        ),
+      ),
+  ]);
+}
+
+/// 1.4.3: cards. The pixel size of the picture [account]'s network gets for
+/// a card of [shape] ([textCardFrameSize]): its own frame for a [story] or
+/// for each network's own shape, else the shape where the network's photo
+/// rules ([PlatformAdapter.photoFit]) and Settings' "fill the whole frame"
+/// let it show whole.
+Size textCardFrameFor(PlatformAdapter adapter, ConnectedAccount account, PostVariant variant, AppSettings settings,
+    {required bool story, required TextCardShape shape}) {
+  final id = account.platformId;
+  if (shape.size == null || story) return textCardSize(id, story: story);
+  final fit = adapter.photoFit(account, variant);
+  return textCardFrameSize(id, shape: shape, fillsFrame: settings.fillsFrame(id), minAspect: fit?.minAspect, maxAspect: fit?.maxAspect);
 }
 
 /// The photo list a card took the place of on a target
@@ -164,7 +194,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     TextCardStyle? cardStyle}) async {
   final cards = {for (final m in post.media.where(isRenderedTextCard)) m.id: m};
   final backgrounds = [for (final m in post.media) if (isTextCardBackground(m)) m];
-  if (!settings.textCards && cards.isEmpty && backgrounds.isEmpty) return post;
+  if (!settings.textCards && cards.isEmpty && backgrounds.isEmpty) return withCardEmphasis(post, marked: false);
   final style = theme ?? textCardThemeOfPost(post) ?? settings.textCardTheme;
   final face = font ?? textCardFontOfPost(post) ?? settings.textCardFont;
   final align = alignment ?? textCardAlignmentOfPost(post) ?? settings.textCardAlignment;
@@ -209,6 +239,8 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
   TextCardBackdrop? backdrop;
   var backdropTried = false;
   var p = post;
+  // 1.4.3: cards. A card made draws bold or italic words written in it.
+  var emphasis = false;
 
   // A target that lists only a card gets back the list the card took the
   // place of (every photo when it had none of its own). The story's own
@@ -281,9 +313,12 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
     final showsHandle = handle[d.id] ?? (oldCard == null ? null : textCardShowsHandleOf(oldCard)) ?? settings.textCardShowsHandle(d.id);
 
     // The card, full screen for a story; null when it could not be made.
+    // 1.4.3: cards. The shape, the attribution and the emphasis are the
+    // classic card's; a design draws at each network's own shape.
+    final altText = textCardAltText(text, attribution: cardDesign == null ? look.attribution : null);
     Future<MediaAttachment?> cardIn(bool story) async {
-      final size = textCardSize(d.id, story: story);
-      final safe = textCardSafeArea(d.id, story: story);
+      final size = textCardFrameFor(adapter, account, variant, settings, story: story, shape: cardDesign == null ? look.shape : TextCardShape.automatic);
+      final safe = textCardSafeArea(d.id, story: story, size: size);
       final hasSafe = safe != EdgeInsets.zero;
       final fallback = await fontMissing();
       final designFallback = await designFontMissing();
@@ -318,7 +353,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
               m.width == size.width.round() &&
               m.height == size.height.round() &&
               (renderParametersEqual(m.renderParameters, params) || (drawnInFont != null && renderParametersEqual(m.renderParameters, drawnInFont))) &&
-              m.altText == textCardAltText(text))
+              m.altText == altText)
           .firstOrNull;
       if (card == null) {
         try {
@@ -355,7 +390,7 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
             sizeBytes: m.sizeBytes,
             width: size.width.round(),
             height: size.height.round(),
-            altText: textCardAltText(text),
+            altText: altText,
             fileName: m.fileName,
             generated: true,
             renderParameters: params,
@@ -373,6 +408,8 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
       }
       made[key] = card;
       used.add(card.id);
+      // A designed card draws it too, when it shows the post's words.
+      if (cardDesign == null ? hasEmphasis(text) : designedCardDrawsEmphasis(cardDesign, text)) emphasis = true;
       return card;
     }
 
@@ -416,11 +453,13 @@ Future<Post> attachTextCards(AppServices s, Post post, AppSettings settings,
       if (!inUse.contains(m.path)) await s.media.discard(m);
     }
   }
-  return p.copyWith(media: [
-    ...p.media.where((m) => !m.isTextCard),
-    ...keep.values,
-    ?keptBackground,
-  ]);
+  return withCardEmphasis(
+      p.copyWith(media: [
+        ...p.media.where((m) => !m.isTextCard),
+        ...keep.values,
+        ?keptBackground,
+      ]),
+      marked: emphasis);
 }
 
 /// The style of the cards already on [post], if any.

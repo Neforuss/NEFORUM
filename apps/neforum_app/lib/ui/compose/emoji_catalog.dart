@@ -55,30 +55,36 @@ Emoji? emojiByGlyph(String glyph) {
 }
 
 /// How well [query] (lower case, one word) fits [e]: lower is better, null for
-/// no fit. A short name exactly, then the start of a word, then anywhere; the
-/// category last, so "flag" lists flags after the emoji named for it.
-int? _fit(Emoji e, String word) {
+/// no fit. A short name exactly, then the start of a word, then anywhere; then
+/// CLDR's search words ([keywords], 1.4.3: "grin" finds 😀); the category
+/// last, so "flag" lists flags after the emoji named for it.
+int? _fit(Emoji e, String word, List<String> keywords) {
   if (e.shortNames.contains(word) || e.text?.toLowerCase() == word) return 0;
   final names = [e.name, ...e.shortNames.map((s) => s.replaceAll('_', ' '))];
   if (names.any((n) => n == word)) return 0;
   final start = RegExp('(^|[ -])${RegExp.escape(word)}');
   if (names.any(start.hasMatch)) return 1;
   if (names.any((n) => n.contains(word))) return 2;
-  if (e.subcategory.toLowerCase().contains(word) || e.category.description.toLowerCase().contains(word)) return 3;
+  if (keywords.contains(word)) return 2;
+  if (keywords.any(start.hasMatch)) return 3;
+  if (e.subcategory.toLowerCase().contains(word) || e.category.description.toLowerCase().contains(word)) return 4;
   return null;
 }
 
 /// The emoji fitting every word of [query], best fit first, Unicode's order
 /// within a fit. Runs over the whole list in a few milliseconds, with no network.
-List<Emoji> searchEmoji(String query) {
+/// [keywords] gives CLDR's search words for an emoji (the character catalog's),
+/// once it is loaded.
+List<Emoji> searchEmoji(String query, {List<String> Function(String emoji)? keywords}) {
   final words = query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
   if (words.isEmpty) return const [];
   final hits = <(int, Emoji)>[];
   for (final e in allEmoji) {
     var total = 0;
     var fits = true;
+    final extra = keywords?.call(e.emoji) ?? const <String>[];
     for (final w in words) {
-      final f = _fit(e, w);
+      final f = _fit(e, w, extra);
       if (f == null) {
         fits = false;
         break;

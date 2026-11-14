@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/settings.dart' show CornerStyle, InterfaceDensity, NavigationChromeStyle;
+import 'selection_theme.dart';
 import 'tokens.dart';
 
 /// Builds the NEFORUM [ThemeData] for one brightness and accent.
@@ -14,18 +15,29 @@ import 'tokens.dart';
 /// The Appearance settings: [customAccent] (ARGB) is the color of
 /// [AccentChoice.custom]; [corners] square sets every radius to 0 (it also
 /// sets [Radii.square], which widgets read directly); [chrome] colors the
-/// sidebar, rail and bottom bar; [density] compact tightens the spacing.
+/// sidebar, rail and bottom bar; [density] compact tightens the spacing;
+/// [seamless] takes the outlines off surfaces ([NfColors.withSeamless]): cards,
+/// dialogs, menus, sheets and the chrome's edge lose their line, while text
+/// fields, chips, buttons and dividers keep theirs ([NfColors.hairline]), and
+/// menus, which float with no scrim, get a shadow instead.
 ///
 /// [highContrast] (the system's high contrast setting, see
 /// `MaterialApp.highContrastTheme`) uses [NfColors.withHighContrast].
+///
+/// 1.4.3: colours. [chromeColor] (ARGB) is the chrome of
+/// [NavigationChromeStyle.custom] (NEFORUM purple while null); [chromeTint]
+/// (ARGB) covers the see-through chrome in place of the surface color.
 ThemeData buildTheme(
   Brightness brightness,
   AccentChoice accent, {
   int? customAccent,
   CornerStyle corners = CornerStyle.rounded,
   NavigationChromeStyle chrome = NavigationChromeStyle.brand,
+  int? chromeColor,
+  int? chromeTint,
   InterfaceDensity density = InterfaceDensity.comfortable,
   bool highContrast = false,
+  bool seamless = false,
 }) {
   Radii.square = corners == CornerStyle.square;
   final base = brightness == Brightness.dark ? NfColors.dark(accent, customAccent: customAccent) : NfColors.light(accent, customAccent: customAccent);
@@ -33,12 +45,20 @@ ThemeData buildTheme(
     NavigationChromeStyle.brand => base,
     NavigationChromeStyle.theme => base.withThemeChrome(),
     NavigationChromeStyle.accent => base.withAccentChrome(),
+    NavigationChromeStyle.custom => chromeColor == null ? base : base.withColorChrome(Color(chromeColor)),
     // Made below from the final page colors: its labels are the page's text.
     NavigationChromeStyle.transparent => base,
   };
   final contrasted = highContrast ? chromed.withHighContrast() : chromed;
-  final c = chrome == NavigationChromeStyle.transparent ? contrasted.withTransparentChrome() : contrasted;
+  final chromeStyled = chrome == NavigationChromeStyle.transparent
+      ? contrasted.withTransparentChrome(tint: chromeTint == null ? null : Color(chromeTint))
+      : contrasted;
+  final c = seamless ? chromeStyled.withSeamless() : chromeStyled;
   final dense = density == InterfaceDensity.compact;
+  // Menus float over the page with no scrim: without an outline in seamless
+  // mode a shadow sets them apart.
+  final menuElevation = seamless ? 6.0 : 0.0;
+  final menuShadow = c.isDark ? Colors.black : Colors.black.withValues(alpha: 0.5);
   final scheme = ColorScheme(
     brightness: brightness,
     primary: c.accent,
@@ -64,7 +84,7 @@ ThemeData buildTheme(
     surfaceContainerHigh: c.surfaceRaised,
     surfaceContainerHighest: c.surfaceSunken,
     outline: c.borderStrong,
-    outlineVariant: c.border,
+    outlineVariant: c.hairline,
     shadow: c.shadow,
     scrim: c.scrim,
     inverseSurface: c.text,
@@ -92,7 +112,7 @@ ThemeData buildTheme(
     hoverColor: c.surfaceHover,
     focusColor: c.accent.withValues(alpha: 0.12),
     splashColor: c.accent.withValues(alpha: 0.08),
-    dividerColor: c.border,
+    dividerColor: c.hairline,
     disabledColor: c.textFaint,
 
     appBarTheme: AppBarTheme(
@@ -115,7 +135,7 @@ ThemeData buildTheme(
       clipBehavior: Clip.antiAlias,
     ),
 
-    dividerTheme: DividerThemeData(color: c.border, thickness: 1, space: 1),
+    dividerTheme: DividerThemeData(color: c.hairline, thickness: 1, space: 1),
 
     filledButtonTheme: FilledButtonThemeData(
       style: ButtonStyle(
@@ -140,7 +160,7 @@ ThemeData buildTheme(
       style: ButtonStyle(
         foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.disabled) ? c.textFaint : c.text),
         backgroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.hovered) ? c.surfaceHover : c.surface),
-        side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.hovered) ? c.borderStrong : c.border)),
+        side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.hovered) ? c.borderStrong : c.hairline)),
         overlayColor: WidgetStateProperty.all(c.text.withValues(alpha: 0.04)),
         textStyle: WidgetStateProperty.all(text.labelLarge),
         padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: dense ? Space.md + 2 : Space.lg + 2, vertical: dense ? Space.sm + 2 : Space.md + 2)),
@@ -184,12 +204,13 @@ ThemeData buildTheme(
       errorStyle: text.bodySmall?.copyWith(color: c.danger),
       prefixIconColor: c.textFaint,
       suffixIconColor: c.textFaint,
-      border: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.border)),
-      enabledBorder: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.border)),
+      // Text fields keep their edge in seamless mode: hairline, not border.
+      border: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.hairline)),
+      enabledBorder: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.hairline)),
       focusedBorder: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.accent, width: 1.6)),
       errorBorder: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.danger)),
       focusedErrorBorder: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.danger, width: 1.6)),
-      disabledBorder: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.border.withValues(alpha: 0.5))),
+      disabledBorder: OutlineInputBorder(borderRadius: Radii.rMd, borderSide: BorderSide(color: c.hairline.withValues(alpha: 0.5))),
     ),
 
     textSelectionTheme: TextSelectionThemeData(
@@ -198,18 +219,8 @@ ThemeData buildTheme(
       selectionHandleColor: c.accent,
     ),
 
-    chipTheme: ChipThemeData(
-      backgroundColor: c.surface,
-      selectedColor: c.accentSoft,
-      disabledColor: c.surfaceSunken,
-      side: BorderSide(color: c.border),
-      shape: RoundedRectangleBorder(borderRadius: Radii.rPill),
-      labelStyle: text.labelMedium?.copyWith(color: c.text),
-      secondaryLabelStyle: text.labelMedium?.copyWith(color: c.accent),
-      padding: EdgeInsets.symmetric(horizontal: Space.sm, vertical: dense ? Space.xxs : Space.xs),
-      checkmarkColor: c.accent,
-      showCheckmark: false,
-    ),
+    // 1.4.3: clear selected state (lib/theme/selection_theme.dart).
+    chipTheme: selectionChipTheme(c, text, dense: dense),
 
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : c.textMuted),
@@ -244,17 +255,8 @@ ThemeData buildTheme(
       linearMinHeight: 6,
     ),
 
-    segmentedButtonTheme: SegmentedButtonThemeData(
-      style: ButtonStyle(
-        backgroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.surface : c.surfaceSunken),
-        foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.text : c.textMuted),
-        side: WidgetStateProperty.all(BorderSide(color: c.border)),
-        textStyle: WidgetStateProperty.all(text.labelMedium),
-        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rSm)),
-        padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: Space.md, vertical: dense ? Space.xs : Space.sm)),
-      ),
-      selectedIcon: const SizedBox.shrink(),
-    ),
+    // 1.4.3: clear selected state (lib/theme/selection_theme.dart).
+    segmentedButtonTheme: selectionSegmentedButtonTheme(c, text, dense: dense),
 
     listTileTheme: ListTileThemeData(
       iconColor: c.textMuted,
@@ -314,7 +316,8 @@ ThemeData buildTheme(
     popupMenuTheme: PopupMenuThemeData(
       color: c.surfaceRaised,
       surfaceTintColor: Colors.transparent,
-      elevation: 0,
+      elevation: menuElevation,
+      shadowColor: menuShadow,
       shape: RoundedRectangleBorder(borderRadius: Radii.rMd, side: BorderSide(color: c.border)),
       textStyle: text.bodyMedium,
       menuPadding: const EdgeInsets.all(Space.xs),
@@ -324,7 +327,8 @@ ThemeData buildTheme(
       style: MenuStyle(
         backgroundColor: WidgetStateProperty.all(c.surfaceRaised),
         surfaceTintColor: WidgetStateProperty.all(Colors.transparent),
-        elevation: WidgetStateProperty.all(0),
+        elevation: WidgetStateProperty.all(menuElevation),
+        shadowColor: WidgetStateProperty.all(menuShadow),
         side: WidgetStateProperty.all(BorderSide(color: c.border)),
         shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rMd)),
         padding: WidgetStateProperty.all(const EdgeInsets.all(Space.xs)),

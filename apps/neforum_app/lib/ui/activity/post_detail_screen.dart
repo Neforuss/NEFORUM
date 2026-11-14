@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/publishing_order.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
@@ -76,6 +77,8 @@ class PostDetailScreen extends ConsumerWidget {
     };
     final publishing = ref.watch(activePublishingProvider)[post.id];
     final style = context.text.bodyLarge!.copyWith(height: 1.55);
+    // 1.4.3: the networks in the publishing order, as a run takes them.
+    final targets = ref.watch(publishingSequenceProvider).targets(post.targets);
 
     return Scaffold(
       // Over a background picture the page lets it show, as the others do.
@@ -127,9 +130,9 @@ class PostDetailScreen extends ConsumerWidget {
         NfCard(
           padding: EdgeInsets.zero,
           child: Column(children: [
-            for (var i = 0; i < post.targets.length; i++) ...[
-              if (i > 0) Divider(height: 1, color: nf.border),
-              _TargetRow(post: post, target: post.targets[i]),
+            for (var i = 0; i < targets.length; i++) ...[
+              if (i > 0) Divider(height: 1, color: nf.hairline),
+              _TargetRow(post: post, target: targets[i]),
             ],
           ]),
         ),

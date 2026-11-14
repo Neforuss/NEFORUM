@@ -11,6 +11,7 @@ import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../audio_links.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'blogs_common.dart';
 
@@ -48,6 +49,7 @@ class DevtoAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'devto',
+    options: devtoOptions,
     name: 'DEV Community',
     shortName: 'DEV',
     iconKey: 'devto',

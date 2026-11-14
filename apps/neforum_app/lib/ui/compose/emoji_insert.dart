@@ -111,8 +111,12 @@ class _EmojiTargetFieldState extends State<EmojiTargetField> {
 /// beside the button on a computer, which stays open across picks and leaves the
 /// cursor in the field; a bottom sheet on a phone.
 class EmojiButton extends ConsumerStatefulWidget {
-  const EmojiButton({super.key, this.size = 38});
+  const EmojiButton({super.key, this.size = 38, this.showBudget = false});
   final double size;
+
+  /// 1.4.3: the panel shows how much room each chosen network has left: for
+  /// the composer's own text, not for captions or answers.
+  final bool showBudget;
 
   @override
   ConsumerState<EmojiButton> createState() => _EmojiButtonState();
@@ -147,14 +151,34 @@ class _EmojiButtonState extends ConsumerState<EmojiButton> {
   _EmojiTargetFieldState? _lastTarget() => EmojiTargets._resolve(ModalRoute.of(context));
 
   void _pick(String emoji) {
-    final target = _lastTarget();
-    if (target == null) return;
-    insertAtCursor(target.widget.controller, emoji, onChanged: target.widget.onChanged);
+    if (!_insert(emoji)) return;
     ref.read(settingsProvider.notifier).update((s) => s.copyWith(emojiRecents: withRecentEmoji(s.emojiRecents, emoji)));
+  }
+
+  /// Styled text from the Text styles tab: in place of the selection, and not
+  /// a recent character.
+  void _style(String styled) => _insert(styled);
+
+  bool _insert(String text) {
+    final target = _lastTarget();
+    if (target == null) return false;
+    insertAtCursor(target.widget.controller, text, onChanged: target.widget.onChanged);
     // On a phone the sheet holds the focus until it closes, so the keyboard does
     // not come up over it.
     if (Env.isDesktop) target._refocus();
+    return true;
   }
+
+  /// The text selected in the field the panel writes to, or ''.
+  String _selection() {
+    final c = _lastTarget()?.widget.controller;
+    if (c == null) return '';
+    final s = c.selection;
+    if (!s.isValid || s.isCollapsed || s.start < 0 || s.end > c.text.length) return '';
+    return s.textInside(c.text);
+  }
+
+  Widget _panelContent(VoidCallback onClose) => EmojiPanel(onPick: _pick, onClose: onClose, selection: _selection, onStyle: _style, showBudget: widget.showBudget);
 
   Future<void> _open() async {
     if (Env.isDesktop) {
@@ -178,7 +202,7 @@ class _EmojiButtonState extends ConsumerState<EmojiButton> {
         final room = size.height - keyboard;
         return Padding(
           padding: EdgeInsets.only(bottom: keyboard),
-          child: SizedBox(height: room < 420 ? room : (room * 0.62).clamp(360.0, 520.0), child: EmojiPanel(onPick: _pick, onClose: () => Navigator.pop(sheet))),
+          child: SizedBox(height: room < 420 ? room : (room * 0.66).clamp(380.0, 560.0), child: _panelContent(() => Navigator.pop(sheet))),
         );
       },
     );
@@ -189,8 +213,8 @@ class _EmojiButtonState extends ConsumerState<EmojiButton> {
     final box = context.findRenderObject() as RenderBox?;
     final screen = MediaQuery.sizeOf(overlay);
     const margin = Space.sm;
-    final width = (screen.width - margin * 2).clamp(0.0, 348.0);
-    final height = (screen.height - margin * 2).clamp(0.0, 420.0);
+    final width = (screen.width - margin * 2).clamp(0.0, 380.0);
+    final height = (screen.height - margin * 2).clamp(0.0, 480.0);
     final at = box != null && box.hasSize ? box.localToGlobal(Offset.zero) : Offset.zero;
     final buttonHeight = box != null && box.hasSize ? box.size.height : 0.0;
     final below = at.dy + buttonHeight + height + margin <= screen.height;
@@ -208,7 +232,7 @@ class _EmojiButtonState extends ConsumerState<EmojiButton> {
           color: overlay.nf.surface,
           shape: RoundedRectangleBorder(borderRadius: Radii.rLg, side: BorderSide(color: overlay.nf.border)),
           clipBehavior: Clip.antiAlias,
-          child: EmojiPanel(onPick: _pick, onClose: _closePanel),
+          child: _panelContent(_closePanel),
         ),
       ),
     );
@@ -224,7 +248,7 @@ class _EmojiButtonState extends ConsumerState<EmojiButton> {
           child: ToolButton(
             key: const Key('emoji-button'),
             icon: Icons.emoji_emotions_outlined,
-            tooltip: 'Emoji',
+            tooltip: 'Emoji, symbols and text styles',
             size: widget.size,
             active: _panel.isShowing,
             onPressed: _open,

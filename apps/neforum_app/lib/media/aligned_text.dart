@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:neforum_core/neforum_core.dart' show EmphasisRun, parseEmphasis;
 
 import '../state/settings.dart' show TextCardAlignment;
 import 'emoji_text.dart';
@@ -66,7 +67,14 @@ double alignmentAnchor(TextCardAlignment a, TextDirection direction) {
 /// with the letter spacing that makes it fill the width. A line that is a
 /// single word is centred instead.
 class AlignedText {
-  AlignedText(String words, {required this.style, required this.alignment, required this.direction, this.maxLines}) : text = _shown(words);
+  /// With [emphasis] (1.4.3), **bold**, *italic* and ***both*** written in
+  /// [words] are drawn in the style it gives for them ([parseEmphasis]), the
+  /// asterisks left out; without it every character is drawn as written.
+  AlignedText(String words, {required this.style, required this.alignment, required this.direction, this.maxLines, TextStyle Function(EmphasisRun run)? emphasis})
+      : _emphasis = emphasis,
+        _runs = emphasis == null ? null : _shownRuns(words) {
+    text = _runs == null ? _shown(words) : _runs.map((r) => r.text).join();
+  }
 
   /// [words] as drawn: an emoji this device cannot draw is left out, not drawn as
   /// a blank or a "no glyph" tile, and the words are tried in the background for
@@ -76,7 +84,16 @@ class AlignedText {
     return EmojiSupport.withoutMissing(words);
   }
 
-  final String text;
+  /// [words] in runs of one emphasis each, every run [_shown].
+  static List<EmphasisRun> _shownRuns(String words) => [
+        for (final r in parseEmphasis(words))
+          if (_shown(r.text) case final shown when shown.isNotEmpty) EmphasisRun(shown, bold: r.bold, italic: r.italic),
+      ];
+
+  /// The words drawn, without the asterisks that mark emphasis.
+  late final String text;
+  final TextStyle Function(EmphasisRun run)? _emphasis;
+  final List<EmphasisRun>? _runs;
   final TextStyle style;
   final TextCardAlignment alignment;
   final TextDirection direction;
@@ -96,6 +113,10 @@ class AlignedText {
   /// The words did not all fit in [maxLines].
   bool get didExceedMaxLines => _p.didExceedMaxLines;
 
+  /// Each line as laid out, top to bottom, a blank line between paragraphs
+  /// included.
+  List<LineMetrics> get lineMetrics => _p.computeLineMetrics();
+
   /// Lays the words out within [maxWidth]. With [fill], or a justified or
   /// distributed alignment, the block is [maxWidth] wide; otherwise it is as
   /// wide as its longest line.
@@ -104,7 +125,7 @@ class AlignedText {
     _painter?.dispose();
     final full = fill || alignment.fillsWidth;
     _painter = TextPainter(
-      text: emojiSpan(text, style),
+      text: _runs == null ? emojiSpan(text, style) : _spanOf(0, text.length, 0),
       textAlign: textAlignOf(alignment),
       textDirection: direction,
       maxLines: maxLines,
@@ -148,11 +169,32 @@ class AlignedText {
     _lines.clear();
   }
 
-  TextPainter _line(String s, double extraSpacing) => TextPainter(
-        text: emojiSpan(s, style.copyWith(letterSpacing: (style.letterSpacing ?? 0) + extraSpacing)),
+  /// [s] on one line, its letters [extraSpacing] further apart. With
+  /// emphasis, [from] and [to] say where [s] is in [text], so each part
+  /// keeps its bold or italic; without them it is drawn in [style].
+  TextPainter _line(String s, double extraSpacing, [int? from, int? to]) => TextPainter(
+        text: _runs != null && from != null && to != null
+            ? _spanOf(from, to, extraSpacing)
+            : emojiSpan(s, style.copyWith(letterSpacing: (style.letterSpacing ?? 0) + extraSpacing)),
         textDirection: direction,
         maxLines: 1,
       )..layout();
+
+  /// [text] from [start] to [end] as spans, each run of words in its
+  /// emphasis' style, letters [extraSpacing] further apart (1.4.3).
+  TextSpan _spanOf(int start, int end, double extraSpacing) {
+    TextStyle spaced(TextStyle s) => extraSpacing == 0 ? s : s.copyWith(letterSpacing: (s.letterSpacing ?? 0) + extraSpacing);
+    final children = <InlineSpan>[];
+    var at = 0;
+    for (final r in _runs!) {
+      final from = math.max(at, start), to = math.min(at + r.text.length, end);
+      at += r.text.length;
+      if (from >= to) continue;
+      // Already without the emoji this device cannot draw (_shownRuns).
+      children.add(emojiSpan(text.substring(from, to), spaced(r.plain ? style : _emphasis!(r)), dropMissing: false));
+    }
+    return TextSpan(style: spaced(style), children: children);
+  }
 
   void _distribute(double width) {
     final metrics = _p.computeLineMetrics();
@@ -160,10 +202,19 @@ class AlignedText {
       final m = metrics[i];
       final at = _p.getPositionForOffset(Offset(m.left + m.width / 2, m.baseline - m.ascent / 2));
       final range = _p.getLineBoundary(at);
-      var words = text.substring(math.max(0, range.start), math.min(text.length, range.end)).trim();
-      if (i == metrics.length - 1 && _p.didExceedMaxLines) words = _withEllipsis(words, width);
+      final start = math.max(0, range.start);
+      final raw = text.substring(start, math.min(text.length, range.end));
+      var words = raw.trim();
+      // Where the line's words are in [text], for their emphasis; a line cut
+      // with an ellipsis is drawn plain.
+      int? from = start + raw.length - raw.trimLeft().length;
+      int? to = from + words.length;
+      if (i == metrics.length - 1 && _p.didExceedMaxLines) {
+        words = _withEllipsis(words, width);
+        from = to = null;
+      }
       if (words.isEmpty) continue;
-      final natural = _line(words, 0);
+      final natural = _line(words, 0, from, to);
       final top = m.baseline - natural.computeDistanceToActualBaseline(TextBaseline.alphabetic);
       final gaps = words.characters.length - 1;
       if (gaps < 1 || !_spreadable(words) || natural.width >= width) {
@@ -176,7 +227,7 @@ class AlignedText {
       final tracking = style.letterSpacing ?? 0;
       final extra = (width - natural.width + tracking) / gaps;
       natural.dispose();
-      _lines.add((_line(words, extra), Offset(-(tracking + extra) / 2, top)));
+      _lines.add((_line(words, extra, from, to), Offset(-(tracking + extra) / 2, top)));
     }
   }
 

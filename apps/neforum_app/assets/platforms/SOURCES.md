@@ -32,6 +32,7 @@ of them.
 | nostr | https://nostr.com/icon-512.png (nostr.com manifest) |
 | wordpress | https://s1.wp.com/i/webclip.png |
 | ghost | https://ghost.org/favicon.ico |
+| emdash | https://emdashcms.com/brand/favicon.png (1.4.3; the site's PNG icon and apple-touch-icon, 300 px, on white, scaled to 256 px) |
 | writefreely | https://github.com/writefreely/writefreely/blob/develop/static/img/wf-sq.png (WriteFreely's 512 px square mark; 1.4.2, was writefreely.org/favicon.ico), in the favicon's colours: light w on #292929, cropped so the w spans 72% of the tile, Lanczos to 256 px |
 | micropub | https://indieweb.org/favicon.ico |
 | devto | https://dev.to apple-touch-icon (media2.dev.to, 192 px) |
@@ -59,3 +60,5 @@ of them.
 | kofi | https://ko-fi.com/favicon.png |
 | artfol | https://artfol.app/image/icon.ico |
 | fivehundredpx | https://500px.com/favicon.ico |
+| parler | https://parler.com/icons/parler-social.svg (1.4.3), drawn from its paths: the white mark on #E50038, the rounded square cropped to fill the tile, 8 x 8 samples a pixel |
+| locals | https://locals.com/assets/logo/logo-on-light-bg.svg (the site's favicon, 1.4.3), drawn from its circles: centred on white, the mark spanning 62% of the tile, 8 x 8 samples a pixel |

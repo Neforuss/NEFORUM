@@ -16,52 +16,73 @@ import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'emoji_insert.dart';
+import 'paragraph_media_sheet.dart';
 import 'track_details_sheet.dart';
 
-/// Opens the platform picker and attaches the chosen photos, videos or sound
-/// files. Phones ask first: their photo picker shows no sound files.
-Future<void> pickAndAttachMedia(BuildContext context, WidgetRef ref) async {
-  final library = ref.read(servicesProvider).media;
-  final notifier = ref.read(composerProvider.notifier);
+/// What a picker gave: the files it attached to the library, and the names of
+/// those it could not.
+typedef MediaPick = ({List<MediaAttachment> added, List<String> rejected});
+
+/// The picker behind every "Add media" control of the composer: the
+/// platform's own ([pickMediaFromPlatform]). Null when the person backs out;
+/// throws when the picker cannot open. Tests put a stand-in here.
+final mediaPickerProvider = Provider<Future<MediaPick?> Function(BuildContext context)>(
+  (ref) => (context) => pickMediaFromPlatform(context, ref.read(servicesProvider).media),
+);
+
+/// Opens the platform picker and imports the chosen photos, videos or sound
+/// files into [library]. Phones ask first: their photo picker shows no sound
+/// files. Null when the person backs out of that question.
+Future<MediaPick?> pickMediaFromPlatform(BuildContext context, MediaLibrary library) async {
   final added = <MediaAttachment>[];
   final rejected = <String>[];
   var sound = false;
   if (Env.isMobile) {
     final choice = await _askPhoneSource(context);
-    if (choice == null || !context.mounted) return;
+    if (choice == null || !context.mounted) return null;
     sound = choice;
   }
-  try {
-    if (Env.isMobile && !sound) {
-      final files = await ImagePicker().pickMultipleMedia(limit: 20);
-      for (final f in files) {
-        try {
-          added.add(await library.importXFile(f));
-        } on UnsupportedMediaException {
-          rejected.add(f.name);
-        }
-      }
-    } else {
-      final files = await FilePicker.pickFiles(
-        dialogTitle: sound ? 'Attach a sound file' : 'Attach photos, videos or sound',
-        type: FileType.custom,
-        allowedExtensions: sound ? MediaLibrary.audioExtensions : MediaLibrary.supportedExtensions,
-      );
-      for (final f in files) {
-        try {
-          added.add(await library.importBytes(await f.readAsBytes(), fileName: f.name));
-        } on UnsupportedMediaException {
-          rejected.add(f.name);
-        }
+  if (Env.isMobile && !sound) {
+    final files = await ImagePicker().pickMultipleMedia(limit: 20);
+    for (final f in files) {
+      try {
+        added.add(await library.importXFile(f));
+      } on UnsupportedMediaException {
+        rejected.add(f.name);
       }
     }
+  } else {
+    final files = await FilePicker.pickFiles(
+      dialogTitle: sound ? 'Attach a sound file' : 'Attach photos, videos or sound',
+      type: FileType.custom,
+      allowedExtensions: sound ? MediaLibrary.audioExtensions : MediaLibrary.supportedExtensions,
+    );
+    for (final f in files) {
+      try {
+        added.add(await library.importBytes(await f.readAsBytes(), fileName: f.name));
+      } on UnsupportedMediaException {
+        rejected.add(f.name);
+      }
+    }
+  }
+  return (added: added, rejected: rejected);
+}
+
+/// Opens the picker ([mediaPickerProvider]) and attaches the chosen photos,
+/// videos or sound files to thread part [part] (0, the first, by default).
+Future<void> pickAndAttachMedia(BuildContext context, WidgetRef ref, {int part = 0}) async {
+  final notifier = ref.read(composerProvider.notifier);
+  final MediaPick? pick;
+  try {
+    pick = await ref.read(mediaPickerProvider)(context);
   } on Object catch (e) {
     if (context.mounted) showToast(context, 'Could not open the picker: $e', icon: Icons.error_outline_rounded);
     return;
   }
-  notifier.addMedia(added);
-  if (rejected.isNotEmpty && context.mounted) {
-    showToast(context, '${rejected.length} file(s) skipped: only images, videos and sound files can be attached', icon: Icons.info_outline_rounded);
+  if (pick == null) return;
+  notifier.addMedia(pick.added, part: part);
+  if (pick.rejected.isNotEmpty && context.mounted) {
+    showToast(context, '${pick.rejected.length} file(s) skipped: only images, videos and sound files can be attached', icon: Icons.info_outline_rounded);
   }
 }
 
@@ -88,8 +109,9 @@ Future<bool?> _askPhoneSource(BuildContext context) => showModalBottomSheet<bool
       ),
     );
 
-/// Attaches files dropped onto the editor.
-Future<void> attachDroppedFiles(BuildContext context, WidgetRef ref, List<XFile> files) async {
+/// Attaches files dropped onto the editor of thread part [part] (0, the
+/// first, by default).
+Future<void> attachDroppedFiles(BuildContext context, WidgetRef ref, List<XFile> files, {int part = 0}) async {
   final library = ref.read(servicesProvider).media;
   final added = <MediaAttachment>[];
   var rejected = 0;
@@ -102,7 +124,7 @@ Future<void> attachDroppedFiles(BuildContext context, WidgetRef ref, List<XFile>
       rejected++;
     }
   }
-  ref.read(composerProvider.notifier).addMedia(added);
+  ref.read(composerProvider.notifier).addMedia(added, part: part);
   if (rejected > 0 && context.mounted) {
     showToast(context, '$rejected file(s) skipped: only images, videos and sound files can be attached', icon: Icons.info_outline_rounded);
   }
@@ -138,38 +160,55 @@ Future<bool> pasteMedia(BuildContext context, WidgetRef ref) async {
 }
 
 /// Horizontal, reorderable strip of attachments with remove and alt-text
-/// controls, plus an "Add" tile.
+/// controls, plus an "Add" tile. It scrolls sideways: on a phone a swipe goes
+/// through the media and a long press picks an item up to reorder it.
 class MediaTray extends ConsumerWidget {
-  const MediaTray({super.key});
+  const MediaTray({super.key, this.part});
+
+  /// 1.4.3: thread media. The thread part whose media this tray shows and
+  /// adds to (0 is the first, [ComposerState.mediaOfPart]); null for every
+  /// attachment of the post, added to the first part.
+  final int? part;
 
   static const double _size = 104;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final media = ref.watch(composerProvider.select((c) => c.media));
+    final part = this.part;
+    // Text edits leave these three as they are, so typing does not rebuild
+    // the tray.
+    ref.watch(composerProvider.select((c) => (c.media, c.mediaParts, c.additionalParts.length)));
+    final c = ref.read(composerProvider);
+    final media = part == null ? c.media : c.mediaOfPart(part);
     final notifier = ref.read(composerProvider.notifier);
     if (media.isEmpty) return const SizedBox.shrink();
+    // Touch screens: a drag that starts on an item scrolls the tray, a long
+    // press reorders. With a mouse, a drag reorders at once.
+    final touch = Env.isMobile;
     return SizedBox(
+      key: ValueKey('media-tray-${part ?? 'post'}'),
       height: _size + 8,
       child: ReorderableListView.builder(
         scrollDirection: Axis.horizontal,
         buildDefaultDragHandles: false,
         itemCount: media.length,
-        onReorderItem: notifier.moveMedia,
+        onReorderItem: part == null ? notifier.moveMedia : (from, to) => notifier.moveMediaInPart(part, from, to),
         proxyDecorator: (child, _, _) => Material(color: Colors.transparent, child: child),
         footer: Padding(
           padding: const EdgeInsets.only(top: 4, bottom: 4),
-          child: _AddTile(size: _size, onTap: () => pickAndAttachMedia(context, ref)),
+          child: _AddTile(
+            key: ValueKey('media-tray-add-${part ?? 0}'),
+            size: _size,
+            onTap: () => pickAndAttachMedia(context, ref, part: part ?? 0),
+          ),
         ),
         itemBuilder: (context, i) {
           final m = media[i];
+          final item = _MediaItem(media: m, size: _size, onRemove: () => notifier.removeMedia(m.id));
           return Padding(
             key: ValueKey(m.id),
             padding: const EdgeInsets.fromLTRB(0, 4, Space.sm, 4),
-            child: ReorderableDragStartListener(
-              index: i,
-              child: _MediaItem(media: m, size: _size, onRemove: () => notifier.removeMedia(m.id)),
-            ),
+            child: touch ? ReorderableDelayedDragStartListener(index: i, child: item) : ReorderableDragStartListener(index: i, child: item),
           );
         },
       ),
@@ -214,6 +253,27 @@ class _MediaItemState extends ConsumerState<_MediaItem> {
               part: ref.watch(composerProvider.select((c) => c.partOfMedia(m.id))).clamp(0, more),
               count: more + 1,
               onSelected: (part) => ref.read(composerProvider.notifier).setMediaPart(m.id, part),
+            ),
+          )
+        // 1.4.3: in one long post, the paragraph this file is linked to.
+        else if (ref.watch(composerProvider.select((c) => ParagraphMedia.paragraphOf(c.postParagraphMedia, m.id))) case final paragraph?)
+          Positioned(
+            left: 5,
+            top: 5,
+            child: Tooltip(
+              message: 'Linked to paragraph ${paragraph + 1}: tap to change',
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  key: ValueKey('paragraph-chip-${m.id}'),
+                  onTap: () => showParagraphMediaSheet(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.62), borderRadius: Radii.rXs),
+                    child: Text('¶ ${paragraph + 1}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
+                  ),
+                ),
+              ),
             ),
           ),
         // A sound file has no picture to describe: it has track details.
@@ -361,7 +421,7 @@ class _TagChip extends StatelessWidget {
 }
 
 class _AddTile extends StatelessWidget {
-  const _AddTile({required this.size, required this.onTap});
+  const _AddTile({super.key, required this.size, required this.onTap});
   final double size;
   final VoidCallback onTap;
 

@@ -14,6 +14,7 @@ import '../../state/settings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
+import '../../widgets/passphrase_input.dart';
 import '../../widgets/surfaces.dart';
 import '../accounts/guide_sheet.dart';
 import 'setting_row.dart';
@@ -38,7 +39,7 @@ class MoveDeviceRows extends ConsumerWidget {
             : 'Not available in the demo workspace.',
         trailing: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
           OutlinedButton.icon(
-            onPressed: available ? () => showDialog<void>(context: context, builder: (_) => const _ExportDialog()) : null,
+            onPressed: available ? () => showDialog<void>(context: context, builder: (_) => const ExportBackupDialog()) : null,
             icon: const Icon(Icons.upload_file_rounded, size: 18),
             label: const Text('Export…'),
           ),
@@ -111,19 +112,21 @@ class _MovedCard extends ConsumerWidget {
   }
 }
 
-class _ExportDialog extends ConsumerStatefulWidget {
-  const _ExportDialog();
+/// Export: what goes in the encrypted file, and its passphrase.
+class ExportBackupDialog extends ConsumerStatefulWidget {
+  const ExportBackupDialog({super.key});
 
   @override
-  ConsumerState<_ExportDialog> createState() => _ExportDialogState();
+  ConsumerState<ExportBackupDialog> createState() => _ExportBackupDialogState();
 }
 
-class _ExportDialogState extends ConsumerState<_ExportDialog> {
+class _ExportBackupDialogState extends ConsumerState<ExportBackupDialog> {
   BackupMode _mode = BackupMode.copy;
   bool _accounts = true, _hosts = true, _settings = true, _posts = true, _history = false;
   bool _own = false, _saved = false, _busy = false, _hidden = true;
   final String _generated = generatePassphrase();
   final _custom = TextEditingController();
+  final _customFormat = PassphraseInputFormatter();
   List<String> _rotating = const [];
 
   @override
@@ -269,6 +272,11 @@ class _ExportDialogState extends ConsumerState<_ExportDialog> {
                 controller: _custom,
                 obscureText: _hidden,
                 enabled: !_busy,
+                // A code is saved the way it is shown: capitals and dashes.
+                inputFormatters: [_customFormat],
+                keyboardType: passphraseKeyboardType,
+                autocorrect: false,
+                enableSuggestions: false,
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                   labelText: 'Your passphrase',
@@ -282,6 +290,11 @@ class _ExportDialogState extends ConsumerState<_ExportDialog> {
                     onPressed: () => setState(() => _hidden = !_hidden),
                   ),
                 ),
+              ),
+            if (_own && showsPassphraseCodeNote(_custom.text))
+              Padding(
+                padding: const EdgeInsets.only(top: Space.xs),
+                child: Text(kPassphraseCodeNote, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
               ),
             TextButton(
               onPressed: _busy ? null : () => setState(() => _own = !_own),
@@ -335,21 +348,26 @@ Future<void> importDeviceBackup(BuildContext context, WidgetRef ref) async {
     showToast(context, 'That is not a NEFORUM backup file', icon: Icons.error_outline_rounded);
     return;
   }
-  final payload = await showDialog<BackupPayload>(context: context, builder: (_) => _PassphraseDialog(bytes: bytes));
+  final payload = await showDialog<BackupPayload>(context: context, builder: (_) => BackupPassphraseDialog(bytes: bytes));
   if (payload == null || !context.mounted) return;
   await showDialog<void>(context: context, builder: (_) => _ImportPreview(payload: payload));
 }
 
-class _PassphraseDialog extends StatefulWidget {
-  const _PassphraseDialog({required this.bytes});
+/// Import's passphrase step: pops the opened [BackupPayload], or `null`.
+class BackupPassphraseDialog extends StatefulWidget {
+  const BackupPassphraseDialog({super.key, required this.bytes, this.open = openDeviceBackup});
   final Uint8List bytes;
 
+  /// Opens the backup with one passphrase (tests pass a fast one).
+  final Future<BackupPayload> Function(Uint8List bytes, String passphrase) open;
+
   @override
-  State<_PassphraseDialog> createState() => _PassphraseDialogState();
+  State<BackupPassphraseDialog> createState() => _BackupPassphraseDialogState();
 }
 
-class _PassphraseDialogState extends State<_PassphraseDialog> {
+class _BackupPassphraseDialogState extends State<BackupPassphraseDialog> {
   final _field = TextEditingController();
+  final _format = PassphraseInputFormatter();
   bool _busy = false;
   String? _error;
 
@@ -365,7 +383,10 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
       _error = null;
     });
     try {
-      final payload = await openDeviceBackup(widget.bytes, _field.text);
+      // 1.4.3: the field writes codes in capitals with dashes; a backup
+      // locked before that may need the exact text typed.
+      final (_, payload) = await openWithPassphraseAttempts(
+          passphraseAttempts(_field.text, _format.typedFor(_field.text)), (p) => widget.open(widget.bytes, p));
       if (mounted) Navigator.of(context).pop(payload);
     } on BackupException catch (e) {
       if (mounted) {
@@ -395,6 +416,10 @@ class _PassphraseDialogState extends State<_PassphraseDialog> {
               autofocus: true,
               obscureText: true,
               enabled: !_busy,
+              inputFormatters: [_format],
+              keyboardType: passphraseKeyboardType,
+              autocorrect: false,
+              enableSuggestions: false,
               onSubmitted: (_) => _busy ? null : _open(),
               decoration: InputDecoration(labelText: 'Passphrase', errorText: _error),
             ),

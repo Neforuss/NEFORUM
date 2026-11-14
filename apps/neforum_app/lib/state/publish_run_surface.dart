@@ -119,6 +119,8 @@ class PublishSurfaceState {
     this.activityShortLabel,
     this.pausedLabel,
     this.pausedShortLabel,
+    this.activityFailedLabel,
+    this.activityPaused = false,
     this.stageLabel,
     this.currentNetwork,
     this.postPermille,
@@ -153,12 +155,27 @@ class PublishSurfaceState {
 
   /// The Live Activity's line. Null means no Live Activity should be showing.
   final String? activityLabel;
+
+  /// The count beside the camera ("2/5": posted of all). The compact island shows
+  /// it at all times, beside the error badge when a network failed.
   final String? activityShortLabel;
 
   /// What the Live Activity reads once it has gone stale. The system flips it
   /// with no code running, so it is sent ahead with every update.
   final String? pausedLabel;
+
+  /// The last count, kept once stale: the pause shape says it is not moving, and
+  /// the count stays true.
   final String? pausedShortLabel;
+
+  /// Set when a network failed ("1 failed"): the island's red badge beside the
+  /// count, and the words VoiceOver and the Lock Screen give for it. A stale
+  /// activity keeps it, since a failure stays true.
+  final String? activityFailedLabel;
+
+  /// Held back with the app about to be frozen: the activity shows the pause shape
+  /// already, before iOS's own stale flip.
+  final bool activityPaused;
 
   /// Made from the stage and the network's name, never from a target's own label:
   /// a lock screen is public.
@@ -202,8 +219,9 @@ class PublishSurfaceState {
 
   /// The `update` argument of `neforum/publish_host` (D5). Android reads `headline`,
   /// `detail`, `postPermille` and `networks`; iOS reads `postId`, the activity and
-  /// paused labels, `stageLabel`, `currentNetwork`, `postPermille`, `systemUnits`,
-  /// `systemSubtitle` and `backgrounded`. Never the post's text.
+  /// paused labels, `activityFailedLabel`, `activityPaused`, `stageLabel`,
+  /// `currentNetwork`, `postPermille`, `systemUnits`, `systemSubtitle` and
+  /// `backgrounded`. Never the post's text.
   Map<String, Object?> toSnapshot() => {
         'postId': postId,
         'phase': phase.name,
@@ -220,6 +238,8 @@ class PublishSurfaceState {
         'activityShortLabel': activityShortLabel,
         'pausedLabel': pausedLabel,
         'pausedShortLabel': pausedShortLabel,
+        'activityFailedLabel': activityFailedLabel,
+        'activityPaused': activityPaused,
         'systemUnits': systemUnits,
         'systemSubtitle': systemSubtitle,
         'backgrounded': backgrounded,
@@ -296,6 +316,9 @@ PublishSurfaceState reducePublishSurface(
   final over = targets.where((t) => t.finished && !outcomeUnknown.contains(t.accountId)).length;
   final toGo = math.max(0, total - over);
   final postedLine = '$posted of $total posted';
+  // The island's count: live, stale and held back alike, so the compact island
+  // never trades it for a word or a sign.
+  final count = '$posted/$total';
   final networks = [for (final t in targets) _network(t, outcomeUnknown)];
   final unconfirmedLines = [for (final t in unknown) '${t.name}: NEFORUM could not confirm this. Check ${t.name} before retrying.'];
   // Nothing measurable in the whole run: a figure would only be made up.
@@ -312,6 +335,7 @@ PublishSurfaceState reducePublishSurface(
     String? activityShortLabel,
     String? pausedLabel,
     String? pausedShortLabel,
+    bool activityPaused = false,
     String? stageLabel,
     String? currentNetwork,
     int? postPermille,
@@ -333,6 +357,9 @@ PublishSurfaceState reducePublishSurface(
         activityShortLabel: activityShortLabel,
         pausedLabel: pausedLabel,
         pausedShortLabel: pausedShortLabel,
+        // Only beside an activity: with none showing there is no badge to word.
+        activityFailedLabel: activityLabel != null && failed > 0 ? '$failed failed' : null,
+        activityPaused: activityPaused,
         stageLabel: stageLabel,
         currentNetwork: currentNetwork,
         postPermille: postPermille,
@@ -375,9 +402,9 @@ PublishSurfaceState reducePublishSurface(
         inAppNotice: summary,
         actions: failed > 0 ? const [PublishSurfaceAction.retry] : const [],
         activityLabel: summary,
-        activityShortLabel: '$posted/$total',
+        activityShortLabel: count,
         pausedLabel: summary,
-        pausedShortLabel: '$posted/$total',
+        pausedShortLabel: count,
         postPermille: progress.permille,
         resultSummary: summary,
       );
@@ -389,7 +416,7 @@ PublishSurfaceState reducePublishSurface(
 
   // The run is going on, or about to be frozen with the next post held back.
   final pausedText = ios ? 'Paused by iOS. $postedLine. Open NEFORUM to finish.' : 'Paused. $postedLine. Open NEFORUM to finish.';
-  const pausedShort = 'Paused';
+  const pausedHeadline = 'Paused';
   final deadMan = ios && !window.visible ? PublishSurfaceNotice('Posting paused by iOS', '$posted of $total posted, $toGo to go. Open NEFORUM to finish.') : null;
   final current = progress.current;
   final waiting = current?.stage == ProgressStage.serverProcessing;
@@ -400,12 +427,13 @@ PublishSurfaceState reducePublishSurface(
   if (lifecycle == PublishRunLifecycle.holding && !window.visible) {
     return build(
       phase: PublishSurfacePhase.paused,
-      headline: pausedShort,
+      headline: pausedHeadline,
       detail: pausedText,
       activityLabel: pausedText,
-      activityShortLabel: pausedShort,
+      activityShortLabel: count,
       pausedLabel: pausedText,
-      pausedShortLabel: pausedShort,
+      pausedShortLabel: count,
+      activityPaused: true,
       stageLabel: pausedText,
       currentNetwork: current?.name,
       postPermille: figure,
@@ -443,9 +471,9 @@ PublishSurfaceState reducePublishSurface(
       inAppNotice: justBack ? 'iOS paused NEFORUM. Continuing.' : (current!.label?.isNotEmpty ?? false ? current.label : '$name is processing.'),
       leaveWarning: justBack ? null : leave,
       activityLabel: '$name is processing',
-      activityShortLabel: '$posted/$total',
+      activityShortLabel: count,
       pausedLabel: pausedText,
-      pausedShortLabel: pausedShort,
+      pausedShortLabel: count,
       stageLabel: stage,
       currentNetwork: name,
       postPermille: figure,
@@ -461,9 +489,9 @@ PublishSurfaceState reducePublishSurface(
     inAppNotice: justBack ? 'iOS paused NEFORUM. Continuing.' : leave,
     leaveWarning: justBack ? null : leave,
     activityLabel: 'Posting $position of $total',
-    activityShortLabel: '$posted/$total',
+    activityShortLabel: count,
     pausedLabel: pausedText,
-    pausedShortLabel: pausedShort,
+    pausedShortLabel: count,
     stageLabel: stage,
     currentNetwork: name,
     postPermille: figure,

@@ -26,7 +26,9 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
   both themes by default (`chrome`, `chromeRaised`, `onChrome`, `onChromeMuted`).
   Settings > Appearance > Navigation bar can make it match the theme (the
   page's surfaces with a `chromeBorder` hairline, the accent instead of
-  yellow for the current section) or the accent color. Mark the current
+  yellow for the current section), the accent color, or any color the user
+  picks (`NfColors.withColorChrome`, darkened only as far as its labels
+  need). Mark the current
   section with `chromeAccent`/`onChromeAccent` (fills) and `chromeSelected`
   (sidebar icon and bar), never with `highlight` directly.
   `PrimaryAction(onChrome: true)` and `NeforumWordmark(onChrome: true)` are the
@@ -34,7 +36,8 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
   The see-through style shows the background picture (or the page) through
   the chrome: `chrome` has no opacity there (text drawn in it uses
   `chrome.withValues(alpha: 1)`), its content takes the page's text colors,
-  and `SeeThroughChrome` lays the surface color over what shows through, as
+  and `SeeThroughChrome` lays the surface color (or the user's tint, moved
+  toward the surface as far as the labels need: `seeThroughTint`) over what shows through, as
   much as the user's opacity and as the labels need over the picture under
   them. Keep anything drawn on it on opaque fills (`chromeRaised`,
   `chromeAccent`, `chromeUrgent`) or in `onChrome`/`onChromeMuted`.
@@ -45,7 +48,7 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
 
 | Token | Where |
 |---|---|
-| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentFill`, `accentSoft`, `highlight`/`onHighlight`, `chrome`/`chromeRaised`/`onChrome`/`onChromeMuted`/`chromeBorder`/`chromeAccent`/`onChromeAccent`/`chromeSelected`/`chromeActionGradient`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`) |
+| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderHover`, `hairline`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentFill`, `accentSoft`, `highlight`/`onHighlight`, `chrome`/`chromeRaised`/`onChrome`/`onChromeMuted`/`chromeBorder`/`chromeAccent`/`onChromeAccent`/`chromeSelected`/`chromeActionGradient`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`; from `selection_theme.dart`: `selectedFill`/`onSelectedFill`/`unselectedBorder`) |
 | `Space.*` | 4-pt spacing scale: `xxs 2, xs 4, sm 8, md 12, lg 16, xl 20, xxl 24, x3 32, x4 40, x5 48, x6 64` |
 | `Radii.*` | `rXs 6, rSm 10, rMd 14, rLg 20, rXl 28, rPill`; all 0 with the square corner style (`Radii.square`, set by `buildTheme`). They are getters, never `const`. For other sizes use `Radii.circular(r)`, `Radii.corner(r)`, `Radii.circleShape`, `Radii.circleBorder`, `Radii.stadium`. Generated images (text cards, captions) keep fixed radii |
 | `Motion.*` | `fast 140ms, medium 240ms, slow 420ms`, curves `standard`, `emphasized`, `spring` |
@@ -79,6 +82,20 @@ Rules:
   motion (press shrink, looping marks) does not run at all.
 - Colors: pick an existing token; `ColorWheel(color:, onChanged:)`
   (`lib/widgets/color_wheel.dart`) when the user picks a color themselves.
+  Every color setting offers the wheel behind a named button ("Custom
+  color…", "Custom colour" in the card editors), never only behind an
+  unlabelled swatch: `ColorChoiceDialog` in Settings > Appearance,
+  `ColorSwatchField` and `showCardColourDialog` in the card editors.
+- On and off: a selectable control that is on shows a solid
+  `nf.selectedFill` with `nf.onSelectedFill` content and a check mark
+  (`lib/theme/selection_theme.dart`); off is the surface with a
+  `borderStrong` edge. Never a tint or a border alone. Themed chips and
+  segmented buttons already do it; a chip whose avatar only illustrates its
+  label drops the avatar while selected (`avatar: selected ? null : icon`),
+  so the check takes its place. Hand-made ones use `lib/widgets/selection_marks.dart`:
+  `OptionPill`, `SelectionCheckBadge`/`SelectionBadged` on tiles and
+  thumbnails, `swatchCheck` on color swatches, and `NfCard(selected:)`
+  draws its own badge.
 - Background picture (Settings > Appearance > Background): pages leave
   their background transparent when `BackdropScope.activeOf(context)`;
   cards keep their surface. The scrim keeps `text` and `textMuted`
@@ -86,6 +103,20 @@ Rules:
   through `legibleOverBackdrop`.
 - High contrast (the system setting) swaps in `NfColors.withHighContrast()`
   by itself; use the tokens and it follows.
+- Seamless (Settings > Appearance > Seamless, `NfColors.withSeamless()`)
+  makes `border` and `chromeBorder` transparent: surfaces are told apart by
+  their fill alone. Pick the line by what it means:
+  - `border`: the outline of a surface (card, section, tile, panel, side
+    panel, banner, menu, dialog) and the lines that split a panel into
+    header, body and footer. It goes in seamless mode.
+  - `hairline`: a line that carries meaning and stays: dividers between the
+    rows of a list, rules, table lines, connector lines, the edge of a text
+    field, chip, outlined button or picture. `Divider()` with no color, and
+    the input, chip, segmented and outlined button themes, use it.
+  - `borderStrong`: edges of controls (checkboxes, swatches, rings, dashed
+    drop zones). `borderHover` for a surface's outline under the pointer.
+  - Selected and focused states use `accent` outlines, which always stay.
+  Menus get a shadow in seamless mode, since they float without a scrim.
 
 ## Layout
 
