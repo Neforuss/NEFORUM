@@ -279,6 +279,10 @@ class EmDashAdapter extends PlatformAdapter {
     return issues;
   }
 
+  /// "Publish as": this post's choice, else the choice kept for the account
+  /// in the Customize sheet (both reach [PostVariant.extra], the post's over
+  /// the account's: VariantResolver), else the account's `defaultStatus`
+  /// (Publish as, chosen when connecting), else published.
   String _status(PostVariant v, ConnectedAccount account) {
     final explicit = blogStr(v.extra['status']);
     if (explicit != null && emdashStatuses.contains(explicit)) return explicit;
