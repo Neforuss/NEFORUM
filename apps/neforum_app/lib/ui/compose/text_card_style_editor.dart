@@ -125,10 +125,20 @@ class TextCardStyleEditor extends ConsumerStatefulWidget {
 }
 
 class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
-  late final TextEditingController _handle = TextEditingController(text: ref.read(composerProvider).textCardStyle.handle ?? '');
+  // Made in initState, not lazily: a field the editor never showed would
+  // otherwise be made in dispose, reading the composer after unmounting.
+  late final TextEditingController _handle;
 
   /// 1.4.3: cards. The attribution under the words.
-  late final TextEditingController _attribution = TextEditingController(text: ref.read(composerProvider).textCardStyle.attribution ?? '');
+  late final TextEditingController _attribution;
+
+  @override
+  void initState() {
+    super.initState();
+    final style = ref.read(composerProvider).textCardStyle;
+    _handle = TextEditingController(text: style.handle ?? '');
+    _attribution = TextEditingController(text: style.attribution ?? '');
+  }
 
   /// [s] without the @handle's words (above the fold) and (1.4.3) the card's
   /// shape and layout, which a new post takes from Settings: a post is
