@@ -271,7 +271,7 @@ void main() {
     await compose(tester, c);
     expect(key('handle'), findsOneWidget);
     expect(key('text-size'), findsNothing, reason: 'folded on a classic card');
-    expect(find.text('Size, colours, line spacing, place and margins'), findsOneWidget);
+    expect(find.text('Shape, size, colours, line spacing, place and margins'), findsOneWidget);
     expect(find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').startsWith('Customize for')), findsWidgets,
         reason: 'a network\'s preview is still built under the master editor');
     c.read(composerProvider.notifier).setTextCardStyle(const TextCardStyle(margin: 120, textColor: 0xFFFFD60A, handlePosition: TextCardHandlePosition.topLeft));

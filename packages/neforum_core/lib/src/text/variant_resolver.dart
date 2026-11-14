@@ -11,6 +11,7 @@ import '../model/post.dart';
 import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/validation.dart';
+import 'emphasis.dart';
 import 'media_packer.dart';
 import 'text_counter.dart';
 import 'text_splitter.dart';
@@ -63,6 +64,15 @@ class ResolverOptions {
 /// any other media the key has no effect.
 const String kTextCardOnlyKey = 'textCardOnly';
 
+/// [PostOverrides.extra] key (1.4.3): `true` on every target of a post whose
+/// text card draws **bold** and *italic* written in its words
+/// ([parseEmphasis]). Networks without Markdown ([TextRules.supportsMarkdown]
+/// false) then get the words without those asterisks ([stripEmphasis]), so
+/// the markers made for the card never show as stray asterisks in a caption.
+/// Networks with Markdown get the words as written. Absent: the words go as
+/// written everywhere.
+const String kEmphasisMarkupKey = 'emphasisMarkup';
+
 /// Turns the master [Post] into the [PostVariant] for one target.
 class VariantResolver {
   const VariantResolver([this.options = const ResolverOptions()]);
@@ -95,16 +105,20 @@ class VariantResolver {
     // text and replaces all of them. writtenIndex maps each part of the post
     // to the written part that takes its media: an empty part's media goes
     // with the part before it (or the first one).
+    // 1.4.3: the asterisks that make a text card's words bold or italic
+    // leave the words of a network without Markdown.
+    final plainEmphasis = o.extra[kEmphasisMarkupKey] == true && !t.supportsMarkdown;
+    String words(String s) => plainEmphasis ? stripEmphasis(s) : s;
     final written = <String>[];
     final writtenIndex = <int>[];
     if (o.text == null) {
       for (final p in post.parts) {
-        if (p.trim().isNotEmpty) written.add(p.trimRight());
+        if (p.trim().isNotEmpty) written.add(words(p).trimRight());
         writtenIndex.add(written.isEmpty ? 0 : written.length - 1);
       }
     }
     final canThread = t.supportsThreads && (account == null || account.tier.isAutomatic);
-    var text = (o.text ?? written.join('\n\n')).trimRight();
+    var text = (o.text == null ? written.join('\n\n') : words(o.text!)).trimRight();
     final link = o.link ?? post.link;
     final tags = post.tags.where((x) => x.trim().isNotEmpty).map(_cleanTag).toList();
 
@@ -238,7 +252,7 @@ class VariantResolver {
     if (t.titleSupported && (title == null || title.trim().isEmpty) && t.titleRequired) {
       // Derive a title from the first line so Reddit/Lemmy/blog posts work
       // without a separate field.
-      final firstLine = (o.text ?? written.firstOrNull ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
+      final firstLine = (o.text == null ? written.firstOrNull ?? '' : words(o.text!)).split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
       if (firstLine.isNotEmpty) {
         title = t.titleMax != null && firstLine.length > t.titleMax! ? '${_cutToUnits(firstLine, t.titleMax! - 1)}…' : firstLine;
         issues.add(ValidationIssue.info('title.derived', 'Title taken from the first line for ${d.name}', field: 'title'));

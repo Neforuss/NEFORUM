@@ -496,6 +496,9 @@ class _TextCardPreview extends ConsumerWidget {
     // whether or not an editor is open.
     final fit = design != null && (design.placeWords || design.placeHandle) ? _wordsFitOf(_previewPost(ref), [(p, placeholder)], composer.textCardStyle, design) : null;
     final warning = fit == null ? null : textCardFitWarning(fit);
+    // 1.4.3: cards. A shape this network does not show whole: the card
+    // sits inside the network's own frame, and the preview says so.
+    final frameNote = design == null ? textCardFrameNote(p.descriptor.name, style.shape, size) : null;
     return LayoutBuilder(builder: (context, c) {
       // Portrait cards at phone width; square and wider ones fill the column
       // up to a comfortable size.
@@ -547,6 +550,17 @@ class _TextCardPreview extends ConsumerWidget {
               Icon(Icons.warning_amber_rounded, size: 16, color: nf.warning),
               const SizedBox(width: Space.xs),
               Flexible(child: Text(warning, key: ValueKey('text-card-fit-warning-$id'), style: context.text.bodySmall)),
+            ]),
+          ),
+        if (frameNote != null)
+          Padding(
+            padding: const EdgeInsets.only(top: Space.sm),
+            child: Row(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.crop_free_rounded, size: 16, color: nf.textMuted),
+              const SizedBox(width: Space.xs),
+              Flexible(
+                child: Text(frameNote, key: ValueKey('text-card-frame-note-$id'), style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+              ),
             ]),
           ),
         const SizedBox(height: Space.sm),
@@ -956,8 +970,9 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
     final style = textCardStyleOf(firstCard);
     final byline = style.bylineFor(first.account.handle ?? first.account.displayName);
     final ownHandles = {for (final (p, _) in cards) p.account.handle ?? p.account.displayName}.toList();
-    // The master card: square, with what most networks show.
-    const size = Size(1080, 1080);
+    // The master card: square, with what most networks show; at its own
+    // shape when it has one (1.4.3).
+    final size = (design == null ? style.shape.size : null) ?? const Size(1080, 1080);
     final signed = branded ?? TextCardMasterPanel._most(cards.map((c) => textCardBrandedOf(c.$2)));
     final handle = showsHandle ?? TextCardMasterPanel._most(cards.map((c) => textCardShowsHandleOf(c.$2)));
     final picture = design != null
@@ -976,7 +991,7 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
             text: text,
             theme: theme,
             font: font.resolve(null),
-            aspect: 1,
+            aspect: size.width / size.height,
             byline: handle ? byline : null,
             branded: signed,
             alignment: alignment,
@@ -1017,7 +1032,8 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
             final preview = Center(
               child: SizedBox(
                 key: const Key('text-card-master-preview'),
-                width: 220,
+                // A landscape card gets the column's whole width.
+                width: size.width > size.height ? 300 : 220,
                 child: ClipRRect(
                   borderRadius: Radii.rMd,
                   child: DecoratedBox(
@@ -1389,11 +1405,13 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
           : await renderTextCardJpeg(
         text: widget.text,
         theme: widget.current,
-        size: textCardSize(widget.platform.id),
+        // 1.4.3: cards. A card of its own shape is saved at that shape, as
+        // the card itself, to post anywhere.
+        size: widget.style.shape.size ?? textCardSize(widget.platform.id),
         byline: widget.showsHandle == true ? widget.byline : null,
         branded: widget.branded ?? true,
         font: widget.font.resolve(widget.platform.id),
-        safe: textCardSafeArea(widget.platform.id),
+        safe: widget.style.shape.size != null ? EdgeInsets.zero : textCardSafeArea(widget.platform.id),
         alignment: widget.alignment,
         backdrop: backdrop,
         customFont: widget.customFont,

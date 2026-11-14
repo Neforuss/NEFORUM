@@ -209,6 +209,8 @@ class AppSettings {
     this.textCardDesign = const {}, // 1.3.1: cards
     this.audioCardDesign = const {}, // 1.3.1: cards
     this.cardPresets = const [], // 1.3.1: cards
+    this.textCardShape = TextCardShape.automatic, // 1.4.3: cards
+    this.textCardLayout = TextCardLayout.full, // 1.4.3: cards
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -297,6 +299,8 @@ class AppSettings {
         textCardDesign: Map<String, dynamic>.from(j['textCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         audioCardDesign: Map<String, dynamic>.from(j['audioCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         cardPresets: [for (final p in j['cardPresets'] as List? ?? const []) if (p is Map) Map<String, dynamic>.from(p)], // 1.3.1: cards
+        textCardShape: TextCardShape.values.asNameMap()[j['textCardShape']] ?? TextCardShape.automatic, // 1.4.3: cards
+        textCardLayout: TextCardLayout.values.asNameMap()[j['textCardLayout']] ?? TextCardLayout.full, // 1.4.3: cards
       );
 
   final ThemeMode themeMode;
@@ -574,6 +578,20 @@ class AppSettings {
   /// 1.3.1: cards. Designs the user saved under a name (CardPreset.toJson).
   final List<Map<String, dynamic>> cardPresets;
 
+  /// 1.4.3: cards. The shape new posts' classic text cards start with
+  /// ([TextCardShape.automatic]: each network's own). Each post can change
+  /// it in the text card editor.
+  final TextCardShape textCardShape;
+
+  /// 1.4.3: cards. Whether new posts' classic text cards start as a quote
+  /// card ([TextCardLayout.panel]) or the whole card.
+  final TextCardLayout textCardLayout;
+
+  /// 1.4.3: cards. The style a new post's classic text card starts with:
+  /// [textCardShape] and [textCardLayout], everything else as the classic
+  /// card has it.
+  TextCardStyle get newTextCardStyle => TextCardStyle(shape: textCardShape, layout: textCardLayout);
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -672,8 +690,12 @@ class AppSettings {
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
     Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
     List<Map<String, dynamic>>? cardPresets, // 1.3.1: cards
+    TextCardShape? textCardShape, // 1.4.3: cards
+    TextCardLayout? textCardLayout, // 1.4.3: cards
   }) =>
       AppSettings(
+        textCardShape: textCardShape ?? this.textCardShape, // 1.4.3: cards
+        textCardLayout: textCardLayout ?? this.textCardLayout, // 1.4.3: cards
         themeMode: themeMode ?? this.themeMode,
         accent: accent ?? this.accent,
         overflow: overflow ?? this.overflow,
@@ -843,5 +865,7 @@ class AppSettings {
         if (textCardDesign.isNotEmpty) 'textCardDesign': textCardDesign, // 1.3.1: cards
         if (audioCardDesign.isNotEmpty) 'audioCardDesign': audioCardDesign, // 1.3.1: cards
         if (cardPresets.isNotEmpty) 'cardPresets': cardPresets, // 1.3.1: cards
+        'textCardShape': textCardShape.name, // 1.4.3: cards
+        'textCardLayout': textCardLayout.name, // 1.4.3: cards
       };
 }

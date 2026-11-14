@@ -67,6 +67,8 @@ const Set<String> kExportableSettings = {
   // preference, not a pairing: phones ignore it.
   'browserQuickPost',
   'browserOpenInFirst',
+  'textCardShape', // 1.4.3: cards
+  'textCardLayout', // 1.4.3: cards
 };
 
 /// 1.3.5: the settings that stay on the device, each with why. Together with

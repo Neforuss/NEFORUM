@@ -165,7 +165,9 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
     final current = TextCardBackground.tryParse(composer.textCardBackground);
     final look = widget.look;
     final id = look.platform.id;
-    final size = textCardSize(id);
+    // 1.4.3: cards. A card of its own shape is shown at that shape.
+    final shaped = composer.textCardStyle.shape.size;
+    final size = shaped ?? textCardSize(id);
     final photos = [
       for (final m in composer.media)
         if (m.kind == MediaKind.image) m,
@@ -214,7 +216,7 @@ class _CardBackgroundSheetState extends ConsumerState<CardBackgroundSheet> {
           aspect: size.width / size.height,
           byline: look.byline,
           branded: look.branded,
-          safe: textCardSafeArea(id),
+          safe: shaped != null ? EdgeInsets.zero : textCardSafeArea(id),
           alignment: look.alignment,
           backdrop: previewBackdrop(ref, current),
           customFont: look.customFont,

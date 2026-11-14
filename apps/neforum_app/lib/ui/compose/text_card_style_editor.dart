@@ -127,13 +127,25 @@ class TextCardStyleEditor extends ConsumerStatefulWidget {
 class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
   late final TextEditingController _handle = TextEditingController(text: ref.read(composerProvider).textCardStyle.handle ?? '');
 
-  /// The size, colour, spacing, place and margin controls are unfolded.
-  late bool _expanded =
-      widget.initiallyExpanded ?? (widget.design == null && !ref.read(composerProvider).textCardStyle.copyWith(clearHandle: true).isClassic);
+  /// 1.4.3: cards. The attribution under the words.
+  late final TextEditingController _attribution = TextEditingController(text: ref.read(composerProvider).textCardStyle.attribution ?? '');
+
+  /// [s] without the @handle's words (above the fold) and (1.4.3) the card's
+  /// shape and layout, which a new post takes from Settings: a post is
+  /// restyled when anything else is set.
+  static TextCardStyle _folded(TextCardStyle s) => s.copyWith(shape: TextCardShape.automatic, layout: TextCardLayout.full, clearHandle: true);
+
+  /// The shape, size, colour, spacing, place and margin controls are
+  /// unfolded.
+  late bool _expanded = widget.initiallyExpanded ?? (widget.design == null && !_folded(ref.read(composerProvider).textCardStyle).isClassic);
 
   /// What the folded controls are set to, in a few words.
   static String _summary(TextCardStyle s) {
     final set = [
+      // 1.4.3: cards.
+      if (s.shape != TextCardShape.automatic) s.shape.label,
+      if (s.layout != TextCardLayout.full) s.layout.label.toLowerCase(),
+      if (s.attribution != null) 'attribution',
       if (s.textSize != 1) 'words ${(s.textSize * 100).round()}%',
       if (s.hasCardColours) 'own colours',
       if (s.textPosition != null) 'words at the ${s.textPosition!.label.toLowerCase()}',
@@ -141,12 +153,13 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
       if (s.margin != TextCardStyle.defaultMargin) 'margins ${s.margin.round()} px',
       if (s.handleSize != 1 || s.handlePosition != TextCardHandlePosition.automatic || s.handleColor != null) 'handle styled',
     ];
-    return set.isEmpty ? 'Size, colours, line spacing, place and margins' : set.join(' · ');
+    return set.isEmpty ? 'Shape, size, colours, line spacing, place and margins' : set.join(' · ');
   }
 
   @override
   void dispose() {
     _handle.dispose();
+    _attribution.dispose();
     super.dispose();
   }
 
@@ -188,6 +201,9 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
     // other editor), never the user's own typing.
     ref.listen(composerProvider.select((c) => c.textCardStyle.handle), (_, next) {
       if (TextCardStyle.cleanHandle(_handle.text) != next) _handle.text = next ?? '';
+    });
+    ref.listen(composerProvider.select((c) => c.textCardStyle.attribution), (_, next) {
+      if (TextCardStyle.cleanAttribution(_attribution.text) != next) _attribution.text = next ?? '';
     });
     final background = widget.background;
     final ownWords = textCardWordsColour(style, background);
@@ -519,7 +535,55 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
       ];
     }
 
-    final canReset = design == null ? !style.isClassic : (designEdited || style.handle != null);
+    // The card's shape and layout are not "handle and words": Reset keeps
+    // them (1.4.3).
+    final canReset = design == null ? !style.copyWith(shape: TextCardShape.automatic, layout: TextCardLayout.full).isClassic : (designEdited || style.handle != null);
+
+    // 1.4.3: cards. The classic card's shape, layout and attribution; a
+    // design draws its own frame and lines.
+    final card = design != null
+        ? const <Widget>[]
+        : [
+            section('Card', Icons.crop_landscape_rounded),
+            // Remembered for new posts, as the theme, font and alignment are.
+            labelled('Shape', chips('shape', TextCardShape.values, style.shape, (s) => s.label, (s) {
+              _edit((x) => x.copyWith(shape: s));
+              ref.read(settingsProvider.notifier).update((x) => x.textCardShape == s ? x : x.copyWith(textCardShape: s));
+            })),
+            labelled('Layout', chips('layout', TextCardLayout.values, style.layout, (l) => l.label, (l) {
+              _edit((x) => x.copyWith(layout: l));
+              ref.read(settingsProvider.notifier).update((x) => x.textCardLayout == l ? x : x.copyWith(textCardLayout: l));
+            })),
+            Padding(
+              padding: const EdgeInsets.only(top: Space.sm),
+              child: TextField(
+                key: _key('attribution'),
+                controller: _attribution,
+                maxLength: TextCardStyle.maxAttributionLength,
+                textInputAction: TextInputAction.done,
+                decoration: InputDecoration(
+                  isDense: true,
+                  counterText: '',
+                  labelText: 'Attribution under the words',
+                  hintText: '- Ada Lovelace',
+                  helperText: 'In bold, below the words. Put words between ** for bold or * for italic, like **this**.',
+                  helperMaxLines: 3,
+                  suffixIcon: style.attribution == null
+                      ? null
+                      : IconButton(
+                          key: _key('attribution-clear'),
+                          tooltip: 'Remove the attribution',
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                          onPressed: () {
+                            _attribution.clear();
+                            _edit((s) => s.copyWith(clearAttribution: true));
+                          },
+                        ),
+                ),
+                onChanged: (v) => _edit((s) => TextCardStyle.cleanAttribution(v) == null ? s.copyWith(clearAttribution: true) : s.copyWith(attribution: v)),
+              ),
+            ),
+          ];
 
     // Tab walks the editor's own controls in reading order, top to bottom,
     // before it leaves the editor: without the group, reading order across
@@ -575,7 +639,7 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
                 padding: const EdgeInsets.fromLTRB(Space.md, Space.sm, Space.sm, Space.sm),
                 decoration: BoxDecoration(
                   borderRadius: Radii.rMd,
-                  border: Border.all(color: design == null && style.copyWith(clearHandle: true).isClassic || design != null && !designEdited ? nf.border : nf.accent),
+                  border: Border.all(color: design == null && _folded(style).isClassic || design != null && !designEdited ? nf.border : nf.accent),
                 ),
                 child: Row(
                   children: [
@@ -602,7 +666,10 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
               ),
             ),
           ),
-          if (_expanded) ...controls,
+          // 1.4.3: cards. The card's shape, layout and attribution close the
+          // unfolded controls, so the words' and the handle's stay where
+          // they were.
+          if (_expanded) ...[...controls, ...card],
           if (!_expanded && warning != null)
             Padding(
               padding: const EdgeInsets.only(top: Space.sm),
@@ -624,7 +691,8 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
                     : () {
                         _handle.clear();
                         if (design == null) {
-                          _composer.setTextCardStyle(TextCardStyle.classic);
+                          _attribution.clear();
+                          _composer.setTextCardStyle(TextCardStyle(shape: style.shape, layout: style.layout));
                         } else {
                           // The design as it was (the Settings default
                           // again, if the post followed it); the classic
