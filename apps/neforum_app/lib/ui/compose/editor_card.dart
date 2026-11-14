@@ -18,6 +18,7 @@ import 'audio_quality_option.dart';
 import 'document_import.dart';
 import 'emoji_insert.dart';
 import 'media_tray.dart';
+import 'paragraph_media_sheet.dart';
 import 'poll_sheet.dart';
 import 'rich_text.dart';
 import 'track_details_sheet.dart';
@@ -245,6 +246,12 @@ class _EditorCardState extends ConsumerState<EditorCard> {
           Padding(
             padding: const EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.lg, Space.sm),
             child: MediaTray(part: perPart ? 0 : null),
+          ),
+        // 1.4.3: which paragraph refers to which photo or video.
+        if (c.canLinkParagraphs || c.paragraphMedia.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(Space.xl, 0, Space.xl, Space.sm),
+            child: ParagraphMediaRow(),
           ),
         if (c.audio != null) ...[
           const Padding(

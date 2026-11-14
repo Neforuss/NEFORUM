@@ -1,6 +1,7 @@
 import 'package:meta/meta.dart';
 
 import 'audio.dart' show AudioMimeTypes;
+import 'paragraph_media.dart' show ParagraphMediaStyle;
 import 'post_option.dart';
 
 export 'post_option.dart';
@@ -148,6 +149,7 @@ class MediaRules {
     this.audioVideoMaxFrames,
     this.maxItems,
     this.gifAlone = false,
+    this.paragraphMedia = ParagraphMediaStyle.none,
   });
 
   final int maxImages;
@@ -221,6 +223,11 @@ class MediaRules {
   /// Most frames a video upload may have (pict-rs: 900 by default); null for
   /// no limit. A track too long for it at [audioVideoFrameRate] goes as a link.
   final int? audioVideoMaxFrames;
+
+  /// How the network shows a post whose paragraphs are linked to its photos
+  /// and videos ([Post.paragraphMedia]); [ParagraphMediaStyle.none] gets the
+  /// post as it always did.
+  final ParagraphMediaStyle paragraphMedia;
 
   /// Whether a still-picture video of a track [durationMs] long fits
   /// [audioVideoMaxFrames] (an unknown length is tried).

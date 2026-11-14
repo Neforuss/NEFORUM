@@ -191,5 +191,7 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
             for (final e in (j['targetChoices'] as Map).entries) '${e.key}': ?TargetChoice.values.asNameMap()[e.value],
           }
         : const {},
+    // 1.4.3: kept by the composer's own paragraph numbers, like the post's.
+    paragraphMedia: p.paragraphMedia,
   );
 }

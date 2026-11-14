@@ -10,6 +10,7 @@ import '../../http/neforum_http.dart';
 import '../../media_hosts/media_host.dart';
 import '../../model/account.dart';
 import '../../model/media.dart';
+import '../../model/paragraph_media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart';
 import '../../model/post_variant.dart';
@@ -107,6 +108,8 @@ class TumblrAdapter extends PlatformAdapter {
       videoMimeTypes: {'video/mp4', 'video/quicktime'},
       supportsAltText: true,
       requiresPublicMediaUrl: false,
+      // 1.4.3: each linked paragraph's text blocks, then its media blocks.
+      paragraphMedia: ParagraphMediaStyle.sections,
       notes: 'Up to 30 images (JPEG, PNG, WEBP up to 20 MB, RGB only; GIF up to 10 MB) and one uploaded MP4/MOV '
           'video (up to 500 MB and 10 minutes) per post. Per user per day: 250 images, 20 videos, 60 minutes of '
           'video. Only one video can be processing at a time.',
@@ -844,10 +847,19 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
           ...TumblrApi.textBlocks(track == null ? text : _withoutUrl(text, track), linkBudget: budget),
         ];
     }
+    // 1.4.3: paragraphs linked to their files: each section's text blocks,
+    // then its media blocks, in reading order.
+    final sections = v.hasParagraphMedia && mediaBlocks.length == v.media.length ? v.paragraphSections : null;
     return [
       if (title != null && title.isNotEmpty) TumblrApi.textBlock(title, subtype: 'heading1'),
-      ...mediaBlocks,
-      ...TumblrApi.textBlocks(text, linkBudget: budget),
+      if (sections == null) ...[
+        ...mediaBlocks,
+        ...TumblrApi.textBlocks(text, linkBudget: budget),
+      ] else
+        for (final s in sections) ...[
+          if (s.text.isNotEmpty) ...TumblrApi.textBlocks(s.text, linkBudget: budget),
+          for (final m in s.media) mediaBlocks[v.media.indexOf(m)],
+        ],
       if (link != null && !_textHasLink(text, link))
         TumblrApi.linkBlock(link,
             title: v.extraAs<String>('linkTitle')?.trim(), description: v.extraAs<String>('linkDescription')?.trim()),

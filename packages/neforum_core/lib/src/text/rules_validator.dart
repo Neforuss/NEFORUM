@@ -2,6 +2,7 @@ import 'package:characters/characters.dart';
 
 import '../model/audio.dart';
 import '../model/media.dart';
+import '../model/paragraph_media.dart';
 import '../model/platform_descriptor.dart';
 import '../model/poll.dart';
 import '../model/post_variant.dart';
@@ -20,7 +21,11 @@ class RulesValidator {
 
     // --- text -----------------------------------------------------------
     final parts = v.isThread ? v.threadParts : [v.text];
-    if (t.maxLength != null) {
+    // A post sent section by section (paragraphs linked to their files) on a
+    // network with threads is cut into messages of the right length by the
+    // adapter.
+    final cutBySections = v.hasParagraphMedia && m.paragraphMedia == ParagraphMediaStyle.sections && t.supportsThreads;
+    if (t.maxLength != null && !cutBySections) {
       for (var i = 0; i < parts.length; i++) {
         final n = TextCounter.count(parts[i], t);
         if (n > t.maxLength!) {

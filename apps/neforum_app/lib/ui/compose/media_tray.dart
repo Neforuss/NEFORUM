@@ -16,6 +16,7 @@ import '../../widgets/layout.dart';
 import '../../widgets/media_thumb.dart';
 import '../../widgets/surfaces.dart';
 import 'emoji_insert.dart';
+import 'paragraph_media_sheet.dart';
 import 'track_details_sheet.dart';
 
 /// What a picker gave: the files it attached to the library, and the names of
@@ -252,6 +253,27 @@ class _MediaItemState extends ConsumerState<_MediaItem> {
               part: ref.watch(composerProvider.select((c) => c.partOfMedia(m.id))).clamp(0, more),
               count: more + 1,
               onSelected: (part) => ref.read(composerProvider.notifier).setMediaPart(m.id, part),
+            ),
+          )
+        // 1.4.3: in one long post, the paragraph this file is linked to.
+        else if (ref.watch(composerProvider.select((c) => ParagraphMedia.paragraphOf(c.postParagraphMedia, m.id))) case final paragraph?)
+          Positioned(
+            left: 5,
+            top: 5,
+            child: Tooltip(
+              message: 'Linked to paragraph ${paragraph + 1}: tap to change',
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  key: ValueKey('paragraph-chip-${m.id}'),
+                  onTap: () => showParagraphMediaSheet(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                    decoration: BoxDecoration(color: Colors.black.withValues(alpha: 0.62), borderRadius: Radii.rXs),
+                    child: Text('¶ ${paragraph + 1}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.white)),
+                  ),
+                ),
+              ),
             ),
           ),
         // A sound file has no picture to describe: it has track details.

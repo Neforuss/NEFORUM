@@ -6,6 +6,7 @@ import 'package:meta/meta.dart';
 import '../audio/audio_publishing.dart';
 import '../model/account.dart';
 import '../model/media.dart';
+import '../model/paragraph_media.dart';
 import '../model/platform_descriptor.dart';
 import '../model/post.dart';
 import '../model/post_placement.dart';
@@ -92,14 +93,34 @@ class VariantResolver {
     // Generated media (text cards) only goes where a target asks for it.
     // Sound files (and the copies made from them) carry the tags they go out
     // with: the file's own under the user's edits.
-    final chosen = post.withEffectiveAudioTags(o.mediaIds == null
+    var chosen = post.withEffectiveAudioTags(o.mediaIds == null
         ? post.media.where((m) => !m.generated).toList()
         : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)]);
     // The story's own copies (Post + Story), checked by the adapter.
     final storyIds = o.storyMediaIds;
-    final storyMedia = storyIds == null ? const <MediaAttachment>[] : [for (final id in storyIds) ...post.media.where((m) => m.id == id)];
+    var storyMedia = storyIds == null ? const <MediaAttachment>[] : [for (final id in storyIds) ...post.media.where((m) => m.id == id)];
     // The text card alone: no text, so no thread and no length to check.
     final cardOnly = o.extra[kTextCardOnlyKey] == true && chosen.isNotEmpty && chosen.every((m) => m.isTextCard);
+
+    // ---- paragraph-to-media links (1.4.3) -------------------------------
+    // Only for a single post written in the main text (no per-network
+    // version, no thread, not the card alone) on a network that shows them.
+    // A post section by section is several messages: only for accounts that
+    // post themselves, never a hand-off. The files then go in the order of
+    // their paragraphs.
+    final paragraphStyle = d.media.paragraphMedia;
+    final links = paragraphStyle == ParagraphMediaStyle.none ||
+            !post.hasParagraphMedia ||
+            post.text.trim().isEmpty ||
+            o.text != null ||
+            cardOnly ||
+            (paragraphStyle == ParagraphMediaStyle.sections && account != null && !account.tier.isAutomatic)
+        ? const <int, List<String>>{}
+        : ParagraphMedia.present(ParagraphMedia.normalized(post.paragraphMedia, paragraphs: ParagraphMedia.split(post.text).length), chosen);
+    if (links.isNotEmpty) {
+      chosen = ParagraphMedia.ordered(chosen, links);
+      storyMedia = ParagraphMedia.ordered(storyMedia, post.paragraphMedia);
+    }
 
     // ---- text ----------------------------------------------------------
     // The parts the user wrote ([Post.parts]). A per-network version is one
@@ -170,7 +191,10 @@ class VariantResolver {
         issues.add(ValidationIssue.info('text.parts_joined', '${d.name} gets the ${written.length} parts as one post', field: 'text'));
       }
     }
-    if (!cardOnly && threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
+    // A network that sends a linked post section by section cuts each
+    // section to its own messages, so the text is not made a thread here.
+    final bySections = links.isNotEmpty && paragraphStyle == ParagraphMediaStyle.sections && t.supportsThreads;
+    if (!cardOnly && !bySections && threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
       final n = TextCounter.count(text, t);
       switch (options.overflow) {
         case OverflowStrategy.threadOrError:
@@ -250,6 +274,27 @@ class VariantResolver {
                   'it gets ${groups.length} posts, one after the other',
               field: 'media'));
         }
+      }
+    }
+
+    // ---- paragraph-to-media links ----------------------------------------
+    // The links of the files this post carries (a series takes the rest).
+    var paragraphMedia = const <int, List<String>>{};
+    if (links.isNotEmpty && threadParts.isEmpty) {
+      paragraphMedia = ParagraphMedia.present(links, media);
+      if (paragraphMedia.isNotEmpty && paragraphStyle == ParagraphMediaStyle.markers && media.length > 1) {
+        final marked = ParagraphMedia.withMarkers(text, paragraphMedia, media);
+        if (t.maxLength == null || TextCounter.fits(marked, t) || !TextCounter.fits(text, t)) {
+          text = marked;
+          issues.add(ValidationIssue.info('media.paragraphs',
+              '${d.name} gets the photos and videos in the order of their paragraphs, each paragraph ending with their numbers', field: 'media'));
+        } else {
+          issues.add(ValidationIssue.info('media.paragraph_numbers',
+              '${d.name} gets the photos and videos in the order of their paragraphs; the numbers after each paragraph would make the text too long, so they are left out',
+              field: 'media'));
+        }
+      } else if (paragraphMedia.isNotEmpty && paragraphStyle == ParagraphMediaStyle.sections) {
+        issues.add(ValidationIssue.info('media.paragraphs', '${d.name} gets each linked paragraph followed by its photos and videos', field: 'media'));
       }
     }
 
@@ -355,6 +400,7 @@ class VariantResolver {
       storyMedia: storyMedia,
       mediaPartIndexes: mediaPartIndexes,
       seriesPosts: series,
+      paragraphMedia: paragraphMedia,
     );
   }
 

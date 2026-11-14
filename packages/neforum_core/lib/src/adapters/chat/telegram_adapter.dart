@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../../audio/audio_publishing.dart';
@@ -6,12 +7,15 @@ import '../../http/neforum_http.dart';
 import '../../model/account.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
+import '../../model/paragraph_media.dart' show ParagraphMediaStyle;
 import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
+import '../../text/text_counter.dart';
+import '../../text/text_splitter.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
@@ -94,6 +98,9 @@ class TelegramAdapter extends PlatformAdapter {
       audioMaxBytes: telegramFileMaxBytes,
       audioMimeTypes: AudioMimeTypes.all,
       keepsAudioBytes: true,
+      // 1.4.3: each linked paragraph with its photos and videos, as messages
+      // in a row.
+      paragraphMedia: ParagraphMediaStyle.sections,
     ),
     defaultQuotas: [
       QuotaRule(
@@ -341,7 +348,12 @@ class TelegramAdapter extends PlatformAdapter {
       issues.add(ValidationIssue.error('media.too_many',
           '${variant.media.length} files; Telegram allows $telegramMaxAlbum per album', field: 'media'));
     }
+    // The albums the post is sent as: one, or one per linked paragraph.
+    final albums = variant.hasParagraphMedia
+        ? [for (final m in telegramSectionMessages(variant)) if (m.media.isNotEmpty) m.media]
+        : [variant.media];
     for (final m in variant.media) {
+      final inAlbum = albums.any((a) => a.length > 1 && a.contains(m));
       final w = m.width;
       final h = m.height;
       if (m.kind == MediaKind.image && w != null && h != null && w > 0 && h > 0) {
@@ -352,7 +364,7 @@ class TelegramAdapter extends PlatformAdapter {
               field: 'media'));
         }
       }
-      if (m.kind == MediaKind.gif && variant.media.length > 1 && !separate) {
+      if (m.kind == MediaKind.gif && inAlbum && !separate) {
         issues.add(ValidationIssue.warning('media.gif_in_album',
             '${m.fileName ?? m.id}: GIFs in an album are shown as still photos; post it alone to keep the animation',
             field: 'media'));
@@ -362,7 +374,8 @@ class TelegramAdapter extends PlatformAdapter {
             field: 'media'));
       }
     }
-    if (variant.hasMedia && variant.text.length > telegramMaxCaption) {
+    // Linked paragraphs: the resolver already says how the post goes out.
+    if (!variant.hasParagraphMedia && variant.hasMedia && variant.text.length > telegramMaxCaption) {
       issues.add(const ValidationIssue.info('text.caption_split',
           'Longer than a 1024-character caption: the media is sent first and the text follows as its own message',
           field: 'text'));
@@ -413,6 +426,7 @@ class TelegramAdapter extends PlatformAdapter {
     }
     final api = TelegramApi(token, ctx);
     final markdown = account.configString('formatting', 'markdown') != 'plain';
+    if (variant.hasParagraphMedia) return _publishSections(api, chat, variant, account, markdown, ctx, sent);
     final parts = (variant.isThread ? variant.threadParts : [variant.text]).where((p) => p.trim().isNotEmpty).toList();
     final ids = sent.ids;
     String? previous;
@@ -481,6 +495,60 @@ class TelegramAdapter extends PlatformAdapter {
       notice: notice,
     );
   }
+
+  /// 1.4.3: a post whose paragraphs are linked to its files, as messages in
+  /// reading order ([telegramSectionMessages]): each section's files with
+  /// its words as their caption, or its words first and then its files when
+  /// they are longer than a caption.
+  ///
+  /// The post's Telegram options ([TelegramSendOptions]) go with every
+  /// message: silent, protected, topic, spoilers, caption above, the link
+  /// preview (with the first words that have a link, or the first words when
+  /// the link is chosen), one message per file, and the pin of the first.
+  Future<PublishResult> _publishSections(TelegramApi api, String chat, PostVariant variant, ConnectedAccount account,
+      bool markdown, AdapterContext ctx, ChatMessages sent) async {
+    final options = TelegramSendOptions.of(variant);
+    final messages = telegramSectionMessages(variant);
+    final ids = sent.ids;
+    sent.total = messages.length;
+    final words = [for (var i = 0; i < messages.length; i++) if (messages[i].media.isEmpty) i];
+    final previewAt = options.previewUrl != null
+        ? words.firstOrNull
+        : words.where((i) => UrlDetector.find(messages[i].text).isNotEmpty).firstOrNull;
+    for (var i = 0; i < messages.length; i++) {
+      final m = messages[i];
+      final label = messages.length > 1 ? 'Sending message ${i + 1} of ${messages.length}' : 'Sending message';
+      final caption = m.text.isEmpty ? null : m.text;
+      Future<String> send() => switch (m.media.length) {
+            0 => _sendText(api, chat, m.text, markdown, null, options, options.linkPreview(m.text, withChoices: i == previewAt)),
+            1 => _sendSingle(api, chat, variant.copyWith(media: m.media), m.media.single, caption, markdown, ctx, options),
+            _ => _sendAlbum(api, chat, variant.copyWith(media: m.media), caption, markdown, ctx, options),
+          };
+      // Later messages sit out a short flood wait instead of leaving the post
+      // half finished. An upload is its own message, so only text is wrapped
+      // in "creating" here.
+      final id = m.media.isEmpty
+          ? await ctx.creating(label, () => ids.isEmpty ? send() : chatSendWithFloodWait(send, _telegramFloodWait, sleep: ctx.wait))
+          : await (ids.isEmpty ? send() : chatSendWithFloodWait(send, _telegramFloodWait, sleep: ctx.wait));
+      sent.add(id);
+    }
+    if (ids.isEmpty) throw const AdapterException(PublishError.validation('Nothing to post'));
+    ctx.log.info('Posted ${ids.length} Telegram message(s) to $chat, paragraph by paragraph');
+    final notice = options.pin ? await _pin(api, chat, ids.first, account, options, ctx) : null;
+    return PublishResult.ok(
+      remoteId: ids.first,
+      remoteUrl: telegramMessageUrl(account, ids.first),
+      threadRemoteIds: ids.length > 1 ? List.unmodifiable(ids) : const [],
+      publishedAt: ctx.now(),
+      notice: notice,
+    );
+  }
+
+  /// Sections send messages one after another.
+  @override
+  ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => variant.hasParagraphMedia
+      ? ProgressShape.forVariant(variant, ProgressFamily.direct, steps: telegramSectionMessages(variant).length, interleaved: true)
+      : super.progressShape(variant, account);
 
   /// Pins the post's first message (`pinChatMessage`). The post is live
   /// already, so a refusal is a notice on the result, never a failure.
@@ -771,6 +839,42 @@ class TelegramSendOptions {
     };
     return out.isEmpty ? null : out;
   }
+}
+
+/// 1.4.3: the messages a post whose paragraphs are linked to its files goes
+/// out as, in reading order ([PostVariant.paragraphSections]). A section
+/// whose words fit a caption (1024) is its files with the words as their
+/// caption; longer words go first, as messages of up to 4096 characters,
+/// and the files follow without a caption. A section without files is its
+/// words alone. Files go 10 to an album, or one per message when the post's
+/// Telegram options send them one by one ([telegramSendsSeparately]).
+List<({String text, List<MediaAttachment> media})> telegramSectionMessages(PostVariant v) {
+  final perMessage = telegramSendsSeparately(v) ? 1 : telegramMaxAlbum;
+  const rules = TextRules(maxLength: telegramMaxText, counting: CountingRule.utf16);
+  final out = <({String text, List<MediaAttachment> media})>[];
+  void words(String text) {
+    if (text.isEmpty) return;
+    for (final piece in TextCounter.fits(text, rules) ? [text] : TextSplitter.split(text, rules, numbering: false)) {
+      if (piece.trim().isNotEmpty) out.add((text: piece.trim(), media: const []));
+    }
+  }
+
+  for (final s in v.paragraphSections) {
+    final text = s.text.trim();
+    final albums = [
+      for (var i = 0; i < s.media.length; i += perMessage) s.media.sublist(i, math.min(i + perMessage, s.media.length)),
+    ];
+    if (albums.isEmpty) {
+      words(text);
+      continue;
+    }
+    final asCaption = text.isNotEmpty && text.length <= telegramMaxCaption;
+    if (!asCaption) words(text);
+    for (var i = 0; i < albums.length; i++) {
+      out.add((text: asCaption && i == 0 ? text : '', media: albums[i]));
+    }
+  }
+  return out;
 }
 
 Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) : <String, dynamic>{};

@@ -1,3 +1,4 @@
+import '../../model/paragraph_media.dart';
 import '../../model/platform_descriptor.dart';
 import '../connect_spec.dart';
 import '../network_options.dart';
@@ -62,6 +63,8 @@ const PlatformDescriptor facebookDescriptor = PlatformDescriptor(
     },
     supportsAltText: true,
     requiresPublicMediaUrl: false,
+    // 1.4.3: photos in the order of their paragraphs, numbered in the text.
+    paragraphMedia: ParagraphMediaStyle.markers,
     notes: 'Photos are uploaded directly (no media host needed). Keep PNGs under 1 MB to avoid pixelation. '
         'One video per post; videos are not mixed with photos.',
   ),

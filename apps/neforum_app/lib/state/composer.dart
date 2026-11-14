@@ -80,6 +80,7 @@ class ComposerState {
     this.textCardDesignBeforeEdits, // 1.3.5: cards
     this.automaticTargets = false, // 1.4.3: Automatic only
     this.targetChoices = const {}, // 1.4.3: Automatic only
+    this.paragraphMedia = const {}, // 1.4.3
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -225,6 +226,26 @@ class ComposerState {
         for (final m in media)
           if (partOfMedia(m.id).clamp(0, additionalParts.length) == part) m,
       ];
+  /// 1.4.3: which paragraph of [text] refers to which photos and videos
+  /// ([Post.paragraphMedia]); empty (the default) for none. Kept while the
+  /// user types: the links move with their paragraphs.
+  final ParagraphMediaLinks paragraphMedia;
+
+  /// The paragraphs of [text], as the links count them.
+  List<String> get paragraphs => ParagraphMedia.split(text);
+
+  /// The files a paragraph can be linked to: the user's photos and videos.
+  List<MediaAttachment> get linkableMedia => [for (final m in media) if (!m.generated && (m.isImage || m.isVideo)) m];
+
+  /// Whether linking paragraphs to media makes sense: one long post (no
+  /// thread) of two paragraphs or more, with a photo or video.
+  bool get canLinkParagraphs => additionalParts.isEmpty && linkableMedia.isNotEmpty && paragraphs.length > 1;
+
+  /// [paragraphMedia] for the post [toPost] builds: only paragraphs that
+  /// exist and files still attached.
+  ParagraphMediaLinks get postParagraphMedia => paragraphMedia.isEmpty
+      ? const {}
+      : ParagraphMedia.normalized(paragraphMedia, paragraphs: paragraphs.length, mediaIds: {for (final m in linkableMedia) m.id});
 
   /// 1.3.1: cards. The installed or imported font of the text card's words
   /// (CaptionFont.toJson); an empty map for the built-in [textCardFont],
@@ -357,6 +378,7 @@ class ComposerState {
     bool clearEditingPostId = false,
     bool? automaticTargets, // 1.4.3: Automatic only
     Map<String, TargetChoice>? targetChoices, // 1.4.3: Automatic only
+    ParagraphMediaLinks? paragraphMedia, // 1.4.3
   }) =>
       ComposerState(
         editingPostId: clearEditingPostId ? null : (editingPostId ?? this.editingPostId),
@@ -398,6 +420,7 @@ class ComposerState {
             clearTextCardDesignBeforeEdits ? null : (textCardDesignBeforeEdits ?? this.textCardDesignBeforeEdits), // 1.3.5: cards
         automaticTargets: automaticTargets ?? this.automaticTargets, // 1.4.3: Automatic only
         targetChoices: targetChoices ?? this.targetChoices, // 1.4.3: Automatic only
+        paragraphMedia: paragraphMedia ?? this.paragraphMedia, // 1.4.3
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -449,6 +472,7 @@ class ComposerState {
       artwork: artwork,
       audioQuality: audioQuality,
       mediaParts: postMediaParts,
+      paragraphMedia: postParagraphMedia,
       audioDetails: {
         for (final e in audioDetails.entries)
           if (!e.value.isEmpty && media.any((m) => m.id == e.key && m.isAudio && !m.generated)) e.key: e.value,
@@ -636,7 +660,27 @@ class ComposerNotifier extends Notifier<ComposerState> {
     }
   }
 
-  void setText(String v) => state = state.copyWith(text: v);
+  /// The main text. Paragraph links move along with their paragraphs.
+  void setText(String v) => state = state.copyWith(
+        text: v,
+        paragraphMedia: state.paragraphMedia.isEmpty ? null : ParagraphMedia.remap(state.text, v, state.paragraphMedia),
+      );
+
+  /// 1.4.3: links file [mediaId] to paragraph [paragraph] (from 0) of the
+  /// text, or unlinks it when it already is. A file belongs to one paragraph:
+  /// linking it here takes it from the paragraph it had. A paragraph's files
+  /// keep the order of the attachments.
+  void toggleParagraphMedia(int paragraph, String mediaId) {
+    final own = state.paragraphMedia[paragraph] ?? const <String>[];
+    final ids = own.contains(mediaId) ? own.where((id) => id != mediaId).toSet() : {...own, mediaId};
+    final order = [for (final m in state.media) m.id];
+    state = state.copyWith(
+      paragraphMedia: ParagraphMedia.link(state.paragraphMedia, paragraph, [for (final id in order) if (ids.contains(id)) id]),
+    );
+  }
+
+  /// 1.4.3: removes every paragraph link.
+  void clearParagraphMedia() => state = state.copyWith(paragraphMedia: const {});
 
   /// Replaces the text programmatically (editor fields resync).
   void prefill(String text) => state = state.copyWith(text: text, revision: state.revision + 1);
@@ -1052,6 +1096,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       audioDetails: state.audioDetails.containsKey(mediaId) ? ({...state.audioDetails}..remove(mediaId)) : null,
       media: state.media.where((m) => m.id != mediaId).toList(),
       mediaParts: {...state.mediaParts}..remove(mediaId),
+      paragraphMedia: ParagraphMedia.withoutMedia(state.paragraphMedia, mediaId),
       overrides: {
         for (final e in state.overrides.entries)
           e.key: e.value.mediaIds == null ? e.value : e.value.copyWith(mediaIds: e.value.mediaIds!.where((x) => x != mediaId).toList()),
@@ -1065,7 +1110,11 @@ class ComposerNotifier extends Notifier<ComposerState> {
     final list = [...state.media];
     final item = list.removeAt(from);
     list.insert(to.clamp(0, list.length), item);
-    state = state.copyWith(media: list);
+    // A paragraph's files follow the attachments' order.
+    final order = {for (final (i, m) in list.indexed) m.id: i};
+    state = state.copyWith(media: list, paragraphMedia: {
+      for (final e in state.paragraphMedia.entries) e.key: [...e.value]..sort((a, b) => (order[a] ?? 0).compareTo(order[b] ?? 0)),
+    });
   }
 
   void setAltText(String mediaId, String alt) => state = state.copyWith(
@@ -1196,6 +1245,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardEveryNetwork: textCardEveryNetworkOfPost(post),
         textCardWithText: textCardWithTextOfPost(post, platformOf),
         mediaParts: p.mediaParts,
+        paragraphMedia: p.paragraphMedia, // 1.4.3
         audioDetails: p.audioDetails,
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
         textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
@@ -1267,6 +1317,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardEveryNetwork: state.textCardEveryNetwork,
       textCardWithText: state.textCardWithText,
       mediaParts: state.mediaParts,
+      paragraphMedia: state.paragraphMedia, // 1.4.3
       audioDetails: state.audioDetails,
       textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
       textCardDesign: state.textCardDesign, // 1.3.1: cards
