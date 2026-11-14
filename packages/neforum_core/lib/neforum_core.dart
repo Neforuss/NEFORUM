@@ -23,6 +23,7 @@ export 'src/auth/oauth1.dart';
 export 'src/auth/oauth2_pkce.dart';
 export 'src/backup/backup_format.dart';
 export 'src/backup/backup_service.dart';
+export 'src/backup/passphrase_code.dart';
 export 'src/handoff/handoff_plan.dart';
 export 'src/http/neforum_http.dart';
 export 'src/media_hosts/media_hosts.dart';

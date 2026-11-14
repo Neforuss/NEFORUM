@@ -56,6 +56,8 @@ Settings that belong to one device stay there: starting at sign-in, keeping NEFO
 
 NEFORUM suggests a random passphrase such as `K7QF-MZ3D-W9TB-XC4N-P2RV-H8LG` (24 characters, about 120 bits). You can use your own instead: at least 10 characters, 14 or more recommended.
 
+A code like the suggested one can be typed in small letters and without the dashes: NEFORUM writes it in capitals and adds the dashes as you type, and keeps it that way. That happens to your own passphrase too when it is made only of those letters and digits (24 at most). Any other passphrase is kept exactly as you type it. A backup locked before NEFORUM 1.4.3 with such a passphrase in small letters still opens: type it the way you set it.
+
 **Write it down or keep it in your password manager.** Without it the file cannot be opened, by you or by anyone else. There is no recovery. The passphrase is never put in the file name or in what you share.
 
 ## How the file is protected
