@@ -141,6 +141,10 @@ class TumblrAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.tumblr(account);
 
+  /// A reconnect posts to the same blog as before.
+  @override
+  Map<String, String> get reconnectFieldSources => const {'blog': cfgBlogName};
+
   @override
   PlatformDescriptor get descriptor => tumblrDescriptor;
 

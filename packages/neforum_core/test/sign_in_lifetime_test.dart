@@ -1143,12 +1143,16 @@ void main() {
             quota: QuotaTracker(InMemoryQuotaRepository()),
             http: NeforumHttp(client: MockClient((r) async => http.Response('{}', 200)), maxRetries: 0),
             clock: () => _now,
+            sleep: (_) async {},
           ).publish('p');
           return (await posts.get('p'))!.targets.single.result!.error!;
         }
 
         final renewal = await stored(_RenewalThrows(Exception('refused for access_token=SECRETaccess1')));
-        expect(renewal.message, contains('Could not refresh credentials'));
+        // 1.4.3: a surprise is not the platform refusing the keys, so it is
+        // tried again later rather than asking for a reconnect.
+        expect(renewal.message, contains('Could not renew the TikTok sign-in (_Exception)'));
+        expect(renewal.kind, PublishErrorKind.network);
         expectClean('${renewal.message} ${renewal.raw}', 'a renewal that is not a transport failure');
         final posting = await stored(_PublishThrows());
         expect(posting.kind, PublishErrorKind.network);

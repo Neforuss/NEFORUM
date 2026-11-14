@@ -86,6 +86,24 @@ class MastodonAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.mastodon(account);
 
+  /// The server, and the app registered on it for NEFORUM when it was
+  /// registered for the address this device's sign-in comes back to now. An
+  /// app registered on another device (a phone's `neforum://` address) would
+  /// be refused here, so then a new one is registered, as at the first
+  /// connect.
+  @override
+  Map<String, String>? reconnectInput(ConnectedAccount account, Map<String, String> secrets, {Uri? redirect}) {
+    final out = super.reconnectInput(account, secrets, redirect: redirect);
+    if (out == null) return null;
+    final registeredFor = account.configString('redirectUri');
+    if (redirect != null && registeredFor != redirect.toString()) {
+      out
+        ..remove('client_id')
+        ..remove('client_secret');
+    }
+    return out;
+  }
+
   @override
   PlatformDescriptor get descriptor => mastodonDescriptor;
 

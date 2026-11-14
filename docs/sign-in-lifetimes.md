@@ -108,6 +108,15 @@ A notification goes out at 10:00 on these days before the date, and when the dat
 - A refused sign-in raises one notification until it works again, whether or not **Tell me how each post went** is on.
 - Scheduling or rescheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that already holds the post still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so. A network that is only about to be asked can say no, so that warning asks first too, and if it does say no the queue says the post misses it.
 
+## When a sign-in stops working
+
+NEFORUM reconnects by itself wherever the keys it already holds allow it, and asks you only when they do not:
+
+- **A renewal that fails for a passing reason** (no connection, the network's sign-in server down, an answer NEFORUM could not read) is tried again a few seconds later, then with the post's own retries. It never shows the account as disconnected. Networks that replace their renewal key each time (X, Tumblr, TikTok, Pixelfed, DeviantArt) wait for the post's next try instead, so a key that may already be spent is not sent twice.
+- **A post the network refuses although the sign-in had time left** gets one renewal with the stored keys (a renewal key, or Bluesky's app password), then one more try.
+- **Keys the network no longer accepts** (a renewal key revoked or run out, a password change, the app removed) need your approval in the browser, and NEFORUM says so once. **Reconnect**, on the account, on the sign-ins page and on the refused post, is one tap: it opens the network's approval page with the app keys and settings you entered before, and keeps the account's options. NEFORUM never stores or reuses your password for a network that signs in through the browser.
+- **Pasted keys and bot tokens** that were revoked need new ones, so Reconnect opens the connect form for that network.
+
 ## Still open
 
 Each of these would change a row above. None can be settled from the vendor's public pages.

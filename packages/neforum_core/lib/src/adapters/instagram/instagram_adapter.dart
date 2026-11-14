@@ -74,6 +74,11 @@ class InstagramAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.instagramFor(account);
 
+  /// Never: the browser sign-in needs the app secret, and NEFORUM does not
+  /// keep it (the token renews without it), so a reconnect opens the form.
+  @override
+  Map<String, String>? reconnectInput(ConnectedAccount account, Map<String, String> secrets, {Uri? redirect}) => null;
+
   @override
   PlatformDescriptor get descriptor => InstagramRules.descriptor;
 

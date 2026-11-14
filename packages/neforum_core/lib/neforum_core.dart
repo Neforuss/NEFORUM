@@ -9,6 +9,7 @@ export 'src/adapters/adapter_registry.dart';
 export 'src/adapters/builtin_adapters.dart';
 export 'src/adapters/connect_spec.dart';
 export 'src/adapters/platform_adapter.dart';
+export 'src/adapters/reconnect_input.dart';
 export 'src/adapters/stored_secret_keys.dart';
 // 1.4.1: the app's YouTube video options (thumbnail, categories).
 export 'src/adapters/youtube/youtube_adapter.dart' show YouTubeAdapter;
@@ -40,6 +41,7 @@ export 'src/model/post_variant.dart';
 export 'src/model/publish_result.dart';
 export 'src/model/sign_in_lifetime.dart';
 export 'src/model/validation.dart';
+export 'src/publish/account_reconnect.dart';
 export 'src/publish/cancellation_signal.dart';
 export 'src/publish/publish_journal.dart';
 export 'src/publish/publish_pause_signal.dart';
