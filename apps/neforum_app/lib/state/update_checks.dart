@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../platform/appimage_update.dart';
 import '../platform/env.dart';
 import '../platform/update_check.dart';
 import 'providers.dart';
@@ -43,6 +44,10 @@ class UpdateCheckStatus {
 
 /// Reads latest.json; replaced in tests.
 final latestReleaseFetcherProvider = Provider<Future<LatestRelease> Function()>((ref) => fetchLatestRelease);
+
+/// Installs a new release itself when NEFORUM runs as an AppImage (and may
+/// check for updates at all); null everywhere else. Replaced in tests.
+final appImageSelfUpdateProvider = Provider<AppImageSelfUpdate?>((ref) => updateChecksAvailable ? createAppImageSelfUpdate() : null);
 
 /// Settings > Updates and the update banner. Automatic checks run at most
 /// once a day ([UpdateSchedule]), only while NEFORUM runs, never in the demo
