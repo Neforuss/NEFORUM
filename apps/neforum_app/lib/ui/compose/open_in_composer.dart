@@ -6,8 +6,11 @@ import '../../state/composer.dart';
 import '../../widgets/layout.dart';
 
 /// Puts [post] in the composer, for editing. The caller then goes to the
-/// Compose page. A post already open there keeps the changes made to it.
+/// Compose page. A post already open there keeps the changes made to it. A post
+/// that can no longer be edited ([isEditablePost]: it went out, or is going out)
+/// comes in as a new post, so publishing it never writes over that record.
 void openPostInComposer(BuildContext context, WidgetRef ref, Post post) {
+  if (!isEditablePost(post)) return duplicatePostInComposer(context, ref, post);
   if (ref.read(composerProvider).editingPostId == post.id) return;
   _replaceComposer(context, ref, 'Replaced what you were writing', (composer) => composer.load(post));
 }
