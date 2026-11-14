@@ -16,6 +16,7 @@ import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/state/settings.dart';
 import 'package:neforum_app/theme/app_theme.dart';
+import 'package:neforum_app/theme/selection_theme.dart';
 import 'package:neforum_app/theme/tokens.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
@@ -190,8 +191,18 @@ void main() {
         expect((input.border! as OutlineInputBorder).borderSide.color, nf.hairline, reason: label);
         expect((input.focusedBorder! as OutlineInputBorder).borderSide.color, nf.accent, reason: '$label focus');
         expect((input.errorBorder! as OutlineInputBorder).borderSide.color, nf.danger, reason: label);
-        expect(t.chipTheme.side!.color, nf.hairline, reason: '$label chip');
-        expect(t.segmentedButtonTheme.style!.side!.resolve({})!.color, nf.hairline, reason: '$label segmented button');
+        // Chips and segments keep a visible edge: the clear selected state's
+        // (selection_theme.dart) when they are off, the hairline while
+        // disabled, the selected fill while on.
+        for (final (name, side) in [
+          ('chip', (Set<WidgetState> s) => WidgetStateProperty.resolveAs<BorderSide?>(t.chipTheme.side, s)!),
+          ('segmented button', (Set<WidgetState> s) => t.segmentedButtonTheme.style!.side!.resolve(s)!),
+        ]) {
+          expect(side({}).color, nf.unselectedBorder, reason: '$label $name');
+          expect(side({WidgetState.disabled}).color, nf.hairline, reason: '$label disabled $name');
+          expect(side({}).color.a, 1, reason: '$label $name');
+        }
+        expect(WidgetStateProperty.resolveAs<BorderSide?>(t.chipTheme.side, {WidgetState.selected})!.color, nf.selectedFill, reason: '$label chip on');
         expect(t.outlinedButtonTheme.style!.side!.resolve({})!.color, nf.hairline, reason: '$label outlined button');
         expect(t.outlinedButtonTheme.style!.side!.resolve({WidgetState.hovered})!.color, nf.borderStrong, reason: label);
         expect(t.dividerTheme.color, nf.hairline, reason: '$label divider');
