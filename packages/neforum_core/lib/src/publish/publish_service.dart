@@ -31,6 +31,7 @@ import 'cancellation_signal.dart';
 import 'publish_journal.dart';
 import 'publish_pause_signal.dart';
 import 'publish_progress.dart';
+import 'publishing_order.dart';
 import 'schedule_hold_plan.dart';
 
 /// What happened when the environment tried to execute a [HandoffPlan].
@@ -218,6 +219,7 @@ class PublishService {
     this.secretsCoordinator,
     this.journal,
     this.signInOutcomes,
+    this.publishingOrder,
     Clock? clock,
     Logger? log,
     Future<Uint8List> Function(MediaAttachment media)? readMedia,
@@ -257,6 +259,11 @@ class PublishService {
   /// Told how each post went, so a sign-in's last confirmed time and its daily
   /// server read stay current without a keychain read per card.
   final SignInOutcomes? signInOutcomes;
+
+  /// 1.4.3: the user's publishing order, account ids (see [inPublishingOrder]),
+  /// read as each run starts. Null keeps the order the post lists its targets in
+  /// within each group.
+  final List<String> Function()? publishingOrder;
   final Clock _now;
   final Logger _log;
   final Future<Uint8List> Function(MediaAttachment media)? _readMedia;
@@ -346,12 +353,14 @@ class PublishService {
   /// carries it. The run stays on record in [journal] until its outcome is
   /// saved.
   ///
-  /// When [interactive], automatic targets go first and hand-offs after them, so
-  /// a sheet waiting for the person never holds up a network that needs nobody.
+  /// Automatic targets go first and hand-offs after them, so a sheet waiting for
+  /// the person never holds up a network that needs nobody. Each group goes in
+  /// the user's [publishingOrder] ([targetsInPublishingOrder]), in the
+  /// background as well.
   ///
-  /// [onPlan] hears the run's targets once, before anything is sent. [onEvent]
-  /// hears what each target is doing, and [onOutcome] how it ended, as soon as it
-  /// has ended and including targets this run leaves alone. A
+  /// [onPlan] hears the run's targets once, in that order, before anything is
+  /// sent. [onEvent] hears what each target is doing, and [onOutcome] how it
+  /// ended, as soon as it has ended and including targets this run leaves alone. A
   /// [PublishProgressTracker] turns these into figures. While [pause] is paused no
   /// request that makes a post starts.
   Future<Post> publish(
@@ -378,8 +387,8 @@ class PublishService {
 
       TargetOutcome? turnOf(PostTarget t) =>
           _turnOf(post, t, interactive: interactive, onlyAccountIds: onlyAccountIds, retryFailed: retryFailed, dueTargetsOnly: dueTargetsOnly);
-      if (onPlan != null) onPlan(await _planRun(post, turnOf));
-      final order = await _runOrder(post, interactive: interactive);
+      final order = await targetsInPublishingOrder(post);
+      if (onPlan != null) onPlan(await _planRun(post, order, turnOf));
       final later = <_LaterHandoff>[];
       for (final target in order) {
         final turn = turnOf(target);
@@ -523,29 +532,27 @@ class PublishService {
         TargetStatus.pending || TargetStatus.publishing || TargetStatus.failed => TargetOutcome.failed,
       };
 
-  /// The order of a run: automatic targets first and hand-offs after them when
-  /// someone is there to do them. Otherwise nothing waits, and the order stays.
-  Future<List<PostTarget>> _runOrder(Post post, {required bool interactive}) async {
-    if (!interactive) return post.targets;
-    final automatic = <PostTarget>[];
-    final handoffs = <PostTarget>[];
+  /// The targets of [post] in the order a run takes them: automatic targets
+  /// first and hand-offs after them, each group in [publishingOrder]
+  /// ([inPublishingOrder]). The progress sheet, Activity and automatic hand-off
+  /// posting list them the same way.
+  Future<List<PostTarget>> targetsInPublishingOrder(Post post) async {
+    final known = <String, ConnectedAccount?>{};
     for (final t in post.targets) {
-      PlatformTier? tier;
       try {
-        tier = (await accounts.get(t.accountId))?.tier;
+        known[t.accountId] = await accounts.get(t.accountId);
       } on Object catch (e) {
         // The target itself reports what is wrong with it when its turn comes.
         _log.debug('Could not read the account of ${t.accountId}: $e');
       }
-      (tier == PlatformTier.handoff ? handoffs : automatic).add(t);
     }
-    return [...automatic, ...handoffs];
+    return inPublishingOrder(post.targets, accountIdOf: (t) => t.accountId, accountOf: (id) => known[id], order: publishingOrder?.call());
   }
 
-  /// Fixes the run's members and how each will go.
-  Future<PublishRunPlan> _planRun(Post post, TargetOutcome? Function(PostTarget t) turnOf) async {
+  /// Fixes the run's members and how each will go, in the run's [order].
+  Future<PublishRunPlan> _planRun(Post post, List<PostTarget> order, TargetOutcome? Function(PostTarget t) turnOf) async {
     final targets = <PlannedTarget>[];
-    for (final t in post.targets) {
+    for (final t in order) {
       var outcome = turnOf(t);
       if (outcome == null && _inBackoff(t)) outcome = TargetOutcome.notThisRun;
       var name = t.accountId;

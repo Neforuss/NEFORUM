@@ -426,12 +426,14 @@ void main() {
         expect(stages, [ProgressStage.handingOff]);
       });
 
-      test('a background run opens nothing and keeps its order', () async {
+      test('a background run opens nothing, and its hand-offs come last too (1.4.3)', () async {
         await save(const [PostTarget(accountId: 'hand'), PostTarget(accountId: 'a')]);
         var sheets = 0;
-        final done = await service(launcher: _Launcher((_) => sheets++)).publish('p1', interactive: false);
+        PublishRunPlan? plan;
+        final done = await service(launcher: _Launcher((_) => sheets++)).publish('p1', interactive: false, onPlan: (p) => plan = p);
         expect(sheets, 0);
         expect(done.targetFor('hand')!.status, TargetStatus.awaitingHandoff);
+        expect(plan!.targets.map((t) => t.accountId), ['a', 'hand']);
       });
 
       test('one a quota sends this way waits too', () async {

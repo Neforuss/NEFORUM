@@ -212,6 +212,7 @@ class AppSettings {
     this.cardPresets = const [], // 1.3.1: cards
     this.textCardShape = TextCardShape.automatic, // 1.4.3: cards
     this.textCardLayout = TextCardLayout.full, // 1.4.3: cards
+    this.publishingOrder = const [], // 1.4.3: publishing order
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -303,6 +304,7 @@ class AppSettings {
         cardPresets: [for (final p in j['cardPresets'] as List? ?? const []) if (p is Map) Map<String, dynamic>.from(p)], // 1.3.1: cards
         textCardShape: TextCardShape.values.asNameMap()[j['textCardShape']] ?? TextCardShape.automatic, // 1.4.3: cards
         textCardLayout: TextCardLayout.values.asNameMap()[j['textCardLayout']] ?? TextCardLayout.full, // 1.4.3: cards
+        publishingOrder: [for (final id in j['publishingOrder'] as List? ?? const []) if (id is String) id], // 1.4.3: publishing order
       );
 
   final ThemeMode themeMode;
@@ -598,6 +600,12 @@ class AppSettings {
   /// [textCardShape] and [textCardLayout], everything else as the classic
   /// card has it.
   TextCardStyle get newTextCardStyle => TextCardStyle(shape: textCardShape, layout: textCardLayout);
+  /// 1.4.3: the order posts go out to the user's accounts, as account ids
+  /// (inPublishingOrder): automatic accounts first and hand-offs after them,
+  /// each group in this order. An account it does not list yet, such as one
+  /// connected since, goes last in its group. Empty: the order the accounts
+  /// were connected in.
+  final List<String> publishingOrder;
 
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
@@ -700,6 +708,7 @@ class AppSettings {
     List<Map<String, dynamic>>? cardPresets, // 1.3.1: cards
     TextCardShape? textCardShape, // 1.4.3: cards
     TextCardLayout? textCardLayout, // 1.4.3: cards
+    List<String>? publishingOrder, // 1.4.3: publishing order
   }) =>
       AppSettings(
         textCardShape: textCardShape ?? this.textCardShape, // 1.4.3: cards
@@ -788,6 +797,7 @@ class AppSettings {
         textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
         audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
         cardPresets: cardPresets ?? this.cardPresets, // 1.3.1: cards
+        publishingOrder: publishingOrder ?? this.publishingOrder, // 1.4.3: publishing order
       );
 
   Map<String, dynamic> toJson() => {
@@ -877,5 +887,6 @@ class AppSettings {
         if (cardPresets.isNotEmpty) 'cardPresets': cardPresets, // 1.3.1: cards
         'textCardShape': textCardShape.name, // 1.4.3: cards
         'textCardLayout': textCardLayout.name, // 1.4.3: cards
+        'publishingOrder': publishingOrder, // 1.4.3: publishing order
       };
 }

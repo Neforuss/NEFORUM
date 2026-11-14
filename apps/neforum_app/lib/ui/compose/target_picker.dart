@@ -17,6 +17,7 @@ import '../../widgets/surfaces.dart';
 import '../root.dart';
 import '../router.dart';
 import 'account_selection_grid.dart';
+import 'publishing_order_sheet.dart';
 
 /// Turns artwork mode on or off.
 ///
@@ -62,6 +63,9 @@ class TargetPicker extends ConsumerWidget {
 
   /// The Artwork switch, for tests.
   static const artworkSwitchKey = ValueKey('target-picker-artwork');
+
+  /// 1.4.3: the button that opens the publishing order, for tests.
+  static const publishingOrderKey = ValueKey('target-picker-publishing-order');
 
 
   @override
@@ -153,6 +157,8 @@ class TargetPicker extends ConsumerWidget {
         Text('${shown.where((a) => selected.contains(a.id)).length} of ${shown.length}', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
       ]),
       Row(mainAxisSize: MainAxisSize.min, children: [
+        // 1.4.3: publishing order. First, so the quick choices keep their places.
+        _PublishingOrderButton(selected: selected),
         _QuickFilter('All', () => notifier.selectAccounts(choosable.map((a) => a.id))),
         _QuickFilter('Automatic only', () => notifier.selectAccounts(auto)),
         _QuickFilter('None', () => notifier.selectAccounts(const [])),
@@ -522,6 +528,25 @@ class _QuickFilter extends StatelessWidget {
           textStyle: context.text.labelMedium,
         ),
         child: Text(label),
+      );
+}
+
+/// 1.4.3: opens the publishing order, with the accounts of this post marked.
+/// Wider windows: beside the quick choices. Phones have [PublishingOrderLink]
+/// under the post, since the account grid's header keeps its room for the
+/// accounts.
+class _PublishingOrderButton extends StatelessWidget {
+  const _PublishingOrderButton({required this.selected});
+
+  final Set<String> selected;
+
+  @override
+  Widget build(BuildContext context) => IconButton(
+        key: TargetPicker.publishingOrderKey,
+        tooltip: 'Publishing order',
+        onPressed: () => showPublishingOrder(context, inPost: selected),
+        icon: Icon(Icons.swap_vert_rounded, size: 20, color: context.nf.textMuted),
+        style: IconButton.styleFrom(minimumSize: const Size.square(30), padding: const EdgeInsets.all(Space.xs + 1), tapTargetSize: MaterialTapTargetSize.shrinkWrap, visualDensity: VisualDensity.compact),
       );
 }
 

@@ -22,6 +22,7 @@ import 'media_tray.dart';
 import 'open_in_composer.dart';
 import 'preview_pane.dart';
 import 'publish_progress_sheet.dart';
+import 'publishing_order_sheet.dart';
 import 'schedule_sheet.dart';
 import 'target_picker.dart';
 
@@ -356,6 +357,8 @@ class _WriteColumn extends ConsumerWidget {
         const SizedBox(height: Space.lg),
         EditorCard(focusNode: focusNode),
         const ThreadPartEditors(),
+        // 1.4.3: the account grid's header keeps its room for the accounts.
+        if (targetGrid) const PublishingOrderLink(),
         if (!c.isEmpty) ...[
           const SizedBox(height: Space.lg),
           const DifferentiationPanel(),
