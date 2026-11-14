@@ -14,6 +14,7 @@ import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../audio_links.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'blog_common.dart';
 
@@ -38,6 +39,7 @@ const Set<String> _rtlLanguages = {'ar', 'he', 'fa', 'ur', 'yi', 'ps', 'dv', 'ug
 class WriteFreelyAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'writefreely',
+    options: writeFreelyOptions,
     name: 'Write.as / WriteFreely',
     shortName: 'Write.as',
     iconKey: 'writefreely',

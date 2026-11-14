@@ -16,6 +16,7 @@ import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'misskey_api.dart';
 
@@ -73,6 +74,7 @@ class MisskeyAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'misskey',
+    options: misskeyOptions,
     name: 'Misskey',
     iconKey: 'misskey',
     homepage: 'https://misskey-hub.net',
@@ -360,6 +362,7 @@ class MisskeyAdapter extends PlatformAdapter {
     final m = d.media;
     return PlatformDescriptor(
       id: d.id,
+      options: d.options,
       name: d.name,
       iconKey: d.iconKey,
       homepage: d.homepage,

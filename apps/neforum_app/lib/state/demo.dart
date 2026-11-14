@@ -43,6 +43,9 @@ class DemoAdapter extends PlatformAdapter {
   bool supportsStories(ConnectedAccount account) => inner.supportsStories(account);
 
   @override
+  List<PostOption> postOptionsFor(ConnectedAccount account) => inner.postOptionsFor(account);
+
+  @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) => inner.buildHandoff(variant, account: account);
 
   @override

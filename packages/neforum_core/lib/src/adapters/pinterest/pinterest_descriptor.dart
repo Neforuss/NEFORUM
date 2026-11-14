@@ -1,4 +1,5 @@
 import '../../model/platform_descriptor.dart';
+import '../network_options.dart';
 
 /// Limits from the Pinterest API v5 OpenAPI description (PinCreate,
 /// PinMediaSource*), the rate-limit and access-tier docs and the Help
@@ -22,6 +23,7 @@ abstract final class PinterestLimits {
 /// Static description of Pinterest for the UI and the publishing pipeline.
 const PlatformDescriptor pinterestDescriptor = PlatformDescriptor(
   id: 'pinterest',
+  options: pinterestOptions,
   name: 'Pinterest',
   iconKey: 'pinterest',
   homepage: 'https://www.pinterest.com',

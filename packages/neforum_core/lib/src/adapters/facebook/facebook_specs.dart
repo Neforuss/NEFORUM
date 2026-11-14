@@ -1,5 +1,6 @@
 import '../../model/platform_descriptor.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import 'facebook_api.dart';
 
 /// What NEFORUM knows about Facebook. Numbers come from the Graph API
@@ -9,6 +10,7 @@ import 'facebook_api.dart';
 /// rolling 24 hours.
 const PlatformDescriptor facebookDescriptor = PlatformDescriptor(
   id: 'facebook',
+  options: facebookOptions,
   name: 'Facebook',
   iconKey: 'facebook',
   homepage: 'https://www.facebook.com',

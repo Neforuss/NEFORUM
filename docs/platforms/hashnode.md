@@ -52,16 +52,16 @@ NEFORUM sends the `publishPost(input: PublishPostInput!)` mutation:
 | Tags | `tags: [{slug, name}]` | At most **15**. The slug is lower-case and hyphenated: `Web Dev` becomes `web-dev`. New tags are created automatically. |
 | Images | Cover and inline images | See below. |
 
-**Per-network options** (`extra`):
+**Hashnode options** (the post's **Customize** sheet; all but Subtitle are under **More options**):
 
 | Option | Hashnode field |
 |---|---|
-| `canonicalUrl` | `originalArticleURL`, the canonical link for an article that first appeared elsewhere |
-| `subtitle` | `subtitle` |
-| `slug` | `slug` |
-| `disableComments: true` | `disableComments` |
-| `coverImageUrl` | The cover, as an image URL you already host |
-| `coverFromFirstImage: false` | Embeds every image in the article instead of using the first as the cover |
+| Subtitle | `subtitle` |
+| Original address (canonical URL) | `originalArticleURL`, the canonical link for an article that first appeared elsewhere |
+| Address (slug) | `slug` |
+| Turn off comments | `disableComments` |
+| Cover image (link) | The cover, as an image URL you already host |
+| First photo as the cover: off | Embeds every image in the article instead of using the first as the cover |
 
 ### Images
 

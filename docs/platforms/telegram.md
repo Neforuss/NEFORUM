@@ -54,9 +54,29 @@ NEFORUM checks the token (`getMe`), looks up the chat (`getChat`) and makes sure
   - Videos and GIFs: up to 50 MB each. A GIF inside an album is sent as a photo, so there the 10 MB photo limit applies.
 - **Captions**: a caption on media holds 1024 characters. If your text fits, it becomes the caption. If not, NEFORUM sends the media first and then the full text as a separate message right after it.
 - **Sensitive media** is sent with Telegram's spoiler blur.
-- **Link**: the post's link is added to the text. Telegram shows a preview for it unless you set `disableLinkPreview: true` in the per-network options. Set `silent: true` to send without a notification sound.
+- **Link**: the post's link is added to the text, and Telegram shows a preview for it (see **No link preview** below).
 - **View post** links: `https://t.me/<channel>/<id>` for public chats, and `https://t.me/c/<id>/<message>` (members only) for private supergroups and channels.
 - **Several messages per post** (media plus a long text, or a long text split into parts): if Telegram asks NEFORUM to slow down between them for up to 10 seconds, NEFORUM waits and carries on. If a later message still fails, the earlier ones stay posted and NEFORUM does **not** retry the post on its own (that would post them twice); the error lists what is already live so you can finish by hand.
+
+### Telegram options
+
+Open a post's **Customize** sheet for a Telegram account. These options use your own bot through the Bot API, so none of them needs Telegram Premium. The ones marked "can be kept" can be saved as the account's default with **Keep these for every Telegram post from this account**; each post can still change them.
+
+| Option | What it does | Bot API field |
+|---|---|---|
+| **Send silently** (can be kept) | Members get the post without a notification sound. Every message of the post is silent. | `disable_notification` |
+| **Pin the post** | Pins the first message. The bot needs **Edit messages of others** in a channel, or **Pin messages** in a group. If Telegram refuses, the post stays up unpinned and NEFORUM says why. | `pinChatMessage` |
+| **Caption above the media** (can be kept) | Shows the text above the photo, video, GIF or album. A sound file always shows its caption below. | `show_caption_above_media` |
+| **Hide behind a spoiler** | Blurs the photos and videos you tap until someone taps them. A post marked sensitive blurs all of them. | `has_spoiler` |
+| **No link preview** (can be kept) | Text messages show links as plain text. | `link_preview_options.is_disabled` |
+| More options: **Protect from forwarding and saving** (can be kept) | Members cannot forward the post or save its photos and videos. | `protect_content` |
+| More options: **Several photos or videos** (can be kept) | **One album** (the default) or **One message each**. One message each keeps GIFs animated; the caption goes with the first. | `sendMediaGroup` or one send each |
+| More options: **Link preview size** (can be kept) | A small or large picture in the preview of a text message's link. Some sites have only one size. | `prefer_small_media` / `prefer_large_media` |
+| More options: **Link preview above the text** (can be kept) | Puts the preview above the message. | `show_above_text` |
+| More options: **Link to preview** | Which link gets the preview. Empty: the first link in the text. | `link_preview_options.url` |
+| More options: **Topic** (can be kept) | Posts in a topic of a group with topics. The topic's number is in a message link: `t.me/c/<group>/<topic>/<message>`. Not shown for channels and basic groups. | `message_thread_id` |
+
+Not offered: paid broadcasts (`allow_paid_broadcast` costs Telegram Stars per message) and message effects (`message_effect_id` works in private chats only, and NEFORUM posts to channels and groups).
 
 ## Limits
 

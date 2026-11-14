@@ -1,10 +1,12 @@
 import '../../model/platform_descriptor.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 
 /// Static description of TikTok (numbers from the Content Posting API
 /// reference and media transfer guide, checked 2026-10-10).
 const tiktokDescriptor = PlatformDescriptor(
   id: 'tiktok',
+  options: tikTokOptions,
   name: 'TikTok',
   iconKey: 'tiktok',
   homepage: 'https://www.tiktok.com',

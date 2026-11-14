@@ -12,8 +12,10 @@ import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
+import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'chat_common.dart';
 import 'telegram_api.dart';
@@ -58,6 +60,7 @@ String telegramTrackTitle(MediaAttachment m) {
 class TelegramAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'telegram',
+    options: telegramOptions,
     name: 'Telegram',
     iconKey: 'telegram',
     homepage: 'https://telegram.org',
@@ -286,6 +289,16 @@ class TelegramAdapter extends PlatformAdapter {
     }
   }
 
+  /// Only a supergroup can have topics: a channel or a small basic group has
+  /// none.
+  static bool hasNoTopics(ConnectedAccount account) => const {'channel', 'group'}.contains(account.configString('chatType'));
+
+  @override
+  List<PostOption> postOptionsFor(ConnectedAccount account) => [
+        for (final o in super.postOptionsFor(account))
+          if (o.key != kTelegramTopic || !hasNoTopics(account)) o,
+      ];
+
   // --------------------------------------------------------------- validate
 
   /// Bot photos: width + height up to 10000 and a ratio up to 20. The share
@@ -305,11 +318,24 @@ class TelegramAdapter extends PlatformAdapter {
       }
       return issues;
     }
-    // A GIF on its own goes out with sendAnimation, which takes 50 MB like
-    // other files; the generic 10 MB photo limit only applies to album GIFs
-    // (sent as photos).
-    if (variant.media.length == 1 && variant.media.single.kind == MediaKind.gif) {
+    // A GIF on its own message goes out with sendAnimation, which takes 50 MB
+    // like other files; the generic 10 MB photo limit only applies to album
+    // GIFs (sent as photos).
+    final separate = telegramSendsSeparately(variant);
+    if (variant.media.length == 1 || separate) {
       issues.removeWhere((i) => i.code == 'media.image_too_large');
+      for (final m in variant.media) {
+        if (m.kind == MediaKind.image && m.sizeBytes > telegramPhotoMaxBytes) {
+          issues.add(ValidationIssue.error('media.image_too_large', '${m.fileName ?? m.id} is larger than 10 MB', field: 'media'));
+        }
+      }
+    }
+    final topic = variant.extra[kTelegramTopic];
+    if (topic != null && hasNoTopics(account)) {
+      issues.add(const ValidationIssue.error('telegram.no_topics',
+          'This chat has no topics: clear Topic in the Telegram options', field: 'extra'));
+    } else if (topic != null && (topic is! int || topic <= 0)) {
+      issues.add(const ValidationIssue.error('telegram.topic', 'Topic must be the topic\'s number', field: 'extra'));
     }
     if (variant.media.length > telegramMaxAlbum) {
       issues.add(ValidationIssue.error('media.too_many',
@@ -326,7 +352,7 @@ class TelegramAdapter extends PlatformAdapter {
               field: 'media'));
         }
       }
-      if (m.kind == MediaKind.gif && variant.media.length > 1) {
+      if (m.kind == MediaKind.gif && variant.media.length > 1 && !separate) {
         issues.add(ValidationIssue.warning('media.gif_in_album',
             '${m.fileName ?? m.id}: GIFs in an album are shown as still photos; post it alone to keep the animation',
             field: 'media'));
@@ -393,59 +419,108 @@ class TelegramAdapter extends PlatformAdapter {
     var nextPart = 0;
     final first = parts.isEmpty ? '' : parts.first;
     final asCaption = variant.hasMedia && first.isNotEmpty && first.length <= telegramMaxCaption;
-    sent.total = (variant.hasMedia ? 1 : 0) + parts.length - (asCaption ? 1 : 0);
+    final separate = telegramSendsSeparately(variant);
+    final mediaMessages = !variant.hasMedia ? 0 : (separate ? variant.media.length : 1);
+    sent.total = mediaMessages + parts.length - (asCaption ? 1 : 0);
+    final options = TelegramSendOptions.of(variant);
 
     if (variant.hasMedia) {
-      final mediaId = variant.media.length == 1
-          ? await _sendSingle(api, chat, variant, asCaption ? first : null, markdown, ctx)
-          : await _sendAlbum(api, chat, variant, asCaption ? first : null, markdown, ctx);
-      sent.add(mediaId);
+      final String mediaId;
+      if (separate) {
+        // One message each, the caption with the first. Later ones sit out
+        // a short flood wait like the parts of a thread.
+        mediaId = await _sendSingle(api, chat, variant, variant.media.first, asCaption ? first : null, markdown, ctx, options,
+            index: 0);
+        sent.add(mediaId);
+        for (var i = 1; i < variant.media.length; i++) {
+          final m = variant.media[i];
+          sent.add(await chatSendWithFloodWait(
+              () => _sendSingle(api, chat, variant, m, null, markdown, ctx, options, index: i), _telegramFloodWait,
+              sleep: ctx.wait));
+        }
+      } else {
+        mediaId = variant.media.length == 1
+            ? await _sendSingle(api, chat, variant, variant.media.single, asCaption ? first : null, markdown, ctx, options)
+            : await _sendAlbum(api, chat, variant, asCaption ? first : null, markdown, ctx, options);
+        sent.add(mediaId);
+      }
       if (asCaption) {
         previous = mediaId;
         nextPart = 1;
       }
     }
 
+    // The link preview options go with the first text message that has a
+    // link (or with the first one, when the link to preview is chosen).
+    final previewPart = options.previewUrl != null
+        ? nextPart
+        : [for (var i = nextPart; i < parts.length; i++) i].where((i) => UrlDetector.find(parts[i]).isNotEmpty).firstOrNull;
     for (var i = nextPart; i < parts.length; i++) {
       final replyTo = previous;
       final text = parts[i];
+      final preview = options.linkPreview(text, withChoices: i == previewPart);
       // Later messages sit out a short flood wait (about one message per
       // second per chat) instead of leaving the post half finished.
       final id = await ctx.creating(
           parts.length > 1 ? 'Sending part ${i + 1} of ${parts.length}' : 'Sending message',
           () => ids.isEmpty
-              ? _sendText(api, chat, variant, text, markdown, replyTo)
-              : chatSendWithFloodWait(() => _sendText(api, chat, variant, text, markdown, replyTo), _telegramFloodWait, sleep: ctx.wait));
+              ? _sendText(api, chat, text, markdown, replyTo, options, preview)
+              : chatSendWithFloodWait(() => _sendText(api, chat, text, markdown, replyTo, options, preview), _telegramFloodWait,
+                  sleep: ctx.wait));
       sent.add(id);
       previous = id;
     }
     if (ids.isEmpty) throw const AdapterException(PublishError.validation('Nothing to post'));
     ctx.log.info('Posted ${ids.length} Telegram message(s) to $chat');
+    final notice = options.pin ? await _pin(api, chat, ids.first, account, options, ctx) : null;
     return PublishResult.ok(
       remoteId: ids.first,
       remoteUrl: telegramMessageUrl(account, ids.first),
       threadRemoteIds: ids.length > 1 ? List.unmodifiable(ids) : const [],
       publishedAt: ctx.now(),
+      notice: notice,
     );
   }
 
-  Future<String> _sendText(
-      TelegramApi api, String chat, PostVariant v, String text, bool markdown, String? replyTo) async {
+  /// Pins the post's first message (`pinChatMessage`). The post is live
+  /// already, so a refusal is a notice on the result, never a failure.
+  Future<String?> _pin(TelegramApi api, String chat, String messageId, ConnectedAccount account, TelegramSendOptions options,
+      AdapterContext ctx) async {
+    try {
+      ctx.progress('Pinning the post');
+      await api.postJson('pinChatMessage', {
+        'chat_id': chat,
+        'message_id': int.parse(messageId),
+        if (options.silent) 'disable_notification': true,
+      });
+      return null;
+    } on TelegramApiError catch (e) {
+      ctx.log.warn('Telegram did not pin message $messageId: ${e.description}');
+      final right = account.configString('chatType') == 'channel' ? '"Edit messages of others"' : '"Pin messages"';
+      return 'Posted, but Telegram did not pin it (${e.description}). The bot needs the $right right to pin.';
+    } on Exception catch (e) {
+      ctx.log.warn('Telegram pin failed: ${chatUnexpected(e, 'api.telegram.org').message}');
+      return 'Posted, but the pin did not go through: Telegram could not be reached. Pin it in Telegram.';
+    }
+  }
+
+  Future<String> _sendText(TelegramApi api, String chat, String text, bool markdown, String? replyTo,
+      TelegramSendOptions options, Map<String, Object>? preview) async {
     final html = markdown ? chatMarkdownToHtml(text) : null;
     final res = await api.postJson('sendMessage', {
       'chat_id': chat,
+      ...options.messageFields(),
       'text': html ?? text,
       if (html != null) 'parse_mode': 'HTML',
-      if (v.extra['disableLinkPreview'] == true) 'link_preview_options': {'is_disabled': true},
-      if (v.extra['silent'] == true) 'disable_notification': true,
+      'link_preview_options': ?preview,
       if (replyTo != null) 'reply_parameters': {'message_id': int.parse(replyTo), 'allow_sending_without_reply': true},
     });
     return _messageId(res);
   }
 
-  Future<String> _sendSingle(
-      TelegramApi api, String chat, PostVariant v, String? caption, bool markdown, AdapterContext ctx) async {
-    final m = v.media.single;
+  Future<String> _sendSingle(TelegramApi api, String chat, PostVariant v, MediaAttachment m, String? caption, bool markdown,
+      AdapterContext ctx, TelegramSendOptions options,
+      {int index = 0}) async {
     final document = m.isAudio && !telegramPlaysAudio(m);
     final (method, field) = switch (m.kind) {
       MediaKind.image => ('sendPhoto', 'photo'),
@@ -453,19 +528,22 @@ class TelegramAdapter extends PlatformAdapter {
       MediaKind.video => ('sendVideo', 'video'),
       MediaKind.audio => document ? ('sendDocument', 'document') : ('sendAudio', 'audio'),
     };
-    final label = 'Uploading ${m.noun} 1 of 1';
+    final label = 'Uploading ${m.noun} ${index + 1} of ${options.separate ? v.media.length : 1}';
     ctx.uploading(m, label);
     final bytes = await ctx.readMedia(m);
     final thumbnail = m.isAudio ? await _audioThumbnail(m, ctx) : null;
     final performer = m.audioTags?.artist?.trim() ?? '';
+    final captioned = caption != null && caption.isNotEmpty;
     // The upload is the post.
     final res = await ctx.creating(
         label,
         () => api.multipart(method, {
               'chat_id': chat,
+              for (final f in options.messageFields().entries) f.key: '${f.value}',
               ..._captionFields(caption, markdown),
-              if (v.sensitive && !m.isAudio) 'has_spoiler': 'true',
-              if (v.extra['silent'] == true) 'disable_notification': 'true',
+              // sendAudio and sendDocument have neither.
+              if (captioned && options.captionAbove && !m.isAudio) 'show_caption_above_media': 'true',
+              if (!m.isAudio && options.spoiler(m)) 'has_spoiler': 'true',
               if (m.isVideo) 'supports_streaming': 'true',
               if (m.kind != MediaKind.image && m.width != null) 'width': '${m.width}',
               if (m.kind != MediaKind.image && m.height != null) 'height': '${m.height}',
@@ -497,10 +575,11 @@ class TelegramAdapter extends PlatformAdapter {
     }
   }
 
-  Future<String> _sendAlbum(
-      TelegramApi api, String chat, PostVariant v, String? caption, bool markdown, AdapterContext ctx) async {
+  Future<String> _sendAlbum(TelegramApi api, String chat, PostVariant v, String? caption, bool markdown, AdapterContext ctx,
+      TelegramSendOptions options) async {
     final files = <HttpFilePart>[];
     final media = <Map<String, Object?>>[];
+    final captioned = caption != null && caption.isNotEmpty;
     for (var i = 0; i < v.media.length; i++) {
       final m = v.media[i];
       ctx.progress('Reading ${m.noun} ${i + 1} of ${v.media.length}');
@@ -510,7 +589,9 @@ class TelegramAdapter extends PlatformAdapter {
         'type': m.isVideo ? 'video' : 'photo',
         'media': 'attach://$name',
         if (i == 0) ..._captionFields(caption, markdown),
-        if (v.sensitive) 'has_spoiler': true,
+        // The album's caption is the first item's, and so is where it shows.
+        if (i == 0 && captioned && options.captionAbove) 'show_caption_above_media': true,
+        if (options.spoiler(m)) 'has_spoiler': true,
         if (m.isVideo) 'supports_streaming': true,
         if (m.isVideo && m.width != null) 'width': m.width,
         if (m.isVideo && m.height != null) 'height': m.height,
@@ -523,8 +604,8 @@ class TelegramAdapter extends PlatformAdapter {
         label,
         () => api.multipart('sendMediaGroup', {
               'chat_id': chat,
+              for (final f in options.messageFields().entries) f.key: '${f.value}',
               'media': telegramField(media),
-              if (v.extra['silent'] == true) 'disable_notification': 'true',
             }, files),
         uploads: true);
     if (res is! List || res.isEmpty) {
@@ -621,6 +702,75 @@ String? telegramMessageUrl(ConnectedAccount account, String messageId) {
   final chat = account.configString('chatId');
   if (chat.startsWith('-100') && chat.length > 4) return 'https://t.me/c/${chat.substring(4)}/$messageId';
   return null;
+}
+
+/// Whether [v]'s photos and videos go as one message each instead of an
+/// album ([kTelegramMediaGrouping]).
+bool telegramSendsSeparately(PostVariant v) => v.media.length > 1 && v.extra[kTelegramMediaGrouping] == 'separate';
+
+/// The Telegram options of a post ([telegramOptions]), read once from
+/// [PostVariant.extra] and turned into Bot API fields.
+class TelegramSendOptions {
+  TelegramSendOptions._(this._v);
+
+  factory TelegramSendOptions.of(PostVariant v) => TelegramSendOptions._(v);
+
+  final PostVariant _v;
+
+  bool get silent => _v.extra[kTelegramSilent] == true;
+  bool get protect => _v.extra[kTelegramProtectContent] == true;
+  bool get captionAbove => _v.extra[kTelegramCaptionAbove] == true;
+  bool get pin => _v.extra[kTelegramPin] == true;
+  bool get separate => telegramSendsSeparately(_v);
+
+  /// The forum topic, when one is chosen.
+  int? get topic {
+    final t = _v.extra[kTelegramTopic];
+    return t is int && t > 0 ? t : null;
+  }
+
+  /// The chosen link to preview, when there is one.
+  String? get previewUrl {
+    final u = _v.extraAs<String>(kTelegramLinkPreviewUrl)?.trim() ?? '';
+    return u.isEmpty ? null : u;
+  }
+
+  /// Whether [m] goes behind a spoiler: the post is marked sensitive, or the
+  /// user picked it (a fitted copy counts as the photo it was made from).
+  bool spoiler(MediaAttachment m) {
+    if (_v.sensitive) return true;
+    final chosen = _v.extra[kTelegramSpoilerMedia];
+    if (chosen is! List) return false;
+    return chosen.contains(m.id) || (m.derivedFrom != null && chosen.contains(m.derivedFrom));
+  }
+
+  /// Fields every send method of the post takes: `disable_notification`,
+  /// `protect_content` and `message_thread_id`.
+  Map<String, Object> messageFields() => {
+        if (silent) 'disable_notification': true,
+        if (protect) 'protect_content': true,
+        'message_thread_id': ?topic,
+      };
+
+  /// `link_preview_options` for a text message with [text]: no preview on
+  /// every message, or, with [withChoices], the chosen link, size and place.
+  /// The size is only honoured with an explicit URL (Bot API), so the
+  /// message's first link is named when none was chosen. Null: Telegram's
+  /// own preview.
+  Map<String, Object>? linkPreview(String text, {required bool withChoices}) {
+    if (_v.extra[kTelegramNoLinkPreview] == true) return const {'is_disabled': true};
+    if (!withChoices) return null;
+    final size = _v.extraAs<String>(kTelegramLinkPreviewSize);
+    final above = _v.extra[kTelegramLinkPreviewAbove] == true;
+    final url = previewUrl ?? (size == 'small' || size == 'large' ? UrlDetector.find(text).firstOrNull?.text : null);
+    final out = <String, Object>{
+      'url': ?url,
+      if (size == 'small' && url != null) 'prefer_small_media': true,
+      if (size == 'large' && url != null) 'prefer_large_media': true,
+      if (above) 'show_above_text': true,
+    };
+    return out.isEmpty ? null : out;
+  }
 }
 
 Map<String, dynamic> _map(Object? v) => v is Map ? Map<String, dynamic>.from(v) : <String, dynamic>{};

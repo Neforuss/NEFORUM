@@ -15,6 +15,7 @@ import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../audio_links.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'blogs_common.dart';
 import 'micropub_api.dart';
@@ -63,6 +64,7 @@ class MicropubAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'micropub',
+    options: micropubOptions,
     name: 'Micropub (IndieWeb / Micro.blog)',
     shortName: 'Micropub',
     iconKey: 'micropub',

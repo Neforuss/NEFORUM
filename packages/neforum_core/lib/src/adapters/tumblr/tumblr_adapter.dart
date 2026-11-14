@@ -20,6 +20,7 @@ import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../audio_links.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'tumblr_api.dart';
 
@@ -65,6 +66,7 @@ class TumblrAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor tumblrDescriptor = PlatformDescriptor(
     id: 'tumblr',
+    options: tumblrOptions,
     name: 'Tumblr',
     iconKey: 'tumblr',
     homepage: 'https://www.tumblr.com',

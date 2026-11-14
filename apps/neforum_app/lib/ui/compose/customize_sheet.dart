@@ -1,91 +1,23 @@
+import 'dart:async';
+import 'dart:ui' show ImageFilter;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mime/mime.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
-import '../../media/text_card.dart' show kTextCardChoiceKey;
 import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
-import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/char_ring.dart';
 import '../../widgets/layout.dart' show showToast;
 import '../../widgets/media_thumb.dart';
 import 'emoji_insert.dart';
-
-/// Platform-specific knobs adapters read from `PostOverrides.extra`.
-class _Extra {
-  const _Extra(this.key, this.label, {this.hint, this.options, this.optionLabels, this.defaultLabel = 'Default', this.boolean = false, this.help});
-  final String key;
-  final String label;
-  final String? hint;
-  final List<String>? options;
-
-  /// Words to show for [options] (otherwise the raw values, in mono).
-  final Map<String, String>? optionLabels;
-  final String defaultLabel;
-  final bool boolean;
-  final String? help;
-}
-
-final Map<String, List<_Extra>> _extrasByPlatform = {
-  'reddit': [
-    _Extra('subreddit', 'Subreddit', hint: 'e.g. selfhosted (without r/)'),
-    _Extra('flair_id', 'Flair ID', hint: 'Optional; some subreddits require one'),
-    _Extra('nsfw', 'Mark as NSFW', boolean: true),
-    _Extra('spoiler', 'Mark as spoiler', boolean: true),
-  ],
-  'lemmy': [_Extra('community', 'Community', hint: 'e.g. selfhosted@lemmy.world')],
-  'pinterest': [_Extra('board', 'Board', hint: 'Board name or ID')],
-  // 1.4.1: a video upload's own details (YouTube Data API videos.insert).
-  'youtube': [
-    const _Extra('privacyStatus', 'Visibility',
-        options: ['public', 'unlisted', 'private'],
-        optionLabels: {'public': 'Public', 'unlisted': 'Unlisted (only people with the link)', 'private': 'Private'},
-        defaultLabel: 'From the post\'s visibility'),
-    _Extra('categoryId', 'Category',
-        options: YouTubeAdapter.categories.keys.toList(),
-        optionLabels: YouTubeAdapter.categories,
-        defaultLabel: 'People & Blogs (YouTube\'s default)'),
-    const _Extra('madeForKids', 'Made for kids',
-        boolean: true, help: 'YouTube asks this of every video. A video made for kids gets no personalised ads and no comments.'),
-    const _Extra('containsSyntheticMedia', 'Altered or synthetic content',
-        boolean: true, help: 'Realistic content made or changed with AI or other tools: YouTube shows viewers a label.'),
-    const _Extra('notifySubscribers', 'Tell my subscribers', boolean: true, help: 'Off: the video goes up without a notification to subscribers.'),
-  ],
-  // 1.4.1: a words-only post goes as text, or with the post's text card.
-  'youtube_posts': [
-    const _Extra(kTextCardChoiceKey, 'A post with words only',
-        options: ['card', 'text'],
-        optionLabels: {'card': 'With a text card (an image of the words)', 'text': 'Text only'},
-        defaultLabel: 'A text card when the post makes one for another network',
-        help: 'YouTube Posts takes the words alone or with an image. The card is the one your other networks get.'),
-  ],
-  'tiktok': [
-    _Extra('privacyLevel', 'Who can watch',
-        options: ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'],
-        help: 'Apps TikTok has not audited can only post privately (SELF_ONLY).'),
-  ],
-  'tumblr': [
-    _Extra('tumblrPostType', 'Post type',
-        options: ['quote', 'chat', 'audio'],
-        optionLabels: {'quote': 'Quote', 'chat': 'Chat', 'audio': 'Audio (a SoundCloud, Spotify or Bandcamp link)'},
-        defaultLabel: 'Automatic (text, photo, video or link)',
-        help: 'Quote: the text is the quote. Chat: one line per speaker, like "Alex: hi". Audio: the post\'s link is the track.'),
-    _Extra('tumblrQuoteSource', 'Quote source', hint: 'Who said it (for quote posts; otherwise the title is used)'),
-    _Extra('state', 'Publish as', options: ['published', 'queue', 'draft']),
-  ],
-  'discord': [
-    _Extra(kMentionEveryoneKey, 'Mention @everyone',
-        boolean: true,
-        help: 'The first message starts with @everyone, which notifies everyone in the channel. '
-            'The default is in Settings > Posting.'),
-  ],
-};
 
 /// Post / Story / Post + Story for a network that takes stories
 /// (`PlatformAdapter.supportsStories`).
@@ -150,6 +82,14 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
   late final Map<String, Object?> _extra;
   final Map<String, TextEditingController> _extraCtl = {};
 
+  /// The options this account can set ([PlatformAdapter.postOptionsFor]),
+  /// drawn from their declarations in core.
+  late final List<PostOption> _options;
+
+  /// "Keep these for every post from this account".
+  bool _remember = false;
+  bool _showMore = false;
+
   TargetPreview get p => widget.preview;
   PostOverrides get o => p.target.overrides;
 
@@ -157,13 +97,24 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
   /// thread (every part the user wrote, joined), else what the network gets.
   String _mainText(ComposerState c) => p.variant.isThread ? c.joinedParts : p.variant.text;
 
-  /// The value a yes/no option has when this post makes no choice: the
-  /// Settings default where there is one, else off.
-  bool _defaultOf(String key) => switch (key) {
-        kMentionEveryoneKey => ref.read(settingsProvider).discordMentionEveryone,
-        'notifySubscribers' => true,
-        _ => false,
-      };
+  /// The options the account remembers (`postDefaults`), under their
+  /// declared keys.
+  Map<String, dynamic> get _accountDefaults =>
+      canonicalOptionKeys(p.descriptor.options, (_account.config['postDefaults'] as Map?)?.cast<String, dynamic>() ?? const {});
+
+  /// The stored account as it is now, not the preview's copy of it.
+  ConnectedAccount get _account => ref.read(accountListProvider).where((a) => a.id == p.account.id).firstOrNull ?? p.account;
+
+  /// What [opt] is when this post makes no choice: the Settings default
+  /// where there is one, else the account's remembered value, else the
+  /// network's own default.
+  Object? _baseline(PostOption opt) {
+    if (opt.key == kMentionEveryoneKey && p.descriptor.id == 'discord') return ref.read(settingsProvider).discordMentionEveryone;
+    return opt.coerce(_accountDefaults[opt.key]) ?? opt.defaultValue;
+  }
+
+  /// This post's own value of [opt], or null.
+  Object? _own(PostOption opt) => opt.coerce(opt.valueIn(_extra.cast<String, dynamic>()));
 
   @override
   void initState() {
@@ -174,12 +125,17 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
     _cw = TextEditingController(text: o.contentWarning ?? c.contentWarning ?? '');
     _media = (o.mediaIds ?? c.media.map((m) => m.id)).toSet();
     _visibility = o.visibility;
-    _extra = {...o.extra};
-    for (final e in _extrasByPlatform[p.descriptor.id] ?? const <_Extra>[]) {
-      if (!e.boolean && e.options == null) {
-        _extraCtl[e.key] = TextEditingController(text: '${_extra[e.key] ?? ''}');
+    // An option saved under an older key shows (and is saved) as the declared one.
+    _extra = {...canonicalOptionKeys(p.descriptor.options, o.extra)};
+    final adapter = ref.read(registryProvider).byId(p.account.platformId);
+    _options = adapter?.postOptionsFor(p.account) ?? p.descriptor.userOptionsFor(p.account.tier);
+    for (final opt in _options) {
+      if (opt.kind == PostOptionKind.text || opt.kind == PostOptionKind.number) {
+        _extraCtl[opt.key] = TextEditingController(text: '${_own(opt) ?? ''}');
       }
     }
+    // Folded options this post already uses are shown.
+    _showMore = _options.any((opt) => opt.surface == PostOptionSurface.more && _own(opt) != null);
   }
 
   @override
@@ -197,15 +153,25 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
     final c = ref.read(composerProvider);
     final extra = {..._extra};
     for (final e in _extraCtl.entries) {
-      final v = e.value.text.trim();
-      if (v.isEmpty) {
-        extra.remove(e.key);
+      extra[e.key] = e.value.text;
+    }
+    // Only choices that differ from the default are kept, under their
+    // declared key.
+    final known = c.media.map((m) => m.id).toSet();
+    for (final opt in _options) {
+      for (final alias in opt.aliases) {
+        extra.remove(alias);
+      }
+      var v = opt.coerce(extra[opt.key]);
+      if (v is List) v = v.where(known.contains).toList();
+      if (v == null || (v is List && v.isEmpty) || v == _baseline(opt)) {
+        extra.remove(opt.key);
       } else {
-        extra[e.key] = v;
+        extra[opt.key] = v;
       }
     }
-    // Only choices that differ from the default are kept.
-    extra.removeWhere((k, v) => v == null || v is bool && v == _defaultOf(k));
+    if (_remember) _rememberForAccount(extra);
+    extra.removeWhere((k, v) => v == null || (v == false && p.descriptor.option(k) == null));
     final allMedia = c.media.map((m) => m.id).toList();
     final mediaIds = allMedia.where(_media.contains).toList();
     final textChanged = _text.text != _mainText(c);
@@ -228,6 +194,38 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
     Navigator.pop(context);
   }
 
+  /// The options that can be kept for the account ([PostOptionScope]).
+  List<PostOption> get _rememberable => [for (final opt in _options) if (opt.scope != PostOptionScope.post) opt];
+
+  /// Which options "Keep these" saves: up to three by name, then a count.
+  String _rememberSummary() {
+    final names = _rememberable.map((opt) => opt.label).toList();
+    final shown = names.length <= 3 ? names.join(', ') : '${names.take(3).join(', ')} and ${names.length - 3} more';
+    return 'Saves $shown as the account\'s default for new posts. Each post can still change them.';
+  }
+
+  /// Writes this sheet's values of [_rememberable] into the account's
+  /// remembered options (`postDefaults`, which every post from the account
+  /// starts from), and takes them out of this post's own [extra]: the post
+  /// now gets them from the account.
+  void _rememberForAccount(Map<String, Object?> extra) {
+    final defaults = {..._accountDefaults};
+    for (final opt in _rememberable) {
+      final value = extra.containsKey(opt.key) ? opt.coerce(extra[opt.key]) : _baseline(opt);
+      opt.aliases.forEach(defaults.remove);
+      if (value == null || value == opt.defaultValue) {
+        defaults.remove(opt.key);
+      } else {
+        defaults[opt.key] = value;
+      }
+      extra.remove(opt.key);
+    }
+    final account = _account;
+    final config = {...account.config, 'postDefaults': defaults};
+    if (defaults.isEmpty) config.remove('postDefaults');
+    unawaited(ref.read(servicesProvider).accounts.upsert(account.copyWith(config: config)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
@@ -235,7 +233,8 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
     final c = ref.watch(composerProvider);
     final rules = d.text;
     final used = rules.maxLength == null ? _text.text.characters.length : TextCounter.count(_text.text, rules);
-    final extras = _extrasByPlatform[d.id] ?? const <_Extra>[];
+    final upFront = [for (final opt in _options) if (opt.surface == PostOptionSurface.main) opt];
+    final more = [for (final opt in _options) if (opt.surface == PostOptionSurface.more) opt];
     final stories = ref.watch(registryProvider).byId(p.account.platformId)?.supportsStories(p.account) ?? false;
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -347,11 +346,39 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
               const SizedBox(height: Space.xs),
               Text(_placementHelp(placementOfExtra(_extra.cast<String, dynamic>()), d.name), style: context.text.bodySmall),
             ],
-            if (extras.isNotEmpty) ...[
+            if (upFront.isNotEmpty || more.isNotEmpty) ...[
               const SizedBox(height: Space.xl),
               Text('${d.name} options', style: context.text.titleSmall),
               const SizedBox(height: Space.sm),
-              for (final e in extras) Padding(padding: const EdgeInsets.only(bottom: Space.md), child: _extraField(e)),
+              for (final opt in upFront) _optionRow(opt, c),
+              if (more.isNotEmpty) ...[
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: const Key('more-options'),
+                    onPressed: () => setState(() => _showMore = !_showMore),
+                    icon: Icon(_showMore ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18),
+                    label: Text(_showMore ? 'Fewer options' : 'More options (${more.length})'),
+                  ),
+                ),
+                AnimatedSize(
+                  duration: context.motion(Motion.fast),
+                  alignment: Alignment.topCenter,
+                  child: _showMore
+                      ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [for (final opt in more) _optionRow(opt, c)])
+                      : const SizedBox(width: double.infinity),
+                ),
+              ],
+              if (_rememberable.isNotEmpty)
+                CheckboxListTile(
+                  key: const Key('remember-options'),
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _remember,
+                  onChanged: (v) => setState(() => _remember = v ?? false),
+                  title: Text('Keep these for every ${d.name} post from this account', style: context.text.bodyMedium),
+                  subtitle: Text(_rememberSummary(), style: context.text.bodySmall),
+                ),
             ],
             if (d.id == 'youtube') _thumbnailField(),
           ]),
@@ -452,39 +479,126 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       ]),
     );
   }
-  Widget _extraField(_Extra e) {
+  /// One declared option: its control, and who can use it when not everyone
+  /// can ([PostOption.gate]).
+  Widget _optionRow(PostOption opt, ComposerState c) {
     final nf = context.nf;
-    if (e.boolean) {
-      final value = _extra[e.key];
-      return SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        title: Text(e.label, style: context.text.bodyMedium),
-        subtitle: e.help == null ? null : Text(e.help!, style: context.text.bodySmall),
-        value: value is bool ? value : _defaultOf(e.key),
-        onChanged: (v) => setState(() => _extra[e.key] = v),
-      );
-    }
-    if (e.options != null) {
-      final current = _extra[e.key] as String?;
-      return DropdownButtonFormField<String?>(
-        initialValue: e.options!.contains(current) ? current : null,
-        isExpanded: true,
-        decoration: InputDecoration(labelText: e.label, helperText: e.help, helperMaxLines: 3),
-        items: [
-          DropdownMenuItem(value: null, child: Text(e.defaultLabel)),
-          for (final o in e.options!)
-            DropdownMenuItem(
-              value: o,
-              child: e.optionLabels?[o] != null ? Text(e.optionLabels![o]!, overflow: TextOverflow.ellipsis) : Text(o, style: monoStyle(context, color: nf.text)),
-            ),
-        ],
-        onChanged: (v) => setState(() => _extra[e.key] = v),
-      );
-    }
-    return TextField(
-      controller: _extraCtl[e.key],
-      decoration: InputDecoration(labelText: e.label, hintText: e.hint, helperText: e.help),
+    return Padding(
+      key: ValueKey('option-${opt.key}'),
+      padding: const EdgeInsets.only(bottom: Space.md),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        _optionField(opt, c),
+        if (opt.gate != null)
+          Padding(
+            padding: const EdgeInsets.only(top: Space.xs),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.info_outline_rounded, size: 14, color: nf.textMuted),
+              const SizedBox(width: Space.xs),
+              Expanded(child: Text(opt.gate!, style: context.text.bodySmall?.copyWith(color: nf.textMuted))),
+            ]),
+          ),
+      ]),
     );
+  }
+
+  Widget _optionField(PostOption opt, ComposerState c) {
+    switch (opt.kind) {
+      case PostOptionKind.toggle:
+        final value = _own(opt) ?? _baseline(opt);
+        return SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(opt.label, style: context.text.bodyMedium),
+          subtitle: opt.help == null ? null : Text(opt.help!, style: context.text.bodySmall),
+          value: value is bool && value,
+          onChanged: (v) => setState(() => _extra[opt.key] = v),
+        );
+      case PostOptionKind.choice:
+        final current = _own(opt) as String?;
+        final remembered = opt.coerce(_accountDefaults[opt.key]) as String?;
+        // No choice of the post's own: the account's remembered one, else the network's default.
+        final unset = remembered != null ? 'This account\'s default: ${opt.labelOf(remembered)}' : opt.defaultLabel ?? 'Not set';
+        return DropdownButtonFormField<String?>(
+          key: ValueKey('choice-${opt.key}-$current'),
+          initialValue: current,
+          isExpanded: true,
+          decoration: InputDecoration(labelText: opt.label, helperText: opt.help, helperMaxLines: 3),
+          items: [
+            DropdownMenuItem(value: null, child: Text(unset, overflow: TextOverflow.ellipsis)),
+            for (final choice in opt.choices) DropdownMenuItem(value: choice.value, child: Text(choice.label, overflow: TextOverflow.ellipsis)),
+          ],
+          onChanged: (v) => setState(() => _extra[opt.key] = v),
+        );
+      case PostOptionKind.text:
+      case PostOptionKind.number:
+        final remembered = _accountDefaults[opt.key];
+        final number = opt.kind == PostOptionKind.number;
+        return TextField(
+          controller: _extraCtl[opt.key],
+          keyboardType: number ? TextInputType.number : null,
+          inputFormatters: number ? [FilteringTextInputFormatter.digitsOnly] : null,
+          decoration: InputDecoration(
+            labelText: opt.label,
+            // The account's remembered value is what an empty field means.
+            hintText: remembered != null ? '$remembered' : opt.hint,
+            helperText: opt.help,
+            helperMaxLines: 3,
+          ),
+        );
+      case PostOptionKind.mediaSelection:
+        return _mediaSelectionField(opt, c);
+    }
+  }
+
+  /// Some of the post's photos and videos, picked by tapping them.
+  Widget _mediaSelectionField(PostOption opt, ComposerState c) {
+    final nf = context.nf;
+    final chosen = {...((_own(opt) as List?)?.cast<String>() ?? const <String>[])};
+    final media = [for (final m in c.media) if (!m.generated && !m.isAudio && _media.contains(m.id)) m];
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(opt.label, style: context.text.bodyMedium),
+      if (opt.help != null) Text(opt.help!, style: context.text.bodySmall),
+      const SizedBox(height: Space.sm),
+      if (media.isEmpty)
+        Text('This post has no photos or videos for ${p.descriptor.name}.', style: context.text.bodySmall?.copyWith(color: nf.textFaint))
+      else
+        Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+          for (final m in media)
+            Semantics(
+              selected: chosen.contains(m.id),
+              button: true,
+              label: '${opt.label}: ${m.fileName ?? m.noun}',
+              child: GestureDetector(
+                key: ValueKey('${opt.key}-${m.id}'),
+                onTap: () => setState(() {
+                  chosen.contains(m.id) ? chosen.remove(m.id) : chosen.add(m.id);
+                  _extra[opt.key] = [for (final x in media) if (chosen.contains(x.id)) x.id];
+                }),
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: Stack(children: [
+                    ClipRRect(
+                      borderRadius: Radii.rSm,
+                      child: ImageFiltered(
+                        enabled: chosen.contains(m.id),
+                        imageFilter: ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                        child: MediaThumb(m, size: 56),
+                      ),
+                    ),
+                    Positioned(
+                      right: 4,
+                      top: 4,
+                      child: Icon(
+                        chosen.contains(m.id) ? Icons.visibility_off_rounded : Icons.radio_button_unchecked_rounded,
+                        size: 18,
+                        color: chosen.contains(m.id) ? nf.accent : Colors.white,
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+        ]),
+    ]);
   }
 
   static String _placementHelp(PostPlacement p, String network) => switch (p) {

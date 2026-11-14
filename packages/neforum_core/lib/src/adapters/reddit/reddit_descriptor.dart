@@ -1,4 +1,5 @@
 import '../../model/platform_descriptor.dart';
+import '../network_options.dart';
 
 /// Self-post body limit (PRAW docs: selftext max 40,000 characters).
 const int redditBodyMax = 40000;
@@ -17,6 +18,7 @@ const int redditFlairTextMax = 64;
 /// Static facts about Reddit.
 const PlatformDescriptor redditDescriptor = PlatformDescriptor(
   id: 'reddit',
+  options: redditOptions,
   name: 'Reddit',
   iconKey: 'reddit',
   homepage: 'https://www.reddit.com',

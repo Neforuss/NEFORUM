@@ -13,6 +13,7 @@ import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'blog_common.dart';
 import 'wordpress_api.dart';
@@ -52,6 +53,7 @@ class WordPressAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'wordpress',
+    options: wordPressOptions,
     name: 'WordPress',
     iconKey: 'wordpress',
     homepage: 'https://wordpress.com', // where an account is made; self-hosted sites work too

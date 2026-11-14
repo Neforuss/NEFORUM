@@ -94,7 +94,7 @@ NEFORUM stores the tokens and the client secret only in this device's secure sto
   - the account is marked as having its uploads locked private, because a locked video never goes public at `publishAt`.
 
   A schedule whose time has already passed is uploaded immediately.
-- Other per-post options: `categoryId` (e.g. `22` = People & Blogs), `notifySubscribers` (default on), `madeForKids` (default off), `containsSyntheticMedia` (declare realistic AI-altered content).
+- Other options in the post's **Customize** sheet: **Category** (YouTube's default is People & Blogs), **Tell my subscribers** (default on), **Made for kids** (default off), **Altered or synthetic content** (declare realistic AI-altered content).
 - Vertical or square videos of 3 minutes or less automatically become **Shorts**. There is no separate Shorts switch.
 - The link to the result is `https://youtu.be/<video id>`.
 

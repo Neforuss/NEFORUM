@@ -47,7 +47,7 @@ The token has no end date on Lemmy 0.19. On Lemmy 1.0 a login ends after one wee
 ## What gets posted
 
 - **Title:** required, 3 to 200 characters, on one line. NEFORUM turns line breaks into spaces. If you leave the title empty, NEFORUM uses the first line of your text.
-- **Community:** required. NEFORUM uses the account's default community. To post somewhere else, set `community` (`!name@instance`) or `communityId` in the per-network options for that post.
+- **Community:** required. NEFORUM uses the account's default community. To post somewhere else, set **Community** (`name@instance`) or **Community ID** (under More options) in the post's **Customize** sheet.
 - **Body:** Markdown, up to 50,000 characters. Long posts are **not** split into threads, because Lemmy has no threads.
 - **Link:** your post's link goes into Lemmy's own URL field (http, https or magnet; max 2,000 characters). Lemmy fetches the preview itself.
 - **Image:** one image per post. It is uploaded to your instance (`POST /pictrs/image`) and becomes the post's URL. Alt text is sent as `alt_text` (max 1,500 characters). If the post has **both** a link and an image, the link goes in the URL field and the image appears at the top of the body.
