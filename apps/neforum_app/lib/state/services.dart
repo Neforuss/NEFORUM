@@ -261,6 +261,9 @@ class AppServices {
         secretsCoordinator: cloudSync.active ? cloudSync : null,
         journal: publishJournal,
         signInOutcomes: signInStatus,
+        // 1.4.3: every run, scheduled and background ones included, goes in the
+        // user's publishing order as it stands when the run starts.
+        publishingOrder: () => _settings.publishingOrder,
         readMedia: media.read,
       );
 

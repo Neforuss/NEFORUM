@@ -44,3 +44,13 @@ A time under one minute ahead, or already past, is refused: it would go out at o
 - **Tomorrow morning** and **Next Monday** are worked out on the calendar, so they stay right on a day of 23 or 25 hours.
 - A day and time the clocks skip shows the real time it becomes and says so.
 - A move to another time zone keeps the moment and the display follows it.
+
+## Publishing order
+
+When a post goes out, NEFORUM posts to its networks one after another, in your publishing order: the accounts that post automatically first, then the hand-offs, which wait for you. Change it in **Settings > Posting > Publishing order**, or in the composer: the order button beside **All**, **Automatic only** and **None**, or **Publishing order** under the post on a phone. Drag an account by its handle to move it.
+
+- The order that counts is the one you have when the post goes out, not the one you had when you scheduled it. Background posting on Android and iPhone follows it too.
+- A hand-off always comes after every automatic account, wherever it is in the list.
+- An account you connect later goes to the end of its group until you move it.
+- The order syncs with your other settings.
+- Activity and the progress sheet list the networks in the same order.

@@ -5,9 +5,14 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../state/providers.dart';
+import '../../state/publishing_order.dart';
 import '../../state/shrunk_videos.dart';
 import '../../theme/tokens.dart';
+import '../compose/publishing_order_sheet.dart';
 import 'setting_row.dart';
+
+/// 1.4.3: the Publishing order row of Settings > Posting, for tests.
+const kPublishingOrderRowKey = ValueKey('settings-publishing-order');
 
 class PostingSettingsSection extends ConsumerWidget {
   const PostingSettingsSection({super.key});
@@ -17,7 +22,26 @@ class PostingSettingsSection extends ConsumerWidget {
     final s = ref.watch(settingsProvider);
     final n = ref.read(settingsProvider.notifier);
     final canShrink = ref.watch(videoShrinkingSupportedProvider).value ?? false;
+    final registry = ref.watch(registryProvider);
+    final ordered = ref.watch(publishingSequenceProvider).accounts;
+    String nameOf(ConnectedAccount a) => registry.descriptor(a.platformId)?.name ?? a.platformId;
+    final shown = ordered.take(4).toList();
+    final now = ordered.isEmpty
+        ? null
+        : 'Now: ${[for (var i = 0; i < shown.length; i++) '${i + 1}. ${nameOf(shown[i])}'].join(', ')}'
+            '${ordered.length > shown.length ? ', and ${ordered.length - shown.length} more' : ''}.';
     return SettingsSection(title: 'Posting', icon: Icons.send_outlined, subtitle: 'How NEFORUM adapts one post for many networks.', children: [
+      // 1.4.3: publishing order
+      SettingRow(
+        key: kPublishingOrderRowKey,
+        title: 'Publishing order',
+        description: now == null ? kPublishingOrderDescription : '$kPublishingOrderDescription $now',
+        stackOnCompact: true,
+        trailing: OutlinedButton(
+          onPressed: ordered.isEmpty ? null : () => showPublishingOrder(context),
+          child: const Text('Change order'),
+        ),
+      ),
       SettingChoice<OverflowStrategy>(
         title: 'When a post is too long for a network',
         value: s.overflow,

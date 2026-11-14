@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../state/providers.dart';
+import '../state/publishing_order.dart';
 import '../theme/app_theme.dart';
 import '../theme/tokens.dart';
 import '../ui/activity/schedule_summary.dart';
@@ -42,7 +43,8 @@ class PostCard extends ConsumerWidget {
     final statuses = <TargetStatus>[];
     final names = <String, String>{};
     final registry = ref.watch(registryProvider);
-    for (final t in p.targets) {
+    // 1.4.3: in the publishing order, as a run takes them.
+    for (final t in ref.watch(publishingSequenceProvider).targets(p.targets)) {
       final a = ref.watch(accountByIdProvider(t.accountId));
       if (a == null) continue;
       platforms.add(a.platformId);

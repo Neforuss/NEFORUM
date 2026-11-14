@@ -178,6 +178,7 @@ AppSettings populatedSettings() => AppSettings(
       cardPresets: const [
         {'name': 'Fake preset', 'design': {'background': 'solid'}},
       ],
+      publishingOrder: const ['acct-2', 'acct-1'], // 1.4.3
     );
 
 /// A second setup, different from both the defaults and [populatedSettings]

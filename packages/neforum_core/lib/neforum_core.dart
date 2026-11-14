@@ -45,6 +45,7 @@ export 'src/publish/publish_journal.dart';
 export 'src/publish/publish_pause_signal.dart';
 export 'src/publish/publish_progress.dart';
 export 'src/publish/publish_service.dart';
+export 'src/publish/publishing_order.dart';
 export 'src/publish/schedule_hold_plan.dart';
 export 'src/publish/sign_in_warnings.dart';
 export 'src/quota/quota_tracker.dart';

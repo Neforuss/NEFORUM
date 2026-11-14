@@ -1482,7 +1482,8 @@ class PostActions {
       if (post == null) return out;
       final bytes = post.media.fold<int>(0, (sum, m) => sum + m.sizeBytes);
       final now = DateTime.now();
-      for (final t in post.targets) {
+      // 1.4.3: listed in the publishing order, as the run goes.
+      for (final t in await s.publisher().targetsInPublishingOrder(post)) {
         if (t.isDone || (accountIds != null && !accountIds.contains(t.accountId)) || (dueTargetsOnly && !post.isTargetDue(t, now))) continue;
         final a = await s.accounts.get(t.accountId);
         final d = a == null ? null : s.registry.descriptor(a.platformId);
@@ -1517,7 +1518,11 @@ class PostActions {
     final run = ref.read(publishRunProvider.notifier);
     final due = post;
     final now = DateTime.now();
-    final starting = accountIds ?? {for (final t in due.targets) if (!dueTargetsOnly || due.isTargetDue(t, now)) t.accountId};
+    // 1.4.3: in the publishing order, so the sheet's rows are in it before the plan.
+    final inOrder = await s.publisher().targetsInPublishingOrder(due);
+    final starting = accountIds == null
+        ? {for (final t in inOrder) if (!dueTargetsOnly || due.isTargetDue(t, now)) t.accountId}
+        : {for (final t in inOrder) if (accountIds.contains(t.accountId)) t.accountId, ...accountIds};
     run.start(postId, starting);
     // What the last run said about these networks is out of date now.
     await NotificationService.instance.cancelResults(postId, starting);
