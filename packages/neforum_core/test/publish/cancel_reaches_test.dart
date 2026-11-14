@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/instagram/instagram_api.dart';
 import 'package:neforum_core/src/adapters/nostr/nostr_adapter.dart';
+import 'package:neforum_core/src/adapters/nostr/nostr_broadcast.dart';
 import 'package:neforum_core/src/adapters/nostr/nostr_relay.dart';
 import 'package:neforum_core/src/adapters/threads/threads_api.dart';
 import 'package:neforum_core/src/adapters/youtube/youtube_api.dart';
@@ -228,7 +229,8 @@ void main() {
     test('Nostr, relays that never answer', () async {
       final signal = CancellationSignal();
       final relay = _SilentRelay();
-      final adapter = NostrAdapter(relayTimeout: const Duration(minutes: 1), connectTimeout: const Duration(minutes: 1), connector: (_) async => relay);
+      final adapter = NostrAdapter(
+          timings: const NostrRelayTimings(ok: Duration(minutes: 1), connect: Duration(minutes: 1)), connector: (_) async => relay);
       final account = fakeAccount('nostr', config: const {'relays': ['wss://a.example']});
       final ctx = AdapterContext(http: NeforumHttp(client: _HangingClient()), cancellation: signal, networkName: 'Nostr');
       final (took, outcome) = await _cancelled(signal, () async {

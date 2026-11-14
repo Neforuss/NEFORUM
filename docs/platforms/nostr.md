@@ -15,14 +15,15 @@ This guide connects your Nostr key, so NEFORUM signs your notes on your device a
    wss://relay.damus.io
    wss://nos.lol
    wss://relay.primal.net
-   wss://relay.nostr.band
+   wss://relay.nostr.net
+   wss://offchain.pub
    ```
-   - Put one `wss://` address per line.
-   - Your other Nostr apps show your write relays under *Relays* in their settings. Copy those for the best reach.
+   - With the defaults, NEFORUM also looks up the relay list you published from another Nostr app (NIP-65) and puts your write relays first.
+   - Put one `wss://` address per line. If you change the list, NEFORUM uses exactly the relays you entered.
 5. Under **Media server (NIP-96)**, leave `https://nostr.build` to upload images and videos there for free.
    - You can enter another NIP-96 server, for example `https://nostrcheck.me`.
    - Leave the field empty if you'd rather upload only to the media host you set up in NEFORUM's settings (S3, WebDAV, ...).
-6. Press **Connect**. NEFORUM works out your public key on your device. Nothing is sent anywhere during this step.
+6. Press **Connect**. NEFORUM works out your public key on your device. With the default relays, it asks a few relays for your published relay list, which takes up to 5 seconds. Your private key never leaves the device.
 
 ## Steps: hand-off (your key stays in your Nostr app)
 
@@ -63,7 +64,13 @@ NEFORUM prepares the note, copies the text and hands it to your Nostr app (Ameth
 
    The file's address goes at the end of your note. An `imeta` tag (NIP-92) carries the file type, size in pixels, hash and alt text, so apps can show the image properly.
 2. **The note** is a standard kind-1 event that NEFORUM signs on your device (NIP-01, BIP-340 Schnorr). Hashtags in your text also become `t` tags, so hashtag searches find the note. Links become `r` tags. A content warning becomes a `content-warning` tag (NIP-36).
-3. **Relays.** NEFORUM sends the note to every relay in your list at once and waits up to 8 seconds for each one to reply. The note counts as **published when at least one relay accepts it**. Relays that refused or didn't answer show up in the log. If a relay asks NEFORUM to sign in (NIP-42), NEFORUM signs in with your key and sends the note again.
+3. **Relays.** NEFORUM connects to every relay in your list at once. Once one relay is connected, the others get 3 more seconds, so one dead relay can't hold your note back. The note counts as **published as soon as one relay has it**:
+   - NEFORUM waits up to 20 seconds for a relay to confirm the note (its `OK`), and shows how long it has been waiting.
+   - A relay that stays silent is asked whether it has the note (a request for the note's id). Busy relays often store a note without confirming it in time. If any relay has it, the note is published.
+   - If none has it, NEFORUM sends the same signed note again, twice, after 2 and then 5 seconds. Sending the same note again can't make a duplicate, because relays keep one copy per note.
+   - Only when no relay has the note in the end does the post fail. If every relay was asked and none has it, NEFORUM says nothing was posted, and you can retry. If a relay never answered at all, the note may still be live, so NEFORUM asks you to check before you retry.
+   - If a relay asks NEFORUM to sign in (NIP-42), NEFORUM signs in with your key and sends the note again.
+   - Relays that refused or didn't answer show up in the log, with any `NOTICE` they sent.
 4. **Threads.** A post split into parts goes out as a chain of replies (NIP-10). Each part replies to the first one, and media goes on the first part.
 5. The link NEFORUM shows afterwards is `https://njump.me/note1...`. It opens in any browser, even without a Nostr app.
 
@@ -73,7 +80,7 @@ NEFORUM prepares the note, copies the text and hands it to your Nostr app (Ameth
 - **Size.** The protocol has no character limit, but relays limit the size of a whole event, often to 64 KB (strfry) or 128 KB (nostr-rs-relay). NEFORUM warns you before you post a very long note.
 - **nostr.build free plan**: 20 MB per file, and you have to be signed in with your key (NIP-98). That's why NEFORUM blocks larger files when nostr.build is the media server. With another server, that check becomes a warning only. Paid nostr.build plans and nostrcheck.me (100 MB free) allow bigger files.
 - **No remote signers yet.** NEFORUM can't yet use a remote signer: no NIP-46 bunker such as nsec.app, and no Amber on Android (NIP-55). For now you have to paste your `nsec`.
-- **Your relay list is not read from Nostr.** NEFORUM uses the relays you entered and doesn't fetch your published relay list (NIP-65, kind 10002).
+- **Your relay list is read once, when you connect.** With the default relays, NEFORUM adds up to 6 write relays from your published relay list (NIP-65, kind 10002), 8 relays in all. If you change your relay list later, remove the account and add it again to pick up the change. Accounts connected before NEFORUM 1.4.3 keep their old list until you do.
 - **No Blossom uploads** (the newer BUD-02 upload method) yet. Use a NIP-96 server or your NEFORUM media host.
 - **No server-side scheduling.** Relays reject notes dated far in the future. Scheduled posts stay in NEFORUM and are signed and sent at the scheduled time, so NEFORUM must be running then.
 - **Everything is public.** Nostr has no "followers only" or "unlisted" setting. A note can't truly be deleted either: deletion requests (NIP-09) are only hints that relays may ignore.
@@ -86,6 +93,12 @@ When a relay refuses a note, NEFORUM tells you why:
 - *rate-limited*: try again later.
 - *restricted*, *blocked* or *auth-required*: that relay doesn't take notes from your key. Use other relays.
 - *pow*: the relay requires proof-of-work, which NEFORUM doesn't do yet.
+
+When no relay confirms the note:
+
+- *No relay confirmed the note, and none of them has it*: every relay was reached and asked, and none kept the note, so nothing was posted. Retry, or add other relays. A relay that drops notes without saying why may filter new keys as spam.
+- *NEFORUM could not confirm this. Check Nostr before retrying*: at least one relay never answered, not even when asked for the note, so the note may be live. Open your profile on njump.me or in your Nostr app before you post again.
+- *Could not reach any Nostr relay*: no relay connection opened. Check your internet connection. If it works, one of your relays may be down, so add others.
 
 ## Sources
 
