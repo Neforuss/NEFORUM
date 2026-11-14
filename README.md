@@ -25,7 +25,7 @@ Every connected account uses one of these. You can connect the same platform mor
 
 | | How it works | Good for |
 |---|---|---|
-| **Auto** | Posts automatically through the platform's open API. No developer keys, no fees, no review. | Mastodon and the fediverse, Pixelfed, Bluesky, Nostr, Misskey, Lemmy, Matrix, Telegram, Discord, WordPress, Ghost, DEV, Micropub, Inkbunny |
+| **Auto** | Posts automatically through the platform's open API. No developer keys, no fees, no review. | Mastodon and the fediverse, Pixelfed, Bluesky, Nostr, Misskey, Lemmy, Matrix, Telegram, Discord, WordPress, Ghost, EmDash, DEV, Micropub, Inkbunny |
 | **Your keys** | Posts automatically through the official API, using a developer app you create once. NEFORUM tracks the platform's quota and warns you before you hit it. | X, Threads, LinkedIn, YouTube, Reddit, Pinterest, Tumblr, Facebook Pages, Instagram professional accounts, TikTok, Hashnode, DeviantArt, Dribbble, Flickr |
 | **Hand-off** | NEFORUM prepares everything: caption on the clipboard, photos in the share sheet, the composer opened with your text. You tap Post. | Any personal account anywhere: Instagram, TikTok, Facebook profiles, YouTube Posts, Snapchat, WhatsApp, Google Business Profile, Substack Notes, the art sites without an API (Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol, 500px), and every platform above when you'd rather not set up keys |
 
@@ -105,14 +105,14 @@ Turn on **Artwork** under Post to, and the post goes only to your art sites (Dev
 
 ## Supported platforms
 
-48 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
+49 platforms. The full matrix (limits, media, quotas, scheduling) is in [docs/platforms.md](docs/platforms.md), generated from the code. Each platform has a step-by-step setup guide in [docs/platforms](docs/platforms), also shown inside the app.
 
 - **Open networks:** Mastodon and compatible servers (Pleroma, Akkoma, GoToSocial, Friendica, Pixelfed, Mitra), Bluesky, Misskey / Sharkey / Firefish / Iceshrimp, Nostr, Lemmy, Matrix
 - **Big platforms:** X, Threads, Facebook, LinkedIn, Reddit, Tumblr
 - **Photo and video:** Instagram, TikTok, YouTube Posts (text and image posts on your channel's Posts tab), Pinterest, Snapchat
 - **Video sites:** YouTube (videos and Shorts), Odysee (automatic through the LBRY desktop app, or hand-off), Rumble, BitChute
 - **Messaging:** Telegram channels and groups, Discord (webhooks), WhatsApp
-- **Blogs and newsletters:** WordPress, Ghost, WriteFreely / Write.as, Micropub (IndieWeb, Micro.blog), DEV, Hashnode, Substack Notes
+- **Blogs and newsletters:** WordPress, Ghost, EmDash, WriteFreely / Write.as, Micropub (IndieWeb, Micro.blog), DEV, Hashnode, Substack Notes
 - **Business:** Google Business Profile
 - **Art and portfolios:** DeviantArt, Dribbble, Pixelfed, Flickr and Inkbunny automatically; Behance, ArtStation, Cara, pixiv, Itaku, Newgrounds, Fur Affinity, Weasyl, Ko-fi, Artfol and 500px by hand-off
 

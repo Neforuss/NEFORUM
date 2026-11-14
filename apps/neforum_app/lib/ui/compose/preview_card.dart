@@ -90,7 +90,7 @@ PreviewFamily previewFamilyFor(String platformId, {bool artPlatform = false}) =>
       'instagram' || 'tiktok' || 'pinterest' || 'youtube' || 'snapchat' || 'rumble' || 'odysee' || 'bitchute' => PreviewFamily.visual,
       'reddit' || 'lemmy' => PreviewFamily.forum,
       'telegram' || 'discord' || 'matrix' || 'whatsapp' => PreviewFamily.chat,
-      'wordpress' || 'ghost' || 'writefreely' || 'micropub' || 'devto' || 'hashnode' || 'substack' => PreviewFamily.blog,
+      'wordpress' || 'ghost' || 'emdash' || 'writefreely' || 'micropub' || 'devto' || 'hashnode' || 'substack' => PreviewFamily.blog,
       _ => PreviewFamily.microblog,
     };
 

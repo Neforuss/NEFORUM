@@ -210,7 +210,9 @@ void main() {
       // A new caller belongs here only with a test that proves its upload
       // cannot make a post. Telegram, Discord and Tumblr never: there the
       // upload request is the post.
-      expect(users, {'mastodon_api.dart', 'misskey_api.dart', 'bluesky_api.dart', 'ghost_api.dart', 'matrix_api.dart'});
+      // EmDash: the media library upload, deduplicated by EmDash itself
+      // (emdash_test.dart, "a lost upload answer").
+      expect(users, {'mastodon_api.dart', 'misskey_api.dart', 'bluesky_api.dart', 'ghost_api.dart', 'matrix_api.dart', 'emdash_api.dart'});
     });
   });
 

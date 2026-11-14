@@ -32,6 +32,7 @@ of them.
 | nostr | https://nostr.com/icon-512.png (nostr.com manifest) |
 | wordpress | https://s1.wp.com/i/webclip.png |
 | ghost | https://ghost.org/favicon.ico |
+| emdash | https://emdashcms.com/brand/favicon.png (1.4.3; the site's PNG icon and apple-touch-icon, 300 px, on white, scaled to 256 px) |
 | writefreely | https://github.com/writefreely/writefreely/blob/develop/static/img/wf-sq.png (WriteFreely's 512 px square mark; 1.4.2, was writefreely.org/favicon.ico), in the favicon's colours: light w on #292929, cropped so the w spans 72% of the tile, Lanczos to 256 px |
 | micropub | https://indieweb.org/favicon.ico |
 | devto | https://dev.to apple-touch-icon (media2.dev.to, 192 px) |

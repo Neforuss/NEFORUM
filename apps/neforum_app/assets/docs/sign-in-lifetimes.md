@@ -1,6 +1,6 @@
 # How long each sign-in lasts
 
-Every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in. Everything here was read from the vendor's own pages or source code on **2026-11-06**. Vendors change these rules: check the source link if a date looks wrong.
+Every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in. Everything here was read from the vendor's own pages or source code on **2026-11-06** (EmDash, added in 1.4.3: **2026-11-13**). Vendors change these rules: check the source link if a date looks wrong.
 
 **NEFORUM renews only when a post goes out.** There is no background job. So "Renews when NEFORUM posts" also means that an account you stop posting to can run out.
 
@@ -11,7 +11,7 @@ Words used in the Status column:
 
 A date in NEFORUM reads "at the latest" where the *Known early revocation* column says something can end the sign-in first, and "about" where NEFORUM worked it out from a documented rule.
 
-## All 48 networks
+## All 49 networks
 
 | Network | How long it lasts | Renews itself | When a person must act | Known early revocation | Source | Date read | Status |
 |---|---|---|---|---|---|---|---|
@@ -26,6 +26,7 @@ A date in NEFORUM reads "at the latest" where the *Known early revocation* colum
 | DeviantArt | Token 1 hour, its renewal key 3 months | Yes, when NEFORUM posts | About 3 months with no post | Yes: `POST /oauth2/revoke` or removing the app | [DeviantArt authentication](https://deviantart.readme.io/docs/authentication) | 2026-11-06 | UNVERIFIED whether a renewal restarts the 3 months or issues a new key: the docs' example returns the same value. Settled by comparing two refresh answers on a live account |
 | Discord | No published limit on webhook addresses | Not needed | When someone deletes the webhook | Yes: anyone with Manage Webhooks in the server, or anyone holding the address | [Discord webhooks](https://docs.discord.com/developers/resources/webhook) | 2026-11-06 | UNVERIFIED. The page is silent. Settled by a Discord statement |
 | Dribbble | No published limit | Not needed | When you revoke it | Yes: "can be revoked by users at any time" | [Dribbble OAuth](https://developer.dribbble.com/v2/oauth/) | 2026-11-06 | UNVERIFIED. The page is silent. Settled by a Dribbble statement |
+| EmDash | No end date for a token made with "No expiry". A token given 7 days to 1 year ends then, and only an admin can see that date | Not needed | When the token ends or is revoked | Yes: revoking it in Settings > API Tokens | [EmDash source](https://github.com/emdash-cms/emdash/blob/main/packages/core/src/api/handlers/api-tokens.ts) | 2026-11-13 | VERIFIED |
 | Facebook | Page token: no published end date. The 60-day user token behind it only serves while connecting | Not needed | After Meta ends it. An Inactive Meta app must be restored in the App Dashboard first, then reconnect | Yes: password change or logout, removed app, app Inactive after 90 days, a permission unused for 90 days | [Meta long-lived tokens](https://developers.facebook.com/docs/facebook-login/guides/access-tokens/get-long-lived/), [Meta app states](https://developers.facebook.com/documentation/development/create-an-app/app-dashboard/app-states), [Meta permissions](https://developers.facebook.com/documentation/development/permissions) | 2026-11-06 | VERIFIED. Meta's pages conflict: the Pages overview says Page tokens have an expiration time, and the tokens page warns lifetimes may change. Settled by inspecting one Page token and watching it |
 | Flickr | No published limit (OAuth 1.0a) | Not needed | When you revoke it | Yes: only a forum reply says so, the formal docs are silent | [Flickr auth](https://www.flickr.com/services/api/auth.oauth.html) | 2026-11-06 | UNVERIFIED. Settled by a Flickr statement |
 | Fur Affinity | No connection: hand-off only | Not applicable | Never in NEFORUM | Not applicable | NEFORUM's code: `art/furaffinity_adapter.dart` | 2026-11-06 | VERIFIED. No connection that expires |

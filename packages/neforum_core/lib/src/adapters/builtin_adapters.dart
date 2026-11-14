@@ -15,6 +15,7 @@ import 'art/newgrounds_adapter.dart';
 import 'art/pixelfed_adapter.dart';
 import 'art/pixiv_adapter.dart';
 import 'art/weasyl_adapter.dart';
+import 'blogs_a/emdash_adapter.dart';
 import 'blogs_a/ghost_adapter.dart';
 import 'blogs_a/wordpress_adapter.dart';
 import 'blogs_a/writefreely_adapter.dart';
@@ -83,6 +84,7 @@ List<PlatformAdapter> builtinAdapters() => [
       // Blogs & newsletters
       WordPressAdapter(),
       GhostAdapter(),
+      EmDashAdapter(),
       WriteFreelyAdapter(),
       MicropubAdapter(),
       DevtoAdapter(),
