@@ -691,7 +691,7 @@ class _Toolbar extends ConsumerWidget {
                 size: s,
                 badge: c.media.isEmpty ? null : '${c.media.length}',
               ),
-              EmojiButton(size: s),
+              EmojiButton(size: s, showBudget: true),
               ToolButton(icon: Icons.description_outlined, tooltip: 'Make a thread from a document (PDF, Word, EPUB, Markdown, text, web page)', onPressed: onDocument, size: s),
               ToolButton(icon: Icons.link_rounded, tooltip: 'Add a link', onPressed: onLink, active: c.link != null, size: s),
               ToolButton(icon: Icons.tag_rounded, tooltip: 'Hashtags', onPressed: onTags, active: c.tags.isNotEmpty, size: s),

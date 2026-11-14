@@ -85,6 +85,12 @@ Instagram's API takes photos from 4:5 to 1.91:1 and only JPEGs; other networks h
 
 The **Poll** button adds a text poll, an image poll or a quiz for networks that have them (YouTube Posts today). The post text is the question; other networks get the post without the poll. In the hand-off every answer has its own copy button.
 
+### Emoji, symbols, kaomoji and text styles
+
+The emoji button in the composer opens four tabs. **Emoji** has every current emoji with skin tones. **Symbols** has about 5,600 Unicode symbols: sets such as Hearts, Stars, Arrows, Currency and Zodiac, and 43 whole Unicode blocks (box drawing, chess, playing cards, Braille and more), with each character's name, code point, HTML code and, on Windows, its Alt code. **Kaomoji** has over 300 kaomoji by feeling, and a builder where you pick arms, face, eyes and mouth. **Text styles** turns the selected text into bold, italic, script, fraktur, double-struck, monospace, fullwidth, circled, squared, small capitals, superscript, upside down, strikethrough, underline and more, using Unicode's own characters. Search works in every tab. Long press or right-click anything to add it to your favourites, which sync with your other settings. A character this device has no font for is left out, so the panel never shows an empty box.
+
+What you insert goes into your post exactly as picked. If it takes a network over its limit (styled letters count double on X), that network says so and the others are unaffected. On Markdown networks NEFORUM escapes the kaomoji, so `¯\_(ツ)_/¯` keeps its arm on Reddit, Lemmy and Discord. Screen readers read styled letters badly, so keep them to a word or two.
+
 ### Artwork for art sites
 
 Turn on **Artwork** under Post to, and the post goes only to your art sites (DeviantArt, ArtStation, Behance, pixiv and the others below): the post's title and tags become the work's title and tags, and its text the description. Set the rating (general, mature or adult), mark work made with AI, and ask the sites not to train AI on it where they offer that. Art sites never receive text cards, and ordinary posts leave them out.
@@ -243,10 +249,22 @@ cd apps/neforum_app && flutter test integration_test -d windows
 
 The core has over 1,000 tests that pin every adapter's requests and error handling against mocked APIs, including server-side scheduling and taking a scheduled post back. The app tests render every screen at phone, tablet, desktop and ultrawide sizes in both themes, and drive the main flows end to end, including text cards and platform-held schedules.
 
+## Character catalog
+
+The Symbols and Text styles tabs and the search words for emoji and symbols come from JSON files in `packages/neforum_core/assets/characters`. `tool/generate_character_catalog.dart` makes them from pinned Unicode files: `Blocks.txt`, `UnicodeData.txt` and `NamesList.txt` from the Unicode Character Database, Unicode's CP437, CP1252 and IBMGRAPH tables for Alt codes, and the CLDR English annotations. Each file is checked against the SHA-256 in the tool, and each JSON file records the versions and hashes it was made from. Nothing is typed by hand: block ranges, names, the styled alphabets and the Letterlike Symbols that fill their gaps (script B is U+212C) all come from those files. The kaomoji (`lib/src/characters/kaomoji.dart`) and the upside-down pairs were written for NEFORUM.
+
+To move to a new Unicode version:
+
+1. In `packages/neforum_core/tool/generate_character_catalog.dart`, set `kUnicodeVersion` (and `kCldrVersion` for a new CLDR release) and empty the `sha256` of each source that changes.
+2. Delete `packages/neforum_core/.dart_tool/character_sources`, then run `dart run tool/generate_character_catalog.dart` in `packages/neforum_core`. It downloads the files, prints a `PIN` line with the hash of each one that has no hash, and writes the JSON files and the `Blocks.txt` and `UnicodeData.txt` copies the tests read.
+3. Paste the printed hashes into the tool and run it again: it now checks them.
+4. Update `test/fixtures/unicode/emoji-test.txt` to the same version and run `dart run tool/generate_emoji_tables.dart`, so emoji counting and the catalog agree.
+5. Run `dart test test/characters test/text`. The gate tests compare every block with `Blocks.txt`, every cell and style with `UnicodeData.txt`, and send each character through every network's text path. A failure names what Unicode changed.
+
 ## Privacy
 
 NEFORUM has no backend. It stores accounts, posts and settings in your app data folder and secrets in the OS keychain (Keychain on Apple platforms, Keystore on Android, DPAPI on Windows). Network traffic goes only to the platforms you post to and, if you pick them, the media host and fallback host you configure, the storage you sync through (which only ever receives the encrypted sync file), neforus.com if you turn on the update check, and api.fontsource.org and cdn.jsdelivr.net if you turn on font downloads. Those two see your IP address and the font names you look up, never your posts. Settings, then Data and privacy, has three tools: **Move to another device** saves your accounts with their keys, media hosts, settings and drafts in one file encrypted with a passphrase (Argon2id and AES-256-GCM), which you carry to your phone or another computer yourself and import there (see [docs/backup.md](docs/backup.md)); **Export posts** saves a readable JSON file of your posts and account list without any keys; **Delete everything** removes all accounts, keys, posts and downloaded fonts from the device. Backup files you made are your own copies: deleting your data in NEFORUM does not delete them.
 
 ## License
 
-NEFORUM is free software under the [GNU General Public License v3](LICENSE). Fonts: Inter, Bricolage Grotesque and JetBrains Mono (SIL Open Font License). A font you download through NEFORUM keeps its own open licence, stored next to the font on your device. The emoji sheet's data comes from the `unicode_emojis` package (MIT). The counter's tests use twitter-text's conformance file (Apache-2.0, kept with its licence in `packages/neforum_core/test/fixtures/twitter_text`) and Unicode's `emoji-test.txt`. Platform logos come from Font Awesome Brands (CC BY 4.0) and belong to their owners; NEFORUM is not affiliated with any of the platforms it posts to.
+NEFORUM is free software under the [GNU General Public License v3](LICENSE). Fonts: Inter, Bricolage Grotesque and JetBrains Mono (SIL Open Font License). A font you download through NEFORUM keeps its own open licence, stored next to the font on your device. The emoji sheet's data comes from the `unicode_emojis` package (MIT). The symbols, text styles and search words come from the Unicode Character Database and Unicode CLDR (Unicode License v3); see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), also shown in the app under Settings, About, Licenses. The counter's tests use twitter-text's conformance file (Apache-2.0, kept with its licence in `packages/neforum_core/test/fixtures/twitter_text`) and Unicode's `emoji-test.txt`. Platform logos come from Font Awesome Brands (CC BY 4.0) and belong to their owners; NEFORUM is not affiliated with any of the platforms it posts to.

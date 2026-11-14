@@ -102,7 +102,7 @@ class _DataSettingsSectionState extends ConsumerState<DataSettingsSection> {
     // Media host keys are keys too: remove both hosts and their secrets.
     var next = await clearMediaHost(ref.read(settingsProvider), s.secrets, slot: MediaHostSlot.fallback);
     next = await clearMediaHost(next, s.secrets);
-    await ref.read(settingsProvider.notifier).update((_) => next.copyWith(defaultTargetIds: const [], emojiRecents: const [], emojiSkinTone: 0));
+    await ref.read(settingsProvider.notifier).update((_) => next.copyWith(defaultTargetIds: const [], emojiRecents: const [], emojiSkinTone: 0, characterFavourites: const []));
     await s.refreshMediaHost();
     // Paired browsers' tokens are keys too (the demo shares the real ones).
     if (!s.demo) await s.browserBridge.forgetAll();

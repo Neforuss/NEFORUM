@@ -67,6 +67,9 @@ const Set<String> kExportableSettings = {
   // preference, not a pairing: phones ignore it.
   'browserQuickPost',
   'browserOpenInFirst',
+  // 1.4.3: symbols. The starred characters are a choice like a theme; the
+  // recent ones stay on the device (emojiRecents).
+  'characterFavourites',
 };
 
 /// 1.3.5: the settings that stay on the device, each with why. Together with
@@ -124,6 +127,7 @@ const Map<String, Object?> kSettingDefaultsLeftOut = {
   'textCardDesign': <String, Object?>{},
   'audioCardDesign': <String, Object?>{},
   'cardPresets': <Object?>[],
+  'characterFavourites': <Object?>[], // 1.4.3: symbols
 };
 
 /// 1.3.5: every shared setting of [s] with its value, defaults included, as

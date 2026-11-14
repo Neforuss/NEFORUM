@@ -12,6 +12,7 @@ import '../model/post_placement.dart';
 import '../model/post_variant.dart';
 import '../model/validation.dart';
 import 'media_packer.dart';
+import 'network_text_transforms.dart';
 import 'text_counter.dart';
 import 'text_splitter.dart';
 import 'url_detector.dart';
@@ -95,16 +96,20 @@ class VariantResolver {
     // text and replaces all of them. writtenIndex maps each part of the post
     // to the written part that takes its media: an empty part's media goes
     // with the part before it (or the first one).
+    // Each piece of the user's text as this network gets it
+    // (NetworkTextTransforms: kaomoji kept whole on Markdown networks, never
+    // normalized). The draft itself is never changed.
+    String adapt(String s) => NetworkTextTransforms.adapt(s, d);
     final written = <String>[];
     final writtenIndex = <int>[];
     if (o.text == null) {
       for (final p in post.parts) {
-        if (p.trim().isNotEmpty) written.add(p.trimRight());
+        if (p.trim().isNotEmpty) written.add(adapt(p.trimRight()));
         writtenIndex.add(written.isEmpty ? 0 : written.length - 1);
       }
     }
     final canThread = t.supportsThreads && (account == null || account.tier.isAutomatic);
-    var text = (o.text ?? written.join('\n\n')).trimRight();
+    var text = (o.text == null ? written.join('\n\n') : adapt(o.text!)).trimRight();
     final link = o.link ?? post.link;
     final tags = post.tags.where((x) => x.trim().isNotEmpty).map(_cleanTag).toList();
 
@@ -237,8 +242,10 @@ class VariantResolver {
     var title = o.title ?? post.title;
     if (t.titleSupported && (title == null || title.trim().isEmpty) && t.titleRequired) {
       // Derive a title from the first line so Reddit/Lemmy/blog posts work
-      // without a separate field.
-      final firstLine = (o.text ?? written.firstOrNull ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
+      // without a separate field. From the text as written: a title is plain
+      // text, so it gets no Markdown escapes.
+      final firstPart = o.text ?? post.parts.where((p) => p.trim().isNotEmpty).firstOrNull;
+      final firstLine = (firstPart ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
       if (firstLine.isNotEmpty) {
         title = t.titleMax != null && firstLine.length > t.titleMax! ? '${_cutToUnits(firstLine, t.titleMax! - 1)}…' : firstLine;
         issues.add(ValidationIssue.info('title.derived', 'Title taken from the first line for ${d.name}', field: 'title'));

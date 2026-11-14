@@ -23,6 +23,10 @@ export 'src/auth/oauth1.dart';
 export 'src/auth/oauth2_pkce.dart';
 export 'src/backup/backup_format.dart';
 export 'src/backup/backup_service.dart';
+// 1.4.3: the character panel's catalog (symbols, kaomoji, text styles).
+export 'src/characters/character_catalog.dart';
+export 'src/characters/kaomoji.dart';
+export 'src/characters/text_styles.dart';
 export 'src/handoff/handoff_plan.dart';
 export 'src/http/neforum_http.dart';
 export 'src/media_hosts/media_hosts.dart';
@@ -65,6 +69,8 @@ export 'src/sync/sync_providers.dart';
 export 'src/sync/sync_sources.dart';
 export 'src/text/emoji_clusters.dart';
 export 'src/text/media_packer.dart';
+// 1.4.3: per-network text transforms (kaomoji on Markdown networks).
+export 'src/text/network_text_transforms.dart';
 export 'src/text/rules_validator.dart';
 export 'src/text/text_counter.dart';
 export 'src/text/text_splitter.dart';
