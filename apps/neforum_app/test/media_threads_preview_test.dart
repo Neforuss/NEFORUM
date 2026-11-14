@@ -134,4 +134,50 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(seconds: 1));
   });
+
+  testWidgets('1.4.3: X shows twenty in one post, or the thread with the reason once X refused that for the account', (tester) async {
+    tester.view.physicalSize = const Size(1440, 6000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage())))!;
+    await tester.pumpWidget(ProviderScope(overrides: [servicesProvider.overrideWithValue(services)], child: const NeforumApp()));
+    await tester.pump(const Duration(milliseconds: 300));
+    final c = ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
+    c.read(routerProvider).go('/compose');
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 150));
+    }
+    await tester.enterText(find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController), 'Holiday');
+    final photos = [for (var i = 0; i < 20; i++) _photo(i)];
+    final x = c.read(accountListProvider).firstWhere((a) => a.platformId == 'x' && a.tier == PlatformTier.byokApi);
+    c.read(composerProvider.notifier)
+      ..addMedia(photos)
+      ..selectAccounts([x.id]);
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 150));
+    }
+
+    var preview = c.read(composerPreviewsProvider).single;
+    expect(preview.variant.isThread, isFalse, reason: 'one post');
+    expect(preview.variant.media, hasLength(20));
+    expect(preview.issues.hasErrors, isFalse);
+    expect(find.textContaining('X now takes up to 20 photos and videos in one post: these 20 go in one post.'), findsOneWidget);
+
+    // X refused twenty for this account yesterday (what a publish records).
+    await tester.runAsync(() => services.accounts.upsert(x.copyWith(config: {
+          ...x.config,
+          'largeMediaPosts': {'result': 'refused', 'at': DateTime.now().toUtc().subtract(const Duration(days: 1)).toIso8601String()},
+        })));
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 150));
+    }
+    preview = c.read(composerPreviewsProvider).single;
+    expect(preview.variant.threadParts, hasLength(5), reason: 'the thread of 4 per post');
+    expect(preview.issues.hasErrors, isFalse);
+    expect(find.textContaining('in one post for this account; sent as a thread. NEFORUM tries one post again in 6 days.'), findsOneWidget);
+    expect(find.textContaining('X now takes up to 20'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 1));
+  });
 }

@@ -15,12 +15,16 @@ import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
+import '../../text/media_packer.dart';
+import '../../text/rules_validator.dart';
 import '../../text/url_detector.dart';
+import '../../util/logger.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'x_api.dart';
+import 'x_media_capacity.dart';
 
 /// X (formerly Twitter) through the official X API v2 with the user's own
 /// developer app, or through a hand-off to the X app / `x.com/intent/tweet`
@@ -33,7 +37,11 @@ import 'x_api.dart';
 /// the two-hour token ended, with a refresh token that X replaces each time, so
 /// without Sync only one device stays connected). Both give the same account id.
 class XAdapter extends PlatformAdapter {
-  XAdapter();
+  /// [clock] decides whether an account's refusal of large media posts is
+  /// recent ([XMediaCapacity.retryAfter]).
+  XAdapter({Clock? clock}) : _now = clock ?? systemClock;
+
+  final Clock _now;
 
   /// OAuth 2.0 scopes NEFORUM asks for. `offline.access` yields a refresh
   /// token; `media.write` is needed by the v2 media endpoints.
@@ -66,10 +74,16 @@ class XAdapter extends PlatformAdapter {
   static const String _desktopRedirect = 'http://127.0.0.1:52771/callback';
   static const String _mobileRedirect = 'neforum://callback';
   static const int _photoMaxBytes = 5 * 1024 * 1024;
-  static const int _gifMaxBytes = 15 * 1024 * 1024;
   static const Set<String> _replySettings = {'following', 'mentionedUsers', 'subscribers', 'verified'};
 
-  static const PlatformDescriptor _descriptor = PlatformDescriptor(
+  /// Hand-off accounts, and API accounts while X refuses them large media
+  /// posts: 4 photos or 1 video per post ([XMediaCapacity.classic]).
+  static final PlatformDescriptor _descriptor = _describe(XMediaCapacity.classic);
+
+  /// API accounts: up to 20 photos and videos per post ([XMediaCapacity.large]).
+  static final PlatformDescriptor _largeDescriptor = _describe(XMediaCapacity.large);
+
+  static PlatformDescriptor _describe(MediaRules media) => PlatformDescriptor(
     id: 'x',
     options: xOptions,
     name: 'X (Twitter)',
@@ -88,22 +102,7 @@ class XAdapter extends PlatformAdapter {
       notes: 'Weighted count: most Latin/Cyrillic characters count 1, CJK and emoji count 2, every link counts 23. '
           'Longer posts need X Premium on the posting account, so NEFORUM splits long text into a thread.',
     ),
-    media: MediaRules(
-      // Sound goes as a video of one still picture, made by the app.
-      audioAsVideo: true,
-      maxImages: 4,
-      maxVideos: 1,
-      // GIFs are "images" in the generic check; photos are held to 5 MB in validate().
-      imageMaxBytes: _gifMaxBytes,
-      videoMaxBytes: 8 * 1024 * 1024 * 1024,
-      videoMaxSeconds: 20 * 60,
-      imageMimeTypes: {'image/jpeg', 'image/png', 'image/gif', 'image/webp'},
-      videoMimeTypes: {'video/mp4', 'video/quicktime'},
-      supportsAltText: true,
-      mediaPerThreadPart: true,
-      notes: 'Up to 4 photos (5 MB each), or 1 animated GIF (15 MB), or 1 video (MP4/MOV, up to 20 minutes and 8 GB; '
-          'longer with Premium). Alt text up to 1000 characters.',
-    ),
+    media: media,
     defaultQuotas: [
       QuotaRule(
         id: 'x.posts_per_15min',
@@ -154,6 +153,12 @@ class XAdapter extends PlatformAdapter {
 
   @override
   PlatformDescriptor get descriptor => _descriptor;
+
+  /// Up to 20 photos and videos in one post for an API account, unless X
+  /// refused that for it in the last 7 days ([XMediaCapacity.usesLarge]).
+  @override
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) =>
+      XMediaCapacity.usesLarge(account, _now()) ? _largeDescriptor : _descriptor;
 
   static const String _byokIntro = '''
 **Post automatically with your own X developer app.** X charges per post (about \$0.015, or \$0.20 when the post contains a link), paid from credits on *your* developer account. NEFORUM never sees any money.
@@ -490,7 +495,10 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
 
   @override
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) {
-    final issues = super.validate(variant, account);
+    final now = _now();
+    final issues = RulesValidator.validate(variant, descriptorForAccount(account), tier: account.tier);
+    final capacity = _capacityNote(variant, account, now);
+    if (capacity != null) issues.add(capacity);
     if (variant.mediaGroups.any((g) => g.length > 1 && g.any((m) => m.kind == MediaKind.gif))) {
       issues.add(const ValidationIssue.error(
           'x.gif_alone', 'An animated GIF must be the only media in an X post', field: 'media'));
@@ -533,6 +541,34 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     return issues;
   }
 
+  /// The preview's line on how X gets the photos and videos of [v] through
+  /// [account]: in one post (X takes it, or is assumed to), or as a thread
+  /// because X refused one such post for the account within 7 days. Null when
+  /// they fit one post the classic way, so nothing needs saying.
+  static ValidationIssue? _capacityNote(PostVariant v, ConnectedAccount account, DateTime now) {
+    if (account.tier != PlatformTier.byokApi || v.media.isEmpty) return null;
+    final wait = XMediaCapacity.daysUntilRetry(account, now);
+    if (wait != null) {
+      if (XMediaCapacity.fitsClassicPost(v.media)) return null;
+      return ValidationIssue.info(
+          'x.media_thread',
+          'X refused more than ${XMediaCapacity.classicPhotos} photos, or photos with a video, in one post for this '
+              'account; sent as a thread. NEFORUM tries one post again in $wait day${wait == 1 ? '' : 's'}.',
+          field: 'media');
+    }
+    final large = v.mediaGroups.where((g) => !XMediaCapacity.fitsClassicPost(g)).toList();
+    if (large.isEmpty) return null;
+    final these = large.length == 1 ? 'these ${large.single.length} go in one post' : 'each post of the thread carries its own';
+    final accepted = XLargeMediaRecord.fromConfig(account)?.accepted ?? false;
+    return ValidationIssue.info(
+        'x.media_one_post',
+        accepted
+            ? 'X takes up to ${XMediaCapacity.largePostMax} photos and videos in one post for this account: $these.'
+            : 'X now takes up to ${XMediaCapacity.largePostMax} photos and videos in one post: $these. If X refuses '
+                'them for this account, NEFORUM sends them as a thread right away.',
+        field: 'media');
+  }
+
   // ---------------------------------------------------------------------
   // Publish
   // ---------------------------------------------------------------------
@@ -549,46 +585,119 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
           ? 'The X keys of this account are missing; reconnect it and paste the four keys again'
           : 'No X sign-in stored for this account; reconnect it'));
     }
+    return _publishWith(variant, account, api, ctx, <String, String>{});
+  }
+
+  /// Posts [variant] with [api]. [uploaded] holds the X media id of every
+  /// file already uploaded in this publish ([_mediaKey]), so a new plan of
+  /// the same post sends no file twice. [replanned]: [variant] is that new
+  /// plan, which is not planned again.
+  ///
+  /// A post with more photos and videos than the classic 4 photos or 1 video
+  /// ([XMediaCapacity]) that X refuses for its media posts nothing. The
+  /// account is then recorded as refusing such posts and the same post goes
+  /// out at once the classic way: planned again by the publish run
+  /// ([AdapterContext.replan]) while nothing of it is live, else the rest of
+  /// it here, each part's media in classic posts that reply to it. A large
+  /// post X accepts is recorded too.
+  Future<PublishResult> _publishWith(
+      PostVariant variant, ConnectedAccount account, XApi api, AdapterContext ctx, Map<String, String> uploaded,
+      {bool replanned = false}) async {
     final parts = variant.isThread ? variant.threadParts : [variant.text];
     // A thread that broke off earlier goes on after its live parts.
     final ids = [...variant.postedThreadIds];
     final start = ids.length;
+    var total = parts.length;
     final handle = (account.handle ?? '').replaceFirst(RegExp('^@'), '');
     String urlOf(String id) => handle.isEmpty ? 'https://x.com/i/web/status/$id' : 'https://x.com/$handle/status/$id';
+    final replySettings = variant.extraAs<String>('replySettings');
+    final reply = _replySettings.contains(replySettings) ? replySettings : null;
     try {
       // Every part's media is uploaded before the first post goes up, so a
       // refused file stops the thread before anything is public.
       final mediaIds = [
         for (var i = 0; i < parts.length; i++)
-          if (i >= start && variant.mediaOfPart(i).isNotEmpty) await api.uploadAll(variant.mediaOfPart(i)) else const <String>[],
+          if (i >= start && variant.mediaOfPart(i).isNotEmpty) await _upload(api, variant.mediaOfPart(i), uploaded) else const <String>[],
       ];
-      final replySettings = variant.extraAs<String>('replySettings');
+      var learned = false;
       for (var i = start; i < parts.length; i++) {
-        final id = await ctx.creating(
-            parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting to X',
-            () => api.createPost(
-                  text: parts[i],
-                  mediaIds: mediaIds[i],
-                  inReplyTo: i == 0 ? null : ids.last,
-                  replySettings: _replySettings.contains(replySettings) ? replySettings : null,
-                ));
+        final media = variant.mediaOfPart(i);
+        final large = media.isNotEmpty && !XMediaCapacity.fitsClassicPost(media);
+        final String id;
+        try {
+          id = await ctx.creating(
+              parts.length > 1 ? 'Posting part ${i + 1} of ${parts.length}' : 'Posting to X',
+              () => api.createPost(text: parts[i], mediaIds: mediaIds[i], inReplyTo: ids.isEmpty ? null : ids.last, replySettings: reply));
+        } on HttpFailure catch (e) {
+          if (!large || !XMediaCapacity.refusesLargePost(e)) rethrow;
+          ctx.log.warn('X refused ${media.length} photos and videos in one post (HTTP ${e.statusCode}: '
+              '${XApi.errorMessage(e.response.jsonMap) ?? 'no reason given'}); posting them as a thread');
+          final refused = await _learn(account, ctx, accepted: false);
+          final replan = ctx.replan;
+          if (ids.isEmpty && !replanned && replan != null) {
+            final again = await replan(refused);
+            if (again != null && again.postedThreadIds.isEmpty && again.mediaGroups.every(XMediaCapacity.fitsClassicPost)) {
+              return await _publishWith(again, refused, api, ctx, uploaded, replanned: true);
+            }
+          }
+          // Parts are live (or there is no post to plan again): the rest
+          // goes on from here, each part's media in classic posts.
+          for (var j = i; j < parts.length; j++) {
+            final groups = packMediaIntoPosts(variant.mediaOfPart(j), XMediaCapacity.classic);
+            total += groups.length > 1 ? groups.length - 1 : 0;
+            for (var g = 0; g < (groups.isEmpty ? 1 : groups.length); g++) {
+              final text = g == 0 ? parts[j] : '';
+              final ofGroup = groups.isEmpty ? const <String>[] : [for (final m in groups[g]) uploaded[_mediaKey(m)]!];
+              ids.add(await ctx.creating(
+                  'Posting to X', () => api.createPost(text: text, mediaIds: ofGroup, inReplyTo: ids.isEmpty ? null : ids.last, replySettings: reply)));
+            }
+          }
+          break;
+        }
         ids.add(id);
+        if (large && !learned && !(XLargeMediaRecord.fromConfig(account)?.accepted ?? false)) {
+          learned = true;
+          await _learn(account, ctx, accepted: true);
+        }
       }
     } on AdapterException catch (e) {
-      return _partial(e.error, ids, parts.length, urlOf);
+      return _partial(e.error, ids, total, urlOf);
     } on HttpFailure catch (e) {
-      return _partial(XApi.mapError(e, now: ctx.now()), ids, parts.length, urlOf);
+      return _partial(XApi.mapError(e, now: ctx.now()), ids, total, urlOf);
     } on TimeoutException catch (e) {
-      return _partial(PublishError.network('X did not answer in time: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)), ids, parts.length, urlOf);
+      return _partial(PublishError.network('X did not answer in time: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)), ids, total, urlOf);
     } on ClientException catch (e) {
-      return _partial(PublishError.network('Could not reach X: ${e.message}', raw: NeforumHttp.transportDetails(e)), ids, parts.length, urlOf);
+      return _partial(PublishError.network('Could not reach X: ${e.message}', raw: NeforumHttp.transportDetails(e)), ids, total, urlOf);
     }
     return PublishResult.ok(
       remoteId: ids.first,
       remoteUrl: urlOf(ids.first),
-      threadRemoteIds: parts.length > 1 ? ids : const [],
+      threadRemoteIds: ids.length > 1 ? ids : const [],
       publishedAt: ctx.now(),
     );
+  }
+
+  /// The X media ids of [media], in order: uploaded now, or earlier in this
+  /// publish ([uploaded], which gets the new ones).
+  static Future<List<String>> _upload(XApi api, List<MediaAttachment> media, Map<String, String> uploaded) async {
+    final missing = [for (final m in media) if (!uploaded.containsKey(_mediaKey(m))) m];
+    if (missing.isNotEmpty) {
+      final got = await api.uploadAll(missing);
+      for (var k = 0; k < missing.length; k++) {
+        uploaded[_mediaKey(missing[k])] = got[k];
+      }
+    }
+    return [for (final m in media) uploaded[_mediaKey(m)]!];
+  }
+
+  static String _mediaKey(MediaAttachment m) => '${m.id}\u0000${m.path}';
+
+  /// Records on the account what X answered a large media post (saved by the
+  /// publish run) and returns the account with it.
+  static Future<ConnectedAccount> _learn(ConnectedAccount account, AdapterContext ctx, {required bool accepted}) async {
+    final record = XLargeMediaRecord(accepted: accepted, at: ctx.now()).toConfig();
+    await ctx.updateAccountConfig({XMediaCapacity.configKey: record});
+    return account.copyWith(config: {...account.config, XMediaCapacity.configKey: record});
   }
 
   @override

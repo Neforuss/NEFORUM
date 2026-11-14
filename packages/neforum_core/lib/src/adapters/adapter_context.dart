@@ -4,7 +4,9 @@ import '../auth/auth_broker.dart';
 import '../http/neforum_http.dart';
 import '../io/media_reader_stub.dart' if (dart.library.io) '../io/media_reader_io.dart';
 import '../media_hosts/media_host.dart';
+import '../model/account.dart';
 import '../model/media.dart';
+import '../model/post_variant.dart';
 import '../model/publish_result.dart';
 import '../publish/cancellation_signal.dart';
 import '../publish/publish_pause_signal.dart';
@@ -40,6 +42,8 @@ class AdapterContext {
     this.createRecorder,
     this.pause,
     this.livePostCount = 0,
+    this.onAccountConfig,
+    this.replan,
   })  : _baseHttp = http,
         log = log ?? Logger('adapter'),
         now = clock ?? systemClock,
@@ -98,6 +102,31 @@ class AdapterContext {
   /// Posts of this target that are already live when this call starts: the
   /// earlier posts of a series. A failure then must not say nothing was posted.
   final int livePostCount;
+
+  /// Saves what the adapter learned about the account while it published
+  /// (X: whether it takes 20 photos and videos in one post) into the stored
+  /// account's [ConnectedAccount.config]: each key of the map replaces that
+  /// key, a null value removes it. Absent outside a publish run.
+  final Future<void> Function(Map<String, Object?> changes)? onAccountConfig;
+
+  /// The target's post resolved again for [account] (an account whose
+  /// limits changed, see [onAccountConfig]), checked as a publish checks it:
+  /// null when the new plan has errors or no post is at hand. For an adapter
+  /// that finds out mid-publish that the plan does not fit the network, and
+  /// posts the new plan instead, once, before anything went live.
+  final Future<PostVariant?> Function(ConnectedAccount account)? replan;
+
+  /// [onAccountConfig], whose failure only gets a log line: what was learned
+  /// is a hint, and the post must not fail over it.
+  Future<void> updateAccountConfig(Map<String, Object?> changes) async {
+    final save = onAccountConfig;
+    if (save == null) return;
+    try {
+      await save(changes);
+    } on Object catch (e) {
+      log.warn('Could not save what was learned about the account: $e');
+    }
+  }
 
   bool get isCancelled => cancellation?.isCancelled ?? false;
 
@@ -350,5 +379,7 @@ class AdapterContext {
         createRecorder: createRecorder,
         pause: pause,
         livePostCount: livePostCount ?? this.livePostCount,
+        onAccountConfig: onAccountConfig,
+        replan: replan,
       );
 }

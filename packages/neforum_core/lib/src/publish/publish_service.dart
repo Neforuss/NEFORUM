@@ -280,6 +280,8 @@ class PublishService {
     String? networkName,
     CreateRecorder? createRecorder,
     PublishPauseSignal? pause,
+    Future<void> Function(Map<String, Object?> changes)? onAccountConfig,
+    Future<PostVariant?> Function(ConnectedAccount account)? replan,
   }) =>
       AdapterContext(
         http: http,
@@ -295,6 +297,8 @@ class PublishService {
         networkName: networkName,
         createRecorder: createRecorder,
         pause: pause,
+        onAccountConfig: onAccountConfig,
+        replan: replan,
       );
 
   // ---------------------------------------------------------------------
@@ -1066,6 +1070,16 @@ class PublishService {
       networkName: adapter.descriptor.name,
       createRecorder: journal == null ? null : _JournalCreateRecorder(journal, post.id, target.accountId, log),
       pause: pause,
+      onAccountConfig: (changes) => _updateAccountConfig(account.id, changes),
+      replan: (changed) async {
+        final again = resolver.resolve(post, target, adapter.descriptorForAccount(changed), account: changed);
+        final problems = [
+          ...again.issues,
+          ...adapter.validate(again, changed),
+          for (final s in again.seriesPosts) ...adapter.validate(s, changed),
+        ];
+        return problems.hasErrors ? null : again;
+      },
     );
 
     final PostVariant variant;
@@ -1423,6 +1437,38 @@ class PublishService {
     final stored = await accounts.get(accountId);
     if (stored == null || stored.lastError == message) return;
     await accounts.upsert(message == null ? stored.copyWith(clearLastError: true) : stored.copyWith(lastError: message));
+  }
+
+  /// [AdapterContext.onAccountConfig]: [changes] merged into the config of the
+  /// account as stored now (null removes a key), for the reason
+  /// [_setLastError] gives. Nothing is written when nothing changes.
+  Future<void> _updateAccountConfig(String accountId, Map<String, Object?> changes) async {
+    final stored = await accounts.get(accountId);
+    if (stored == null) return;
+    final config = {...stored.config};
+    for (final e in changes.entries) {
+      if (e.value == null) {
+        config.remove(e.key);
+      } else {
+        config[e.key] = e.value;
+      }
+    }
+    if (_sameJson(config, stored.config)) return;
+    await accounts.upsert(stored.copyWith(config: config));
+  }
+
+  static bool _sameJson(Object? a, Object? b) {
+    if (a is Map && b is Map) {
+      return a.length == b.length && a.keys.every((k) => b.containsKey(k) && _sameJson(a[k], b[k]));
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_sameJson(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
   }
 
   /// Runs [step] and only logs when it fails.

@@ -146,10 +146,20 @@ class MediaRules {
     this.audioAsVideoWhenPossible = false,
     this.audioVideoFrameRate,
     this.audioVideoMaxFrames,
+    this.maxItems,
+    this.gifAlone = false,
   });
 
   final int maxImages;
   final int maxVideos;
+
+  /// Most photos and videos together in one post, where that is less than
+  /// [maxImages] plus [maxVideos] (X: 20 of any mix). Null: no limit beyond
+  /// the two.
+  final int? maxItems;
+
+  /// An animated GIF goes in a post of its own (X).
+  final bool gifAlone;
   final bool requiresMedia;
   final bool allowsMixedImageVideo;
   final int? imageMaxBytes;
