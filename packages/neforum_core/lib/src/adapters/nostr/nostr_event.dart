@@ -19,6 +19,9 @@ abstract final class NostrKind {
   /// NIP-01 short text note.
   static const int textNote = 1;
 
+  /// NIP-65 relay list metadata (the user's read and write relays).
+  static const int relayList = 10002;
+
   /// NIP-42 client authentication.
   static const int clientAuth = 22242;
 
@@ -68,6 +71,34 @@ class NostrEvent {
 
   /// NIP-19 `note1...` encoding of [id].
   String get noteId => Nip19.encode('note', id);
+
+  /// Reads an event a relay sent. Returns null when a field is missing or
+  /// malformed, or when [id] is not the hash of the other fields, so a relay
+  /// cannot pass off a different event under a known id. [verifySignature]
+  /// also checks the BIP-340 signature (slower; needed when the content is
+  /// trusted, such as a relay list).
+  static NostrEvent? fromJson(Object? json, {bool verifySignature = false}) {
+    if (json is! Map) return null;
+    final id = json['id'], pubkey = json['pubkey'], createdAt = json['created_at'];
+    final kind = json['kind'], rawTags = json['tags'], content = json['content'], sig = json['sig'];
+    if (id is! String || pubkey is! String || createdAt is! int || kind is! int || content is! String || sig is! String) return null;
+    if (rawTags is! List || !_hex64.hasMatch(id) || !_hex64.hasMatch(pubkey)) return null;
+    final tags = <List<String>>[];
+    for (final t in rawTags) {
+      if (t is! List || t.any((v) => v is! String)) return null;
+      tags.add(t.cast<String>().toList());
+    }
+    final expected = nostrEventId(pubkey: pubkey, createdAt: createdAt, kind: kind, tags: tags, content: content);
+    if (expected != id.toLowerCase()) return null;
+    if (verifySignature) {
+      try {
+        if (!bip340.verify(pubkey, expected, sig)) return null;
+      } on Object {
+        return null;
+      }
+    }
+    return NostrEvent(id: expected, pubkey: pubkey.toLowerCase(), createdAt: createdAt, kind: kind, tags: tags, content: content, sig: sig);
+  }
 }
 
 /// Builds the canonical NIP-01 serialisation

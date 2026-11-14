@@ -1,14 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:bip340/bip340.dart' as bip340;
 import 'package:crypto/crypto.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/nostr/nostr_adapter.dart';
+import 'package:neforum_core/src/adapters/nostr/nostr_broadcast.dart';
 import 'package:neforum_core/src/adapters/nostr/nostr_event.dart';
 import 'package:neforum_core/src/adapters/nostr/nostr_relay.dart';
+import 'package:neforum_core/src/adapters/nostr/nostr_relay_list.dart';
 import 'package:test/test.dart';
 
 import '../support/test_context.dart';
@@ -25,12 +30,14 @@ final int nowSecs = testNow.millisecondsSinceEpoch ~/ 1000;
 /// How a fake relay reacts to an incoming client message.
 typedef RelayScript = void Function(FakeRelay relay, List<dynamic> message);
 
-/// In-memory relay: records every frame and answers via [script].
+/// In-memory relay: records every frame and answers via [script]. [store] is
+/// what the relay has, shared by every connection to the same relay.
 class FakeRelay implements RelayConnection {
-  FakeRelay(this.url, this.script);
+  FakeRelay(this.url, this.script, {Map<String, Map<String, dynamic>>? store}) : store = store ?? {};
 
   final String url;
   final RelayScript script;
+  final Map<String, Map<String, dynamic>> store;
   final StreamController<String> _out = StreamController<String>();
   final List<List<dynamic>> sent = [];
   bool closed = false;
@@ -39,6 +46,9 @@ class FakeRelay implements RelayConnection {
         for (final m in sent)
           if (m[0] == 'EVENT') Map<String, dynamic>.from(m[1] as Map),
       ];
+
+  /// How many frames of [type] the client sent.
+  int count(String type) => sent.where((m) => m[0] == type).length;
 
   @override
   Stream<String> get messages => _out.stream;
@@ -54,10 +64,30 @@ class FakeRelay implements RelayConnection {
     if (!_out.isClosed) _out.add(jsonEncode(message));
   }
 
+  /// Keeps the event of an EVENT frame.
+  void keep(List<dynamic> m) {
+    final e = Map<String, dynamic>.from(m[1] as Map);
+    store[e['id'] as String] = e;
+  }
+
+  /// Answers a REQ for ids from [store], then EOSE.
+  void answerReq(List<dynamic> m) {
+    final filter = m[2] as Map;
+    for (final id in (filter['ids'] as List? ?? const [])) {
+      if (store[id] case final e?) reply(['EVENT', m[1], e]);
+    }
+    reply(['EOSE', m[1]]);
+  }
+
+  /// The relay ends the connection.
+  Future<void> drop() => _out.close();
+
   @override
   Future<void> close() async {
     closed = true;
-    await _out.close();
+    // Not awaited: with the listener gone, close() hands back a future of the
+    // root zone, which the fake clock never runs.
+    if (!_out.isClosed) unawaited(_out.close());
   }
 }
 
@@ -73,22 +103,94 @@ RelayScript rejectWith(String message) => (r, m) {
 
 void silent(FakeRelay r, List<dynamic> m) {}
 
+/// Stores every note. Says OK after [okAfter] (never when null). Answers a
+/// REQ for ids when [answersReq].
+RelayScript storing({Duration? okAfter, bool answersReq = true}) => (r, m) {
+      if (m[0] == 'EVENT') {
+        r.keep(m);
+        if (okAfter != null) Timer(okAfter, () => r.reply(['OK', eventIdOf(m), true, '']));
+      } else if (m[0] == 'REQ' && answersReq) {
+        r.answerReq(m);
+      }
+    };
+
+/// Never says OK and never keeps the note, but answers a REQ (EOSE).
+void dropsNotes(FakeRelay r, List<dynamic> m) {
+  if (m[0] == 'REQ') r.answerReq(m);
+}
+
+/// Short waits for tests that run on the real clock.
+const quickTimings = NostrRelayTimings(
+  connect: Duration(milliseconds: 200),
+  connectGrace: Duration(milliseconds: 50),
+  ok: Duration(milliseconds: 200),
+  retryOk: Duration(milliseconds: 100),
+  lookup: Duration(milliseconds: 100),
+  retryDelays: [Duration(milliseconds: 10), Duration(milliseconds: 10)],
+  settle: Duration(milliseconds: 50),
+  progressEvery: Duration.zero,
+  auth: Duration(milliseconds: 200),
+);
+
 /// Builds an adapter whose relays are [FakeRelay]s keyed by URL. A missing
-/// script means the connection fails.
-({NostrAdapter adapter, Map<String, FakeRelay> relays}) harness(Map<String, RelayScript?> scripts) {
+/// script means the connection fails. [connectDelay] holds a relay's socket
+/// back that long (forever when [Duration.zero] is not enough: see the test).
+({NostrAdapter adapter, Map<String, FakeRelay> relays, Map<String, int> connects}) harness(
+  Map<String, RelayScript?> scripts, {
+  NostrRelayTimings timings = quickTimings,
+  Map<String, Duration> connectDelay = const {},
+}) {
   final relays = <String, FakeRelay>{};
+  final stores = <String, Map<String, Map<String, dynamic>>>{};
+  final connects = <String, int>{};
   final adapter = NostrAdapter(
-    relayTimeout: const Duration(milliseconds: 200),
-    connectTimeout: const Duration(milliseconds: 200),
+    timings: timings,
     mediaPollInterval: Duration.zero,
     random: Random(1),
     connector: (uri) async {
-      final script = scripts[uri.toString()];
+      final url = uri.toString();
+      connects[url] = (connects[url] ?? 0) + 1;
+      final delay = connectDelay[url];
+      if (delay != null) await Future<void>.delayed(delay);
+      final script = scripts[url];
       if (script == null) throw StateError('connection refused');
-      return relays[uri.toString()] = FakeRelay(uri.toString(), script);
+      return relays[url] = FakeRelay(url, script, store: stores.putIfAbsent(url, () => {}));
     },
   );
-  return (adapter: adapter, relays: relays);
+  return (adapter: adapter, relays: relays, connects: connects);
+}
+
+/// Runs [body] on a fake clock: timers fire as [FakeAsync.elapse] moves time,
+/// so the real default waits (20 s and more) take no real time.
+void onFakeClock(void Function(FakeAsync clock) body) => FakeAsync().run(body);
+
+/// A publish running on the fake clock: [result] and [took] fill in when it
+/// ends.
+class FakeClockPublish {
+  FakeClockPublish(FakeAsync clock, NostrAdapter adapter, PostVariant variant, ConnectedAccount account, AdapterContext ctx) {
+    final start = clock.elapsed;
+    adapter.publish(variant, account, secrets, ctx).then((r) {
+      result = r;
+      took = clock.elapsed - start;
+    });
+  }
+
+  PublishResult? result;
+  Duration? took;
+}
+
+/// An [AdapterContext] that keeps its progress messages and log lines.
+({AdapterContext ctx, List<String> progress, List<String> log}) recordingContext() {
+  final progress = <String>[];
+  final log = <String>[];
+  final ctx = AdapterContext(
+    http: NeforumHttp(client: MockClient(noHttp)),
+    clock: () => testNow,
+    onProgress: progress.add,
+    networkName: 'Nostr',
+    log: Logger('test', sink: (level, area, msg, [err]) => log.add('[${level.name}] $msg')),
+  );
+  return (ctx: ctx, progress: progress, log: log);
 }
 
 ConnectedAccount nostrAccount({List<String>? relays, String? nip96}) => fakeAccount('nostr', config: {
@@ -225,7 +327,7 @@ void main() {
     });
 
     test('empty relays fall back to defaults; empty media server disables NIP-96', () async {
-      final r = await NostrAdapter().connect(PlatformTier.openApi,
+      final r = await NostrAdapter(connector: (_) async => throw StateError('offline')).connect(PlatformTier.openApi,
           {'privateKey': nip19NsecHex, 'relays': '', 'nip96Server': ''}, testContext(handler: noHttp));
       expect(r.account.config['relays'], nostrDefaultRelays);
       expect(r.account.config['nip96Server'], '');
@@ -635,6 +737,491 @@ void main() {
       expect(res.error?.kind, PublishErrorKind.validation);
       expect(res.error?.message, contains('Part 2 of 2'));
       expect(res.error?.message, contains('https://njump.me/note1'));
+    });
+  });
+
+  // 1.4.3: "wss://nos.lol: timeout (no OK within 8s); wss://relay.primal.net:
+  // timeout (no OK within 8s)". A silent relay is no longer a failure: the wait
+  // is longer and says how long it has been, a relay still silent is asked for
+  // the note by its id, the note is sent again with backoff, and the publish
+  // fails only when no relay has the note. These run the real default waits
+  // on a fake clock.
+  group('slow, silent and picky relays', () {
+    const one = ['wss://a.example'];
+    const defaults = NostrRelayTimings();
+
+    test('an OK after 15 s is a success (it was a failure at 8 s)', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': storing(okAfter: const Duration(seconds: 15))}, timings: defaults);
+        final r = recordingContext();
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), r.ctx);
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(p.took, const Duration(seconds: 15));
+        expect(h.relays['wss://a.example']!.count('REQ'), 0, reason: 'the OK came within the first wait');
+        expect(r.progress, containsAllInOrder(<String>[
+          'Sending note to 1 relay',
+          'Waiting for the relays to confirm the note (5 s)',
+          'Waiting for the relays to confirm the note (10 s)',
+        ]));
+      });
+    });
+
+    test('an OK later than the first wait still counts while the relay is checked', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': storing(okAfter: const Duration(seconds: 25), answersReq: false)}, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(p.took, const Duration(seconds: 25));
+        expect(h.relays['wss://a.example']!.count('REQ'), 1);
+        expect(h.relays['wss://a.example']!.count('EVENT'), 1);
+      });
+    });
+
+    test('no OK ever, but the relay has the note: the REQ for its id finds it', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': storing()}, timings: defaults);
+        final r = recordingContext();
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), r.ctx);
+        clock.elapse(const Duration(minutes: 5));
+        final relay = h.relays['wss://a.example']!;
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(p.took, const Duration(seconds: 20));
+        expect(p.result?.remoteId, relay.events.single['id']);
+        final req = relay.sent.firstWhere((m) => m[0] == 'REQ');
+        expect(req[2], {
+          'ids': [relay.events.single['id']],
+        });
+        expect(relay.sent.last, ['CLOSE', req[1]], reason: 'the check closes its subscription');
+        expect(r.progress, contains('No relay has confirmed the note yet. Checking whether a relay has it'));
+        expect(r.log, contains(contains('has the note although it sent no OK')));
+      });
+    });
+
+    test('a relay that drops notes: sent again with backoff, then a clean failure that says nothing was posted', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': dropsNotes}, timings: defaults);
+        final r = recordingContext();
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), r.ctx);
+        clock.elapse(const Duration(minutes: 5));
+        final relay = h.relays['wss://a.example']!;
+        final err = p.result?.error;
+        expect(err?.kind, PublishErrorKind.network);
+        expect(err?.outcomeUnknown, isNot(isTrue), reason: 'every relay was asked and has nothing');
+        expect(err?.retryable, isTrue);
+        expect(err?.message, contains('none of them has it'));
+        expect(err?.raw, contains('checked: it does not have the note'));
+        // 20 s wait, check, 2 s, resend, 10 s, check, 5 s, resend, 10 s, check.
+        expect(p.took, const Duration(seconds: 47));
+        expect(relay.count('EVENT'), 3);
+        expect(relay.count('REQ'), 3);
+        expect({for (final e in relay.events) e['id']}, hasLength(1), reason: 'the same signed note each time, so no duplicate');
+        expect(r.progress, containsAllInOrder(<String>['Sending the note again (try 2 of 3)', 'Sending the note again (try 3 of 3)']));
+      });
+    });
+
+    test('a relay that answers nothing at all: the note may be live, so the outcome stays unknown', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': silent}, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        final err = p.result?.error;
+        expect(err?.kind, PublishErrorKind.network);
+        expect(err?.outcomeUnknown, isTrue);
+        expect(err?.retryable, isFalse);
+        expect(err?.raw, contains('no answer when asked for the note'));
+        // 20 + 8 + 2 + 10 + 8 + 5 + 10 + 8.
+        expect(p.took, const Duration(seconds: 71));
+        expect(h.relays['wss://a.example']!.closed, isTrue);
+      });
+    });
+
+    test('success as soon as one relay accepts: a hanging relay costs 2 s, not 20', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': acceptAll, 'wss://b.example': silent}, timings: defaults);
+        final r = recordingContext();
+        final p = FakeClockPublish(
+            clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: ['wss://a.example', 'wss://b.example']), r.ctx);
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(p.took, defaults.settle);
+        expect(h.relays['wss://b.example']!.count('EVENT'), 1, reason: 'the silent relay got the note too');
+        expect(h.relays['wss://b.example']!.count('REQ'), 0);
+        expect(r.log, contains('[warn] Nostr relay wss://b.example: timeout (no OK)'));
+      });
+    });
+
+    test('a relay that refuses (OK false) is not asked again and the failure is definite', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': rejectWith('invalid: bad signature')}, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.error?.kind, PublishErrorKind.validation);
+        expect(p.result?.error?.outcomeUnknown, isNot(isTrue));
+        expect(p.took, Duration.zero);
+        expect(h.relays['wss://a.example']!.count('EVENT'), 1);
+        expect(h.relays['wss://a.example']!.count('REQ'), 0);
+      });
+    });
+
+    test('one relay rate-limits, the other drops the note: nothing is live and the rate limit explains why', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': rejectWith('rate-limited: slow down'), 'wss://b.example': dropsNotes}, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'),
+            nostrAccount(relays: ['wss://a.example', 'wss://b.example']), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.error?.kind, PublishErrorKind.quota);
+        expect(p.result?.error?.outcomeUnknown, isNot(isTrue));
+        expect(h.relays['wss://a.example']!.count('EVENT'), 1, reason: 'a refusal is final');
+        expect(h.relays['wss://b.example']!.count('EVENT'), 3);
+      });
+    });
+
+    test('a relay that asks for NIP-42 sign-in when the socket opens is answered, then takes the note', () {
+      onFakeClock((clock) {
+        FakeRelay? relay;
+        final adapter = NostrAdapter(
+          timings: defaults,
+          random: Random(1),
+          connector: (uri) async {
+            relay = FakeRelay(uri.toString(), (r, m) {
+              final authed = r.sent.any((x) => x[0] == 'AUTH');
+              if (m[0] == 'AUTH') r.reply(['OK', eventIdOf(m), true, '']);
+              if (m[0] == 'EVENT') r.reply(['OK', eventIdOf(m), authed, authed ? '' : 'auth-required: sign in first']);
+            });
+            relay!.reply(['AUTH', 'challenge-on-open']);
+            return relay!;
+          },
+        );
+        final p = FakeClockPublish(clock, adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        // The challenge is answered whenever it is read: before the note, or
+        // after the relay refused the note for want of a sign-in.
+        expect(relay!.sent.map((m) => m[0]), anyOf(equals(['AUTH', 'EVENT']), equals(['EVENT', 'AUTH', 'EVENT'])));
+        final auth = Map<String, dynamic>.from(relay!.sent.firstWhere((m) => m[0] == 'AUTH')[1] as Map);
+        expectValidEvent(auth);
+        expect(tagsOf(auth), [
+          ['relay', 'wss://a.example'],
+          ['challenge', 'challenge-on-open'],
+        ]);
+      });
+    });
+
+    test('a relay that refuses the sign-in: a definite configuration error, no endless resends', () {
+      onFakeClock((clock) {
+        final h = harness({
+          'wss://a.example': (r, m) {
+            if (m[0] == 'EVENT') {
+              r.reply(['AUTH', 'c1']);
+              r.reply(['OK', eventIdOf(m), false, 'auth-required: members only']);
+            } else if (m[0] == 'AUTH') {
+              r.reply(['OK', eventIdOf(m), false, 'restricted: not a member']);
+            }
+          },
+        }, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.error?.kind, PublishErrorKind.configuration);
+        expect(p.result?.error?.outcomeUnknown, isNot(isTrue));
+        expect(h.relays['wss://a.example']!.count('EVENT'), 1);
+        expect(p.took, lessThan(const Duration(seconds: 1)));
+      });
+    });
+
+    test('a connection lost after the note went out: opened again, and the note is found there', () {
+      onFakeClock((clock) {
+        final h = harness({
+          'wss://a.example': (r, m) {
+            if (m[0] == 'EVENT') {
+              r.keep(m);
+              r.drop();
+            } else if (m[0] == 'REQ') {
+              r.answerReq(m);
+            }
+          },
+        }, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(h.connects['wss://a.example'], 2);
+        expect(p.took, lessThan(const Duration(seconds: 1)));
+      });
+    });
+
+    test('a relay whose socket never opens holds the note back 3 s, not 8', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': acceptAll, 'wss://b.example': acceptAll},
+            timings: defaults, connectDelay: {'wss://b.example': const Duration(hours: 1)});
+        final p = FakeClockPublish(
+            clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: ['wss://a.example', 'wss://b.example']), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(p.took, defaults.connectGrace);
+        expect(h.relays['wss://b.example'], isNull);
+      });
+    });
+
+    test('a relay that opens late gets the note when it is sent again', () {
+      onFakeClock((clock) {
+        final h = harness({'wss://a.example': dropsNotes, 'wss://b.example': acceptAll},
+            timings: defaults, connectDelay: {'wss://b.example': const Duration(seconds: 6)});
+        final p = FakeClockPublish(
+            clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: ['wss://a.example', 'wss://b.example']), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(h.relays['wss://b.example']!.count('EVENT'), 1);
+        // 3 s grace, 20 s wait, check, 2 s, b takes it, then 2 s for a to say something.
+        expect(p.took, const Duration(seconds: 27));
+      });
+    });
+
+    test('a NOTICE instead of an OK ends up in the details', () {
+      onFakeClock((clock) {
+        final h = harness({
+          'wss://a.example': (r, m) {
+            if (m[0] == 'EVENT') r.reply(['NOTICE', 'blocked: spam detected']);
+            if (m[0] == 'REQ') r.answerReq(m);
+          },
+        }, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.error?.raw, contains('NOTICE: blocked: spam detected'));
+        expect(p.result?.error?.outcomeUnknown, isNot(isTrue));
+      });
+    });
+
+    test('a forged event under the note\'s id does not count as found', () {
+      onFakeClock((clock) {
+        final h = harness({
+          'wss://a.example': (r, m) {
+            if (m[0] == 'EVENT') r.keep(m);
+            if (m[0] == 'REQ') {
+              final id = ((m[2] as Map)['ids'] as List).single as String;
+              r.reply(['EVENT', m[1], {...r.store[id]!, 'content': 'not what you wrote'}]);
+              r.reply(['EOSE', m[1]]);
+            }
+          },
+        }, timings: defaults);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), testContext(handler: noHttp));
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isFalse);
+        expect(p.result?.error?.message, contains('none of them has it'));
+      });
+    });
+
+    test('Cancel during the check ends the publish at once and closes the relay', () {
+      onFakeClock((clock) {
+        final signal = CancellationSignal();
+        final h = harness({'wss://a.example': silent}, timings: defaults);
+        final ctx = AdapterContext(http: NeforumHttp(client: MockClient(noHttp)), cancellation: signal, networkName: 'Nostr', clock: () => testNow);
+        final p = FakeClockPublish(clock, h.adapter, const PostVariant(text: 'gm'), nostrAccount(relays: one), ctx);
+        clock.elapse(const Duration(seconds: 22));
+        expect(h.relays['wss://a.example']!.count('REQ'), 1);
+        signal.cancel();
+        clock.flushMicrotasks();
+        expect(p.result?.error?.kind, PublishErrorKind.cancelled);
+        expect(p.result?.error?.outcomeUnknown, isTrue);
+        expect(h.relays['wss://a.example']!.closed, isTrue);
+        clock.elapse(const Duration(minutes: 5));
+        expect(h.relays['wss://a.example']!.count('EVENT'), 1, reason: 'nothing is sent after Cancel');
+      });
+    });
+
+    test('thread: each part waits for its own confirmation and says which part', () {
+      onFakeClock((clock) {
+        var n = 0;
+        final h = harness({
+          'wss://a.example': (r, m) {
+            if (m[0] != 'EVENT') return;
+            final late = ++n == 1;
+            Timer(Duration(seconds: late ? 12 : 0), () => r.reply(['OK', eventIdOf(m), true, '']));
+          },
+        }, timings: defaults);
+        final r = recordingContext();
+        final p = FakeClockPublish(
+            clock, h.adapter, const PostVariant(text: 'one', threadParts: ['one', 'two']), nostrAccount(relays: one), r.ctx);
+        clock.elapse(const Duration(minutes: 5));
+        expect(p.result?.success, isTrue, reason: '${p.result?.error}');
+        expect(p.result?.threadRemoteIds, hasLength(2));
+        expect(r.progress, contains('Waiting for the relays to confirm part 1 of 2 (10 s)'));
+        expect(p.took, const Duration(seconds: 12));
+      });
+    });
+  });
+
+  group('RelaySession', () {
+    test('a REQ answered with CLOSED auth-required is asked again after the sign-in', () async {
+      final keys = NostrKeys.parse(nip19NsecHex);
+      late FakeRelay relay;
+      final opened = await RelaySession.open(
+        'wss://a.example',
+        (uri) async => relay = FakeRelay(uri.toString(), (r, m) {
+          if (m[0] == 'REQ') {
+            if (r.sent.any((x) => x[0] == 'AUTH')) {
+              r.answerReq(m);
+            } else {
+              r.reply(['AUTH', 'c']);
+              r.reply(['CLOSED', m[1], 'auth-required: read needs sign-in']);
+            }
+          } else if (m[0] == 'AUTH') {
+            r.reply(['OK', eventIdOf(m), true, '']);
+          }
+        }),
+        timeout: const Duration(seconds: 1),
+        signAuth: (relay, challenge) => keys.sign(kind: NostrKind.clientAuth, content: '', createdAt: nowSecs, tags: [
+          ['relay', relay],
+          ['challenge', challenge],
+        ]),
+        log: Logger('test'),
+      );
+      final session = opened.session!;
+      expect(await session.lookup('ab' * 32, const Duration(seconds: 1)), RelayLookupStatus.missing);
+      expect(relay.sent.map((m) => m[0]), ['REQ', 'AUTH', 'REQ', 'CLOSE']);
+      await session.close();
+    });
+  });
+
+  group('relay list (NIP-65)', () {
+    final keys = NostrKeys.parse(nip19NsecHex);
+
+    NostrEvent relayList(int createdAt, List<List<String>> tags) =>
+        keys.sign(kind: NostrKind.relayList, content: '', createdAt: createdAt, tags: tags, random: Random(2));
+
+    test('write relays are r tags with no marker or "write", normalised, in order', () {
+      final e = relayList(1, [
+        ['r', 'wss://both.example/'],
+        ['r', 'wss://read.example', 'read'],
+        ['r', 'wss://write.example', 'write'],
+        ['r', 'https://not-a-relay.example'],
+        ['r', 'wss://both.example'],
+        ['p', 'wss://not-r.example'],
+      ]);
+      expect(writeRelaysOf(e), ['wss://both.example', 'wss://write.example']);
+    });
+
+    /// A connector where only [lists] answers, with these relay list events.
+    RelayConnector indexer(List<NostrEvent> lists, {List<Uri>? asked}) => (uri) async {
+          asked?.add(uri);
+          if (uri.toString() != 'wss://purplepag.es') throw StateError('connection refused');
+          return FakeRelay(uri.toString(), (r, m) {
+            if (m[0] != 'REQ') return;
+            final f = m[2] as Map;
+            expect(f['kinds'], [10002]);
+            expect(f['authors'], [testPub]);
+            for (final e in lists) {
+              r.reply(['EVENT', m[1], e.toJson()]);
+            }
+            r.reply(['EOSE', m[1]]);
+          });
+        };
+
+    test('connecting with the default relays puts the published write relays first', () async {
+      final asked = <Uri>[];
+      final list = relayList(nowSecs - 100, [
+        ['r', 'wss://mine.example'],
+        ['r', 'wss://nos.lol'],
+        ['r', 'wss://inbox.example', 'read'],
+      ]);
+      final r = await NostrAdapter(connector: indexer([list], asked: asked))
+          .connect(PlatformTier.openApi, {'privateKey': nip19NsecHex, 'relays': nostrDefaultRelays.join('\n')}, testContext(handler: noHttp));
+      expect(r.account.config['relays'], ['wss://mine.example', 'wss://nos.lol', 'wss://relay.damus.io', 'wss://relay.primal.net', 'wss://relay.nostr.net', 'wss://offchain.pub']);
+      expect(asked.map((u) => '$u').toSet(), {...nostrDefaultRelays, ...nostrRelayListIndexers});
+    });
+
+    test('the newest list wins only when its signature is good', () async {
+      final older = relayList(nowSecs - 1000, [
+        ['r', 'wss://old.example'],
+      ]);
+      final newer = relayList(nowSecs - 10, [
+        ['r', 'wss://new.example'],
+      ]);
+      final forged = NostrEvent(
+          id: newer.id, pubkey: newer.pubkey, createdAt: newer.createdAt, kind: newer.kind, tags: newer.tags, content: newer.content, sig: older.sig);
+      final r = await NostrAdapter(connector: indexer([older, forged]))
+          .connect(PlatformTier.openApi, {'privateKey': nip19NsecHex}, testContext(handler: noHttp));
+      expect((r.account.config['relays'] as List).first, 'wss://old.example');
+      final r2 = await NostrAdapter(connector: indexer([older, newer]))
+          .connect(PlatformTier.openApi, {'privateKey': nip19NsecHex}, testContext(handler: noHttp));
+      expect((r2.account.config['relays'] as List).first, 'wss://new.example');
+    });
+
+    test('many listed relays: at most 6 from the list and 8 in all', () {
+      final listed = [for (var i = 0; i < 9; i++) 'wss://r$i.example'];
+      final merged = NostrAdapter.mergeRelayLists(listed, nostrDefaultRelays);
+      expect(merged, [...listed.take(6), ...nostrDefaultRelays.take(2)]);
+    });
+
+    test('relays the person typed are kept as they are: no lookup', () async {
+      final asked = <Uri>[];
+      final r = await NostrAdapter(connector: indexer(const [], asked: asked))
+          .connect(PlatformTier.openApi, {'privateKey': nip19NsecHex, 'relays': 'wss://own.example'}, testContext(handler: noHttp));
+      expect(r.account.config['relays'], ['wss://own.example']);
+      expect(asked, isEmpty);
+    });
+
+    test('relays that never answer cost at most the lookup time', () {
+      onFakeClock((clock) {
+        ConnectResult? result;
+        NostrAdapter(connector: (_) => Completer<RelayConnection>().future)
+            .connect(PlatformTier.openApi, {'privateKey': nip19NsecHex}, testContext(handler: noHttp))
+            .then((r) => result = r);
+        clock.elapse(const Duration(seconds: 4));
+        expect(result, isNull);
+        clock.elapse(const Duration(seconds: 1));
+        expect(result?.account.config['relays'], nostrDefaultRelays);
+      });
+    });
+  });
+
+  group('over a real WebSocket', () {
+    late HttpServer server;
+    late String url;
+    final frames = <List<dynamic>>[];
+
+    /// A relay on localhost that keeps notes, answers REQs, and says OK only
+    /// when [sayOk] is true.
+    Future<void> startRelay({required bool sayOk}) async {
+      frames.clear();
+      final store = <String, Object?>{};
+      server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      url = 'ws://127.0.0.1:${server.port}';
+      server.listen((req) async {
+        final ws = await WebSocketTransformer.upgrade(req);
+        ws.listen((raw) {
+          final m = jsonDecode(raw as String) as List<dynamic>;
+          frames.add(m);
+          if (m[0] == 'EVENT') {
+            store[eventIdOf(m)] = m[1];
+            if (sayOk) ws.add(jsonEncode(['OK', eventIdOf(m), true, '']));
+          } else if (m[0] == 'REQ') {
+            for (final id in ((m[2] as Map)['ids'] as List)) {
+              if (store[id] case final e?) ws.add(jsonEncode(['EVENT', m[1], e]));
+            }
+            ws.add(jsonEncode(['EOSE', m[1]]));
+          }
+        });
+      });
+    }
+
+    tearDown(() => server.close(force: true));
+
+    test('the default connector publishes and reads the OK', () async {
+      await startRelay(sayOk: true);
+      final res = await NostrAdapter(timings: quickTimings, random: Random(1))
+          .publish(const PostVariant(text: 'gm'), nostrAccount(relays: [url]), secrets, testContext(handler: noHttp));
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(frames.map((m) => m[0]), ['EVENT']);
+    });
+
+    test('a relay that keeps the note without an OK is confirmed by the REQ', () async {
+      await startRelay(sayOk: false);
+      final res = await NostrAdapter(timings: quickTimings, random: Random(1))
+          .publish(const PostVariant(text: 'gm'), nostrAccount(relays: [url]), secrets, testContext(handler: noHttp));
+      expect(res.success, isTrue, reason: '${res.error}');
+      expect(frames.map((m) => m[0]).take(2), ['EVENT', 'REQ']);
+      expect(res.remoteId, (frames.first[1] as Map)['id']);
     });
   });
 }

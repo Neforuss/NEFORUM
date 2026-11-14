@@ -9,23 +9,33 @@ import '../../model/post.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
 import '../../model/validation.dart';
-import '../../publish/cancellation_signal.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../platform_adapter.dart';
+import 'nostr_broadcast.dart';
 import 'nostr_event.dart';
 import 'nostr_media.dart';
 import 'nostr_relay.dart';
+import 'nostr_relay_list.dart';
 
 /// Relays used when the user does not enter their own. Widely used public
-/// relays that accept writes without payment.
+/// relays that accept writes without payment. (relay.nostr.band was dropped
+/// in 1.4.3: its socket no longer opens.)
 const List<String> nostrDefaultRelays = [
   'wss://relay.damus.io',
   'wss://nos.lol',
   'wss://relay.primal.net',
-  'wss://relay.nostr.band',
+  'wss://relay.nostr.net',
+  'wss://offchain.pub',
 ];
+
+/// At most this many relays come from the user's NIP-65 relay list.
+const int nostrMaxListedRelays = 6;
+
+/// At most this many relays in total when the relay list is merged with
+/// [nostrDefaultRelays].
+const int nostrMaxRelays = 8;
 
 /// Default NIP-96 media server (free plan: 20 MB per file, NIP-98 auth).
 const String nostrDefaultNip96Server = 'https://nostr.build';
@@ -39,8 +49,8 @@ const String nostrDefaultNip96Server = 'https://nostr.build';
 class NostrAdapter extends PlatformAdapter {
   NostrAdapter({
     RelayConnector? connector,
-    this.relayTimeout = const Duration(seconds: 8),
-    this.connectTimeout = const Duration(seconds: 8),
+    this.timings = const NostrRelayTimings(),
+    this.relayListTimeout = const Duration(seconds: 5),
     this.mediaPollInterval = const Duration(seconds: 2),
     Random? random,
   })  : _connector = connector ?? webSocketRelayConnector,
@@ -49,11 +59,11 @@ class NostrAdapter extends PlatformAdapter {
   final RelayConnector _connector;
   final Random? _random;
 
-  /// How long to wait for each relay's `OK`.
-  final Duration relayTimeout;
+  /// How long each step of sending to relays may take.
+  final NostrRelayTimings timings;
 
-  /// How long to wait for each relay's WebSocket to open.
-  final Duration connectTimeout;
+  /// How long connecting may spend reading the user's relay list (NIP-65).
+  final Duration relayListTimeout;
 
   /// Delay between polls of a NIP-96 `processing_url`.
   final Duration mediaPollInterval;
@@ -118,10 +128,25 @@ class NostrAdapter extends PlatformAdapter {
     } on FormatException catch (e) {
       throw ConnectException(e.message, field: secretPrivateKey);
     }
-    final relays = parseRelays(input[configRelays]);
+    var relays = parseRelays(input[configRelays]);
     final nip96 = _normaliseServer(input[configNip96]);
     final npub = keys.npub;
     final short = '${npub.substring(0, 12)}…${npub.substring(npub.length - 6)}';
+    if (_isDefaultList(relays)) {
+      // The person kept the defaults: their own relay list says where their
+      // notes belong (NIP-65), so it goes first.
+      ctx.progress('Looking up your relay list');
+      final listed = await fetchWriteRelays(
+        pubkey: keys.publicKeyHex,
+        from: [...relays, ...nostrRelayListIndexers],
+        connector: _connector,
+        signAuth: _authSigner(keys, () => ctx.now().toUtc().millisecondsSinceEpoch ~/ 1000),
+        log: ctx.log,
+        timeout: relayListTimeout,
+      );
+      relays = mergeRelayLists(listed, relays);
+      ctx.log.info('Nostr relay list (NIP-65): ${listed.isEmpty ? 'none found' : '${listed.length} write relays'}');
+    }
     ctx.log.info('Connected Nostr key $short with ${relays.length} relays');
     return ConnectResult(
       account: ConnectedAccount(
@@ -150,16 +175,42 @@ class NostrAdapter extends PlatformAdapter {
     final items = (raw ?? '').split(RegExp(r'[\s,]+')).map((s) => s.trim()).where((s) => s.isNotEmpty);
     final out = <String>[];
     for (final item in items) {
-      final uri = Uri.tryParse(item);
-      if (uri == null || (uri.scheme != 'wss' && uri.scheme != 'ws') || uri.host.isEmpty) {
+      final s = normaliseRelayUrl(item);
+      if (s == null) {
         throw ConnectException('"$item" is not a relay address. Relay addresses start with wss://', field: configRelays);
       }
-      var s = uri.toString();
-      if (s.endsWith('/') && uri.path == '/') s = s.substring(0, s.length - 1);
       if (!out.contains(s)) out.add(s);
     }
     return out.isEmpty ? List.of(nostrDefaultRelays) : out;
   }
+
+  /// The relays to write to: up to [nostrMaxListedRelays] from the user's
+  /// relay list first, then [others], at most [nostrMaxRelays] in all.
+  static List<String> mergeRelayLists(List<String> listed, List<String> others) {
+    final out = <String>[];
+    for (final r in listed.take(nostrMaxListedRelays)) {
+      if (!out.contains(r)) out.add(r);
+    }
+    for (final r in others) {
+      if (out.length >= nostrMaxRelays) break;
+      if (!out.contains(r)) out.add(r);
+    }
+    return out;
+  }
+
+  static bool _isDefaultList(List<String> relays) =>
+      relays.length == nostrDefaultRelays.length && relays.toSet().containsAll(nostrDefaultRelays);
+
+  AuthEventSigner _authSigner(NostrKeys keys, int Function() nowSecs) => (relay, challenge) => keys.sign(
+        kind: NostrKind.clientAuth,
+        content: '',
+        createdAt: nowSecs(),
+        random: _random,
+        tags: [
+          ['relay', relay],
+          ['challenge', challenge],
+        ],
+      );
 
   static String _normaliseServer(String? raw) {
     if (raw == null) return nostrDefaultNip96Server;
@@ -230,7 +281,7 @@ class NostrAdapter extends PlatformAdapter {
     if (account.tier == PlatformTier.handoff) {
       return PublishResult.failure(const PublishError.unsupported('This Nostr account uses hand-off: your Nostr app signs the note'));
     }
-    final sessions = <RelaySession>[];
+    RelayPool? pool;
     try {
       final keys = _keysFrom(account, secrets);
       final relays = _relaysOf(account);
@@ -249,43 +300,18 @@ class NostrAdapter extends PlatformAdapter {
       ).uploadAll(variant.media);
 
       ctx.progress('Connecting to ${relays.length} relay${relays.length == 1 ? '' : 's'}');
-      final opening = Future.wait(relays.map((r) => RelaySession.open(
-            r,
-            _connector,
-            timeout: connectTimeout,
-            log: ctx.log,
-            signAuth: (relay, challenge) => keys.sign(
-              kind: NostrKind.clientAuth,
-              content: '',
-              createdAt: nowSecs(),
-              random: _random,
-              tags: [
-                ['relay', relay],
-                ['challenge', challenge],
-              ],
-            ),
-          )));
-      final List<({RelaySession? session, RelayAck? failure})> opened;
-      try {
-        opened = await ctx.untilCancelled(opening);
-      } on OperationCancelledException {
-        // Sockets that open after Cancel have nobody left to close them.
-        unawaited(opening.then((all) async {
-          for (final o in all) {
-            if (o.session case final s?) await _closeQuietly(s);
-          }
-        }));
-        rethrow;
-      }
-      final openFailures = <RelayAck>[];
-      for (final o in opened) {
-        if (o.session != null) sessions.add(o.session!);
-        if (o.failure != null) {
-          openFailures.add(o.failure!);
-          ctx.log.warn('Nostr relay ${o.failure}');
-        }
-      }
-      if (sessions.isEmpty) throw AdapterException(classifyRelayFailures(openFailures));
+      // Sockets that open after Cancel are closed by the pool's close below.
+      final relayPool = pool = RelayPool(connector: _connector, timings: timings, signAuth: _authSigner(keys, nowSecs), log: ctx.log);
+      await ctx.untilCancelled(relayPool.openAll(relays));
+      if (relayPool.live.isEmpty) throw AdapterException(classifyRelayFailures(relayPool.openFailures));
+      final broadcast = RelayBroadcast(
+        pool: relayPool,
+        timings: timings,
+        log: ctx.log,
+        progress: ctx.progress,
+        sleep: ctx.wait,
+        checkCancelled: ctx.throwIfCancelled,
+      );
 
       final parts = variant.isThread ? variant.threadParts : [variant.text];
       final baseTime = nowSecs();
@@ -310,16 +336,41 @@ class NostrAdapter extends PlatformAdapter {
           ),
           random: _random,
         );
-        final live = sessions.where((s) => !s.isClosed).toList();
-        // A relay that never said OK may still have the note and pass it on.
-        final acks = await ctx.creating(
+        final live = relayPool.live.length;
+        final what = parts.length > 1 ? 'part ${i + 1} of ${parts.length}' : 'the note';
+        String liveParts() => 'The first $i part${i == 1 ? ' is' : 's are'} already live at https://njump.me/${Nip19.encode('note', ids.first)}';
+        final outcome = await ctx.creating(
             parts.length > 1
-                ? 'Sending part ${i + 1} of ${parts.length} to ${live.length} relays'
-                : 'Sending note to ${live.length} relay${live.length == 1 ? '' : 's'}',
-            () => ctx.untilCancelled(Future.wait(live.map((s) => s.publish(event, relayTimeout)))));
-        final accepted = acks.where((a) => a.accepted).toList();
-        if (accepted.isEmpty && acks.any((a) => a.status == RelayAckStatus.timeout || a.status == RelayAckStatus.connectionError)) {
-          final unknown = ctx.outcomeUnknownError(details: acks.map((a) => '$a').join('; '));
+                ? 'Sending part ${i + 1} of ${parts.length} to $live relays'
+                : 'Sending note to $live relay${live == 1 ? '' : 's'}',
+            () async {
+          final o = await ctx.untilCancelled(broadcast.send(event, what: what));
+          if (!o.success && o.definite) {
+            // Every relay refused the note or was asked and does not have
+            // it: nothing is live, so this failure says so (and a retry
+            // cannot post twice).
+            for (final a in o.others) {
+              ctx.log.warn('Nostr relay $a');
+            }
+            final err = classifyRelayFailures([...o.others, ...relayPool.openFailures]);
+            if (i == 0) throw AdapterException(err);
+            throw AdapterException(PublishError(
+              kind: err.kind,
+              notAllowed: err.notAllowed,
+              message: 'Part ${i + 1} of ${parts.length} was not accepted by any relay (${err.message}). ${liveParts()}',
+              statusCode: err.statusCode,
+              raw: err.raw,
+            ));
+          }
+          return o;
+        });
+        for (final a in outcome.others) {
+          ctx.log.warn('Nostr relay $a');
+        }
+        if (!outcome.success) {
+          // A relay that never answered, even when asked, may still have the
+          // note and pass it on.
+          final unknown = ctx.outcomeUnknownError(details: outcome.others.map((a) => '$a').join('; '));
           throw AdapterException(i == 0
               ? unknown
               : PublishError(
@@ -327,28 +378,14 @@ class NostrAdapter extends PlatformAdapter {
                   notAllowed: unknown.notAllowed,
                   outcomeUnknown: true,
                   raw: unknown.raw,
-                  message: '${unknown.message} The first $i part${i == 1 ? ' is' : 's are'} already live at https://njump.me/${Nip19.encode('note', ids.first)}',
+                  message: '${unknown.message} ${liveParts()}',
                 ));
         }
-        for (final a in acks.where((a) => !a.accepted)) {
-          ctx.log.warn('Nostr relay $a');
-        }
-        if (accepted.isEmpty) {
-          final err = classifyRelayFailures([...acks, ...openFailures]);
-          if (i == 0) throw AdapterException(err);
-          throw AdapterException(PublishError(
-            kind: err.kind,
-            notAllowed: err.notAllowed,
-            message: 'Part ${i + 1} of ${parts.length} was not accepted by any relay (${err.message}). '
-                'The first $i part${i == 1 ? ' is' : 's are'} already live at https://njump.me/${Nip19.encode('note', ids.first)}',
-            statusCode: err.statusCode,
-            raw: err.raw,
-          ));
-        }
+        final accepted = outcome.accepted;
         if (i == 0) rootHint = accepted.first.relay;
         ids.add(event.id);
         ctx.log.info('Nostr note ${event.noteId} accepted by ${accepted.length}/${relays.length} relays '
-            '(${accepted.map((a) => a.relay).join(', ')})');
+            '(${accepted.map((a) => a.message.isEmpty ? a.relay : '${a.relay}: ${a.message}').join(', ')})');
       }
       return PublishResult.ok(
         remoteId: ids.first,
@@ -359,20 +396,12 @@ class NostrAdapter extends PlatformAdapter {
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } finally {
-      await Future.wait(sessions.map(_closeQuietly));
+      await pool?.close();
     }
   }
 
   @override
   ProgressShape progressShape(PostVariant variant, ConnectedAccount account) => ProgressShape.forVariant(variant, ProgressFamily.waitNoNumber);
-
-  static Future<void> _closeQuietly(RelaySession s) async {
-    try {
-      await s.close();
-    } on Object {
-      // Best effort.
-    }
-  }
 
   NostrKeys _keysFrom(ConnectedAccount account, Map<String, String> secrets) {
     final raw = secrets[secretPrivateKey];
@@ -456,6 +485,12 @@ PublishError classifyRelayFailures(List<RelayAck> acks) {
   final summary = acks.map((a) => a.toString()).join('; ');
   bool any(String prefix) => acks.any((a) => a.prefix == prefix);
   if (acks.isNotEmpty && acks.every((a) => a.status != RelayAckStatus.rejected)) {
+    if (acks.any((a) => a.status == RelayAckStatus.timeout)) {
+      // Only said after every silent relay was asked and does not have it.
+      return PublishError.network(
+          'No relay confirmed the note, and none of them has it, so nothing was posted. Try again, or add other relays to the account.',
+          raw: summary);
+    }
     return PublishError.network('Could not reach any Nostr relay.', raw: summary);
   }
   if (any('rate-limited')) {
@@ -496,7 +531,7 @@ const _spec = ConnectSpec(
 
 1. Open your Nostr app (Damus, Amethyst, Primal, ...) and find the setting that shows your **private key**. It starts with `nsec1`. If you do not have one yet, any Nostr app can create it for you.
 2. Paste it below. NEFORUM keeps it in your device's secure storage and only uses it to sign your notes. Anyone with this key can post as you, so never share it.
-3. Optionally list the relays you write to (one per line). Leave the defaults if unsure.
+3. Optionally list the relays you write to (one per line). Leave the defaults if unsure: NEFORUM then also uses the relay list you published from another Nostr app.
 
 Media is uploaded to a media server (free nostr.build by default, 20 MB per file), or to your own media host if you set one up in NEFORUM settings.''',
   fields: [
@@ -513,8 +548,9 @@ Media is uploaded to a media server (free nostr.build by default, 20 MB per file
       label: 'Relays',
       kind: FieldKind.multiline,
       required: false,
-      defaultValue: 'wss://relay.damus.io\nwss://nos.lol\nwss://relay.primal.net\nwss://relay.nostr.band',
-      help: 'One wss:// address per line. A note counts as published when at least one relay accepts it.',
+      defaultValue: 'wss://relay.damus.io\nwss://nos.lol\nwss://relay.primal.net\nwss://relay.nostr.net\nwss://offchain.pub',
+      help: 'One wss:// address per line. A note counts as published when at least one relay has it. '
+          'With the defaults, NEFORUM also adds the write relays from your published relay list (NIP-65).',
     ),
     ConnectField(
       key: NostrAdapter.configNip96,
