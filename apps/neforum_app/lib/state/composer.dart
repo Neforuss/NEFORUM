@@ -307,9 +307,10 @@ class ComposerState {
     Map<String, dynamic>? textCardDesignBeforeEdits, // 1.3.5: cards
     bool clearTextCardDesign = false,
     bool clearTextCardDesignBeforeEdits = false,
+    bool clearEditingPostId = false,
   }) =>
       ComposerState(
-        editingPostId: editingPostId ?? this.editingPostId,
+        editingPostId: clearEditingPostId ? null : (editingPostId ?? this.editingPostId),
         text: text ?? this.text,
         title: clearTitle ? null : (title ?? this.title),
         link: clearLink ? null : (link ?? this.link),
@@ -412,6 +413,26 @@ class ComposerState {
   }
 }
 
+/// Whether the composer may still save over [post] as the post it edits: a draft
+/// or a scheduled post. A post that went out, is going out or failed in a run
+/// belongs to that run: its targets hold what each network answered, and words
+/// written over it are a new post. Saved over it instead, they would keep those
+/// answers (see [PostActions]), go to no network and be recorded as posted with
+/// the earlier post's links.
+bool isEditablePost(Post? post) => post != null && (post.status == PostStatus.draft || post.status == PostStatus.scheduled);
+
+/// The composer's edited post went out between the moment Publish was pressed
+/// and the moment its words were saved. Nothing was saved or sent; pressing
+/// Publish again posts the words as a new post.
+class EditedPostPublishedException implements Exception {
+  const EditedPostPublishedException();
+
+  String get message => 'This post went out while you were editing it, so your changes were not saved over it. Press Publish again to post them as a new post.';
+
+  @override
+  String toString() => message;
+}
+
 /// `PostOverrides.extra` key of a Discord target's "Mention @everyone"
 /// choice (bool), read by the Discord adapter.
 const String kMentionEveryoneKey = 'mentionEveryone';
@@ -459,6 +480,18 @@ class ComposerNotifier extends Notifier<ComposerState> {
       final style = state.textCardStyle.copyWith(shape: next.shape, layout: next.layout);
       if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
     });
+    // 1.4.3: the post being edited went out (a run outside the composer while
+    // NEFORUM was in the background, another device) or was deleted: the words
+    // stay, as a new post.
+    ref.listen<AsyncValue<List<Post>>>(postsProvider, (_, next) {
+      final posts = next.value;
+      if (posts != null) _forgetPostThatWentOut(posts);
+    });
+    return _fresh();
+  }
+
+  /// An empty post with the default targets.
+  ComposerState _fresh() {
     final settings = ref.read(settingsProvider);
     return ComposerState(
       visibility: settings.defaultVisibility,
@@ -467,6 +500,19 @@ class ComposerNotifier extends Notifier<ComposerState> {
       // Settings > Text cards picked.
       textCardStyle: settings.newTextCardStyle,
     );
+  }
+
+  /// Stops editing the saved post once [posts] say it can no longer be edited
+  /// ([isEditablePost]) or is gone. Everything written stays; publishing or
+  /// saving then makes a new post instead of writing over that post's record.
+  /// A post being published is left to [PostActions], which decides when the
+  /// words are saved (its run may be this composer's own).
+  void _forgetPostThatWentOut(List<Post> posts) {
+    final id = state.editingPostId;
+    if (id == null) return;
+    final post = posts.where((p) => p.id == id).firstOrNull;
+    if (post?.status == PostStatus.publishing || isEditablePost(post)) return;
+    state = state.copyWith(clearEditingPostId: true);
   }
 
   /// Art sites are left out: they only receive artwork (artwork_targets.dart).
@@ -912,12 +958,18 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   /// Puts back a post that was being written when NEFORUM closed
   /// (composer_draft.dart).
-  void restore(ComposerState kept) => state = kept.copyWith(revision: state.revision + 1);
+  /// The post it edited may have gone out since it was kept: it then comes back
+  /// as a new post.
+  void restore(ComposerState kept) {
+    state = kept.copyWith(revision: state.revision + 1);
+    final posts = ref.read(postsProvider).value;
+    if (posts != null) _forgetPostThatWentOut(posts);
+  }
 
   /// Starts over with the same targets. Kept art sites keep artwork mode on,
   /// with the artwork details back at their defaults.
   void reset({bool keepTargets = true}) {
-    final fresh = build();
+    final fresh = _fresh();
     state = fresh.copyWith(
       selected: keepTargets ? state.selected : fresh.selected,
       artwork: keepTargets && state.isArtwork ? newArtworkDetails(ref.read(settingsProvider)) : null,
@@ -1284,17 +1336,38 @@ class PostActions {
   /// two never overwrite each other.
   final Map<String, Future<void>> _delegations = {};
 
-  /// Saves the composer's post with [status], under [id] when given.
+  /// The saved post the composer edits, while the composer may still save over
+  /// it ([isEditablePost]). Null for a new post, and for one that went out, is
+  /// going out, failed in a run or was deleted since it was opened: its record is
+  /// that run's, and words written over it are a new post.
+  Future<Post?> _editedPost(ComposerState c) async {
+    final id = c.editingPostId;
+    if (id == null) return null;
+    final post = await ref.read(servicesProvider).posts.get(id);
+    return isEditablePost(post) ? post : null;
+  }
+
+  /// Saves the composer's post with [status]: over the post it edits while that
+  /// can still be edited ([_editedPost]), otherwise as a new post, under [id]
+  /// when given. Throws [EditedPostPublishedException], and saves nothing, when
+  /// [id] is the edited post's and that post went out since [id] was chosen.
   Future<Post> _save(PostStatus status, {String? id}) async {
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
     final now = DateTime.now();
-    final existing = c.editingPostId == null ? null : await s.posts.get(c.editingPostId!);
+    final edited = await _editedPost(c);
+    final postId = id ?? edited?.id ?? _uuid.v7();
+    if (edited == null && postId == c.editingPostId && await s.posts.get(postId) != null) throw const EditedPostPublishedException();
+    // Only the post being edited is saved over, and only its own outcomes stay.
+    final existing = edited?.id == postId ? edited : null;
     if (existing != null) await _releaseHeld(existing.id);
-    var post = c.toPost(id: id ?? c.editingPostId ?? _uuid.v7(), status: status, now: now, createdAt: existing?.createdAt);
+    var post = c.toPost(id: postId, status: status, now: now, createdAt: existing?.createdAt);
     // Networks that already have an edited post (the earlier times of a post
     // with a time per network) keep their outcome, so they never get it twice.
+    // Never those of a post that went out: the new words would go nowhere and be
+    // recorded as posted with that post's links.
     final current = existing == null ? null : await s.posts.get(existing.id);
+    if (existing != null && !isEditablePost(current)) throw const EditedPostPublishedException();
     if (current != null) {
       post = post.copyWith(targets: [
         for (final t in post.targets)
@@ -1391,10 +1464,10 @@ class PostActions {
   /// to go has a time that has passed: the scheduler would send it at once. A
   /// composer can hold such a time for as long as its draft stays open.
   Future<Post> schedule() async {
-    final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
-    final editing = c.editingPostId;
-    final existing = editing == null ? null : await s.posts.get(editing);
+    // A post that went out since it was opened is scheduled as a new one, every
+    // network included ([_save]).
+    final existing = await _editedPost(c);
     final now = ref.read(scheduleClockProvider)();
     for (final id in c.selected) {
       if (existing?.targetFor(id)?.isDone ?? false) continue;
@@ -1416,15 +1489,27 @@ class PostActions {
   /// The run is on record in the publish journal before the post is saved
   /// as publishing, so a NEFORUM that closes before the run starts leaves a
   /// post that recovery can settle.
+  ///
+  /// The post's id is the edited post's only while that post can still be
+  /// edited ([isEditablePost]). Words written over a post that went out since it
+  /// was opened are a new post: saved over it, they would keep its networks'
+  /// outcomes, go to no network and be recorded as posted with its links.
   Future<Post> publishNow() async {
     final run = ref.read(publishRunProvider.notifier);
     run.prepare();
     final s = ref.read(servicesProvider);
     final c = ref.read(composerProvider);
-    final id = c.editingPostId ?? _uuid.v7();
+    final guess = c.editingPostId ?? _uuid.v7();
     // At once, while the app is on screen: it is the one time Android lets it begin.
-    final keeper = ref.read(publishRunKeeperProvider)..begin(id);
+    final keeper = ref.read(publishRunKeeperProvider)..begin(guess);
+    var id = guess;
     try {
+      if (c.editingPostId != null && await _editedPost(c) == null) {
+        id = _uuid.v7();
+        // The new post's hold first, so the keep-alive never lapses between them.
+        keeper.begin(id);
+        unawaited(keeper.end(guess));
+      }
       try {
         await s.publishJournal.record(id);
       } on Object catch (e) {
