@@ -92,7 +92,7 @@ class OptionPill extends StatelessWidget {
             decoration: BoxDecoration(
               color: on ? nf.selectedFill : Colors.transparent,
               borderRadius: Radii.rPill,
-              border: Border.all(color: on ? nf.selectedFill : nf.border),
+              border: Border.all(color: on ? nf.selectedFill : nf.hairline),
             ),
             child: IconTheme.merge(
               data: IconThemeData(color: on ? fg : nf.textFaint, size: 14),

@@ -75,7 +75,7 @@ ChipThemeData selectionChipTheme(NfColors c, TextTheme text, {required bool dens
     disabledColor: c.surfaceSunken,
     side: WidgetStateBorderSide.resolveWith((s) {
       if (s.contains(WidgetState.selected)) return BorderSide(color: fill);
-      return BorderSide(color: s.contains(WidgetState.disabled) ? c.border : c.unselectedBorder);
+      return BorderSide(color: s.contains(WidgetState.disabled) ? c.hairline : c.unselectedBorder);
     }),
     shape: RoundedRectangleBorder(borderRadius: Radii.rPill),
     labelStyle: text.labelMedium?.copyWith(
@@ -112,7 +112,7 @@ SegmentedButtonThemeData selectionSegmentedButtonTheme(NfColors c, TextTheme tex
         return s.contains(WidgetState.disabled) ? c.textFaint : c.textMuted;
       }),
       overlayColor: WidgetStateProperty.resolveWith((s) => (s.contains(WidgetState.selected) ? c.onSelectedFill : c.text).withValues(alpha: 0.08)),
-      side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.disabled) ? c.border : c.unselectedBorder)),
+      side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.disabled) ? c.hairline : c.unselectedBorder)),
       textStyle: WidgetStateProperty.all(text.labelMedium),
       shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rSm)),
       padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: Space.md, vertical: dense ? Space.xs : Space.sm)),

@@ -341,7 +341,7 @@ class _ChromePreview extends StatelessWidget {
       Container(
         key: const Key('chrome-preview'),
         padding: const EdgeInsets.all(Space.sm),
-        decoration: BoxDecoration(color: fill, borderRadius: Radii.rSm, border: Border.all(color: nf.border)),
+        decoration: BoxDecoration(color: fill, borderRadius: Radii.rSm, border: Border.all(color: nf.hairline)),
         child: Wrap(spacing: Space.md, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
           Container(
             padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs),
