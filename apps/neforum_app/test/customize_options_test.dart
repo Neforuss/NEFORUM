@@ -150,8 +150,12 @@ void main() {
           expect(find.text(o.gate!), findsWidgets, reason: '${a.platformId}: the gate of ${o.key} is explained');
         }
       }
-      // Nothing that is not declared for this account's tier.
-      final shown = find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('option-'));
+      // Nothing that is not declared for this account's tier. Only the sheet
+      // counts: the previews behind it have keys of their own
+      // ('option-pill-check' on a pill that is on).
+      final shown = find.descendant(
+          of: find.byType(CustomizeSheet),
+          matching: find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('option-')));
       expect(shown.evaluate().length, options.where((o) => o.surface != PostOptionSurface.dedicated).length, reason: a.platformId);
       await tester.tap(find.text('Cancel'));
       await settle(tester);
