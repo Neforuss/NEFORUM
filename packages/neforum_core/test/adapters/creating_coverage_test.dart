@@ -50,7 +50,7 @@ void main() {
     final api = {for (final a in builtinAdapters()) if (a.descriptor.tiers.any((t) => t != PlatformTier.handoff)) a.id};
     expect(api, _postCallIn.keys.toSet());
     expect(api, hasLength(30));
-    expect(builtinAdapters().length - api.length, 18, reason: 'the rest are hand-off only and refuse to publish');
+    expect(builtinAdapters().length - api.length, 20, reason: 'the rest are hand-off only and refuse to publish');
   });
 
   for (final entry in _postCallIn.entries) {

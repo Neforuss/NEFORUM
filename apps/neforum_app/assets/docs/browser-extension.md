@@ -53,6 +53,7 @@ When you click **Open** in a hand-off, NEFORUM gives the post to the extension a
 | TikTok Studio | Uploads the photos or video, then replaces the file name TikTok puts in the caption with your caption. When you press TikTok's Post yourself, NEFORUM sees the post go up and moves on; if it does not, click **I posted it** on the panel. |
 | Instagram (web) | Create > Post, uploads the files, goes through the two Next screens and types the caption. |
 | Substack Notes | Opens "What's on your mind?" (or Create > Note), types the text and adds the images. |
+| Parler | `app.parler.com/compose` opens the composer (elsewhere on the site, the extension opens it with the sidebar's Post button), types the text and adds the photos, GIFs and videos. Its Post is the composer's own button, never the sidebar's. |
 | Facebook | Opens "What's on your mind?" when needed, types the text and adds the media. |
 | Tumblr | Opens Tumblr's full editor for the kind of post (`/new/text`, `/new/photo`, `/new/video`, `/new/link`, `/new/quote`, `/new/chat` or `/new/audio`, not the text-only share tool), types the text, adds the photos or video and the tags. In a link post the link goes into Tumblr's URL field and becomes a link card; in an audio post the track's link becomes the player. |
 | LinkedIn, Reddit | Their composer links already carry the text; the extension adds the photos and videos. |
@@ -126,6 +127,7 @@ Without the extension (on a phone, or on a computer with no paired browser), han
 - Chrome keeps the extension after a restart. It may show a reminder that a developer-mode extension is installed; that's expected for extensions not from the store.
 - Firefox removes a temporary add-on when it closes. For a permanent install it needs to be signed by Mozilla: when a GitHub release has `neforum-extension-firefox-<version>.xpi` (signed by Mozilla for self-distribution), open that file in Firefox to install it for good. Otherwise it happens when it is published on addons.mozilla.org (or, for testing, use Firefox Developer Edition with `xpinstall.signatures.required` set to false).
 - Mastodon, Misskey and blogs run on their own addresses, which the extension does not know in advance: use **Fill in this page** there. Automatic posting cannot start there by itself.
+- Locals is not filled in by itself: its composer is only shown to signed-in members and has not been studied yet, so a Locals hand-off works by copying (**Fill in this page** can still try).
 - The site recipes follow each site's page as it was known when this version was made, and the art sites' upload forms could not be studied signed in. When a site changes, the extension says what it could not do, does not post automatically, and you finish by hand.
 - Automatic posting needs NEFORUM running on a computer with a paired browser; phones cannot do it.
 

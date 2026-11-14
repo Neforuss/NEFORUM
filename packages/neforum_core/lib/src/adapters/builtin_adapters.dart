@@ -27,6 +27,8 @@ import 'chat/matrix_adapter.dart';
 import 'chat/telegram_adapter.dart';
 import 'facebook/facebook_adapter.dart';
 import 'handoff_only/google_business_adapter.dart';
+import 'handoff_only/locals_adapter.dart';
+import 'handoff_only/parler_adapter.dart';
 import 'handoff_only/snapchat_adapter.dart';
 import 'handoff_only/substack_adapter.dart';
 import 'handoff_only/whatsapp_adapter.dart';
@@ -65,6 +67,7 @@ List<PlatformAdapter> builtinAdapters() => [
       LinkedInAdapter(),
       RedditAdapter(),
       TumblrAdapter(),
+      ParlerAdapter(),
       // Photo & video
       InstagramAdapter(),
       TikTokAdapter(),
@@ -88,6 +91,7 @@ List<PlatformAdapter> builtinAdapters() => [
       DevtoAdapter(),
       HashnodeAdapter(),
       SubstackAdapter(),
+      LocalsAdapter(),
       // Business
       GoogleBusinessAdapter(),
       // Art and portfolios (posting through an API)

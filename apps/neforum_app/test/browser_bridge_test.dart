@@ -587,7 +587,7 @@ void main() {
       final chrome = manifest('chrome');
       final firefox = manifest('firefox');
       expect(firefox['version'], chrome['version']);
-      expect(chrome['version'], '1.1.4');
+      expect(chrome['version'], '1.1.5');
       final matches = [for (final m in (chrome['content_scripts'] as List).single['matches'] as List) m as String];
       expect((firefox['content_scripts'] as List).single['matches'], matches);
       bool matched(String host) => matches.any((m) => m == 'https://$host/*' || (m.startsWith('https://*.') && host.endsWith(m.substring(10, m.length - 2))));
@@ -607,6 +607,7 @@ void main() {
         'https://www.flickr.com/photos/upload/',
         'https://studio.youtube.com/',
         'https://web.whatsapp.com/',
+        'https://app.parler.com/compose',
       ]) {
         final host = Uri.parse(url).host;
         expect(matched(host), isTrue, reason: '$host: the content scripts run there');

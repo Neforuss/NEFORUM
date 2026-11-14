@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: Parler composer test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; display: flex; gap: 24px; }
+  [hidden] { display: none !important; }
+  nav { display: grid; gap: 8px; align-content: start; }
+  [role="dialog"] { border: 1px solid #bbb; border-radius: 10px; padding: 10px; width: 520px; display: grid; gap: 8px; }
+  textarea { width: 100%; box-sizing: border-box; }
+  .row { display: flex; gap: 6px; align-items: center; }
+  button[disabled] { opacity: .4; }
+</style>
+</head>
+<body>
+  <!--
+    Parler's web composer as inspected on 2026-11-13: a dialog with Post /
+    Burst / Story tabs, form#compose-form holding one plain textarea that the
+    page keeps in its own state (like React: a value set without an input
+    event is put back on the next render, and Post stays greyed out), a hidden
+    multiple file input that "Attach media" opens and that the page empties
+    in its change handler, and the Post button outside the form, tied to it
+    with form="compose-form". The sidebar has a Post button too (no link),
+    which opens the composer.
+      ?p=parler
+      &closed=1   the composer starts closed: the extension opens it
+    window.result() says what the page holds and what a submit sent.
+  -->
+  <nav>
+    <a href="#feed">Home</a>
+    <button type="button" id="sidebar-post">Post</button>
+  </nav>
+  <main>
+    <div role="dialog" aria-label="Create" id="composer">
+      <div class="row" role="tablist"><button type="button" role="tab">Post</button><button type="button" role="tab">Burst</button><button type="button" role="tab">Story</button></div>
+      <form id="compose-form" aria-busy="false">
+        <textarea placeholder="What's on your mind?" rows="4" aria-autocomplete="list" aria-expanded="false"></textarea>
+        <span id="counter">300</span>
+        <div id="attached"></div>
+        <input type="file" class="hidden" hidden multiple accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm">
+      </form>
+      <div class="row">
+        <button type="button" aria-label="Attach media" id="attach">Media</button>
+        <button type="button" aria-label="Add GIF">GIF</button>
+        <button type="button" aria-label="Who is this post for?">Everyone</button>
+        <button type="button">Save draft</button>
+        <button type="submit" form="compose-form" id="post" disabled>Post</button>
+      </div>
+    </div>
+  </main>
+  <script>
+    const q = new URLSearchParams(location.search);
+    const composer = document.getElementById('composer');
+    const form = document.getElementById('compose-form');
+    const area = form.querySelector('textarea');
+    const input = form.querySelector('input[type="file"]');
+    const post = document.getElementById('post');
+    // The page's own state, as React keeps it.
+    const state = { text: '', files: [] };
+    window.__submits = [];
+    window.__sidebarClicks = 0;
+    window.__inputClears = 0;
+    function render() {
+      if (area.value !== state.text) area.value = state.text;
+      document.getElementById('counter').textContent = String(300 - [...state.text].length);
+      document.getElementById('attached').textContent = state.files.join(', ');
+      post.disabled = state.text.trim() === '';
+    }
+    area.addEventListener('input', () => {
+      state.text = area.value;
+      render();
+    });
+    document.getElementById('attach').addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+      for (const f of input.files) state.files.push(f.name);
+      // Parler reads the files, then empties the input.
+      input.value = '';
+      window.__inputClears++;
+      render();
+    });
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      window.__submits.push({ text: state.text, files: [...state.files], trusted: e.isTrusted });
+      setTimeout(() => (composer.hidden = true), 300);
+    });
+    document.getElementById('sidebar-post').addEventListener('click', () => {
+      window.__sidebarClicks++;
+      composer.hidden = false;
+      area.focus();
+    });
+    if (q.get('closed') === '1') composer.hidden = true;
+    render();
+    window.result = () => ({
+      text: state.text,
+      shown: area.value,
+      files: [...state.files],
+      clears: window.__inputClears,
+      submits: window.__submits.map((s) => ({ ...s })),
+      sidebarClicks: window.__sidebarClicks,
+      open: !composer.hidden,
+      postDisabled: post.disabled,
+    });
+  </script>
+  <script src="harness.js"></script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>

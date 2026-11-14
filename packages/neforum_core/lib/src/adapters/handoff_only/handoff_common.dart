@@ -11,7 +11,8 @@ import '../platform_adapter.dart';
 export '../../model/sign_in_lifetime.dart' show SignInPolicy;
 
 /// Base class for platforms that NEFORUM can only reach by hand-off
-/// (Snapchat, WhatsApp, Google Business Profile, Substack Notes).
+/// (Snapchat, WhatsApp, Google Business Profile, Substack Notes, Parler,
+/// Locals).
 ///
 /// These platforms have no posting API a personal account can use, so the
 /// only tier is [PlatformTier.handoff]. Connecting needs nothing but an

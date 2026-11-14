@@ -18,9 +18,9 @@ function loadContent(globals = {}) {
   return sandbox.NEFORUM_EXT;
 }
 
-/** Loads recipes.js over stand-in page helpers ([fill]), to run a recipe's own steps. */
-function loadRecipes(fill) {
-  const sandbox = { console, setTimeout, clearTimeout, NEFORUM_EXT: { fill } };
+/** Loads recipes.js over stand-in page helpers ([fill]), to run a recipe's own steps ([globals]: stand-ins such as document). */
+function loadRecipes(fill, globals = {}) {
+  const sandbox = { console, setTimeout, clearTimeout, ...globals, NEFORUM_EXT: { fill } };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(readFileSync(new URL('../src/content/recipes.js', import.meta.url), 'utf8'), sandbox, { filename: 'recipes.js' });
@@ -177,6 +177,45 @@ test('every art and portfolio site has a recipe that fills its form and knows ho
   assert.ok(!recipes.flickr.postPattern.test('upload settings'));
 });
 
+test('Parler: files count as its change handler sees them, before it empties the input; Post is the form\'s own button', async () => {
+  const listeners = new Set();
+  const input = {
+    files: [],
+    addEventListener: (type, f) => type === 'change' && listeners.add(f),
+    removeEventListener: (type, f) => listeners.delete(f),
+  };
+  const textarea = { tag: 'textarea' };
+  const form = { querySelector: (s) => (/file/.test(s) ? input : /textarea/.test(s) ? textarea : null), closest: () => null };
+  let pageTakesFiles = true;
+  const recipes = loadRecipes(
+    {
+      visible: (el) => el === textarea,
+      waitFor: async (find) => find(),
+      // Like Parler: the change handler reads the files, then empties the input.
+      setInputFiles(el, files) {
+        if (!pageTakesFiles) return false;
+        el.files = files;
+        for (const f of [...listeners]) f();
+        el.files = [];
+        return el.files.length === files.length;
+      },
+    },
+    { document: { getElementById: (id) => (id === 'compose-form' ? form : null), querySelector: () => null } },
+  );
+  const parler = recipes.parler;
+  const files = [{ name: 'a.png' }, { name: 'b.mp4' }];
+  assert.equal(await parler.attach(files), 'input', 'taken, although the input reads empty afterwards');
+  assert.equal(input.files.length, 0);
+  assert.equal(listeners.size, 0, 'the counting listener is gone');
+  pageTakesFiles = false;
+  assert.equal(await parler.attach(files), null, 'not taken: the generic way may try');
+  assert.equal(parler.fileInput(), input);
+  assert.equal(await parler.editor(), textarea);
+  assert.deepEqual([...parler.postSelectors], ['button[type="submit"][form="compose-form"]']);
+  assert.equal(parler.manualPublish, undefined, 'an automatic job may post');
+  assert.ok(!parler.prefer.includes('input'), 'the input is the recipe\'s own way; the fallbacks are paste and drop');
+});
+
 test('sites where posting needs the user stay manual even for automatic jobs', () => {
   const { recipes } = loadContent();
   for (const id of ['reddit', 'whatsapp', 'youtube']) assert.ok(recipes[id].manualPublish, id);
@@ -189,15 +228,17 @@ test('tags: the job\'s list, else the Tags snippet', () => {
   assert.deepEqual([...tagsOf({ snippets: [] })], []);
 });
 
-test('manifests: version 1.1.4 in both, the same pages, art sites and YouTube Studio included', () => {
+test('manifests: version 1.1.5 in both, the same pages, art sites, YouTube Studio and Parler included', () => {
   const chrome = manifest('chrome');
   const firefox = manifest('firefox');
-  assert.equal(chrome.version, '1.1.4');
+  assert.equal(chrome.version, '1.1.5');
   assert.equal(firefox.version, chrome.version);
   assert.deepEqual(firefox.content_scripts, chrome.content_scripts);
   assert.ok(chrome.description.length <= 132, 'the Chrome Web Store limit');
   const matches = chrome.content_scripts[0].matches;
   for (const [id, host] of Object.entries(ART_SITES)) assert.ok(matches.includes(`https://${host}/*`), `${id}: ${host}`);
   assert.ok(matches.includes('https://studio.youtube.com/*'));
+  assert.ok(matches.includes('https://app.parler.com/*'), 'the Parler composer: app.parler.com/compose');
+  assert.ok(!matches.some((m) => /locals\.com/.test(m)), 'Locals is not filled in until its composer can be studied');
   assert.deepEqual(chrome.host_permissions, ['http://127.0.0.1/*'], 'still only the app on this computer');
 });

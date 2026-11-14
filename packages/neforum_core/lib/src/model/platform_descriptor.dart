@@ -59,6 +59,11 @@ enum CountingRule {
   /// Code points (runes), with every URL counted as [TextRules.urlWeight].
   /// Mastodon.
   codePointsWithUrlWeight,
+
+  /// One per code point (rune), links included at their full length: an
+  /// emoji outside the Basic Multilingual Plane counts 1, not 2. Parler's
+  /// web composer counts this way (a `for...of` loop over the text).
+  codePoints,
 }
 
 /// Text constraints and features for one platform.

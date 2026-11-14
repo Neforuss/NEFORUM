@@ -177,6 +177,21 @@ void main() {
     expect(automaticHandoffPage(plan('youtube_posts', composer: Uri.parse('http://www.youtube.com/@a/posts'))), isNull, reason: 'https pages only');
   });
 
+  test('Parler (1.4.3) posts automatically on the composer its plan opens; Locals stays with the user', () {
+    final registry = builtinRegistry();
+    final parler = registry.require('parler').buildHandoff(const PostVariant(text: 'Hello Parler'))!;
+    expect(automaticHandoffPage(parler), Uri.parse('https://app.parler.com/compose'));
+    expect(kAutomaticPostingPlatforms, contains('parler'));
+    expect(kAutomationRestrictedPlatforms, isNot(contains('parler')), reason: 'its terms only forbid automation that puts excessive demand on it');
+    final on = AppSettings.fromJson(const AppSettings().copyWith(automaticHandoffPosting: true).toJson());
+    expect(on.postsHandoffAutomatically('parler'), isTrue);
+    // Locals: its composer could not be studied, so the extension does not run there.
+    final locals = registry.require('locals');
+    final account = ConnectedAccount(id: 'l', platformId: 'locals', tier: PlatformTier.handoff, displayName: 'l', createdAt: DateTime.utc(2026), config: const {'community': 'mycommunity'});
+    expect(automaticHandoffPage(locals.buildHandoff(const PostVariant(text: 'Hello supporters'), account: account)!), isNull);
+    expect(on.postsHandoffAutomatically('locals'), isFalse);
+  });
+
   testWidgets('Settings: Post automatically, and the networks it applies to', variant: TargetPlatformVariant.only(TargetPlatform.windows), timeout: const Timeout(Duration(minutes: 1)), (tester) async {
     tester.view.physicalSize = const Size(900, 2600);
     tester.view.devicePixelRatio = 1;

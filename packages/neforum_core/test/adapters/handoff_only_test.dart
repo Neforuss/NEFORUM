@@ -2,6 +2,8 @@ import 'package:http/http.dart' as http;
 import 'package:neforum_core/neforum_core.dart';
 import 'package:neforum_core/src/adapters/handoff_only/google_business_adapter.dart';
 import 'package:neforum_core/src/adapters/handoff_only/handoff_common.dart';
+import 'package:neforum_core/src/adapters/handoff_only/locals_adapter.dart';
+import 'package:neforum_core/src/adapters/handoff_only/parler_adapter.dart';
 import 'package:neforum_core/src/adapters/handoff_only/snapchat_adapter.dart';
 import 'package:neforum_core/src/adapters/handoff_only/substack_adapter.dart';
 import 'package:neforum_core/src/adapters/handoff_only/whatsapp_adapter.dart';
@@ -20,7 +22,15 @@ final List<HandoffOnlyAdapter> _all = [
   WhatsAppAdapter(),
   GoogleBusinessAdapter(),
   SubstackAdapter(),
+  ParlerAdapter(),
+  LocalsAdapter(),
 ];
+
+/// The optional fields a hand-off adapter asks for after the label.
+const Map<String, List<String>> _extraFields = {
+  'parler': ['premium'],
+  'locals': ['community'],
+};
 
 ConnectedAccount _acct(String platformId) => fakeAccount(platformId, tier: PlatformTier.handoff);
 
@@ -44,7 +54,7 @@ void main() {
           expect(d.apiCostSummary, isNotEmpty);
         });
 
-        test('connect spec: one optional label field, no browser, no redirects', () {
+        test('connect spec: an optional label field (and its own optional fields), no browser, no redirects', () {
           expect(a.connectSpecs, hasLength(1));
           final spec = a.connectSpecs.single;
           expect(spec.tier, PlatformTier.handoff);
@@ -52,12 +62,13 @@ void main() {
           expect(spec.loopbackRedirectOk, isFalse);
           expect(spec.customSchemeRedirectOk, isFalse);
           expect(spec.fixedRedirectUri, isNull);
-          expect(spec.fields, hasLength(1));
-          final f = spec.fields.single;
-          expect(f.key, 'label');
+          expect(spec.fields.map((f) => f.key), ['label', ...?_extraFields[a.id]]);
+          final f = spec.fields.first;
           expect(f.kind, FieldKind.text);
-          expect(f.required, isFalse);
-          expect(f.secret, isFalse);
+          for (final field in spec.fields) {
+            expect(field.required, isFalse, reason: field.key);
+            expect(field.secret, isFalse, reason: field.key);
+          }
           expect(spec.intro, contains('hand-off only'));
           expect(spec.intro.toLowerCase(), contains('api'));
         });
@@ -329,6 +340,192 @@ void main() {
       final plan = a.buildHandoff(PostVariant(text: 'Pics', media: [fakeImage()]))!;
       expect(plan.shareFiles, hasLength(1));
       expect(plan.instructions.split('\n'), hasLength(4));
+    });
+  });
+
+  group('Parler', () {
+    final a = ParlerAdapter();
+    final free = _acct('parler');
+    final premium = fakeAccount('parler', tier: PlatformTier.handoff, config: {'premium': true});
+
+    test('descriptor: the limits read from the composer (2026-11-13)', () {
+      final d = a.descriptor;
+      expect((d.id, d.name, d.homepage), ('parler', 'Parler', 'https://parler.com/'));
+      expect(d.text.maxLength, 300);
+      expect(d.text.counting, CountingRule.codePoints);
+      expect(d.text.supportsThreads, isFalse);
+      expect(d.media.maxImages, 4);
+      expect(d.media.maxVideos, 4);
+      expect(d.media.allowsMixedImageVideo, isTrue);
+      expect(d.media.imageMaxBytes, 20 * 1024 * 1024);
+      expect(d.media.videoMaxBytes, 500 * 1024 * 1024);
+      expect(d.media.videoMaxSeconds, 3600);
+      // The composer's file input: accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/quicktime,video/webm".
+      expect(d.media.imageMimeTypes, {'image/jpeg', 'image/png', 'image/gif', 'image/webp'});
+      expect(d.media.videoMimeTypes, {'video/mp4', 'video/quicktime', 'video/webm'});
+      expect(d.media.audioAsVideo, isTrue);
+      expect(d.personalAccountOk, isTrue);
+    });
+
+    test('Premium accounts get 2000 characters; the free limit stays 300', () {
+      expect(a.descriptorForAccount(free).text.maxLength, 300);
+      expect(a.descriptorForAccount(premium).text.maxLength, 2000);
+      expect(a.descriptorForAccount(fakeAccount('parler', tier: PlatformTier.handoff, config: {'premium': 'true'})).text.maxLength, 2000,
+          reason: 'a form value kept as text');
+      expect(a.descriptorForAccount(fakeAccount('parler', tier: PlatformTier.handoff, config: {'premium': false})).text.maxLength, 300);
+      final long = PostVariant(text: 'x' * 301);
+      expect(_codes(a.validate(long, free)), contains('text.too_long'));
+      expect(_codes(a.validate(long, premium)), isNot(contains('text.too_long')), reason: 'validate uses the account\'s limit');
+      expect(_codes(a.validate(PostVariant(text: 'x' * 2001), premium)), contains('text.too_long'));
+    });
+
+    test('counts code points, as the composer does: an emoji is one, not two', () {
+      // 299 letters and one emoji outside the BMP: 301 UTF-16 units, 300 code points.
+      final text = '${'a' * 299}😀';
+      expect(text.length, 301);
+      expect(TextCounter.count(text, a.descriptor.text), 300);
+      expect(_codes(a.validate(PostVariant(text: text), free)), isNot(contains('text.too_long')));
+      expect(_codes(a.validate(PostVariant(text: '$text!'), free)), contains('text.too_long'));
+      // A link counts at its full length (no fixed link weight).
+      const link = 'https://example.org/a/rather/long/path/that/is/over/twenty/three';
+      expect(TextCounter.count(link, a.descriptor.text), link.length);
+    });
+
+    test('connect(): Parler Premium is kept only when turned on', () async {
+      final on = await a.connect(PlatformTier.handoff, {'label': 'Me', 'premium': 'true'}, _noHttp([]));
+      expect(on.account.config, {'label': 'Me', 'premium': true});
+      expect(ParlerAdapter.isPremium(on.account), isTrue);
+      expect(a.descriptorForAccount(on.account).text.maxLength, 2000);
+      final off = await a.connect(PlatformTier.handoff, {'label': 'Me', 'premium': 'false'}, _noHttp([]));
+      expect(off.account.config, {'label': 'Me'});
+      expect(ParlerAdapter.isPremium(off.account), isFalse);
+      final premiumField = a.connectSpecs.single.fields.last;
+      expect((premiumField.kind, premiumField.defaultValue), (FieldKind.boolean, 'false'));
+    });
+
+    test('validate(): 4 photos and videos together, and the composer\'s file types', () {
+      expect(a.validate(PostVariant(text: 'hi', media: [for (var i = 0; i < 4; i++) fakeImage(id: 'i$i')]), free), isEmpty);
+      final five = a.validate(PostVariant(text: 'hi', media: [for (var i = 0; i < 3; i++) fakeImage(id: 'i$i'), fakeVideo(id: 'v1'), fakeVideo(id: 'v2')]), free);
+      expect(_codes(five), ['parler.too_many_attachments'], reason: 'neither kind alone is over 4');
+      expect(five.single.severity, IssueSeverity.error);
+      expect(a.validate(PostVariant(text: 'hi', media: [fakeImage(), fakeVideo()]), free), isEmpty, reason: 'photos and video mix');
+      expect(_codes(a.validate(PostVariant(text: 'hi', media: [fakeImage(mimeType: 'image/heic')]), free)), contains('media.image_type'));
+      expect(_codes(a.validate(PostVariant(text: 'hi', media: [fakeImage(sizeBytes: 21 * 1024 * 1024)]), free)), contains('media.image_too_large'));
+      expect(_codes(a.validate(PostVariant(text: 'hi', media: [fakeVideo(sizeBytes: 501 * 1024 * 1024)]), free)), contains('media.video_too_large'));
+      expect(_codes(a.validate(PostVariant(text: 'hi', media: [fakeVideo(durationMs: 3601000)]), free)), contains('media.video_too_long'));
+      expect(a.validate(PostVariant(text: 'hi', media: [fakeVideo(mimeType: 'video/webm', durationMs: 3600000)]), free), isEmpty);
+    });
+
+    test('hand-off opens the web composer with the text on the clipboard', () {
+      final plan = a.buildHandoff(const PostVariant(text: 'A post'))!;
+      expect(plan.preferred, HandoffMethod.manual);
+      expect(plan.webIntent, isNull);
+      expect(plan.desktopUrl, 'https://app.parler.com/compose');
+      expect(plan.androidPackage, isNull, reason: 'the Parler app\'s package is not known');
+      expect(plan.clipboardText, 'A post');
+      expect(plan.shareFiles, isEmpty);
+      expect(plan.instructions.split('\n'), hasLength(3));
+      expect(plan.instructions, contains('Ctrl+V'));
+      expect(plan.instructions, endsWith('3. Click **Post**.'));
+    });
+
+    test('hand-off with media adds the Attach media step', () {
+      final img = fakeImage();
+      final plan = a.buildHandoff(PostVariant(text: 'Pics', media: [img]))!;
+      expect(plan.shareFiles, [img]);
+      expect(plan.instructions.split('\n'), hasLength(4));
+      expect(plan.instructions, contains('**Attach media**'));
+      expect(plan.mediaNote, contains('add the media yourself'));
+      final mediaOnly = a.buildHandoff(PostVariant(text: '', media: [img]))!;
+      expect(mediaOnly.clipboardText, isNull);
+      expect(mediaOnly.instructions, isNot(contains('Ctrl+V')));
+    });
+
+    test('intro and guide say how Premium is set', () {
+      expect(a.connectSpecs.single.intro, contains('**Parler Premium**'));
+      expect(a.descriptor.text.notes, contains('2000'));
+    });
+  });
+
+  group('Locals', () {
+    final a = LocalsAdapter();
+    final acct = _acct('locals');
+
+    test('descriptor: the limits from Locals\' help centre', () {
+      final d = a.descriptor;
+      expect((d.id, d.name, d.homepage), ('locals', 'Locals', 'https://locals.com/'));
+      expect(d.text.maxLength, isNull, reason: 'Locals publishes no character limit');
+      expect(d.media.maxImages, 10);
+      expect(d.media.maxVideos, 1);
+      expect(d.media.allowsMixedImageVideo, isFalse);
+      expect(d.media.imageMimeTypes, {'image/jpeg', 'image/png', 'image/gif', 'image/webp'});
+      expect(d.media.videoMimeTypes, containsAll(['video/mp4', 'video/quicktime', 'video/webm', 'video/mpeg', 'video/x-ms-wmv', 'video/3gpp']));
+      expect(d.media.maxAudios, 1);
+      expect(d.media.audioMimeTypes, {AudioMimeTypes.mp3, AudioMimeTypes.m4a, AudioMimeTypes.wav});
+      expect(d.media.videoMaxBytes, isNull, reason: 'creators\' limits depend on their plan: a warning, not an error');
+      expect(d.media.videoMaxSeconds, isNull);
+    });
+
+    test('parseCommunity takes the name, the host or a link', () {
+      for (final input in ['mycommunity', 'MyCommunity', 'mycommunity.locals.com', 'https://mycommunity.locals.com/', 'https://mycommunity.locals.com/post/123/hello?x=1', '  mycommunity.locals.com/feed  ']) {
+        expect(LocalsAdapter.parseCommunity(input), 'mycommunity', reason: input);
+      }
+      expect(LocalsAdapter.parseCommunity('my-community-2'), 'my-community-2');
+      expect(LocalsAdapter.parseCommunity(''), isNull);
+      expect(LocalsAdapter.parseCommunity(null), isNull);
+      for (final bad in ['locals.com', 'www.locals.com', 'https://example.org/x', 'my community', '-bad', 'a_b']) {
+        expect(() => LocalsAdapter.parseCommunity(bad), throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'community')), reason: bad);
+      }
+    });
+
+    test('connect(): the community becomes the account\'s page and, without a label, its name', () async {
+      final r = await a.connect(PlatformTier.handoff, {'community': 'https://mycommunity.locals.com/'}, _noHttp([]));
+      expect(r.account.config, {'community': 'mycommunity'});
+      expect(r.account.displayName, 'mycommunity.locals.com');
+      expect(r.account.profileUrl, 'https://mycommunity.locals.com/');
+      final labelled = await a.connect(PlatformTier.handoff, {'label': 'Shop', 'community': 'mycommunity'}, _noHttp([]));
+      expect(labelled.account.displayName, 'Shop');
+      expect(labelled.account.config, {'label': 'Shop', 'community': 'mycommunity'});
+      await expectLater(a.connect(PlatformTier.handoff, {'community': 'not a community'}, _noHttp([])),
+          throwsA(isA<ConnectException>().having((e) => e.field, 'field', 'community')));
+    });
+
+    test('hand-off opens the community, else the feed, and the Locals app on Android', () async {
+      final community = (await a.connect(PlatformTier.handoff, {'community': 'mycommunity'}, _noHttp([]))).account;
+      final plan = a.buildHandoff(const PostVariant(text: 'Hello supporters'), account: community)!;
+      expect(plan.preferred, HandoffMethod.manual);
+      expect(plan.desktopUrl, 'https://mycommunity.locals.com/');
+      expect(plan.androidPackage, 'com.locals.localsapp');
+      expect(plan.clipboardText, 'Hello supporters');
+      expect(plan.instructions, contains('**Write a Post**'));
+      expect(plan.instructions.split('\n'), hasLength(3));
+      expect(plan.instructions, endsWith('3. Click **Publish**.'));
+      final feed = a.buildHandoff(const PostVariant(text: 'Hello supporters'), account: acct)!;
+      expect(feed.desktopUrl, 'https://locals.com/feed');
+      expect(feed.instructions, startsWith('1. Your Locals feed opens'));
+      expect(a.buildHandoff(const PostVariant(text: 'Hello supporters'))!.desktopUrl, 'https://locals.com/feed');
+      final media = a.buildHandoff(PostVariant(text: 'Pics', media: [fakeImage()]), account: community)!;
+      expect(media.instructions.split('\n'), hasLength(4));
+      expect(media.instructions, contains('**Add Content**'));
+    });
+
+    test('validate(): 10 photos, one video alone, the 10-character minimum and the members\' media limit', () {
+      final ten = [for (var i = 0; i < 10; i++) fakeImage(id: 'i$i')];
+      expect(a.validate(PostVariant(text: 'Ten photos here', media: ten), acct), isEmpty);
+      expect(_codes(a.validate(PostVariant(text: 'Eleven photos', media: [...ten, fakeImage(id: 'x')]), acct)), contains('media.too_many_images'));
+      expect(_codes(a.validate(PostVariant(text: 'Photo and video', media: [fakeImage(), fakeVideo()]), acct)), contains('media.mixed'));
+      final short = a.validate(const PostVariant(text: 'Hi there'), acct);
+      expect(_codes(short), ['locals.text_too_short']);
+      expect(short.single.severity, IssueSeverity.warning);
+      expect(a.validate(const PostVariant(text: 'Hi there!!'), acct), isEmpty, reason: 'exactly 10 characters');
+      final long = a.validate(PostVariant(text: 'A long video for you', media: [fakeVideo(durationMs: 301000)]), acct);
+      expect(_codes(long), ['locals.member_media_limit']);
+      expect(long.single.severity, IssueSeverity.warning, reason: 'a creator may post it');
+      expect(_codes(a.validate(PostVariant(text: 'A big video for you', media: [fakeVideo(sizeBytes: 200 * 1024 * 1024)]), acct)),
+          ['locals.member_media_limit'], reason: '"below 200MBs"');
+      expect(a.validate(PostVariant(text: 'A short video for you', media: [fakeVideo(durationMs: 300000)]), acct), isEmpty);
+      const sound = MediaAttachment(id: 's', path: '/tmp/s.mp3', mimeType: 'audio/mpeg', sizeBytes: 4 * 1024 * 1024, durationMs: 420000);
+      expect(_codes(a.validate(const PostVariant(text: 'A long track for you', media: [sound]), acct)), contains('locals.member_media_limit'));
     });
   });
 

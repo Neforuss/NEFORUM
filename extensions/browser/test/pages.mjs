@@ -11,7 +11,10 @@
 //   - the user's own click on a site's Post is watched and reported
 //     (posted: confirmed), the decoy Post is never pressed;
 //   - I posted it reports posted: user;
-//   - a text-only YouTube Posts job puts the words in and no file anywhere.
+//   - a text-only YouTube Posts job puts the words in and no file anywhere;
+//   - Parler (1.4.3): the text reaches the page's own state, the photo goes
+//     once into the file input Parler empties, an automatic job presses the
+//     form's Post and never the sidebar's, and a closed composer is opened.
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -190,6 +193,32 @@ const scenarios = {
     assert.equal(await evaluate(cdp, 'window.postClicks'), 1, 'the user pressed Post once; the extension pressed nothing');
     assert.equal(await evaluate(cdp, 'window.untrustedClicks'), 0);
     assert.equal(await evaluate(cdp, 'window.decoyClicks'), 0);
+  },
+
+  async 'Parler (1.4.3): the text goes in as typing, the photo once into the input Parler empties, and an automatic job presses the form\'s Post'(cdp, base) {
+    await open(cdp, `${base}/test/pages/parler.html?p=parler&auto=1`);
+    await until(cdp, 'window.result().submits.length >= 1', 'the automatic Post', 20000);
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.submits.length, 1, 'posted once');
+    assert.equal(r.submits[0].text, 'Hello from NEFORUM #test', 'the page\'s own state holds the text, not only the field');
+    assert.deepEqual(r.submits[0].files, ['card.png'], 'the photo went in once, although Parler empties its input');
+    assert.equal(r.clears, 1, 'one change event: no second try through the generic way');
+    assert.equal(r.sidebarClicks, 0, 'the sidebar\'s Post (which opens a composer) was never pressed');
+  },
+
+  async 'Parler (1.4.3): a closed composer is opened from the sidebar and filled, not posted'(cdp, base) {
+    await open(cdp, `${base}/test/pages/parler.html?p=parler&closed=1&qp=0`);
+    await until(cdp, 'window.__results.length >= 1', 'the fill report');
+    const r = await evaluate(cdp, 'window.result()');
+    assert.equal(r.open, true, 'the composer opened');
+    assert.equal(r.sidebarClicks, 1);
+    assert.equal(r.text, 'Hello from NEFORUM #test');
+    assert.equal(r.shown, r.text, 'what the field shows is what the page holds');
+    assert.deepEqual(r.files, ['card.png']);
+    assert.equal(r.postDisabled, false, 'Post is ready for the user');
+    assert.equal(r.submits.length, 0, 'nothing was posted');
+    const report = await evaluate(cdp, 'window.__results[0]');
+    assert.equal(report.status, 'filled');
   },
 
   async 'I posted it reports posted: user'(cdp, base) {

@@ -416,6 +416,39 @@
       prefer: ['paste', 'input', 'drop'],
     },
 
+    // Parler (app.parler.com/compose): the composer is a dialog over the feed
+    // with one plain textarea in form#compose-form (React keeps its value, so
+    // the text goes in as typing), a hidden file input for photos, GIFs and
+    // videos, and a Post button outside the form, tied to it by form=.
+    parler: {
+      async open() {
+        // /compose opens the composer as the app starts.
+        if (await waitFor(parlerForm, { timeout: 4000 })) return;
+        // Elsewhere, the sidebar's Post button (no link) opens the same one.
+        await openWith(() => findByText('button, [role="button"]', /^\s*post\s*$/i), { timeout: 6000 });
+      },
+      root: () => parlerForm()?.closest('[role="dialog"]') ?? dialog() ?? document,
+      editor: () => waitFor(() => parlerForm()?.querySelector('textarea') ?? null, { timeout: 8000 }),
+      fileInput: () => parlerFileInput(),
+      // Parler reads the files in its change handler and then empties the
+      // input, so they cannot be read back from it afterwards: count them as
+      // the handler sees them. Read back, the input looks empty, and the fill
+      // would call the files missing and try another way.
+      async attach(files) {
+        const input = parlerFileInput();
+        if (!input) return null;
+        let seen = -1;
+        const count = () => (seen = input.files?.length ?? 0);
+        input.addEventListener('change', count, { capture: true, once: true });
+        setInputFiles(input, files);
+        input.removeEventListener('change', count, { capture: true });
+        return seen === files.length ? 'input' : null;
+      },
+      prefer: ['paste', 'drop'],
+      postSelectors: ['button[type="submit"][form="compose-form"]'],
+      postWords: ['post'],
+    },
+
     tiktok: {
       // TikTok Studio: upload first, then the caption box appears with the
       // file name in it, which the caption replaces.
@@ -661,6 +694,19 @@
       afterPostWords: ['upload'],
     }),
   };
+
+  // ---- Parler -------------------------------------------------------------------
+
+  /** Parler's composer form, while the composer is open (its text field on screen). */
+  const parlerForm = () => {
+    const form = document.getElementById('compose-form');
+    return form && visible(form.querySelector('textarea') ?? form) ? form : null;
+  };
+
+  /** The composer's file input (hidden; the "Attach media" button opens it). */
+  const parlerFileInput = () =>
+    parlerForm()?.querySelector('input[type="file"]') ??
+    (parlerForm()?.closest('[role="dialog"]') ?? document).querySelector('input[type="file"]:not([disabled])');
 
   // ---- YouTube Posts: polls and quizzes ---------------------------------------
 

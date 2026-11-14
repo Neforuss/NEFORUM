@@ -94,6 +94,10 @@ const Map<String, PlatformBrand> platformBrands = {
   'rumble': PlatformBrand(color: Color(0xFF85C742), onColor: Color(0xFF111111), monogram: 'R'),
   'odysee': PlatformBrand(color: Color(0xFFE50054), icon: FontAwesomeIcons.odysee),
   'bitchute': PlatformBrand(color: Color(0xFFEF4137), monogram: 'B'),
+  // The red of Parler's own icon (parler.com/icons/parler-social.svg).
+  'parler': PlatformBrand(color: Color(0xFFE50038), monogram: 'P'),
+  // The dark dots of Locals' icon (locals.com/assets/logo/logo-on-light-bg.svg).
+  'locals': PlatformBrand(color: Color(0xFF080808), darkColor: Color(0xFF2A2A2A), monogram: 'Lo'),
   // Art and portfolios (posting through an API)
   'deviantart': PlatformBrand(color: Color(0xFF00E59B), onColor: Color(0xFF06070D), icon: FontAwesomeIcons.deviantart),
   'dribbble': PlatformBrand(color: Color(0xFFEA4C89), icon: FontAwesomeIcons.dribbble),
@@ -139,7 +143,7 @@ const Set<String> _platformIcons = {
   'reddit', 'telegram', 'discord', 'matrix', 'tumblr', 'lemmy', 'misskey', 'nostr', 'wordpress', 'ghost', //
   'writefreely', 'micropub', 'devto', 'hashnode', 'snapchat', 'whatsapp', 'google_business', 'substack', 'rumble', //
   'odysee', 'bitchute', 'deviantart', 'dribbble', 'pixelfed', 'flickr', 'inkbunny', 'behance', 'artstation', 'cara', //
-  'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', 'kofi', 'artfol', 'fivehundredpx',
+  'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', 'kofi', 'artfol', 'fivehundredpx', 'parler', 'locals',
 };
 
 /// Platforms shown with another platform's icon: YouTube's Posts tab is
