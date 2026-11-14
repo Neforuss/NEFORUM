@@ -260,17 +260,16 @@ void main() {
     search.controller!.text = 'face';
     search.onChanged!('face');
     await _settle(t);
-    // 1.4.3: search also matches CLDR keywords, so "face" finds far more emoji
-    // and the grid builds only the rows on screen. Scroll to a newer face.
-    await t.scrollUntilVisible(
-      find.byIcon(Icons.image_not_supported_outlined).first,
-      220,
-      scrollable: find.descendant(of: find.byType(GridView), matching: find.byType(Scrollable)).first,
-      maxScrolls: 200,
-    );
-    await _settle(t);
-    expect(find.byIcon(Icons.image_not_supported_outlined), findsWidgets, reason: 'newer faces show the plain icon on this Windows');
     await _saveWidget(t, shot, path('emoji_sheet_search'));
+    // 1.4.3: "face" also matches CLDR keywords now (185 results), and how many
+    // of them a Windows hides depends on its emoji font (CI hides only 17.0).
+    // Orca (Emoji 17.0) is the only result for "orca": the plain icon.
+    search.controller!.text = 'orca';
+    search.onChanged!('orca');
+    await _settle(t);
+    final hidden = support.hiddenVersions?.contains('17.0') ?? true;
+    expect(find.byIcon(Icons.image_not_supported_outlined), hidden ? findsOneWidget : findsNothing, reason: 'Emoji 17.0 shows the plain icon where this Windows cannot draw it');
+    await _saveWidget(t, shot, path('emoji_sheet_search_new'));
     expect(t.takeException(), isNull);
     expect(allEmoji.length, greaterThan(1800));
     // ignore: avoid_print
