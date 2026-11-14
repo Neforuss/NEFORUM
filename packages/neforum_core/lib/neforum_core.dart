@@ -23,6 +23,7 @@ export 'src/auth/oauth1.dart';
 export 'src/auth/oauth2_pkce.dart';
 export 'src/backup/backup_format.dart';
 export 'src/backup/backup_service.dart';
+export 'src/backup/passphrase_code.dart';
 // 1.4.3: the character panel's catalog (symbols, kaomoji, text styles).
 export 'src/characters/character_catalog.dart';
 export 'src/characters/kaomoji.dart';

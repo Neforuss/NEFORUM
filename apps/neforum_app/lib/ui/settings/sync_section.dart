@@ -14,6 +14,7 @@ import '../../state/settings.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/layout.dart';
+import '../../widgets/passphrase_input.dart';
 import '../../widgets/surfaces.dart';
 import '../accounts/guide_sheet.dart';
 import 'setting_row.dart';
@@ -202,6 +203,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
   SyncProvider? _provider;
   final _fields = <String, TextEditingController>{};
   final _passphrase = TextEditingController();
+  final _passphraseFormat = PassphraseInputFormatter();
   String? _folder;
 
   /// The picked location's bookmark (phones and tablets), and whether it is
@@ -385,7 +387,10 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     final s = ref.read(servicesProvider);
     final p = _provider!;
     final config = _config;
-    final secrets = _secrets;
+    var secrets = _secrets;
+    // 1.4.3: the field writes codes in capitals with dashes, but a file
+    // locked before that may hold the exact text the user typed.
+    final attempts = passphraseAttempts(_passphrase.text, _passphraseFormat.typedFor(_passphrase.text));
     // Whether this attempt reuses this device's stored Google sign-in: when
     // that sign-in turns out dead, the next tap signs in again.
     final reused = p.kind == SyncBackendKind.googleDrive && _oauth != null && _oauthClientId == config['clientId'];
@@ -410,11 +415,14 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       final before = ref.read(settingsProvider);
       final changedStorage = syncStorageIdentity(before.syncProviderId, before.syncConfig, filesApp: Env.isMobile) !=
           syncStorageIdentity(p.id, config, filesApp: Env.isMobile);
-      if (blob != null && !changedStorage) {
+      if (blob != null && (!changedStorage || attempts.length > 1)) {
         // The same file: no dry run, but the passphrase must still open it,
-        // or every sync after this one would fail.
+        // or every sync after this one would fail. A new one with two ways
+        // to read the passphrase: find the one that opens it. What opens
+        // the file is what this device keeps.
         setState(() => _progress = 'Unlocking the sync file: this takes a moment on purpose…');
-        await openSyncFileOffThread(secrets['passphrase']!, blob.bytes);
+        final (used, _) = await openWithPassphraseAttempts(attempts, (p) => openSyncFileOffThread(p, blob.bytes));
+        secrets = {...secrets, 'passphrase': used};
       }
       // Joining an existing file: the dry run shows what this device gets
       // and gives, and whose setup wins where both differ; the user
@@ -688,6 +696,13 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
         controller: _passphrase,
         enabled: !_busy,
         obscureText: _hidden,
+        // Codes are written in shape as they are typed. No forced capitals
+        // on phone keyboards: a custom passphrase ("my cat Biscuit") must
+        // come out exactly as the user types it.
+        inputFormatters: [_passphraseFormat],
+        keyboardType: passphraseKeyboardType,
+        autocorrect: false,
+        enableSuggestions: false,
         onChanged: (_) => setState(() {}),
         decoration: InputDecoration(
           labelText: 'Passphrase',
@@ -717,6 +732,11 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           ]),
         ),
       ),
+      if (showsPassphraseCodeNote(_passphrase.text))
+        Padding(
+          padding: const EdgeInsets.only(top: Space.xs),
+          child: Text(kPassphraseCodeNote, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+        ),
       CheckboxListTile(
         dense: true,
         contentPadding: EdgeInsets.zero,

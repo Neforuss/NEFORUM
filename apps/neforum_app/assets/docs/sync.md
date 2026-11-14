@@ -16,6 +16,7 @@ This guide keeps your accounts, their keys, your posts and your settings the sam
 1. Go to **Settings > Sync > Set up…** and pick the **same storage**.
 2. Choose the same folder or file, or fill in the same WebDAV address or S3 bucket and key.
 3. Enter the **same passphrase**.
+   - A code like `K7QF-MZ3D-W9TB-XC4N-P2RV-H8LG` can be typed in small letters and without the dashes: NEFORUM writes it in capitals and adds the dashes as you type. Any other passphrase is kept exactly as you type it.
 4. Choose **Turn on sync**. NEFORUM opens the existing file and shows what joining will do, before it changes anything. For example: "This device gets 16 accounts, 2 media hosts and 41 settings from DESKTOP-X (Windows)", or "This device's setup will be used".
 5. Choose **Join**.
    - To keep the other side's setup instead, choose **Use this device's setup instead** (or **Use the sync file's setup instead**). NEFORUM shows what that would do, and you confirm again.
@@ -187,7 +188,7 @@ Platforms that hold scheduled posts themselves (see **Settings > Scheduling**) p
 ## Troubleshooting
 
 **"The sync passphrase does not open the sync file"**
-Use the passphrase you chose on your first device.
+Use the passphrase you chose on your first device. If it looks like a code (letters and digits only, 24 at most) and you set it in small letters before NEFORUM 1.4.3, type it the way you set it: NEFORUM tries it that way too.
 
 **"The folder is not there"**
 Start the cloud app, or reconnect the drive.
