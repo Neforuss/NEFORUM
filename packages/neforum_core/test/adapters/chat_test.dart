@@ -419,6 +419,182 @@ void telegramTests() {
     });
   });
 
+  group('telegram options (Bot API fields)', () {
+    Future<List<http.Request>> run(PostVariant v, {ConnectedAccount? account, http.Response Function(http.Request r)? answer}) async {
+      final calls = <http.Request>[];
+      var next = 300;
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        if (answer != null) return answer(r);
+        if (r.url.path.endsWith('/sendMediaGroup')) {
+          return _tgOk([
+            {'message_id': next++},
+            {'message_id': next++},
+          ]);
+        }
+        if (r.url.path.endsWith('/pinChatMessage')) return _tgOk(true);
+        return _tgOk({'message_id': next++});
+      });
+      final res = await adapter.publish(v, account ?? _tgAccount(), {'bot_token': _tgToken}, ctx);
+      expect(res.success, isTrue, reason: '${res.error}');
+      return calls;
+    }
+
+    test('silent, protected and in a topic: every message of a thread carries all three', () async {
+      final calls = await run(const PostVariant(
+          text: 'one', threadParts: ['one', 'two'], extra: {'silent': true, 'protectContent': true, 'topicId': 42}));
+      expect(calls, hasLength(2));
+      for (final c in calls) {
+        final body = bodyOf(c);
+        expect(body['disable_notification'], isTrue);
+        expect(body['protect_content'], isTrue);
+        expect(body['message_thread_id'], 42);
+      }
+    });
+
+    test('nothing chosen: no option field is sent', () async {
+      final calls = await run(PostVariant(text: 'A caption', media: [fakeImage()]));
+      final f = multipartFieldsOf(calls.single);
+      for (final k in ['disable_notification', 'protect_content', 'message_thread_id', 'show_caption_above_media', 'has_spoiler']) {
+        expect(f.containsKey(k), isFalse, reason: k);
+      }
+    });
+
+    test('silent, protected and in a topic on a single photo and an album (multipart fields)', () async {
+      const extra = {'silent': true, 'protectContent': true, 'topicId': 7};
+      final single = multipartFieldsOf((await run(PostVariant(text: 'x', media: [fakeImage()], extra: extra))).single);
+      expect(single, containsPair('disable_notification', 'true'));
+      expect(single, containsPair('protect_content', 'true'));
+      expect(single, containsPair('message_thread_id', '7'));
+      final album = multipartFieldsOf(
+          (await run(PostVariant(text: 'x', media: [fakeImage(id: 'a'), fakeImage(id: 'b')], extra: extra))).single);
+      expect(album, containsPair('disable_notification', 'true'));
+      expect(album, containsPair('protect_content', 'true'));
+      expect(album, containsPair('message_thread_id', '7'));
+    });
+
+    test('caption above the media: sendPhoto, sendVideo, sendAnimation and the album\'s first item', () async {
+      const above = {'captionAboveMedia': true};
+      for (final m in [fakeImage(), fakeVideo(), fakeImage(id: 'g', mimeType: 'image/gif')]) {
+        final f = multipartFieldsOf((await run(PostVariant(text: 'cap', media: [m], extra: above))).single);
+        expect(f['show_caption_above_media'], 'true', reason: m.mimeType);
+      }
+      final album = multipartFieldsOf(
+          (await run(PostVariant(text: 'cap', media: [fakeImage(id: 'a'), fakeVideo(id: 'b')], extra: above))).single);
+      final items = (jsonDecode(album['media']!) as List).cast<Map<String, dynamic>>();
+      expect(items[0]['show_caption_above_media'], isTrue);
+      expect(items[1].containsKey('show_caption_above_media'), isFalse);
+      expect(album.containsKey('show_caption_above_media'), isFalse, reason: 'it belongs to InputMedia, not sendMediaGroup');
+    });
+
+    test('caption above: not on a sound file (sendAudio has no such field) and not without a caption', () async {
+      const audio = MediaAttachment(id: 's', path: '/tmp/s.mp3', mimeType: 'audio/mpeg', sizeBytes: 100);
+      final f = multipartFieldsOf((await run(PostVariant(text: 'cap', media: [audio], extra: const {'captionAboveMedia': true}))).single);
+      expect(f.containsKey('show_caption_above_media'), isFalse);
+      final long = await run(PostVariant(text: 'x' * 1500, media: [fakeImage()], extra: const {'captionAboveMedia': true}));
+      expect(multipartFieldsOf(long.first).containsKey('show_caption_above_media'), isFalse, reason: 'the text went separately');
+    });
+
+    test('spoiler per photo: only the chosen ones, a fitted copy counts as its photo', () async {
+      const fitted =
+          MediaAttachment(id: 'fit-b', path: '/tmp/b.jpg', mimeType: 'image/jpeg', sizeBytes: 64, generated: true, derivedFrom: 'b');
+      final calls = await run(PostVariant(
+          text: 'x', media: [fakeImage(id: 'a'), fitted, fakeImage(id: 'c')], extra: const {'spoilerMedia': ['b', 'c']}));
+      final items = (jsonDecode(multipartFieldsOf(calls.single)['media']!) as List).cast<Map<String, dynamic>>();
+      expect(items.map((i) => i['has_spoiler'] == true), [false, true, true]);
+      final single = multipartFieldsOf((await run(PostVariant(text: 'x', media: [fakeImage(id: 'a')], extra: const {'spoilerMedia': ['a']}))).single);
+      expect(single['has_spoiler'], 'true');
+      final other = multipartFieldsOf((await run(PostVariant(text: 'x', media: [fakeImage(id: 'a')], extra: const {'spoilerMedia': ['z']}))).single);
+      expect(other.containsKey('has_spoiler'), isFalse);
+    });
+
+    test('link preview: off on every message; size, place and link on the message with the link', () async {
+      final off = await run(const PostVariant(text: 'a https://a.example', threadParts: ['a https://a.example', 'b'], extra: {'disableLinkPreview': true}));
+      expect(off.map((c) => bodyOf(c)['link_preview_options']), [
+        {'is_disabled': true},
+        {'is_disabled': true},
+      ]);
+      final chosen = await run(const PostVariant(
+          text: 'no link here',
+          threadParts: ['no link here', 'read https://b.example/post'],
+          extra: {'linkPreviewSize': 'large', 'linkPreviewAbove': true}));
+      expect(bodyOf(chosen[0]).containsKey('link_preview_options'), isFalse);
+      expect(bodyOf(chosen[1])['link_preview_options'],
+          {'url': 'https://b.example/post', 'prefer_large_media': true, 'show_above_text': true});
+      final small = await run(const PostVariant(text: 'see', extra: {'linkPreviewUrl': ' https://c.example ', 'linkPreviewSize': 'small'}));
+      expect(bodyOf(small.single)['link_preview_options'], {'url': 'https://c.example', 'prefer_small_media': true});
+    });
+
+    test('photos and videos as separate messages: one send each, caption on the first, GIF stays animated', () async {
+      final calls = await run(PostVariant(
+          text: 'cap',
+          threadParts: const [],
+          media: [fakeImage(id: 'a'), fakeImage(id: 'g', mimeType: 'image/gif'), fakeVideo(id: 'v')],
+          extra: const {'mediaGrouping': 'separate', 'silent': true}));
+      expect(calls.map((c) => c.url.pathSegments.last), ['sendPhoto', 'sendAnimation', 'sendVideo']);
+      expect(multipartFieldsOf(calls[0])['caption'], 'cap');
+      expect(multipartFieldsOf(calls[1]).containsKey('caption'), isFalse);
+      expect(calls.every((c) => multipartFieldsOf(c)['disable_notification'] == 'true'), isTrue);
+    });
+
+    test('separate messages: every id is reported, and a long text follows as a reply to the first', () async {
+      final calls = <http.Request>[];
+      var next = 10;
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _tgOk({'message_id': next++});
+      });
+      final res = await adapter.publish(
+          PostVariant(text: 'x' * 1500, media: [fakeImage(id: 'a'), fakeImage(id: 'b')], extra: const {'mediaGrouping': 'separate'}),
+          _tgAccount(), {'bot_token': _tgToken}, ctx);
+      expect(calls.map((c) => c.url.pathSegments.last), ['sendPhoto', 'sendPhoto', 'sendMessage']);
+      expect(res.threadRemoteIds, ['10', '11', '12']);
+      expect(bodyOf(calls[2]).containsKey('reply_parameters'), isFalse, reason: 'no caption went out, so nothing to reply to');
+    });
+
+    test('pin: pinChatMessage on the first message, silently when the post is silent', () async {
+      final calls = await run(const PostVariant(text: 'one', threadParts: ['one', 'two'], extra: {'pin': true, 'silent': true}));
+      expect(calls.map((c) => c.url.pathSegments.last), ['sendMessage', 'sendMessage', 'pinChatMessage']);
+      expect(bodyOf(calls.last), {'chat_id': '-1001234567890', 'message_id': 300, 'disable_notification': true});
+    });
+
+    test('pin refused: the post stays a success, with a notice that names the right', () async {
+      final ctx = testContext(handler: (r) async => r.url.path.endsWith('/pinChatMessage')
+          ? _json({'ok': false, 'error_code': 400, 'description': 'Bad Request: not enough rights to pin a message'}, 400)
+          : _tgOk({'message_id': 5}));
+      final res = await adapter.publish(const PostVariant(text: 'x', extra: {'pin': true}), _tgAccount(), {'bot_token': _tgToken}, ctx);
+      expect(res.success, isTrue);
+      expect(res.remoteId, '5');
+      expect(res.notice, allOf(contains('did not pin'), contains('Edit messages of others')));
+    });
+
+    test('topic: an error for a channel or basic group, hidden from their options; offered for a supergroup', () {
+      final channel = _tgAccount();
+      const v = PostVariant(text: 'x', extra: {'topicId': 3});
+      expect(adapter.validate(v, channel).map((i) => i.code), contains('telegram.no_topics'));
+      expect(adapter.postOptionsFor(channel).map((o) => o.key), isNot(contains('topicId')));
+      final group = _tgAccount(extra: {'chatType': 'supergroup'});
+      expect(adapter.validate(v, group).map((i) => i.code), isNot(contains('telegram.no_topics')));
+      expect(adapter.postOptionsFor(group).map((o) => o.key), contains('topicId'));
+      expect(adapter.validate(const PostVariant(text: 'x', extra: {'topicId': 'abc'}), group).map((i) => i.code), contains('telegram.topic'));
+    });
+
+    test('hand-off accounts get no Bot API options', () {
+      final handoff = fakeAccount('telegram', tier: PlatformTier.handoff);
+      expect(adapter.postOptionsFor(handoff), isEmpty);
+    });
+
+    test('separate messages: a GIF over 10 MB is fine, a photo over 10 MB is not; no still-GIF warning', () {
+      final gif = fakeImage(id: 'g', mimeType: 'image/gif', sizeBytes: 20 * 1024 * 1024);
+      final big = fakeImage(id: 'p', sizeBytes: 11 * 1024 * 1024);
+      final issues = adapter.validate(PostVariant(text: 'x', media: [gif, fakeImage()], extra: const {'mediaGrouping': 'separate'}), _tgAccount());
+      expect(issues.hasErrors, isFalse, reason: '$issues');
+      expect(issues.map((i) => i.code), isNot(contains('media.gif_in_album')));
+      expect(adapter.validate(PostVariant(text: 'x', media: [gif, big], extra: const {'mediaGrouping': 'separate'}), _tgAccount()).map((i) => i.code),
+          contains('media.image_too_large'));
+    });
+  });
+
   group('telegram hand-off', () {
     test('share URL with the text', () {
       final plan = adapter.buildHandoff(const PostVariant(text: 'Hello world & more'))!;

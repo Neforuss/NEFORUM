@@ -18,6 +18,7 @@ import '../../model/validation.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'x_api.dart';
 
@@ -70,6 +71,7 @@ class XAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'x',
+    options: xOptions,
     name: 'X (Twitter)',
     shortName: 'X',
     iconKey: 'x',

@@ -4,6 +4,7 @@ import '../../model/platform_descriptor.dart';
 import '../../model/post_placement.dart';
 import '../../model/post_variant.dart';
 import '../../model/validation.dart';
+import '../network_options.dart';
 
 /// Static facts about Instagram, taken from the Instagram Platform docs
 /// (content publishing guide, IG User Media reference, error-code reference;
@@ -34,6 +35,7 @@ class InstagramRules {
 
   static const PlatformDescriptor descriptor = PlatformDescriptor(
     id: 'instagram',
+    options: instagramOptions,
     name: 'Instagram',
     iconKey: 'instagram',
     homepage: 'https://www.instagram.com/',

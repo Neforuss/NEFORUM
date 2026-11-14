@@ -17,6 +17,7 @@ import '../../text/rules_validator.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'threads_api.dart';
 
@@ -96,6 +97,7 @@ class ThreadsAdapter extends PlatformAdapter {
 
   static const _descriptor = PlatformDescriptor(
     id: platformId,
+    options: threadsOptions,
     name: 'Threads',
     iconKey: 'threads',
     homepage: 'https://www.threads.com',

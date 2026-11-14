@@ -10,6 +10,7 @@ import '../../model/validation.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
 import '../handoff_only/handoff_common.dart';
+import '../network_options.dart';
 
 /// YouTube Posts: the text, image, poll and quiz posts on a channel's Posts
 /// tab (called the Community tab until 2025), YouTube's equivalent of a
@@ -47,6 +48,7 @@ class YouTubePostsAdapter extends HandoffOnlyAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'youtube_posts',
+    options: youTubePostsOptions,
     name: 'YouTube Posts',
     shortName: 'YT Posts',
     iconKey: 'youtube',

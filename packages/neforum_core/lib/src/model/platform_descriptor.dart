@@ -1,6 +1,9 @@
 import 'package:meta/meta.dart';
 
 import 'audio.dart' show AudioMimeTypes;
+import 'post_option.dart';
+
+export 'post_option.dart';
 
 /// How a platform can be reached by NEFORUM.
 ///
@@ -311,6 +314,7 @@ class PlatformDescriptor {
     this.family,
     this.polls,
     this.categories = const {},
+    this.options = const [],
   });
 
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
@@ -369,6 +373,21 @@ class PlatformDescriptor {
 
   /// A video site ([PlatformCategory.video]).
   bool get isVideoPlatform => categories.contains(PlatformCategory.video);
+
+  /// Every `PostVariant.extra` key the adapter reads, declared once: the
+  /// options the user sets per post or per account, and the keys NEFORUM
+  /// sets itself ([PostOptionSurface.internal]). The app draws the customize
+  /// sheet from them, and `post_options_declared_test.dart` fails when an
+  /// adapter reads a key that is not here.
+  final List<PostOption> options;
+
+  /// The option declared under [key] (or with [key] as an alias).
+  PostOption? option(String key) =>
+      options.where((o) => o.key == key).firstOrNull ?? options.where((o) => o.aliases.contains(key)).firstOrNull;
+
+  /// The options an account on [tier] can set, in their declared order.
+  List<PostOption> userOptionsFor(PlatformTier tier) =>
+      [for (final o in options) if (o.isUserFacing && o.appliesTo(tier)) o];
 
   bool supportsTier(PlatformTier t) => tiers.contains(t);
 

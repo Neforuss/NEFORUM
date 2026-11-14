@@ -16,6 +16,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'art_api_common.dart';
 import 'flickr_api.dart';
@@ -33,6 +34,7 @@ abstract final class FlickrLimits {
 /// Static description of Flickr.
 const PlatformDescriptor flickrDescriptor = PlatformDescriptor(
   id: 'flickr',
+  options: flickrOptions,
   name: 'Flickr',
   iconKey: 'flickr',
   homepage: 'https://www.flickr.com',

@@ -276,9 +276,13 @@ class VariantResolver {
     }
 
     // ---- extra ---------------------------------------------------------
+    // The account's remembered options, then this post's. Each is moved to
+    // its declared key first, so an option saved under an older key
+    // ([PostOption.aliases]) still counts, and a post's choice under the old
+    // key still beats the account's under the new one.
     final extra = <String, dynamic>{
-      if (account != null) ...(account.config['postDefaults'] as Map?)?.cast<String, dynamic>() ?? const {},
-      ...o.extra,
+      if (account != null) ...canonicalOptionKeys(d.options, (account.config['postDefaults'] as Map?)?.cast<String, dynamic>() ?? const {}),
+      ...canonicalOptionKeys(d.options, o.extra),
     };
 
     // ---- series --------------------------------------------------------

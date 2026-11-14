@@ -14,6 +14,7 @@ import '../../text/rules_validator.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'bluesky_api.dart';
 import 'bluesky_richtext.dart';
@@ -60,6 +61,7 @@ class BlueskyAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: platformId,
+    options: blueskyOptions,
     name: 'Bluesky',
     iconKey: 'bluesky',
     homepage: 'https://bsky.app',

@@ -16,6 +16,7 @@ import '../../text/text_counter.dart';
 import '../../text/url_detector.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'linkedin_api.dart';
 
@@ -60,6 +61,7 @@ class LinkedInAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor linkedInDescriptor = PlatformDescriptor(
     id: 'linkedin',
+    options: linkedInOptions,
     name: 'LinkedIn',
     iconKey: 'linkedin',
     homepage: 'https://www.linkedin.com',

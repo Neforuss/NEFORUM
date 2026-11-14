@@ -61,7 +61,7 @@ When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site tit
 ## What gets posted
 
 - **Title** is required, up to 255 characters. If you leave it empty, NEFORUM uses the first line of the post.
-- **Text** becomes simple HTML and is sent with `POST /ghost/api/admin/posts/?source=html`. A blank line starts a new paragraph and `https://` links become clickable. Ghost turns the HTML into normal editor cards. To send your own HTML, set the per-network option `html: true`. Add `ghostHtmlCard: true` to keep it exactly as written inside a single HTML card. Ghost's HTML conversion is lossy otherwise.
+- **Text** becomes simple HTML and is sent with `POST /ghost/api/admin/posts/?source=html`. A blank line starts a new paragraph and `https://` links become clickable. Ghost turns the HTML into normal editor cards. To send your own HTML, turn on **The text is HTML** (Customize > More options). Turn on **Whole post as one HTML card** too to keep it exactly as written inside a single HTML card. Ghost's HTML conversion is lossy otherwise.
 - **Tags** go into the Ghost tags field as `[{"name": "..."}]`. Ghost creates any tag that doesn't exist yet.
 - **Images**: each image is uploaded with `POST /ghost/api/admin/images/upload/` (multipart `file`, `purpose=image`). The **first image becomes the feature image**, and its alt text becomes `feature_image_alt`. The other images are placed in the post. Set `featuredImage: false` to put every image in the post instead. Accepted types are JPEG, PNG, GIF, WebP and SVG.
 - **Videos aren't uploaded.** Add videos in the Ghost editor.

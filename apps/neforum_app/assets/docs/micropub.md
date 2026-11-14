@@ -82,14 +82,14 @@ NEFORUM sends a form-encoded `h=entry` request. Every Micropub server must accep
 
 Your server answers with `201 Created` or `202 Accepted`. The `Location` header is the post's address, and NEFORUM links to it.
 
-**Per-network options** (`extra`):
+**Micropub options** (the post's **Customize** sheet; all but Publish as are under **More options**):
 
 | Option | What it does | Micropub parameter |
 |---|---|---|
-| `postStatus: "draft"` or `draft: true` | Creates a draft | `post-status=draft` |
-| `slug` | Sets the post's slug | `mp-slug` |
-| `syndicateTo: [uid, ...]` | Cross-posts to targets from `q=config`. You can also save a default in the account settings. | `mp-syndicate-to[]` |
-| `destination: uid` | Picks one blog on a multi-blog Micro.blog account | `mp-destination` |
+| Publish as: Draft | Creates a draft | `post-status=draft` |
+| Address (slug) | Sets the post's slug | `mp-slug` |
+| Syndicate to | Cross-posts to targets from `q=config`, as UIDs separated by commas. You can also save a default in the account settings. | `mp-syndicate-to[]` |
+| Destination | Picks one blog on a multi-blog Micro.blog account | `mp-destination` |
 
 ### Hand-off
 

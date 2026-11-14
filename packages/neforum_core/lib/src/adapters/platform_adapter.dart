@@ -145,6 +145,12 @@ abstract class PlatformAdapter {
     return PhotoFit.fromRules(d.media).copyWith(label: d.name);
   }
 
+  /// The options the user can set for a post through [account]: the
+  /// descriptor's ([PlatformDescriptor.options]) for the account's tier.
+  /// An adapter drops the ones the account cannot use (a channel has no
+  /// topics).
+  List<PostOption> postOptionsFor(ConnectedAccount account) => descriptorForAccount(account).userOptionsFor(account.tier);
+
   /// Whether [account] can place a post as a story as well as in the feed
   /// ([PostPlacement], read from `PostVariant.extra`). The composer then
   /// offers Post / Story / Post + Story for the target.

@@ -13,6 +13,7 @@ import '../../text/rules_validator.dart';
 import '../../text/text_splitter.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'chat_common.dart';
 
@@ -85,6 +86,7 @@ class DiscordWebhook {
 class DiscordAdapter extends PlatformAdapter {
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'discord',
+    options: discordOptions,
     name: 'Discord',
     iconKey: 'discord',
     homepage: 'https://discord.com',

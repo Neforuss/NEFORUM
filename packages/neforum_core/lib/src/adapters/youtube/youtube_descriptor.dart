@@ -1,5 +1,6 @@
 import '../../model/platform_descriptor.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 
 /// Video MIME types YouTube accepts for upload. The API takes `video/*`
 /// (or `application/octet-stream`); these are the containers YouTube lists.
@@ -19,6 +20,7 @@ const youtubeVideoMimeTypes = {
 /// and `videos.insert` reference, quota page last updated 2026-10-08).
 const youtubeDescriptor = PlatformDescriptor(
   id: 'youtube',
+  options: youTubeOptions,
   // 1.4.1: named for what it does, beside YouTube Posts (the channel's text
   // and image posts), so nobody takes one for the other.
   name: 'YouTube videos',

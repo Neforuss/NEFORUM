@@ -64,16 +64,17 @@ NEFORUM sends `POST /api/articles` with `{"article": {...}}`:
 
 By default, `published` is set to `true`. Set `draft: true` to save the article as a draft instead.
 
-**Per-network options** (`extra`):
+**DEV options** (the post's **Customize** sheet; all but the first are under **More options**):
 
 | Option | DEV field |
 |---|---|
-| `canonicalUrl` | `canonical_url`. Use it when the article first appeared on your own blog. |
-| `description` | `description` |
-| `series` | `series` |
-| `organizationId` | `organization_id` |
-| `mainImage` | `main_image`, as an image URL you already host |
-| `coverFromFirstImage: false` | Embeds every image in the article instead of using the first as the cover |
+| Save as a draft | `published: false` |
+| Original address (canonical URL) | `canonical_url`. Use it when the article first appeared on your own blog. |
+| Description | `description` |
+| Series | `series` |
+| Organization ID | `organization_id` |
+| Cover image (link) | `main_image`, as an image URL you already host |
+| First photo as the cover: off | Embeds every image in the article instead of using the first as the cover |
 
 ## Limits
 

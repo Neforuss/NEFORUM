@@ -13,6 +13,7 @@ import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../audio_links.dart';
 import '../connect_spec.dart';
+import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'blogs_common.dart';
 import 'hashnode_api.dart';
@@ -42,6 +43,7 @@ class HashnodeAdapter extends PlatformAdapter {
 
   static const PlatformDescriptor _descriptor = PlatformDescriptor(
     id: 'hashnode',
+    options: hashnodeOptions,
     name: 'Hashnode',
     iconKey: 'hashnode',
     homepage: 'https://hashnode.com',
