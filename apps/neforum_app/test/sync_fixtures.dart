@@ -145,6 +145,7 @@ AppSettings populatedSettings() => AppSettings(
       navigationChrome: NavigationChromeStyle.transparent,
       customAccentColor: 0xFF336699,
       interfaceDensity: InterfaceDensity.compact,
+      seamlessSurfaces: true, // 1.4.3
       mobileTextScale: 1.2,
       collapsedSettingsSections: const ['sync'],
       targetPickerFolded: true,

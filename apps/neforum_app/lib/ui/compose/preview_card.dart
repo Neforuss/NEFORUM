@@ -213,7 +213,7 @@ class _Microblog extends StatelessWidget {
         // LayoutBuilder, which cannot run inside IntrinsicHeight).
         Stack(children: [
           if (i < parts.length - 1)
-            Positioned(left: 17, top: 40, bottom: 4, child: Container(width: 2, color: nf.border)),
+            Positioned(left: 17, top: 40, bottom: 4, child: Container(width: 2, color: nf.hairline)),
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             AccountAvatar(p.account, size: 36, showBadge: false),
             const SizedBox(width: Space.md),
@@ -509,7 +509,7 @@ class _TextCardPreview extends ConsumerWidget {
               borderRadius: Radii.rMd,
               child: DecoratedBox(
                 position: DecorationPosition.foreground,
-                decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+                decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.hairline)),
                 child: design != null
                     ? CardDesignView(
                         request: CardPreviewRequest.text(
@@ -802,7 +802,7 @@ class _TextCardPicture extends ConsumerWidget {
         child: DecoratedBox(
           key: ValueKey('text-card-picture-$id'),
           position: DecorationPosition.foreground,
-          decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+          decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.hairline)),
           child: design != null
               ? CardDesignView(
                   request: CardPreviewRequest.text(
@@ -1022,7 +1022,7 @@ class _TextCardMasterPanelState extends ConsumerState<TextCardMasterPanel> {
                   borderRadius: Radii.rMd,
                   child: DecoratedBox(
                     position: DecorationPosition.foreground,
-                    decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.border)),
+                    decoration: BoxDecoration(borderRadius: Radii.rMd, border: Border.all(color: nf.hairline)),
                     child: picture,
                   ),
                 ),
@@ -1281,7 +1281,7 @@ Widget _optionPill(BuildContext context,
         decoration: BoxDecoration(
           color: selected ? nf.accentSoft : Colors.transparent,
           borderRadius: Radii.rPill,
-          border: Border.all(color: selected ? nf.accent : nf.border),
+          border: Border.all(color: selected ? nf.accent : nf.hairline),
         ),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
           leading,
@@ -1431,7 +1431,7 @@ class _CardStylePickerState extends ConsumerState<_CardStylePicker> {
               decoration: BoxDecoration(
                 color: selected ? nf.accentSoft : Colors.transparent,
                 borderRadius: Radii.rPill,
-                border: Border.all(color: selected ? nf.accent : nf.border),
+                border: Border.all(color: selected ? nf.accent : nf.hairline),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 leading,

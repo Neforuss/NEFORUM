@@ -41,7 +41,8 @@ class SettingsSection extends StatelessWidget {
     final collapsed = scope?.collapsed.contains(title) ?? false;
     final rows = <Widget>[];
     for (var i = 0; i < children.length; i++) {
-      if (i > 0) rows.add(Divider(height: 1, color: nf.border, indent: Space.xl, endIndent: Space.xl));
+      // Rows keep their dividers in seamless mode; only the card's outline goes.
+      if (i > 0) rows.add(Divider(height: 1, color: nf.hairline, indent: Space.xl, endIndent: Space.xl));
       rows.add(children[i]);
     }
     Widget header = AnimatedPadding(

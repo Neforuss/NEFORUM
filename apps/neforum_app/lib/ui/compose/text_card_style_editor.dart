@@ -299,7 +299,7 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
           style: OutlinedButton.styleFrom(
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: Space.sm + 2),
-            side: BorderSide(color: own ? nf.accent : nf.border),
+            side: BorderSide(color: own ? nf.accent : nf.hairline),
           ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -575,7 +575,7 @@ class _TextCardStyleEditorState extends ConsumerState<TextCardStyleEditor> {
                 padding: const EdgeInsets.fromLTRB(Space.md, Space.sm, Space.sm, Space.sm),
                 decoration: BoxDecoration(
                   borderRadius: Radii.rMd,
-                  border: Border.all(color: design == null && style.copyWith(clearHandle: true).isClassic || design != null && !designEdited ? nf.border : nf.accent),
+                  border: Border.all(color: design == null && style.copyWith(clearHandle: true).isClassic || design != null && !designEdited ? nf.hairline : nf.accent),
                 ),
                 child: Row(
                   children: [

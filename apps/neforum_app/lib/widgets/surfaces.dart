@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../theme/tokens.dart';
 
-/// The basic container of the app: a surface with a hairline border.
-/// Hover and press feedback when [onTap] is set.
+/// The basic container of the app: a surface with a hairline border ([NfColors.border],
+/// none in seamless mode, where only a selected card or a [borderColor] keeps
+/// an outline). Hover and press feedback when [onTap] is set.
 class NfCard extends StatefulWidget {
   const NfCard({
     super.key,
@@ -48,7 +49,7 @@ class _NfCardState extends State<NfCard> {
     final interactive = widget.onTap != null;
     final border = widget.selected
         ? nf.accent
-        : widget.borderColor ?? (interactive && _hover ? nf.borderStrong : nf.border);
+        : widget.borderColor ?? (interactive && _hover ? nf.borderHover : nf.border);
     final bg = widget.color ?? (widget.selected ? nf.accentSoft : (interactive && _hover ? nf.surfaceHover : nf.surface));
 
     Widget content = AnimatedContainer(
@@ -92,7 +93,8 @@ class _NfCardState extends State<NfCard> {
   }
 }
 
-/// A recessed area (media tray, code block, drop zone).
+/// A recessed area (media tray, code block, drop zone). Its outline goes in
+/// seamless mode, its fill and a dashed or highlighted edge stay.
 class NfWell extends StatelessWidget {
   const NfWell({super.key, required this.child, this.padding = const EdgeInsets.all(Space.md), this.radius, this.dashed = false, this.highlight = false});
 
@@ -149,7 +151,8 @@ class _DashedBorderPainter extends CustomPainter {
   bool shouldRepaint(_DashedBorderPainter old) => old.color != color;
 }
 
-/// Thin labelled divider: `──── Label ────`.
+/// Thin labelled divider: `──── Label ────`. A rule that carries meaning:
+/// it stays in seamless mode ([NfColors.hairline]).
 class LabeledDivider extends StatelessWidget {
   const LabeledDivider(this.label, {super.key});
   final String label;
@@ -158,12 +161,12 @@ class LabeledDivider extends StatelessWidget {
   Widget build(BuildContext context) {
     final nf = context.nf;
     return Row(children: [
-      Expanded(child: Divider(color: nf.border)),
+      Expanded(child: Divider(color: nf.hairline)),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: Space.md),
         child: Text(label.toUpperCase(), style: context.text.labelSmall?.copyWith(color: nf.textFaint, letterSpacing: 1.2)),
       ),
-      Expanded(child: Divider(color: nf.border)),
+      Expanded(child: Divider(color: nf.hairline)),
     ]);
   }
 }

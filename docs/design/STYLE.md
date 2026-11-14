@@ -45,7 +45,7 @@ NEFORUM is purple **#7D00FF** and yellow **#FFFF00** (`Brand.purple`,
 
 | Token | Where |
 |---|---|
-| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentFill`, `accentSoft`, `highlight`/`onHighlight`, `chrome`/`chromeRaised`/`onChrome`/`onChromeMuted`/`chromeBorder`/`chromeAccent`/`onChromeAccent`/`chromeSelected`/`chromeActionGradient`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`) |
+| `context.nf` | All semantic colors (`bg`, `surface`, `surfaceRaised`, `surfaceSunken`, `surfaceHover`, `border`, `borderHover`, `hairline`, `borderStrong`, `text`, `textMuted`, `textFaint`, `accent`, `accentFill`, `accentSoft`, `highlight`/`onHighlight`, `chrome`/`chromeRaised`/`onChrome`/`onChromeMuted`/`chromeBorder`/`chromeAccent`/`onChromeAccent`/`chromeSelected`/`chromeActionGradient`, `success/warning/danger/info` and their `*Soft` backgrounds, `brandGradient`, `elevation1/2`, `glow()`) |
 | `Space.*` | 4-pt spacing scale: `xxs 2, xs 4, sm 8, md 12, lg 16, xl 20, xxl 24, x3 32, x4 40, x5 48, x6 64` |
 | `Radii.*` | `rXs 6, rSm 10, rMd 14, rLg 20, rXl 28, rPill`; all 0 with the square corner style (`Radii.square`, set by `buildTheme`). They are getters, never `const`. For other sizes use `Radii.circular(r)`, `Radii.corner(r)`, `Radii.circleShape`, `Radii.circleBorder`, `Radii.stadium`. Generated images (text cards, captions) keep fixed radii |
 | `Motion.*` | `fast 140ms, medium 240ms, slow 420ms`, curves `standard`, `emphasized`, `spring` |
@@ -86,6 +86,20 @@ Rules:
   through `legibleOverBackdrop`.
 - High contrast (the system setting) swaps in `NfColors.withHighContrast()`
   by itself; use the tokens and it follows.
+- Seamless (Settings > Appearance > Seamless, `NfColors.withSeamless()`)
+  makes `border` and `chromeBorder` transparent: surfaces are told apart by
+  their fill alone. Pick the line by what it means:
+  - `border`: the outline of a surface (card, section, tile, panel, side
+    panel, banner, menu, dialog) and the lines that split a panel into
+    header, body and footer. It goes in seamless mode.
+  - `hairline`: a line that carries meaning and stays: dividers between the
+    rows of a list, rules, table lines, connector lines, the edge of a text
+    field, chip, outlined button or picture. `Divider()` with no color, and
+    the input, chip, segmented and outlined button themes, use it.
+  - `borderStrong`: edges of controls (checkboxes, swatches, rings, dashed
+    drop zones). `borderHover` for a surface's outline under the pointer.
+  - Selected and focused states use `accent` outlines, which always stay.
+  Menus get a shadow in seamless mode, since they float without a scrim.
 
 ## Layout
 

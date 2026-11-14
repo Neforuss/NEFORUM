@@ -585,7 +585,7 @@ class _AccountChipState extends State<AccountChip> {
               decoration: BoxDecoration(
                 color: sel ? nf.accentSoft : (_hover && enabled ? nf.surfaceHover : nf.surface),
                 borderRadius: Radii.rPill,
-                border: Border.all(color: sel ? nf.accent : (_hover ? nf.borderStrong : nf.border), width: sel ? 1.5 : 1),
+                border: Border.all(color: sel ? nf.accent : (_hover ? nf.borderHover : nf.border), width: sel ? 1.5 : 1),
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
                 // Profile photo when known; otherwise the platform's mark is

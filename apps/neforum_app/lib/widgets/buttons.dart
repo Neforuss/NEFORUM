@@ -100,7 +100,8 @@ class _PrimaryActionState extends State<PrimaryAction> {
                 color: enabled ? null : nf.surfaceSunken,
                 borderRadius: radius,
                 boxShadow: enabled ? nf.glow(widget.onChrome ? nf.chromeAccent : nf.accentFill, strength: (_hover ? 1.35 : 1) * (widget.onChrome ? 0.6 : 1)) : null,
-                border: enabled ? null : Border.all(color: nf.border),
+                // A button keeps its edge in seamless mode.
+                border: enabled ? null : Border.all(color: nf.hairline),
               ),
               child: Stack(
                 alignment: Alignment.center,
@@ -243,7 +244,8 @@ class PillButton extends StatelessWidget {
       style: OutlinedButton.styleFrom(
         foregroundColor: filled ? Colors.white : c,
         backgroundColor: filled ? c : null,
-        side: BorderSide(color: filled ? c : nf.border),
+        // A button keeps its edge in seamless mode.
+        side: BorderSide(color: filled ? c : nf.hairline),
         shape: Radii.stadium,
         padding: const EdgeInsets.symmetric(horizontal: Space.lg, vertical: Space.md),
         minimumSize: const Size(0, 40),

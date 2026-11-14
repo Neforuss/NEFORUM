@@ -144,7 +144,7 @@ class _SignInsScreenState extends ConsumerState<SignInsScreen> {
               padding: EdgeInsets.zero,
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 for (final (i, r) in groups[g]!.indexed) ...[
-                  if (i > 0) Divider(height: 1, color: context.nf.border),
+                  if (i > 0) Divider(height: 1, color: context.nf.hairline),
                   _SignInRowView(
                     key: ValueKey('sign-in-row-${r.account.id}'),
                     row: r,

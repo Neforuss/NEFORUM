@@ -382,7 +382,7 @@ class _SectionBar extends StatelessWidget {
                     onSelected: (_) => onJump(s.title),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
-                    side: BorderSide(color: s.title == current ? nf.accent : nf.border),
+                    side: BorderSide(color: s.title == current ? nf.accent : nf.hairline),
                     labelStyle: context.text.labelMedium?.copyWith(
                       color: s.title == current ? nf.accent : nf.textMuted,
                       fontWeight: s.title == current ? FontWeight.w700 : FontWeight.w500,
