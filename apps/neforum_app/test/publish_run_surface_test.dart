@@ -231,6 +231,89 @@ void main() {
     });
   });
 
+  group('the compact island', () {
+    /// Two posted, one failed, one sending, one to come.
+    PostProgress failedRun() => _run(targets: [
+          _t('Mastodon', outcome: TargetOutcome.published),
+          _t('Bluesky', outcome: TargetOutcome.published),
+          _t('Threads', outcome: TargetOutcome.failed),
+          _t('X', stage: ProgressStage.uploading, permille: 300),
+          _t('LinkedIn'),
+        ], permille: 550);
+
+    test('a failure keeps the count and adds the badge\'s words beside it', () {
+      final s = _ios(failedRun(), PublishRunLifecycle.running, _away);
+      expect(s.activityShortLabel, '2/5');
+      expect(s.activityFailedLabel, '1 failed');
+      expect(s.activityLabel, 'Posting 4 of 5');
+      expect(s.postPermille, 550, reason: 'the ring is drawn from it');
+    });
+
+    test('the count shows live, stale, held back, waiting and finished, never a word or a sign', () {
+      final waiting = _run(targets: [
+        _t('Mastodon', outcome: TargetOutcome.published),
+        _t('Threads', outcome: TargetOutcome.failed),
+        _t('Instagram', stage: ProgressStage.serverProcessing, permille: 600),
+      ]);
+      final finished = _run(targets: [_t('a', outcome: TargetOutcome.published), _t('b', outcome: TargetOutcome.failed)], permille: 1000);
+      final cases = {
+        'live': (_ios(failedRun(), PublishRunLifecycle.running, _away), '2/5'),
+        'in front': (_ios(failedRun(), PublishRunLifecycle.running, _front), '2/5'),
+        'held back': (_ios(failedRun(), PublishRunLifecycle.holding, _away), '2/5'),
+        'waiting': (_ios(waiting, PublishRunLifecycle.running, _away), '1/3'),
+        'finished': (_ios(finished, PublishRunLifecycle.finished, _away), '1/2'),
+      };
+      for (final MapEntry(key: name, value: (s, count)) in cases.entries) {
+        expect(s.activityShortLabel, count, reason: '$name: live');
+        expect(s.pausedShortLabel, count, reason: '$name: stale keeps the last count');
+        expect(s.activityShortLabel, matches(RegExp(r'^\d+/\d+$')), reason: name);
+        expect(s.activityFailedLabel, '1 failed', reason: '$name: a failure stays true');
+      }
+    });
+
+    test('no badge without a failure, and none for a result nobody could confirm', () {
+      expect(_ios(_run(), PublishRunLifecycle.running, _away).activityFailedLabel, isNull);
+      final unknown = _ios(
+          _run(targets: [_t('Threads', outcome: TargetOutcome.failed), _t('X', stage: ProgressStage.posting)]), PublishRunLifecycle.running, _away,
+          unknown: {'id-Threads'});
+      expect(unknown.activityFailedLabel, isNull);
+      expect(unknown.activityShortLabel, '0/2');
+    });
+
+    test('the badge counts every failed network', () {
+      final p = _run(targets: [
+        _t('a', outcome: TargetOutcome.failed),
+        _t('b', outcome: TargetOutcome.failed),
+        _t('c', outcome: TargetOutcome.published),
+        _t('d', stage: ProgressStage.posting),
+      ]);
+      final s = _ios(p, PublishRunLifecycle.running, _away);
+      expect(s.activityFailedLabel, '2 failed');
+      expect(s.activityShortLabel, '1/4');
+    });
+
+    test('no activity, no badge: stopped and closed end it', () {
+      for (final l in [PublishRunLifecycle.stopped, PublishRunLifecycle.closed]) {
+        final s = _ios(failedRun(), l, _away);
+        expect(s.activityLabel, isNull, reason: l.name);
+        expect(s.activityFailedLabel, isNull, reason: l.name);
+      }
+    });
+
+    test('the pause shape before iOS\'s own stale flip only when held back with the app away', () {
+      expect(_ios(failedRun(), PublishRunLifecycle.holding, _away).activityPaused, isTrue);
+      expect(_ios(failedRun(), PublishRunLifecycle.holding, _front).activityPaused, isFalse, reason: 'in front it goes on posting');
+      expect(_ios(failedRun(), PublishRunLifecycle.running, _away).activityPaused, isFalse);
+      expect(_ios(failedRun(), PublishRunLifecycle.finished, _away).activityPaused, isFalse);
+    });
+
+    test('the badge\'s words say nothing the OS decides', () {
+      final s = _ios(failedRun(), PublishRunLifecycle.running, _away);
+      expect(s.activityFailedLabel, isNot(contains('—')));
+      expect(s.activityFailedLabel, isNot(contains('!')));
+    });
+  });
+
   group('iOS\'s own bar', () {
     test('this post\'s figure plus the polls really made, under 0.1%', () {
       TargetProgress wait(int polls) => _t('Threads', stage: ProgressStage.serverProcessing, waitPolls: polls);
@@ -418,12 +501,21 @@ void main() {
       final m = _ios(_run(), PublishRunLifecycle.running, _away).toSnapshot();
       for (final key in [
         'postId', 'phase', 'headline', 'detail', 'postPermille', 'posted', 'failed', 'total', 'currentNetwork', 'stageLabel', 'networks', //
-        'activityLabel', 'activityShortLabel', 'pausedLabel', 'pausedShortLabel', 'systemUnits', 'systemSubtitle', 'backgrounded',
+        'activityLabel', 'activityShortLabel', 'pausedLabel', 'pausedShortLabel', 'activityFailedLabel', 'activityPaused', //
+        'systemUnits', 'systemSubtitle', 'backgrounded',
       ]) {
         expect(m.containsKey(key), isTrue, reason: key);
       }
       expect(m['postId'], 'post-1');
       expect(m['phase'], 'posting');
+      expect(m['activityShortLabel'], '2/5');
+      expect(m['pausedShortLabel'], '2/5');
+      expect(m['activityFailedLabel'], isNull);
+      expect(m['activityPaused'], isFalse);
+      final held = _ios(_run(targets: [_t('A', outcome: TargetOutcome.failed), _t('B', stage: ProgressStage.posting)]), PublishRunLifecycle.holding, _away).toSnapshot();
+      expect(held['activityFailedLabel'], '1 failed');
+      expect(held['activityPaused'], isTrue);
+      expect(held['activityShortLabel'], '0/2');
       expect(m['networks'], isA<List<Object?>>());
       expect((m['networks'] as List).first, {'id': 'id-Mastodon', 'state': 'posted', 'permille': 1000});
     });
@@ -462,7 +554,7 @@ void main() {
 
     test('what a Live Activity holds stays far under its 4 KB limit with 48 networks', () {
       final s = _ios(_run(targets: [for (var i = 0; i < 48; i++) _t('A rather long network name $i', stage: i == 0 ? ProgressStage.uploading : null)]), PublishRunLifecycle.running, _away);
-      final held = [s.phase.name, s.activityLabel, s.activityShortLabel, s.pausedLabel, s.pausedShortLabel, s.stageLabel, s.currentNetwork].join();
+      final held = [s.phase.name, s.activityLabel, s.activityShortLabel, s.pausedLabel, s.pausedShortLabel, s.activityFailedLabel, s.stageLabel, s.currentNetwork].join();
       expect(held.length, lessThan(1024));
     });
 

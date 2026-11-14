@@ -314,10 +314,13 @@ final class PublishRunKeeper {
       stageLabel: snapshot["stageLabel"] as? String,
       network: snapshot["currentNetwork"] as? String,
       permille: (snapshot["postPermille"] as? NSNumber)?.intValue,
+      failedLabel: snapshot["activityFailedLabel"] as? String,
+      paused: snapshot["activityPaused"] as? Bool,
       updatedAt: Date()
     )
     let backgrounded = snapshot["backgrounded"] as? Bool ?? false
-    let key = [state.phase, state.label, state.stageLabel ?? "", state.network ?? ""].joined(separator: "|")
+    // The count and the badge are part of the key: a failure goes out at once.
+    let key = [state.phase, state.label, state.shortLabel, state.failedLabel ?? "", state.stageLabel ?? "", state.network ?? ""].joined(separator: "|")
     let now = Date()
     let due = key != run.lastKey || backgrounded != run.lastBackgrounded || now.timeIntervalSince(run.lastAppliedAt) >= kLiveActivityMinInterval
     guard due else { return }
@@ -351,6 +354,8 @@ final class PublishRunKeeper {
       stageLabel: nil,
       network: nil,
       permille: nil,
+      failedLabel: nil,
+      paused: nil,
       updatedAt: Date()
     )
     let content = ActivityContent(state: state, staleDate: nil)

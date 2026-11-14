@@ -7,7 +7,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:neforum_core/neforum_core.dart' show Post, PostStatus, MediaAttachment;
 import 'package:neforum_app/platform/notifications.dart';
+import 'package:neforum_app/state/publish_run_surface.dart';
 import 'package:neforum_app/state/scheduler.dart';
+
+import '../integration_test/live_activity_probe_runs.dart' as probe;
 
 String _read(String path) => File(path).readAsStringSync();
 
@@ -215,6 +218,77 @@ void main() {
       expect(attributes.toLowerCase(), isNot(contains('var text')));
       expect(attributes.toLowerCase(), isNot(contains('var body')));
     });
+
+    test('every snapshot key the keeper reads is one Dart sends', () {
+      final sent = const PublishSurfaceState(postId: 'p', phase: PublishSurfacePhase.posting, headline: 'h').toSnapshot().keys.toSet();
+      final read = RegExp(r'snapshot\["(\w+)"\]').allMatches(keeper).map((m) => m.group(1)!).toSet();
+      expect(read, containsAll(['activityShortLabel', 'pausedShortLabel', 'activityFailedLabel', 'activityPaused', 'postPermille']));
+      expect(read.difference(sent), isEmpty);
+    });
+
+    test('fields added to the state are optional, so an activity from an older build still decodes', () {
+      expect(attributes, contains('var failedLabel: String?'));
+      expect(attributes, contains('var paused: Bool?'));
+      expect(keeper, contains('failedLabel: snapshot["activityFailedLabel"] as? String'));
+      expect(keeper, contains('paused: snapshot["activityPaused"] as? Bool'));
+    });
+
+    test('a new count or a failure reaches the activity at once', () {
+      final key = RegExp(r'let key = \[([^\]]*)\]').firstMatch(keeper)!.group(1)!;
+      expect(key, contains('state.shortLabel'));
+      expect(key, contains('state.failedLabel'));
+    });
+  });
+
+  group('the island', () {
+    /// The body of the trailing closure [name] in the Dynamic Island builder.
+    String closure(String name) {
+      final start = widget.indexOf('} $name: {');
+      expect(start, greaterThan(0), reason: name);
+      final end = widget.indexOf(RegExp(r'\n      \}'), start + 1);
+      return widget.substring(start, end);
+    }
+
+    test('the compact pill: a ring around the mark on one side, the count on the other', () {
+      expect(closure('compactLeading'), contains('PublishRing(state: state, isStale: stale)'));
+      expect(closure('compactTrailing'), contains('PublishCount(state: state, isStale: stale)'));
+      expect(closure('minimal'), contains('PublishRing(state: state, isStale: stale)'));
+    });
+
+    test('the count is always there, and the badge sits beside it, never instead of it', () {
+      final count = widget.substring(widget.indexOf('struct PublishCount'), widget.indexOf('struct PublishFailureBadge'));
+      final text = count.indexOf('Text(state.shortLine(isStale: isStale))');
+      final badge = count.indexOf('if let failure = state.failure()');
+      expect(text, greaterThan(0));
+      expect(badge, greaterThan(text));
+      expect(count.substring(0, text), isNot(contains('if ')), reason: 'nothing hides the count');
+      expect(count, contains('HStack'));
+      expect(widget, contains('"exclamationmark.circle.fill"'));
+      expect(widget, contains('Color.red'));
+    });
+
+    test('the ring follows the bar, so a stale ring has no arc; the pause shape follows stale or held back', () {
+      expect(attributes, contains('guard let value = bar(isStale: isStale) else { return nil }'));
+      expect(attributes, contains('isStale || paused == true'));
+      final ring = widget.substring(widget.indexOf('struct PublishRing'), widget.indexOf('struct PublishCount'));
+      expect(ring, contains('state.ring(isStale: isStale)'));
+      expect(ring, contains('.trim(from: 0'));
+      expect(ring, contains('state.showsPause(isStale: isStale)'));
+      expect(widget, isNot(contains('PublishMark(isStale:')), reason: 'held back shows the pause shape too');
+    });
+
+    test('the minimal circle has words for VoiceOver, from the reducer', () {
+      expect(closure('minimal'), contains('.accessibilityLabel(Text(state.line(isStale: stale)))'));
+      expect(widget, contains('.accessibilityLabel(Text(failure))'));
+    });
+
+    test('the expanded island carries the count and the failure too', () {
+      final expanded = widget.substring(widget.indexOf('return DynamicIsland {'), widget.indexOf('} compactLeading: {'));
+      expect(expanded, contains('DynamicIslandExpandedRegion(.trailing)'));
+      expect(expanded, contains('PublishCount(state: state, isStale: stale)'));
+      final detail = widget.substring(widget.indexOf('struct PublishDetailView'), widget.indexOf('struct PublishLockScreenView'));
+      expect(detail, contains('state.failure()'));
+    });
   });
 
   group('CI', () {
@@ -229,6 +303,48 @@ void main() {
       expect(workflow, contains('tool/ci_live_activity_simulator.sh'));
       expect(_read('tool/ci_live_activity_simulator.sh'), contains('simctl io'));
       expect(File('integration_test/live_activity_probe.dart').existsSync(), isTrue);
+      expect(workflow, contains('apps/neforum_app/build/live-activity/*.png'));
+    });
+
+    group('the island run', () {
+      final script = _read('tool/ci_live_activity_simulator.sh');
+      String variable(String name) => RegExp('^$name="([^"]*)"\$', multiLine: true).firstMatch(script)!.group(1)!;
+
+      test('reads the words the probe\'s run really has', () {
+        final first = probe.probeFirstRun(DateTime.utc(2026));
+        expect(variable('COUNT'), first.activityShortLabel);
+        expect(variable('LABEL'), first.activityLabel);
+        expect(variable('FAILED'), first.activityFailedLabel);
+        expect(first.pausedShortLabel, first.activityShortLabel, reason: 'the stale pill is read for the same count');
+        final second = probe.probeSecondRun(DateTime.utc(2026));
+        expect(second.activityFailedLabel, isNull);
+        expect(second.postId, isNot(first.postId), reason: 'two activities, for the minimal circles');
+      });
+
+      test('saves compact, expanded, stale and minimal pictures', () {
+        for (final name in ['island-compact.png', 'island-expanded', 'island-stale.png', 'island-minimal.png']) {
+          expect(script, contains(name));
+        }
+      });
+
+      test('fails unless the compact pill shows the count with the badge, live and stale', () {
+        expect(script, contains(r'grep -qF "$COUNT" "$OUT/island-compact.txt" || {'));
+        expect(script, contains('--require right.red --forbid left.orange'));
+        expect(script, contains('--require left.orange --require right.red --forbid left.blue'));
+        expect(script, contains(r'grep -qF "$COUNT" "$OUT/island-stale.txt"'));
+      });
+
+      test('builds its tools before the probe starts, so the stale date is not spent on them', () {
+        final ready = script.indexOf('PROBE_READY begin=');
+        expect(script.indexOf('swiftc -o'), allOf(greaterThan(0), lessThan(ready)));
+        expect(script.indexOf('dart compile exe tool/island_pixels.dart'), allOf(greaterThan(0), lessThan(ready)));
+        expect(script.indexOf('brew install cameroncooke/axe/axe'), allOf(greaterThan(0), lessThan(ready)));
+      });
+
+      test('the expanded and minimal pictures warn instead of failing', () {
+        expect(script, contains('::warning::No expanded island picture'));
+        expect(script, contains('::warning::The probe never started its second run'));
+      });
     });
   });
 
