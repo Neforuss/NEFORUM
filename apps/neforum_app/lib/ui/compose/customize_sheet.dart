@@ -9,6 +9,7 @@ import '../../media/text_card.dart' show kTextCardChoiceKey;
 import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
+import '../../state/story_placements.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
@@ -86,31 +87,6 @@ final Map<String, List<_Extra>> _extrasByPlatform = {
             'The default is in Settings > Posting.'),
   ],
 };
-
-/// Post / Story / Post + Story for a network that takes stories
-/// (`PlatformAdapter.supportsStories`).
-class PlacementSelector extends StatelessWidget {
-  const PlacementSelector({super.key, required this.value, required this.onChanged});
-  final PostPlacement value;
-  final ValueChanged<PostPlacement> onChanged;
-
-  static IconData _icon(PostPlacement p) => switch (p) {
-        PostPlacement.feed => Icons.grid_view_rounded,
-        PostPlacement.story => Icons.amp_stories_outlined,
-        PostPlacement.feedAndStory => Icons.library_add_outlined,
-      };
-
-  @override
-  Widget build(BuildContext context) => SegmentedButton<PostPlacement>(
-        segments: [
-          for (final p in PostPlacement.values)
-            ButtonSegment(value: p, label: Text(p.label, maxLines: 1, overflow: TextOverflow.ellipsis), icon: Icon(_icon(p), size: 18)),
-        ],
-        selected: {value},
-        showSelectedIcon: false,
-        onSelectionChanged: (s) => onChanged(s.single),
-      );
-}
 
 Future<void> showCustomizeSheet(BuildContext context, TargetPreview preview) {
   final sheet = CustomizeSheet(preview: preview);
@@ -236,7 +212,6 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
     final rules = d.text;
     final used = rules.maxLength == null ? _text.text.characters.length : TextCounter.count(_text.text, rules);
     final extras = _extrasByPlatform[d.id] ?? const <_Extra>[];
-    final stories = ref.watch(registryProvider).byId(p.account.platformId)?.supportsStories(p.account) ?? false;
 
     return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       Padding(
@@ -331,22 +306,6 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
               ],
               onChanged: (v) => setState(() => _visibility = v),
             ),
-            if (stories) ...[
-              const SizedBox(height: Space.xl),
-              Text('Post or story', style: context.text.titleSmall),
-              const SizedBox(height: Space.sm),
-              PlacementSelector(
-                value: placementOfExtra(_extra.cast<String, dynamic>()),
-                onChanged: (v) => setState(() {
-                  final next = extraWithPlacement(_extra.cast<String, dynamic>(), v);
-                  _extra
-                    ..clear()
-                    ..addAll(next);
-                }),
-              ),
-              const SizedBox(height: Space.xs),
-              Text(_placementHelp(placementOfExtra(_extra.cast<String, dynamic>()), d.name), style: context.text.bodySmall),
-            ],
             if (extras.isNotEmpty) ...[
               const SizedBox(height: Space.xl),
               Text('${d.name} options', style: context.text.titleSmall),
@@ -361,16 +320,17 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.md, Space.xxl, Space.lg),
         child: Row(children: [
-          if (!o.copyWith(clearScheduledAt: true).isEmpty)
+          if (!withoutPlacement(o).copyWith(clearScheduledAt: true).isEmpty)
             TextButton.icon(
               onPressed: () {
-                // The network's own time is part of the schedule: it stays.
+                // The network's own time is part of the schedule, and Post /
+                // Story is chosen on the preview (1.4.3): both stay.
                 final at = o.scheduledAt;
                 final notifier = ref.read(composerProvider.notifier);
                 if (at == null) {
                   notifier.clearOverride(p.account.id);
                 } else {
-                  notifier.setOverride(p.account.id, PostOverrides(scheduledAt: at));
+                  notifier.setOverride(p.account.id, placementOnly(o).copyWith(scheduledAt: at));
                 }
                 Navigator.pop(context);
               },
@@ -486,14 +446,6 @@ class _CustomizeSheetState extends ConsumerState<CustomizeSheet> {
       decoration: InputDecoration(labelText: e.label, hintText: e.hint, helperText: e.help),
     );
   }
-
-  static String _placementHelp(PostPlacement p, String network) => switch (p) {
-        PostPlacement.feed => 'A regular $network post with your caption.',
-        PostPlacement.story =>
-          'A story: each photo or video becomes a frame, words only become a 9:16 text card. A story has no caption field: with Caption on photo, your caption is written on its photo.',
-        PostPlacement.feedAndStory =>
-          'The post with your caption, and the same photos or videos as a story (9:16) on the same account. A story has no caption field: with Caption on photo, the story\'s photo gets your caption written on it too (Settings > Posting).',
-      };
 
   static String _visLabel(PostVisibility v) => switch (v) {
         PostVisibility.public => 'Public',

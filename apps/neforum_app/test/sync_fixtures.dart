@@ -178,6 +178,7 @@ AppSettings populatedSettings() => AppSettings(
       cardPresets: const [
         {'name': 'Fake preset', 'design': {'background': 'solid'}},
       ],
+      defaultPlacements: const {'acct-1': 'feedAndStory', 'acct-2': 'story'}, // 1.4.3
     );
 
 /// A second setup, different from both the defaults and [populatedSettings]

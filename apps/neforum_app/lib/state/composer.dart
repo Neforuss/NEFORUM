@@ -32,6 +32,7 @@ import 'publish_run_surface.dart';
 import 'scheduler.dart';
 import 'settings.dart';
 import 'shrunk_videos.dart';
+import 'story_placements.dart';
 import 'text_cards.dart';
 
 const _uuid = Uuid();
@@ -257,8 +258,15 @@ class ComposerState {
       (title ?? '').trim().isEmpty &&
       (link ?? '').trim().isEmpty;
 
-  /// Something that clearing or replacing the post would lose.
-  bool get hasContent => !isEmpty || additionalParts.isNotEmpty || poll != null || contentWarning != null || tags.isNotEmpty || overrides.isNotEmpty;
+  /// Something that clearing or replacing the post would lose. Post / Story
+  /// alone is not: it stays, and a new post starts with it (1.4.3).
+  bool get hasContent =>
+      !isEmpty ||
+      additionalParts.isNotEmpty ||
+      poll != null ||
+      contentWarning != null ||
+      tags.isNotEmpty ||
+      overrides.values.any((o) => !withoutPlacement(o).isEmpty);
 
   ComposerState copyWith({
     String? editingPostId,
@@ -438,7 +446,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
     // arrive, unless the user already started choosing.
     ref.listen(accountListProvider, (prev, next) {
       if ((prev == null || prev.isEmpty) && next.isNotEmpty && state.selected.isEmpty && state.isEmpty) {
-        state = state.copyWith(selected: _defaultTargets(next));
+        final selected = _defaultTargets(next);
+        state = state.copyWith(selected: selected, overrides: _withRememberedPlacements(state.overrides, selected, accounts: next));
       }
     });
     // 1.3.5 round 5: a post with no theme of its own follows Settings > Text
@@ -453,15 +462,37 @@ class ComposerNotifier extends Notifier<ComposerState> {
       if (style != state.textCardStyle) state = state.copyWith(textCardStyle: style);
     });
     final settings = ref.read(settingsProvider);
+    final selected = _defaultTargets(ref.read(accountListProvider));
     return ComposerState(
       visibility: settings.defaultVisibility,
-      selected: _defaultTargets(ref.read(accountListProvider)),
+      selected: selected,
+      // 1.4.3: a new post starts with each account's remembered Post / Story.
+      overrides: _withRememberedPlacements(const {}, selected),
     );
   }
 
   /// Art sites are left out: they only receive artwork (artwork_targets.dart).
   Set<String> _defaultTargets(List<ConnectedAccount> accounts) =>
       defaultPostTargets(accounts, ref.read(registryProvider), ref.read(settingsProvider));
+
+  /// 1.4.3: [overrides] with the remembered Post / Story of each of [ids] that
+  /// has no placement of its own ([withRememberedPlacements]).
+  Map<String, PostOverrides> _withRememberedPlacements(Map<String, PostOverrides> overrides, Iterable<String> ids, {List<ConnectedAccount>? accounts}) =>
+      withRememberedPlacements(overrides, ids, accounts ?? ref.read(accountListProvider), ref.read(registryProvider), ref.read(settingsProvider));
+
+  /// 1.4.3: Post, Story or Post + Story for [accountId] on this post, chosen
+  /// on its preview. The choice is remembered for the account: the next new
+  /// post starts with it ([AppSettings.defaultPlacements]).
+  void setPlacement(String accountId, PostPlacement placement) {
+    final current = state.overrides[accountId] ?? const PostOverrides();
+    final next = current.copyWith(extra: extraWithPlacement(current.extra, placement));
+    state = state.copyWith(overrides: next.isEmpty ? ({...state.overrides}..remove(accountId)) : {...state.overrides, accountId: next});
+    final remembered = ref.read(settingsProvider).defaultPlacements;
+    final updated = withRememberedPlacement(remembered, accountId, placement);
+    if (!mapEquals(remembered, updated)) {
+      unawaited(ref.read(settingsProvider.notifier).update((s) => s.copyWith(defaultPlacements: withRememberedPlacement(s.defaultPlacements, accountId, placement))));
+    }
+  }
 
   void setText(String v) => state = state.copyWith(text: v);
 
@@ -731,7 +762,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   /// Empties the post: every part, media, title, link, poll, content
   /// warning, tags and per-network versions. Keeps the targets, the schedule,
-  /// artwork mode and which saved post is being edited.
+  /// each network's Post / Story (1.4.3), artwork mode and which saved post
+  /// is being edited.
   void clearPost() {
     state = ComposerState(
       editingPostId: state.editingPostId,
@@ -741,7 +773,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
       // The times per network are part of the schedule.
       overrides: {
         for (final e in state.overrides.entries)
-          if (e.value.scheduledAt != null) e.key: PostOverrides(scheduledAt: e.value.scheduledAt),
+          if (e.value.scheduledAt != null || hasOwnPlacement(e.value))
+            e.key: placementOnly(e.value).copyWith(scheduledAt: e.value.scheduledAt),
       },
       artwork: state.artwork,
       revision: state.revision + 1,
@@ -829,18 +862,33 @@ class ComposerNotifier extends Notifier<ComposerState> {
         media: [for (final m in state.media) m.id == mediaId ? m.copyWith(altText: alt, clearAltText: alt.isEmpty) : m],
       );
 
+  /// An account added to the post starts with its remembered Post / Story
+  /// (1.4.3), unless this post already chose one for it.
   void toggleAccount(String accountId) {
     final s = {...state.selected};
-    if (!s.remove(accountId)) s.add(accountId);
-    state = state.copyWith(selected: s);
+    if (s.remove(accountId)) {
+      state = state.copyWith(selected: s);
+      return;
+    }
+    s.add(accountId);
+    state = state.copyWith(selected: s, overrides: _withRememberedPlacements(state.overrides, [accountId]));
   }
 
-  void selectAccounts(Iterable<String> ids) => state = state.copyWith(selected: ids.toSet());
+  /// See [toggleAccount] for the accounts this adds.
+  void selectAccounts(Iterable<String> ids) {
+    final selected = ids.toSet();
+    state = state.copyWith(selected: selected, overrides: _withRememberedPlacements(state.overrides, selected.difference(state.selected)));
+  }
 
   void setOverride(String accountId, PostOverrides o) =>
       state = state.copyWith(overrides: {...state.overrides, accountId: o});
 
-  void clearOverride(String accountId) => state = state.copyWith(overrides: {...state.overrides}..remove(accountId));
+  /// Back to the main post for [accountId]. Its Post / Story stays: it is
+  /// chosen on the preview, not by customizing (1.4.3).
+  void clearOverride(String accountId) {
+    final kept = placementOnly(state.overrides[accountId] ?? const PostOverrides());
+    state = state.copyWith(overrides: kept.isEmpty ? ({...state.overrides}..remove(accountId)) : {...state.overrides, accountId: kept});
+  }
 
   /// Loads an existing post into the composer (edit draft / reschedule).
   /// Generated text cards stay out of the editor; they are rebuilt on save.
@@ -908,8 +956,11 @@ class ComposerNotifier extends Notifier<ComposerState> {
   /// with the artwork details back at their defaults.
   void reset({bool keepTargets = true}) {
     final fresh = build();
+    final selected = keepTargets ? state.selected : fresh.selected;
     state = fresh.copyWith(
-      selected: keepTargets ? state.selected : fresh.selected,
+      selected: selected,
+      // 1.4.3: the new post starts with each account's remembered Post / Story.
+      overrides: _withRememberedPlacements(const {}, selected),
       artwork: keepTargets && state.isArtwork ? newArtworkDetails(ref.read(settingsProvider)) : null,
       revision: state.revision + 1,
     );

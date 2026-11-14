@@ -124,8 +124,10 @@ With browser sign-in, NEFORUM exchanges the code (valid for 1 hour, usable once)
 | 1 photo | Feed photo, with alt text if you wrote one |
 | 1 video | Reel (`media_type=REELS`) |
 | 2–10 photos/videos | Carousel. Instagram crops every image to the first image's aspect ratio |
-| "Story" switched on | Story with one photo or video. Stories have no caption and no alt text via the API |
+| Story | Story with one photo or video. Stories have no caption and no alt text via the API |
 | Post + Story | The feed post with your caption, and the same photos or videos as a story on the same account |
+
+Choose **Post**, **Story** or **Post + Story** on the Instagram preview in the composer, under the account's name. The highlighted choice is the one that goes out. NEFORUM remembers it for that account: your next new post starts with the same choice, on every device you sync. Posts you already wrote keep their own.
 
 A story has no caption field, and the API offers no link or post stickers. So when **Caption on photo** is on for Instagram, the story's photo gets your caption written on it too, in the story's 9:16 frame and the same style (1.4.1). **Write the caption on the Instagram story too** in Settings > Posting, or in the caption editor, switches this off.
 

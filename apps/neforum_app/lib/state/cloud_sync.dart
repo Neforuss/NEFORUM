@@ -352,10 +352,7 @@ class CloudSync implements SecretsCoordinator {
         },
         handles: kExportableSettings.contains,
         appliesDeletions: false,
-        remapAccountIds: (key, value, ids) {
-          if (key != 'defaultTargetIds' || value is! List || !value.any(ids.containsKey)) return value;
-          return [...{for (final id in value) ids[id] ?? id}];
-        },
+        remapAccountIds: (key, value, ids) => remapSettingAccountIds(key, value, ids),
       );
 
   /// Both media hosts with their keys, as one record (so a host never

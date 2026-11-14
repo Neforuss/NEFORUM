@@ -209,6 +209,7 @@ class AppSettings {
     this.textCardDesign = const {}, // 1.3.1: cards
     this.audioCardDesign = const {}, // 1.3.1: cards
     this.cardPresets = const [], // 1.3.1: cards
+    this.defaultPlacements = const {}, // 1.4.3: story placement
   });
 
   factory AppSettings.fromJson(Map<String, dynamic> j) => AppSettings(
@@ -297,6 +298,7 @@ class AppSettings {
         textCardDesign: Map<String, dynamic>.from(j['textCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         audioCardDesign: Map<String, dynamic>.from(j['audioCardDesign'] as Map? ?? const {}), // 1.3.1: cards
         cardPresets: [for (final p in j['cardPresets'] as List? ?? const []) if (p is Map) Map<String, dynamic>.from(p)], // 1.3.1: cards
+        defaultPlacements: validDefaultPlacements(j['defaultPlacements']), // 1.4.3: story placement
       );
 
   final ThemeMode themeMode;
@@ -574,6 +576,12 @@ class AppSettings {
   /// 1.3.1: cards. Designs the user saved under a name (CardPreset.toJson).
   final List<Map<String, dynamic>> cardPresets;
 
+  /// 1.4.3: story placement. Post, Story or Post + Story as last chosen in the
+  /// composer, by account id (a [PostPlacement] name). New posts start with
+  /// it on accounts that can post a story; the feed (the default) is not
+  /// stored. See lib/state/story_placements.dart.
+  final Map<String, String> defaultPlacements;
+
   ResolverOptions get resolverOptions => ResolverOptions(
         overflow: overflow,
         threadNumbering: threadNumbering,
@@ -672,6 +680,7 @@ class AppSettings {
     Map<String, dynamic>? textCardDesign, // 1.3.1: cards
     Map<String, dynamic>? audioCardDesign, // 1.3.1: cards
     List<Map<String, dynamic>>? cardPresets, // 1.3.1: cards
+    Map<String, String>? defaultPlacements, // 1.4.3: story placement
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -757,6 +766,7 @@ class AppSettings {
         textCardDesign: textCardDesign ?? this.textCardDesign, // 1.3.1: cards
         audioCardDesign: audioCardDesign ?? this.audioCardDesign, // 1.3.1: cards
         cardPresets: cardPresets ?? this.cardPresets, // 1.3.1: cards
+        defaultPlacements: defaultPlacements ?? this.defaultPlacements, // 1.4.3: story placement
       );
 
   Map<String, dynamic> toJson() => {
@@ -843,5 +853,18 @@ class AppSettings {
         if (textCardDesign.isNotEmpty) 'textCardDesign': textCardDesign, // 1.3.1: cards
         if (audioCardDesign.isNotEmpty) 'audioCardDesign': audioCardDesign, // 1.3.1: cards
         if (cardPresets.isNotEmpty) 'cardPresets': cardPresets, // 1.3.1: cards
+        if (defaultPlacements.isNotEmpty) 'defaultPlacements': defaultPlacements, // 1.4.3: story placement
       };
+}
+
+/// 1.4.3: story placement. The stored [AppSettings.defaultPlacements] that
+/// can be used: account ids with the name of a story placement. Anything
+/// else (the feed, which is the default, an unknown name, a value that is
+/// not text) is left out.
+Map<String, String> validDefaultPlacements(Object? raw) {
+  if (raw is! Map) return const {};
+  return {
+    for (final e in raw.entries)
+      if ((e.key, PostPlacement.tryParse(e.value)) case (final String id, final PostPlacement p) when p != PostPlacement.feed) id: p.name,
+  };
 }

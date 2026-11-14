@@ -23,6 +23,7 @@ import '../../state/composer.dart';
 import '../../state/fitted_photos.dart';
 import '../../state/providers.dart';
 import '../../state/settings.dart' show TextCardAlignment;
+import '../../state/story_placements.dart' show withoutPlacement;
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../theme/zoom.dart';
@@ -38,6 +39,7 @@ import 'card_background_sheet.dart';
 import 'card_design_view.dart';
 import 'card_designer_sheet.dart';
 import 'font_picker_sheet.dart';
+import 'placement_switch.dart';
 import 'rich_text.dart';
 import 'text_card_style_editor.dart';
 
@@ -122,8 +124,10 @@ class PreviewCard extends ConsumerWidget {
     final p = preview;
     final d = p.descriptor;
     final v = p.variant;
-    // A network's own time is set in the schedule, not by customizing.
-    final customized = !p.target.overrides.copyWith(clearScheduledAt: true).isEmpty;
+    // A network's own time is set in the schedule, and Post / Story on the
+    // preview itself (1.4.3), not by customizing.
+    final customized = !withoutPlacement(p.target.overrides).copyWith(clearScheduledAt: true).isEmpty;
+    final stories = ref.watch(registryProvider).byId(p.account.platformId)?.supportsStories(p.account) ?? false;
     final hasErrors = p.issues.hasErrors;
     final family = previewFamilyFor(d.id, artPlatform: d.isArtPlatform);
     final rules = d.text;
@@ -165,6 +169,18 @@ class PreviewCard extends ConsumerWidget {
             ToolButton(icon: Icons.tune_rounded, tooltip: 'Customize for ${d.name}', onPressed: onCustomize, size: 34, active: customized),
           ]),
         ),
+        // 1.4.3: Post / Story / Post + Story in plain sight, remembered for
+        // the account's next posts.
+        if (stories)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(Space.md, 0, Space.md, Space.md),
+            child: PlacementSwitch(
+              accountId: p.account.id,
+              network: d.name,
+              value: placementOfExtra(p.target.overrides.extra),
+              onChanged: (v) => ref.read(composerProvider.notifier).setPlacement(p.account.id, v),
+            ),
+          ),
         Divider(height: 1, color: nf.border),
         Padding(padding: const EdgeInsets.all(Space.md + 2), child: body),
         // 1.3.4: what does not fit in one post goes on in further posts.
