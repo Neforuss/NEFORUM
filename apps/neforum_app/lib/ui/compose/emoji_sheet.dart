@@ -154,7 +154,7 @@ class _EmojiPanelState extends ConsumerState<EmojiPanel> {
             Expanded(child: _TabButton(key: Key('character-tab-${t.tab.name}'), label: t.label, icon: t.icon, selected: _tab == t.tab, onTap: () => _setTab(t.tab))),
         ]),
       ),
-      Divider(height: 1, color: nf.border),
+      Divider(height: 1, color: nf.hairline),
       Expanded(child: KeyedSubtree(key: ValueKey(_tab), child: body)),
       if (widget.showBudget) const CharacterBudgetStrip(),
     ]);
@@ -219,7 +219,7 @@ class _EmojiPanelState extends ConsumerState<EmojiPanel> {
               Expanded(child: _CategoryButton(key: Key('emoji-category-${c.name}'), icon: _categoryIcons[c]!, tooltip: c.description, selected: _category == c && !_favourites, onTap: () => _showCategory(c))),
           ]),
         ),
-      Divider(height: 1, color: nf.border),
+      Divider(height: 1, color: nf.hairline),
       Expanded(
         child: listShown
             ? list.isEmpty

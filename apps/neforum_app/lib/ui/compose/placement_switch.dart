@@ -42,7 +42,7 @@ class PlacementSwitch extends StatelessWidget {
           backgroundColor: WidgetStateProperty.resolveWith((s) => when(s, nf.accentSoft, nf.surfaceSunken)),
           foregroundColor: WidgetStateProperty.resolveWith((s) => when(s, nf.accent, nf.textMuted)),
           iconColor: WidgetStateProperty.resolveWith((s) => when(s, nf.accent, nf.textMuted)),
-          side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.selected) ? nf.accent : nf.border)),
+          side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.selected) ? nf.accent : nf.hairline)),
           textStyle: WidgetStateProperty.resolveWith(
             (s) => context.text.labelMedium?.copyWith(fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500),
           ),

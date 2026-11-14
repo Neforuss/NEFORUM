@@ -150,7 +150,7 @@ class PublishingOrderEditor extends ConsumerWidget {
                 const SliverToBoxAdapter(child: SizedBox(height: Space.lg)),
               ]),
       ),
-      Divider(height: 1, color: nf.border),
+      Divider(height: 1, color: nf.hairline),
       Padding(
         padding: const EdgeInsets.fromLTRB(Space.xxl, Space.md, Space.xxl, Space.lg),
         child: Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center, spacing: Space.sm, runSpacing: Space.sm, children: [

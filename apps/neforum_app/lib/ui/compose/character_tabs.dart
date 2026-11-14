@@ -97,7 +97,7 @@ class _GroupChip extends StatelessWidget {
         excludeSemantics: true,
         child: Material(
           color: selected ? nf.accentSoft : Colors.transparent,
-          shape: RoundedRectangleBorder(borderRadius: Radii.rPill, side: BorderSide(color: selected ? nf.accent : nf.border)),
+          shape: RoundedRectangleBorder(borderRadius: Radii.rPill, side: BorderSide(color: selected ? nf.accent : nf.hairline)),
           child: InkWell(
             customBorder: Radii.stadium,
             onTap: onTap,
@@ -370,7 +370,7 @@ class _SymbolsTabState extends ConsumerState<SymbolsTab> with _GlyphChecks {
             for (final g in _groups.where((g) => !g.isBlock)) _GroupChip(key: Key('symbols-group-${g.id}'), label: g.title, selected: _group == g.id, onTap: () => _select(g.id)),
           ],
         ),
-      Divider(height: 1, color: nf.border),
+      Divider(height: 1, color: nf.hairline),
       Expanded(
         child: !settled && !keepUndrawn
             ? const SizedBox.shrink()
@@ -411,7 +411,7 @@ class _DetailsBar extends StatelessWidget {
           ].join('  ·  ');
     return Container(
       key: const Key('symbols-details'),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: nf.border))),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: nf.hairline))),
       padding: const EdgeInsets.fromLTRB(Space.md, Space.xs, Space.xs, Space.xs),
       child: Row(children: [
         Expanded(
@@ -546,7 +546,7 @@ class _KaomojiTabState extends ConsumerState<KaomojiTab> with _GlyphChecks {
             for (final g in _groups) _GroupChip(key: Key('kaomoji-group-${g.id}'), label: g.title, selected: _group == g.id, onTap: () => _select(g.id)),
           ],
         ),
-      Divider(height: 1, color: nf.border),
+      Divider(height: 1, color: nf.hairline),
       Expanded(
         child: !settled
             ? const SizedBox.shrink()
@@ -678,7 +678,7 @@ class _TextStylesTabState extends ConsumerState<TextStylesTab> with _GlyphChecks
                 decoration: const InputDecoration(hintText: 'Select text in your post, or type it here', isDense: true),
               ),
       ),
-      Divider(height: 1, color: nf.border),
+      Divider(height: 1, color: nf.hairline),
       Expanded(
         child: !settled
             ? const SizedBox.shrink()
@@ -687,7 +687,7 @@ class _TextStylesTabState extends ConsumerState<TextStylesTab> with _GlyphChecks
                 : ListView.separated(
                     padding: const EdgeInsets.symmetric(vertical: Space.xs),
                     itemCount: offered.length,
-                    separatorBuilder: (_, _) => Divider(height: 1, indent: Space.md, endIndent: Space.md, color: nf.border),
+                    separatorBuilder: (_, _) => Divider(height: 1, indent: Space.md, endIndent: Space.md, color: nf.hairline),
                     itemBuilder: (context, i) {
                       final k = offered[i];
                       final styled = ts.apply(k, usable ? source : _sample);
@@ -756,7 +756,7 @@ class CharacterBudgetStrip extends ConsumerWidget {
             : '${r.name} ${r.left} left';
     return Container(
       key: const Key('character-budget'),
-      decoration: BoxDecoration(border: Border(top: BorderSide(color: nf.border))),
+      decoration: BoxDecoration(border: Border(top: BorderSide(color: nf.hairline))),
       padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.xs),
       child: Text.rich(
         TextSpan(children: [
