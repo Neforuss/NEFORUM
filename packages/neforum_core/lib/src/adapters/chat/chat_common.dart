@@ -2,6 +2,7 @@ import '../../http/neforum_http.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/publish_result.dart';
+import '../../text/network_text_transforms.dart';
 
 /// Helpers shared by the chat adapters (Telegram, Discord, Matrix).
 ///
@@ -121,7 +122,32 @@ final RegExp _italicUnderscore = RegExp(r'(?<![\w_])_(?=[^\s_])([^\n_]*?[^\s_])_
 ///
 /// With [brLineBreaks] (Matrix) newlines outside code blocks become `<br>`;
 /// without it (Telegram, whose HTML mode keeps literal newlines) they stay.
+///
+/// The curated kaomoji (`kKaomojiGroups`) are not Markdown: they are set
+/// aside first and come back as plain text, so `(*^▽^*)` keeps its stars and
+/// two kaomoji with a backtick each do not make the words between them code.
 String? chatMarkdownToHtml(String text, {bool brLineBreaks = false}) {
+  final kept = <String>[];
+  final spans = NetworkTextTransforms.kaomojiSpans(text);
+  if (spans.isNotEmpty) {
+    final b = StringBuffer();
+    var cursor = 0;
+    for (final s in spans) {
+      b
+        ..write(text.substring(cursor, s.start))
+        ..write('\u0001${kept.length}\u0002');
+      kept.add(text.substring(s.start, s.end));
+      cursor = s.end;
+    }
+    b.write(text.substring(cursor));
+    text = b.toString();
+  }
+  final html = _chatMarkdownToHtml(text, brLineBreaks);
+  if (html == null || kept.isEmpty) return html;
+  return html.replaceAllMapped(RegExp('\u0001(\\d+)\u0002'), (m) => chatEscapeHtml(kept[int.parse(m[1]!)]));
+}
+
+String? _chatMarkdownToHtml(String text, bool brLineBreaks) {
   var changed = false;
   final out = StringBuffer();
   var cursor = 0;

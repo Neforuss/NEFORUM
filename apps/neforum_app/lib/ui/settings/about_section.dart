@@ -39,12 +39,20 @@ class AboutSettingsSection extends StatelessWidget {
             OutlinedButton.icon(onPressed: () => open('https://github.com/Neforuss/NEFORUM/issues'), icon: const Icon(Icons.bug_report_outlined, size: 18), label: const Text('Report a problem')),
             OutlinedButton.icon(onPressed: () => open(kTermsUrl), icon: const Icon(Icons.gavel_rounded, size: 18), label: const Text('Terms of service')),
             OutlinedButton.icon(onPressed: () => open(kPrivacyUrl), icon: const Icon(Icons.privacy_tip_outlined, size: 18), label: const Text('Privacy policy')),
+            // 1.4.3: symbols. The licences of the packages and data NEFORUM ships.
+            OutlinedButton.icon(
+              key: const Key('about-licenses'),
+              onPressed: () => showLicensePage(context: context, applicationName: 'NEFORUM', applicationVersion: kAppVersion),
+              icon: const Icon(Icons.description_outlined, size: 18),
+              label: const Text('Licenses'),
+            ),
           ]),
           const SizedBox(height: Space.xl),
           Text('Credits', style: context.text.titleSmall),
           const SizedBox(height: Space.xs),
           Text(
-            'Fonts: Inter, Bricolage Grotesque, JetBrains Mono and TikTok Sans (SIL Open Font License). Platform logos: Font Awesome Brands (CC BY 4.0); trademarks belong to their owners. Icons: Material Symbols (Apache 2.0).',
+            'Fonts: Inter, Bricolage Grotesque, JetBrains Mono and TikTok Sans (SIL Open Font License). Platform logos: Font Awesome Brands (CC BY 4.0); trademarks belong to their owners. Icons: Material Symbols (Apache 2.0). '
+            'Symbols, text styles and search words: the Unicode Character Database and Unicode CLDR (Unicode License v3). Kaomoji: written for NEFORUM.',
             style: context.text.bodySmall,
           ),
         ]),

@@ -195,6 +195,7 @@ class AppSettings {
     this.fontDownloads = FontDownloadMode.ask, // 1.4: fonts
     this.emojiRecents = const [], // 1.4: emoji
     this.emojiSkinTone = 0, // 1.4: emoji
+    this.characterFavourites = const [], // 1.4.3: symbols
     // 1.4: notifications
     this.notificationPromptAt,
     this.notificationOsAskedAt,
@@ -283,6 +284,7 @@ class AppSettings {
         fontDownloads: FontDownloadMode.values.asNameMap()[j['fontDownloads']] ?? FontDownloadMode.ask, // 1.4: fonts
         emojiRecents: [for (final e in j['emojiRecents'] as List? ?? const []) if (e is String) e], // 1.4: emoji
         emojiSkinTone: ((j['emojiSkinTone'] as num?)?.toInt() ?? 0).clamp(0, 5), // 1.4: emoji
+        characterFavourites: [for (final e in j['characterFavourites'] as List? ?? const []) if (e is String && e.isNotEmpty) e], // 1.4.3: symbols
         // 1.4: notifications
         notificationPromptAt: DateTime.tryParse('${j['notificationPromptAt'] ?? ''}'),
         notificationOsAskedAt: DateTime.tryParse('${j['notificationOsAskedAt'] ?? ''}'),
@@ -516,6 +518,11 @@ class AppSettings {
   /// 1.4: the skin tone the emoji sheet shows: 0 for the default, 1 to 5.
   final int emojiSkinTone;
 
+  /// 1.4.3: symbols. The emoji, symbols and kaomoji the user starred in the
+  /// character panel, newest first: one set shared by its tabs. It travels
+  /// with Sync and "Move to another device", like the other choices.
+  final List<String> characterFavourites;
+
   /// 1.4: when the explanation screen about notifications was shown here. It
   /// is shown once. Saying Not now spends nothing with the OS. Device-only.
   final DateTime? notificationPromptAt;
@@ -658,6 +665,7 @@ class AppSettings {
     FontDownloadMode? fontDownloads, // 1.4: fonts
     List<String>? emojiRecents, // 1.4: emoji
     int? emojiSkinTone, // 1.4: emoji
+    List<String>? characterFavourites, // 1.4.3: symbols
     // 1.4: notifications
     DateTime? notificationPromptAt,
     DateTime? notificationOsAskedAt,
@@ -743,6 +751,7 @@ class AppSettings {
         fontDownloads: fontDownloads ?? this.fontDownloads, // 1.4: fonts
         emojiRecents: emojiRecents ?? this.emojiRecents, // 1.4: emoji
         emojiSkinTone: emojiSkinTone ?? this.emojiSkinTone, // 1.4: emoji
+        characterFavourites: characterFavourites ?? this.characterFavourites, // 1.4.3: symbols
         // 1.4: notifications
         notificationPromptAt: notificationPromptAt ?? this.notificationPromptAt,
         notificationOsAskedAt: notificationOsAskedAt ?? this.notificationOsAskedAt,
@@ -829,6 +838,7 @@ class AppSettings {
         'fontDownloads': fontDownloads.name, // 1.4: fonts
         if (emojiRecents.isNotEmpty) 'emojiRecents': emojiRecents, // 1.4: emoji
         if (emojiSkinTone != 0) 'emojiSkinTone': emojiSkinTone, // 1.4: emoji
+        if (characterFavourites.isNotEmpty) 'characterFavourites': characterFavourites, // 1.4.3: symbols
         // 1.4: notifications
         if (notificationPromptAt != null) 'notificationPromptAt': notificationPromptAt!.toUtc().toIso8601String(),
         if (notificationOsAskedAt != null) 'notificationOsAskedAt': notificationOsAskedAt!.toUtc().toIso8601String(),

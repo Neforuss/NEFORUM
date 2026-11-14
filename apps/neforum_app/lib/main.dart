@@ -11,6 +11,7 @@ import 'platform/env.dart';
 import 'platform/notifications.dart';
 import 'platform/publish_host.dart';
 import 'platform/storage.dart';
+import 'state/character_catalog.dart';
 import 'state/fitted_photos.dart';
 import 'state/publish_result_notices.dart';
 import 'state/scheduler.dart';
@@ -89,6 +90,7 @@ Future<void> main(List<String> args) => runNeforum(args);
 Future<void> runNeforum(List<String> args, {Future<void> Function(AppServices services)? prepare}) async {
   WidgetsFlutterBinding.ensureInitialized();
   final startMinimized = args.contains('--minimized');
+  registerCharacterDataLicense();
 
   await DesktopIntegration.instance.initWindow(startHidden: startMinimized);
   NotificationService.instance.backgroundHandler = notificationBackgroundHandler;

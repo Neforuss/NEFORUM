@@ -161,6 +161,7 @@ AppSettings populatedSettings() => AppSettings(
       fontDownloads: FontDownloadMode.on,
       emojiRecents: const ['\u{1F600}'],
       emojiSkinTone: 3,
+      characterFavourites: const ['★', '¯\\_(ツ)_/¯'], // 1.4.3: symbols
       notificationPromptAt: DateTime.utc(2026, 11, 1),
       notificationOsAskedAt: DateTime.utc(2026, 11, 2),
       notificationHintShownAt: DateTime.utc(2026, 11, 3),
