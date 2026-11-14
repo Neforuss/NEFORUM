@@ -288,4 +288,35 @@ void main() {
     expect(c.read(settingsProvider).defaultPlacements, {'fb-api': 'feedAndStory', 'fb-handoff': 'story'});
     await done(tester);
   });
+
+  // 1.4.3 integration with "Automatic only": the accounts it adds, at once or
+  // later while the targets follow the post, are added like a tick by hand.
+  testWidgets('an account Automatic only adds starts with its remembered placement', (tester) async {
+    final igApi = ConnectedAccount(id: 'ig-api', platformId: 'instagram', tier: PlatformTier.byokApi, displayName: 'Studio', createdAt: _now);
+    final storage = _MemoryStorage()
+      ..json['settings.json'] = const AppSettings(defaultTargetIds: [_ig], defaultPlacements: {'fb-api': 'story', 'ig-api': 'feedAndStory'}).toJson();
+    final (services, c) = await boot(tester, storage);
+    await tester.runAsync(() => services.accounts.upsert(_fbApi));
+    await tester.runAsync(() => services.accounts.upsert(igApi));
+    await tester.pump(const Duration(milliseconds: 300));
+    final n = c.read(composerProvider.notifier);
+    expect(rememberedPlacement(c.read(settingsProvider), igApi, c.read(registryProvider)), PostPlacement.feedAndStory,
+        reason: 'Instagram on its API takes stories');
+
+    // An empty post: the Page takes it at once; Instagram needs words or a
+    // picture, so it waits.
+    n.selectAutomatic();
+    expect(c.read(composerProvider).selected, contains(_fbApi.id));
+    expect(c.read(composerProvider).selected, isNot(contains(igApi.id)));
+    expect(placementIn(c, _fbApi.id), PostPlacement.story);
+    expect(c.read(composerProvider).overrides.containsKey(igApi.id), isFalse);
+
+    // Words make a text card for Instagram: the targets follow the post and
+    // add it, with its remembered Post + Story.
+    n.setText('Words that become a card');
+    expect(c.read(composerProvider).selected, contains(igApi.id));
+    expect(placementIn(c, igApi.id), PostPlacement.feedAndStory);
+    expect(placementIn(c, _fbApi.id), PostPlacement.story, reason: 'the others are left as they were');
+    await done(tester);
+  });
 }
