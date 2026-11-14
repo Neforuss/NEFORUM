@@ -179,6 +179,16 @@ xcrun simctl io "$UDID" screenshot "$OUT/app-in-front.png"
 COUNT="2/5"
 LABEL="Posting 4 of 5"
 FAILED="1 failed"
+# Vision reads the pill's small slash as a bar: the first run with the count in the
+# pill showed "2/5" with the badge and was read as "2|5". So the count is looked
+# for with the slash as any of the upright strokes Vision gives for it, spaces
+# around it or not, and never inside a longer number ("12/5", "2/50").
+COUNT_SLASH="[/|lI]"
+COUNT_READ="(^|[^0-9])${COUNT%/*} ?${COUNT_SLASH} ?${COUNT#*/}([^0-9]|\$)"
+# Whether the text read from a picture ($1) has the count.
+shows_count() {
+  grep -qE "$COUNT_READ" "$1"
+}
 
 # Every iPhone with an island is 3x, and the island's middle is about 30 pt down.
 # Echoes "x y" in points for AXe.
@@ -208,7 +218,7 @@ sleep 4
 xcrun simctl io "$UDID" screenshot "$OUT/island-compact.png"
 "$OUT/read_text" "$OUT/island-compact.png" | tee "$OUT/island-compact.txt"
 # The count at all times: a failure adds the red badge beside it, never replaces it.
-grep -qF "$COUNT" "$OUT/island-compact.txt" || { echo "The compact island did not show the count $COUNT during a run with a failure"; exit 1; }
+shows_count "$OUT/island-compact.txt" || { echo "The compact island did not show the count $COUNT during a run with a failure"; exit 1; }
 "$OUT/island_pixels" "$OUT/island-compact.png" --require right.red --forbid left.orange | tee "$OUT/island-compact-colours.txt" \
   || { echo "The compact island did not show the red failure badge beside the count, or showed the pause shape while live"; exit 1; }
 # The ring and the mark are the accent colour, blue unless the extension sets one.
@@ -239,7 +249,7 @@ if command -v axe > /dev/null 2>&1; then
 fi
 if [ "$expanded" = yes ]; then
   cat "$OUT/island-expanded.txt"
-  if grep -qF "$FAILED" "$OUT/island-expanded.txt" && grep -qF "$COUNT" "$OUT/island-expanded.txt"; then
+  if grep -qF "$FAILED" "$OUT/island-expanded.txt" && shows_count "$OUT/island-expanded.txt"; then
     echo "expanded: captured, with \"$LABEL\", $COUNT and \"$FAILED\"" >> "$SUMMARY"
   else
     echo "::warning::The expanded island showed \"$LABEL\" without $COUNT or \"$FAILED\". See island-expanded.png"
@@ -262,7 +272,7 @@ for _ in $(seq 1 30); do
   xcrun simctl io "$UDID" screenshot "$OUT/island-stale.png" > /dev/null
   "$OUT/read_text" "$OUT/island-stale.png" > "$OUT/island-stale.txt"
   if "$OUT/island_pixels" "$OUT/island-stale.png" --require left.orange --require right.red --forbid left.blue > "$OUT/island-stale-colours.txt" \
-    && grep -qF "$COUNT" "$OUT/island-stale.txt" && ! grep -q "Posting" "$OUT/island-stale.txt"; then
+    && shows_count "$OUT/island-stale.txt" && ! grep -q "Posting" "$OUT/island-stale.txt"; then
     stale=yes
     break
   fi
@@ -291,7 +301,7 @@ if [ "$minimal" = started ]; then
   "$OUT/island_pixels" "$OUT/island-minimal.png" > "$OUT/island-minimal-colours.txt" || true
   cat "$OUT/island-minimal.txt" "$OUT/island-minimal-colours.txt"
   # Minimal circles hold rings, no text: a count means iOS chose the pill for one.
-  if grep -qE "[0-9]/[0-9]" "$OUT/island-minimal.txt"; then
+  if grep -qE "(^|[^0-9])[0-9] ?${COUNT_SLASH} ?[0-9]([^0-9]|\$)" "$OUT/island-minimal.txt"; then
     echo "::warning::With two activities the island still showed a count: not both minimal. See island-minimal.png"
     echo "minimal: captured, but a count showed (a pill, not two circles)" >> "$SUMMARY"
   else

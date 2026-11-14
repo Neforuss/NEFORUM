@@ -328,10 +328,26 @@ void main() {
       });
 
       test('fails unless the compact pill shows the count with the badge, live and stale', () {
-        expect(script, contains(r'grep -qF "$COUNT" "$OUT/island-compact.txt" || {'));
+        expect(script, contains(r'shows_count "$OUT/island-compact.txt" || {'));
         expect(script, contains('--require right.red --forbid left.orange'));
         expect(script, contains('--require left.orange --require right.red --forbid left.blue'));
-        expect(script, contains(r'grep -qF "$COUNT" "$OUT/island-stale.txt"'));
+        expect(script, contains(r'shows_count "$OUT/island-stale.txt"'));
+      });
+
+      test('reads the count as Vision gives it, and never out of another number', () {
+        // The script's own pattern, put together as bash does.
+        expect(script, contains(r'COUNT_READ="(^|[^0-9])${COUNT%/*} ?${COUNT_SLASH} ?${COUNT#*/}([^0-9]|\$)"'));
+        expect(script, contains(r'grep -qE "$COUNT_READ" "$1"'));
+        final count = variable('COUNT').split('/');
+        final read = RegExp('(^|[^0-9])${count[0]} ?${variable('COUNT_SLASH')} ?${count[1]}([^0-9]|\$)', multiLine: true);
+        // CI run 43566168953: the pill showed "2/5" and Vision read "2|5".
+        expect(read.hasMatch('6:45\n2|5\nSettings'), isTrue);
+        for (final shown in ['2/5', '2 / 5', '2l5', '2I5', '2 | 5', '2/5 !']) {
+          expect(read.hasMatch(shown), isTrue, reason: shown);
+        }
+        for (final absent in ['6:45\nSettings', '25', '2 5', '12/5', '2/50', '3/5', '2/4', '2:5', '…', '']) {
+          expect(read.hasMatch(absent), isFalse, reason: absent);
+        }
       });
 
       test('builds its tools before the probe starts, so the stale date is not spent on them', () {
