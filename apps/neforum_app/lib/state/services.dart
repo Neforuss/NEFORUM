@@ -264,6 +264,18 @@ class AppServices {
         readMedia: media.read,
       );
 
+  /// One-tap Reconnect (1.4.3): the stored keys first, then the browser
+  /// sign-in with the app keys already saved. The new sign-in's server read
+  /// is not waited for, as when connecting.
+  AccountReconnector reconnector() => AccountReconnector(
+        registry: registry,
+        accounts: accounts,
+        secrets: secrets,
+        renew: (id) => publisher().renewSignIn(id),
+        connected: (account, keys) async =>
+            unawaited(signInStatus.accountConnected(account, keys, connectContext()).then<void>((_) {}, onError: (Object _) {})),
+      );
+
   /// Context for connect flows (sign-in) outside a publish run.
   AdapterContext connectContext({void Function(String)? onProgress}) => AdapterContext(
         http: http,

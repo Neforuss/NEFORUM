@@ -17,6 +17,7 @@ import '../../widgets/surfaces.dart';
 import '../router.dart';
 import 'connection_section.dart';
 import 'guide_sheet.dart';
+import 'reconnect_action.dart';
 
 /// One connected account with its status, quotas and controls, and (1.3.5)
 /// its connection setup in a section that opens on a tap.
@@ -72,10 +73,8 @@ class AccountCard extends ConsumerWidget {
               Icon(Icons.link_off_rounded, size: 18, color: nf.danger),
               const SizedBox(width: Space.sm),
               Expanded(child: Text('Needs reconnecting: ${a.lastError}', maxLines: 3, overflow: TextOverflow.ellipsis, style: context.text.bodySmall?.copyWith(color: nf.text))),
-              TextButton(
-                onPressed: () => context.go('${AppSection.accounts.path}/add?platform=${a.platformId}'),
-                child: const Text('Reconnect'),
-              ),
+              const SizedBox(width: Space.sm),
+              _ReconnectButton(account: a),
             ]),
           ),
         if (quotas != null && quotas.isNotEmpty)
@@ -156,6 +155,23 @@ class _SignInLine extends ConsumerWidget {
           ]),
         ),
       ),
+    );
+  }
+}
+
+/// 1.4.3: one tap signs the account in again with the keys and app it already
+/// has ([reconnectAccount]); the form opens only when something must be typed.
+class _ReconnectButton extends ConsumerWidget {
+  const _ReconnectButton({required this.account});
+  final ConnectedAccount account;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final busy = ref.watch(reconnectingProvider).contains(account.id);
+    return FilledButton(
+      key: ValueKey('reconnect-${account.id}'),
+      onPressed: busy ? null : () => reconnectAccount(context, ref, account),
+      child: Text(busy ? 'Reconnecting…' : 'Reconnect'),
     );
   }
 }

@@ -11,6 +11,7 @@ import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
+import '../accounts/reconnect_action.dart';
 import 'time_format.dart';
 
 /// One network's outcome for a post; tap to act on it.
@@ -86,9 +87,33 @@ class TargetChip extends ConsumerWidget {
   }
 }
 
-/// Explains a failed or cancelled target and offers a retry.
+/// Explains a failed or cancelled target and offers a retry. A refused sign-in
+/// (1.4.3) offers Reconnect first: one tap signs in again with the keys and
+/// app already saved, then the post is retried.
 Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, PostTarget target, String platformName) {
   final e = target.result?.error;
+  final account = refusesSignIn(e) ? ref.read(accountByIdProvider(target.accountId)) : null;
+  final reconnect = account != null && account.tier != PlatformTier.handoff;
+
+  Future<void> retry() async {
+    final Post done;
+    try {
+      done = await ref.read(postActionsProvider).publishExisting(post.id, accountIds: {target.accountId});
+    } on Object catch (e) {
+      if (context.mounted) showToast(context, 'Could not publish: $e', icon: Icons.error_outline_rounded);
+      return;
+    }
+    final t = done.targetFor(target.accountId);
+    if (context.mounted) {
+      final message = switch (t?.status) {
+        TargetStatus.failed => 'Still failing: ${t?.result?.error?.message}',
+        TargetStatus.cancelled => 'Cancelled',
+        _ => 'Posted to $platformName',
+      };
+      showToast(context, message, icon: t != null && needsRetry(t) ? Icons.error_outline_rounded : Icons.check_circle_rounded);
+    }
+  }
+
   return showDialog<void>(
     context: context,
     builder: (dialogContext) {
@@ -115,29 +140,32 @@ Future<void> showTargetError(BuildContext context, WidgetRef ref, Post post, Pos
         actionsPadding: const EdgeInsets.fromLTRB(Space.xxl, 0, Space.xxl, Space.xl),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), style: TextButton.styleFrom(foregroundColor: nf.textMuted), child: const Text('Close')),
-          FilledButton.icon(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              final Post done;
-              try {
-                done = await ref.read(postActionsProvider).publishExisting(post.id, accountIds: {target.accountId});
-              } on Object catch (e) {
-                if (context.mounted) showToast(context, 'Could not publish: $e', icon: Icons.error_outline_rounded);
-                return;
-              }
-              final t = done.targetFor(target.accountId);
-              if (context.mounted) {
-                final message = switch (t?.status) {
-                  TargetStatus.failed => 'Still failing: ${t?.result?.error?.message}',
-                  TargetStatus.cancelled => 'Cancelled',
-                  _ => 'Posted to $platformName',
-                };
-                showToast(context, message, icon: t != null && needsRetry(t) ? Icons.error_outline_rounded : Icons.check_circle_rounded);
-              }
-            },
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('Retry'),
-          ),
+          if (reconnect) ...[
+            TextButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                retry();
+              },
+              child: const Text('Retry'),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('target-error-reconnect'),
+              onPressed: () async {
+                Navigator.pop(dialogContext);
+                if (await reconnectAccount(context, ref, account) && context.mounted) await retry();
+              },
+              icon: const Icon(Icons.link_rounded, size: 18),
+              label: const Text('Reconnect and retry'),
+            ),
+          ] else
+            FilledButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                retry();
+              },
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
+            ),
         ],
       );
     },
@@ -151,7 +179,8 @@ String targetErrorAdvice(PublishError? e) => switch (e?.kind) {
         'A slow connection or the server can end an upload early, and NEFORUM cannot tell which it was. Retry when nothing else is uploading, or use a smaller file.',
       // The whole request went out and no answer came back.
       PublishErrorKind.network when e?.uploadInterrupted == true => 'Look on the site first: it may be there. Retry only if it is not.',
-      PublishErrorKind.auth => 'The sign-in expired or was revoked. Reconnect the account in Accounts, then retry.',
+      PublishErrorKind.auth =>
+        'The sign-in expired or was revoked, and the keys NEFORUM holds could not renew it. Reconnect signs in again with what NEFORUM already has, so usually you only approve NEFORUM on the network\'s page. Then the post is retried.',
       PublishErrorKind.quota => 'A posting limit was reached. Retry after it resets, or post this one by hand-off.',
       PublishErrorKind.validation => 'The platform rejected the content. Customize the post for this network and retry.',
       // Connection drops, platform or media host outages, and posts the

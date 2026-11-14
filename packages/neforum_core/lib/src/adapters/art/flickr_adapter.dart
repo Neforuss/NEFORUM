@@ -88,6 +88,11 @@ class FlickrAdapter extends PlatformAdapter {
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.flickr(account);
 
+  /// The Key and Secret are kept with the OAuth 1.0a keys the sign-in made.
+  @override
+  Map<String, String> get reconnectFieldSources =>
+      const {'apiKey': OAuth1Credentials.keyConsumerKey, 'apiSecret': OAuth1Credentials.keyConsumerSecret};
+
   @override
   PlatformDescriptor get descriptor => flickrDescriptor;
 
