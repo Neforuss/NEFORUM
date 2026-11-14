@@ -22,7 +22,6 @@ class PlacementSwitch extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final nf = context.nf;
-    Color? when(Set<WidgetState> s, Color selected, Color other) => s.contains(WidgetState.disabled) ? null : (s.contains(WidgetState.selected) ? selected : other);
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [
       SegmentedButton<PostPlacement>(
         key: Key('placement-$accountId'),
@@ -38,11 +37,9 @@ class PlacementSwitch extends StatelessWidget {
         showSelectedIcon: true,
         selectedIcon: const Icon(Icons.check_rounded, size: 16),
         expandedInsets: EdgeInsets.zero,
+        // The fill, text, check and edges are the app's clear selected state
+        // (selectionSegmentedButtonTheme, lib/theme/selection_theme.dart).
         style: ButtonStyle(
-          backgroundColor: WidgetStateProperty.resolveWith((s) => when(s, nf.accentSoft, nf.surfaceSunken)),
-          foregroundColor: WidgetStateProperty.resolveWith((s) => when(s, nf.accent, nf.textMuted)),
-          iconColor: WidgetStateProperty.resolveWith((s) => when(s, nf.accent, nf.textMuted)),
-          side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.selected) ? nf.accent : nf.hairline)),
           textStyle: WidgetStateProperty.resolveWith(
             (s) => context.text.labelMedium?.copyWith(fontWeight: s.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500),
           ),
