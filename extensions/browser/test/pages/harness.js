@@ -6,9 +6,9 @@
 //   ?auto=1          the job is automatic (the user turned on automatic
 //                    posting): filled in, a 3-second countdown, then Post
 // A page can set window.NEFORUM_TEST_PARTS (a thread's parts),
-// NEFORUM_TEST_TAGS, NEFORUM_TEST_TITLE, NEFORUM_TEST_DESCRIPTION and
-// NEFORUM_TEST_ARTWORK before loading this (?rating=adult overrides the
-// artwork's rating).
+// NEFORUM_TEST_TAGS, NEFORUM_TEST_TITLE, NEFORUM_TEST_DESCRIPTION,
+// NEFORUM_TEST_MEDIA and NEFORUM_TEST_ARTWORK before loading this
+// (?rating=adult overrides the artwork's rating).
 // Results the content script reports land in window.__results.
 (() => {
   const q = new URLSearchParams(location.search);
@@ -30,7 +30,14 @@
     ...(window.NEFORUM_TEST_DESCRIPTION ? { description: window.NEFORUM_TEST_DESCRIPTION } : {}),
     ...(artwork ? { artwork } : {}),
     snippets: window.NEFORUM_TEST_SNIPPETS ?? [],
-    media: window.NEFORUM_TEST_MEDIA === false ? [] : [{ index: 0, name: 'card.png', mimeType: 'image/png', size: atob(png).length, kind: 'image' }],
+    // NEFORUM_TEST_MEDIA: false for none, or a list of { name, mimeType, kind }
+    // (the bytes are the photo's whatever the type says).
+    media:
+      window.NEFORUM_TEST_MEDIA === false
+        ? []
+        : Array.isArray(window.NEFORUM_TEST_MEDIA)
+          ? window.NEFORUM_TEST_MEDIA.map((m, index) => ({ index, size: atob(png).length, ...m }))
+          : [{ index: 0, name: 'card.png', mimeType: 'image/png', size: atob(png).length, kind: 'image' }],
     steps: '',
     quickPost: q.get('qp') !== '0',
     autoPost: q.get('auto') === '1',

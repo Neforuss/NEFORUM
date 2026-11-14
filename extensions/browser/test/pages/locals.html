@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>NEFORUM extension: Locals composer test</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; }
+  [hidden] { display: none !important; }
+  header { display: flex; gap: 8px; margin-bottom: 12px; }
+  .row { display: flex; gap: 12px; align-items: center; }
+  .cursor_pointer { cursor: pointer; padding: 4px 6px; border: 1px solid #ccc; border-radius: 6px; }
+  [role="dialog"] { border: 1px solid #bbb; border-radius: 10px; padding: 10px; width: 560px; display: grid; gap: 8px; background: #fff; }
+  .ProseMirror { min-height: 60px; border: 1px solid #ddd; padding: 6px; }
+  .ProseMirror p { margin: 0; }
+  .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: #999; }
+  .previews img { width: 48px; height: 48px; }
+  button[disabled] { opacity: .4; }
+</style>
+<script>
+  // What NEFORUM hands off, before harness.js reads it.
+  (() => {
+    const q = new URLSearchParams(location.search);
+    window.NEFORUM_TEST_TEXT = 'Hello supporters\nSecond line from NEFORUM';
+    if (q.get('title') === '1') window.NEFORUM_TEST_TITLE = 'A title for supporters';
+    if (q.get('video') === '1') window.NEFORUM_TEST_MEDIA = [{ name: 'clip.mp4', mimeType: 'video/mp4', kind: 'video' }];
+  })();
+</script>
+</head>
+<body>
+  <!--
+    Locals' community feed (locals.com/<community>/feed) as inspected
+    signed in on 2026-11-13. SolidJS: click and input handlers sit on the
+    elements ($$click, $$input) and one listener on the document runs them
+    as events bubble up, so an event that does not bubble, or a click on a
+    wrapper around the element, does nothing. "Regular Post" (in the
+    "Start a Post" card, or in the header's Create menu) mounts the
+    "Create a Post" dialog: input#post-craft-title, a TipTap editor
+    (.tiptap.ProseMirror, contenteditable) that types like any editor and
+    takes pasted plain text as paragraphs, a paste handler around it that
+    attaches pasted images (Locals' own), media buttons that would open the
+    file window (no file input until then, and no drop target), and
+    button#add-pin-modal-btn, greyed out while the post is empty. Publish
+    closes the dialog.
+      ?p=locals     (harness)
+      &title=1      the post has a title
+      &video=1      the post's file is a video (clip.mp4)
+      &stub=0       no "Start a Post" card: only the header's Create menu
+      &news=1       the news feed: no card, no Create menu
+      &upload=ms    a pasted photo uploads for that long; Publish stays
+                    pressable meanwhile (only the progress bar shows it)
+    window.result() says what the page holds and what Publish sent.
+  -->
+  <header>
+    <a href="#feed">Locals</a>
+    <button type="button" aria-haspopup="dialog" aria-expanded="false" id="create">Create</button>
+  </header>
+  <section id="stub">
+    <span>Start a Post</span>
+    <div class="row">
+      <div class="item"><div class="cursor_pointer" id="regular"><svg width="12" height="12" viewBox="0 0 12 12"></svg><span>Regular Post</span></div></div>
+      <div class="item"><div class="cursor_pointer"><span>Article</span></div></div>
+      <div class="item"><div class="cursor_pointer"><span>Live Stream</span></div></div>
+    </div>
+  </section>
+  <main id="feed"><p>Community feed</p></main>
+  <script>
+    const q = new URLSearchParams(location.search);
+    const upload = Number(q.get('upload') ?? 0);
+    const state = { open: false, title: '', text: '', files: [], uploading: false, supportersOnly: false };
+    const counts = { regular: 0, create: 0, media: 0, pastedTexts: 0, drops: 0 };
+    window.__submits = [];
+    window.__uploadDoneAt = null;
+    let dialog = null;
+
+    // SolidJS-style delegation: handlers on elements, run by one listener
+    // on the document for events that bubble.
+    for (const type of ['click', 'input']) {
+      document.addEventListener(type, (e) => {
+        for (let n = e.target; n && n !== document; n = n.parentNode) {
+          const h = n[`$$${type}`];
+          if (h) return h(e, n);
+        }
+      });
+    }
+
+    const el = (html) => {
+      const t = document.createElement('template');
+      t.innerHTML = html.trim();
+      return t.content.firstElementChild;
+    };
+
+    function render() {
+      if (!dialog) return;
+      const publish = dialog.querySelector('#add-pin-modal-btn');
+      publish.disabled = state.text.trim() === '' && state.files.length === 0;
+      dialog.querySelector('.counter').textContent = `${state.text.length.toLocaleString('en-US')}/15,000`;
+    }
+
+    function openComposer() {
+      document.getElementById('popover')?.remove();
+      if (dialog) return;
+      state.open = true;
+      dialog = el(`
+        <div role="dialog" id="dialog-cl-37-content" aria-labelledby="dialog-cl-37-title" tabindex="-1" data-expanded>
+          <div class="row"><h2 id="dialog-cl-37-title">Create a Post</h2><button type="button" aria-label="Dismiss">X</button></div>
+          <label for="post-craft-title">Title:</label>
+          <input type="text" id="post-craft-title" name="textfield-cl-39" maxlength="255" autocomplete="off" placeholder="Add a title for your post (optional)">
+          <div class="paste-area">
+            <div contenteditable="true" translate="no" tabindex="0" class="tiptap ProseMirror"><p data-placeholder="Write a new post" class="is-empty is-editor-empty"><br class="ProseMirror-trailingBreak"></p></div>
+          </div>
+          <div class="previews"></div>
+          <div class="row toolbar">
+            <button type="button" aria-haspopup="dialog">:)</button>
+            <button type="button" class="media"><svg viewBox="0 0 20 16" width="20" height="16"></svg></button>
+            <button type="button" class="media"><svg viewBox="0 0 12 11" width="12" height="11"></svg></button>
+            <button type="button" class="media"><svg viewBox="0 0 12 11" width="12" height="11"></svg></button>
+            <button type="button" class="media"><svg viewBox="0 0 17 21" width="17" height="21"></svg></button>
+            <button type="button"><svg viewBox="0 0 22 22" width="22" height="22"></svg></button>
+            <button type="button" aria-haspopup="dialog">Settings</button>
+          </div>
+          <div class="row"><div class="counter">0/15,000</div><button type="button" id="add-pin-modal-btn" aria-label="Publish" disabled>Publish</button></div>
+        </div>`);
+      document.body.append(dialog);
+      const title = dialog.querySelector('#post-craft-title');
+      const editor = dialog.querySelector('.ProseMirror');
+      title.$$input = (e) => {
+        state.title = e.target.value;
+        render();
+      };
+      // The editor's own view of its text (TipTap's getText()).
+      const sync = () => {
+        state.text = editor.innerText.replace(/\n+$/, '');
+        editor.firstElementChild?.classList.toggle('is-editor-empty', state.text === '');
+        render();
+      };
+      editor.addEventListener('input', sync);
+      // ProseMirror: pasted plain text becomes paragraphs; a paste without
+      // text is not its business.
+      editor.addEventListener('paste', (e) => {
+        const text = e.clipboardData?.getData('text/plain');
+        if (!text) return;
+        e.preventDefault();
+        counts.pastedTexts++;
+        if (state.text === '') editor.innerHTML = '';
+        for (const line of text.split(/\r?\n/)) editor.append(Object.assign(document.createElement('p'), { textContent: line }));
+        sync();
+      });
+      // Locals' own paste handler: pasted images become the post's photos.
+      dialog.querySelector('.paste-area').addEventListener('paste', (e) => {
+        const files = [...(e.clipboardData?.items ?? [])].map((i) => i.getAsFile()).filter((f) => f && f.type.startsWith('image'));
+        if (!files.length) return;
+        for (const f of files) {
+          state.files.push(f.name);
+          dialog.querySelector('.previews').append(Object.assign(document.createElement('img'), { src: URL.createObjectURL(f), alt: '' }));
+        }
+        if (upload > 0) {
+          state.uploading = true;
+          const bar = el('<div role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="height:6px;width:200px;background:#7d00ff"></div>');
+          dialog.querySelector('.previews').append(bar);
+          const start = Date.now();
+          const tick = setInterval(() => {
+            const pct = Math.min(100, Math.round(((Date.now() - start) / upload) * 100));
+            bar.setAttribute('aria-valuenow', String(pct));
+            if (pct >= 100) {
+              clearInterval(tick);
+              bar.remove();
+              state.uploading = false;
+              window.__uploadDoneAt = Date.now();
+            }
+          }, 100);
+        }
+        render();
+      });
+      dialog.addEventListener('drop', () => counts.drops++);
+      // The media buttons open the file window (Uppy, mounted on the click).
+      for (const b of dialog.querySelectorAll('.media')) b.$$click = () => counts.media++;
+      dialog.querySelector('[aria-label="Dismiss"]').$$click = () => closeComposer();
+      dialog.querySelector('#add-pin-modal-btn').$$click = (e, button) => {
+        if (button.disabled) return;
+        window.__submits.push({ title: state.title, text: state.text, files: [...state.files], uploading: state.uploading, supportersOnly: state.supportersOnly, at: Date.now(), trusted: e.isTrusted });
+        setTimeout(closeComposer, 300);
+      };
+      render();
+    }
+
+    function closeComposer() {
+      dialog?.remove();
+      dialog = null;
+      state.open = false;
+    }
+
+    // "Regular Post" in the card: the handler is on the inner div.
+    document.getElementById('regular').$$click = () => {
+      counts.regular++;
+      openComposer();
+    };
+    // The header's Create menu (a popover with the same three items).
+    document.getElementById('create').$$click = () => {
+      counts.create++;
+      if (document.getElementById('popover')) return;
+      const pop = el(`<div role="dialog" id="popover"><div class="item"><div class="cursor_pointer" id="pop-regular"><span>Regular Post</span></div></div><div class="cursor_pointer"><span>Article</span></div><div class="cursor_pointer"><span>Live Stream</span></div></div>`);
+      document.body.append(pop);
+      pop.querySelector('#pop-regular').$$click = () => {
+        counts.regular++;
+        openComposer();
+      };
+    };
+    if (q.get('stub') === '0' || q.get('news') === '1') document.getElementById('stub').remove();
+    if (q.get('news') === '1') document.getElementById('create').remove();
+
+    const norm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+    window.result = () => ({
+      open: state.open,
+      title: state.title,
+      shownTitle: dialog?.querySelector('#post-craft-title').value ?? null,
+      text: norm(state.text),
+      lines: state.text.split('\n').filter(Boolean).length,
+      files: [...state.files],
+      uploading: state.uploading,
+      uploadDoneAt: window.__uploadDoneAt,
+      publishDisabled: dialog?.querySelector('#add-pin-modal-btn').disabled ?? null,
+      submits: window.__submits.map((s) => ({ ...s })),
+      supportersOnly: state.supportersOnly,
+      regularClicks: counts.regular,
+      createClicks: counts.create,
+      mediaClicks: counts.media,
+      pastedTexts: counts.pastedTexts,
+      drops: counts.drops,
+    });
+  </script>
+  <script src="harness.js"></script>
+  <script src="../../src/content/fill.js"></script>
+  <script src="../../src/content/recipes.js"></script>
+  <script src="../../src/content/panel.js"></script>
+  <script src="../../src/content/main.js"></script>
+</body>
+</html>

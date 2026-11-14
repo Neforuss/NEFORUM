@@ -437,3 +437,65 @@ test('Attach where nothing takes the files: the site\'s file window opens for th
   assert.equal(opened, 1, 'the site\'s file input is opened, from the user\'s click on Attach');
   assert.ok(page.statuses.some((s) => /^Choose the file in the window that opened/.test(s)));
 });
+
+test('an attachOnly recipe (Locals): files its attach did not take stay out, the fill is partial with its help, and an automatic job does not post', async () => {
+  const media = [{ index: 0, name: 'clip.mp4', mimeType: 'video/mp4', size: 5, kind: 'video' }];
+  let opened = 0;
+  // The uploader's own input, once the user opened it: the file window for Attach.
+  const uploader = { kind: 'uploader input', click: () => opened++ };
+  const recipe = { attach: async () => null, attachOnly: true, mediaHelp: (files) => `Add ${files[0].name} yourself.`, fileInput: () => uploader };
+  const app = standInApp(automaticJob({ media }));
+  const page = loadPage({ app, recipe, fileInput: { kind: 'found input' } });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  const [report] = app.state.reports;
+  assert.equal(report.status, 'partial');
+  assert.equal(report.automatic, 'manual');
+  assert.match(report.message, /^Not everything was filled in\. Add clip\.mp4 yourself\.$/);
+  assert.equal(page.setFiles.length, 0, 'no file input was given the files');
+  assert.equal(page.attachCalls.length, 0, 'no paste or drop either');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(page.pressed.length, 0, 'nothing posted');
+  // Attach: the recipe's way, then the site's file window for the user.
+  await page.actions().attach();
+  assert.equal(page.setFiles.length, 0);
+  assert.equal(page.attachCalls.length, 0);
+  assert.equal(opened, 1, 'its file window opens for the user to pick the file');
+  assert.ok(page.statuses.some((s) => /^Choose the file in the window that opened/.test(s)));
+});
+
+test('typeFirst (Locals) goes with the text', async () => {
+  const app = standInApp(handOff());
+  const page = loadPage({ app, recipe: { typeFirst: true } });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  assert.equal(page.inserted[0].options.typeFirst, true);
+});
+
+test('busy() (Locals: an upload still running): Post waits until it ends, and is not pressed while it never does', async () => {
+  let checks = 2;
+  let app = standInApp(automaticJob());
+  let page = loadPage({ app, recipe: { busy: () => checks-- > 0 } });
+  page.start();
+  await until(() => app.state.reports.some((r) => r.posted), 'the posted report');
+  assert.equal(page.pressed.length, 1);
+  assert.ok(page.statuses.some((s) => /^Waiting for Example to be ready/.test(s)));
+  assert.ok(checks < 0, 'asked until the upload ended');
+
+  app = standInApp(automaticJob());
+  page = loadPage({ app, recipe: { busy: () => true } });
+  page.start();
+  await until(() => app.state.reports.some((r) => r.automatic === 'manual'), 'the not-posted report');
+  assert.equal(page.pressed.length, 0);
+  assert.equal(app.state.reports.at(-1).message, "Example's Post button stayed greyed out.");
+});
+
+test('a composer that does not open fills nothing: failed, not partly filled', async () => {
+  const app = standInApp(handOff({ media: [{ index: 0, name: 'photo.png', mimeType: 'image/png', size: 5, kind: 'image' }] }));
+  const page = loadPage({ app, recipe: { open: async () => { throw new Error('No post composer here.'); } } });
+  page.start();
+  await until(() => app.state.reports.length === 1, 'the fill report');
+  assert.equal(app.state.reports[0].status, 'failed');
+  assert.equal(app.state.reports[0].message, 'No post composer here.');
+  assert.equal(page.inserted.length, 0);
+});

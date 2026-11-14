@@ -60,3 +60,5 @@ of them.
 | kofi | https://ko-fi.com/favicon.png |
 | artfol | https://artfol.app/image/icon.ico |
 | fivehundredpx | https://500px.com/favicon.ico |
+| parler | https://parler.com/icons/parler-social.svg (1.4.3), drawn from its paths: the white mark on #E50038, the rounded square cropped to fill the tile, 8 x 8 samples a pixel |
+| locals | https://locals.com/assets/logo/logo-on-light-bg.svg (the site's favicon, 1.4.3), drawn from its circles: centred on white, the mark spanning 62% of the tile, 8 x 8 samples a pixel |

@@ -12,6 +12,7 @@ import '../media/caption_fonts.dart' show CaptionFont, captionFontReadyProvider;
 import '../media/font_catalog.dart' show FontDownloadMode;
 import '../media/card_design.dart';
 import '../media/card_design_edits.dart' show designWithHandle;
+import '../media/card_renderer.dart' show designedCardDrawsEmphasis;
 import '../media/caption_style.dart';
 import '../media/text_card.dart';
 import '../media/text_card_background.dart';
@@ -1402,10 +1403,15 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
   // words of networks without Markdown, as they will when the post is saved
   // (attachTextCards, withCardEmphasis).
   final cardChosen = post.targets.any((t) => c.selected.contains(t.accountId) && textCardChoiceOf(t.overrides.extra) == TextCardChoice.card);
+  // A designed card draws it as well, when it shows the post's words.
+  final design = cardDesign;
   final emphasisOnCard = settings.textCards &&
-      cardDesign == null &&
       (postMakesCard || cardChosen) &&
-      post.targets.any((t) => c.selected.contains(t.accountId) && hasEmphasis(textCardText(post, t)));
+      post.targets.any((t) {
+        if (!c.selected.contains(t.accountId)) return false;
+        final words = textCardText(post, t);
+        return design == null ? hasEmphasis(words) : designedCardDrawsEmphasis(design, words);
+      });
   post = withCardEmphasis(post, marked: emphasisOnCard);
   // 1.4.3: cards. The classic card's shape; a design draws at each
   // network's own.

@@ -403,6 +403,39 @@ void main() {
       expect((site.created, site.published), (1, 1));
     });
 
+    // 1.4.3 integration: "Publish as" in the Customize sheet. The post's own
+    // choice wins, then the choice kept for the account from the sheet
+    // (postDefaults), then the account's Default status, then published.
+    test('Publish as: the post, then the kept choice, then Default status, then published', () async {
+      Future<String> statusOf({Map<String, dynamic> config = const {}, Map<String, Object?> postChoice = const {}}) async {
+        final site = _Site();
+        final account = _account(extra: config);
+        final post = Post(
+          id: 'order',
+          title: 'Order',
+          text: 'x',
+          targets: [PostTarget(accountId: account.id, overrides: PostOverrides(extra: postChoice))],
+          createdAt: testNow,
+          updatedAt: testNow,
+        );
+        final v = const VariantResolver().resolve(post, post.targets.single, emdash.descriptorForAccount(account), account: account);
+        final res = await emdash.publish(v, account, _secrets, testContext(handler: site.handle));
+        expect(res.success, isTrue, reason: '${res.error}');
+        return site.published == 1 ? 'published' : 'draft';
+      }
+
+      const keptDraft = {'postDefaults': {'status': 'draft'}};
+      const keptPublished = {'postDefaults': {'status': 'published'}};
+      expect(await statusOf(), 'published', reason: 'nothing set');
+      expect(await statusOf(config: {'defaultStatus': 'draft'}), 'draft', reason: 'Default status');
+      expect(await statusOf(config: {'defaultStatus': 'draft', ...keptPublished}), 'published', reason: 'the kept choice beats Default status');
+      expect(await statusOf(config: keptDraft), 'draft', reason: 'the kept choice beats published');
+      expect(await statusOf(config: keptDraft, postChoice: {'status': 'published'}), 'published', reason: "the post's choice beats the kept one");
+      expect(await statusOf(config: {'defaultStatus': 'draft'}, postChoice: {'status': 'published'}), 'published',
+          reason: "the post's choice beats Default status");
+      expect(await statusOf(config: keptPublished, postChoice: {'status': 'draft'}), 'draft');
+    });
+
     test('publish as draft: no publish call, the result links the draft in the admin', () async {
       final site = _Site();
       final res = await emdash.publish(const PostVariant(title: 'Draft', text: 'x'), _account(extra: {'defaultStatus': 'draft'}), _secrets,

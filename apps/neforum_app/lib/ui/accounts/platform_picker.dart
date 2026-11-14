@@ -54,12 +54,12 @@ const _artGroup = 'Art and portfolios';
 /// site goes there.
 const _groups = <String, List<String>>{
   'Open networks': ['mastodon', 'bluesky', 'misskey', 'nostr', 'lemmy', 'matrix'],
-  'Big platforms': ['x', 'threads', 'facebook', 'linkedin', 'reddit', 'tumblr'],
+  'Big platforms': ['x', 'threads', 'facebook', 'linkedin', 'reddit', 'tumblr', 'parler'],
   'Photo & video': ['instagram', 'tiktok', 'youtube_posts', 'pinterest', 'snapchat'],
   'Video sites': ['youtube', 'rumble', 'odysee', 'bitchute'],
   _artGroup: [],
   'Messaging': ['telegram', 'discord', 'whatsapp'],
-  'Blogs & newsletters': ['wordpress', 'ghost', 'emdash', 'writefreely', 'micropub', 'devto', 'hashnode', 'substack'],
+  'Blogs & newsletters': ['wordpress', 'ghost', 'emdash', 'writefreely', 'micropub', 'devto', 'hashnode', 'substack', 'locals'],
   'Business': ['google_business'],
 };
 
