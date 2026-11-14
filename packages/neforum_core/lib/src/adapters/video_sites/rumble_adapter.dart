@@ -43,6 +43,7 @@ class RumbleAdapter extends HandoffOnlyAdapter {
     apiCostSummary: 'Free. Rumble has no upload API for personal accounts, so NEFORUM prepares the upload and you '
         'publish it on rumble.com.',
     setupGuide: 'docs/platforms/rumble.md',
+    categories: {PlatformCategory.video},
   );
 
   @override

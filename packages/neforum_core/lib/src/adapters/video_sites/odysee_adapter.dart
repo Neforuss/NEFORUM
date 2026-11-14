@@ -70,6 +70,7 @@ class OdyseeAdapter extends PlatformAdapter {
     apiCostSummary: 'Free apart from a tiny LBC deposit per upload (0.001 LBC by default), which you get back if you '
         'remove the video. No developer keys.',
     setupGuide: 'docs/platforms/odysee.md',
+    categories: {PlatformCategory.video},
   );
 
   @override

@@ -279,6 +279,12 @@ class QuotaRule {
 enum PlatformCategory {
   /// Art portfolio and gallery sites (DeviantArt, ArtStation, Behance, ...).
   art,
+
+  /// Video sites (YouTube videos, Odysee, Rumble, BitChute): a post goes
+  /// there for its video. Some take a picture or a sound file as an upload
+  /// too, but a post without a video is not what they are for, so the
+  /// composer's "Automatic only" leaves them out until the post has one.
+  video,
 }
 
 /// Everything the UI and the publishing pipeline need to know about one
@@ -360,6 +366,9 @@ class PlatformDescriptor {
   /// A portfolio or gallery site for artwork: it only receives artwork posts
   /// ([Post.artwork]).
   bool get isArtPlatform => categories.contains(PlatformCategory.art);
+
+  /// A video site ([PlatformCategory.video]).
+  bool get isVideoPlatform => categories.contains(PlatformCategory.video);
 
   bool supportsTier(PlatformTier t) => tiers.contains(t);
 
