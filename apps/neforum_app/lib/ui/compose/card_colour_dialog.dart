@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/color_swatch_field.dart' show kPictureColorSwatches;
 import '../../widgets/color_wheel.dart';
+import '../../widgets/selection_marks.dart' show swatchCheck;
 import '../settings/appearance_section.dart' show hexColor, parseHexColor;
 
 /// What [showCardColourDialog] returns: the colour picked (opaque ARGB), or a
@@ -149,6 +150,8 @@ class _Swatch extends StatelessWidget {
             decoration: BoxDecoration(shape: Radii.circleShape, border: Border.all(color: selected ? nf.text : Colors.transparent, width: 2)),
             child: Container(
               decoration: BoxDecoration(color: Color(color), shape: Radii.circleShape, border: Border.all(color: nf.borderStrong)),
+              // 1.4.3: not by the ring alone.
+              child: selected ? swatchCheck(Color(color)) : null,
             ),
           ),
         ),

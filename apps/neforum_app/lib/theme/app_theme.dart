@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/settings.dart' show CornerStyle, InterfaceDensity, NavigationChromeStyle;
+import 'selection_theme.dart';
 import 'tokens.dart';
 
 /// Builds the NEFORUM [ThemeData] for one brightness and accent.
@@ -22,12 +23,18 @@ import 'tokens.dart';
 ///
 /// [highContrast] (the system's high contrast setting, see
 /// `MaterialApp.highContrastTheme`) uses [NfColors.withHighContrast].
+///
+/// 1.4.3: colours. [chromeColor] (ARGB) is the chrome of
+/// [NavigationChromeStyle.custom] (NEFORUM purple while null); [chromeTint]
+/// (ARGB) covers the see-through chrome in place of the surface color.
 ThemeData buildTheme(
   Brightness brightness,
   AccentChoice accent, {
   int? customAccent,
   CornerStyle corners = CornerStyle.rounded,
   NavigationChromeStyle chrome = NavigationChromeStyle.brand,
+  int? chromeColor,
+  int? chromeTint,
   InterfaceDensity density = InterfaceDensity.comfortable,
   bool highContrast = false,
   bool seamless = false,
@@ -38,11 +45,14 @@ ThemeData buildTheme(
     NavigationChromeStyle.brand => base,
     NavigationChromeStyle.theme => base.withThemeChrome(),
     NavigationChromeStyle.accent => base.withAccentChrome(),
+    NavigationChromeStyle.custom => chromeColor == null ? base : base.withColorChrome(Color(chromeColor)),
     // Made below from the final page colors: its labels are the page's text.
     NavigationChromeStyle.transparent => base,
   };
   final contrasted = highContrast ? chromed.withHighContrast() : chromed;
-  final chromeStyled = chrome == NavigationChromeStyle.transparent ? contrasted.withTransparentChrome() : contrasted;
+  final chromeStyled = chrome == NavigationChromeStyle.transparent
+      ? contrasted.withTransparentChrome(tint: chromeTint == null ? null : Color(chromeTint))
+      : contrasted;
   final c = seamless ? chromeStyled.withSeamless() : chromeStyled;
   final dense = density == InterfaceDensity.compact;
   // Menus float over the page with no scrim: without an outline in seamless
@@ -209,18 +219,8 @@ ThemeData buildTheme(
       selectionHandleColor: c.accent,
     ),
 
-    chipTheme: ChipThemeData(
-      backgroundColor: c.surface,
-      selectedColor: c.accentSoft,
-      disabledColor: c.surfaceSunken,
-      side: BorderSide(color: c.hairline),
-      shape: RoundedRectangleBorder(borderRadius: Radii.rPill),
-      labelStyle: text.labelMedium?.copyWith(color: c.text),
-      secondaryLabelStyle: text.labelMedium?.copyWith(color: c.accent),
-      padding: EdgeInsets.symmetric(horizontal: Space.sm, vertical: dense ? Space.xxs : Space.xs),
-      checkmarkColor: c.accent,
-      showCheckmark: false,
-    ),
+    // 1.4.3: clear selected state (lib/theme/selection_theme.dart).
+    chipTheme: selectionChipTheme(c, text, dense: dense),
 
     switchTheme: SwitchThemeData(
       thumbColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? Colors.white : c.textMuted),
@@ -255,17 +255,8 @@ ThemeData buildTheme(
       linearMinHeight: 6,
     ),
 
-    segmentedButtonTheme: SegmentedButtonThemeData(
-      style: ButtonStyle(
-        backgroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.surface : c.surfaceSunken),
-        foregroundColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? c.text : c.textMuted),
-        side: WidgetStateProperty.all(BorderSide(color: c.hairline)),
-        textStyle: WidgetStateProperty.all(text.labelMedium),
-        shape: WidgetStateProperty.all(RoundedRectangleBorder(borderRadius: Radii.rSm)),
-        padding: WidgetStateProperty.all(EdgeInsets.symmetric(horizontal: Space.md, vertical: dense ? Space.xs : Space.sm)),
-      ),
-      selectedIcon: const SizedBox.shrink(),
-    ),
+    // 1.4.3: clear selected state (lib/theme/selection_theme.dart).
+    segmentedButtonTheme: selectionSegmentedButtonTheme(c, text, dense: dense),
 
     listTileTheme: ListTileThemeData(
       iconColor: c.textMuted,

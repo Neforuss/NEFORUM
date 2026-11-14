@@ -12,6 +12,7 @@ import '../../theme/tokens.dart';
 import '../../theme/zoom.dart';
 import '../../widgets/color_wheel.dart';
 import '../../widgets/layout.dart' show showToast;
+import '../../widgets/selection_marks.dart' show swatchCheck;
 import '../shell/app_backdrop.dart' show isDecodablePicture;
 import 'setting_row.dart';
 
@@ -44,7 +45,7 @@ class AppearanceSettingsSection extends ConsumerWidget {
         title: 'Accent color',
         description: 'Used for highlights and the main button.',
         stackOnCompact: true,
-        trailing: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
+        trailing: Wrap(spacing: Space.sm, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
           for (final a in AccentChoice.presets)
             _Swatch(
               tooltip: a.label,
@@ -52,11 +53,18 @@ class AppearanceSettingsSection extends ConsumerWidget {
               selected: s.accent == a,
               onTap: () => n.update((x) => x.copyWith(accent: a)),
             ),
-          _Swatch(
-            tooltip: s.customAccentColor == null ? 'Choose your own color' : 'Your color (${hexColor(s.customAccentColor!)})',
-            color: s.customAccentColor == null ? null : Color(s.customAccentColor!),
-            selected: s.accent == AccentChoice.custom,
-            onTap: () async {
+          // 1.4.3: colours. The color picked before, one tap away.
+          if (s.customAccentColor case final own?)
+            _Swatch(
+              tooltip: 'Your color (${hexColor(own)})',
+              color: Color(own),
+              selected: s.accent == AccentChoice.custom,
+              onTap: () => n.update((x) => x.copyWith(accent: AccentChoice.custom)),
+            ),
+          // 1.4.3: colours. Any color, on the wheel.
+          _CustomColorButton(
+            key: const Key('accent-custom-color'),
+            onPressed: () async {
               final picked = await showDialog<int>(context: context, builder: (_) => CustomAccentDialog(initial: s.customAccentColor));
               if (picked != null) await n.update((x) => x.copyWith(accent: AccentChoice.custom, customAccentColor: picked));
             },
@@ -71,10 +79,20 @@ class AppearanceSettingsSection extends ConsumerWidget {
           (NavigationChromeStyle.brand, 'NEFORUM purple', 'Deep purple in both themes.'),
           (NavigationChromeStyle.theme, 'Match the theme', 'Light in the light theme, dark in the dark theme.'),
           (NavigationChromeStyle.accent, 'Your accent color', 'The accent color chosen above.'),
+          (NavigationChromeStyle.custom, 'Your own color', 'Any color, picked on the color wheel. Labels stay readable.'),
           (NavigationChromeStyle.transparent, 'See-through', 'Your background picture, or the page, shows through. Labels stay readable.'),
         ],
-        onChanged: (v) => n.update((x) => x.copyWith(navigationChrome: v)),
+        onChanged: (v) async {
+          // 1.4.3: colours. Your own color asks for the color first.
+          if (v == NavigationChromeStyle.custom && s.navigationChromeColor == null) {
+            final picked = await pickNavigationChromeColor(context, null);
+            if (picked != null) await n.update((x) => x.copyWith(navigationChrome: v, navigationChromeColor: picked));
+            return;
+          }
+          await n.update((x) => x.copyWith(navigationChrome: v));
+        },
       ),
+      if (s.navigationChrome == NavigationChromeStyle.custom) const _CustomNavigationColor(),
       if (s.navigationChrome == NavigationChromeStyle.transparent) const _SeeThroughNavigation(),
       SettingRow(
         title: 'Corners',
@@ -124,13 +142,46 @@ class AppearanceSettingsSection extends ConsumerWidget {
   }
 }
 
-/// A round accent swatch (square with square corners). [color] null shows
-/// the "choose a color" palette.
+/// 1.4.3: colours. The way to any color: a named button with the color
+/// wheel's palette, so it is never a guess which swatch opens the wheel.
+class _CustomColorButton extends StatelessWidget {
+  const _CustomColorButton({super.key, required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => OutlinedButton.icon(
+        onPressed: onPressed,
+        icon: const _WheelMark(),
+        label: const Text('Custom color…'),
+      );
+}
+
+/// A small color wheel, the mark of "Custom color…".
+class _WheelMark extends StatelessWidget {
+  const _WheelMark();
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: 18,
+        height: 18,
+        decoration: const BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: SweepGradient(colors: [
+            Color(0xFFFF0000), Color(0xFFFFFF00), Color(0xFF00FF00), Color(0xFF00FFFF), //
+            Color(0xFF0000FF), Color(0xFFFF00FF), Color(0xFFFF0000),
+          ]),
+        ),
+      );
+}
+
+/// A round color swatch (square with square corners), with a check while
+/// selected.
 class _Swatch extends StatelessWidget {
   const _Swatch({required this.tooltip, required this.color, required this.selected, required this.onTap});
 
   final String tooltip;
-  final Color? color;
+  final Color color;
   final bool selected;
   final VoidCallback onTap;
 
@@ -154,14 +205,8 @@ class _Swatch extends StatelessWidget {
             padding: const EdgeInsets.all(3),
             decoration: BoxDecoration(shape: Radii.circleShape, border: Border.all(color: selected ? nf.text : Colors.transparent, width: 2)),
             child: Container(
-              decoration: BoxDecoration(
-                color: fill,
-                gradient: fill == null ? const SweepGradient(colors: [Color(0xFFF2542D), Color(0xFFC77800), Color(0xFF0F9F6E), Color(0xFF1677FF), Color(0xFF7D00FF), Color(0xFFD6338A), Color(0xFFF2542D)]) : null,
-                shape: Radii.circleShape,
-              ),
-              child: selected
-                  ? Icon(Icons.check_rounded, size: 14, color: fill == null ? Colors.white : readableOn(fill))
-                  : (fill == null ? const Icon(Icons.add_rounded, size: 14, color: Colors.white) : null),
+              decoration: BoxDecoration(color: fill, shape: Radii.circleShape, border: Border.all(color: nf.borderStrong.withValues(alpha: 0.6))),
+              child: selected ? swatchCheck(fill) : null,
             ),
           ),
         ),
@@ -183,9 +228,10 @@ int? parseHexColor(String input) {
   return 0xFF000000 | int.parse(hex, radix: 16);
 }
 
-/// Picks the user's own accent color: a preset swatch or a hex code. Returns
+/// Picks the user's own accent color: a preset swatch, the color wheel or a
+/// hex code, with a preview of the button and link text it makes. Returns
 /// the ARGB color, or null when cancelled.
-class CustomAccentDialog extends StatefulWidget {
+class CustomAccentDialog extends StatelessWidget {
   const CustomAccentDialog({super.key, this.initial});
 
   final int? initial;
@@ -198,10 +244,154 @@ class CustomAccentDialog extends StatefulWidget {
   ];
 
   @override
-  State<CustomAccentDialog> createState() => _CustomAccentDialogState();
+  Widget build(BuildContext context) => ColorChoiceDialog(
+        title: 'Your accent color',
+        description: 'Pick a color on the wheel or below it, or type its hex code. NEFORUM adjusts it where needed so text stays readable.',
+        initial: initial,
+        preview: (context, color) {
+          final nf = context.nf;
+          final shades = accentShadesOf(Color(color));
+          // The readability adjustment changed what the preview shows.
+          final adjusted = shades.light.toARGB32() != (color | 0xFF000000) || (nf.isDark && shades.dark.toARGB32() != (color | 0xFF000000));
+          return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Wrap(spacing: Space.lg, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
+                decoration: BoxDecoration(color: shades.light, borderRadius: Radii.rSm),
+                child: Text('Button', style: context.text.labelLarge?.copyWith(color: Colors.white)),
+              ),
+              Text('Link text', style: context.text.labelLarge?.copyWith(color: nf.isDark ? shades.dark : shades.light)),
+            ]),
+            if (adjusted) ...[
+              const SizedBox(height: Space.sm),
+              Text('Adjusted a little so text on it and beside it stays readable.', style: context.text.bodySmall),
+            ],
+          ]);
+        },
+      );
 }
 
-class _CustomAccentDialogState extends State<CustomAccentDialog> {
+/// 1.4.3: colours. Picks the color of the navigation bar for "Your own
+/// color": the wheel, swatches or a hex code, with a preview of the bar and
+/// its labels. Returns the ARGB color, or null when cancelled.
+Future<int?> pickNavigationChromeColor(BuildContext context, int? current) => showDialog<int>(
+      context: context,
+      builder: (_) => ColorChoiceDialog(
+        title: 'Navigation bar color',
+        description: 'Pick a color on the wheel or below it, or type its hex code. NEFORUM darkens it where needed so the labels stay readable.',
+        initial: current,
+        presets: const [0xFF16062F, ...CustomAccentDialog.presets, 0xFF000000, 0xFFFFFFFF],
+        preview: (context, color) {
+          final c = context.nf.withColorChrome(Color(color));
+          return _ChromePreview(
+            fill: c.chrome,
+            text: c.onChrome,
+            muted: c.onChromeMuted,
+            selectedFill: c.chromeAccent,
+            onSelected: c.onChromeAccent,
+            adjusted: c.chrome.toARGB32() != (color | 0xFF000000),
+          );
+        },
+      ),
+    );
+
+/// 1.4.3: colours. Picks the tint of the see-through navigation bar. Returns
+/// the ARGB color, [ColorChoiceDialog.reset] for the page color again, or
+/// null when cancelled.
+Future<int?> pickNavigationChromeTint(BuildContext context, int? current) => showDialog<int>(
+      context: context,
+      builder: (_) => ColorChoiceDialog(
+        title: 'See-through tint',
+        description: 'The color over what shows through the navigation bar, in place of the page color. NEFORUM softens it where '
+            'needed so the labels stay readable.',
+        initial: current,
+        resetLabel: current == null ? null : 'Use the page color',
+        preview: (context, color) {
+          final nf = context.nf;
+          final tint = nf.seeThroughTint(Color(color));
+          return _ChromePreview(
+            fill: tint,
+            text: nf.text,
+            muted: nf.textMuted,
+            selectedFill: nf.accentFill,
+            onSelected: readableOn(nf.accentFill),
+            adjusted: tint.toARGB32() != (color | 0xFF000000),
+          );
+        },
+      ),
+    );
+
+/// A strip of navigation bar in [fill]: the current section on its
+/// [selectedFill], and two more in [text] and [muted].
+class _ChromePreview extends StatelessWidget {
+  const _ChromePreview({required this.fill, required this.text, required this.muted, required this.selectedFill, required this.onSelected, required this.adjusted});
+
+  final Color fill;
+  final Color text;
+  final Color muted;
+  final Color selectedFill;
+  final Color onSelected;
+  final bool adjusted;
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    final label = context.text.labelMedium;
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        key: const Key('chrome-preview'),
+        padding: const EdgeInsets.all(Space.sm),
+        decoration: BoxDecoration(color: fill, borderRadius: Radii.rSm, border: Border.all(color: nf.border)),
+        child: Wrap(spacing: Space.md, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: Space.sm, vertical: Space.xs),
+            decoration: BoxDecoration(color: selectedFill, borderRadius: Radii.rPill),
+            child: Text('Compose', style: label?.copyWith(color: onSelected)),
+          ),
+          Text('Queue', style: label?.copyWith(color: text)),
+          Text('Activity', style: label?.copyWith(color: muted)),
+        ]),
+      ),
+      if (adjusted) ...[
+        const SizedBox(height: Space.sm),
+        Text('Adjusted a little so the labels stay readable.', style: context.text.bodySmall),
+      ],
+    ]);
+  }
+}
+
+/// 1.4.3: colours. Any color, for any Appearance setting: preset swatches,
+/// the [ColorWheel] with its brightness slider and a hex code, all following
+/// each other, with an optional [preview] of the color where it is used.
+/// Pops the ARGB color, [reset] for the default again (with a
+/// [resetLabel]), or nothing when cancelled.
+class ColorChoiceDialog extends StatefulWidget {
+  const ColorChoiceDialog({
+    super.key,
+    required this.title,
+    required this.description,
+    this.initial,
+    this.presets = CustomAccentDialog.presets,
+    this.preview,
+    this.resetLabel,
+  });
+
+  final String title;
+  final String description;
+  final int? initial;
+  final List<int> presets;
+  final Widget Function(BuildContext context, int color)? preview;
+  final String? resetLabel;
+
+  /// Popped by the [resetLabel] button: never a color, all of which are
+  /// opaque.
+  static const int reset = 0;
+
+  @override
+  State<ColorChoiceDialog> createState() => _ColorChoiceDialogState();
+}
+
+class _ColorChoiceDialogState extends State<ColorChoiceDialog> {
   late int? _color = widget.initial;
   late final _hex = TextEditingController(text: widget.initial == null ? '' : hexColor(widget.initial!));
   String? _error;
@@ -230,16 +420,12 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
   Widget build(BuildContext context) {
     final nf = context.nf;
     final color = _color;
-    final shades = color == null ? null : accentShadesOf(Color(color));
-    // The readability adjustment changed what the preview shows.
-    final adjusted = color != null &&
-        shades != null &&
-        (shades.light.toARGB32() != (color | 0xFF000000) || (nf.isDark && shades.dark.toARGB32() != (color | 0xFF000000)));
     final wheel = ColorWheel(
-      color: Color(color ?? CustomAccentDialog.presets.first),
+      color: Color(color ?? widget.presets.first),
       diameter: context.isCompact ? 180 : 164,
       onChanged: (c) => _pick(c.toARGB32()),
     );
+    final preview = widget.preview;
     final details = Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
       TextField(
         controller: _hex,
@@ -247,33 +433,22 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
         inputFormatters: [FilteringTextInputFormatter.allow(RegExp('[#0-9a-fA-F]')), LengthLimitingTextInputFormatter(7)],
         onChanged: _typed,
       ),
-      if (shades != null) ...[
+      if (color != null && preview != null) ...[
         const SizedBox(height: Space.lg),
-        Wrap(spacing: Space.lg, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: Space.md, vertical: Space.sm),
-            decoration: BoxDecoration(color: shades.light, borderRadius: Radii.rSm),
-            child: Text('Button', style: context.text.labelLarge?.copyWith(color: Colors.white)),
-          ),
-          Text('Link text', style: context.text.labelLarge?.copyWith(color: nf.isDark ? shades.dark : shades.light)),
-        ]),
-        if (adjusted) ...[
-          const SizedBox(height: Space.sm),
-          Text('Adjusted a little so text on it and beside it stays readable.', style: context.text.bodySmall),
-        ],
+        preview(context, color),
       ],
     ]);
+    final resetLabel = widget.resetLabel;
     return AlertDialog(
-      title: const Text('Your accent color'),
+      title: Text(widget.title),
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 440),
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('Pick a color on the wheel or below it, or type its hex code. NEFORUM adjusts it where needed so text stays readable.',
-                style: context.text.bodySmall),
+            Text(widget.description, style: context.text.bodySmall),
             const SizedBox(height: Space.lg),
             Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
-              for (final p in CustomAccentDialog.presets)
+              for (final p in widget.presets)
                 _Swatch(tooltip: hexColor(p), color: Color(p), selected: color == p, onTap: () => _pick(p)),
             ]),
             const SizedBox(height: Space.lg),
@@ -291,6 +466,8 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
         ),
       ),
       actions: [
+        if (resetLabel != null)
+          TextButton(key: const Key('color-choice-reset'), onPressed: () => Navigator.pop(context, ColorChoiceDialog.reset), child: Text(resetLabel)),
         TextButton(onPressed: () => Navigator.pop(context), style: TextButton.styleFrom(foregroundColor: nf.textMuted), child: const Text('Cancel')),
         FilledButton(onPressed: color == null ? null : () => Navigator.pop(context, color), child: const Text('Use this color')),
       ],
@@ -298,17 +475,71 @@ class _CustomAccentDialogState extends State<CustomAccentDialog> {
   }
 }
 
+/// 1.4.3: colours. The color in use, as a swatch beside its name.
+class _ColorInUse extends StatelessWidget {
+  const _ColorInUse({required this.color, required this.name});
+
+  final Color color;
+  final String name;
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        width: 22,
+        height: 22,
+        decoration: BoxDecoration(color: color, shape: Radii.circleShape, border: Border.all(color: nf.borderStrong)),
+      ),
+      const SizedBox(width: Space.sm),
+      Text(name, style: context.text.labelLarge?.copyWith(color: nf.textMuted)),
+    ]);
+  }
+}
+
+/// 1.4.3: colours. Settings > Appearance > Navigation bar > Your own color:
+/// the color, and the way to another one on the wheel.
+class _CustomNavigationColor extends ConsumerWidget {
+  const _CustomNavigationColor();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final color = ref.watch(settingsProvider.select((s) => s.navigationChromeColor));
+    final n = ref.read(settingsProvider.notifier);
+    return SettingRow(
+      title: 'Navigation bar color',
+      description: 'NEFORUM darkens it a little where the labels need it.',
+      stackOnCompact: true,
+      trailing: Wrap(spacing: Space.md, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+        _ColorInUse(color: color == null ? Brand.night : Color(color), name: color == null ? 'NEFORUM purple' : hexColor(color)),
+        _CustomColorButton(
+          key: const Key('navigation-custom-color'),
+          onPressed: () async {
+            final picked = await pickNavigationChromeColor(context, color);
+            if (picked != null) await n.update((x) => x.copyWith(navigationChromeColor: picked));
+          },
+        ),
+      ]),
+    );
+  }
+}
+
 /// Settings > Appearance > Navigation bar > See-through: how much of the
-/// theme's surface color covers it, and the frosted-glass blur of the
-/// background picture under it (only with a picture: over the plain page a
-/// blur shows nothing).
+/// theme's surface color (1.4.3: or a tint of the user's own) covers it, and
+/// the frosted-glass blur of the background picture under it (only with a
+/// picture: over the plain page a blur shows nothing).
 class _SeeThroughNavigation extends ConsumerWidget {
   const _SeeThroughNavigation();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final nf = context.nf;
-    final s = ref.watch(settingsProvider.select((s) => (opacity: s.navigationChromeOpacity, blur: s.navigationChromeBlur, picture: s.backgroundImagePath != null)));
+    final s = ref.watch(settingsProvider.select((s) => (
+          opacity: s.navigationChromeOpacity,
+          blur: s.navigationChromeBlur,
+          picture: s.backgroundImagePath != null,
+          tint: s.navigationChromeTint,
+        )));
     final n = ref.read(settingsProvider.notifier);
 
     Widget slider(String label, String value, Slider slider) => MergeSemantics(
@@ -347,6 +578,27 @@ class _SeeThroughNavigation extends ConsumerWidget {
               onChanged: (v) => n.update((x) => x.copyWith(navigationChromeBlur: validNavigationChromeBlur(v.roundToDouble()))),
             ),
           ),
+        // 1.4.3: colours. The tint over what shows through.
+        Padding(
+          padding: const EdgeInsets.only(top: Space.sm),
+          child: Wrap(spacing: Space.md, runSpacing: Space.sm, crossAxisAlignment: WrapCrossAlignment.center, children: [
+            SizedBox(width: 52, child: Text('Tint', style: context.text.labelLarge?.copyWith(color: nf.textMuted))),
+            _ColorInUse(
+              color: s.tint == null ? nf.surface : nf.seeThroughTint(Color(s.tint!)),
+              name: s.tint == null ? 'Page color' : hexColor(s.tint!),
+            ),
+            _CustomColorButton(
+              key: const Key('see-through-custom-color'),
+              onPressed: () async {
+                final picked = await pickNavigationChromeTint(context, s.tint);
+                if (picked == null) return;
+                await n.update((x) => picked == ColorChoiceDialog.reset
+                    ? x.copyWith(clearNavigationChromeTint: true)
+                    : x.copyWith(navigationChromeTint: picked));
+              },
+            ),
+          ]),
+        ),
       ]),
     );
   }

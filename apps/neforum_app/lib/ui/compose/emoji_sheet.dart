@@ -355,7 +355,8 @@ class _ToneSwatch extends StatelessWidget {
                   border: Border.all(color: selected ? nf.accent : nf.borderStrong, width: selected ? 3 : 1),
                 ),
                 // Not by colour alone.
-                child: selected ? const Icon(Icons.check_rounded, size: 12, color: Color(0xFF000000)) : null,
+                // 1.4.3: white or ink, whichever reads on the tone.
+                child: selected ? Icon(Icons.check_rounded, size: 12, color: readableOn(tone.color)) : null,
               ),
             ),
           ),

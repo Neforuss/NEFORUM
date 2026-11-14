@@ -602,7 +602,8 @@ class _ScheduleSheetState extends ConsumerState<ScheduleSheet> {
                           _setMoment(p.$2);
                         }),
                         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text(p.$1, style: context.text.labelLarge),
+                          // Clear of the check on the chosen card.
+                          Padding(padding: const EdgeInsets.only(right: Space.lg), child: Text(p.$1, style: context.text.labelLarge)),
                           const SizedBox(height: 2),
                           Text(_quickPickWhen(p), style: context.text.bodySmall),
                         ]),

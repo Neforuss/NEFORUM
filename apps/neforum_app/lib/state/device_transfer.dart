@@ -78,6 +78,9 @@ const Set<String> kExportableSettings = {
   // 1.4.3: story placement. Post / Story / Post + Story as last chosen for
   // each account, which travels with the accounts.
   'defaultPlacements',
+  // 1.4.3: colours
+  'navigationChromeColor',
+  'navigationChromeTint',
 };
 
 /// 1.3.5: the settings that stay on the device, each with why. Together with
@@ -137,6 +140,8 @@ const Map<String, Object?> kSettingDefaultsLeftOut = {
   'cardPresets': <Object?>[],
   'characterFavourites': <Object?>[], // 1.4.3: symbols
   'defaultPlacements': <String, Object?>{}, // 1.4.3: story placement
+  'navigationChromeColor': null, // 1.4.3: colours
+  'navigationChromeTint': null, // 1.4.3: colours
 };
 
 /// 1.3.5: every shared setting of [s] with its value, defaults included, as
