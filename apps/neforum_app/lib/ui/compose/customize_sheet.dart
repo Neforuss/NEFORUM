@@ -13,7 +13,6 @@ import '../../platform/env.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../state/story_placements.dart';
-import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
 import '../../widgets/char_ring.dart';
