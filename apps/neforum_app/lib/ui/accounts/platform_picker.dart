@@ -59,7 +59,7 @@ const _groups = <String, List<String>>{
   'Video sites': ['youtube', 'rumble', 'odysee', 'bitchute'],
   _artGroup: [],
   'Messaging': ['telegram', 'discord', 'whatsapp'],
-  'Blogs & newsletters': ['wordpress', 'ghost', 'writefreely', 'micropub', 'devto', 'hashnode', 'substack'],
+  'Blogs & newsletters': ['wordpress', 'ghost', 'emdash', 'writefreely', 'micropub', 'devto', 'hashnode', 'substack'],
   'Business': ['google_business'],
 };
 

@@ -426,6 +426,12 @@ List<_Real> _realAccounts(_Fakes f, DateTime now) {
         'Sign-in method: Browser sign-in (IndieAuth)'],
     ),
     _Real(
+      _acct('emdash', PlatformTier.openApi, {'site': 'https://emdash.example', 'siteTitle': 'Robin Writes', 'version': '1.5.0', 'defaultStatus': 'draft'}),
+      oauth(type: 'personal-access-token'),
+      keys: ['Access token'],
+      show: ['Site address: https://emdash.example', 'Site name: Robin Writes', 'Publish as: Draft'],
+    ),
+    _Real(
       _acct('devto', PlatformTier.openApi, {'base': 'https://dev.example', 'userId': 5, 'username': 'robin'}),
       oauth(type: 'api-key'),
       keys: ['Access token'],

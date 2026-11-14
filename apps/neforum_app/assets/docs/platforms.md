@@ -25,6 +25,7 @@ Generated from the code on 2026-10-25.
 | DeviantArt | Your keys, Hand-off | Yes | No limit | 1 image (required) | - | - | [deviantart.md](platforms/deviantart.md) |
 | Discord | Auto | Yes | 2000 characters, threads | 10 images or 10 videos | 30/1 min | - | [discord.md](platforms/discord.md) |
 | Dribbble | Your keys, Hand-off | Yes | No limit | 10 images or 1 video (required) | 1440/day | - | [dribbble.md](platforms/dribbble.md) |
+| EmDash | Auto, Hand-off | Yes | No limit | 20 images or 4 videos | - | - | [emdash.md](platforms/emdash.md) |
 | Facebook | Your keys, Hand-off | Hand-off only | 63206 characters | 10 images or 1 video | 4800/day | Yes | [facebook.md](platforms/facebook.md) |
 | Flickr | Your keys, Hand-off | Yes | No limit | 10 images or 1 video (required) | - | - | [flickr.md](platforms/flickr.md) |
 | Fur Affinity | Hand-off | Yes | No limit | 1 image (required) | - | - | [furaffinity.md](platforms/furaffinity.md) |
@@ -119,6 +120,11 @@ Generated from the code on 2026-10-25.
 
 - **Account:** Any Dribbble account for the hand-off. Posting through the API needs your own Dribbble app and an account that may upload shots (an approved Designer account or a team).
 - **Cost and limits:** Free. The API allows 60 requests a minute and 1,440 a day, and Dribbble reviews every shot.
+
+### EmDash
+
+- **Account:** An EmDash site (1.5 or newer) and an Administrator account on it, which is what can make API tokens. Other roles can use Hand-off.
+- **Cost and limits:** Free: EmDash is open source and the API is part of your own site. EmDash does not publish an API quota.
 
 ### Facebook
 

@@ -60,7 +60,7 @@ NetworkStyle styleFor(String platformId) => switch (platformId) {
       'tumblr' => const NetworkStyle('Tags go in the tags field, and people browse by them; the post can be playful.'),
       'google_business' => const NetworkStyle('What customers need: an offer, an event, opening hours. No hashtags.'),
       'telegram' || 'discord' || 'matrix' || 'whatsapp' => _chat,
-      'wordpress' || 'ghost' || 'writefreely' || 'micropub' || 'devto' || 'hashnode' || 'substack' => _blog,
+      'wordpress' || 'ghost' || 'emdash' || 'writefreely' || 'micropub' || 'devto' || 'hashnode' || 'substack' => _blog,
       _ => const NetworkStyle('Write it the way people there talk.'),
     };
 

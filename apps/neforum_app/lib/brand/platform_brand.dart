@@ -83,6 +83,8 @@ const Map<String, PlatformBrand> platformBrands = {
   'nostr': PlatformBrand(color: Color(0xFF8E30EB), monogram: 'N'),
   'wordpress': PlatformBrand(color: Color(0xFF21759B), icon: FontAwesomeIcons.wordpress),
   'ghost': PlatformBrand(color: Color(0xFF15171A), darkColor: Color(0xFF30343B), icon: FontAwesomeIcons.ghost),
+  // The orange of EmDash's mark.
+  'emdash': PlatformBrand(color: Color(0xFFF6821F), onColor: Color(0xFF111111), monogram: 'Ed'),
   'writefreely': PlatformBrand(color: Color(0xFF3C4A57), darkColor: Color(0xFF52657A), monogram: 'Wf'),
   'micropub': PlatformBrand(color: Color(0xFFE85D0C), icon: FontAwesomeIcons.rss),
   'devto': PlatformBrand(color: Color(0xFF0A0A0A), darkColor: Color(0xFF2B2B2B), icon: FontAwesomeIcons.dev),
@@ -139,7 +141,7 @@ const Set<String> _platformIcons = {
   'reddit', 'telegram', 'discord', 'matrix', 'tumblr', 'lemmy', 'misskey', 'nostr', 'wordpress', 'ghost', //
   'writefreely', 'micropub', 'devto', 'hashnode', 'snapchat', 'whatsapp', 'google_business', 'substack', 'rumble', //
   'odysee', 'bitchute', 'deviantart', 'dribbble', 'pixelfed', 'flickr', 'inkbunny', 'behance', 'artstation', 'cara', //
-  'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', 'kofi', 'artfol', 'fivehundredpx',
+  'pixiv', 'itaku', 'newgrounds', 'furaffinity', 'weasyl', 'kofi', 'artfol', 'fivehundredpx', 'emdash',
 };
 
 /// Platforms shown with another platform's icon: YouTube's Posts tab is
