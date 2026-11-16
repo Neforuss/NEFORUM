@@ -227,7 +227,7 @@ void main() {
 
       final channel = calls[1];
       expect(channel.method, 'GET');
-      expect(channel.url.toString(), 'https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true');
+      expect(channel.url.toString(), 'https://www.googleapis.com/youtube/v3/channels?part=snippet,status&mine=true');
       expect(channel.headers['authorization'], 'Bearer ya29.new');
 
       final a = res.account;

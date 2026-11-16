@@ -124,6 +124,27 @@ class TextRules {
   /// link in the body is pointless (YouTube description still fine → true).
   final bool linkInText;
   final String? notes;
+
+  /// These rules with a longer or shorter [maxLength] and their [notes]
+  /// (1.4.4: an account's paid plan, see `SubscriptionPlans`).
+  TextRules copyWith({int? maxLength, String? notes}) => TextRules(
+        maxLength: maxLength ?? this.maxLength,
+        counting: counting,
+        urlWeight: urlWeight,
+        titleMax: titleMax,
+        titleRequired: titleRequired,
+        titleSupported: titleSupported,
+        supportsThreads: supportsThreads,
+        supportsContentWarning: supportsContentWarning,
+        supportsMarkdown: supportsMarkdown,
+        supportsHtml: supportsHtml,
+        supportsHashtags: supportsHashtags,
+        hashtagsAsField: hashtagsAsField,
+        maxHashtags: maxHashtags,
+        mentionCountsDomain: mentionCountsDomain,
+        linkInText: linkInText,
+        notes: notes ?? this.notes,
+      );
 }
 
 /// Media constraints for one platform.
@@ -242,6 +263,37 @@ class MediaRules {
     if (max == null || durationMs == null) return true;
     return (durationMs / 1000 * (audioVideoFrameRate ?? 30)).ceil() <= max;
   }
+
+  /// These rules with other video limits and [notes] (1.4.4: an account's
+  /// paid plan, see `SubscriptionPlans`).
+  MediaRules copyWith({int? videoMaxBytes, int? videoMaxSeconds, String? notes}) => MediaRules(
+        maxImages: maxImages,
+        maxVideos: maxVideos,
+        requiresMedia: requiresMedia,
+        allowsMixedImageVideo: allowsMixedImageVideo,
+        imageMaxBytes: imageMaxBytes,
+        videoMaxBytes: videoMaxBytes ?? this.videoMaxBytes,
+        videoMaxSeconds: videoMaxSeconds ?? this.videoMaxSeconds,
+        imageMimeTypes: imageMimeTypes,
+        videoMimeTypes: videoMimeTypes,
+        supportsAltText: supportsAltText,
+        requiresPublicMediaUrl: requiresPublicMediaUrl,
+        mediaPerThreadPart: mediaPerThreadPart,
+        notes: notes ?? this.notes,
+        maxAudios: maxAudios,
+        audioMaxBytes: audioMaxBytes,
+        audioMimeTypes: audioMimeTypes,
+        keepsAudioBytes: keepsAudioBytes,
+        audioWithOtherMedia: audioWithOtherMedia,
+        audioAsVideo: audioAsVideo,
+        audioAsLink: audioAsLink,
+        audioAsVideoWhenPossible: audioAsVideoWhenPossible,
+        audioVideoFrameRate: audioVideoFrameRate,
+        audioVideoMaxFrames: audioVideoMaxFrames,
+        maxItems: maxItems,
+        gifAlone: gifAlone,
+        paragraphMedia: paragraphMedia,
+      );
 
   bool get supportsAnyMedia => maxImages > 0 || maxVideos > 0 || maxAudios > 0;
 
@@ -426,6 +478,34 @@ class PlatformDescriptor {
       [for (final o in options) if (o.isUserFacing && o.appliesTo(tier)) o];
 
   bool supportsTier(PlatformTier t) => tiers.contains(t);
+
+  /// This descriptor with other [text] and [media] rules: one account's own
+  /// limits (1.4.4: its paid plan, see `SubscriptionPlans`). Everything else,
+  /// [options] included, is this descriptor's own.
+  PlatformDescriptor copyWith({TextRules? text, MediaRules? media}) => PlatformDescriptor(
+        id: id,
+        name: name,
+        tiers: tiers,
+        defaultTier: defaultTier,
+        text: text ?? this.text,
+        media: media ?? this.media,
+        accountRequirements: accountRequirements,
+        apiCostSummary: apiCostSummary,
+        shortName: shortName,
+        iconKey: iconKey,
+        homepage: homepage,
+        defaultQuotas: defaultQuotas,
+        personalAccountOk: personalAccountOk,
+        setupGuide: setupGuide,
+        serverSideScheduling: serverSideScheduling,
+        supportsLinkField: supportsLinkField,
+        family: family,
+        polls: polls,
+        categories: categories,
+        options: options,
+        articleFormat: articleFormat,
+        articleOptionKey: articleOptionKey,
+      );
 
   @override
   String toString() => 'PlatformDescriptor($id)';

@@ -15,7 +15,9 @@ class XEndpoints {
   static final Uri authorize = Uri.parse('https://x.com/i/oauth2/authorize');
   static final Uri token = Uri.parse('https://api.x.com/2/oauth2/token');
   static final Uri revoke = Uri.parse('https://api.x.com/2/oauth2/revoke');
-  static final Uri me = Uri.https('api.x.com', '/2/users/me', {'user.fields': 'profile_image_url'});
+  /// 1.4.4: with the plan fields, read in the same call ([XUser.subscriptionType]).
+  static final Uri me =
+      Uri.https('api.x.com', '/2/users/me', {'user.fields': 'profile_image_url,subscription_type,verified_type'});
   static final Uri tweets = Uri.parse('https://api.x.com/2/tweets');
   static final Uri mediaUpload = Uri.parse('https://api.x.com/2/media/upload');
   static final Uri mediaInitialize = Uri.parse('https://api.x.com/2/media/upload/initialize');
@@ -32,12 +34,26 @@ class XEndpoints {
 
 /// The authenticated X user, from `GET /2/users/me`.
 class XUser {
-  const XUser({required this.id, required this.username, required this.name, this.avatarUrl, this.accessLevel});
+  const XUser({
+    required this.id,
+    required this.username,
+    required this.name,
+    this.avatarUrl,
+    this.accessLevel,
+    this.subscriptionType,
+    this.verifiedType,
+  });
 
   final String id;
   final String username;
   final String name;
   final String? avatarUrl;
+
+  /// `subscription_type`: Basic, Premium, PremiumPlus or None, when X sends it.
+  final String? subscriptionType;
+
+  /// `verified_type`: blue, government, business or none, when X sends it.
+  final String? verifiedType;
 
   /// X's `x-access-level` response header on OAuth 1.0a calls (`read`,
   /// `read-write`, `read-write-directmessages`), when X sends it.
@@ -111,6 +127,8 @@ class XApi {
       name: _str(data['name']) ?? username,
       avatarUrl: _str(data['profile_image_url']),
       accessLevel: res.headers['x-access-level'],
+      subscriptionType: _str(data['subscription_type']),
+      verifiedType: _str(data['verified_type']),
     );
   }
 
@@ -348,7 +366,9 @@ class XApi {
     }
     if (status == 403) {
       if (lower.contains('too long') || lower.contains('length')) {
-        return PublishError.validation('X refused the post length (over 280 characters needs X Premium): $detail',
+        return PublishError.validation(
+            'X refused the post length (over 280 characters needs X Premium; if this account has none, set its plan '
+            'to X free on the account card): $detail',
             raw: raw, statusCode: status);
       }
       if (RegExp(r'not permitted|permission|scope|oauth|unsupported authentication|not authorized')

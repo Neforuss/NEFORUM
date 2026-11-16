@@ -106,8 +106,11 @@ void _expectNoSecretShown(Iterable<String> shown, Iterable<Map<String, String>> 
   }
 }
 
-/// A plausible value for [f] on [a], all lower case.
-Object _fakeValue(PlatformAdapter a, ConnectField f) => switch (f.kind) {
+/// A plausible value for [f] on [a], all lower case. A paid plan (1.4.4) is
+/// stored by its id, the last of the network's plans.
+Object _fakeValue(PlatformAdapter a, ConnectField f, PlatformTier tier) => f.key == AccountSubscription.tierKey
+    ? a.subscriptionPlansFor(tier)!.tiers.last.id
+    : switch (f.kind) {
       FieldKind.url => 'https://${a.id.replaceAll('_', '-')}.example/${f.key.toLowerCase()}',
       FieldKind.boolean => true,
       FieldKind.select => f.options!.first,
@@ -139,7 +142,7 @@ List<(ConnectedAccount, Map<String, String>, ConnectSpec)> _formAccounts(_Fakes 
               displayName: 'form ${a.id} ${spec.tier.name.toLowerCase()}',
               handle: '@form-${a.id}',
               createdAt: _connected,
-              config: {for (final f in spec.fields) if (!f.secret) f.key: _fakeValue(a, f)},
+              config: {for (final f in spec.fields) if (!f.secret) f.key: _fakeValue(a, f, spec.tier)},
             ),
             {for (final f in spec.fields) if (f.secret) f.key: fakes.next()},
             spec,
@@ -1077,7 +1080,10 @@ void main() {
       final shown = {for (final d in c.details) d.label: d.value};
       for (final f in spec.fields.where((f) => !f.secret)) {
         final label = cleanFieldLabel(f.label);
-        expect(shown[label], _shownValue(f, account.config[f.key] as Object), reason: '${account.id}: ${f.key} as "$label"');
+        final expected = f.key == AccountSubscription.tierKey
+            ? adapter.subscriptionPlansFor(account.tier)!.tiers.last.label
+            : _shownValue(f, account.config[f.key] as Object);
+        expect(shown[label], expected, reason: '${account.id}: ${f.key} as "$label"');
       }
       for (final f in spec.fields.where((f) => f.secret)) {
         expect(c.storedKeys, contains(kSecretKeyLabels[f.key] ?? cleanFieldLabel(f.label)), reason: '${account.id}: ${f.key}');

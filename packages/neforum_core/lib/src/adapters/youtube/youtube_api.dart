@@ -15,7 +15,8 @@ abstract final class YouTubeEndpoints {
   static final Uri authorize = Uri.parse('https://accounts.google.com/o/oauth2/v2/auth');
   static final Uri token = Uri.parse('https://oauth2.googleapis.com/token');
   static final Uri revoke = Uri.parse('https://oauth2.googleapis.com/revoke');
-  static final Uri channelsMine = Uri.parse('https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true');
+  /// 1.4.4: `status` too, for `longUploadsStatus` (videos over 15 minutes).
+  static final Uri channelsMine = Uri.parse('https://www.googleapis.com/youtube/v3/channels?part=snippet,status&mine=true');
 
   /// Starts a resumable `videos.insert` session. Built from a string so the
   /// comma in `part=snippet,status` stays literal.

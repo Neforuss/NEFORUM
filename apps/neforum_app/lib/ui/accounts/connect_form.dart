@@ -7,6 +7,7 @@ import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../../brand/platform_brand.dart';
 import '../../state/providers.dart';
+import '../../state/subscription_view.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/badges.dart';
@@ -14,6 +15,7 @@ import '../../widgets/platform_site_link.dart';
 import '../../widgets/buttons.dart';
 import '../../widgets/layout.dart';
 import '../../widgets/surfaces.dart';
+import '../../widgets/switch_field.dart';
 import 'guide_sheet.dart';
 import 'markdown_style.dart';
 
@@ -243,6 +245,17 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
         ],
         const SizedBox(height: Space.xl),
         for (final f in spec.fields) Padding(padding: const EdgeInsets.only(bottom: Space.lg), child: _field(f)),
+        // 1.4.4: a plan the network reports needs no question on the form.
+        if (_adapter.subscriptionPlansFor(widget.tier) case final plans? when plans.detected)
+          Padding(
+            key: const ValueKey('connect-plan-detected'),
+            padding: const EdgeInsets.only(bottom: Space.lg),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.workspace_premium_outlined, size: 18, color: nf.textMuted),
+              const SizedBox(width: Space.sm),
+              Expanded(child: Text(subscriptionDetectedNote(plans), style: context.text.bodySmall?.copyWith(color: nf.textMuted))),
+            ]),
+          ),
         if (_error != null) ...[
           Container(
             padding: const EdgeInsets.all(Space.md),
@@ -302,10 +315,12 @@ class _ConnectFormState extends ConsumerState<ConnectForm> {
     final Widget input;
     switch (f.kind) {
       case FieldKind.boolean:
-        input = SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: Text(f.label, style: context.text.bodyMedium),
+        // 1.4.4: lined up with the text fields (NfSwitchField).
+        input = NfSwitchField(
+          key: ValueKey('connect-switch-${f.key}'),
+          label: f.label,
           value: _bool[f.key] ?? false,
+          errorText: _fieldErrors[f.key],
           onChanged: (v) {
             setState(() => _bool[f.key] = v);
             _edited(f.key);

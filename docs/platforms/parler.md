@@ -6,7 +6,7 @@ This guide connects Parler by **hand-off only**: NEFORUM copies your post and op
 
 1. In NEFORUM, add an account and choose **Parler**.
 2. Optionally type a label, for example your Parler handle.
-3. If the account has **Parler Premium**, turn on **Parler Premium**: posts can then be 2000 characters instead of 300.
+3. If the account has **Parler Premium**, turn on **Parler Premium**: posts can then be 2000 characters instead of 300. You can change it later on the account card, under the account's plan.
 4. Tap **Add Parler**. That's it.
 
 ## Steps: when you publish

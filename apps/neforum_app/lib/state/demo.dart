@@ -28,6 +28,22 @@ class DemoAdapter extends PlatformAdapter {
   @override
   List<ConnectSpec> get connectSpecs => inner.connectSpecs;
 
+  // 1.4.4: paid plans, the real adapter's (its limits follow them through
+  // descriptorForAccount above).
+  @override
+  SubscriptionPlans? subscriptionPlansFor(PlatformTier tier) => inner.subscriptionPlansFor(tier);
+
+  @override
+  SubscriptionTier? subscriptionTierOf(ConnectedAccount account) => inner.subscriptionTierOf(account);
+
+  @override
+  String? legacySubscriptionTierId(ConnectedAccount account) => inner.legacySubscriptionTierId(account);
+
+  @override
+  ConnectedAccount withSubscriptionTier(ConnectedAccount account, String tierId,
+          {SubscriptionSource source = SubscriptionSource.chosen, DateTime? at}) =>
+      inner.withSubscriptionTier(account, tierId, source: source, at: at);
+
   /// Real validation, minus complaints about the account's own setup (demo
   /// accounts have no keys or server details).
   @override
@@ -52,8 +68,11 @@ class DemoAdapter extends PlatformAdapter {
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
     await Future<void>.delayed(const Duration(milliseconds: 700));
     _counter++;
-    final name = input.values.firstWhere((v) => v.trim().isNotEmpty && !v.startsWith('http'), orElse: () => 'Demo user $_counter');
-    return ConnectResult(
+    final name = input.entries
+        .where((e) => e.key != AccountSubscription.tierKey)
+        .map((e) => e.value)
+        .firstWhere((v) => v.trim().isNotEmpty && !v.startsWith('http') && v != 'true' && v != 'false', orElse: () => 'Demo user $_counter');
+    return withChosenSubscription(tier, input, ConnectResult(
       account: ConnectedAccount(
         id: 'demo-${descriptor.id}-${DateTime.now().microsecondsSinceEpoch}',
         platformId: descriptor.id,
@@ -63,7 +82,7 @@ class DemoAdapter extends PlatformAdapter {
         createdAt: DateTime.now(),
         config: const {'demo': true},
       ),
-    );
+    ));
   }
 
   @override

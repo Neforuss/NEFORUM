@@ -6,6 +6,7 @@ import '../../model/validation.dart';
 import '../../text/rules_validator.dart';
 import '../adapter_context.dart';
 import '../connect_spec.dart';
+import '../subscription_tiers.dart';
 import 'handoff_common.dart';
 
 /// Parler via hand-off.
@@ -41,8 +42,25 @@ class ParlerAdapter extends HandoffOnlyAdapter {
   /// "Videos must be 60 minutes or shorter".
   static const int videoMaxSeconds = 60 * 60;
 
-  /// Config key: the account has Parler Premium (2000 characters).
+  /// Config key of 1.4.3: the account has Parler Premium (2000 characters).
+  /// 1.4.4 keeps the plan under [AccountSubscription.tierKey] and still writes
+  /// this key, so a device on 1.4.3 reads the same plan through Sync.
   static const String premiumKey = 'premium';
+
+  /// The id of Parler Premium among [plans].
+  static const String premiumTierId = 'premium';
+
+  /// Free (300 characters) or Parler Premium (2000), chosen by the person:
+  /// Parler has no API that could say.
+  static const SubscriptionPlans plans = SubscriptionPlans(
+    fieldLabel: 'Parler Premium',
+    help: 'Turn on if this account has Parler Premium: posts can then be $premiumMaxLength characters instead of '
+        '$freeMaxLength.',
+    tiers: [
+      SubscriptionTier(id: SubscriptionTier.freeId, label: 'Parler free', summary: 'Posts up to $freeMaxLength characters'),
+      SubscriptionTier(id: premiumTierId, label: 'Parler Premium', summary: 'Posts up to $premiumMaxLength characters'),
+    ],
+  );
 
   static PlatformDescriptor _build(int maxLength) => PlatformDescriptor(
         id: 'parler',
@@ -83,11 +101,9 @@ class ParlerAdapter extends HandoffOnlyAdapter {
   static final PlatformDescriptor _free = _build(freeMaxLength);
   static final PlatformDescriptor _premium = _build(premiumMaxLength);
 
-  /// Whether [account] was connected with Parler Premium turned on.
-  static bool isPremium(ConnectedAccount account) {
-    final v = account.config[premiumKey];
-    return v == true || (v is String && v.toLowerCase() == 'true');
-  }
+  /// Whether [account] has Parler Premium: its plan ([AccountSubscription]),
+  /// or for an account set up by 1.4.3, its `premium` switch.
+  static bool isPremium(ConnectedAccount account) => ParlerAdapter().subscriptionTierOf(account)?.id == premiumTierId;
 
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicy.noConnection;
@@ -96,7 +112,33 @@ class ParlerAdapter extends HandoffOnlyAdapter {
   PlatformDescriptor get descriptor => _free;
 
   @override
-  PlatformDescriptor descriptorForAccount(ConnectedAccount account) => isPremium(account) ? _premium : _free;
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) =>
+      subscriptionTierOf(account)?.id == premiumTierId ? _premium : _free;
+
+  @override
+  SubscriptionPlans? subscriptionPlansFor(PlatformTier tier) => tier == PlatformTier.handoff ? plans : null;
+
+  /// 1.4.3 stored Parler Premium as `premium: true` (or "true" from the form).
+  @override
+  String? legacySubscriptionTierId(ConnectedAccount account) {
+    final v = account.config[premiumKey];
+    if (v == null) return null;
+    return v == true || (v is String && v.trim().toLowerCase() == 'true') ? premiumTierId : SubscriptionTier.freeId;
+  }
+
+  /// The plan, and the 1.4.3 switch beside it for devices not yet on 1.4.4.
+  @override
+  ConnectedAccount withSubscriptionTier(ConnectedAccount account, String tierId,
+      {SubscriptionSource source = SubscriptionSource.chosen, DateTime? at}) {
+    final next = super.withSubscriptionTier(account, tierId, source: source, at: at);
+    final config = {...next.config};
+    if (tierId == premiumTierId) {
+      config[premiumKey] = true;
+    } else {
+      config.remove(premiumKey);
+    }
+    return next.copyWith(config: config);
+  }
 
   @override
   String get connectIntro => '''
@@ -120,28 +162,20 @@ Parler posts take 300 characters, or 2000 with **Parler Premium**: turn on **Par
         intro: base.intro,
         loopbackRedirectOk: false,
         customSchemeRedirectOk: false,
-        fields: [
-          ...base.fields,
-          const ConnectField(
-            key: premiumKey,
-            label: 'Parler Premium',
-            kind: FieldKind.boolean,
-            required: false,
-            defaultValue: 'false',
-            help: 'Turn on if this account has Parler Premium: posts can then be $premiumMaxLength characters '
-                'instead of $freeMaxLength.',
-          ),
-        ],
+        fields: [...base.fields, plans.connectField],
       ),
     ];
   }
 
+  /// Parler Premium is stored only when turned on, so a free account keeps
+  /// the config 1.4.3 gave it. The form's `premium` answer of 1.4.3 still
+  /// counts.
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
     final base = await super.connect(tier, input, ctx);
-    final premium = (input[premiumKey] ?? '').trim().toLowerCase() == 'true';
-    if (!premium) return base;
-    return ConnectResult(account: base.account.copyWith(config: {...base.account.config, premiumKey: true}));
+    final answer = input[AccountSubscription.tierKey] ?? input[premiumKey];
+    if (plans.fromInput(answer)?.id != premiumTierId) return base;
+    return ConnectResult(account: withSubscriptionTier(base.account, premiumTierId), secrets: base.secrets);
   }
 
   @override

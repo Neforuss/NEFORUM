@@ -57,7 +57,7 @@ Status as of October 2026.
 - **Testing vs. production:** if your Google Auth Platform app stays in *Testing*, Google ends your sign-in **every 7 days** and you have to reconnect. Click **Publish app** (step 5 of *Steps*) to avoid that. Google then shows an "unverified app" warning during sign-in. That warning is normal for your own app. NEFORUM may not be able to show this 7-day date: Google documents the field that reports it only for time-limited access.
 - **Unused for 6 months:** even in production, Google ends a sign-in that has not been used for 6 months. NEFORUM renews only when it posts, so post at least that often or reconnect. Google also keeps at most 100 sign-ins per Google account per app and silently ends the oldest.
 - **Connect from the desktop app.** Google only accepts `http://127.0.0.1` sign-ins for "Desktop app" clients. It rejects `neforum://` (custom schemes must contain a dot and belong to an iOS/Android client), so the Connect button doesn't work on Android/iOS.
-- Channels that are not phone-verified can't upload videos longer than **15 minutes**. Verify at <https://www.youtube.com/verify>.
+- Channels that are not phone-verified can't upload videos longer than **15 minutes**. Verify at <https://www.youtube.com/verify>. With your own keys, NEFORUM asks YouTube when you connect (the channel's `longUploadsStatus`), and the account card shows "Verified channel" or "Standard channel". A standard channel is held to 15 minutes in the composer. After verifying, reconnect the account so NEFORUM reads it again. Channels connected before NEFORUM 1.4.4 keep the 12-hour limit until they reconnect. See [paid plans](../paid-tiers.md).
 
 ## The video's details
 

@@ -28,7 +28,7 @@ final List<HandoffOnlyAdapter> _all = [
 
 /// The optional fields a hand-off adapter asks for after the label.
 const Map<String, List<String>> _extraFields = {
-  'parler': ['premium'],
+  'parler': ['subscriptionTier'],
   'locals': ['community'],
 };
 
@@ -392,15 +392,20 @@ void main() {
     });
 
     test('connect(): Parler Premium is kept only when turned on', () async {
-      final on = await a.connect(PlatformTier.handoff, {'label': 'Me', 'premium': 'true'}, _noHttp([]));
-      expect(on.account.config, {'label': 'Me', 'premium': true});
+      // 1.4.4: the plan, and the 1.4.3 switch beside it for older devices.
+      const premiumConfig = {'label': 'Me', 'subscriptionTier': 'premium', 'subscriptionSource': 'chosen', 'premium': true};
+      final on = await a.connect(PlatformTier.handoff, {'label': 'Me', 'subscriptionTier': 'true'}, _noHttp([]));
+      expect(on.account.config, premiumConfig);
       expect(ParlerAdapter.isPremium(on.account), isTrue);
       expect(a.descriptorForAccount(on.account).text.maxLength, 2000);
-      final off = await a.connect(PlatformTier.handoff, {'label': 'Me', 'premium': 'false'}, _noHttp([]));
+      final old = await a.connect(PlatformTier.handoff, {'label': 'Me', 'premium': 'true'}, _noHttp([]));
+      expect(old.account.config, premiumConfig, reason: 'the 1.4.3 form answer still counts');
+      final off = await a.connect(PlatformTier.handoff, {'label': 'Me', 'subscriptionTier': 'false'}, _noHttp([]));
       expect(off.account.config, {'label': 'Me'});
       expect(ParlerAdapter.isPremium(off.account), isFalse);
       final premiumField = a.connectSpecs.single.fields.last;
-      expect((premiumField.kind, premiumField.defaultValue), (FieldKind.boolean, 'false'));
+      expect((premiumField.key, premiumField.label, premiumField.kind, premiumField.defaultValue),
+          ('subscriptionTier', 'Parler Premium', FieldKind.boolean, 'false'));
     });
 
     test('validate(): 4 photos and videos together, and the composer\'s file types', () {
