@@ -36,6 +36,7 @@ import '../root.dart';
 import '../router.dart';
 import '../settings/sync_section.dart';
 import 'app_backdrop.dart';
+import 'first_start_sync.dart';
 import '../settings/updates_section.dart';
 import 'nav_input.dart';
 import 'notification_prompt.dart';
@@ -84,20 +85,32 @@ class _AppShellState extends ConsumerState<AppShell> {
       // first post (see _KeyringBanner).
       if (Env.isLinux && !ref.read(isDemoProvider)) unawaited(SecureSecretStore.verifyAvailable());
       final updates = ref.read(updateCheckProvider.notifier);
-      unawaited(_askFirstStartQuestions());
+      if (Env.isIOS) FilesAppFolder.listenForOpened(_takeOpenedSyncFile);
+      // A sync file NEFORUM was opened with is that file's setup first; the
+      // questions come after it, so they never stack on it.
+      unawaited(() async {
+        if (Env.isIOS) {
+          try {
+            await _takeOpenedSyncFile();
+          } on Object catch (e) {
+            debugPrint('Could not read the sync file NEFORUM was opened with: $e');
+          }
+        }
+        if (mounted) await _askFirstStartQuestions();
+      }());
       updates.start();
-      if (Env.isIOS) {
-        FilesAppFolder.listenForOpened(_takeOpenedSyncFile);
-        unawaited(_takeOpenedSyncFile());
-      }
     });
   }
 
-  /// One question at a time: notifications among the first things in setup
+  /// One question at a time: on a new install, whether to join an existing
+  /// sync first (it decides whether the accounts arrive; the join flow a
+  /// shortcut opens finishes before the next question), then notifications
   /// (once, with the OS prompt only on Turn on), then update checks (asked
   /// once, then at most daily, never in the demo). Then what finished while
   /// NEFORUM was closed, when the OS could not say.
   Future<void> _askFirstStartQuestions() async {
+    await offerSyncOnFirstStart(context, ref);
+    if (!mounted) return;
     await askAboutNotificationsOnFirstLaunch(context, ref);
     if (!mounted) return;
     final updates = ref.read(updateCheckProvider.notifier);

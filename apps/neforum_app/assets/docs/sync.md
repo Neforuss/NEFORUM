@@ -14,6 +14,7 @@ This guide keeps your accounts, their keys, your posts and your settings the sam
 ## Steps: On each other device
 
 1. Go to **Settings > Sync > Set up…** and pick the **same storage**.
+   - On a new install, NEFORUM asks this when it first starts: "Do you already use NEFORUM on another device?" Pick your storage there to go straight to this step, or choose **No, I'm new to NEFORUM**. It asks only once on each device.
 2. Choose the same folder or file, or fill in the same WebDAV address or S3 bucket and key.
 3. Enter the **same passphrase**.
    - A code like `K7QF-MZ3D-W9TB-XC4N-P2RV-H8LG` can be typed in small letters and without the dashes: NEFORUM writes it in capitals and adds the dashes as you type. Any other passphrase is kept exactly as you type it.
