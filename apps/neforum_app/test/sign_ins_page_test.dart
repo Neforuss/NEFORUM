@@ -80,13 +80,15 @@ ConnectedAccount _acct(String platform, PlatformTier tier, {String? id, String? 
       config: config,
     );
 
-/// [secrets] as the status file reads them, by the real policy and the real rules.
-SignInStatus _status(ConnectedAccount a, Map<String, String> secrets, {DateTime? confirmed, DateTime? refused}) {
+/// [secrets] as the status file reads them, by the real policy and the real
+/// rules, read at [now] ([_now] unless given).
+SignInStatus _status(ConnectedAccount a, Map<String, String> secrets, {DateTime? confirmed, DateTime? refused, DateTime? now}) {
   final policy = _real.require(a.platformId).signInPolicyFor(a);
-  return SignInStatus.fromLifetime(a.id, deriveSignInLifetime(policy, secrets, now: _now), hasConnection: policy.hasConnection, lastConfirmedAt: confirmed, lastAuthFailure: refused);
+  return SignInStatus.fromLifetime(a.id, deriveSignInLifetime(policy, secrets, now: now ?? _now), hasConnection: policy.hasConnection, lastConfirmedAt: confirmed, lastAuthFailure: refused);
 }
 
-Map<String, String> _access(Duration left) => {OAuthTokens.keyAccessToken: 't', OAuthTokens.keyExpiresAt: _iso(_now.add(left))};
+/// An access token that ends [left] after [from] ([_now] unless given).
+Map<String, String> _access(Duration left, {DateTime? from}) => {OAuthTokens.keyAccessToken: 't', OAuthTokens.keyExpiresAt: _iso((from ?? _now).add(left))};
 
 Map<String, String> _refreshing(DateTime renewed) => {
       OAuthTokens.keyAccessToken: 't',
@@ -535,6 +537,18 @@ void main() {
         signInRiskFor(accountId: a?.id ?? 'gone', account: a, network: 'LinkedIn', status: s, due: due, now: _now, heldNow: heldNow, willHold: willHold);
     final ending = _status(link, _access(const Duration(days: 10)));
 
+    // The composer refuses a time already past by the real clock, and the
+    // scheduler sends a post that is due by it, so the tests that schedule
+    // through them count from the real now (the app's sign-in clock too),
+    // never from the fixed [_now]: a fixed date passes one day and fails the
+    // next.
+    final live = DateTime.now();
+    final liveEnd = live.add(const Duration(days: 10));
+    final liveBefore = liveEnd.subtract(const Duration(days: 1));
+    final liveAfter = liveEnd.add(const Duration(days: 1));
+    final liveEnding = _status(link, _access(const Duration(days: 10), from: live), now: live);
+    SignInStatus liveLater() => _status(link, _access(const Duration(days: 60), from: live), now: live);
+
     final cases = <String, (SignInRisk? Function(), SignInRiskKind?)>{
       'scheduled before the end': (() => risk(link, ending, before), null),
       'scheduled after the end, must reconnect': (() => risk(link, ending, after), SignInRiskKind.endsFirst),
@@ -641,8 +655,8 @@ void main() {
         );
 
     testWidgets('the queue warns on the post, and clears when the sign-in is fixed', (t) async {
-      final (c, s) = await _boot(t, fleet: [(link, ending)], route: '/compose', size: const Size(1100, 1400));
-      await t.runAsync(() => s.posts.upsert(scheduled(after, link)));
+      final (c, s) = await _boot(t, fleet: [(link, liveEnding)], route: '/compose', size: const Size(1100, 1400), now: live);
+      await t.runAsync(() => s.posts.upsert(scheduled(liveAfter, link)));
       c.read(routerProvider).go('/queue');
       await _settle(t);
       expect(find.byKey(const ValueKey('sign-in-risks')), findsOneWidget);
@@ -653,31 +667,31 @@ void main() {
       c.read(routerProvider).go('/queue');
       await _settle(t);
       // Reconnected: a later date, and the warning goes with no further step.
-      await t.runAsync(() => s.signInStatusStore.change(link.id, (_) => _status(link, _access(const Duration(days: 60)))));
+      await t.runAsync(() => s.signInStatusStore.change(link.id, (_) => liveLater()));
       await _settle(t);
       expect(find.byKey(const ValueKey('sign-in-risks')), findsNothing);
       await _end(t);
     });
 
     testWidgets('the queue picks up a date that arrives after the post was scheduled', (t) async {
-      final (c, s) = await _boot(t, fleet: [(link, _status(link, _access(const Duration(days: 60))))], route: '/compose', size: const Size(1100, 1400));
-      await t.runAsync(() => s.posts.upsert(scheduled(after, link)));
+      final (c, s) = await _boot(t, fleet: [(link, liveLater())], route: '/compose', size: const Size(1100, 1400), now: live);
+      await t.runAsync(() => s.posts.upsert(scheduled(liveAfter, link)));
       c.read(routerProvider).go('/queue');
       await _settle(t);
       expect(find.byKey(const ValueKey('sign-in-risks')), findsNothing);
-      await t.runAsync(() => s.signInStatusStore.change(link.id, (_) => ending));
+      await t.runAsync(() => s.signInStatusStore.change(link.id, (_) => liveEnding));
       await _settle(t);
       expect(find.byKey(const ValueKey('sign-in-risks')), findsOneWidget);
       await _end(t);
     });
 
     testWidgets('the composer warns, and Schedule asks first: Go back schedules nothing', (t) async {
-      final (c, s) = await _boot(t, fleet: [(link, ending)], route: '/compose', size: const Size(1200, 900));
+      final (c, s) = await _boot(t, fleet: [(link, liveEnding)], route: '/compose', size: const Size(1200, 900), now: live);
       final n = c.read(composerProvider.notifier);
       n.reset(keepTargets: false);
       n.setText('Hello');
       n.selectAccounts([link.id]);
-      n.setSchedule(after);
+      n.setSchedule(liveAfter);
       await _settle(t);
       expect(find.byKey(const ValueKey('composer-sign-in-warning')), findsOneWidget);
 
@@ -688,7 +702,7 @@ void main() {
       await _settle(t);
       var posts = (await t.runAsync(() => s.posts.all()))!;
       expect(posts, isEmpty);
-      expect(c.read(composerProvider).scheduledAt, after, reason: 'the composer is as it was');
+      expect(c.read(composerProvider).scheduledAt, liveAfter, reason: 'the composer is as it was');
 
       await t.tap(find.textContaining(RegExp(r'^Schedule( for|$)')));
       await _settle(t);
@@ -701,12 +715,12 @@ void main() {
     });
 
     testWidgets('a post within the sign-in schedules with no question and no warning', (t) async {
-      final (c, s) = await _boot(t, fleet: [(link, ending)], route: '/compose', size: const Size(1200, 900));
+      final (c, s) = await _boot(t, fleet: [(link, liveEnding)], route: '/compose', size: const Size(1200, 900), now: live);
       final n = c.read(composerProvider.notifier);
       n.reset(keepTargets: false);
       n.setText('Hello');
       n.selectAccounts([link.id]);
-      n.setSchedule(before);
+      n.setSchedule(liveBefore);
       await _settle(t);
       expect(find.byKey(const ValueKey('composer-sign-in-warning')), findsNothing);
       await t.tap(find.textContaining(RegExp(r'^Schedule( for|$)')));
