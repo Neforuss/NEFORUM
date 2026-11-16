@@ -27,6 +27,10 @@ abstract final class RenderKind {
   /// A sound file as a video of one still picture, for a network that takes
   /// only video.
   static const String audioVideo = 'audioVideo';
+
+  /// 1.4.4: an animated GIF as an MP4, for a network that takes no GIF
+  /// (Instagram's API; lib/state/gif_videos.dart).
+  static const String gifVideo = 'gifVideo';
 }
 
 /// The kind of generated file [m] is ([RenderKind]); null for user files and

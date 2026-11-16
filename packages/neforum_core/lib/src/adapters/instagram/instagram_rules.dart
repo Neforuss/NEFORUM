@@ -77,12 +77,15 @@ class InstagramRules {
       videoMimeTypes: {'video/mp4', 'video/quicktime'},
       supportsAltText: true,
       requiresPublicMediaUrl: true,
+      // 1.4.4: GIFs go as videos (the API) or as they are (the share sheet).
+      gifAsVideo: true,
       // 1.4.3: carousel items (and story frames) in the order of their
       // paragraphs, numbered in the caption.
       paragraphMedia: ParagraphMediaStyle.markers,
       notes: 'One photo, one video (posted as a Reel) or a carousel of 2-10 items. The API takes JPEG only, '
           'up to 8 MB, aspect ratio 4:5 to 1.91:1. Reels: MP4/MOV, 3 s to 15 min, up to 300 MB. '
-          'Story videos: 3-60 s, up to 100 MB.',
+          'Story videos: 3-60 s, up to 100 MB. The API takes no GIF: NEFORUM makes an animated GIF an MP4 video '
+          '(a Reel, a carousel video or a video story).',
     ),
     defaultQuotas: [
       QuotaRule(
@@ -107,6 +110,17 @@ class InstagramRules {
       if (handoff && (issue.code == 'media.image_type' || issue.code == 'media.image_too_large')) continue;
       // Alt text cannot travel through the share sheet, and stories take none.
       if ((handoff || story) && issue.code == 'media.no_alt') continue;
+      // 1.4.4: a GIF still here was not made a video or a still picture
+      // (photos are never changed in Settings): say how it can go.
+      if (!handoff && issue.code == 'media.image_type' && issue.message.startsWith('image/gif ')) {
+        for (final m in v.media.where((m) => m.kind == MediaKind.gif)) {
+          out.add(ValidationIssue.error('instagram.gif',
+              '${_name(m)} is a GIF, which Instagram\'s API does not take. When Settings fit photos, NEFORUM makes it a video '
+              '(a still picture on a device that cannot make videos)',
+              field: 'media'));
+        }
+        continue;
+      }
       // Too many hashtags is a hard API error (2207010), not just a warning.
       if (issue.code == 'hashtags.too_many' && !handoff) {
         out.add(ValidationIssue.error(issue.code, issue.message, field: issue.field));
@@ -231,6 +245,8 @@ class InstagramRules {
       mimeTypes: const {'image/jpeg'},
       maxBytes: imageMaxBytes,
       label: isStory(v) ? 'Instagram stories' : 'Instagram feed photos',
+      // 1.4.4: the API takes no GIF; an animated one goes as a video.
+      gifAsVideo: true,
     );
   }
 

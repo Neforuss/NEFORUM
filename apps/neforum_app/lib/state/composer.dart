@@ -26,6 +26,7 @@ import 'card_designs.dart';
 import 'captioned_photos.dart';
 import 'composer_draft.dart';
 import 'fitted_photos.dart';
+import 'gif_videos.dart';
 import 'notification_state.dart';
 import 'providers.dart';
 import 'publish_result_notices.dart';
@@ -1639,9 +1640,32 @@ final composerPreviewsProvider = Provider<List<TargetPreview>>((ref) {
           if (!m.generated && fit.problemsOf(m).isNotEmpty) m,
       ];
       if (fitted.isNotEmpty) {
-        variant = variant.copyWith(media: [for (final m in variant.media) fitted.contains(m) ? fit.standIn(m, settings.photoFit) : m]);
+        // 1.4.4: an animated GIF where the network takes none (Instagram's
+        // API) becomes a video where this device makes one, else a still.
+        final gifVideos = <MediaAttachment, MediaAttachment>{};
+        final gifStills = <MediaAttachment>{};
         for (final m in fitted) {
-          issues.add(ValidationIssue.info('media.photo_fit', '${m.fileName ?? 'A photo'} will be ${fit.describe(m, settings.photoFit)} for ${d.name}', field: 'media'));
+          if (m.kind != MediaKind.gif || !fit.gifAsVideo) continue;
+          final animation = ref.watch(gifAnimationProvider(m.path)).value;
+          if (animation == null || !animation.isAnimated) continue;
+          if (ref.watch(videoCaptionsSupportedProvider).value ?? false) {
+            gifVideos[m] = gifVideoStandIn(m, animation, fit, settings.photoFit);
+          } else {
+            gifStills.add(m);
+          }
+        }
+        variant = variant.copyWith(media: [for (final m in variant.media) fitted.contains(m) ? gifVideos[m] ?? fit.standIn(m, settings.photoFit) : m]);
+        for (final m in fitted) {
+          final name = m.fileName ?? 'A GIF';
+          if (gifVideos.containsKey(m)) {
+            issues.add(ValidationIssue.info('media.gif_video', '$name plays as a video on ${d.name}: NEFORUM makes an MP4 of it when you save', field: 'media'));
+          } else if (gifStills.contains(m)) {
+            issues.add(ValidationIssue.warning('media.gif_still',
+                '$name goes to ${d.name} as a still picture (its first frame): ${d.name} takes no GIF, and this device cannot make videos',
+                field: 'media'));
+          } else {
+            issues.add(ValidationIssue.info('media.photo_fit', '${m.fileName ?? 'A photo'} will be ${fit.describe(m, settings.photoFit)} for ${d.name}', field: 'media'));
+          }
         }
       }
     }

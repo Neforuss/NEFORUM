@@ -61,7 +61,10 @@ class _FitJob {
 FittedPhoto? _fitPhoto(_FitJob j) {
   img.Image? decoded;
   try {
-    decoded = img.decodeImage(j.bytes);
+    // 1.4.4: a GIF becomes a still picture of its first frame (Instagram's
+    // API, on a device that cannot make it a video); the other frames are
+    // never decoded.
+    decoded = isGifBytes(j.bytes) ? gifFirstFrame(j.bytes) : img.decodeImage(j.bytes);
   } on Object {
     // A broken or unknown file can make the decoder throw.
     decoded = null;
@@ -134,17 +137,47 @@ Uint8List? framePhotoPngJob((Uint8List, int, int, PhotoFitMode) job) {
     decoded = null;
   }
   if (decoded == null || decoded.width == 0 || decoded.height == 0) return null;
-  var image = img.bakeOrientation(decoded);
+  return img.encodePng(frameImage(img.bakeOrientation(decoded), width: width, height: height, mode: mode).convert(numChannels: 3));
+}
+
+/// [image] (decoded and upright) as a whole [width] x [height] frame: brought
+/// to the frame's shape the way Settings fit photos ([mode]: borders of its
+/// own blur or colours, or cut), then scaled to the frame. Used for a video's
+/// still picture and for each picture of a GIF that becomes a video.
+img.Image frameImage(img.Image image, {required int width, required int height, required PhotoFitMode mode}) {
   final target = width / height;
+  var shaped = image;
   if ((image.width / image.height - target).abs() > PhotoFit.aspectTolerance) {
-    image = switch (mode) {
+    shaped = switch (mode) {
       PhotoFitMode.crop => _crop(image, target),
       PhotoFitMode.color => _colorFill(image, target),
       _ => _pad(image, target),
     };
   }
-  final framed = img.copyResize(image, width: width, height: height, interpolation: img.Interpolation.average);
-  return img.encodePng(framed.convert(numChannels: 3));
+  if (shaped.width == width && shaped.height == height) return shaped;
+  return img.copyResize(shaped, width: width, height: height, interpolation: img.Interpolation.average);
+}
+
+/// Whether [bytes] are a GIF file (its "GIF87a" or "GIF89a" signature).
+bool isGifBytes(List<int> bytes) =>
+    bytes.length >= 6 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38 && (bytes[4] == 0x37 || bytes[4] == 0x39) && bytes[5] == 0x61;
+
+/// The first picture of the GIF in [bytes] as full colour, its transparent
+/// parts black (video and JPEG have no transparency); null when it cannot be
+/// read.
+img.Image? gifFirstFrame(Uint8List bytes) {
+  final decoder = img.GifDecoder();
+  if (decoder.startDecode(bytes) == null) return null;
+  final frame = decoder.decodeFrame(0);
+  return frame == null ? null : opaqueFrame(frame);
+}
+
+/// [frame] (a GIF picture, usually with a palette) as an opaque RGB image:
+/// transparent pixels become black.
+img.Image opaqueFrame(img.Image frame) {
+  final rgba = frame.convert(numChannels: 4);
+  final out = img.Image(width: rgba.width, height: rgba.height, numChannels: 3);
+  return img.compositeImage(out, rgba);
 }
 
 img.Image _scaled(img.Image image, double scale) => img.copyResize(

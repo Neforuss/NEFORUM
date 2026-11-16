@@ -112,10 +112,10 @@ void main() {
     final v = const VariantResolver().resolve(post, post.targets.single, ig);
     expect(v.media.map((m) => m.id), ['png']);
     expect(v.issues.where((i) => i.code == 'media.dropped'), isEmpty);
-    // A GIF of a type the network refuses is still dropped: it cannot be
-    // changed without losing its animation.
+    // 1.4.4: a GIF stays too: the app makes it a video for Instagram
+    // (InstagramRules: gifAsVideo); it was dropped before.
     final withGif = post.withTarget(const PostTarget(accountId: 'ig', overrides: PostOverrides(mediaIds: ['gif'])));
-    expect(const VariantResolver().resolve(withGif, withGif.targets.single, ig).media, isEmpty);
+    expect(const VariantResolver().resolve(withGif, withGif.targets.single, ig).media.map((m) => m.id), ['gif']);
   });
 
   group('each network\'s photo rules', () {

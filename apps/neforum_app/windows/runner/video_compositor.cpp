@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <utility>
 
 namespace {
@@ -1115,6 +1116,200 @@ class StillVideoWriter {
   int64_t next_frame_ = 0;
 };
 
+// Reads the whole file at |path|; false when it cannot be read.
+bool ReadWholeFile(const std::wstring& path, std::vector<uint8_t>* bytes) {
+  std::ifstream file(path, std::ios::binary | std::ios::ate);
+  if (!file) return false;
+  const std::streamoff size = file.tellg();
+  if (size <= 0) return false;
+  bytes->resize(static_cast<size_t>(size));
+  file.seekg(0);
+  return static_cast<bool>(file.read(reinterpret_cast<char*>(bytes->data()), size));
+}
+
+// 1.4.4: still pictures shown one after another as an H.264 video, each for
+// its number of frames (an animated GIF, drawn by Dart), with a silent AAC
+// track: networks may refuse a video without sound. Silence goes to the
+// encoder in pieces of 1024 samples, each before the frames that start after
+// it, so the two stay interleaved.
+class FramesVideoWriter {
+ public:
+  FramesVideoWriter(const FramesVideoRequest& request, const std::function<void(double)>& progress,
+                    const std::atomic<bool>& cancelled)
+      : request_(request), cancelled_(cancelled), reporter_(progress) {}
+  FramesVideoWriter(const FramesVideoWriter&) = delete;
+  FramesVideoWriter& operator=(const FramesVideoWriter&) = delete;
+
+  bool Run(std::string* code, std::string* message) {
+    const bool ok = OpenOutput() && Process();
+    if (!ok) {
+      *code = code_;
+      *message = message_;
+    }
+    return ok;
+  }
+
+ private:
+  static constexpr UINT32 kSoundRate = 48000;
+  static constexpr UINT32 kSoundChannels = 2;
+  static constexpr UINT32 kSoundPiece = 1024;
+
+  UINT32 FrameRate() const { return request_.frame_rate >= 1 && request_.frame_rate <= 60 ? request_.frame_rate : 30; }
+  LONGLONG FrameTime(int64_t frame) const { return frame * kTicksPerSecond / FrameRate(); }
+  LONGLONG SoundTime(int64_t samples) const { return samples * kTicksPerSecond / kSoundRate; }
+
+  bool Fail(const char* code, std::string message) {
+    code_ = code;
+    message_ = std::move(message);
+    return false;
+  }
+
+  bool OpenOutput() {
+    const UINT32 width = static_cast<UINT32>(request_.frame_width);
+    const UINT32 height = static_cast<UINT32>(request_.frame_height);
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic_));
+    if (FAILED(hr)) return Fail("framesVideo", WithCode("Windows could not read pictures.", hr));
+    DeleteFileW(request_.output_path.c_str());
+    ComPtr<IMFAttributes> attributes;
+    hr = MFCreateAttributes(&attributes, 1);
+    if (SUCCEEDED(hr)) hr = attributes->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4);
+    if (SUCCEEDED(hr)) hr = MFCreateSinkWriterFromURL(request_.output_path.c_str(), nullptr, attributes.Get(), &writer_);
+    if (FAILED(hr)) return Fail("framesVideo", WithCode("NEFORUM could not create the new video file.", hr));
+
+    // About 0.12 bits per pixel per frame, the encoder's quality mode on top:
+    // moving pictures need real bits, unlike a still.
+    const UINT32 bitrate = std::clamp<UINT32>(width * height * FrameRate() / 8, 1000000, 12000000);
+    ComPtr<IMFMediaType> h264;
+    hr = CreateH264Type(width, height, FrameRate(), 1, bitrate, &h264);
+    if (SUCCEEDED(hr)) hr = writer_->AddStream(h264.Get(), &sink_video_);
+    ComPtr<IMFMediaType> rgb;
+    if (SUCCEEDED(hr)) hr = CreateRgbInputType(width, height, FrameRate(), 1, &rgb);
+    ComPtr<IMFAttributes> parameters;
+    if (SUCCEEDED(hr)) hr = MFCreateAttributes(&parameters, 3);
+    if (SUCCEEDED(hr)) hr = parameters->SetUINT32(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_Quality);
+    if (SUCCEEDED(hr)) hr = parameters->SetUINT32(CODECAPI_AVEncCommonQuality, 75);
+    // A key frame every two seconds.
+    if (SUCCEEDED(hr)) hr = parameters->SetUINT32(CODECAPI_AVEncMPVGOPSize, FrameRate() * 2);
+    if (SUCCEEDED(hr)) hr = writer_->SetInputMediaType(sink_video_, rgb.Get(), parameters.Get());
+    if (FAILED(hr)) return Fail("framesVideo", WithCode("Windows has no H.264 encoder for this frame size.", hr));
+
+    ComPtr<IMFMediaType> pcm;
+    hr = MFCreateMediaType(&pcm);
+    if (SUCCEEDED(hr)) hr = pcm->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+    if (SUCCEEDED(hr)) hr = pcm->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+    if (SUCCEEDED(hr)) hr = pcm->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+    if (SUCCEEDED(hr)) hr = pcm->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, kSoundRate);
+    if (SUCCEEDED(hr)) hr = pcm->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, kSoundChannels);
+    if (SUCCEEDED(hr)) hr = pcm->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, kSoundChannels * 2);
+    if (SUCCEEDED(hr)) hr = pcm->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, kSoundRate * kSoundChannels * 2);
+    ComPtr<IMFMediaType> aac;
+    if (SUCCEEDED(hr)) hr = CreateAacType(kSoundRate, kSoundChannels, AacBytesPerSecond(128000, kSoundChannels), &aac);
+    if (SUCCEEDED(hr)) hr = writer_->AddStream(aac.Get(), &sink_audio_);
+    if (SUCCEEDED(hr)) hr = writer_->SetInputMediaType(sink_audio_, pcm.Get(), nullptr);
+    if (FAILED(hr)) return Fail("framesVideo", WithCode("Windows could not encode the silent sound.", hr));
+
+    // One piece of silence, shared by every sound sample.
+    const DWORD bytes = kSoundPiece * kSoundChannels * 2;
+    hr = MFCreateMemoryBuffer(bytes, &silence_);
+    BYTE* data = nullptr;
+    if (SUCCEEDED(hr)) hr = silence_->Lock(&data, nullptr, nullptr);
+    if (SUCCEEDED(hr)) {
+      memset(data, 0, bytes);
+      silence_->Unlock();
+      hr = silence_->SetCurrentLength(bytes);
+    }
+    if (SUCCEEDED(hr)) hr = writer_->BeginWriting();
+    if (FAILED(hr)) return Fail("framesVideo", WithCode("Windows could not start the encoder.", hr));
+    return true;
+  }
+
+  // Silence up to |end|.
+  bool WriteSoundBefore(LONGLONG end) {
+    while (SoundTime(sound_samples_) < end) {
+      const LONGLONG time = SoundTime(sound_samples_);
+      ComPtr<IMFSample> sample;
+      HRESULT hr = MFCreateSample(&sample);
+      if (SUCCEEDED(hr)) hr = sample->AddBuffer(silence_.Get());
+      if (SUCCEEDED(hr)) hr = sample->SetSampleTime(time);
+      if (SUCCEEDED(hr)) hr = sample->SetSampleDuration(SoundTime(sound_samples_ + kSoundPiece) - time);
+      if (SUCCEEDED(hr)) hr = writer_->WriteSample(sink_audio_, sample.Get());
+      if (FAILED(hr)) return Fail("framesVideo", WithCode("Windows could not encode the silent sound.", hr));
+      sound_samples_ += kSoundPiece;
+    }
+    return true;
+  }
+
+  // The picture at |path| in a buffer of its own: the encoder may still hold
+  // the previous picture's frames.
+  bool ReadPicture(const std::wstring& path, ComPtr<IMFMediaBuffer>* picture) {
+    const UINT width = static_cast<UINT>(request_.frame_width);
+    const UINT height = static_cast<UINT>(request_.frame_height);
+    const DWORD size = width * height * 4;
+    std::vector<uint8_t> png;
+    if (!ReadWholeFile(path, &png)) return Fail("framesVideo", "A picture of the video could not be read.");
+    HRESULT hr = MFCreateMemoryBuffer(size, picture->ReleaseAndGetAddressOf());
+    BYTE* pixels = nullptr;
+    if (SUCCEEDED(hr)) hr = (*picture)->Lock(&pixels, nullptr, nullptr);
+    if (SUCCEEDED(hr)) {
+      hr = DecodePicture(wic_.Get(), png, width, height, pixels);
+      (*picture)->Unlock();
+    }
+    if (SUCCEEDED(hr)) hr = (*picture)->SetCurrentLength(size);
+    if (FAILED(hr)) return Fail("framesVideo", WithCode("A picture of the video could not be read.", hr));
+    return true;
+  }
+
+  bool Process() {
+    int64_t total = 0;
+    for (const int count : request_.frame_counts) total += count;
+    const LONGLONG duration = FrameTime(total);
+    std::wstring shown;
+    ComPtr<IMFMediaBuffer> picture;
+    for (size_t i = 0; i < request_.frame_paths.size(); i++) {
+      // The same picture again (a GIF's loop) is read again: one picture in
+      // memory at a time, however long the GIF.
+      if (request_.frame_paths[i] != shown) {
+        if (!ReadPicture(request_.frame_paths[i], &picture)) return false;
+        shown = request_.frame_paths[i];
+      }
+      for (int k = 0; k < request_.frame_counts[i]; k++) {
+        if (cancelled_) return Fail("cancelled", "The video was not finished because NEFORUM closed.");
+        const LONGLONG time = FrameTime(next_frame_);
+        if (!WriteSoundBefore(FrameTime(next_frame_ + 1))) return false;
+        ComPtr<IMFSample> frame;
+        HRESULT hr = MFCreateSample(&frame);
+        if (SUCCEEDED(hr)) hr = frame->AddBuffer(picture.Get());
+        if (SUCCEEDED(hr)) hr = frame->SetSampleTime(time);
+        if (SUCCEEDED(hr)) hr = frame->SetSampleDuration(FrameTime(next_frame_ + 1) - time);
+        if (SUCCEEDED(hr)) hr = writer_->WriteSample(sink_video_, frame.Get());
+        if (FAILED(hr)) return Fail("framesVideo", WithCode("Windows could not encode a video frame.", hr));
+        next_frame_++;
+        reporter_.Report(time, duration);
+      }
+    }
+    if (next_frame_ == 0) return Fail("args", "The video has no pictures.");
+    if (!WriteSoundBefore(duration)) return false;
+    const HRESULT hr = writer_->Finalize();
+    if (FAILED(hr)) return Fail("framesVideo", WithCode("Windows could not finish the new video.", hr));
+    reporter_.Done();
+    return true;
+  }
+
+  const FramesVideoRequest& request_;
+  const std::atomic<bool>& cancelled_;
+  ProgressReporter reporter_;
+  std::string code_ = "framesVideo";
+  std::string message_;
+
+  ComPtr<IWICImagingFactory> wic_;
+  ComPtr<IMFSinkWriter> writer_;
+  ComPtr<IMFMediaBuffer> silence_;
+  DWORD sink_video_ = 0;
+  DWORD sink_audio_ = 0;
+  int64_t next_frame_ = 0;
+  int64_t sound_samples_ = 0;
+};
+
 // Converts a sound file to MP3 (the system's MP3 encoder) or to AAC in an
 // MPEG-4 file (.m4a).
 class AudioTranscoder {
@@ -1282,6 +1477,42 @@ std::vector<uint8_t> BytesField(const flutter::EncodableMap& map, const char* ke
   const auto* value = Field(map, key);
   const auto* bytes = value ? std::get_if<std::vector<uint8_t>>(value) : nullptr;
   return bytes ? *bytes : std::vector<uint8_t>();
+}
+
+// A list of strings (paths); entries of any other type are left out, which
+// the request's own checks then catch.
+std::vector<std::wstring> PathListField(const flutter::EncodableMap& map, const char* key) {
+  std::vector<std::wstring> out;
+  const auto* value = Field(map, key);
+  const auto* list = value ? std::get_if<flutter::EncodableList>(value) : nullptr;
+  if (!list) return out;
+  for (const auto& item : *list) {
+    if (const auto* text = std::get_if<std::string>(&item)) out.push_back(Wide(*text));
+  }
+  return out;
+}
+
+// A list of ints; any other entry becomes 0, which the request's checks refuse.
+std::vector<int> IntListField(const flutter::EncodableMap& map, const char* key) {
+  std::vector<int> out;
+  const auto* value = Field(map, key);
+  const auto* list = value ? std::get_if<flutter::EncodableList>(value) : nullptr;
+  if (list) {
+    for (const auto& item : *list) {
+      if (const auto* value32 = std::get_if<int32_t>(&item)) {
+        out.push_back(*value32);
+      } else if (const auto* value64 = std::get_if<int64_t>(&item)) {
+        out.push_back(static_cast<int>(std::clamp<int64_t>(*value64, 0, 1 << 20)));
+      } else {
+        out.push_back(0);
+      }
+    }
+    return out;
+  }
+  // Int32List arrives as a typed list.
+  const auto* typed = value ? std::get_if<std::vector<int32_t>>(value) : nullptr;
+  if (typed) out.assign(typed->begin(), typed->end());
+  return out;
 }
 
 // A bitrate argument: bits per second from 0 to 4 Gbit/s.
@@ -1581,6 +1812,43 @@ bool RenderStillVideoFile(const StillVideoRequest& request,
   return ok;
 }
 
+bool RenderFramesVideoFile(const FramesVideoRequest& request,
+                           const std::function<void(double)>& progress,
+                           const std::atomic<bool>& cancelled, std::string* error_code,
+                           std::string* error) {
+  const bool frame_ok = request.frame_width >= 16 && request.frame_height >= 16 &&
+                        request.frame_width <= 4096 && request.frame_height <= 4096 &&
+                        request.frame_width % 2 == 0 && request.frame_height % 2 == 0;
+  int64_t total = 0;
+  bool counts_ok = request.frame_counts.size() == request.frame_paths.size();
+  for (const int count : request.frame_counts) {
+    counts_ok = counts_ok && count >= 1;
+    total += count;
+  }
+  bool paths_ok = !request.frame_paths.empty();
+  for (const auto& path : request.frame_paths) {
+    paths_ok = paths_ok && !path.empty() && path != request.output_path;
+  }
+  if (!frame_ok || !counts_ok || !paths_ok || total > 3600 || request.output_path.empty()) {
+    *error_code = "args";
+    *error = "The video request is not complete.";
+    return false;
+  }
+  bool ok = false;
+  {
+    MediaFoundationScope scope;
+    if (!scope.started()) {
+      *error_code = "unsupported";
+      *error = "Windows Media Foundation is not available on this PC.";
+      return false;
+    }
+    FramesVideoWriter writer(request, progress, cancelled);
+    ok = writer.Run(error_code, error);
+  }
+  if (!ok) DeleteFileW(request.output_path.c_str());
+  return ok;
+}
+
 std::vector<std::string> AudioOutputFormats() {
   std::vector<std::string> formats;
   MediaFoundationScope scope;
@@ -1808,6 +2076,24 @@ void VideoCompositor::HandleMethodCall(
     Start(std::move(result), IntField(*args, "id"),
           [this, request = std::move(request)](Job& job, const Progress& progress) {
             if (!RenderStillVideoFile(request, progress, closing_, &job.error_code, &job.error_message)) return;
+            job.value = flutter::EncodableValue();
+            job.ok = true;
+          });
+    return;
+  }
+
+  if (method == "framesVideo") {
+    FramesVideoRequest request;
+    request.frame_paths = PathListField(*args, "framePaths");
+    request.frame_counts = IntListField(*args, "frameCounts");
+    request.output_path = Wide(StringField(*args, "outputPath"));
+    request.frame_width = static_cast<int>(IntField(*args, "frameWidth"));
+    request.frame_height = static_cast<int>(IntField(*args, "frameHeight"));
+    const int64_t rate = IntField(*args, "frameRate");
+    request.frame_rate = rate >= 1 && rate <= 60 ? static_cast<uint32_t>(rate) : 30;
+    Start(std::move(result), IntField(*args, "id"),
+          [this, request = std::move(request)](Job& job, const Progress& progress) {
+            if (!RenderFramesVideoFile(request, progress, closing_, &job.error_code, &job.error_message)) return;
             job.value = flutter::EncodableValue();
             job.ok = true;
           });
