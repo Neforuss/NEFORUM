@@ -138,7 +138,7 @@ On Android, **Share** opens the network's own app directly when it is installed,
 
 ## Limits
 
-- The extension is not in the Chrome Web Store or on Firefox Add-ons yet, so you install it from the files that come with NEFORUM.
+- The extension is not published in the Chrome Web Store or on Firefox Add-ons, so you install it from the files that come with NEFORUM. The Chrome Web Store rejected the first submission because its description listed the supported sites ("keyword spam").
 - Chrome keeps the extension after a restart. It may show a reminder that a developer-mode extension is installed; that's expected for extensions not from the store.
 - Firefox removes a temporary add-on when it closes. A permanent install needs an add-on signed by Mozilla. When a GitHub release has `neforum-extension-firefox-<version>.xpi` (signed by Mozilla for self-distribution), open that file in Firefox to install it for good. Otherwise a permanent install becomes possible once the extension is published on addons.mozilla.org. For testing, you can use Firefox Developer Edition with `xpinstall.signatures.required` set to false.
 - Mastodon, Misskey and blogs run on their own addresses, which the extension does not know in advance, so use **Fill in this page** there. Automatic posting cannot start there by itself.

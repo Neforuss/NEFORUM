@@ -1,6 +1,6 @@
 # Dribbble setup guide
 
-This guide sets up Dribbble. By default NEFORUM hands each shot to Dribbble's uploader and you press **Publish**; with your own Dribbble app it can also create shots by itself, from one still image fitted to 800 x 600 pixels.
+This guide sets up Dribbble. By default NEFORUM hands each shot to Dribbble's uploader and you press **Publish**; with your own Dribbble app it can also create shots by itself, from one still image of 800 x 600 or 400 x 300 pixels (NEFORUM resizes photos to 800 x 600).
 
 ## Steps
 

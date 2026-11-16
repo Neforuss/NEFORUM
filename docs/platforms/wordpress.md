@@ -21,7 +21,7 @@ This guide connects a **self-hosted WordPress** site (WordPress.org software, ve
 2. Press the connect button. NEFORUM opens your site's **Authorize application** page (`/wp-admin/authorize-application.php`).
 3. Sign in if it asks.
 4. Press **Yes, I approve of this connection**. WordPress sends you back to `neforum://callback`, and NEFORUM receives the password automatically.
-   - WordPress only accepts `https://` or app-scheme addresses here. It refuses `http://127.0.0.1` addresses. So on desktops that can't receive `neforum://` links, NEFORUM shows you the authorize page instead. WordPress then displays the new password, and you paste it together with your username (as in *Steps*).
+   - WordPress only accepts `https://` or app-scheme addresses here. It refuses `http://127.0.0.1` addresses. So on Windows and Linux, which can't receive `neforum://` links, NEFORUM shows you the authorize page instead. WordPress then displays the new password, and you paste it together with your username (as in *Steps*).
    - You don't need to register any redirect address.
 
 ## Steps: hand-off

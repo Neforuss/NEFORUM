@@ -67,7 +67,7 @@ Open a post's **Customize** sheet for a Telegram account. These options use your
 | **Send silently** (can be kept) | Members get the post without a notification sound. Every message of the post is silent. | `disable_notification` |
 | **Pin the post** | Pins the first message. The bot needs **Edit messages of others** in a channel, or **Pin messages** in a group. If Telegram refuses, the post stays up unpinned and NEFORUM says why. | `pinChatMessage` |
 | **Caption above the media** (can be kept) | Shows the text above the photo, video, GIF or album. A sound file always shows its caption below. | `show_caption_above_media` |
-| **Hide behind a spoiler** | Blurs the photos and videos you tap until someone taps them. A post marked sensitive blurs all of them. | `has_spoiler` |
+| **Hide behind a spoiler** | You pick which of the post's photos and videos to hide. In Telegram each one you picked shows blurred until a reader taps it; the others show normally. A post marked sensitive blurs all its photos and videos. Sound files are never blurred. | `has_spoiler` |
 | **No link preview** (can be kept) | Text messages show links as plain text. | `link_preview_options.is_disabled` |
 | More options: **Protect from forwarding and saving** (can be kept) | Members cannot forward the post or save its photos and videos. | `protect_content` |
 | More options: **Several photos or videos** (can be kept) | **One album** (the default) or **One message each**. One message each keeps GIFs animated; the caption goes with the first. | `sendMediaGroup` or one send each |

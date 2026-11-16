@@ -25,7 +25,7 @@ These steps set up "Your own API keys". Registering the app takes about a minute
      http://localhost:52771/callback neforum://callback/
      ```
 
-     The first one is for NEFORUM on Windows and macOS, the second for Android and iPhone. **Keep the slash at the end of `neforum://callback/`**: Tumblr only accepts app addresses like this one when they end in a slash. Each address must match exactly, character for character. Use `localhost`, not `127.0.0.1`: Tumblr refuses to save `127.0.0.1` addresses.
+     The first one is for NEFORUM on Windows and Linux, the second for Android, iPhone and macOS. **Keep the slash at the end of `neforum://callback/`**: Tumblr only accepts app addresses like this one when they end in a slash. Each address must match exactly, character for character. Use `localhost`, not `127.0.0.1`: Tumblr refuses to save `127.0.0.1` addresses.
 4. Click **Register**. Tumblr only switches on OAuth 2 for an app once it has at least one OAuth2 redirect URL.
 5. On the app list, copy the **OAuth Consumer Key**.
 6. Click **Show secret key** and copy the **Secret Key** too.
@@ -187,12 +187,12 @@ NEFORUM opens the share sheet with your photos or video. Pick **Tumblr** (the An
 
 ### If the sign-in fails after you click Allow
 
-Tumblr shows its permission page even when the return address NEFORUM asks for is not registered in your app. After **Allow** it then sends the browser back with an error instead of a sign-in, and NEFORUM shows **Sign-in failed** with Tumblr's reason. The address NEFORUM asks for on a computer is `http://localhost:52771/callback`, so it must appear in **OAuth2 redirect URLs** exactly like that.
+Tumblr shows its permission page even when the return address NEFORUM asks for is not registered in your app. After **Allow** it then sends the browser back with an error instead of a sign-in, and NEFORUM shows **Sign-in failed** with Tumblr's reason. The address NEFORUM asks for on Windows and Linux is `http://localhost:52771/callback`, and on Android, iOS and macOS `neforum://callback/`, so each must appear in **OAuth2 redirect URLs** exactly like that.
 
 - **Your app lists a different address** (for example an older app registered with `http://127.0.0.1:52771/callback`): enter that address in **Redirect URI (advanced)** in NEFORUM, or change the app to `http://localhost:52771/callback`.
 - Tumblr refuses to save some addresses with "The url's domain is not valid": `127.0.0.1` and home-network IPs such as `192.168.x.x`. `localhost` is accepted.
 
-On a computer the address must keep port `52771` and the path `/callback`. NEFORUM listens there only while you sign in.
+On Windows and Linux the address must keep port `52771` and the path `/callback`. NEFORUM listens there only while you sign in.
 
 Before NEFORUM 1.0.4 the app asked Tumblr for `http://127.0.0.1:52771/callback` unless the advanced field was filled in, which is why sign-in failed for apps registered with `localhost`.
 

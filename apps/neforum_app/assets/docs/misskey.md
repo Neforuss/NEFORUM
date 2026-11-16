@@ -16,8 +16,8 @@ This guide connects your account on a server that speaks the **Misskey API**, so
    - *Edit or delete your Drive files and folders* (`write:drive`)
    - *View your account information* (`read:account`)
 6. Press **Allow**. The browser sends you back to NEFORUM:
-   - on Windows and macOS this is `http://127.0.0.1:52771/callback`
-   - on Android and iOS it is `neforum://callback`
+   - on Windows and Linux this is `http://127.0.0.1:52771/callback`
+   - on Android, iOS and macOS it is `neforum://callback`
 
 You don't register either address anywhere. Misskey accepts them without any setup.
 

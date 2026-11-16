@@ -16,8 +16,8 @@ These steps set up your own X app (once, about 10 minutes).
    - **App permissions:** *Read and write*
    - **Type of app:** *Native App*. This is a public client and needs no secret. *Web App* and *Automated App or Bot* also work, but then you have to paste the Client Secret into NEFORUM too.
    - **Callback URI / Redirect URL:** add **both** of these, character for character:
-     - `http://127.0.0.1:52771/callback` (used by NEFORUM on Windows and macOS)
-     - `neforum://callback` (used by NEFORUM on Android and iOS)
+     - `http://127.0.0.1:52771/callback` (used by NEFORUM on Windows and Linux)
+     - `neforum://callback` (used by NEFORUM on Android, iOS and macOS)
 
      X compares them exactly: no trailing slash, and `localhost` is **not** accepted (use `127.0.0.1`). An app can have up to 10 callback URLs.
    - **Website URL:** any page about you, or `https://github.com/Neforuss/NEFORUM`.
@@ -127,7 +127,7 @@ NEFORUM opens `https://x.com/intent/tweet?text=…&url=…`. That is X's documen
 - X refuses identical text posted twice in a short time ("duplicate content"). Its developer policy also forbids posting identical or very similar content across several accounts.
 - If a thread fails part-way, NEFORUM tells you which parts were already posted and does not retry automatically, because a retry would duplicate them.
 - NEFORUM loads the whole video into memory before uploading it, so multi-gigabyte videos may fail on phones.
-- The `neforum://callback` redirect is not explicitly documented by X. X's rules only list forbidden schemes, and custom schemes have worked in the past. If the console refuses it, sign in from a computer using the `127.0.0.1` address.
+- The `neforum://callback` redirect is not explicitly documented by X. X's rules only list forbidden schemes, and custom schemes have worked in the past. If the console refuses it, sign in from NEFORUM on Windows or Linux using the `127.0.0.1` address.
 - Polls, communities, quote posts and editing posts are not supported.
 
 ## Sources

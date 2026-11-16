@@ -4,7 +4,7 @@ This guide connects Pinterest, so NEFORUM creates **Pins on one of your boards**
 
 ## Steps
 
-These steps set up "Your own API keys". Read *Before you start* below first: Pinterest must approve your app, and until it grants Standard access NEFORUM can only make **test Pins** in Pinterest's API Sandbox, which only you can see. Do the NEFORUM part on Windows or macOS: Pinterest cannot send you back to a phone after you sign in.
+These steps set up "Your own API keys". Read *Before you start* below first: Pinterest must approve your app, and until it grants Standard access NEFORUM can only make **test Pins** in Pinterest's API Sandbox, which only you can see. NEFORUM sends Pinterest the same return address, `http://localhost:52771/callback`, on Windows, macOS, Linux, Android and iOS.
 
 1. Use a business account.
    - If your Pinterest account is personal, open Pinterest **Settings > Account management** and choose **Convert to a business account**. It is free and keeps your profile, Pins and followers. Pinterest no longer shows developer apps that belong to personal accounts.
@@ -144,7 +144,7 @@ What the automatic tier **cannot** do:
 - **Post GIF or WebP images.** The API accepts uploaded images only as JPEG or PNG.
 - **Post to secret boards.** NEFORUM only lists your public boards and group boards.
 - **Set alt text on carousels.** Alt text is sent only for single-image Pins.
-- **Connect from a phone.** Pinterest needs a web address to send you back to after you sign in. It does not document app links such as `neforum://callback`. Connect from NEFORUM on Windows or macOS. On phones, use the hand-off tier.
+- **Send you back to an app address.** Pinterest does not document app links such as `neforum://callback`, so NEFORUM asks for the web address `http://localhost:52771/callback` on every device. Windows and Linux answer it with a small server inside NEFORUM; Android, iOS and macOS answer it with a relay inside NEFORUM that hands the sign-in to the app's browser window.
 - **Make public Pins or video Pins with Trial access.** Trial apps work only in the API Sandbox.
 
 ### Known limitations

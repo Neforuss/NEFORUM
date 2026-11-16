@@ -107,7 +107,7 @@ The link has to do the following (checked against Meta's and TikTok's docs, plus
 | **Catbox** | optional | free | 200 MB (GIF 20 MB) | only with an account hash | permanent links |
 | **My own links** | n/a | n/a | n/a | n/a (you manage the files) | you already host your files |
 
-Litterbox is run by one volunteer and is sometimes down or refuses uploads for a while. A bucket you own doesn't depend on anyone else's server. You can also keep Litterbox and add a bucket as the [fallback host](#fallback-host).
+Litterbox is run by one person (see [Litterbox and Catbox](#litterbox-and-catbox)) and is sometimes down or refuses uploads for a while. A bucket you own doesn't depend on anyone else's server. You can also keep Litterbox and add a bucket as the [fallback host](#fallback-host).
 
 ### Test connection
 
@@ -127,7 +127,7 @@ If the host has a temporary problem, NEFORUM waits a few seconds and tries once 
 
 Once a main host is saved, **Settings > Media hosting** offers an optional **fallback host**. When the main host can't store a file, after its own retry, NEFORUM uploads the file to the fallback instead, so the post still goes out. This covers outages (such as Litterbox answering HTTP 500), problems with your settings, and files larger than the main host accepts. Those large files go straight to the fallback.
 
-- **Pick a different provider.** Litterbox and Catbox are run by the same people, so an outage often hits both. A good pair is Litterbox as the main host with your own bucket as the fallback, or the other way round.
+- **Pick a different provider.** Litterbox and Catbox are both services of catbox.moe, run by one person, so an outage often hits both. A good pair is Litterbox as the main host with your own bucket as the fallback, or the other way round.
 - **You're told when it steps in.** The Media hosting section shows the last time the fallback was used this session, and why the main host failed.
 - **If both fail**, the post's error explains both problems. It counts as temporary (try again later) when either host only had an outage.
 - **Clean-up** deletes the file from the host that stored it, even when both hosts are the same kind (for example two buckets).
@@ -136,7 +136,7 @@ Once a main host is saved, **Settings > Media hosting** offers an optional **fal
 
 ## Litterbox and Catbox
 
-Both are free services run by one volunteer at catbox.moe. They come with no guarantee, and files go to a server you do not control. Don't upload anything private.
+Both are free services of catbox.moe. Its FAQ speaks as the one person who runs and pays for it, and names no team. They come with no guarantee, and files go to a server you do not control. Don't upload anything private.
 
 **Litterbox** (temporary, default)
 

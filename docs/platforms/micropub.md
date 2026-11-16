@@ -13,10 +13,10 @@ This guide connects your own website or Micro.blog blog through **Micropub**, th
    - **media** (upload files)
    - **profile** (so your server may send your name and photo)
 5. Wait for the browser to send you back to NEFORUM:
-   - Windows and macOS: `http://127.0.0.1:52771/callback`
-   - Android and iOS: `neforum://callback`
+   - Windows and Linux: `http://127.0.0.1:52771/callback`
+   - Android, iOS and macOS: `neforum://callback`
 
-You don't register anything. On a phone, servers that check redirect addresses refuse this sign-in (see *Client ids*): sign in on a computer, or use a Micro.blog app token.
+You don't register anything. On Android, iOS and macOS, servers that check redirect addresses refuse this sign-in (see *Client ids*): sign in on Windows or Linux, or use a Micro.blog app token.
 
 ## Steps: Micro.blog app token
 
@@ -60,8 +60,8 @@ If NEFORUM can't post automatically, it can still hand the post off to you. The 
 
 You don't register anything. IndieAuth identifies an app by a *client id* URL:
 
-- **On a computer** NEFORUM uses the loopback client id `http://127.0.0.1:52771/`. The IndieAuth spec says servers must not fetch a loopback client id, and the redirect address is on the same host and port, so your server has nothing to check.
-- **On a phone** the redirect `neforum://callback` is on a different "host" than any web client id. A server that checks redirect addresses only accepts it if the client id page lists it. NEFORUM uses `https://neforum.app/`, but as of October 2026 that page does not exist yet, so servers that check will refuse the sign-in. Sign in on a computer, or use an app token (Micro.blog).
+- **On Windows and Linux** NEFORUM uses the loopback client id `http://127.0.0.1:52771/`. The IndieAuth spec says servers must not fetch a loopback client id, and the redirect address is on the same host and port, so your server has nothing to check.
+- **On Android, iOS and macOS** the redirect `neforum://callback` is on a different "host" than any web client id. A server that checks redirect addresses only accepts it if the client id page lists it. NEFORUM uses `https://neforum.app/`, but as of October 2026 that page does not exist yet, so servers that check will refuse the sign-in. Sign in on Windows or Linux, or use an app token (Micro.blog).
 
 Leave **Client ID (advanced)** empty unless you host your own client metadata page that lists NEFORUM's redirect address. Some servers refuse loopback client ids; then you need such a page or an app token.
 
@@ -105,7 +105,7 @@ Your server answers with `201 Created` or `202 Accepted`. The `Location` header 
 - **Images per post.** The spec sets no limit. NEFORUM sends at most 10 images and 1 video per post.
 - **File types and sizes** depend on your server. Micro.blog documents JPEG uploads.
 - **Discovery limits.** NEFORUM finds links with a lightweight parser. Links that JavaScript adds to the page are not seen. Relative links are resolved against the address you entered, not the final address after redirects.
-- **Client id on phones.** `https://neforum.app/` does not publish NEFORUM's redirect address yet, so servers that verify redirects refuse phone sign-ins. Desktop sign-in uses the loopback client id and is not affected. Use an app token (Micro.blog) on a phone.
+- **Client id on Android, iOS and macOS.** `https://neforum.app/` does not publish NEFORUM's redirect address yet, so servers that verify redirects refuse sign-ins from these devices. Sign-in on Windows and Linux uses the loopback client id and is not affected. Use an app token (Micro.blog) on the others.
 - **Profile.** Servers may ignore the `profile` scope. NEFORUM then names the account after your site's host.
 
 ## Sources

@@ -10,7 +10,7 @@ Submit at <https://addons.mozilla.org/developers/addon/submit/distribution>, cho
 - `strict_min_version` is 140.0 on desktop and 142.0 on Android (`gecko_android`). These are the first versions that read `data_collection_permissions`, which AMO requires. Firefox 140 is also the current ESR.
 - `data_collection_permissions` is `{"required": ["none"]}`: the extension collects and transmits no data. AMO's form shows this as "This add-on does not collect data".
 - CI runs `web-ext lint` (the same linter AMO runs on upload) on every build; it reports no errors and no warnings.
-- Every version number goes to AMO once (listed and unlisted share the numbering). The first submission is 1.1.3; the next change to the extension needs 1.1.4.
+- The current extension version is 1.1.6 (`version` in both manifests). Every version number goes to AMO once, and listed and unlisted share the numbering. If CI's unlisted signing already sent 1.1.6 to AMO, a listed upload of the same build needs a higher version in both manifests first, and so does every change to the extension.
 
 ## Describe add-on
 

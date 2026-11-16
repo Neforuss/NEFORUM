@@ -47,13 +47,13 @@ This does not apply to X and Tumblr accounts connected with OAuth 1.0a keys, whi
 |---|---|
 | Accounts and their keys (tokens, API keys, app passwords) | On |
 | Media hosts and their keys | On |
-| Settings (theme, text cards, photo fitting, posting rules, default targets) | On |
+| Settings (theme, text cards, photo fitting, posting rules, default targets, how the browser extension posts) | On |
 | Drafts and scheduled posts | On |
 | Published post history | Off |
 | Photos and videos | Never (drafts arrive without them) |
 | Font files | Never. A style that names a font arrives; the other device draws the default font until it has that font, and offers one-tap download if the font came from the font list |
 
-Settings that belong to one device stay on that device and are not put in the file. These are starting at sign-in, keeping NEFORUM in the tray, and the browser extension with its paired browsers.
+Settings that belong to one device stay on that device and are not put in the file. These include starting at sign-in, keeping NEFORUM in the tray, the browser extension being on, its paired browsers and **Post automatically**. How the extension posts (**Open hand-offs in my first-choice browser** and **Post with Ctrl+Enter**) is a setting like the others and goes in the file, as it does with Sync.
 
 ### The passphrase
 
