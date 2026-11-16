@@ -1,6 +1,6 @@
 # Substack Notes setup guide
 
-This guide connects Substack **Notes** (Substack's short-post feed) by **hand-off only**: NEFORUM copies your text and opens Substack, and you paste it into the Notes composer and click **Post**. Nothing to set up, no API key, no sign-in.
+This guide connects Substack **Notes** (Substack's short-post feed) by **hand-off only**: NEFORUM copies your text and opens Substack, and you paste it into the Notes composer and click **Post**. There is nothing else to set up: NEFORUM needs no API key and no sign-in.
 
 ## Steps
 

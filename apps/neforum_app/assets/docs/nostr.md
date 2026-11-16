@@ -37,7 +37,7 @@ This guide connects your Nostr key, so NEFORUM signs your notes on your device a
 
 Nostr is an open protocol, not a company. Your identity is a **key pair**: a public key (`npub1...`) that people follow, and a private key (`nsec1...`) that signs your posts. Notes are sent to **relays**, which are servers that store and pass them on. Any Nostr app (Damus, Amethyst, Primal, Snort, Coracle, ...) shows notes from the same relays.
 
-Status as of October 2026: free and open. You don't sign up for anything, there's no developer portal, no API key and no app review. Personal accounts are all there is.
+Status as of October 2026: free and open. You don't sign up for anything. There's no developer portal, no API key and no app review, and every account is a personal account.
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|

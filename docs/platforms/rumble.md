@@ -1,6 +1,6 @@
 # Rumble setup guide
 
-This guide connects Rumble by **hand-off**: NEFORUM opens Rumble's upload page with your title, description and tags ready to paste, and you pick the video and publish. Nothing to set up, no developer app, no sign-in.
+This guide connects Rumble by **hand-off**: NEFORUM opens Rumble's upload page with your title, description and tags ready to paste, and you pick the video and publish. There is nothing else to set up: no developer app and no sign-in in NEFORUM.
 
 ## Steps
 

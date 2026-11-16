@@ -38,7 +38,7 @@ Artfol, an AI-free social portfolio for artists, has no public API. NEFORUM ther
 
 ## Limits
 
-- Artfol publishes no media limits. Older reviews say one image per post; this is not confirmed now.
+- Artfol publishes no media limits. Older reviews say one image per post; this has not been confirmed for the current app.
 - NEFORUM sends JPEG or PNG images.
 
 ## Sources

@@ -6,24 +6,24 @@ NEFORUM reaches every platform in one of three ways. Each account you connect us
 - **Your keys** (official API with your own developer app): posts automatically within the platform's quota. You create a free (or, for X, pay-per-use) developer app once.
 - **Hand-off**: NEFORUM prepares the post, copies the text and opens the platform's app or website; you tap Post. Works with any personal account, even where the API is closed to normal users.
 
-The **Media** column is what one post holds. More than that is never dropped (1.3.4): through Auto and Your keys, the rest goes in further posts of a thread on X, Bluesky, Mastodon and Misskey, and in a numbered series of separate posts, one after the other, everywhere else. A hand-off is one post, and what does not fit is listed in its preview.
+The **Media** column is what one post holds. More than that is never dropped through Auto and Your keys: the rest goes in further posts of a thread on Bluesky, Mastodon, Misskey and X (Twitter), and in a numbered series of separate posts, one after the other, everywhere else. A hand-off is one post, and what does not fit is listed in its preview. An article is always one post with every file its network takes.
 
 How long each connection lasts, and when you have to step in, is in [How long each sign-in lasts](sign-in-lifetimes.md).
 
-Generated from the code on 2026-10-25.
+Generated from the code on 2026-11-16.
 
 | Platform | Ways to post | Personal account OK | Text limit | Media | Quotas tracked | Server-side scheduling | Setup guide |
 |---|---|---|---|---|---|---|---|
 | 500px | Hand-off | Yes | No limit | 30 images (required) | - | - | [fivehundredpx.md](platforms/fivehundredpx.md) |
 | Artfol | Hand-off | Yes | No limit | 100 images (required) | - | - | [artfol.md](platforms/artfol.md) |
-| ArtStation | Hand-off | Yes | No limit | 100 images or 100 videos (required) | - | - | [artstation.md](platforms/artstation.md) |
-| Behance | Hand-off | Yes | No limit | 100 images or 100 videos (required) | - | - | [behance.md](platforms/behance.md) |
+| ArtStation | Hand-off | Yes | No limit | 100 images and videos (required) | - | - | [artstation.md](platforms/artstation.md) |
+| Behance | Hand-off | Yes | No limit | 100 images and videos (required) | - | - | [behance.md](platforms/behance.md) |
 | BitChute | Hand-off | Yes | 3000 characters | 1 video (required) | - | - | [bitchute.md](platforms/bitchute.md) |
 | Bluesky | Auto, Hand-off | Yes | 300 characters, threads | 4 images or 1 video | 1666/1 h, 11666/day | - | [bluesky.md](platforms/bluesky.md) |
 | Cara | Hand-off | Yes | 1200 characters | 10 images (required) | - | - | [cara.md](platforms/cara.md) |
 | DEV Community | Auto, Hand-off | Yes | 819200 bytes | 10 images, needs media host for API | 10/30 s | - | [devto.md](platforms/devto.md) |
 | DeviantArt | Your keys, Hand-off | Yes | No limit | 1 image (required) | - | - | [deviantart.md](platforms/deviantart.md) |
-| Discord | Auto | Yes | 2000 characters, threads | 10 images or 10 videos | 30/1 min | - | [discord.md](platforms/discord.md) |
+| Discord | Auto | Yes | 2000 characters, threads | 10 images and videos | 30/1 min | - | [discord.md](platforms/discord.md) |
 | Dribbble | Your keys, Hand-off | Yes | No limit | 10 images or 1 video (required) | 1440/day | - | [dribbble.md](platforms/dribbble.md) |
 | EmDash | Auto, Hand-off | Yes | No limit | 20 images or 4 videos | - | - | [emdash.md](platforms/emdash.md) |
 | Facebook | Your keys, Hand-off | Hand-off only | 63206 characters | 10 images or 1 video | 4800/day | Yes | [facebook.md](platforms/facebook.md) |
@@ -33,18 +33,18 @@ Generated from the code on 2026-10-25.
 | Google Business Profile | Hand-off | Hand-off only | 1500 characters | 1 image or 1 video | - | - | [google_business.md](platforms/google_business.md) |
 | Hashnode | Your keys, Hand-off | Yes | No limit | 10 images | 500/1 min | - | [hashnode.md](platforms/hashnode.md) |
 | Inkbunny | Auto, Hand-off | Yes | No limit | 20 images or 1 video (required) | - | - | [inkbunny.md](platforms/inkbunny.md) |
-| Instagram | Your keys, Hand-off | Hand-off only | 2200 characters | 10 images or 10 videos (required), needs media host for API | 100/day | - | [instagram.md](platforms/instagram.md) |
+| Instagram | Your keys, Hand-off | Hand-off only | 2200 characters | 10 images and videos (required), needs media host for API | 100/day | - | [instagram.md](platforms/instagram.md) |
 | Itaku | Hand-off | Yes | 5000 characters | 100 images or 1 video (required) | - | - | [itaku.md](platforms/itaku.md) |
 | Ko-fi | Hand-off | Yes | No limit | 8 images (required) | - | - | [kofi.md](platforms/kofi.md) |
 | Lemmy | Auto, Hand-off | Yes | 50000 characters | 1 image or 1 video | 6/10 min | - | [lemmy.md](platforms/lemmy.md) |
 | LinkedIn | Your keys, Hand-off | Yes | 3000 characters | 20 images or 1 video | 150/day | - | [linkedin.md](platforms/linkedin.md) |
 | Locals | Hand-off | Yes | 15000 characters | 10 images or 1 video | - | - | [locals.md](platforms/locals.md) |
 | Mastodon | Auto, Hand-off | Yes | 500 characters (links = 23), threads | 4 images or 1 video | 300/5 min, 1000/day | Yes | [mastodon.md](platforms/mastodon.md) |
-| Matrix | Auto | Yes | No limit | 10 images or 10 videos | 12/1 min | - | [matrix.md](platforms/matrix.md) |
+| Matrix | Auto | Yes | No limit | 10 images and videos | 12/1 min | - | [matrix.md](platforms/matrix.md) |
 | Micropub (IndieWeb / Micro.blog) | Auto | Yes | No limit | 10 images or 1 video | - | - | [micropub.md](platforms/micropub.md) |
-| Misskey | Auto, Hand-off | Yes | 3000 characters, threads | 16 images or 16 videos | 300/1 h | - | [misskey.md](platforms/misskey.md) |
+| Misskey | Auto, Hand-off | Yes | 3000 characters, threads | 16 images and videos | 300/1 h | - | [misskey.md](platforms/misskey.md) |
 | Newgrounds | Hand-off | Yes | No limit | 100 images (required) | - | - | [newgrounds.md](platforms/newgrounds.md) |
-| Nostr | Auto, Hand-off | Yes | No limit | 20 images or 20 videos | - | - | [nostr.md](platforms/nostr.md) |
+| Nostr | Auto, Hand-off | Yes | No limit | 20 images and videos | - | - | [nostr.md](platforms/nostr.md) |
 | Odysee | Auto, Hand-off | Yes | 5000 characters | 1 image or 1 video (required) | - | - | [odysee.md](platforms/odysee.md) |
 | Parler | Hand-off | Yes | 300 characters | 4 images and videos | - | - | [parler.md](platforms/parler.md) |
 | Pinterest | Your keys, Hand-off | Hand-off only | 800 characters | 5 images or 1 video (required) | 300/day, 1000/day | - | [pinterest.md](platforms/pinterest.md) |
@@ -54,12 +54,12 @@ Generated from the code on 2026-10-25.
 | Rumble | Hand-off | Yes | 5000 characters | 1 video (required) | - | - | [rumble.md](platforms/rumble.md) |
 | Snapchat | Hand-off | Yes | 250 characters | 1 image or 1 video (required) | - | - | [snapchat.md](platforms/snapchat.md) |
 | Substack Notes | Hand-off | Yes | No limit | 6 images or 1 video | - | - | [substack.md](platforms/substack.md) |
-| Telegram | Auto, Hand-off | Yes | 4096 characters, threads | 10 images or 10 videos | 20/1 min | - | [telegram.md](platforms/telegram.md) |
-| Threads | Your keys, Hand-off | Yes | 500 characters, threads | 20 images or 20 videos, needs media host for API | 250/day | - | [threads.md](platforms/threads.md) |
+| Telegram | Auto, Hand-off | Yes | 4096 characters, threads | 10 images and videos | 20/1 min | - | [telegram.md](platforms/telegram.md) |
+| Threads | Your keys, Hand-off | Yes | 500 characters, threads | 20 images and videos, needs media host for API | 250/day | - | [threads.md](platforms/threads.md) |
 | TikTok | Your keys, Hand-off | Yes | 2200 characters | 35 images or 1 video (required) | 15/day, 6/1 min | - | [tiktok.md](platforms/tiktok.md) |
 | Tumblr | Your keys, Hand-off | Yes | 524288 characters | 30 images or 1 video | 250/day | Yes | [tumblr.md](platforms/tumblr.md) |
 | Weasyl | Hand-off | Yes | No limit | 1 image (required) | - | - | [weasyl.md](platforms/weasyl.md) |
-| WhatsApp | Hand-off | Yes | No limit | 100 images or 100 videos | - | - | [whatsapp.md](platforms/whatsapp.md) |
+| WhatsApp | Hand-off | Yes | No limit | 100 images and videos | - | - | [whatsapp.md](platforms/whatsapp.md) |
 | WordPress | Auto, Hand-off | Yes | No limit | 20 images or 5 videos | - | Yes | [wordpress.md](platforms/wordpress.md) |
 | Write.as / WriteFreely | Auto, Hand-off | Yes | No limit | 20 images, needs media host for API | - | - | [writefreely.md](platforms/writefreely.md) |
 | X (Twitter) | Your keys, Hand-off | Yes | 280 weighted (links = 23), threads | 4 images or 1 video | 100/15 min, 10000/day, 500/month | - | [x.md](platforms/x.md) |
@@ -235,12 +235,12 @@ Generated from the code on 2026-10-25.
 
 ### Pinterest
 
-- **Account:** Automatic posting needs a Pinterest business account (converting a personal account is free and keeps your profile) and your own Pinterest developer app, which Pinterest must approve before it works. Until Pinterest also grants the app Standard access, Pins it creates are only visible to you.
-- **Cost and limits:** Free. With Trial access Pinterest allows about 300 new Pins and 1000 API calls per day, and the Pins stay private to you; Standard access (after a video review by Pinterest) makes them public.
+- **Account:** Automatic posting needs a Pinterest business account (converting a personal account is free and keeps your profile) and your own Pinterest developer app, which Pinterest must approve before it works. Until Pinterest also grants the app Standard access, it can only make test Pins in Pinterest's API Sandbox, which only you can see.
+- **Cost and limits:** Free. With Trial access Pinterest allows about 300 new Pins and 1000 API calls per day, as test Pins in its API Sandbox that only you can see (no video Pins); Standard access (after a video review by Pinterest) makes them public.
 
 ### Pixelfed
 
-- **Account:** Any account on a Pixelfed server. You only type your server address and approve NEFORUM in the browser.
+- **Account:** Any account on a Pixelfed server. You only type your server address and approve NEFORUM in the browser, or paste a personal access token from your server's settings.
 - **Cost and limits:** Free on every server, with no developer account or app review.
 
 ### pixiv
@@ -313,13 +313,13 @@ Generated from the code on 2026-10-25.
 - **Account:** Any X account works. Automatic posting needs your own X developer app (created at console.x.com, no review) with credits on it; hand-off needs only the X app or website.
 - **Cost and limits:** Since February 2026 new X developer accounts are pay-per-use with no free tier: each post costs about $0.015, or $0.20 if it contains a link, paid from credits you buy at console.x.com. Hand-off is free because you press Post yourself.
 
-### YouTube videos
-
-- **Account:** A Google account with a YouTube channel. "Your own API keys" also needs a free Google Cloud project with an OAuth client that you create yourself (about 10 minutes); hand-off only needs the YouTube app or website.
-- **Cost and limits:** Free: Google gives every project 100 uploads a day and sells no paid plan. Uploads from a project Google has not audited (yours) may be locked to PRIVATE by YouTube; if that happens, use hand-off for public videos.
-
 ### YouTube Posts
 
 - **Account:** Any channel with advanced features turned on (YouTube Studio > Settings > Channel > Feature eligibility) that is not set as "Made for Kids". There is no subscriber minimum. NEFORUM never signs in to YouTube; you post on youtube.com or in the YouTube app.
 - **Cost and limits:** Free. YouTube's API can upload videos but cannot create posts, so NEFORUM uses hand-off: it copies your text and opens YouTube, where you choose Create > Create post. For videos, connect "YouTube".
+
+### YouTube videos
+
+- **Account:** A Google account with a YouTube channel. "Your own API keys" also needs a free Google Cloud project with an OAuth client that you create yourself (about 10 minutes); hand-off only needs the YouTube app or website.
+- **Cost and limits:** Free: Google gives every project 100 uploads a day and sells no paid plan. Uploads from a project Google has not audited (yours) may be locked to PRIVATE by YouTube; if that happens, use hand-off for public videos.
 

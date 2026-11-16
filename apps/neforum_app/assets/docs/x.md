@@ -16,8 +16,8 @@ These steps set up your own X app (once, about 10 minutes).
    - **App permissions:** *Read and write*
    - **Type of app:** *Native App*. This is a public client and needs no secret. *Web App* and *Automated App or Bot* also work, but then you have to paste the Client Secret into NEFORUM too.
    - **Callback URI / Redirect URL:** add **both** of these, character for character:
-     - `http://127.0.0.1:52771/callback` (used by NEFORUM on Windows and macOS)
-     - `neforum://callback` (used by NEFORUM on Android and iOS)
+     - `http://127.0.0.1:52771/callback` (used by NEFORUM on Windows and Linux)
+     - `neforum://callback` (used by NEFORUM on Android, iOS and macOS)
 
      X compares them exactly: no trailing slash, and `localhost` is **not** accepted (use `127.0.0.1`). An app can have up to 10 callback URLs.
    - **Website URL:** any page about you, or `https://github.com/Neforuss/NEFORUM`.
@@ -107,7 +107,7 @@ Good to know:
 
 - **Text:** up to 280 characters, counted the way X counts them. Most Latin, Greek and Cyrillic characters count as 1. Chinese, Japanese and Korean characters and every emoji count as 2, however many code points make the emoji. Every link counts as 23, however long it is. Longer text is split into a numbered **thread**: each part is posted as a reply to the one before it.
 - **Long posts (X Premium):** every X Premium plan (Basic, Premium, Premium+, and the plans of The X Subscription) takes posts up to **25,000 characters** and videos up to **125 minutes and 16 GB**. With such a plan, NEFORUM sends long text as one post instead of a thread. With your own keys, NEFORUM asks X which plan the account has when you connect it, and the account card shows the answer ("Read from X"). Change it there if X is wrong, or choose **Ask X again** (one profile read on your developer account). For a hand-off account, choose the plan on the connect form or on the account card. Free accounts stay at 280 characters, and long text is split into a thread. See [paid plans](../paid-tiers.md).
-- **Media:** up to 20 photos and videos in one post, mixed and in your order. X's API reference allows 20 media in a post, but X's own text still says 4 photos or 1 video, so NEFORUM checks with X: if X refuses the 20 for your account, NEFORUM sends the same post at once as a thread of 4 photos or 1 video per post, uploading nothing twice, and keeps doing that for the account for 7 days before it tries 20 again. The composer's preview shows which one X will get and why. More than 20 go on in further posts of the thread. Photos are JPEG, PNG, WEBP or static GIF up to 5 MB each; an animated GIF (15 MB) always goes in a post of its own; videos are MP4/MOV, up to 20 minutes and 8 GB (125 minutes and 16 GB with X Premium).
+- **Media:** up to 20 photos and videos in one post, mixed and in your order. X's API reference allows 20 media in a post, but X's own text still says 4 photos or 1 video, so NEFORUM checks with X: if X refuses the 20 for your account, NEFORUM sends the same post at once as a thread of 4 photos or 1 video per post, uploading nothing twice, and keeps doing that for the account for 7 days before it tries 20 again. The composer's preview shows which of the two X will get and why. If a post has more than 20, the rest go into further posts of the thread. Photos are JPEG, PNG, WEBP or static GIF up to 5 MB each; an animated GIF (15 MB) always goes in a post of its own; videos are MP4/MOV, up to 20 minutes and 8 GB (125 minutes and 16 GB with X Premium).
 - **Alt text:** sent for every photo or GIF that has it, up to 1000 characters.
 - **Who can reply:** you can set the per-post option `replySettings` to `following`, `mentionedUsers`, `subscribers` or `verified`.
 - **Scheduling:** the X API cannot schedule posts. NEFORUM keeps the schedule itself, so the device has to be on and online at posting time. Media is uploaded at posting time, because X only keeps uploads for 24 hours.
@@ -127,7 +127,7 @@ NEFORUM opens `https://x.com/intent/tweet?text=…&url=…`. That is X's documen
 - X refuses identical text posted twice in a short time ("duplicate content"). Its developer policy also forbids posting identical or very similar content across several accounts.
 - If a thread fails part-way, NEFORUM tells you which parts were already posted and does not retry automatically, because a retry would duplicate them.
 - NEFORUM loads the whole video into memory before uploading it, so multi-gigabyte videos may fail on phones.
-- The `neforum://callback` redirect is not explicitly documented by X. X's rules only list forbidden schemes, and custom schemes have worked in the past. If the console refuses it, sign in from a computer using the `127.0.0.1` address.
+- The `neforum://callback` redirect is not explicitly documented by X. X's rules only list forbidden schemes, and custom schemes have worked in the past. If the console refuses it, sign in from NEFORUM on Windows or Linux using the `127.0.0.1` address.
 - Polls, communities, quote posts and editing posts are not supported.
 
 ## Sources

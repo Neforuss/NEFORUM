@@ -1,6 +1,6 @@
 # Odysee setup guide
 
-This guide connects Odysee (the LBRY network), so NEFORUM uploads your videos **automatically** on a computer, through the LBRY desktop app, or by **hand-off** anywhere.
+This guide connects Odysee (the LBRY network), so NEFORUM uploads your videos **automatically** through the LBRY desktop app on a computer, or by **hand-off** on any device.
 
 ## Steps
 

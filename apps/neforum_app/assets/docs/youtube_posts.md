@@ -1,6 +1,6 @@
 # YouTube Posts setup guide
 
-This guide connects **YouTube Posts**, the text, image, poll and quiz posts on your channel's **Posts** tab (called the Community tab until 2025; for videos and Shorts, connect **YouTube videos** instead, you can have both). NEFORUM copies your text and opens YouTube for you to post; on a computer with the NEFORUM browser extension, it can also post for you automatically once you turn that on.
+This guide connects **YouTube Posts**, the text, image, poll and quiz posts on your channel's **Posts** tab (called the Community tab until 2025). For videos and Shorts, connect **YouTube videos** instead; you can have both. NEFORUM copies your text and opens YouTube for you to post; on a computer with the NEFORUM browser extension, it can also post for you automatically once you turn that on.
 
 ## Steps
 
@@ -48,7 +48,7 @@ Status as of October 2026.
 |---|---|---|---|
 | **Hand-off** (only tier) | A YouTube channel with advanced features turned on, not set as Made for Kids | Free | NEFORUM copies your text and opens YouTube. You choose **Create** > **Create post**, paste and select **Post**. On a computer with the browser extension and **Post automatically** turned on, the extension posts it for you. |
 
-Nothing to set up for the hand-off itself: no API key, no sign-in in NEFORUM.
+The hand-off itself needs no setup: no API key and no sign-in in NEFORUM.
 
 ## How it works
 

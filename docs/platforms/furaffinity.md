@@ -44,7 +44,7 @@ Fur Affinity has no API, and the site sits behind bot protection. NEFORUM theref
 
 - About 10 MB per file (the figure the PostyBirb cross-poster uses; Fur Affinity shrinks large images). Fur Affinity's own limits could not be read.
 - JPEG, PNG or GIF.
-- Keywords: at least 3 of 3 or more characters, 500 characters in all (PostyBirb's checks). NEFORUM warns when there are fewer.
+- Keywords: at least 3, each 3 or more characters long, and 500 characters in all (PostyBirb's checks). NEFORUM warns when there are fewer.
 
 ## Sources
 

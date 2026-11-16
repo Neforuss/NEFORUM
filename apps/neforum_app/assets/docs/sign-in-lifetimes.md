@@ -1,15 +1,21 @@
 # How long each sign-in lasts
 
-Every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in. Everything here was read from the vendor's own pages or source code on **2026-11-06** (EmDash, added in 1.4.3: **2026-11-13**; Pixelfed personal access tokens and Pinterest sandbox tokens, added in 1.4.4: **2026-11-16**). Vendors change these rules: check the source link if a date looks wrong.
+When you connect an account, the network gives NEFORUM a sign-in (a token or key) that may run out. This page lists every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in.
 
-**NEFORUM renews only when a post goes out.** There is no background job. So "Renews when NEFORUM posts" also means that an account you stop posting to can run out.
+Everything here was read from the vendor's own pages or source code on **2026-11-06**. Later additions were read on their own dates: EmDash, added in 1.4.3, on **2026-11-13**; Pixelfed personal access tokens and Pinterest sandbox tokens, added in 1.4.4, on **2026-11-16**. Vendors change these rules, so check the source link if a date looks wrong.
+
+**NEFORUM renews only when a post goes out.** There is no background job. So an account marked "Renews when NEFORUM posts" can still run out if you stop posting to it.
 
 Words used in the Status column:
 
 - **VERIFIED**: the vendor's own page or source says it. Where two of its pages disagree, the row says so.
 - **UNVERIFIED**: no vendor page read settles it. The row says what would. A page that says nothing about expiry is not evidence that a token never expires, so these rows say "no published limit" and not "never expires".
 
-A date in NEFORUM reads "at the latest" where the *Known early revocation* column says something can end the sign-in first, and "about" where NEFORUM worked it out from a documented rule. A date you typed yourself (a Pixelfed token's end date) is shown as yours.
+How NEFORUM labels the dates it shows:
+
+- "at the latest" when the *Known early revocation* column says something can end the sign-in first;
+- "about" when NEFORUM worked the date out from a documented rule;
+- as yours, when you typed the date yourself (a Pixelfed token's end date).
 
 ## All 51 networks
 
@@ -93,7 +99,7 @@ Most networks say how long a sign-in lasts only when it is made or renewed, so N
 - **LinkedIn**: `introspectToken`, with your client ID and secret.
 - **Bluesky and Lemmy**: the `exp` inside the token, with no network at all.
 
-NEFORUM asks when you connect, after a post, and when the sign-ins page opens, at most once a day per account. It never asks X in the background: X charges per request and does not say whether this read counts.
+NEFORUM asks when you connect, after a post, and when the sign-ins page opens, at most once a day per account. It never asks X in the background, because X charges per request and does not say whether this read counts as one.
 
 ## What NEFORUM warns you about
 
@@ -107,19 +113,21 @@ A notification goes out at 10:00 on these days before the date, and when the dat
 | Renews when NEFORUM posts | 7, 1 |
 | A date the vendor announced (X keys) | 60, 30, 14, 7, 3, 1 |
 
-- Only days still ahead when NEFORUM first learns the date count, and each one fires once on each device. A device that was off says the latest one when it next runs.
-- Phones ask the system ahead of time. They keep at most 20 of these waiting, and post reminders go first when the system's room runs short. Computers check while NEFORUM runs, on its timer and when it starts.
-- A banner above every section shows anything at 14 days or fewer, ended or refused. Closing it holds until the next of those days.
-- A refused sign-in raises one notification until it works again, whether or not **Tell me how each post went** is on.
-- Scheduling or rescheduling a post that a sign-in will not reach warns in the schedule sheet and the composer, and asks before it schedules. The queue shows the same warning for as long as it holds. A network that already holds the post still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so. A network that is only about to be asked can say no, so that warning asks first too, and if it does say no the queue says the post misses it.
+- A reminder day counts only if it is still ahead when NEFORUM first learns the date. Each one fires once on each device. A device that was off gives the latest one when it next runs.
+- Phones hand these notifications to the system ahead of time. A phone keeps at most 20 of them waiting, and post reminders take priority when the system runs short of room. Computers check while NEFORUM runs, on its timer and when it starts.
+- A banner above every section shows any sign-in that is 14 days or fewer from its date, has ended, or was refused. If you close the banner, it stays closed until the next of those days.
+- A refused sign-in raises one notification, and no more until it works again, whether or not **Tell me how each post went** is on.
+- If you schedule or reschedule a post for a time after a sign-in ends, the schedule sheet and the composer warn you and ask before scheduling. The queue shows the same warning for as long as it applies.
+  - A network that already holds the post still publishes it, but NEFORUM cannot change or take it back after the date, and the warning says so.
+  - A network that is only about to be asked to hold the post can say no, so that warning asks first too. If the network does say no, the queue says the post will miss it.
 
 ## When a sign-in stops working
 
 NEFORUM reconnects by itself wherever the keys it already holds allow it, and asks you only when they do not:
 
-- **A renewal that fails for a passing reason** (no connection, the network's sign-in server down, an answer NEFORUM could not read) is tried again a few seconds later, then with the post's own retries. It never shows the account as disconnected. Networks that replace their renewal key each time (X, Tumblr, TikTok, Pixelfed, DeviantArt) wait for the post's next try instead, so a key that may already be spent is not sent twice.
+- **A renewal that fails for a passing reason** (no connection, the network's sign-in server down, an answer NEFORUM could not read) is tried again a few seconds later, then with the post's own retries. NEFORUM never shows the account as disconnected for this. Networks that replace their renewal key each time (X, Tumblr, TikTok, Pixelfed, DeviantArt) skip the quick retry and wait for the post's next try, so that a key that may already be used up is not sent twice.
 - **A post the network refuses although the sign-in had time left** gets one renewal with the stored keys (a renewal key, or Bluesky's app password), then one more try.
-- **Keys the network no longer accepts** (a renewal key revoked or run out, a password change, the app removed) need your approval in the browser, and NEFORUM says so once. **Reconnect**, on the account, on the sign-ins page and on the refused post, is one tap: it opens the network's approval page with the app keys and settings you entered before, and keeps the account's options. NEFORUM never stores or reuses your password for a network that signs in through the browser.
+- **Keys the network no longer accepts** (a renewal key revoked or run out, a password change, the app removed) need your approval in the browser, and NEFORUM tells you once. **Reconnect** is one tap, on the account, on the sign-ins page or on the refused post. It opens the network's approval page with the app keys and settings you entered before, and keeps the account's options. NEFORUM never stores or reuses your password for a network that signs in through the browser.
 - **Pasted keys and bot tokens** that were revoked need new ones, so Reconnect opens the connect form for that network.
 
 ## Still open

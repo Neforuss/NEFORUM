@@ -1,6 +1,6 @@
 # NEFORUM browser extension
 
-The NEFORUM extension for Chrome and Firefox finishes hand-offs for you: it fills in the post on the platform's own page (text, thread parts, poll answers, photos, videos, artwork details), and you post it with one key. If you turn on automatic posting, it also presses Post for you after a 3-second countdown.
+A hand-off is how NEFORUM posts to a platform it cannot post to for you: it opens the platform's own page or app, and you press Post yourself. The NEFORUM extension for Chrome and Firefox finishes hand-offs for you. It fills in the post on the platform's page (text, thread parts, poll answers, photos, videos, artwork details), and you post it with one key. If you turn on automatic posting, it also presses Post for you after a 3-second countdown.
 
 ## Steps: install in Chrome, Edge, Brave or Opera
 
@@ -40,7 +40,13 @@ The NEFORUM extension for Chrome and Firefox finishes hand-offs for you: it fill
 
 The extension works in Google Chrome and Mozilla Firefox, and in other Chromium browsers such as Microsoft Edge, Brave and Opera (from the Chrome version).
 
-When you click **Open** in a hand-off, NEFORUM gives the post to the extension and opens the platform's page. A small NEFORUM panel shows on the page while it works and says what was filled in. **Fill in again** repeats it. **Insert text** puts the text into the box you clicked last, and **Attach** adds the files again, through the composer's own photo button the way you would (never into a search box); when nothing on the page takes them, the site's file window opens for you to pick them. **I posted it** tells NEFORUM the post is up when it did not see it go, and NEFORUM moves on to the next network. Poll answers, tags, the other parts of a thread and other snippets each have **Copy** and **Insert**.
+When you click **Open** in a hand-off, NEFORUM gives the post to the extension and opens the platform's page. A small NEFORUM panel shows on the page while the extension works, and says what was filled in. The panel has these buttons:
+
+- **Fill in again** fills in the page again.
+- **Insert text** puts the text into the box you clicked last.
+- **Attach** adds the files again, through the composer's own photo button the way you would (never into a search box). When nothing on the page takes them, the site's file window opens for you to pick them.
+- **I posted it** tells NEFORUM the post is up when NEFORUM did not see it go, and NEFORUM moves on to the next network.
+- Poll answers, tags, the other parts of a thread and other snippets each have **Copy** and **Insert**.
 
 ### What it fills in
 
@@ -70,10 +76,10 @@ When the page is filled in, the panel shows **Post now** and says "press Ctrl+En
 
 - **Without automatic posting, it only posts when you press the key or click Post now.** Key presses made by scripts don't count.
 - **If an upload is still running**, the site's button is greyed out. The extension waits for it ("Waiting for TikTok to be ready…"). Press **Esc** or **Stop** to cancel.
-- **Typing somewhere else on the page** (a search box, a chat) keeps Ctrl+Enter for that box: the extension only reacts when you're in the composer or nowhere in particular.
+- **Typing somewhere else on the page** (a search box, a chat) keeps Ctrl+Enter for that box. The extension only reacts when you're in the composer or not in any box.
 - **Once per hand-off.** Pressing again, or reloading the page, does not post a second time.
-- **Facebook's Next screen** is gone through for you when it appears before Post. A confirmation some sites show after Post (Flickr's "Upload", Itaku's rating check) is answered too, unless you pressed **Esc** or **Stop** after Post: then it is yours to answer.
-- **When the post went out** (the composer closed or emptied, the page moved on, or the site said so), NEFORUM marks the hand-off as posted and moves on to the next one. That goes for the site's own Post button too, when you press it yourself: the extension presses nothing then, it only watches. If the page gave no sign, the hand-off says so, and you click **I posted it** (on the page's panel or in NEFORUM) once you've checked.
+- **Facebook's Next screen** is gone through for you when it appears before Post. Some sites show a confirmation after Post (Flickr's "Upload", Itaku's rating check). The extension answers it too, unless you pressed **Esc** or **Stop** after Post; then it is yours to answer.
+- **When the post went out** (the composer closed or emptied, the page moved on, or the site said so), NEFORUM marks the hand-off as posted and moves on to the next one. This also works when you press the site's own Post button yourself: the extension then presses nothing and only watches. If the page gave no sign, the hand-off says so, and you click **I posted it** (on the page's panel or in NEFORUM) once you've checked.
 - If the extension can't find the Post button, it leaves Ctrl+Enter to the site (X, Bluesky and Mastodon post on Ctrl+Enter themselves) and tells you to press Post. NEFORUM moves on when it sees the post go, or when you click **I posted it** on the panel.
 
 ### Automatic posting
@@ -81,55 +87,63 @@ When the page is filled in, the panel shows **Post now** and says "press Ctrl+En
 With **Post automatically** on, a hand-off for a network that is not left out goes like this, on a computer with a paired browser:
 
 - The hand-off opens the page in your browser by itself, with no click.
-- The extension fills in everything it can. Only when everything went in does it show a 3-second countdown in its panel, with **Stop** (or **Esc**). Then it presses the site's Post button, checks that the post went out, and NEFORUM marks the hand-off as done and moves on to the next one.
-- **Stop** and **Esc** work from the moment the extension starts filling in until it presses Post, also while it waits for an upload or checks with NEFORUM. After either one, nothing is posted by itself.
-- If anything is missing (a field it could not find, a rating it could not set, a part of a thread), or the site needs a choice only you can make, it does not post. The page stays filled in, the hand-off sheet says why, and you finish it as usual. Sites that always need you: Reddit (community and flair), WhatsApp (who gets it), YouTube video uploads ("made for kids"), Behance (cover and creative field), Newgrounds (rating questions and terms), Fur Affinity (its pages).
-- Right before it presses Post, the extension asks NEFORUM again. Closing the hand-off (**Later**, **Skip**), opening the page again from it, or **Cancel** in Activity therefore stops it, even while it waits for an upload.
-- Only the page NEFORUM opened posts. Another tab of the same site gets the post to fill in, never to post, and what it reports does not change how the hand-off goes. A post you make from that tab with **Post now** or Ctrl+Enter still counts, and the page NEFORUM opened then does not post it again.
-- When the page was filled in but the post was not seen going out (Post pressed without a sign, the countdown stopped, something left for you), the hand-off keeps a note saying what to check, also when you close it with **Later**. The hand-off, the post's details and the notification show the note, and that hand-off is never posted automatically again: you finish it, or mark it as posted.
+- The extension fills in everything it can. Only when everything went in does it show a 3-second countdown in its panel, with **Stop** (or **Esc**). Then it presses the site's Post button and checks that the post went out, and NEFORUM marks the hand-off as done and moves on to the next one.
+- **Stop** and **Esc** work from the moment the extension starts filling in until it presses Post, including while it waits for an upload or checks with NEFORUM. After either one, the extension does not post by itself.
+- If anything is missing (a field it could not find, a rating it could not set, a part of a thread), or the site needs a choice only you can make, it does not post. The page stays filled in, the hand-off sheet says why, and you finish it as usual. These sites always need you:
+  - Reddit (community and flair)
+  - WhatsApp (who gets it)
+  - YouTube video uploads ("made for kids")
+  - Behance (cover and creative field)
+  - Newgrounds (rating questions and terms)
+  - Fur Affinity (its pages).
+- Right before it presses Post, the extension checks with NEFORUM again. So closing the hand-off (**Later**, **Skip**), opening the page again from it, or **Cancel** in Activity stops it, even while it waits for an upload.
+- Only the page NEFORUM opened posts. If you open the same site in another tab, that tab gets the post to fill in but never posts it, and what it reports does not change how the hand-off goes. A post you make from that tab with **Post now** or Ctrl+Enter still counts, and the page NEFORUM opened then does not post it again.
+- Sometimes the page is filled in but NEFORUM does not see the post go out: Post was pressed without a sign, the countdown was stopped, or something was left for you. Then the hand-off keeps a note saying what to check, even when you close it with **Later**. The hand-off, the post's details and the notification show the note, and that hand-off is never posted automatically again: you finish it, or mark it as posted.
 - **Scheduled posts** go out the same way at their time while NEFORUM is open on this computer, without the hand-off sheet. If one does not post, it waits with the usual "Time to post" notification.
-- Only networks whose pages the extension fills in by itself can post automatically, so **Networks that post automatically** lists only those. A network where you have more than one account always waits for you: the browser posts as whichever account is signed in there.
-- The extension presses Post by itself only for hand-offs NEFORUM marks automatic, and NEFORUM marks them only when you turned automatic posting on, for that network. The demo workspace never gives the extension anything, so its sample posts stay in NEFORUM. Phones cannot run the extension, so there it does nothing.
+- Only networks whose pages the extension fills in by itself can post automatically, so **Networks that post automatically** lists only those. A network where you have more than one account always waits for you, because the browser posts as whichever account is signed in there.
+- The extension presses Post by itself only for hand-offs that NEFORUM marks automatic. NEFORUM marks them only when you turned automatic posting on, for that network. The demo workspace never gives the extension anything, so its sample posts stay in NEFORUM. Phones cannot run the extension, so automatic posting does nothing there.
 
-Some platforms treat scripted posting as automation and can restrict accounts for it. X, LinkedIn and Snapchat forbid it in their terms, so they are left out until you put them in (NEFORUM warns you when you do). If you'd rather click Post yourself everywhere, keep **Post automatically** off; to also stop the one-key posting, turn off **Post with Ctrl+Enter**.
+Some platforms treat scripted posting as automation and can restrict accounts for it. X, LinkedIn and Snapchat forbid it in their terms, so they are left out until you put them in, and NEFORUM warns you when you do. If you'd rather click Post yourself everywhere, keep **Post automatically** off. To also stop the one-key posting, turn off **Post with Ctrl+Enter**.
 
 ### Which browser is which ("Opens in")
 
-Each paired browser in **Settings > Browser extension** has **Opens in**: the program it really is, and where NEFORUM opens hand-offs for it. The list is the browsers Windows knows about (the same list as Default Apps), the browser apps on a Mac, or the browser commands on Linux.
+Each paired browser in **Settings > Browser extension** has an **Opens in** setting. It names the program the browser really is, which is where NEFORUM opens hand-offs for it. The list holds the browsers Windows knows about (the same list as Default Apps), the browser apps on a Mac, or the browser commands on Linux.
 
-NEFORUM guesses it when you pair: "Firefox" is Mozilla Firefox, "Chrome" is Google Chrome. Many browsers are built on Chromium (Helium, Vivaldi, Thorium, ungoogled Chromium...) and can look just like Chrome to the extension; some even use the same program file name, `chrome.exe`. So if you paired one of those, pick it under **Opens in**. On Windows and Linux, **Other program…** lets you choose a browser that isn't listed, such as a portable one.
+NEFORUM guesses the program when you pair: "Firefox" is Mozilla Firefox, and "Chrome" is Google Chrome. Many browsers are built on Chromium (Helium, Vivaldi, Thorium, ungoogled Chromium...) and can look just like Chrome to the extension. Some even use the same program file name, `chrome.exe`. So if you paired one of those, pick it under **Opens in**. On Windows and Linux, **Other program…** lets you choose a browser that isn't listed, such as a portable one.
 
 ### Chrome and Firefox on one computer
 
 Pair both if you use both (or any two browsers: Chrome and Helium, Edge and Firefox). The paired browsers are listed in order of choice, and the first one gets **First choice**:
 
-- Hand-offs open in your first choice (not your system's default browser), and only that browser fills them in on its own. The other one stays quiet, so the post isn't filled in twice. You can still use **Fill in this page** in it.
+- Hand-offs open in your first choice rather than your system's default browser, and only that browser fills them in on its own. The other browser stays quiet, so the post isn't filled in twice. You can still use **Fill in this page** in it.
 - **Swap** trades the first two places (Chrome and Firefox swap). With more browsers, the arrow next to one makes it the first choice.
-- Only the browser set to the program NEFORUM opened fills the page in on its own, so Chrome and Helium never both fill in the same post.
-- If the first choice isn't installed any more or won't start, the next one is used; if none, your default browser, and any paired browser fills in.
+- Only the browser whose **Opens in** is set to the program NEFORUM opened fills the page in on its own, so Chrome and Helium never both fill in the same post.
+- If the first choice isn't installed any more or won't start, NEFORUM uses the next one. If none of them works, it uses your default browser, and any paired browser fills in.
 - Turn off **Open hand-offs in my first-choice browser** to always use your default browser.
 
 ### How it stays private
 
 - The extension talks only to NEFORUM on your own computer (`127.0.0.1`, ports 52772 to 52779, or 41772 to 41779 when those can't be used). Nothing goes to Neforus or anywhere else.
-- Only a paired browser can ask NEFORUM for anything; pairing needs the code shown in NEFORUM. Websites cannot read from NEFORUM: it refuses requests from web pages and sends no headers that would let a page read its answers.
+- Only a paired browser can ask NEFORUM for anything, and pairing needs the code shown in NEFORUM. Websites cannot read from NEFORUM: it refuses requests from web pages and sends no headers that would let a page read its answers.
 - NEFORUM hands over one post at a time, only when a hand-off opens the page, and forgets it after 10 minutes.
-- The extension reads nothing from the sites except what it needs to find the composer, its fields and its Post button, and sends back only "filled in / partly / failed", "posted" and, for automatic posting, "counting down / stopped / not posted automatically", so the hand-off can say how it went.
+- From the sites, the extension reads only what it needs to find the composer, its fields and its Post button. It sends back only "filled in / partly / failed", "posted" and, for automatic posting, "counting down / stopped / not posted automatically", so the hand-off can say how it went.
 
 The full protocol is in `extensions/browser/PROTOCOL.md` in the repository.
 
 ### When NEFORUM is not paired with a browser
 
-Without the extension (on a phone, or on a computer with no paired browser), hand-offs work by copying. NEFORUM copies the text first; after you paste it in the other app and come back to NEFORUM, the next part (a snippet, then each photo) is already on the clipboard, and the hand-off says what it is ("Photo 2 of 3 copied. Paste it."). A photo that cannot be copied is skipped, and the hand-off says so. The switch **Copy the next part when I come back** in the hand-off (and, on a computer, in **Settings > Browser extension**) turns this off. On Android, **Share** opens the network's own app directly when it is installed (its caption is on the clipboard and in the share), and the system share sheet when it is not; iPhones and iPads keep the share sheet.
+Without the extension (on a phone, or on a computer with no paired browser), hand-offs work by copying. NEFORUM copies the text first. After you paste it in the other app and come back to NEFORUM, the next part (a snippet, then each photo) is already on the clipboard, and the hand-off says what it is ("Photo 2 of 3 copied. Paste it."). A photo that cannot be copied is skipped, and the hand-off says so. To turn this off, use the switch **Copy the next part when I come back** in the hand-off, or on a computer in **Settings > Browser extension**.
+
+On Android, **Share** opens the network's own app directly when it is installed, with the caption on the clipboard and in the share. When the app is not installed, **Share** opens the system share sheet. iPhones and iPads always use the share sheet.
 
 ## Limits
 
-- The extension is not in the Chrome Web Store or on Firefox Add-ons yet, so you install it from the files that come with NEFORUM.
+- The extension is not published in the Chrome Web Store or on Firefox Add-ons, so you install it from the files that come with NEFORUM. The Chrome Web Store rejected the first submission because its description listed the supported sites ("keyword spam").
 - Chrome keeps the extension after a restart. It may show a reminder that a developer-mode extension is installed; that's expected for extensions not from the store.
-- Firefox removes a temporary add-on when it closes. For a permanent install it needs to be signed by Mozilla: when a GitHub release has `neforum-extension-firefox-<version>.xpi` (signed by Mozilla for self-distribution), open that file in Firefox to install it for good. Otherwise it happens when it is published on addons.mozilla.org (or, for testing, use Firefox Developer Edition with `xpinstall.signatures.required` set to false).
-- Mastodon, Misskey and blogs run on their own addresses, which the extension does not know in advance: use **Fill in this page** there. Automatic posting cannot start there by itself.
-- Locals: the extension fills in its post but never publishes it by itself, because NEFORUM could not check Locals' terms on scripted posting; you press **Publish** (or Ctrl+Enter). A video, sound file or PDF goes in only through Locals' own buttons, so you add it. Locals' news feed (`locals.com/_/feed`) has no composer: enter your community when connecting, or open its feed and click **Fill in again**.
-- The site recipes follow each site's page as it was known when this version was made, and the art sites' upload forms could not be studied signed in. When a site changes, the extension says what it could not do, does not post automatically, and you finish by hand.
+- Firefox removes a temporary add-on when it closes. A permanent install needs an add-on signed by Mozilla. When a GitHub release has `neforum-extension-firefox-<version>.xpi` (signed by Mozilla for self-distribution), open that file in Firefox to install it for good. Otherwise a permanent install becomes possible once the extension is published on addons.mozilla.org. For testing, you can use Firefox Developer Edition with `xpinstall.signatures.required` set to false.
+- Mastodon, Misskey and blogs run on their own addresses, which the extension does not know in advance, so use **Fill in this page** there. Automatic posting cannot start there by itself.
+- Locals: the extension fills in its post but never publishes it by itself, because NEFORUM could not check Locals' terms on scripted posting. You press **Publish** (or Ctrl+Enter). A video, sound file or PDF goes in only through Locals' own buttons, so you add it. Locals' news feed (`locals.com/_/feed`) has no composer: enter your community when connecting, or open its feed and click **Fill in again**.
+- The extension's steps for each site follow that site's page as it was known when this version was made, and the art sites' upload forms could not be studied signed in. When a site changes, the extension says what it could not do and does not post automatically, and you finish by hand.
 - Automatic posting needs NEFORUM running on a computer with a paired browser; phones cannot do it.
 
 ## Troubleshooting
@@ -148,18 +162,23 @@ Sites change their pages, so a step can stop working. The panel then says what i
 
 ### If the extension cannot find NEFORUM on Windows
 
-NEFORUM listens on one of ports 52772 to 52779. Those are in the range Windows hands out on its own (49152 to 65535), and Hyper-V, which WSL, Docker and Windows Sandbox use, reserves random blocks of that range each time Windows starts. When it has taken NEFORUM's ports, NEFORUM can't open them.
+NEFORUM listens on one of ports 52772 to 52779. Those are in the range Windows hands out on its own (49152 to 65535). Hyper-V, which WSL, Docker and Windows Sandbox use, reserves random blocks of that range each time Windows starts. When Hyper-V has taken NEFORUM's ports, NEFORUM can't open them.
 
 NEFORUM then moves on to ports 41772 to 41779, below that range, so it keeps working. **Settings > Browser extension** shows the port it listens on. The extension only looks on those ports from **version 1.0.1**, so update it:
 
-- **Chrome, Edge, Brave, Opera**: after updating NEFORUM, open `chrome://extensions` and click the reload arrow on NEFORUM (if you loaded the `chrome` folder from **Show extension files**; if you copied it somewhere else, load the new folder instead). The card shows the version (now 1.1.1).
+- **Chrome, Edge, Brave, Opera**: after updating NEFORUM, open `chrome://extensions` and click the reload arrow on NEFORUM. This works if you loaded the `chrome` folder from **Show extension files**; if you copied it somewhere else, load the new folder instead. The card shows the version (now 1.1.6).
 - **Firefox**: load `manifest.json` from the new `firefox` folder again (see the install steps).
 
 If the status says **Ports blocked**, Windows refused every one of NEFORUM's ports. Restarting the computer usually changes which ports are reserved. To see the reserved ranges, run `netsh interface ipv4 show excludedportrange protocol=tcp` in a terminal.
 
 ### Publishing it in the stores (for the maintainer)
 
-`dart run tool/build_extension.dart` (in `apps/neforum_app`) builds both versions and writes upload-ready zips to `dist/`: `neforum-extension-chrome-<version>.zip` for the Chrome Web Store (a developer account costs a one-time US$5) and `neforum-extension-firefox-<version>.zip` for addons.mozilla.org (free; the add-on id is `neforum-extension@neforus.com`). Store review checks the permissions: the extension uses `storage`, `scripting`, `activeTab`, host access to `127.0.0.1` (any port: the match pattern `http://127.0.0.1/*` covers both port ranges), and content scripts on the platforms in the table above (YouTube Studio and the art sites since 1.1.0). The Chrome Web Store's developer agreement forbids extensions that knowingly break a site's terms; automatic posting is off by default and leaves out the networks whose terms forbid it. The listing text, permission justifications, privacy answers and reviewer notes are ready in [docs/chrome-web-store.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/chrome-web-store.md) and [docs/firefox-amo.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/firefox-amo.md); signing is in [docs/signing.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/signing.md).
+`dart run tool/build_extension.dart` (in `apps/neforum_app`) builds both versions and writes upload-ready zips to `dist/`:
+
+- `neforum-extension-chrome-<version>.zip` for the Chrome Web Store (a developer account costs a one-time US$5)
+- `neforum-extension-firefox-<version>.zip` for addons.mozilla.org (free; the add-on id is `neforum-extension@neforus.com`).
+
+Store review checks the permissions. The extension uses `storage`, `scripting`, `activeTab`, host access to `127.0.0.1` (any port: the match pattern `http://127.0.0.1/*` covers both port ranges), and content scripts on the platforms in the table above (YouTube Studio and the art sites since 1.1.0). The Chrome Web Store's developer agreement forbids extensions that knowingly break a site's terms. Automatic posting is off by default and leaves out the networks whose terms forbid it. The listing text, permission justifications, privacy answers and reviewer notes are ready in [docs/chrome-web-store.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/chrome-web-store.md) and [docs/firefox-amo.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/firefox-amo.md); signing is in [docs/signing.md](https://github.com/Neforuss/NEFORUM/blob/main/docs/signing.md).
 
 ## Sources
 

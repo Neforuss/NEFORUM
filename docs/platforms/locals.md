@@ -1,6 +1,6 @@
 # Locals setup guide
 
-This guide connects Locals (locals.com) by **hand-off only**: NEFORUM copies your post and opens your community's feed on Locals, and you paste it and click **Publish**. With the NEFORUM browser extension paired, the post is filled in for you. Nothing to set up, no API key, no sign-in.
+This guide connects Locals (locals.com) by **hand-off only**: NEFORUM copies your post and opens your community's feed on Locals, and you paste it and click **Publish**. With the NEFORUM browser extension paired, the post is filled in for you. There is nothing else to set up: NEFORUM needs no API key and no sign-in.
 
 ## Steps
 
@@ -54,7 +54,7 @@ These were read from Locals' post window and the community settings it loads, si
 - Title: optional, up to **255 characters**.
 - One kind of media per post: up to **10 photos** (JPEG, PNG, GIF and WebP, up to **20 MB** each), **or** one video, **or** one sound file (MP3, M4A, WAV), **or** one PDF. NEFORUM does not send PDFs.
 - The photo limit is set per community: another community showed **5**. NEFORUM warns when a post has more than 5 photos.
-- Videos: MPEG, MP4, Ogg, MOV, WebM, WMV, FLV, AVI, M4V, 3GP and 3G2. Members: videos and sound up to **5 minutes** and under **200 MB** (help centre). Creators and their team: by the community's plan (the community seen allowed 5 GB a file, and 5 GB of uploads a month on the Basic plan). NEFORUM warns above the member limit and lets a creator go ahead.
+- Videos: MPEG, MP4, Ogg, MOV, WebM, WMV, FLV, AVI, M4V, 3GP and 3G2. Members: videos and sound up to **5 minutes** and under **200 MB** (help centre). Creators and their team: by the community's plan (the community we checked allowed 5 GB a file, and 5 GB of uploads a month on the Basic plan). NEFORUM warns above the member limit and lets a creator go ahead.
 - Articles (a title of at least 5 characters, an optional subtitle and a JPEG, PNG or GIF cover, up to 60,000 characters) are a separate kind of post that you write on Locals. NEFORUM hands off ordinary posts.
 - Locals has no threads: a thread is joined into one post.
 

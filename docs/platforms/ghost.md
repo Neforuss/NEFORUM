@@ -54,7 +54,7 @@ The Admin API key is never sent as is. For each request NEFORUM creates a short-
 - payload `{"iat": <now>, "exp": <now + 5 minutes>, "aud": "/admin/"}`
 - signed with HMAC-SHA256 using the **hex-decoded** secret half of the key
 
-The token is sent as `Authorization: Ghost <token>`, together with `Accept-Version: v5.0`. Because the token is made fresh every time, nothing ever expires or needs refreshing. Your device's clock must be correct, though. A clock that's more than a few minutes off makes Ghost reject the token with "HTTP 401".
+The token is sent as `Authorization: Ghost <token>`, together with `Accept-Version: v5.0`. Because the token is made fresh for every request, there is no sign-in that expires or needs refreshing. Your device's clock must be correct, though. A clock that's more than a few minutes off makes Ghost reject the token with "HTTP 401".
 
 When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site title and public address. It then checks the key with `GET /ghost/api/admin/posts/?limit=1`.
 
@@ -63,15 +63,15 @@ When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site tit
 - **Title** is required, up to 255 characters. If you leave it empty, NEFORUM uses the first line of the post.
 - **Text** becomes simple HTML and is sent with `POST /ghost/api/admin/posts/?source=html`. A blank line starts a new paragraph and `https://` links become clickable. Ghost turns the HTML into normal editor cards. To send your own HTML, turn on **The text is HTML** (Customize > More options). Turn on **Whole post as one HTML card** too to keep it exactly as written inside a single HTML card. Ghost's HTML conversion is lossy otherwise.
 - **Tags** go into the Ghost tags field as `[{"name": "..."}]`. Ghost creates any tag that doesn't exist yet.
-- **Images**: each image is uploaded with `POST /ghost/api/admin/images/upload/` (multipart `file`, `purpose=image`). The **first image becomes the feature image**, and its alt text becomes `feature_image_alt`. The other images are placed in the post. Set `featuredImage: false` to put every image in the post instead. Accepted types are JPEG, PNG, GIF, WebP and SVG.
+- **Images**: each image is uploaded with `POST /ghost/api/admin/images/upload/` (multipart `file`, `purpose=image`). The **first image becomes the feature image**, and its alt text becomes `feature_image_alt`. The other images are placed in the post. Turn off **First photo as the featured image** (Customize > More options) to put every image in the post instead. Accepted types are JPEG, PNG, GIF, WebP and SVG.
 - **Videos aren't uploaded.** Add videos in the Ghost editor.
-- **Status**: `published` or `draft`, as set for the account. You can override it per post with the option `status` (`published`, `draft` or `scheduled`).
+- **Status**: `published` or `draft`, as set for the account. **Publish as** (Customize) overrides it per post with **Published** or **Draft**. When Ghost holds the schedule, a published post goes as `scheduled` (see the next point).
 - **Scheduling**: if you let Ghost hold the schedule, NEFORUM sends `status: scheduled` and `published_at` (UTC). When Ghost answers `status: scheduled`, the post is shown as held by Ghost, and Ghost publishes it at that time, even when your device is off.
-  - Only posts that Ghost will publish can be held. With **Publish as** `draft`, NEFORUM keeps the schedule on your device instead.
+  - Only posts that Ghost will publish can be held. With **Publish as** set to **Draft**, NEFORUM keeps the schedule on your device instead.
   - If Ghost refuses the schedule (for example a time that is too close), NEFORUM also keeps the schedule on your device.
   - When you edit, reschedule, delete or "publish now" a held post, NEFORUM deletes the scheduled copy with `DELETE /ghost/api/admin/posts/<id>/` (Ghost answers 204). If the copy is already gone (404), that counts as done.
-- **Visibility**: Public and Unlisted are sent as `public`, and Followers and Private as `members`. The option `ghostVisibility` can set `public`, `members`, `paid` or `tiers` directly.
-- **Other options**: `excerpt` (sent as `custom_excerpt`), `canonicalUrl` (sent as `canonical_url`, useful when the post first appeared elsewhere) and `slug`.
+- **Visibility**: Public and Unlisted are sent as `public`, and Followers and Private as `members`. **Who can read it** (Customize) sets it directly: **Everyone** (`public`), **Members** (`members`), **Paid members** (`paid`) or **Specific tiers (chosen in Ghost)** (`tiers`).
+- **Other options** (Customize > More options): **Excerpt** (sent as `custom_excerpt`), **Original address (canonical URL)** (sent as `canonical_url`, useful when the post first appeared elsewhere) and **Address (slug)** (sent as `slug`).
 - **Newsletters**: NEFORUM never asks Ghost to email a post. Posts are published on the site only.
 
 ## Limits
@@ -81,7 +81,7 @@ When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site tit
 - **Device clock.** The signed token is valid for at most 5 minutes, so a wrong clock causes "HTTP 401".
 - **No threads, no content warnings.** Blog posts are single posts.
 - **Unlisted** posts don't exist in Ghost. They are published as public, with a warning.
-- **Text is converted with simple rules, not full Markdown.** Use `html: true` for full control.
+- **Text is converted with simple rules, not full Markdown.** For full control, turn on both **The text is HTML** and **Whole post as one HTML card**. With **The text is HTML** alone, Ghost still converts your HTML into its editor cards and may change it.
 
 ## Sources
 

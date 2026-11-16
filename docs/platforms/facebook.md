@@ -29,7 +29,7 @@ This guide connects a **Facebook Page you manage** to NEFORUM through a free Met
 
 ### Get a token from the Graph API Explorer (recommended)
 
-This is the way to connect. It needs no redirect setup.
+This is the recommended way to connect. It needs no redirect setup.
 
 10. Open <https://developers.facebook.com/tools/explorer/>.
 11. Check that the **Meta App** dropdown (top right) shows **your** app, not another app and not "Graph API Explorer".
@@ -99,11 +99,11 @@ When you press **Connect** with an Explorer token, NEFORUM:
 
 * exchanges the token for a long-lived user token (`GET /oauth/access_token?grant_type=fb_exchange_token`, needs the App ID and App Secret; "A long-lived token generally lasts about 60 days");
 * reads your name (`GET /me`) and the permissions you granted (`GET /me/permissions`), and stops with a clear message if `pages_manage_posts`, `pages_read_engagement` or `pages_show_list` is missing;
-* lists your Pages (`GET /me/accounts`) and stores the Page token of the chosen Page. Page tokens obtained with a long-lived user token "do not have an expiration date". That is no end date, not a promise: Meta warns lifetimes can change, and a password change, a removed app, a Meta app left Inactive for 90 days or a permission unused for 90 days can end it.
+* lists your Pages (`GET /me/accounts`) and stores the Page token of the chosen Page. Page tokens obtained with a long-lived user token "do not have an expiration date". So the Page token has no set end date, but Meta does not promise it lasts: Meta warns that lifetimes can change, and a password change, a removed app, a Meta app left Inactive for 90 days or a permission unused for 90 days can end it.
 
 If you pick your Page in the *User or Page* dropdown, the Explorer gives a Page token, which NEFORUM cannot turn into a long-lived one. NEFORUM recognises it and asks for a User token instead.
 
-Everything stays on your device: the App Secret and the Page token are kept in NEFORUM's secret store. The 60-day user token only serves while connecting and is not kept (an account connected before NEFORUM 1.4 holds it until you reconnect, and nothing uses it). NEFORUM sends `appsecret_proof` with every call, so you can switch on *App settings > Advanced > Require App Secret*.
+Everything stays on your device: the App Secret and the Page token are kept in NEFORUM's secret store. The 60-day user token is used only while connecting and is not kept. An account connected before NEFORUM 1.4 still holds one until you reconnect, but nothing uses it. NEFORUM sends `appsecret_proof` with every call, so you can switch on *App settings > Advanced > Require App Secret*.
 
 ### Browser sign-in
 

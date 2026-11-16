@@ -1,6 +1,6 @@
 # Parler setup guide
 
-This guide connects Parler by **hand-off only**: NEFORUM copies your post and opens Parler's composer, and you paste it and click **Post**. With the NEFORUM browser extension paired, the composer is filled in for you. Nothing to set up, no API key, no sign-in.
+This guide connects Parler by **hand-off only**: NEFORUM copies your post and opens Parler's composer, and you paste it and click **Post**. With the NEFORUM browser extension paired, the composer is filled in for you. There is nothing else to set up: NEFORUM needs no API key and no sign-in.
 
 ## Steps
 

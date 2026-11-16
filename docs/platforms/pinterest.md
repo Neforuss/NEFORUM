@@ -4,7 +4,7 @@ This guide connects Pinterest, so NEFORUM creates **Pins on one of your boards**
 
 ## Steps
 
-These steps set up "Your own API keys". Read *Before you start* below first: Pinterest must approve your app, and until it grants Standard access NEFORUM can only make **test Pins** in Pinterest's API Sandbox, which only you can see. Do the NEFORUM part on Windows or macOS: Pinterest cannot send you back to a phone after you sign in.
+These steps set up "Your own API keys". Read *Before you start* below first: Pinterest must approve your app, and until it grants Standard access NEFORUM can only make **test Pins** in Pinterest's API Sandbox, which only you can see. Do the NEFORUM part on Windows, macOS or Linux: Pinterest cannot send you back to a phone after you sign in.
 
 1. Use a business account.
    - If your Pinterest account is personal, open Pinterest **Settings > Account management** and choose **Convert to a business account**. It is free and keeps your profile, Pins and followers. Pinterest no longer shows developer apps that belong to personal accounts.
@@ -144,7 +144,7 @@ What the automatic tier **cannot** do:
 - **Post GIF or WebP images.** The API accepts uploaded images only as JPEG or PNG.
 - **Post to secret boards.** NEFORUM only lists your public boards and group boards.
 - **Set alt text on carousels.** Alt text is sent only for single-image Pins.
-- **Connect from a phone.** Pinterest needs a web address to send you back to after you sign in. It does not document app links such as `neforum://callback`. Connect from NEFORUM on Windows or macOS. On phones, use the hand-off tier.
+- **Connect from a phone.** Pinterest needs a web address to send you back to after you sign in. It does not document app links such as `neforum://callback`. Connect from NEFORUM on Windows, macOS or Linux. On phones, use the hand-off tier.
 - **Make public Pins or video Pins with Trial access.** Trial apps work only in the API Sandbox.
 
 ### Known limitations

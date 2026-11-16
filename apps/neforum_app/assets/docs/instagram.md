@@ -20,7 +20,7 @@ There is nothing to set up for hand-off.
 
 1. Make your account professional: in the Instagram app, go to *Settings > Account type and tools > Switch to professional account*.
    - Business and Creator both work. You do **not** need a Facebook Page: "This API setup does not require a Facebook Page to be linked to the Instagram professional account."
-2. Pick a media host under *Settings > Media hosting*, even if you only post text. Without one NEFORUM cannot post to Instagram, not even text.
+2. Pick a media host under *Settings > Media hosting*, even if you only post text. Without one, NEFORUM cannot post anything to Instagram, including text-only posts.
    - **To start:** pick **Litterbox**. It needs no account and no setup. It is a free service run by a volunteer, with no guarantee: uploads can fail when its server has problems.
    - **For regular posting:** use a storage bucket you own (Backblaze B2, Cloudflare R2, Amazon S3) or a Nextcloud/WebDAV share. A bucket is the most reliable choice.
    - The [media hosting guide](../media-hosts.md) explains each host step by step (in NEFORUM also under *Settings > Media hosting > Guide*).
@@ -141,7 +141,7 @@ A photo outside 4:5 to 1.91:1 (a 3:4 phone photo, a tall screenshot, a panorama)
 
 Choose under **Settings > Posting > When a photo does not fit a network**. The composer says what will happen ("art.jpg will be given borders to 4:5 for Instagram"). The copy is a JPEG within 8 MB and keeps the photo's alt text. Videos are never changed; a HEIC photo cannot be read, so convert it to JPEG first.
 
-**GIFs become videos.** Instagram's API takes no GIF. When you save or post, NEFORUM turns an animated GIF into an MP4 video (H.264, 30 frames a second, a silent sound track) that keeps the GIF's own timing and plays it over until the video lasts at least 5 seconds (at most 60). It is fitted to the frame the way photos are: 4:5 in the feed, 9:16 in a story when **Fill the whole frame** is on for Instagram. A single GIF goes out as a Reel, a GIF in a carousel as a video item, and a GIF in a story as a video story. The composer says "party.gif plays as a video on Instagram". A GIF that does not move becomes a JPEG like any photo. On a device that cannot make videos (Linux, or a Windows N edition without the Media Feature Pack), an animated GIF goes as a still picture of its first frame, and the composer says so. With **Never change my photos**, a GIF stops the post. Hand-off hands the GIF itself to the Instagram app. The same applies to other networks' limits: Threads (1:10 to 10:1), Telegram (width + height up to 10000), LinkedIn (under 36 million pixels), X (photos up to 5 MB) and file types a network refuses.
+**GIFs become videos.** Instagram's API takes no GIF. When you save or post, NEFORUM turns an animated GIF into an MP4 video (H.264, 30 frames a second, a silent sound track) that keeps the GIF's own timing and plays it over until the video lasts at least 5 seconds (at most 60). It is fitted to the frame the way photos are: 4:5 in the feed, 9:16 in a story when **Fill the whole frame** is on for Instagram. A single GIF goes out as a Reel, a GIF in a carousel as a video item, and a GIF in a story as a video story. The composer says "party.gif plays as a video on Instagram". A GIF that does not move becomes a JPEG like any photo. On a device that cannot make videos (Linux, or a Windows N edition without the Media Feature Pack), an animated GIF goes as a still picture of its first frame, and the composer says so. With **Never change my photos**, a GIF stops the post. Hand-off hands the GIF itself to the Instagram app. NEFORUM also makes adjusted copies for other networks' limits: Threads (1:10 to 10:1), Telegram (width + height up to 10000), LinkedIn (under 36 million pixels), X (photos up to 5 MB) and file types a network refuses.
 
 Hand-off posts go through the Instagram app, which crops by itself, so only file types it cannot open are converted there.
 
@@ -159,10 +159,10 @@ NEFORUM checks these before posting. All numbers are from the IG User Media refe
 
 ### Known limitations
 
-- **No scheduling on Instagram's side.** NEFORUM keeps scheduled posts itself and publishes at the chosen time. Instagram containers expire after 24 hours, so nothing is sent early.
+- **No scheduling on Instagram's side.** NEFORUM keeps scheduled posts itself and publishes at the chosen time. Instagram's upload containers expire after 24 hours, so NEFORUM sends nothing to Instagram early.
 - **Video processing takes time.** NEFORUM checks the status for about five minutes ("once per minute, for no more than 5 minutes"). Long Reels can take longer. If they do, the post fails with a "still processing" message and you can retry.
 - Not supported yet: tagging people or products, locations, collaborators, music, cover images for Reels, trial Reels, and resumable video uploads (`rupload.facebook.com`, which Meta only offers to apps using Facebook Login for Business).
-- If you ever let *other* people's accounts use your Meta app, Meta requires App Review and Business Verification (Advanced Access). NEFORUM's model is that everyone uses their own app.
+- If you ever let *other* people's accounts use your Meta app, Meta requires App Review and Business Verification (Advanced Access). NEFORUM is built for everyone to use their own app.
 - Hand-off for stories with stickers, or Android/iOS "Add to Story" deep links, need a Facebook App ID and are not used. The normal share sheet still offers Story.
 
 ## Troubleshooting

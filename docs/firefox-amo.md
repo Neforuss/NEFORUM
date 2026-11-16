@@ -1,16 +1,16 @@
 # addons.mozilla.org listing (NEFORUM extension)
 
-Ready-to-paste text for a **listed** submission on addons.mozilla.org (AMO), where Firefox users find the extension and Firefox keeps it updated. (CI's unlisted signing for self-distribution is separate: [signing.md](signing.md).)
+Ready-to-paste text for a **listed** submission on addons.mozilla.org (AMO), where Firefox users find the extension and Firefox keeps it updated. CI's unlisted signing for self-distribution is a separate process, described in [signing.md](signing.md).
 
 Submit at <https://addons.mozilla.org/developers/addon/submit/distribution>, choose **On this site**, and upload `neforum-extension-firefox-<version>.zip` from the GitHub release (or `dist/` after `dart run tool/build_extension.dart` in `apps/neforum_app`). An account is free.
 
 ## Before uploading
 
 - Add-on id: `neforum-extension@neforus.com` (in `extensions/browser/manifest.firefox.json`). The first submission, listed or unlisted, ties it to the submitting account.
-- `strict_min_version` is 140.0 on desktop and 142.0 on Android (`gecko_android`): the first versions that read `data_collection_permissions`, which AMO requires. Firefox 140 is also the current ESR.
+- `strict_min_version` is 140.0 on desktop and 142.0 on Android (`gecko_android`). These are the first versions that read `data_collection_permissions`, which AMO requires. Firefox 140 is also the current ESR.
 - `data_collection_permissions` is `{"required": ["none"]}`: the extension collects and transmits no data. AMO's form shows this as "This add-on does not collect data".
 - CI runs `web-ext lint` (the same linter AMO runs on upload) on every build; it reports no errors and no warnings.
-- Every version number goes to AMO once (listed and unlisted share the numbering). The first submission is 1.1.3; the next change to the extension needs 1.1.4.
+- The current extension version is 1.1.6 (`version` in both manifests). Every version number goes to AMO once, and listed and unlisted share the numbering. If CI's unlisted signing already sent 1.1.6 to AMO, a listed upload of the same build needs a higher version in both manifests first, and so does every change to the extension.
 
 ## Describe add-on
 
@@ -22,7 +22,7 @@ Submit at <https://addons.mozilla.org/developers/addon/submit/distribution>, cho
 
 > Fills in posts you prepared in the NEFORUM desktop app on each network's own page: text, thread parts, poll answers, photos, videos and art site forms. You press Post, or turn on automatic posting in NEFORUM.
 
-**Description** (names no sites, like the Chrome Web Store one, which was rejected as "keyword spam" while it listed them; the guide's table holds the list):
+**Description**. Like the Chrome Web Store one, it names no sites: the Chrome Web Store rejected that description as "keyword spam" while it listed them. The guide's table holds the list instead.
 
 ```text
 The companion extension of NEFORUM, the free and open-source cross-poster (https://neforus.com/neforum/). It needs the NEFORUM desktop app on the same computer (Windows, macOS or Linux).

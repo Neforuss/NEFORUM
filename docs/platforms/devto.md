@@ -62,7 +62,7 @@ NEFORUM sends `POST /api/articles` with `{"article": {...}}`:
 | Tags | `tags` | At most **4**, each at most **30** characters. They're lower-cased, and anything except letters and digits is removed: `Web-Dev` becomes `webdev`. Extra tags and tags that are still longer than 30 characters are dropped (DEV would refuse the whole article). |
 | Images | `main_image` and inline images | See "Images need a media host" above. |
 
-By default, `published` is set to `true`. Set `draft: true` to save the article as a draft instead.
+By default NEFORUM sends `published: true`. Turn on **Save as a draft** (below), or set an article's **Publish as** to a draft, and it sends `published: false` instead.
 
 **DEV options** (the post's **Customize** sheet; all but the first are under **More options**):
 

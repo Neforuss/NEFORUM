@@ -8,28 +8,28 @@ Drop a sound file into the composer and NEFORUM sends it everywhere it can go: a
 2. The file appears in the tray with its name, length and size. A lossless file (WAV, FLAC, AIFF, Apple Lossless) has a yellow **Lossless** badge.
 3. Under the tray, choose the **Audio quality**:
    - **Standard (MP3)**, the default: one compressed file for every network. An MP3 goes as it is; anything else is converted once, at 256 kbit/s, when you save or publish.
-   - **Lossless (original file)**: networks that take your file's type get the original. Only offered for lossless files: an MP3 or AAC file turned into WAV would only be bigger, never better.
-4. Each network's preview says what it gets ("Telegram gets your original FLAC file, unchanged", "X takes sound only as a video…").
+   - **Lossless (original file)**: networks that take your file's type get the original. This choice appears only for lossless files, because an MP3 or AAC file turned into WAV would be bigger and sound no better.
+4. Check each network's preview. It says what that network gets, for example "Telegram gets your original FLAC file, unchanged" or "X takes sound only as a video…".
 5. Publish or schedule as usual.
 
 ## How it works
 
 ### MP3 or M4A?
 
-The Standard copy is an MP3 where the device has an MP3 encoder (Windows). Phones and Macs have no MP3 encoder in the system, so they make an **M4A (AAC, 256 kbit/s)** instead; every network that takes sound plays it. A device that cannot convert sound at all (Linux, the web preview) sends the original file wherever it is taken, and says so.
+The Standard copy is an MP3 where the device has an MP3 encoder, which is Windows. Phones and Macs have no MP3 encoder built into the system, so they make an **M4A (AAC, 256 kbit/s)** instead, and every network that takes sound plays it. A device that cannot convert sound at all (Linux, the web preview) sends the original file to every network that takes it, and NEFORUM says so.
 
 ### Video-only networks
 
 X, Bluesky, Instagram, Threads, Facebook, TikTok, YouTube, LinkedIn, Pinterest, Rumble, BitChute and Parler take no sound files. NEFORUM makes a video for each of them when you save: one still picture for the whole track, with the sound at 256 kbit/s AAC.
 
-- **Picture:** the post's first photo, else the track's cover art, shown whole: fitted to the frame the way *Settings > Posting > When a photo does not fit a network* says (on a blur of its own colours, or filled with its colours). A square cover in Instagram's 9:16 frame keeps its sides, also in the profile grid, which shows the middle of a Reel. Only **Crop it to fit** cuts the picture to fill the frame. Without a photo or cover, a card with the track's title (the post title, else the file name), the post's first words, and the file type and length, on the NEFORUM purple.
-- **Frame:** 1080 x 1920 on TikTok and Instagram (Reels), 1920 x 1080 on YouTube (an upright or square video would become a Short), 1080 x 1080 elsewhere.
-- The network's video limits apply: X, for example, takes videos up to 20 minutes.
+- **Picture:** the post's first photo, or if there is none, the track's cover art. The picture is shown whole, fitted to the frame the way *Settings > Posting > When a photo does not fit a network* says: on a blur of its own colours, or filled with its colours. A square cover in Instagram's 9:16 frame keeps its sides, also in the profile grid, which shows the middle of a Reel. Only **Crop it to fit** cuts the picture to fill the frame. With no photo and no cover, the picture is a card on the NEFORUM purple showing the track's title (the post title, or else the file name), the post's first words, and the file type and length.
+- **Frame:** 1080 x 1920 on TikTok and Instagram (Reels), 1920 x 1080 on YouTube (an upright or square video would become a Short), and 1080 x 1080 everywhere else.
+- The network's video limits apply. X, for example, takes videos up to 20 minutes by default, longer with X Premium.
 - On a device that cannot make videos (Linux, the web preview) these networks show "takes sound only as a video; this device can't make one".
 
 ### Link-only networks
 
-Nostr, Lemmy, Reddit, DEV, Hashnode, Micropub, WriteFreely and Tumblr get a **link** to the file at the end of the post. The file goes on your media host first ([Settings > Media hosting](media-hosts.md)); Nostr uses its own media server (NIP-96) when one is set. The link stays in the post, so a host that only makes temporary links (Litterbox) is refused: use a bucket you own.
+Nostr, Lemmy, Reddit, DEV, Hashnode, Micropub, WriteFreely and Tumblr get a **link** to the file at the end of the post. NEFORUM first uploads the file to your media host ([Settings > Media hosting](media-hosts.md)). Nostr uses its own media server (NIP-96) when one is set. Because the link stays in the post for good, NEFORUM refuses a host that only makes temporary links, such as Litterbox: use a bucket you own.
 
 ### Per network
 
@@ -49,4 +49,4 @@ Nostr, Lemmy, Reddit, DEV, Hashnode, Micropub, WriteFreely and Tumblr get a **li
 | Lemmy, Reddit, DEV, Hashnode, Micropub, WriteFreely, Tumblr | link on your media host | any | the host's | yes, on the host |
 | Snapchat, WhatsApp, Substack Notes, Google Business Profile, art sites | left out (the post goes without it) | none | | |
 
-With **Lossless**, a network that does not take the original's type gets the Standard copy instead (Mastodon and AIFF, Ghost and FLAC). Telegram and Mastodon take one sound file per post, alone: the post's photos are left out there.
+With **Lossless**, a network that does not take the original's file type gets the Standard copy instead, for example AIFF on Mastodon or FLAC on Ghost. Telegram and Mastodon take one sound file per post and nothing else with it, so the post's photos are left out there.

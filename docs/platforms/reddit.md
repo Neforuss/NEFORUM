@@ -13,16 +13,16 @@ These steps set up "Your own API keys" (once, about 5 minutes).
    - **name:** `NEFORUM` (or anything you like)
    - **type:** choose **installed app**. Don't choose *script*: a script app can only sign in with your password. Don't choose *web app*: it needs a secret that NEFORUM can't keep.
    - **description / about url:** optional. For example `https://github.com/Neforuss/NEFORUM`
-   - **redirect uri:** enter exactly `http://127.0.0.1:52771/callback` for NEFORUM on **Windows and macOS**, or `neforum://callback` for NEFORUM on **Android and iOS**.
+   - **redirect uri:** enter exactly `http://127.0.0.1:52771/callback` for NEFORUM on **Windows and Linux**, or `neforum://callback` for NEFORUM on **Android, iOS and macOS**.
 
-     A Reddit app has **only one** redirect uri, and Reddit compares it character for character. If you use NEFORUM on a computer *and* a phone, create two installed apps (one per redirect uri), or connect from a computer.
+     A Reddit app has **only one** redirect uri, and Reddit compares it character for character. If you use NEFORUM on devices from both groups (Windows or Linux, and Android, iOS or macOS), create two installed apps (one per redirect uri), or connect from devices of one group only.
 4. Press **create app**.
 5. Copy the **client ID**: the short code right under the words *installed app* at the top of the app box. An installed app has no secret.
 6. In NEFORUM: **Add account → Reddit → Your own API keys**.
 7. Paste the client ID.
 8. Optionally enter a default subreddit.
    - Leave out `r/`. Use `u_yourname` to post on your own profile.
-9. Press **Connect**. Your browser opens Reddit's consent page (a compact version on phones).
+9. Press **Connect**. Your browser opens Reddit's consent page (a compact version on Android, iOS and macOS).
 10. Press **Allow**. NEFORUM shows `u/yourname`.
 
 ## Steps: hand-off

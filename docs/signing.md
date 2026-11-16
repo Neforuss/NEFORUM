@@ -33,7 +33,7 @@ Set them in GitHub: **Settings > Secrets and variables > Actions**. Secrets are 
 
 ## Build provenance attestations (active)
 
-The release job attests every file it publishes (`actions/attest-build-provenance`, with `id-token: write` and `attestations: write`): GitHub signs a statement, kept in the repository's attestations and in the public Sigstore transparency log, that the file was built by this workflow from this commit. It costs nothing for a public repository and needs no setup.
+The release job attests every file it publishes (`actions/attest-build-provenance`, with `id-token: write` and `attestations: write`). GitHub signs a statement that the file was built by this workflow from this commit, and keeps it in the repository's attestations and in the public Sigstore transparency log. It costs nothing for a public repository and needs no setup.
 
 Anyone can check a download:
 
@@ -57,7 +57,7 @@ The `windows-signing` job runs for `v*` tags once the variable `SIGNPATH_ORGANIZ
 4. Submits the installer (artifact configuration `installer`) and checks its signature.
 5. Uploads `neforum-windows-signed`; the release job puts these two files in place of the unsigned ones.
 
-Not signed: the DLLs next to `NEFORUM.exe` (the Flutter engine and plugins are other projects' code, which the Foundation does not sign for us), and the uninstaller `unins000.exe` (Inno Setup signs it only while compiling, through a local `SignTool`, which a remote signing service cannot be).
+Not signed: the DLLs next to `NEFORUM.exe` (the Flutter engine and plugins are other projects' code, which the Foundation does not sign for us), and the uninstaller `unins000.exe` (Inno Setup signs it only while compiling, through a local `SignTool`, and a remote signing service cannot act as one).
 
 ### Steps for the owner
 
@@ -168,7 +168,7 @@ Firefox installs only extensions signed by Mozilla. On the **unlisted** channel 
 
 - runs the extension's tests and `web-ext lint` (Mozilla's add-on linter, the same checks AMO runs on upload) on the Firefox build;
 - with `AMO_JWT_ISSUER` and `AMO_JWT_SECRET`, signs it with `web-ext sign --channel unlisted` and ships `neforum-extension-firefox-<version>.xpi` instead of the unsigned zip;
-- signs each extension version once: AMO refuses a version number twice, so a version an earlier release already shipped signed is taken from that release, after checking that its files are exactly this build's. A changed extension therefore needs a new version number in both manifests.
+- signs each extension version once. AMO rejects a version number it has already signed, so when an earlier release already shipped this version signed, the job takes the signed file from that release, after checking that its files are exactly this build's. A changed extension therefore needs a new version number in both manifests.
 
 Without the secrets the unsigned `neforum-extension-firefox-<version>.zip` ships, as before.
 
@@ -196,7 +196,7 @@ The AppImage updates itself, in two ways.
 **Update now in NEFORUM.** When the update check finds a newer version and NEFORUM runs as an AppImage (the AppImage runtime sets `$APPIMAGE`), the Download button in Settings > Updates and in the update banner reads **Update now**. After the user confirms, NEFORUM:
 
 1. Takes the AppImage for this processor from `latest.json` (`linux-x64-appimage` or `linux-arm64-appimage`). It installs only a file of this project's GitHub releases (`https://github.com/Neforuss/NEFORUM/releases/download/<tag>/<file>`); any other address gets the download page instead.
-2. Downloads it into a hidden file next to the AppImage (`.NEFORUM-x86_64.AppImage.<version>.part`), so the last step stays on one file system. The request is the update check's: a fixed User-Agent, no cookies, nothing about the device. Redirects are followed only over https.
+2. Downloads it into a hidden file next to the AppImage (`.NEFORUM-x86_64.AppImage.<version>.part`), so the last step stays on one file system. The request is the same as the update check's: a fixed User-Agent, no cookies, and nothing about the device. Redirects are followed only over https.
 3. Checks its SHA-256 against `latest.json`, which `tool/make_latest_json.dart` builds from the release's `SHA256SUMS`. The file comes from GitHub and the checksum from neforus.com, so a changed file has to get past both sites.
 4. Gives it the old AppImage's permissions plus execute, and renames it over the old AppImage. The rename is atomic: the AppImage is either the old file or the new one, never half of each. The running copy keeps its mount, so nothing breaks while it closes.
 5. Starts a small `/bin/sh` helper that waits until this NEFORUM has exited (at most 30 seconds), then runs the new AppImage, and quits. NEFORUM is one instance per user session, so the new copy has to start after the old one is gone.

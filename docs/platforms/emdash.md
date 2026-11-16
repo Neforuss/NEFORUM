@@ -68,7 +68,7 @@ To revoke access, open **Settings > API Tokens** and revoke the `NEFORUM` token.
 
 ### A retry never posts twice
 
-The post is first saved as a draft, then published. Before it is sent, NEFORUM fixes its slug and marks every block of its text with a key made from the post. If a try fails halfway (for example the publish call gets no answer) and the post is sent again, EmDash answers that the slug is taken. NEFORUM then reads the post at that slug, sees its own mark and finishes that post instead of making a second one. The result says that it found the post from an earlier try.
+The post is first saved as a draft, then published. Before it is sent, NEFORUM sets its slug in advance and marks every block of its text with a key made from the post. If a try fails halfway (for example the publish call gets no answer) and the post is sent again, EmDash answers that the slug is taken. NEFORUM then reads the post at that slug, sees its own mark and finishes that post instead of making a second one. The result says that it found the post from an earlier try.
 
 If another post already has the slug, NEFORUM uses the slug with six characters of the key added (`my-title-3fa2c1`), and a retry looks there too. Files are uploaded with EmDash's duplicate check, so the same photo sent again is stored once.
 
