@@ -46,6 +46,7 @@ class HandoffPlan {
     this.snippets = const [],
     this.composerUrl,
     this.composerInstructions,
+    this.clipboardHtml,
   });
 
   final String platformId;
@@ -60,6 +61,12 @@ class HandoffPlan {
   /// Text to put on the clipboard before launching (captions for Instagram,
   /// TikTok, ... which ignore shared text).
   final String? clipboardText;
+
+  /// 1.4.4: the same text as HTML, for an article (headings, lists, links,
+  /// bold...): put on the clipboard as rich text next to [clipboardText],
+  /// so pasting into a blog editor keeps the formatting. Null: plain text
+  /// only.
+  final String? clipboardHtml;
 
   /// Text to pass to the share sheet (some apps accept it, e.g. X, Threads).
   final String? shareText;
@@ -111,5 +118,6 @@ class HandoffPlan {
         snippets: snippets,
         composerUrl: composerUrl,
         composerInstructions: composerInstructions,
+        clipboardHtml: clipboardHtml,
       );
 }

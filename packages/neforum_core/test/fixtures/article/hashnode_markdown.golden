@@ -1,0 +1,49 @@
+## Intro & \<setup\>
+
+Plain **bold**, *italic*, `code()` and [a link](https://example.com/a?b=1&c=2) \*not emphasis\* 2 \< 3  
+next line
+
+![Ref alt](https://cdn.example.test/i1)
+
+*A caption · Jane Doe*
+
+![G1](https://cdn.example.test/g1)
+
+![G2](https://cdn.example.test/g2)
+
+![](https://cdn.example.test/g3)
+
+*Three photos*
+
+### Details
+
+[The track](https://cdn.example.test/a1)
+
+%[https://www.youtube.com/watch?v=dQw4w9WgXcQ]
+
+> To be or not to be.
+>
+> Hamlet
+
+- first
+- **second**
+
+3. three
+4. four
+
+````dart
+void main() {
+  print("```");
+}
+````
+
+***
+
+The end. See <https://example.org/x_y>.
+
+---- report
+dropped excerpt excerpt: Hashnode has no excerpt field; the excerpt is left out
+degraded caption_as_text img: Hashnode has no captions; the caption goes in a line of text under the photo
+degraded gallery_as_images gal: Hashnode has no galleries; the photos are shown one after the other
+dropped media_unavailable vid: Hashnode does not get the file of this video, so the video is left out
+degraded audio_as_link aud: Hashnode has no sound player; the sound file is a link

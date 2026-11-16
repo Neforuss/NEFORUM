@@ -21,6 +21,9 @@ class XEndpoints {
   static final Uri mediaInitialize = Uri.parse('https://api.x.com/2/media/upload/initialize');
   static final Uri mediaMetadata = Uri.parse('https://api.x.com/2/media/metadata');
 
+  static final Uri articleDraft = Uri.parse('https://api.x.com/2/articles/draft');
+  static Uri articlePublish(String id) => Uri.parse('https://api.x.com/2/articles/${Uri.encodeComponent(id)}/publish');
+
   static Uri mediaAppend(String id) => Uri.parse('https://api.x.com/2/media/upload/$id/append');
   static Uri mediaFinalize(String id) => Uri.parse('https://api.x.com/2/media/upload/$id/finalize');
   static Uri mediaStatus(String id) =>
@@ -151,6 +154,29 @@ class XApi {
     final id = _str(_map(res.jsonMap['data'])['id']);
     if (id == null) {
       throw AdapterException(PublishError.platform('X accepted the post but returned no id', raw: _snippet(res.body)));
+    }
+    return id;
+  }
+
+  /// 1.4.4: `POST /2/articles/draft` (docs.x.com, "Create draft Article")
+  /// with [body] (`title`, `content_state`, `cover_media`); returns the
+  /// draft's id.
+  Future<String> createArticleDraft(Map<String, Object?> body) async {
+    final res = await _call('POST', XEndpoints.articleDraft, json: body);
+    final id = _str(_map(res.jsonMap['data'])['id']);
+    if (id == null) {
+      throw AdapterException(PublishError.platform('X saved the Article but returned no id', raw: _snippet(res.body)));
+    }
+    return id;
+  }
+
+  /// 1.4.4: `POST /2/articles/{id}/publish`; returns the id of the post the
+  /// Article is published as (`data.post_id`).
+  Future<String> publishArticle(String articleId) async {
+    final res = await _call('POST', XEndpoints.articlePublish(articleId), json: const {});
+    final id = _str(_map(res.jsonMap['data'])['post_id']);
+    if (id == null) {
+      throw AdapterException(PublishError.platform('X published the Article but returned no post id', raw: _snippet(res.body)));
     }
     return id;
   }

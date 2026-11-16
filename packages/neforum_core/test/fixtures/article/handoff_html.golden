@@ -1,0 +1,64 @@
+<p>[Photo: c1.jpg]</p><p><em>Cover caption</em></p>
+<h2>Intro &amp; &lt;setup&gt;</h2>
+<p>Plain <strong>bold</strong>, <em>italic</em>, <code>code()</code> and <a href="https://example.com/a?b=1&amp;c=2">a link</a> *not emphasis* 2 &lt; 3<br>next line</p>
+<p>[Photo: i1.jpg]</p><p><em>A caption · Jane Doe</em></p>
+<p>[Photo: g1.jpg]</p><p>[Photo: g2.jpg]</p><p>[Photo: g3.jpg]</p>
+<h3>Details</h3>
+<p>[Video: v1.mp4]</p><p><em>The video</em></p>
+<p>[Sound: a1.mp3]</p><p><em>The track</em></p>
+<p><a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">https://www.youtube.com/watch?v=dQw4w9WgXcQ</a></p>
+<blockquote><p>To be or not to be.<br><cite>Hamlet</cite></p></blockquote>
+<ul><li>first</li><li><strong>second</strong></li></ul>
+<ol start="3"><li>three</li><li>four</li></ol>
+<pre><code class="language-dart">void main() {
+  print(&quot;```&quot;);
+}</code></pre>
+<hr>
+<p>The end. See <a href="https://example.org/x_y">https://example.org/x_y</a>.</p>
+
+---- markdown
+\[Photo: c1.jpg\]
+
+## Intro & \<setup\>
+
+Plain **bold**, *italic*, `code()` and [a link](https://example.com/a?b=1&c=2) \*not emphasis\* 2 \< 3  
+next line
+
+\[Photo: i1.jpg\]
+
+\[Photo: g1.jpg\]  
+\[Photo: g2.jpg\]  
+\[Photo: g3.jpg\]
+
+### Details
+
+\[Video: v1.mp4\]
+
+\[Sound: a1.mp3\]
+
+<https://www.youtube.com/watch?v=dQw4w9WgXcQ>
+
+> To be or not to be.
+>
+> Hamlet
+
+- first
+- **second**
+
+3. three
+4. four
+
+````dart
+void main() {
+  print("```");
+}
+````
+
+***
+
+The end. See <https://example.org/x_y>.
+
+---- report
+degraded cover_in_body cover: Substack has no cover image; the cover goes at the top of the post
+degraded media_by_hand -: Files cannot be handed over with the text; each shows as [Photo: ...] where you add it in Substack
+degraded embed_as_link emb: Substack gets the embed as a link

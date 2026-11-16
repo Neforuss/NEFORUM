@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'article.dart' show ArticleFormat;
 import 'audio.dart' show AudioMimeTypes;
 import 'paragraph_media.dart' show ParagraphMediaStyle;
 import 'post_option.dart';
@@ -337,7 +338,20 @@ class PlatformDescriptor {
     this.polls,
     this.categories = const {},
     this.options = const [],
+    this.articleFormat,
+    this.articleOptionKey,
   });
+
+  /// 1.4.4: the format the platform takes a post's article in
+  /// ([Post.article]); null: it takes the post's text and media only.
+  final ArticleFormat? articleFormat;
+
+  /// 1.4.4: set when the article is something a target opts into (an X
+  /// Article): the post option ([options]) that, `true`, sends it; without
+  /// it the target gets the short version. Only accounts that post by
+  /// themselves can opt in. Null: every target of the platform gets the
+  /// article ([articleFormat]).
+  final String? articleOptionKey;
 
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
   final String id;

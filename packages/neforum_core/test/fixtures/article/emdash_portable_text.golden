@@ -1,0 +1,349 @@
+[
+  {
+    "_type": "block",
+    "_key": "nfk0",
+    "style": "h2",
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk0s0",
+        "text": "Intro & <setup>",
+        "marks": []
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk1",
+    "style": "normal",
+    "markDefs": [
+      {
+        "_type": "link",
+        "_key": "nfk1l0",
+        "href": "https://example.com/a?b=1&c=2"
+      }
+    ],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk1s0",
+        "text": "Plain ",
+        "marks": []
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s1",
+        "text": "bold",
+        "marks": [
+          "strong"
+        ]
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s2",
+        "text": ", ",
+        "marks": []
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s3",
+        "text": "italic",
+        "marks": [
+          "em"
+        ]
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s4",
+        "text": ", ",
+        "marks": []
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s5",
+        "text": "code()",
+        "marks": [
+          "code"
+        ]
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s6",
+        "text": " and ",
+        "marks": []
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s7",
+        "text": "a link",
+        "marks": [
+          "nfk1l0"
+        ]
+      },
+      {
+        "_type": "span",
+        "_key": "nfk1s8",
+        "text": " *not emphasis* 2 < 3\nnext line",
+        "marks": []
+      }
+    ]
+  },
+  {
+    "_type": "image",
+    "_key": "nfk2",
+    "asset": {
+      "_ref": "em-i1",
+      "url": "https://cdn.example.test/i1"
+    },
+    "alt": "Ref alt",
+    "caption": "A caption · Jane Doe",
+    "width": 1200,
+    "height": 800
+  },
+  {
+    "_type": "gallery",
+    "_key": "nfk3",
+    "images": [
+      {
+        "_type": "image",
+        "_key": "nfk3g0",
+        "asset": {
+          "_ref": "em-g1",
+          "url": "https://cdn.example.test/g1"
+        },
+        "alt": "G1",
+        "width": 1200,
+        "height": 800
+      },
+      {
+        "_type": "image",
+        "_key": "nfk3g1",
+        "asset": {
+          "_ref": "em-g2",
+          "url": "https://cdn.example.test/g2"
+        },
+        "alt": "G2",
+        "width": 1200,
+        "height": 800
+      },
+      {
+        "_type": "image",
+        "_key": "nfk3g2",
+        "asset": {
+          "_ref": "em-g3",
+          "url": "https://cdn.example.test/g3"
+        },
+        "width": 1200,
+        "height": 800
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk4",
+    "style": "normal",
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk4s0",
+        "text": "Three photos",
+        "marks": [
+          "em"
+        ]
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk5",
+    "style": "h3",
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk5s0",
+        "text": "Details",
+        "marks": []
+      }
+    ]
+  },
+  {
+    "_type": "video",
+    "_key": "nfk6",
+    "asset": {
+      "_ref": "em-v1",
+      "url": "https://cdn.example.test/v1"
+    },
+    "caption": "The video",
+    "width": 1080,
+    "height": 1920
+  },
+  {
+    "_type": "block",
+    "_key": "nfk7",
+    "style": "normal",
+    "markDefs": [
+      {
+        "_type": "link",
+        "_key": "nfk7l0",
+        "href": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+      }
+    ],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk7s0",
+        "text": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "marks": [
+          "nfk7l0"
+        ]
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk8",
+    "style": "blockquote",
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk8s0",
+        "text": "To be or not to be.",
+        "marks": []
+      },
+      {
+        "_type": "span",
+        "_key": "nfk8s1",
+        "text": "\nHamlet",
+        "marks": [
+          "em"
+        ]
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk9",
+    "style": "normal",
+    "listItem": "bullet",
+    "level": 1,
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk9s0",
+        "text": "first",
+        "marks": []
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk10",
+    "style": "normal",
+    "listItem": "bullet",
+    "level": 1,
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk10s0",
+        "text": "second",
+        "marks": [
+          "strong"
+        ]
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk11",
+    "style": "normal",
+    "listItem": "number",
+    "level": 1,
+    "listId": "nfkl0",
+    "listStart": 3,
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk11s0",
+        "text": "three",
+        "marks": []
+      }
+    ]
+  },
+  {
+    "_type": "block",
+    "_key": "nfk12",
+    "style": "normal",
+    "listItem": "number",
+    "level": 1,
+    "listId": "nfkl0",
+    "listStart": 3,
+    "markDefs": [],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk12s0",
+        "text": "four",
+        "marks": []
+      }
+    ]
+  },
+  {
+    "_type": "code",
+    "_key": "nfk13",
+    "code": "void main() {\n  print(\"```\");\n}",
+    "language": "dart"
+  },
+  {
+    "_type": "break",
+    "_key": "nfk14",
+    "style": "lineBreak"
+  },
+  {
+    "_type": "block",
+    "_key": "nfk15",
+    "style": "normal",
+    "markDefs": [
+      {
+        "_type": "link",
+        "_key": "nfk15l0",
+        "href": "https://example.org/x_y"
+      }
+    ],
+    "children": [
+      {
+        "_type": "span",
+        "_key": "nfk15s0",
+        "text": "The end. See ",
+        "marks": []
+      },
+      {
+        "_type": "span",
+        "_key": "nfk15s1",
+        "text": "https://example.org/x_y",
+        "marks": [
+          "nfk15l0"
+        ]
+      },
+      {
+        "_type": "span",
+        "_key": "nfk15s2",
+        "text": ".",
+        "marks": []
+      }
+    ]
+  }
+]
+
+---- report
+dropped subtitle subtitle: EmDash has no subtitle field; the subtitle is left out
+dropped canonical_url canonicalUrl: EmDash has no canonical URL field; it is left out
+degraded gallery_caption_as_text gal: EmDash galleries have no caption of their own; it goes in a line under the gallery
+dropped no_audio_block aud: EmDash has no sound block; the sound file is left out
+degraded embed_as_link emb: EmDash has no embed block for any address; the embed is a link

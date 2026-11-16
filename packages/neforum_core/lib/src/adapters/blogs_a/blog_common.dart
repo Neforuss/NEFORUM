@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../../article/article_renderer.dart';
 import '../../http/neforum_http.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
@@ -186,6 +187,14 @@ bool wantsRawHtml(PostVariant v) => v.extra['html'] == true || v.extra['format']
 
 /// The post body as HTML: raw when requested, otherwise converted.
 String bodyHtml(PostVariant v) => wantsRawHtml(v) ? v.text.trim() : plainTextToHtml(v.text);
+
+/// 1.4.4: the variant's article as HTML for a hand-off's rich clipboard
+/// ([HandoffPlan.clipboardHtml]), files marked where the user adds them;
+/// null without an article.
+String? articleHandoffHtml(PostVariant v, String network) {
+  final doc = v.article;
+  return doc == null ? null : ArticleRenderer.handoff(doc, network: network, media: v.media).html;
+}
 
 /// The full text of a variant (threads joined), for clipboards.
 String fullText(PostVariant v) => v.isThread ? v.threadParts.join('\n\n') : v.text;

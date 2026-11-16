@@ -1,0 +1,24 @@
+<h2>Intro &amp; &lt;setup&gt;</h2>
+<p>Plain <strong>bold</strong>, <em>italic</em>, <code>code()</code> and <a href="https://example.com/a?b=1&amp;c=2">a link</a> *not emphasis* 2 &lt; 3<br>next line</p>
+<figure class="kg-card kg-image-card kg-card-hascaption"><img src="https://cdn.example.test/i1" class="kg-image" alt="Ref alt" loading="lazy" width="1200" height="800"><figcaption>A caption · Jane Doe</figcaption></figure>
+<figure class="kg-card kg-gallery-card kg-width-wide"><div class="kg-gallery-container"><div class="kg-gallery-row"><div class="kg-gallery-image"><img src="https://cdn.example.test/g1" width="1200" height="800" loading="lazy" alt="G1"></div><div class="kg-gallery-image"><img src="https://cdn.example.test/g2" width="1200" height="800" loading="lazy" alt="G2"></div><div class="kg-gallery-image"><img src="https://cdn.example.test/g3" width="1200" height="800" loading="lazy" alt=""></div></div></div><figcaption>Three photos</figcaption></figure>
+<h3>Details</h3>
+<!--kg-card-begin: html-->
+<figure class="kg-card kg-video-card"><video controls src="https://cdn.example.test/v1"></video><figcaption>The video</figcaption></figure>
+<!--kg-card-end: html-->
+<!--kg-card-begin: html-->
+<figure class="kg-card kg-audio-card"><audio controls preload="metadata" src="https://cdn.example.test/a1"></audio><figcaption>The track</figcaption></figure>
+<!--kg-card-end: html-->
+<p><a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">https://www.youtube.com/watch?v=dQw4w9WgXcQ</a></p>
+<blockquote><p>To be or not to be.<br><cite>Hamlet</cite></p></blockquote>
+<ul><li>first</li><li><strong>second</strong></li></ul>
+<ol start="3"><li>three</li><li>four</li></ol>
+<pre><code class="language-dart">void main() {
+  print(&quot;```&quot;);
+}</code></pre>
+<hr>
+<p>The end. See <a href="https://example.org/x_y">https://example.org/x_y</a>.</p>
+
+---- report
+dropped subtitle subtitle: Ghost has no subtitle field; the subtitle is left out
+degraded embed_as_link emb: Ghost makes embeds only in its own editor; the embed is sent as a link

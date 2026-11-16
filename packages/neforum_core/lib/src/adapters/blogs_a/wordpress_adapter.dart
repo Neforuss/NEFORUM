@@ -1,8 +1,10 @@
+import '../../article/article_renderer.dart';
 import '../../audio/audio_text_template.dart';
 import '../../auth/auth_broker.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
@@ -97,6 +99,7 @@ class WordPressAdapter extends PlatformAdapter {
     setupGuide: 'docs/platforms/wordpress.md',
     serverSideScheduling: true,
     supportsLinkField: false,
+    articleFormat: ArticleFormat.gutenberg,
   );
 
   @override
@@ -386,6 +389,8 @@ class WordPressAdapter extends PlatformAdapter {
       status = explicit;
     } else if (v.visibility == Visibility.private) {
       status = 'private';
+    } else if (v.article?.isDraft ?? false) {
+      status = 'draft';
     } else {
       final def = account.configString('defaultStatus', 'publish');
       status = wordPressStatuses.contains(def) ? def : 'publish';
@@ -438,24 +443,36 @@ class WordPressAdapter extends PlatformAdapter {
     for (var i = 0; i < variant.media.length; i++) {
       uploads.add(await _upload(api, variant.media[i], i, variant.media.length, ctx));
     }
-    final featuredIndex = variant.extra['featuredImage'] == false ? -1 : uploads.indexWhere((u) => u.$1.isImage);
-    final featured = featuredIndex < 0 ? null : uploads[featuredIndex];
-    final embedded = [
-      for (var i = 0; i < uploads.length; i++)
-        if (i != featuredIndex) uploads[i],
-    ];
+    final doc = variant.article;
+    final String html;
+    final int? featuredId;
+    if (doc != null) {
+      // 1.4.4: the article as block editor markup; its cover is the
+      // featured image.
+      final assets = ArticleAssets([for (final u in uploads) ArticleAsset(u.$1, url: u.$3, remoteId: u.$2)]);
+      html = renderGutenberg(doc, assets, network: descriptor.name).output;
+      final cover = doc.cover == null ? null : assets.find(doc.cover!.mediaId);
+      featuredId = cover?.media.isImage == true ? cover!.remoteId as int? : null;
+    } else {
+      final featuredIndex = variant.extra['featuredImage'] == false ? -1 : uploads.indexWhere((u) => u.$1.isImage);
+      featuredId = featuredIndex < 0 ? null : uploads[featuredIndex].$2;
+      html = [
+        bodyHtml(variant),
+        for (var i = 0; i < uploads.length; i++)
+          if (i != featuredIndex)
+            uploads[i].$1.isAudio
+                ? wordPressAudioBlock(uploads[i].$2, uploads[i].$3, caption: wordPressAudioDetails(uploads[i].$1)['caption'] as String?)
+                : mediaFigureHtml(uploads[i].$1, uploads[i].$3),
+      ].where((s) => s.isNotEmpty).join('\n\n');
+    }
 
     final tagIds = await _resolveTerms(api, 'tags', List<Object>.from(variant.tags), ctx);
     final categoryIds = await _resolveTerms(api, 'categories', _categoryInputs(variant, account), ctx);
 
-    final html = [
-      bodyHtml(variant),
-      for (final u in embedded)
-        u.$1.isAudio ? wordPressAudioBlock(u.$2, u.$3, caption: wordPressAudioDetails(u.$1)['caption'] as String?) : mediaFigureHtml(u.$1, u.$3),
-    ].where((s) => s.isNotEmpty).join('\n\n');
     final status = _status(variant, account);
-    final excerpt = blogStr(variant.extra['excerpt']);
-    final slug = blogStr(variant.extra['slug']);
+    // The post's own option first, then the article's field.
+    final excerpt = blogStr(variant.extra['excerpt']) ?? articleText(doc?.excerpt);
+    final slug = blogStr(variant.extra['slug']) ?? articleText(doc?.slug);
     final at = variant.scheduledAt;
     final body = <String, Object?>{
       'title': title,
@@ -465,7 +482,7 @@ class WordPressAdapter extends PlatformAdapter {
       'slug': ?slug,
       if (tagIds.isNotEmpty) 'tags': tagIds,
       if (categoryIds.isNotEmpty) 'categories': categoryIds,
-      if (featured != null) 'featured_media': featured.$2,
+      'featured_media': ?featuredId,
       if (at != null) 'date_gmt': isoSecondsUtc(at),
     };
     final r = await guardWordPress(
@@ -663,6 +680,7 @@ class WordPressAdapter extends PlatformAdapter {
       platformId: id,
       webIntent: intent,
       clipboardText: title.isEmpty ? text : '$title\n\n$text',
+      clipboardHtml: articleHandoffHtml(variant, descriptor.name),
       shareText: title.isEmpty ? text : '$title\n\n$text',
       shareFiles: variant.media,
       androidPackage: 'org.wordpress.android',

@@ -1,8 +1,11 @@
+import '../../article/article_renderer.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../media_hosts/media_host.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
+import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/publish_result.dart';
@@ -101,6 +104,7 @@ class DevtoAdapter extends PlatformAdapter {
     setupGuide: 'docs/platforms/devto.md',
     serverSideScheduling: false,
     supportsLinkField: false,
+    articleFormat: ArticleFormat.devtoMarkdown,
   );
 
   @override
@@ -288,8 +292,23 @@ class DevtoAdapter extends PlatformAdapter {
 
     var markdown = v.text;
     String? mainImage = blogStr(v.extra['mainImage']);
-    if (v.hasMedia) {
-      final urls = await _hostImages(v, ctx);
+    final doc = v.article;
+    if (doc != null) {
+      // 1.4.4: the article as DEV Markdown, photos where they are in it; its
+      // cover is the main image unless the post set a link of its own.
+      final pictures = [for (final m in v.media) if (!m.isAudio) m];
+      final urls = pictures.isEmpty ? const <String>[] : await _hostImages(pictures, ctx);
+      final assets = ArticleAssets([
+        for (var i = 0; i < pictures.length; i++) ArticleAsset(pictures[i], url: urls[i]),
+        ...await hostArticleAudio(v, ctx, platform: 'DEV'),
+      ]);
+      markdown = renderMarkdown(doc, assets,
+              dialect: ArticleMarkdownDialect.devto, network: descriptor.name, excerptOverride: blogStr(v.extra['description']))
+          .output;
+      final cover = doc.cover == null ? null : assets.find(doc.cover!.mediaId);
+      if (cover != null && cover.media.isImage) mainImage ??= cover.url;
+    } else if (v.hasMedia) {
+      final urls = await _hostImages(v.media, ctx);
       final alts = [for (final m in v.media) m.altText];
       if (mainImage == null && v.extra['coverFromFirstImage'] != false) {
         mainImage = urls.first;
@@ -300,14 +319,17 @@ class DevtoAdapter extends PlatformAdapter {
     }
 
     final tags = sendableTags(v.tags);
+    final draft = v.extra['draft'] is bool ? v.extra['draft'] == true : (doc?.isDraft ?? false);
+    final canonical = blogStr(v.extra['canonicalUrl']) ?? articleText(doc?.canonicalUrl);
+    final description = blogStr(v.extra['description']) ?? articleText(doc?.excerpt);
     final article = <String, Object?>{
       'title': v.title!.trim(),
       'body_markdown': markdown,
-      'published': v.extra['draft'] != true,
+      'published': !draft,
       if (tags.isNotEmpty) 'tags': tags,
       if (mainImage != null) 'main_image': mainImage,
-      if (blogStr(v.extra['canonicalUrl']) != null) 'canonical_url': blogStr(v.extra['canonicalUrl']),
-      if (blogStr(v.extra['description']) != null) 'description': blogStr(v.extra['description']),
+      'canonical_url': ?canonical,
+      'description': ?description,
       if (blogStr(v.extra['series']) != null) 'series': blogStr(v.extra['series']),
       if (blogInt(v.extra['organizationId']) != null) 'organization_id': blogInt(v.extra['organizationId']),
     };
@@ -325,16 +347,16 @@ class DevtoAdapter extends PlatformAdapter {
     return PublishResult.ok(remoteId: articleId, remoteUrl: url, publishedAt: ctx.now());
   }
 
-  Future<List<String>> _hostImages(PostVariant v, AdapterContext ctx) async {
+  Future<List<String>> _hostImages(List<MediaAttachment> media, AdapterContext ctx) async {
     final host = ctx.mediaHost;
     if (host == null) {
       throw const AdapterException(PublishError.configuration(
           'DEV cannot upload images: set up a media host in Settings, or remove the images'));
     }
     final urls = <String>[];
-    for (var i = 0; i < v.media.length; i++) {
-      final m = v.media[i];
-      ctx.uploading(m, 'Uploading image ${i + 1} of ${v.media.length} to ${host.name}');
+    for (var i = 0; i < media.length; i++) {
+      final m = media[i];
+      ctx.uploading(m, 'Uploading image ${i + 1} of ${media.length} to ${host.name}');
       try {
         final hosted = await host.upload(m, await ctx.readMedia(m), via: ctx.http);
         urls.add(hosted.url.toString());

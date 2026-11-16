@@ -4,10 +4,12 @@ import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:unorm_dart/unorm_dart.dart' show nfkc;
 
+import '../../article/article_renderer.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart' show Visibility;
@@ -93,6 +95,7 @@ class EmDashAdapter extends PlatformAdapter {
     serverSideScheduling: false,
     supportsLinkField: false,
     options: emdashOptions,
+    articleFormat: ArticleFormat.portableText,
   );
 
   @override
@@ -286,6 +289,7 @@ class EmDashAdapter extends PlatformAdapter {
   String _status(PostVariant v, ConnectedAccount account) {
     final explicit = blogStr(v.extra['status']);
     if (explicit != null && emdashStatuses.contains(explicit)) return explicit;
+    if (v.article?.isDraft ?? false) return 'draft';
     return account.configString('defaultStatus', 'published') == 'draft' ? 'draft' : 'published';
   }
 
@@ -332,30 +336,64 @@ class EmDashAdapter extends PlatformAdapter {
     // EmDash's Portable Text).
     final images = <EmDashMedia>[];
     final videos = <EmDashMedia>[];
+    final uploads = <(MediaAttachment, EmDashMedia)>[];
     final media = v.media.where((m) => !m.isAudio).toList();
     if (media.length < v.media.length) ctx.log.info('EmDash takes no sound files; ${v.media.length - media.length} left out');
     for (var i = 0; i < media.length; i++) {
       final uploaded = await _upload(api, media[i], i, media.length, ctx);
       (media[i].isVideo ? videos : images).add(uploaded);
+      uploads.add((media[i], uploaded));
     }
-    final useFeatured = v.extra['featuredImage'] != false && images.isNotEmpty;
-    final featured = useFeatured ? images.first : null;
-    final inline = useFeatured ? images.skip(1).toList() : images;
-
-    final content = [
-      ...markdownToPortableText(v.text, keyPrefix: prefix),
-      for (var i = 0; i < inline.length; i++) inline[i].imageBlock('${prefix}i$i'),
-      for (var i = 0; i < videos.length; i++) videos[i].videoBlock('${prefix}v$i'),
-    ];
+    final doc = v.article;
+    final List<Map<String, Object?>> content;
+    EmDashMedia? featured;
+    if (doc != null) {
+      // 1.4.4: the article's blocks as Portable Text; its cover is the
+      // featured image.
+      final assets = ArticleAssets([
+        for (final (m, e) in uploads)
+          ArticleAsset(m, url: e.url, remoteId: e.id, extra: {
+            'width': ?e.width,
+            'height': ?e.height,
+            'blurhash': ?e.blurhash,
+            'dominantColor': ?e.dominantColor,
+          }),
+      ]);
+      content = renderPortableText(doc, assets, keyPrefix: prefix, network: descriptor.name).output;
+      final cover = doc.cover == null ? null : assets.find(doc.cover!.mediaId);
+      if (cover != null && cover.media.isImage) {
+        final e = uploads.firstWhere((u) => identical(u.$1, cover.media)).$2;
+        final alt = doc.cover!.altFor(cover.media);
+        featured = EmDashMedia(
+            id: e.id,
+            url: e.url,
+            filename: e.filename,
+            mimeType: e.mimeType,
+            alt: alt,
+            width: e.width,
+            height: e.height,
+            blurhash: e.blurhash,
+            dominantColor: e.dominantColor);
+      }
+    } else {
+      final useFeatured = v.extra['featuredImage'] != false && images.isNotEmpty;
+      featured = useFeatured ? images.first : null;
+      final inline = useFeatured ? images.skip(1).toList() : images;
+      content = [
+        ...markdownToPortableText(v.text, keyPrefix: prefix),
+        for (var i = 0; i < inline.length; i++) inline[i].imageBlock('${prefix}i$i'),
+        for (var i = 0; i < videos.length; i++) videos[i].videoBlock('${prefix}v$i'),
+      ];
+    }
     final tags = await _tagSlugs(api, v.tags, ctx);
-    final excerpt = blogStr(v.extra['excerpt']);
+    final excerpt = blogStr(v.extra['excerpt']) ?? articleText(doc?.excerpt);
     final data = <String, Object?>{
       'title': title,
       'content': content,
       'excerpt': ?excerpt,
       if (featured != null) 'featured_image': featured.mediaValue(),
     };
-    final slug = emdashSlug(blogStr(v.extra['slug']) ?? title);
+    final slug = emdashSlug(blogStr(v.extra['slug']) ?? articleText(doc?.slug) ?? title);
     final (post, resumed) = await _createOnce(api, data, slug, key, tags.slugs, status, ctx);
     final postId = blogStr(post['id']);
     if (postId == null) throw const AdapterException(PublishError.platform('EmDash did not return the created post'));
@@ -549,6 +587,7 @@ class EmDashAdapter extends PlatformAdapter {
     return HandoffPlan(
       platformId: id,
       clipboardText: text,
+      clipboardHtml: articleHandoffHtml(variant, descriptor.name),
       shareText: title.isEmpty ? text : '$title\n\n$text',
       shareFiles: variant.media,
       desktopUrl: editor,
