@@ -5,6 +5,7 @@
 // advances when the user comes back, and sharing straight into the
 // network's app on Android.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -67,8 +68,13 @@ class _MemoryStorage implements AppStorage {
   Future<void> writeJson(String name, Object data) async => _json[name] = data;
   @override
   Future<String> saveMedia(String id, String extension, Uint8List bytes) async => 'mem://$id.$extension';
+  /// Photos read, in order: copying a photo starts by reading it.
+  final List<String> reads = [];
   @override
-  Future<Uint8List> readMedia(String path) async => _png;
+  Future<Uint8List> readMedia(String path) async {
+    reads.add(path);
+    return _png;
+  }
   @override
   Future<void> deleteMedia(String path) async {}
   @override
@@ -896,17 +902,31 @@ void main() {
     final images = <Map<Object?, Object?>>[];
     final texts = <String>[];
     var imageOk = true;
+    // Completed by the next thing that reaches the clipboard. Each return
+    // below makes exactly one copy: the photo that cannot be copied is the
+    // last part, so nothing is tried after it.
+    Completer<void>? copying;
+    void noteCopy() {
+      copying?.complete();
+      copying = null;
+    }
+
     final messenger = tester.binding.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(const MethodChannel('neforum/share'), (call) async {
       shares.add(call.arguments as Map<Object?, Object?>);
       return 'app';
     });
     messenger.setMockMethodCallHandler(const MethodChannel('neforum/clipboard'), (call) async {
+      if (call.method != 'copyImage') return null;
       images.add(call.arguments as Map<Object?, Object?>);
+      noteCopy();
       return imageOk;
     });
     messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') texts.add((call.arguments as Map)['text'] as String);
+      if (call.method == 'Clipboard.setData') {
+        texts.add((call.arguments as Map)['text'] as String);
+        noteCopy();
+      }
       return null;
     });
     addTearDown(() {
@@ -916,7 +936,8 @@ void main() {
       messenger.setMockMethodCallHandler(SystemChannels.platform, null);
     });
 
-    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage())))!;
+    final storage = _MemoryStorage();
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: storage)))!;
     final photos = [_photo('one'), _photo('two')];
     final plan = HandoffPlan(
       platformId: 'instagram',
@@ -957,28 +978,47 @@ void main() {
     expect(find.text('Text copied. Paste it in the app, then come back here: the next part is copied for you.'), findsOneWidget);
 
     Future<void> leaveAndComeBack() async {
-      await tester.runAsync(() async {
+      final copied = await tester.runAsync(() async {
+        final copy = Completer<void>();
+        copying = copy;
         for (final state in [AppLifecycleState.inactive, AppLifecycleState.hidden, AppLifecycleState.paused, AppLifecycleState.hidden, AppLifecycleState.inactive, AppLifecycleState.resumed]) {
           tester.binding.handleAppLifecycleStateChanged(state);
         }
-        // Decoding and encoding a photo happen off the fake clock.
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+        // Decoding and encoding a photo happen off the fake clock, as long as
+        // they take: wait for the part to reach the clipboard, not a set time.
+        final reached = await copy.future.then((_) => true).timeout(const Duration(seconds: 20), onTimeout: () => false);
+        // What follows the copy is only microtasks: let the sheet note it. (If
+        // the sheet ever awaits real work after copying, wait for that here.)
+        await pumpEventQueue();
+        return reached;
       });
+      expect(copied, isNotNull, reason: 'coming back threw: see the error above');
+      expect(copied, isTrue, reason: 'nothing was copied on return');
       await tester.pump();
     }
 
+    // Each return starts exactly the copy it asks for: a photo copy starts by
+    // reading the photo, so one more would show here, not later.
     await leaveAndComeBack();
-    expect(texts.last, '#art #violet');
+    expect(texts, ['My caption', '#art #violet']);
+    expect(images, isEmpty);
+    expect(storage.reads, isEmpty);
     expect(find.text('Tags copied. Paste it in the app.'), findsOneWidget);
 
     await leaveAndComeBack();
     expect(images, hasLength(1));
+    expect(images.single['png'], isA<Uint8List>());
     expect(images.single.keys.toSet(), {'png'}, reason: 'a phone pastes the picture: no file path, no Windows bitmap');
+    expect(texts, hasLength(2));
+    expect(storage.reads, [photos[0].path]);
     expect(find.text('Photo 1 of 2 copied. Paste it in the app.'), findsOneWidget);
 
     // A photo that cannot be copied is skipped, with a note.
     imageOk = false;
     await leaveAndComeBack();
+    expect(images, hasLength(2));
+    expect(texts, hasLength(2));
+    expect(storage.reads, [photos[0].path, photos[1].path]);
     expect(find.text('Photo 2 of 2 could not be copied here, so it was skipped. That was the last part: everything has been copied.'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox.shrink());

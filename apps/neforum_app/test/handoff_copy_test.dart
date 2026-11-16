@@ -1,6 +1,8 @@
 // Hand-off on a computer: photos go onto the clipboard for Ctrl+V, and
 // "Copy next" hands out the text, the snippets and each photo in turn.
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -27,8 +29,13 @@ class _MemoryStorage implements AppStorage {
   Future<void> writeJson(String name, Object data) async {}
   @override
   Future<String> saveMedia(String id, String extension, Uint8List bytes) async => 'mem://$id.$extension';
+  /// Photos read, in order: copying a photo starts by reading it.
+  final List<String> reads = [];
   @override
-  Future<Uint8List> readMedia(String path) async => _png;
+  Future<Uint8List> readMedia(String path) async {
+    reads.add(path);
+    return _png;
+  }
   @override
   Future<void> deleteMedia(String path) async {}
   @override
@@ -63,13 +70,26 @@ void main() {
 
     final copiedImages = <Map<Object?, Object?>>[];
     final copiedText = <String>[];
+    // Completed by the next thing that reaches the clipboard. Each tap below
+    // copies exactly one thing.
+    Completer<void>? copying;
+    void noteCopy() {
+      copying?.complete();
+      copying = null;
+    }
+
     final messenger = tester.binding.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(const MethodChannel('neforum/clipboard'), (call) async {
+      if (call.method != 'copyImage') return null;
       copiedImages.add(call.arguments as Map<Object?, Object?>);
+      noteCopy();
       return true;
     });
     messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') copiedText.add((call.arguments as Map)['text'] as String);
+      if (call.method == 'Clipboard.setData') {
+        copiedText.add((call.arguments as Map)['text'] as String);
+        noteCopy();
+      }
       return null;
     });
     addTearDown(() {
@@ -77,7 +97,8 @@ void main() {
       messenger.setMockMethodCallHandler(SystemChannels.platform, null);
     });
 
-    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage())))!;
+    final storage = _MemoryStorage();
+    final services = (await tester.runAsync(() => AppServices.create(demo: true, storage: storage)))!;
     final photos = [_photo('one'), _photo('two')];
     final plan = HandoffPlan(
       platformId: 'youtube_posts',
@@ -108,30 +129,50 @@ void main() {
     expect(find.textContaining('then press Ctrl+V in the composer'), findsOneWidget);
 
     Future<void> tapAndSettle(Finder f) async {
-      await tester.runAsync(() async {
+      final copied = await tester.runAsync(() async {
+        final copy = Completer<void>();
+        copying = copy;
         await tester.tap(f);
-        // Decoding and encoding the photo happen off the fake clock.
-        await Future<void>.delayed(const Duration(milliseconds: 300));
+        // Decoding and encoding the photo happen off the fake clock, as long
+        // as they take: wait for the copy to reach the clipboard, not a set time.
+        final reached = await copy.future.then((_) => true).timeout(const Duration(seconds: 20), onTimeout: () => false);
+        // What follows the copy is only microtasks: let the sheet note it. (If
+        // the sheet ever awaits real work after copying, wait for that here.)
+        await pumpEventQueue();
+        return reached;
       });
+      expect(copied, isNotNull, reason: 'the tap threw: see the error above');
+      expect(copied, isTrue, reason: 'nothing was copied');
       await tester.pump();
     }
+
+    List<Object?> photoPaths() => [for (final c in copiedImages) c['path']];
 
     await tapAndSettle(find.byTooltip('Copy photo 2'));
     expect(copiedImages, hasLength(1));
     expect(copiedImages.single['path'], 'C:/media/two.png');
     expect(copiedImages.single['png'], isA<Uint8List>());
     expect(copiedImages.single['dib'], isA<Uint8List>(), reason: 'Windows also gets a bitmap');
+    expect(copiedText, isEmpty);
+    // Each tap starts exactly the copies it asks for: a photo copy starts by
+    // reading the photo, so one more would show here, not later.
+    expect(storage.reads, ['C:/media/two.png']);
 
     // Copy next: text, caption, photo 1, photo 2, then start again.
     expect(find.text('Copy next: Text'), findsOneWidget);
     await tapAndSettle(find.text('Copy next: Text'));
-    expect(copiedText.last, 'Which logo do you like?');
+    expect(copiedText, ['Which logo do you like?']);
+    expect(storage.reads, ['C:/media/two.png']);
     await tapAndSettle(find.text('Copy next: Image 1 caption'));
-    expect(copiedText.last, 'Diamond');
+    expect(copiedText, ['Which logo do you like?', 'Diamond']);
+    expect(storage.reads, ['C:/media/two.png']);
     await tapAndSettle(find.text('Copy next: Photo 1 of 2'));
-    expect(copiedImages.last['path'], 'C:/media/one.png');
+    expect(photoPaths(), ['C:/media/two.png', 'C:/media/one.png']);
+    expect(storage.reads, ['C:/media/two.png', 'C:/media/one.png']);
     await tapAndSettle(find.text('Copy next: Photo 2 of 2'));
-    expect(copiedImages.last['path'], 'C:/media/two.png');
+    expect(photoPaths(), ['C:/media/two.png', 'C:/media/one.png', 'C:/media/two.png']);
+    expect(storage.reads, ['C:/media/two.png', 'C:/media/one.png', 'C:/media/two.png']);
+    expect(copiedText, hasLength(2), reason: 'photos copy no text');
     expect(find.text('All copied. Start again with the text'), findsOneWidget);
     await tester.pump(const Duration(seconds: 5));
   });
