@@ -27,7 +27,7 @@ const String kComposerDraftFile = 'composer.json';
 final composerDraftKeeperProvider = Provider<ComposerDraftKeeper?>((ref) {
   final services = ref.watch(servicesProvider);
   if (services.demo) return null;
-  final keeper = ComposerDraftKeeper(services.storage);
+  final keeper = ComposerDraftKeeper(services.storage, createTimer: ref.watch(composerDraftTimerProvider));
   ref.listen<ComposerState>(composerProvider, (prev, next) => keeper.changed(next));
   ref.onDispose(() => unawaited(keeper.flush()));
 
@@ -48,15 +48,26 @@ final composerDraftKeeperProvider = Provider<ComposerDraftKeeper?>((ref) {
   return keeper;
 });
 
+/// Starts the [ComposerDraftKeeper]'s pause before it writes a change
+/// (tests put in timers they fire themselves, so whether the file is
+/// written yet never depends on how fast the machine runs the test).
+final composerDraftTimerProvider = Provider<Timer Function(Duration duration, void Function() callback)>((ref) => Timer.new);
+
 /// Writes the composer to [kComposerDraftFile] for
 /// [composerDraftKeeperProvider].
 class ComposerDraftKeeper {
-  ComposerDraftKeeper(this._storage);
+  ComposerDraftKeeper(this._storage, {Timer Function(Duration duration, void Function() callback)? createTimer}) : _createTimer = createTimer ?? Timer.new;
 
   final AppStorage _storage;
+  final Timer Function(Duration duration, void Function() callback) _createTimer;
   Timer? _pending;
   ComposerState? _unsaved;
   Future<void> _lastWrite = Future<void>.value();
+
+  /// The latest write of the file, done or under way; awaiting it starts no
+  /// write of its own (unlike [flush]).
+  @visibleForTesting
+  Future<void> get lastWrite => _lastWrite;
 
   /// False until the file was read at startup: nothing is written before
   /// that, so an empty composer never overwrites a post waiting to be put
@@ -72,7 +83,7 @@ class ComposerDraftKeeper {
     if (isComposerBlank(c)) {
       unawaited(flush());
     } else {
-      _pending = Timer(const Duration(milliseconds: 300), () => unawaited(flush()));
+      _pending = _createTimer(const Duration(milliseconds: 300), () => unawaited(flush()));
     }
   }
 
