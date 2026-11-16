@@ -641,6 +641,11 @@ List<ConnectionDetail> connectionDetails(ConnectedAccount account, PlatformAdapt
 
   for (final f in fields.values) {
     if (!account.config.containsKey(f.key) || hidden(f.key)) continue;
+    // 1.4.4: the paid plan by its name ("Parler Premium"), not its stored id.
+    if (f.key == AccountSubscription.tierKey) {
+      add(_Group.option, cleanFieldLabel(f.label), adapter?.subscriptionTierOf(account)?.label);
+      continue;
+    }
     add(_fieldGroup(f), cleanFieldLabel(f.label), listed(f.key, _formatValue(account.config[f.key], field: f)));
   }
   for (final e in _configLabels.entries) {

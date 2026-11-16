@@ -716,7 +716,7 @@ void main() {
 
       expect(calls, hasLength(1));
       expect(calls.single.method, 'GET');
-      expect(calls.single.url.toString(), 'https://api.x.com/2/users/me?user.fields=profile_image_url');
+      expect(calls.single.url.toString(), 'https://api.x.com/2/users/me?user.fields=profile_image_url%2Csubscription_type%2Cverified_type');
       expectSigned(calls.single);
 
       final a = r.account;

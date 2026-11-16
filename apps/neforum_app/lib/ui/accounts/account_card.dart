@@ -9,6 +9,7 @@ import '../../state/artwork_targets.dart';
 import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../state/sign_in_view.dart';
+import '../../state/subscription_view.dart';
 import '../../theme/tokens.dart';
 import '../../widgets/account_avatar.dart';
 import '../../widgets/badges.dart';
@@ -105,6 +106,8 @@ class AccountCard extends ConsumerWidget {
             if (!v && ref.read(composerProvider).selected.contains(a.id)) ref.read(composerProvider.notifier).toggleAccount(a.id);
           },
         ),
+        // 1.4.4: the account's paid plan, which sets its limits.
+        if (registry.byId(a.platformId)?.subscriptionPlansFor(a.tier) != null) _PlanRow(account: a),
         const SizedBox(height: Space.xs),
         Divider(height: 1, color: nf.border),
         // Keyed by account: when the grid reuses this card for another
@@ -172,6 +175,108 @@ class _ReconnectButton extends ConsumerWidget {
       key: ValueKey('reconnect-${account.id}'),
       onPressed: busy ? null : () => reconnectAccount(context, ref, account),
       child: Text(busy ? 'Reconnecting…' : 'Reconnect'),
+    );
+  }
+}
+
+/// 1.4.4: the plan of an account on a network whose paid plans raise its
+/// limits (X Premium, Parler Premium, a verified YouTube channel): its name,
+/// who set it, what it changes, and a menu to change it (or, where the
+/// network can say, to ask it again).
+class _PlanRow extends ConsumerStatefulWidget {
+  const _PlanRow({required this.account});
+  final ConnectedAccount account;
+
+  @override
+  ConsumerState<_PlanRow> createState() => _PlanRowState();
+}
+
+class _PlanRowState extends ConsumerState<_PlanRow> {
+  bool _asking = false;
+
+  static const String _ask = '\u0000ask';
+
+  Future<void> _choose(PlatformAdapter adapter, String value) async {
+    final s = ref.read(servicesProvider);
+    final a = widget.account;
+    if (value != _ask) {
+      await s.accounts.upsert(adapter.withSubscriptionTier(a, value));
+      return;
+    }
+    final network = adapter.subscriptionPlansFor(a.tier)?.detectedBy ?? adapter.descriptor.name;
+    setState(() => _asking = true);
+    String words;
+    var icon = Icons.check_rounded;
+    try {
+      final secrets = await s.secrets.read(a.id) ?? const <String, String>{};
+      final tier = await adapter.readSubscriptionTier(a, secrets, s.connectContext());
+      if (tier == null) {
+        words = '$network did not say which plan this account has. Nothing changed.';
+        icon = Icons.info_outline_rounded;
+      } else {
+        final now = DateTime.now();
+        await s.accounts.upsert(adapter.withSubscriptionTier(a, tier.id, source: SubscriptionSource.detected, at: now));
+        words = '$network says this account has ${tier.label}.';
+      }
+    } on AdapterException catch (e) {
+      words = 'Could not ask $network: ${e.error.message}';
+      icon = Icons.error_outline_rounded;
+    } finally {
+      if (mounted) setState(() => _asking = false);
+    }
+    if (mounted) showToast(context, words, icon: icon);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final nf = context.nf;
+    final a = widget.account;
+    final adapter = ref.watch(registryProvider).byId(a.platformId);
+    final plans = adapter?.subscriptionPlansFor(a.tier);
+    final tier = adapter?.subscriptionTierOf(a);
+    if (adapter == null || plans == null || tier == null) return const SizedBox.shrink();
+    final canAsk = adapter.canReadSubscriptionTier(a) && !ref.watch(servicesProvider).demo;
+    return Padding(
+      key: ValueKey('plan-${a.id}'),
+      padding: const EdgeInsets.fromLTRB(Space.lg, Space.xs, Space.xs, Space.xs),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Icon(tier.isFree ? Icons.workspace_premium_outlined : Icons.workspace_premium_rounded, size: 18, color: tier.isFree ? nf.textMuted : nf.accent),
+        ),
+        const SizedBox(width: Space.sm),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(tier.label, style: context.text.bodyMedium),
+            const SizedBox(height: Space.xxs),
+            Text(subscriptionCardLine(adapter, a), style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
+          ]),
+        ),
+        if (_asking)
+          const Padding(
+            padding: EdgeInsets.all(Space.md),
+            child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+          )
+        else
+          PopupMenuButton<String>(
+            key: ValueKey('plan-menu-${a.id}'),
+            tooltip: 'Change plan',
+            icon: Icon(Icons.edit_outlined, size: 18, color: nf.textMuted),
+            position: PopupMenuPosition.under,
+            onSelected: (v) => _choose(adapter, v),
+            itemBuilder: (_) => [
+              for (final t in plans.tiers)
+                CheckedPopupMenuItem(value: t.id, checked: t.id == tier.id, child: Text(t.label)),
+              if (canAsk) ...[
+                const PopupMenuDivider(),
+                PopupMenuItem(
+                  value: _ask,
+                  child: Text('Ask ${plans.detectedBy ?? adapter.descriptor.name} again (one profile read)'),
+                ),
+              ],
+            ],
+          ),
+      ]),
     );
   }
 }

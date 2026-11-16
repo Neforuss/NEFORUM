@@ -17,6 +17,7 @@ import '../../model/publish_result.dart';
 import '../../model/validation.dart';
 import '../../text/media_packer.dart';
 import '../../text/rules_validator.dart';
+import '../../text/text_counter.dart';
 import '../../text/url_detector.dart';
 import '../../util/logger.dart';
 import '../adapter_context.dart';
@@ -25,6 +26,7 @@ import '../network_options.dart';
 import '../platform_adapter.dart';
 import 'x_api.dart';
 import 'x_media_capacity.dart';
+import 'x_subscription.dart';
 
 /// X (formerly Twitter) through the official X API v2 with the user's own
 /// developer app, or through a hand-off to the X app / `x.com/intent/tweet`
@@ -83,6 +85,13 @@ class XAdapter extends PlatformAdapter {
   /// API accounts: up to 20 photos and videos per post ([XMediaCapacity.large]).
   static final PlatformDescriptor _largeDescriptor = _describe(XMediaCapacity.large);
 
+  /// The same two for an account on a paid X plan ([XSubscription]): posts
+  /// up to 25,000 characters, videos up to 125 minutes and 16 GB.
+  static final PlatformDescriptor _paidDescriptor =
+      _descriptor.copyWith(text: XSubscription.paidText(_descriptor.text), media: XSubscription.paidMedia(XMediaCapacity.classic));
+  static final PlatformDescriptor _paidLargeDescriptor =
+      _descriptor.copyWith(text: XSubscription.paidText(_descriptor.text), media: XSubscription.paidMedia(XMediaCapacity.large));
+
   static PlatformDescriptor _describe(MediaRules media) => PlatformDescriptor(
     id: 'x',
     options: xOptions,
@@ -100,7 +109,8 @@ class XAdapter extends PlatformAdapter {
       supportsHashtags: true,
       linkInText: true,
       notes: 'Weighted count: most Latin/Cyrillic characters count 1, CJK and emoji count 2, every link counts 23. '
-          'Longer posts need X Premium on the posting account, so NEFORUM splits long text into a thread.',
+          'Longer posts need X Premium on the posting account, so NEFORUM splits long text into a thread unless '
+          'the account has an X Premium plan (read from X, or set on the account card).',
     ),
     media: media,
     defaultQuotas: [
@@ -155,10 +165,59 @@ class XAdapter extends PlatformAdapter {
   PlatformDescriptor get descriptor => _descriptor;
 
   /// Up to 20 photos and videos in one post for an API account, unless X
-  /// refused that for it in the last 7 days ([XMediaCapacity.usesLarge]).
+  /// refused that for it in the last 7 days ([XMediaCapacity.usesLarge]);
+  /// 25,000 characters and longer videos on a paid X plan ([XSubscription]).
   @override
-  PlatformDescriptor descriptorForAccount(ConnectedAccount account) =>
-      XMediaCapacity.usesLarge(account, _now()) ? _largeDescriptor : _descriptor;
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) {
+    final large = XMediaCapacity.usesLarge(account, _now());
+    if (XSubscription.isPaid(subscriptionTierOf(account))) return large ? _paidLargeDescriptor : _paidDescriptor;
+    return large ? _largeDescriptor : _descriptor;
+  }
+
+  /// API accounts: read from X ([XSubscription.api]); hand-off accounts:
+  /// chosen on the form ([XSubscription.handoff]).
+  @override
+  SubscriptionPlans? subscriptionPlansFor(PlatformTier tier) => switch (tier) {
+        PlatformTier.byokApi => XSubscription.api,
+        PlatformTier.handoff => XSubscription.handoff,
+        _ => null,
+      };
+
+  /// `GET /2/users/me` with the plan fields. X bills reads on pay-per-use
+  /// developer accounts, so this runs only when the person asks.
+  @override
+  Future<SubscriptionTier?> readSubscriptionTier(
+      ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (account.tier != PlatformTier.byokApi) return null;
+    final api = _api(account, secrets, ctx);
+    if (api == null) {
+      throw const AdapterException(PublishError.auth('No X sign-in stored for this account; reconnect it'));
+    }
+    try {
+      return _planOf(await api.me());
+    } on HttpFailure catch (e) {
+      throw AdapterException(XApi.mapError(e, now: ctx.now()));
+    } on TimeoutException catch (e) {
+      throw AdapterException(PublishError.network('X did not answer in time: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
+    } on ClientException catch (e) {
+      throw AdapterException(PublishError.network('Could not reach X: ${e.message}', raw: NeforumHttp.transportDetails(e)));
+    }
+  }
+
+  @override
+  bool canReadSubscriptionTier(ConnectedAccount account) => account.tier == PlatformTier.byokApi;
+
+  /// The plan [user]'s profile shows, or null when X sent no plan fields.
+  static SubscriptionTier? _planOf(XUser user) => XSubscription.api
+      .tierWithId(XSubscription.tierIdFromProfile(subscriptionType: user.subscriptionType, verifiedType: user.verifiedType));
+
+  /// The config of a new API account for [user]: [config] and the plan X
+  /// reported, when it reported one.
+  static Map<String, dynamic> _withPlan(Map<String, dynamic> config, XUser user, DateTime now) {
+    final plan = _planOf(user);
+    if (plan == null) return config;
+    return {...config, ...AccountSubscription.entries(plan.id, source: SubscriptionSource.detected, at: now)};
+  }
 
   static const String _byokIntro = '''
 **Post automatically with your own X developer app.** X charges per post (about \$0.015, or \$0.20 when the post contains a link), paid from credits on *your* developer account. NEFORUM never sees any money.
@@ -183,7 +242,7 @@ Paste the four keys from the X developer portal (Keys and tokens: API Key and Se
 Photos and videos are attached through the share sheet on Android and iOS. On Windows and macOS the browser composer cannot receive files, so you attach them by hand.''';
 
   @override
-  List<ConnectSpec> get connectSpecs => const [
+  List<ConnectSpec> get connectSpecs => [
         ConnectSpec(
           tier: PlatformTier.byokApi,
           usesBrowser: true,
@@ -257,6 +316,8 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
               placeholder: '@yourname',
               help: 'Only used to label this account in NEFORUM.',
             ),
+            // 1.4.4: a paid plan takes posts up to 25,000 characters.
+            XSubscription.handoff.connectField,
           ],
         ),
       ];
@@ -314,12 +375,12 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
       avatarUrl: user.avatarUrl,
       profileUrl: 'https://x.com/${user.username}',
       createdAt: ctx.now(),
-      config: {
+      config: _withPlan({
         cfgAuthMode: authOAuth2,
         cfgClientId: clientId,
         cfgConfidential: clientSecret.isNotEmpty,
         cfgUserId: user.id,
-      },
+      }, user, ctx.now()),
     );
     return ConnectResult(
       account: account,
@@ -397,10 +458,10 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
         avatarUrl: user.avatarUrl,
         profileUrl: 'https://x.com/${user.username}',
         createdAt: ctx.now(),
-        config: {
+        config: _withPlan({
           cfgAuthMode: authOAuth1,
           cfgUserId: user.id,
-        },
+        }, user, ctx.now()),
       ),
       secrets: keys.toSecrets(),
     );
@@ -411,6 +472,10 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     if (handle.isNotEmpty && !RegExp(r'^[A-Za-z0-9_]{1,15}$').hasMatch(handle)) {
       throw const ConnectException('X usernames have 1-15 letters, digits or underscores', field: 'handle');
     }
+    return withChosenSubscription(PlatformTier.handoff, input, _handoffAccount(handle, ctx));
+  }
+
+  ConnectResult _handoffAccount(String handle, AdapterContext ctx) {
     return ConnectResult(
       account: ConnectedAccount(
         id: 'x-handoff-${const Uuid().v4()}',
@@ -499,6 +564,15 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
     final issues = RulesValidator.validate(variant, descriptorForAccount(account), tier: account.tier);
     final capacity = _capacityNote(variant, account, now);
     if (capacity != null) issues.add(capacity);
+    final plan = subscriptionTierOf(account);
+    final texts = variant.isThread ? variant.threadParts : [variant.text];
+    if (XSubscription.isPaid(plan) && texts.any((p) => TextCounter.count(p, _descriptor.text) > XSubscription.freeMaxLength)) {
+      issues.add(ValidationIssue.info(
+          'x.long_post',
+          'One long post: this account has ${plan!.label}, which takes up to 25,000 characters. Timelines show the '
+              'first 280 before "Show more".',
+          field: 'text'));
+    }
     if (variant.mediaGroups.any((g) => g.length > 1 && g.any((m) => m.kind == MediaKind.gif))) {
       issues.add(const ValidationIssue.error(
           'x.gif_alone', 'An animated GIF must be the only media in an X post', field: 'media'));
