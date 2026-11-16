@@ -76,6 +76,27 @@ void main() {
       expect(declared, 4, reason: 'X (API, hand-off), Parler, YouTube (API); see docs/paid-tiers.md');
     });
 
+    // 1.4.4 integration: a plan's descriptor is a copy, and a copy that drops
+    // a field another 1.4.4 feature added (articles, Instagram's GIF videos)
+    // turns that feature off for paid accounts only.
+    test('a plan keeps everything but the limits it changes', () {
+      for (final a in adapters) {
+        final d = a.descriptor;
+        final copy = d.copyWith(text: d.text.copyWith(), media: d.media.copyWith());
+        expect(copy.articleFormat, d.articleFormat, reason: a.id);
+        expect(copy.articleOptionKey, d.articleOptionKey, reason: a.id);
+        expect(copy.options, d.options, reason: a.id);
+        expect(copy.media.gifAsVideo, d.media.gifAsVideo, reason: a.id);
+        expect(copy.media.gifAlone, d.media.gifAlone, reason: a.id);
+        expect(copy.media.paragraphMedia, d.media.paragraphMedia, reason: a.id);
+        expect(copy.media.maxItems, d.media.maxItems, reason: a.id);
+      }
+      final premium = x.descriptorForAccount(xAccount(plan: 'premium'));
+      expect(premium.articleFormat, isNotNull);
+      expect(premium.articleOptionKey, x.descriptor.articleOptionKey);
+      expect(adapters.where((a) => a.descriptor.media.gifAsVideo), isNotEmpty, reason: 'Instagram makes GIFs videos');
+    });
+
     test('a plan the person chooses is asked on the connect form; a detected one is not', () {
       for (final a in adapters) {
         for (final spec in a.connectSpecs) {

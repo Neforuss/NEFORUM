@@ -298,6 +298,7 @@ class MediaRules {
         audioVideoMaxFrames: audioVideoMaxFrames,
         maxItems: maxItems,
         gifAlone: gifAlone,
+        gifAsVideo: gifAsVideo,
         paragraphMedia: paragraphMedia,
       );
 
