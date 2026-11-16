@@ -99,6 +99,7 @@ const Map<String, _Row> _variants = {
   'Mastodon: Mitra': _Row('mastodon', '', SignInLimit.date, SignInRenewal.never, unverified: true, config: {'software': 'mitra'}),
   'Mastodon: other servers': _Row('mastodon', '', SignInLimit.undocumented, SignInRenewal.notNeeded, unverified: true, config: {'software': 'friendica'}),
   'Matrix: token pasted from Element': _Row('matrix', '', SignInLimit.undocumented, SignInRenewal.never, unverified: true, config: {'authMethod': 'token'}),
+  'Pinterest: sandbox token pasted from the app page': _Row('pinterest', '', SignInLimit.date, SignInRenewal.never, tier: _byok, config: {'authMethod': 'token', 'environment': 'sandbox'}),
   'Micropub: Micro.blog app token': _Row('micropub', '', SignInLimit.undocumented, SignInRenewal.notNeeded, unverified: true, config: {'authMethod': 'token', 'microblog': true}),
   'Write.as / WriteFreely: Write.as hosted': _Row('writefreely', '', SignInLimit.undocumented, SignInRenewal.notNeeded, unverified: true, config: {'instance': 'https://write.as/'}),
 };
@@ -120,7 +121,7 @@ List<List<String>> _docRows(String doc, String heading) {
 const _h = (name: 0, lifetime: 1, renews: 2, act: 3, early: 4, source: 5, date: 6, status: 7);
 
 /// Rows read on another day than the table's 2026-11-06: networks added later.
-const Map<String, String> _readLater = {'EmDash': '2026-11-13'};
+const Map<String, String> _readLater = {'EmDash': '2026-11-13', 'Pinterest: sandbox token pasted from the app page': '2026-11-16'};
 
 void _checkRow(List<String> cells, SignInPolicy p, String label) {
   expect(cells, hasLength(8), reason: label);

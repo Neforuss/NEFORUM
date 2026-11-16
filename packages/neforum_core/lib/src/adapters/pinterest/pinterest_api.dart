@@ -32,17 +32,43 @@ class PinterestUser {
 ///
 /// Endpoints and shapes follow the official OpenAPI description
 /// (pinterest/api-description v5, 5.28.0).
+///
+/// [sandbox] sends every call to Pinterest's API Sandbox
+/// (`api-sandbox.pinterest.com`): "Sandbox calls are the same as production
+/// calls, except the subdomain" (developers.pinterest.com/docs/developer-tools/sandbox/,
+/// read 2026-11-16). Apps with Trial access may create Pins only there; a
+/// sandbox token does not work in production, nor the other way round.
 class PinterestApi {
   PinterestApi({
     required this.ctx,
     required this.accessToken,
+    this.sandbox = false,
     this.videoPollInterval = const Duration(seconds: 5),
     this.videoPollAttempts = 60,
   });
 
-  static final Uri base = Uri.parse('https://api.pinterest.com/v5/');
+  static final Uri productionBase = Uri.parse('https://api.pinterest.com/v5/');
+  static final Uri sandboxBase = Uri.parse('https://api-sandbox.pinterest.com/v5/');
   static final Uri authorizationEndpoint = Uri.parse('https://www.pinterest.com/oauth/');
-  static final Uri tokenEndpoint = Uri.parse('https://api.pinterest.com/v5/oauth/token');
+
+  /// Production token endpoint.
+  static final Uri tokenEndpoint = productionBase.resolve('oauth/token');
+
+  /// "Generate a Sandbox token by inserting `-sandbox` into the request URL
+  /// path" (set-up-authentication-and-authorization, read 2026-11-16).
+  static final Uri sandboxTokenEndpoint = sandboxBase.resolve('oauth/token');
+
+  static Uri baseFor({required bool sandbox}) => sandbox ? sandboxBase : productionBase;
+  static Uri tokenEndpointFor({required bool sandbox}) => sandbox ? sandboxTokenEndpoint : tokenEndpoint;
+
+  /// How long a sandbox token made with "Generate access token" on the app
+  /// page lasts ("lasts 30 days", the sandbox page). It has no refresh token.
+  static const Duration sandboxTokenLife = Duration(days: 30);
+
+  /// Pinterest error `code` for "Apps with Trial access may not create Pins in
+  /// production https://api.pinterest.com - use API Sandbox
+  /// https://api-sandbox.pinterest.com instead."
+  static const int trialProductionRefused = 29;
 
   /// `boards:write` and `pins:read` are listed by the OpenAPI security block of
   /// `POST /v5/pins`; Pinterest rejects pin creation without `boards:write`.
@@ -60,13 +86,15 @@ class PinterestApi {
 
   final AdapterContext ctx;
   final String accessToken;
+  final bool sandbox;
   final Duration videoPollInterval;
   final int videoPollAttempts;
 
   Map<String, String> get _auth => {'Authorization': 'Bearer $accessToken', 'Accept': 'application/json'};
 
-  static Uri endpoint(String path, [Map<String, String>? query]) {
-    final u = base.resolve(path);
+  /// [path] on this client's host: the sandbox or production.
+  Uri endpoint(String path, [Map<String, String>? query]) {
+    final u = baseFor(sandbox: sandbox).resolve(path);
     return query == null ? u : u.replace(queryParameters: query);
   }
 
@@ -89,10 +117,15 @@ class PinterestApi {
 
   /// Every board the user owns or collaborates on (follows `bookmark`
   /// pagination, at most [maxPages] pages of 250).
-  Future<List<PinterestBoard>> boards({int maxPages = 10}) async {
+  ///
+  /// In the sandbox Pinterest filters production boards out after it fetched
+  /// each page, so a page can come back empty with a bookmark while sandbox
+  /// boards follow (the sandbox page). There the default walks further.
+  Future<List<PinterestBoard>> boards({int? maxPages}) async {
+    final pages = maxPages ?? (sandbox ? 40 : 10);
     final out = <PinterestBoard>[];
     String? bookmark;
-    for (var page = 0; page < maxPages; page++) {
+    for (var page = 0; page < pages; page++) {
       final res = await ctx.http.get(
         endpoint('boards', {'page_size': '250', if (bookmark != null) 'bookmark': bookmark}),
         headers: _auth,
@@ -115,6 +148,22 @@ class PinterestApi {
   }
 
   // --------------------------------------------------------------- writes
+
+  /// `POST /v5/boards`: a new board named [name]. Used in the sandbox, where
+  /// the person's production boards do not exist.
+  Future<PinterestBoard> createBoard(String name, {String? description}) async {
+    final res = await ctx.http.postJson(
+      endpoint('boards'),
+      {'name': name, if (description != null) 'description': description},
+      headers: _auth,
+    );
+    final j = res.jsonMap;
+    final id = j['id']?.toString();
+    if (id == null || id.isEmpty) {
+      throw AdapterException(PublishError.platform('Pinterest did not return a board id', raw: _snippet(res.body)));
+    }
+    return PinterestBoard(id: id, name: (j['name'] as String?) ?? name, privacy: j['privacy'] as String?);
+  }
 
   /// `POST /v5/pins`. Returns the new Pin's id.
   ///
@@ -224,9 +273,28 @@ class PinterestApi {
 
   // ------------------------------------------------------- error mapping
 
+  /// Pinterest's answer to a Trial app creating a Pin in production (code
+  /// [trialProductionRefused]): the app must use the API Sandbox.
+  static bool isTrialProductionRefusal(HttpFailure f) {
+    final j = f.response.jsonMap;
+    final code = j['code'] is int ? j['code'] as int : int.tryParse('${j['code']}');
+    if (code == trialProductionRefused) return true;
+    final lower = ((j['message'] as String?) ?? '').toLowerCase();
+    return lower.contains('api-sandbox') || (lower.contains('trial access') && lower.contains('production'));
+  }
+
+  /// What sandbox Pins are, in the words every message uses.
+  static const String sandboxPinsNote = 'Sandbox Pins are test Pins: only you can see them, on your own profile. '
+      'Public Pins need Standard access: click Upgrade on your app card at developers.pinterest.com/apps.';
+
   /// Maps a Pinterest HTTP failure (`{code, message}` body) onto a
   /// [PublishError].
-  static PublishError mapFailure(HttpFailure f, {String context = 'Pinterest', bool videoPin = false}) {
+  ///
+  /// [trialAccess]: the account was connected as a Trial app. A Trial refusal
+  /// then offers Reconnect, which moves the account to the API Sandbox; an
+  /// account set up as Standard has the wrong access level and must be added
+  /// again.
+  static PublishError mapFailure(HttpFailure f, {String context = 'Pinterest', bool videoPin = false, bool trialAccess = true}) {
     final status = f.statusCode;
     final j = f.response.jsonMap;
     final code = j['code'] is int ? j['code'] as int : int.tryParse('${j['code']}');
@@ -234,6 +302,24 @@ class PinterestApi {
     final raw = _snippet(f.body);
     final detail = message.isEmpty ? 'HTTP $status' : message;
     final lower = message.toLowerCase();
+
+    if (isTrialProductionRefusal(f)) {
+      if (trialAccess) {
+        return PublishError.auth(
+            '$context: your Pinterest app has Trial access, and Pinterest lets Trial apps create Pins only in its '
+            'API Sandbox. Reconnect Pinterest to move this account to the sandbox. $sandboxPinsNote',
+            raw: raw,
+            statusCode: status);
+      }
+      return PublishError(
+        kind: PublishErrorKind.configuration,
+        message: '$context: Pinterest says your app has Trial access, but this account was added as Standard access. '
+            'In Accounts, remove this Pinterest account and add it again with Access level "trial" (or paste a '
+            'sandbox token). $sandboxPinsNote',
+        statusCode: status,
+        raw: raw,
+      );
+    }
 
     if (status == 401 && (code == consumerTypeNotSupported || lower.contains('consumer type'))) {
       return PublishError(
