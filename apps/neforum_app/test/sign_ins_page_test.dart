@@ -319,6 +319,20 @@ void main() {
       expect(row(soon, _status(soon, _access(const Duration(days: 3)))).status.endsSoon(_now), isTrue);
     });
 
+    test('1.4.4: a Pixelfed personal access token must be reconnected, and a date the person typed reads as theirs', () {
+      final pixelfed = _acct('pixelfed', PlatformTier.openApi, config: const {'authMethod': 'token'});
+      final typed = {
+        ..._access(const Duration(days: 10)),
+        SignInSecretKeys.expiresAtSource: SignInDateSource.userEntered.name,
+      };
+      final s = _status(pixelfed, typed);
+      expect(s.source, SignInDateSource.userEntered);
+      expect(signInGroupOf(s, _now), SignInGroup.mustReconnect);
+      final r = row(pixelfed, s);
+      expect(signInSourceWords(r), 'The end date you entered for your token.');
+      expect(signInRowSentence(r, _now), contains(signInDay(s.expiresAt!)));
+    });
+
     test('an account with no status yet is listed from its policy, and marked unverified', () {
       final telegram = _acct('telegram', PlatformTier.openApi);
       final rows = signInRows([telegram], const {}, _real, _now);

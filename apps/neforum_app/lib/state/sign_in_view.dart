@@ -172,6 +172,7 @@ String? signInSourceWords(SignInRow r) {
   return switch (s.source) {
     SignInDateSource.serverReported => 'Date from ${r.network}.',
     SignInDateSource.computed => "Worked out by NEFORUM from ${r.network}'s published rule.",
+    SignInDateSource.userEntered => 'The end date you entered for your token.',
     SignInDateSource.unknown => 'Stored before NEFORUM 1.4. Where it came from was not recorded.',
   };
 }

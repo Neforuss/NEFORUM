@@ -98,6 +98,7 @@ const Map<String, _Row> _variants = {
   'Mastodon: Akkoma': _Row('mastodon', '', SignInLimit.date, SignInRenewal.onUse, unverified: true, config: {'software': 'akkoma'}),
   'Mastodon: Mitra': _Row('mastodon', '', SignInLimit.date, SignInRenewal.never, unverified: true, config: {'software': 'mitra'}),
   'Mastodon: other servers': _Row('mastodon', '', SignInLimit.undocumented, SignInRenewal.notNeeded, unverified: true, config: {'software': 'friendica'}),
+  'Pixelfed: personal access token': _Row('pixelfed', '', SignInLimit.date, SignInRenewal.never, config: {'authMethod': 'token'}),
   'Matrix: token pasted from Element': _Row('matrix', '', SignInLimit.undocumented, SignInRenewal.never, unverified: true, config: {'authMethod': 'token'}),
   'Micropub: Micro.blog app token': _Row('micropub', '', SignInLimit.undocumented, SignInRenewal.notNeeded, unverified: true, config: {'authMethod': 'token', 'microblog': true}),
   'Write.as / WriteFreely: Write.as hosted': _Row('writefreely', '', SignInLimit.undocumented, SignInRenewal.notNeeded, unverified: true, config: {'instance': 'https://write.as/'}),
@@ -120,7 +121,7 @@ List<List<String>> _docRows(String doc, String heading) {
 const _h = (name: 0, lifetime: 1, renews: 2, act: 3, early: 4, source: 5, date: 6, status: 7);
 
 /// Rows read on another day than the table's 2026-11-06: networks added later.
-const Map<String, String> _readLater = {'EmDash': '2026-11-13'};
+const Map<String, String> _readLater = {'EmDash': '2026-11-13', 'Pixelfed: personal access token': '2026-11-16'};
 
 void _checkRow(List<String> cells, SignInPolicy p, String label) {
   expect(cells, hasLength(8), reason: label);
@@ -308,6 +309,8 @@ void main() {
       expect(adapters[id]!.rotatesRefreshTokensFor(a(id, PlatformTier.handoff)), isFalse, reason: '$id on hand-off');
     }
     expect(adapters['x']!.rotatesRefreshTokensFor(a('x', _byok, {'authMode': 'oauth1'})), isFalse);
+    expect(adapters['pixelfed']!.rotatesRefreshTokensFor(a('pixelfed', PlatformTier.openApi, {'authMethod': 'token'})), isFalse,
+        reason: 'a personal access token has no refresh token');
     // Not documented as rotating, or fall back on a stored credential.
     for (final (id, tier) in [('pinterest', _byok), ('reddit', _byok), ('bluesky', PlatformTier.openApi), ('micropub', PlatformTier.openApi), ('matrix', PlatformTier.openApi)]) {
       expect(adapters[id]!.rotatesRefreshTokensFor(a(id, tier)), isFalse, reason: id);
