@@ -73,6 +73,11 @@ Rules:
 - Page structure: `PageBody(children: [PageHeader(...), ...sections])`.
   Section titles: `SectionHeader`. Empty lists: `EmptyState`.
   Toasts: `showToast`. Destructive confirmation: `confirmDialog`.
+- A menu opened from inside a floating panel (the character panel, any
+  `OverlayPortal` in the root overlay) is `AnchoredMenuButton`
+  (`lib/widgets/anchored_menu.dart`), never `PopupMenuButton`: a popup menu
+  is a route on the nearest navigator, which in the app is the shell tab's,
+  so it is drawn under the panel.
 - Hover states on every clickable thing on desktop (`NfCard(onTap:)`,
   `ToolButton`, themed buttons already do this). Cursor `click`.
 - Animate state changes with `AnimatedSwitcher`/`AnimatedContainer` using

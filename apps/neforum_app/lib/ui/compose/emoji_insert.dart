@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../platform/env.dart';
 import '../../state/providers.dart';
 import '../../theme/tokens.dart';
+import '../../widgets/anchored_menu.dart';
 import '../../widgets/buttons.dart';
 import 'emoji_catalog.dart';
 import 'emoji_sheet.dart';
@@ -134,6 +135,8 @@ class _EmojiButtonState extends ConsumerState<EmojiButton> {
   void _removeKeyHandler() => HardwareKeyboard.instance.removeHandler(_onKey);
 
   bool _onKey(KeyEvent event) {
+    // With a group menu open in the panel, Escape closes that menu only.
+    if (AnchoredMenuButton.anyOpen) return false;
     if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape && _panel.isShowing) {
       _closePanel();
       return true;
