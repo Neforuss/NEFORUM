@@ -108,7 +108,9 @@ class AutomaticHandoff {
     this.posting = const Duration(minutes: 4),
     this.pressing = const Duration(seconds: 30),
     Future<bool> Function(Uri url)? openDefault,
-  }) : _openDefault = openDefault ?? ((url) => launchUrl(url, mode: LaunchMode.externalApplication));
+    Timer Function(Duration duration, void Function() callback)? createTimer,
+  })  : _openDefault = openDefault ?? ((url) => launchUrl(url, mode: LaunchMode.externalApplication)),
+        _createTimer = createTimer ?? Timer.new;
 
   final AppServices _s;
 
@@ -126,6 +128,11 @@ class AutomaticHandoff {
 
   /// Opens a page in the system's default browser (tests put a stand-in here).
   final Future<bool> Function(Uri url) _openDefault;
+
+  /// Starts the timers for [firstReport], [posting] and [pressing] (tests
+  /// put a stand-in here that runs on a clock they move by hand, so a
+  /// deadline never depends on how fast the machine runs the test).
+  final Timer Function(Duration duration, void Function() callback) _createTimer;
 
   bool get _available => _s.extensionFillsHandoffs && _s.settings.automaticHandoffPosting;
 
@@ -208,7 +215,7 @@ class AutomaticHandoff {
 
     void wait(Duration d, _Attempt then) {
       timer?.cancel();
-      timer = Timer(d, () => finish(then));
+      timer = _createTimer(d, () => finish(then));
     }
 
     BrowserJob? job;

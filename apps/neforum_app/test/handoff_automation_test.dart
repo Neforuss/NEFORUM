@@ -5,6 +5,7 @@
 // advances when the user comes back, and sharing straight into the
 // network's app on Android.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -52,6 +53,55 @@ Future<(int, Map<String, dynamic>?)> _call(HttpClient client, int port, String m
   final res = await req.close();
   final text = await res.transform(utf8.decoder).join();
   return (res.statusCode, text.isEmpty ? null : jsonDecode(text) as Map<String, dynamic>);
+}
+
+/// Timers on a clock the test moves by hand ([elapse]): a deadline passes
+/// when the test says that much time went by, never because the machine was
+/// slow to run the stand-in extension's requests (with real 500 ms timers, a
+/// busy machine let the deadline pass between two fetches 250 ms apart).
+class _ManualTimers {
+  Duration _now = Duration.zero;
+  final List<_ManualTimer> _pending = [];
+
+  Timer start(Duration duration, void Function() callback) {
+    // As with Timer, a negative duration is no wait at all.
+    final timer = _ManualTimer(this, _now + (duration.isNegative ? Duration.zero : duration), callback);
+    _pending.add(timer);
+    return timer;
+  }
+
+  /// Moves the clock on by [by], firing the timers due by then, earliest
+  /// first (those due together in the order they were started).
+  void elapse(Duration by) {
+    final until = _now + by;
+    while (true) {
+      _ManualTimer? timer;
+      for (final t in _pending) {
+        if (t.due <= until && (timer == null || t.due < timer.due)) timer = t;
+      }
+      if (timer == null) break;
+      _pending.remove(timer);
+      _now = timer.due;
+      timer.callback();
+    }
+    _now = until;
+  }
+}
+
+class _ManualTimer implements Timer {
+  _ManualTimer(this._owner, this.due, this.callback);
+  final _ManualTimers _owner;
+  final Duration due;
+  final void Function() callback;
+
+  @override
+  bool get isActive => _owner._pending.contains(this);
+
+  @override
+  int get tick => 0;
+
+  @override
+  void cancel() => _owner._pending.remove(this);
 }
 
 /// Settings and media in memory; accounts and posts in [dataDir] (outside
@@ -655,7 +705,8 @@ void main() {
       await _tearDown(env);
     });
 
-    AutomaticHandoff automatic({Duration firstReport = const Duration(seconds: 5)}) => AutomaticHandoff(s, firstReport: firstReport, openDefault: (url) async {
+    AutomaticHandoff automatic({Duration firstReport = const Duration(seconds: 5), _ManualTimers? clock}) =>
+        AutomaticHandoff(s, firstReport: firstReport, createTimer: clock?.start, openDefault: (url) async {
           opened.add(url);
           return true;
         });
@@ -724,18 +775,45 @@ void main() {
       expect(post.targetFor('yp')!.handoffNote, isNull, reason: 'no "older than 1.1.0" note for a current extension');
     });
 
+    // These two wait the app's own two minutes, on a clock the test moves: no
+    // deadline depends on how fast the machine runs the stand-in extension
+    // (each fetch is seen before the next step, since the bridge tells the
+    // run before it answers the page).
+    const firstReport = Duration(minutes: 2);
+    const justShort = Duration(minutes: 1, seconds: 59, milliseconds: 999);
+
     test('a page still fetching the job gets more time to report', () async {
+      final clock = _ManualTimers();
       final served = extension([
         {...filled, 'automatic': 'countdown', 'posted': 'confirmed'},
       ], between: (id) async {
         for (var i = 0; i < 3; i++) {
-          await Future<void>.delayed(const Duration(milliseconds: 250));
+          clock.elapse(const Duration(minutes: 1));
           await _call(env.client, env.port, 'GET', '/v1/job?host=www.youtube.com&page=$_pageA', token: env.token);
         }
+        clock.elapse(justShort);
       });
-      final post = await automatic(firstReport: const Duration(milliseconds: 500)).complete(await due('s2', ['yp']));
+      final post = await automatic(firstReport: firstReport, clock: clock).complete(await due('s2', ['yp']));
       await served;
-      expect(post.targetFor('yp')!.status, TargetStatus.handedOff, reason: '750 ms in all, never 500 ms without a sign of the page');
+      expect(post.targetFor('yp')!.status, TargetStatus.handedOff, reason: 'nearly five minutes in all, never two without a sign of the page');
+    });
+
+    test('a page that stops fetching the job is given up on once it has been quiet for the whole wait', () async {
+      final clock = _ManualTimers();
+      final served = extension(const [], between: (id) async {
+        clock.elapse(const Duration(minutes: 1));
+        await _call(env.client, env.port, 'GET', '/v1/job?host=www.youtube.com&page=$_pageA', token: env.token);
+        clock.elapse(justShort);
+        await pumpEventQueue();
+        expect(env.bridge.job?.id, id, reason: 'nearly three minutes in all, but not two since the page last fetched it');
+        clock.elapse(const Duration(milliseconds: 1));
+      });
+      final post = await automatic(firstReport: firstReport, clock: clock).complete(await due('s14', ['yp']));
+      await served;
+      final target = post.targetFor('yp')!;
+      expect(target.status, TargetStatus.awaitingHandoff);
+      expect(target.handoffNote, isNull, reason: 'nothing came back from the page: nothing was filled in or pressed there');
+      expect(env.bridge.job, isNull);
     });
 
     test('stopped on the page: the job stays a while for a post made there; else the target keeps a note and is not posted automatically again', () async {
