@@ -261,14 +261,15 @@ else
 fi
 
 # Past the 45 s stale date nothing of NEFORUM's updates it. iOS redraws a stale
-# activity with some delay (about 2 minutes once on CI), so the island is read
-# every 10 s for up to 5 minutes, and the delay is reported. Stale, the pill keeps
+# activity with some delay (about 2 minutes once on CI; the v1.4.3 tag run
+# still had not after 9 minutes), so the island is read every 10 s for up to
+# 10 minutes, and the delay is reported. Stale, the pill keeps
 # the last count and the badge, the mark turns to the orange pause shape, and the
 # ring loses its blue arc. No live words anywhere.
 REMAINING=$(( 50 - ( $(date +%s) - STARTED ) ))
 if [ "$REMAINING" -gt 0 ]; then sleep "$REMAINING"; fi
 stale=no
-for _ in $(seq 1 30); do
+for _ in $(seq 1 60); do
   xcrun simctl io "$UDID" screenshot "$OUT/island-stale.png" > /dev/null
   "$OUT/read_text" "$OUT/island-stale.png" > "$OUT/island-stale.txt"
   if "$OUT/island_pixels" "$OUT/island-stale.png" --require left.orange --require right.red --forbid left.blue > "$OUT/island-stale-colours.txt" \
@@ -280,7 +281,7 @@ for _ in $(seq 1 30); do
 done
 cat "$OUT/island-stale.txt" "$OUT/island-stale-colours.txt"
 echo "The pause shape showed $(( $(date +%s) - STARTED )) s after the last update (stale date 45 s)." | tee "$OUT/stale-delay.txt"
-[ "$stale" = yes ] || { echo "The island did not show the pause shape with the count $COUNT and the badge within 5 minutes of the stale date"; exit 1; }
+[ "$stale" = yes ] || { echo "The island did not show the pause shape with the count $COUNT and the badge within 10 minutes of the stale date"; exit 1; }
 echo "stale: proved, pause shape with $COUNT and the failure badge" >> "$SUMMARY"
 
 # The minimal presentation: back in front, the probe starts a second run, and with

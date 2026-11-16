@@ -455,8 +455,13 @@ void main() {
       await settle(tester);
       final editor = find.byWidgetPredicate((w) => w is TextField && w.controller is HighlightController);
       await tester.enterText(editor, 'Checking the bar at many widths with a schedule set. #neforum');
+      // The next Christmas Eve at 18:45 still ahead (a long label): a fixed
+      // date would turn into a passed time, which the bar shows differently.
+      final now = DateTime.now();
+      var christmasEve = DateTime(now.year, 12, 24, 18, 45);
+      if (!christmasEve.isAfter(now.add(const Duration(days: 1)))) christmasEve = DateTime(now.year + 1, 12, 24, 18, 45);
       for (final scheduled in const [false, true]) {
-        if (scheduled) c.read(composerProvider.notifier).setSchedule(DateTime(2026, 12, 24, 18, 45));
+        if (scheduled) c.read(composerProvider.notifier).setSchedule(christmasEve);
         for (final w in const [740.0, 900.0, 1000.0, 1180.0, 1230.0, 1280.0, 1366.0, 1440.0, 1600.0]) {
           tester.view.physicalSize = Size(w, 820);
           await settle(tester);

@@ -223,6 +223,7 @@ class AppSettings {
     this.notificationOsAskedAt,
     this.notificationHintShownAt,
     this.notificationBannerClosedAt,
+    this.syncOfferAnsweredAt, // 1.4.4: first-start sync
     this.textCardEveryNetwork = false, // 1.3: cards
     // 1.3.1: sidebar
     this.navigationChromeOpacity = 0,
@@ -321,6 +322,7 @@ class AppSettings {
         notificationOsAskedAt: DateTime.tryParse('${j['notificationOsAskedAt'] ?? ''}'),
         notificationHintShownAt: DateTime.tryParse('${j['notificationHintShownAt'] ?? ''}'),
         notificationBannerClosedAt: DateTime.tryParse('${j['notificationBannerClosedAt'] ?? ''}'),
+        syncOfferAnsweredAt: DateTime.tryParse('${j['syncOfferAnsweredAt'] ?? ''}'), // 1.4.4: first-start sync
         textCardEveryNetwork: j['textCardEveryNetwork'] as bool? ?? false, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: validNavigationChromeOpacity(j['navigationChromeOpacity']),
@@ -586,6 +588,12 @@ class AppSettings {
   /// the reminder. Device-only.
   final DateTime? notificationBannerClosedAt;
 
+  /// 1.4.4: when the first-start question "join an existing sync?" was
+  /// answered on this install (a way to join chosen, or "I'm new"). It is
+  /// never asked again here; Settings > Sync stays. Device-only: another
+  /// device's answer is not this one's.
+  final DateTime? syncOfferAnsweredAt;
+
   /// 1.3: cards. New text-only posts start with the same text card on every
   /// network that takes images, not only on those that need one. Each post
   /// can change it.
@@ -758,6 +766,7 @@ class AppSettings {
     DateTime? notificationOsAskedAt,
     DateTime? notificationHintShownAt,
     DateTime? notificationBannerClosedAt,
+    DateTime? syncOfferAnsweredAt, // 1.4.4: first-start sync
     bool? textCardEveryNetwork, // 1.3: cards
     // 1.3.1: sidebar
     double? navigationChromeOpacity,
@@ -856,6 +865,7 @@ class AppSettings {
         notificationOsAskedAt: notificationOsAskedAt ?? this.notificationOsAskedAt,
         notificationHintShownAt: notificationHintShownAt ?? this.notificationHintShownAt,
         notificationBannerClosedAt: notificationBannerClosedAt ?? this.notificationBannerClosedAt,
+        syncOfferAnsweredAt: syncOfferAnsweredAt ?? this.syncOfferAnsweredAt, // 1.4.4: first-start sync
         textCardEveryNetwork: textCardEveryNetwork ?? this.textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         navigationChromeOpacity: navigationChromeOpacity ?? this.navigationChromeOpacity,
@@ -950,6 +960,7 @@ class AppSettings {
         if (notificationOsAskedAt != null) 'notificationOsAskedAt': notificationOsAskedAt!.toUtc().toIso8601String(),
         if (notificationHintShownAt != null) 'notificationHintShownAt': notificationHintShownAt!.toUtc().toIso8601String(),
         if (notificationBannerClosedAt != null) 'notificationBannerClosedAt': notificationBannerClosedAt!.toUtc().toIso8601String(),
+        if (syncOfferAnsweredAt != null) 'syncOfferAnsweredAt': syncOfferAnsweredAt!.toUtc().toIso8601String(), // 1.4.4: first-start sync
         'textCardEveryNetwork': textCardEveryNetwork, // 1.3: cards
         // 1.3.1: sidebar
         if (navigationChromeOpacity != 0) 'navigationChromeOpacity': navigationChromeOpacity,

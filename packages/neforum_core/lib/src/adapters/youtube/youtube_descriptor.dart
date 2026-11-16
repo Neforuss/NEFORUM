@@ -1,6 +1,7 @@
 import '../../model/platform_descriptor.dart';
 import '../connect_spec.dart';
 import '../network_options.dart';
+import '../subscription_tiers.dart';
 
 /// Video MIME types YouTube accepts for upload. The API takes `video/*`
 /// (or `application/octet-stream`); these are the containers YouTube lists.
@@ -88,6 +89,51 @@ const youtubeDescriptor = PlatformDescriptor(
   supportsLinkField: false,
   categories: {PlatformCategory.video},
 );
+
+/// 1.4.4: YouTube's long uploads, per channel. Not a paid plan: a channel
+/// uploads videos over 15 minutes once it is verified by phone and in good
+/// standing. The YouTube Data API reports it as the channel's
+/// `status.longUploadsStatus` ("allowed", "eligible" or "disallowed",
+/// developers.google.com/youtube/v3/docs/channels), read when the account
+/// connects.
+abstract final class YouTubeLongUploads {
+  static const String allowedId = 'long_uploads';
+
+  /// A channel without long uploads: 15 minutes.
+  static const int standardVideoMaxSeconds = 15 * 60;
+
+  static const SubscriptionPlans plans = SubscriptionPlans(
+    fieldLabel: 'Verified YouTube channel',
+    help: 'YouTube takes videos over 15 minutes (up to 12 hours) only from channels verified by phone. NEFORUM reads '
+        'it from YouTube when you connect.',
+    detectedBy: 'YouTube',
+    // Channels connected before 1.4.4 keep their 12 hours until a reconnect
+    // reads the real answer.
+    assumedId: allowedId,
+    tiers: [
+      SubscriptionTier(id: SubscriptionTier.freeId, label: 'Standard channel', summary: 'Videos up to 15 minutes'),
+      SubscriptionTier(id: allowedId, label: 'Verified channel', summary: 'Videos up to 12 hours and 256 GB'),
+    ],
+  );
+
+  /// The plan id for a `longUploadsStatus` value, or null when YouTube sent
+  /// none (only the channel's owner gets it).
+  static String? tierIdFor(Object? longUploadsStatus) => switch (longUploadsStatus) {
+        'allowed' => allowedId,
+        'eligible' || 'disallowed' => SubscriptionTier.freeId,
+        _ => null,
+      };
+
+  /// [youtubeDescriptor] for a channel without long uploads.
+  static final PlatformDescriptor standardDescriptor = youtubeDescriptor.copyWith(
+    media: youtubeDescriptor.media.copyWith(
+      videoMaxSeconds: standardVideoMaxSeconds,
+      notes: 'A video upload, not a post: exactly one video, up to 15 minutes on this channel (YouTube takes up to 12 '
+          'hours once the channel is verified by phone at youtube.com/verify; reconnect it afterwards). Vertical or '
+          'square clips of 3 minutes or less automatically become Shorts. Text and image posts go to YouTube Posts.',
+    ),
+  );
+}
 
 /// The loopback redirect the desktop broker listens on.
 const youtubeLoopbackRedirect = 'http://127.0.0.1:52771/callback';

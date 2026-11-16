@@ -20,7 +20,7 @@ import FlutterMacOS
 /// and the caption PNG over the whole frame.
 ///
 /// Frames for previews come from AVAssetImageGenerator. Re-encoding at a set
-/// bitrate (transcode, audioVideo, transcodeAudio) needs AVAssetReader and
+/// bitrate (transcode, audioVideo, framesVideo, transcodeAudio) needs AVAssetReader and
 /// AVAssetWriter, because AVAssetExportSession cannot set one: see
 /// [MediaWriterJob].
 final class VideoCompositorPlugin: NSObject, FlutterPlugin {
@@ -82,6 +82,8 @@ final class VideoCompositorPlugin: NSObject, FlutterPlugin {
       transcode(args, result)
     case "audioVideo":
       audioVideo(args, result)
+    case "framesVideo":
+      framesVideo(args, result)
     case "audioFormats":
       // AVFoundation always has an AAC encoder; neither system ships an MP3 one.
       result(["m4a"])
@@ -386,6 +388,31 @@ final class VideoCompositorPlugin: NSObject, FlutterPlugin {
     }
   }
 
+  /// 1.4.4: still pictures one after another (an animated GIF, drawn by
+  /// Dart): each PNG of framePaths for its frameCounts frames.
+  private func framesVideo(_ args: [String: Any], _ result: @escaping FlutterResult) {
+    func int(_ key: String) -> Int { (args[key] as? NSNumber)?.intValue ?? 0 }
+    let paths = (args["framePaths"] as? [Any] ?? []).map { $0 as? String ?? "" }
+    let counts = (args["frameCounts"] as? [Any] ?? []).map { ($0 as? NSNumber)?.intValue ?? 0 }
+    let output = args["outputPath"] as? String ?? ""
+    let width = int("frameWidth")
+    let height = int("frameHeight")
+    let rate = int("frameRate")
+    let frameRate = (1...60).contains(rate) ? Int32(rate) : MediaWriterJob.stillFrameRate
+    let frameOk = (16...4096).contains(width) && (16...4096).contains(height) && width % 2 == 0 && height % 2 == 0
+    let listsOk = !paths.isEmpty && paths.count == counts.count && !paths.contains { $0.isEmpty || $0 == output }
+      && counts.allSatisfy { $0 >= 1 } && counts.reduce(0, +) <= MediaWriterJob.maxFrames
+    guard frameOk, listsOk, !output.isEmpty else {
+      result(FlutterError(code: "args", message: "The video request is not complete.", details: nil))
+      return
+    }
+    startJob(id: int("id"), code: "framesVideo", result: result) {
+      try MediaWriterJob.framesVideo(
+        paths: paths, counts: counts, output: URL(fileURLWithPath: output),
+        frame: CGSize(width: width, height: height), frameRate: frameRate)
+    }
+  }
+
   private func transcodeAudio(_ args: [String: Any], _ result: @escaping FlutterResult) {
     func int(_ key: String) -> Int { (args[key] as? NSNumber)?.intValue ?? 0 }
     let input = args["inputPath"] as? String ?? ""
@@ -496,6 +523,9 @@ final class MediaWriterJob {
   /// Still pictures are written at a rate every network accepts, unless a
   /// network counts the frames (audioVideo's frameRate).
   static let stillFrameRate: Int32 = 30
+
+  /// Most frames a framesVideo request may have: 60 s at 60 a second.
+  static let maxFrames = 3600
 
   private let writer: AVAssetWriter
   private let readers: [AVAssetReader]
@@ -704,6 +734,108 @@ final class MediaWriterJob {
     // The picture stays until the sound ends.
     return MediaWriterJob(
       writer: writer, readers: [reader], feeds: [still, sound], duration: duration, sessionEnd: duration)
+  }
+
+  /// 1.4.4: an MP4 of the PNGs at [paths], one after another, each shown for
+  /// its [counts] frames at [frameRate] frames per second (an animated GIF,
+  /// drawn by Dart in the [frame]), with a silent AAC track: networks may
+  /// refuse a video without sound. A picture is read when its turn comes, so
+  /// one is in memory at a time.
+  static func framesVideo(
+    paths: [String], counts: [Int], output: URL, frame: CGSize, frameRate: Int32
+  ) throws -> MediaWriterJob {
+    let total = counts.reduce(0, +)
+    guard total > 0 else { throw CompositionError("The video has no pictures.") }
+    let duration = CMTime(value: CMTimeValue(total), timescale: frameRate)
+    try? FileManager.default.removeItem(at: output)
+    let writer = try AVAssetWriter(outputURL: output, fileType: .mp4)
+    writer.shouldOptimizeForNetworkUse = true
+    // About 0.12 bits per pixel per frame: moving pictures need real bits.
+    let video = try h264Input(
+      size: frame, bitrate: min(12_000_000, max(1_000_000, Int(frame.width * frame.height) * Int(frameRate) / 8)),
+      keyFrameInterval: Int(frameRate) * 2, writer: writer)
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video, sourcePixelBufferAttributes: nil)
+    var entry = 0
+    var left = counts[0]
+    var index: CMTimeValue = 0
+    var shownPath: String?
+    var shown: CVPixelBuffer?
+    let pictures = Feed(input: video) {
+      while entry < paths.count, left == 0 {
+        entry += 1
+        left = entry < counts.count ? counts[entry] : 0
+      }
+      guard entry < paths.count else { return nil }
+      if paths[entry] != shownPath || shown == nil {
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: paths[entry]) as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else { throw CompositionError("A picture of the video could not be read.") }
+        shown = try pixelBuffer(of: image, size: frame)
+        shownPath = paths[entry]
+      }
+      let time = CMTime(value: index, timescale: frameRate)
+      guard let buffer = shown, adaptor.append(buffer, withPresentationTime: time) else {
+        throw writer.error ?? CompositionError("The new file could not be written.")
+      }
+      index += 1
+      left -= 1
+      return time
+    }
+    let silence = try silentAacFeed(writer: writer, duration: duration)
+    return MediaWriterJob(writer: writer, readers: [], feeds: [pictures, silence], duration: duration, sessionEnd: duration)
+  }
+
+  /// Silence as AAC for [duration]: 48 kHz stereo PCM of zeros, in pieces of
+  /// 1024 samples.
+  private static func silentAacFeed(writer: AVAssetWriter, duration: CMTime) throws -> Feed {
+    let rate = 48_000.0
+    let aac: [String: Any] = [
+      AVFormatIDKey: kAudioFormatMPEG4AAC,
+      AVSampleRateKey: rate,
+      AVNumberOfChannelsKey: 2,
+      AVEncoderBitRateKey: 64_000,
+    ]
+    guard writer.canApply(outputSettings: aac, forMediaType: .audio) else {
+      throw CompositionError("Silence cannot be encoded on this device.")
+    }
+    var pcm = AudioStreamBasicDescription(
+      mSampleRate: rate, mFormatID: kAudioFormatLinearPCM,
+      mFormatFlags: kLinearPCMFormatFlagIsSignedInteger | kLinearPCMFormatFlagIsPacked,
+      mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4, mChannelsPerFrame: 2, mBitsPerChannel: 16,
+      mReserved: 0)
+    var described: CMAudioFormatDescription?
+    guard CMAudioFormatDescriptionCreate(
+      allocator: kCFAllocatorDefault, asbd: &pcm, layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+      extensions: nil, formatDescriptionOut: &described) == noErr, let format = described
+    else { throw CompositionError("Silence cannot be encoded on this device.") }
+    let input = AVAssetWriterInput(mediaType: .audio, outputSettings: aac, sourceFormatHint: format)
+    input.expectsMediaDataInRealTime = false
+    guard writer.canAdd(input) else { throw CompositionError("The new file cannot take sound.") }
+    writer.add(input)
+    let total = Int64((duration.seconds * rate).rounded())
+    var written: Int64 = 0
+    return Feed(input: input) {
+      guard written < total else { return nil }
+      let frames = Int(Swift.min(1024, total - written))
+      let bytes = frames * 4
+      var block: CMBlockBuffer?
+      guard CMBlockBufferCreateWithMemoryBlock(
+        allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: bytes, blockAllocator: kCFAllocatorDefault,
+        customBlockSource: nil, offsetToData: 0, dataLength: bytes, flags: kCMBlockBufferAssureMemoryNowFlag,
+        blockBufferOut: &block) == kCMBlockBufferNoErr, let data = block,
+        CMBlockBufferFillDataBytes(with: 0, blockBuffer: data, offsetIntoDestination: 0, dataLength: bytes)
+          == kCMBlockBufferNoErr
+      else { throw CompositionError("Silence could not be prepared.") }
+      let time = CMTime(value: CMTimeValue(written), timescale: CMTimeScale(rate))
+      var sample: CMSampleBuffer?
+      guard CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: kCFAllocatorDefault, dataBuffer: data, formatDescription: format, sampleCount: frames,
+        presentationTimeStamp: time, packetDescriptions: nil, sampleBufferOut: &sample) == noErr, let buffer = sample
+      else { throw CompositionError("Silence could not be prepared.") }
+      guard input.append(buffer) else { throw writer.error ?? CompositionError("The new file could not be written.") }
+      written += Int64(frames)
+      return time
+    }
   }
 
   /// The sound of [input] as an AAC .m4a at [bitrate].

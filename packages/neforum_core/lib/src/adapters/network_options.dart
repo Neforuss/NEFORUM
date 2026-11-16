@@ -357,7 +357,23 @@ const List<PostOption> xOptions = [
     tiers: {PlatformTier.byokApi},
     apiField: 'reply_settings',
   ),
+  PostOption(
+    key: kXArticleKey,
+    label: 'Post as an X Article',
+    kind: PostOptionKind.toggle,
+    defaultValue: false,
+    help: 'The post\'s article goes to X as an Article (a long post with headings, photos and links), which needs X Premium. '
+        'Off: X gets the short version.',
+    gate: 'Only when the post has an article.',
+    scope: PostOptionScope.postOrAccount,
+    tiers: {PlatformTier.byokApi},
+  ),
 ];
+
+/// 1.4.4: [PostOverrides.extra] key: `true` sends the post's article
+/// ([Post.article]) to X as an X Article instead of the short version
+/// ([PlatformDescriptor.articleOptionKey]).
+const String kXArticleKey = 'xArticle';
 
 // ------------------------------------------------------------------- Threads
 

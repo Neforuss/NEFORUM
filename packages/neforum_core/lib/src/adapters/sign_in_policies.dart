@@ -33,6 +33,8 @@ abstract final class SignInPolicies {
 
   static bool _authMode(ConnectedAccount account, String mode) => account.config['authMode'] == mode;
 
+  static bool _authMethod(ConnectedAccount account, String method) => account.config['authMethod'] == method;
+
   // ---- Big platforms ------------------------------------------------------
 
   static const SignInPolicy xOAuth2 = SignInPolicy(
@@ -130,6 +132,16 @@ abstract final class SignInPolicies {
     earlyRevocationPossible: true,
     sourceUrl: 'https://developers.pinterest.com/docs/getting-started/set-up-authentication-and-authorization/',
   );
+  /// A sandbox token made with "Generate access token" on the Pinterest app
+  /// page: "This token lasts 30 days", with no refresh token (sandbox page,
+  /// read 2026-11-16). NEFORUM stores the end as 30 days from the connect.
+  static const SignInPolicy pinterestSandboxToken = SignInPolicy(
+    limit: SignInLimit.date,
+    renewal: SignInRenewal.never,
+    earlyRevocationPossible: true,
+    sourceUrl: 'https://developers.pinterest.com/docs/developer-tools/sandbox/',
+    note: 'Generate a new sandbox token on your app\'s page and reconnect before it ends.',
+  );
   static const SignInPolicy youTube = SignInPolicy(
     limit: SignInLimit.date,
     renewal: SignInRenewal.onUse,
@@ -208,7 +220,24 @@ abstract final class SignInPolicies {
     sourceUrl: 'https://raw.githubusercontent.com/pixelfed/pixelfed/dev/config/instance.php',
     note: 'Your server can change these limits.',
   );
-  static SignInPolicy pixelfed(ConnectedAccount account) => _api(account, pixelfedPolicy);
+
+  /// How long a Pixelfed personal access token lasts: Laravel Passport's
+  /// default (`personalAccessTokensExpireIn`, one year), which Pixelfed 0.15.2
+  /// does not change. Read 2026-11-16. The token is a JWT that carries its own
+  /// `exp`, which NEFORUM stores when it connects.
+  static const Duration pixelfedPersonalTokenLife = Duration(days: 365);
+
+  /// A Pixelfed personal access token: no refresh token, so nothing renews it.
+  static const SignInPolicy pixelfedPersonalToken = SignInPolicy(
+    limit: SignInLimit.date,
+    renewal: SignInRenewal.never,
+    earlyRevocationPossible: true,
+    sourceUrl: 'https://github.com/laravel/passport/blob/13.x/src/Passport.php',
+    note: 'Make a new token on your server before then and reconnect with it.',
+  );
+
+  static SignInPolicy pixelfed(ConnectedAccount account) =>
+      _api(account, _authMethod(account, 'token') ? pixelfedPersonalToken : pixelfedPolicy);
 
   static const SignInPolicy blueskyPolicy = SignInPolicy(
     limit: SignInLimit.date,
@@ -415,6 +444,6 @@ abstract final class SignInPolicies {
   static SignInPolicy linkedInFor(ConnectedAccount account) => _api(account, linkedIn);
   static SignInPolicy redditFor(ConnectedAccount account) => _api(account, reddit);
   static SignInPolicy tikTokFor(ConnectedAccount account) => _api(account, tikTok);
-  static SignInPolicy pinterestFor(ConnectedAccount account) => _api(account, pinterest);
+  static SignInPolicy pinterestFor(ConnectedAccount account) => _api(account, _authMethod(account, 'token') ? pinterestSandboxToken : pinterest);
   static SignInPolicy youTubeFor(ConnectedAccount account) => _api(account, youTube);
 }

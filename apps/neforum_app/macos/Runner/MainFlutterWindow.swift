@@ -34,6 +34,10 @@ class MainFlutterWindow: NSWindow {
         result(MainFlutterWindow.readImage())
         return
       }
+      if call.method == "copyHtml", let args = call.arguments as? [String: Any] {
+        result(MainFlutterWindow.copyHtml(args))
+        return
+      }
       guard call.method == "copyImage", let args = call.arguments as? [String: Any] else {
         result(FlutterMethodNotImplemented)
         return
@@ -135,6 +139,22 @@ class MainFlutterWindow: NSWindow {
       return ["png": FlutterStandardTypedData(bytes: png)]
     }
     return [:]
+  }
+
+  /// 1.4.4: articles. Formatted text (public.html) for editors that paste
+  /// formatting, with the words as plain text for the rest.
+  private static func copyHtml(_ args: [String: Any]) -> Bool {
+    let html = args["html"] as? String ?? ""
+    let text = args["text"] as? String ?? ""
+    guard !html.isEmpty || !text.isEmpty else { return false }
+    let item = NSPasteboardItem()
+    var any = false
+    if !html.isEmpty { any = item.setString(html, forType: .html) || any }
+    if !text.isEmpty { any = item.setString(text, forType: .string) || any }
+    guard any else { return false }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    return pasteboard.writeObjects([item])
   }
 
   /// PNG and TIFF (what browsers and apps read on paste) plus the original

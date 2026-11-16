@@ -25,7 +25,10 @@ class RulesValidator {
     // network with threads is cut into messages of the right length by the
     // adapter.
     final cutBySections = v.hasParagraphMedia && m.paragraphMedia == ParagraphMediaStyle.sections && t.supportsThreads;
-    if (t.maxLength != null && !cutBySections) {
+    // 1.4.4: an article a target opts into (an X Article) is not a post of
+    // the network's usual length: that limit is not the article's.
+    final optedArticle = v.hasArticle && d.articleOptionKey != null;
+    if (t.maxLength != null && !cutBySections && !optedArticle) {
       for (var i = 0; i < parts.length; i++) {
         final n = TextCounter.count(parts[i], t);
         if (n > t.maxLength!) {
@@ -77,8 +80,10 @@ class RulesValidator {
       issues.add(ValidationIssue.warning('media.unsupported', '${d.name} does not take media; it will be dropped', field: 'media'));
     } else {
       // The limits apply to each post that carries media (one group unless
-      // a thread places media in later parts).
-      final groups = v.mediaGroups;
+      // a thread places media in later parts). 1.4.4: an article's files are
+      // not a social post's: no count per post (its serializer reports a
+      // format's own limit, such as NPF's 30 photos).
+      final groups = v.hasArticle ? const <List<MediaAttachment>>[] : v.mediaGroups;
       for (final group in groups) {
         final where = groups.length > 1 ? ' in one post' : '';
         final groupImages = group.where((x) => x.isImage).length;

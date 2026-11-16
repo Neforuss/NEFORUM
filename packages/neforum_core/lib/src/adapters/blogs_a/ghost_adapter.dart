@@ -1,8 +1,10 @@
+import '../../article/article_renderer.dart';
 import '../../audio/audio_publishing.dart';
 import '../../audio/audio_text_template.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/audio.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
@@ -88,6 +90,7 @@ class GhostAdapter extends PlatformAdapter {
     setupGuide: 'docs/platforms/ghost.md',
     serverSideScheduling: true,
     supportsLinkField: false,
+    articleFormat: ArticleFormat.ghostHtml,
   );
 
   @override
@@ -277,7 +280,7 @@ class GhostAdapter extends PlatformAdapter {
     final explicit = blogStr(v.extra['status']);
     var status = explicit != null && ghostStatuses.contains(explicit)
         ? explicit
-        : (account.configString('defaultStatus', 'published') == 'draft' ? 'draft' : 'published');
+        : (account.configString('defaultStatus', 'published') == 'draft' || (v.article?.isDraft ?? false) ? 'draft' : 'published');
     if (status == 'published' && v.scheduledAt != null) status = 'scheduled';
     return status;
   }
@@ -349,28 +352,60 @@ class GhostAdapter extends PlatformAdapter {
       }
     }
     final wholeHtmlCard = variant.extra['ghostHtmlCard'] == true;
-    final useFeature = variant.extra['featuredImage'] != false && images.isNotEmpty;
-    final feature = useFeature ? images.first : null;
-    final inline = useFeature ? images.skip(1) : images;
-
-    var html = [
-      bodyHtml(variant),
-      for (final (m, url) in inline) mediaFigureHtml(m, url, imageClass: 'kg-card kg-image-card'),
-      for (final (m, url, thumbnail) in sounds)
-        ghostAudioHtml(url,
-            htmlCard: !wholeHtmlCard,
-            caption: m.audioTags == null ? null : renderAudioText(kDefaultAudioTextTemplate, m.audioTags!),
-            thumbnailUrl: thumbnail),
-    ].where((s) => s.isNotEmpty).join('\n\n');
+    final doc = variant.article;
+    var html = '';
+    String? featureUrl;
+    var featureAlt = '';
+    String? featureCaption;
+    var excerpt = blogStr(variant.extra['excerpt']);
+    if (doc != null) {
+      // 1.4.4: the article as Ghost's card HTML; its cover is the feature
+      // image, and its subtitle the excerpt when it has none (Ghost shows
+      // the excerpt under the title).
+      final thumbnails = {for (final (m, _, thumbnail) in sounds) m.id: thumbnail};
+      final assets = ArticleAssets([
+        for (final (m, url) in images) ArticleAsset(m, url: url),
+        for (final (m, url, _) in sounds) ArticleAsset(m, url: url),
+      ]);
+      html = renderGhostHtml(doc, assets,
+          network: descriptor.name,
+          excerptOverride: excerpt,
+          audioHtml: (ref, a) => ghostAudioHtml(a.url,
+              htmlCard: !wholeHtmlCard,
+              caption: articleText(ref.captionLine) ??
+                  (a.media.audioTags == null ? null : renderAudioText(kDefaultAudioTextTemplate, a.media.audioTags!)),
+              thumbnailUrl: thumbnails[a.media.id])).output;
+      final cover = doc.cover;
+      final coverAsset = cover == null ? null : assets.find(cover.mediaId);
+      if (cover != null && coverAsset != null && coverAsset.media.isImage) {
+        featureUrl = coverAsset.url;
+        featureAlt = cover.altFor(coverAsset.media);
+        featureCaption = articleText(cover.captionLine);
+      }
+      excerpt ??= articleText(doc.excerpt) ?? articleText(doc.subtitle);
+    } else {
+      final useFeature = variant.extra['featuredImage'] != false && images.isNotEmpty;
+      final feature = useFeature ? images.first : null;
+      final inline = useFeature ? images.skip(1) : images;
+      html = [
+        bodyHtml(variant),
+        for (final (m, url) in inline) mediaFigureHtml(m, url, imageClass: 'kg-card kg-image-card'),
+        for (final (m, url, thumbnail) in sounds)
+          ghostAudioHtml(url,
+              htmlCard: !wholeHtmlCard,
+              caption: m.audioTags == null ? null : renderAudioText(kDefaultAudioTextTemplate, m.audioTags!),
+              thumbnailUrl: thumbnail),
+      ].where((s) => s.isNotEmpty).join('\n\n');
+      featureUrl = feature?.$2;
+      featureAlt = (feature?.$1.altText ?? '').trim();
+    }
     if (wholeHtmlCard && html.isNotEmpty) {
       html = '<!--kg-card-begin: html-->\n$html\n<!--kg-card-end: html-->';
     }
     final status = _status(variant, account);
     final at = variant.scheduledAt;
-    final excerpt = blogStr(variant.extra['excerpt']);
-    final canonical = blogStr(variant.extra['canonicalUrl']);
-    final slug = blogStr(variant.extra['slug']);
-    final featureAlt = (feature?.$1.altText ?? '').trim();
+    final canonical = blogStr(variant.extra['canonicalUrl']) ?? articleText(doc?.canonicalUrl);
+    final slug = blogStr(variant.extra['slug']) ?? articleText(doc?.slug);
     final post = <String, Object?>{
       'title': title,
       'html': html,
@@ -378,8 +413,9 @@ class GhostAdapter extends PlatformAdapter {
       'visibility': _visibility(variant),
       if (at != null && status != 'draft') 'published_at': at.toUtc().toIso8601String(),
       if (variant.tags.isNotEmpty) 'tags': [for (final t in variant.tags) {'name': t}],
-      if (feature != null) 'feature_image': feature.$2,
-      if (feature != null && featureAlt.isNotEmpty) 'feature_image_alt': featureAlt,
+      'feature_image': ?featureUrl,
+      if (featureUrl != null && featureAlt.isNotEmpty) 'feature_image_alt': featureAlt,
+      if (featureUrl != null) 'feature_image_caption': ?featureCaption,
       'custom_excerpt': ?excerpt,
       'canonical_url': ?canonical,
       'slug': ?slug,
@@ -499,6 +535,7 @@ class GhostAdapter extends PlatformAdapter {
     return HandoffPlan(
       platformId: id,
       clipboardText: text,
+      clipboardHtml: articleHandoffHtml(variant, descriptor.name),
       shareText: title.isEmpty ? text : '$title\n\n$text',
       shareFiles: variant.media,
       desktopUrl: editor,

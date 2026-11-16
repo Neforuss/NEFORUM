@@ -112,6 +112,9 @@ class VideoCompositionException implements Exception {
 /// a rate every network accepts.
 const int kStillFrameRate = 30;
 
+/// The video tools of each runner. Since 1.4.4 they also make an animated GIF
+/// an MP4 ([renderFramesVideo]) for Instagram, which takes no GIF.
+///
 /// Burns a caption block into a video for TikTok and Instagram: re-encodes it
 /// as an H.264/AAC MP4 of a fixed frame (9:16, 4:5...) filled with a
 /// background colour, with the video scaled into a content rectangle (aspect
@@ -362,6 +365,64 @@ class VideoCompositor {
       'audioBitrate': audioBitsPerSecond,
       'frameRate': frameRate,
     }, onProgress);
+  }
+
+  /// 1.4.4: writes an H.264 MP4 at [outputPath] from still pictures shown one
+  /// after another: [framePaths] are PNG files of exactly [frameWidth] x
+  /// [frameHeight], and [frameCounts] says for how many frames (at
+  /// [frameRate] frames per second) each one stays, so a GIF keeps its own
+  /// timing. The video has a silent AAC track: some networks refuse a video
+  /// without sound. This is how an animated GIF reaches Instagram, which
+  /// takes no GIF.
+  Future<void> renderFramesVideo({
+    required List<String> framePaths,
+    required List<int> frameCounts,
+    required String outputPath,
+    required int frameWidth,
+    required int frameHeight,
+    int frameRate = kStillFrameRate,
+    void Function(double progress)? onProgress,
+  }) {
+    final problem = framesVideoProblem(
+        framePaths: framePaths, frameCounts: frameCounts, outputPath: outputPath, frameWidth: frameWidth, frameHeight: frameHeight, frameRate: frameRate);
+    if (problem != null) return Future<void>.error(VideoCompositionException('invalid', problem));
+    return _enqueue('framesVideo', {
+      'framePaths': framePaths,
+      'frameCounts': frameCounts,
+      'outputPath': outputPath,
+      'frameWidth': frameWidth,
+      'frameHeight': frameHeight,
+      'frameRate': frameRate,
+    }, onProgress);
+  }
+
+  /// Most frames a [renderFramesVideo] request may write: 60 s at 60 frames a
+  /// second, far over what NEFORUM asks for.
+  static const int maxVideoFrames = 3600;
+
+  /// What is wrong with a [renderFramesVideo] request; null when it can be sent.
+  @visibleForTesting
+  static String? framesVideoProblem({
+    required List<String> framePaths,
+    required List<int> frameCounts,
+    required String outputPath,
+    required int frameWidth,
+    required int frameHeight,
+    required int frameRate,
+  }) {
+    if (framePaths.isEmpty || framePaths.any((p) => p.isEmpty)) return 'No pictures were given.';
+    if (frameCounts.length != framePaths.length) return 'Every picture needs its number of frames.';
+    if (frameCounts.any((n) => n < 1)) return 'Every picture must stay for at least one frame.';
+    if (frameCounts.fold<int>(0, (a, b) => a + b) > maxVideoFrames) return 'The video would be too long.';
+    if (outputPath.isEmpty || !outputPath.toLowerCase().endsWith('.mp4')) return 'The new file must be a .mp4 file.';
+    if (framePaths.contains(outputPath)) return 'The new file cannot replace a picture.';
+    for (final side in [frameWidth, frameHeight]) {
+      if (side < minFrameSide || side > maxFrameSide || side.isOdd) {
+        return 'The frame must be an even number of pixels from $minFrameSide to $maxFrameSide on each side.';
+      }
+    }
+    if (frameRate < 1 || frameRate > 60) return 'The frame rate must be from 1 to 60 frames per second.';
+    return null;
   }
 
   /// The audio formats [transcodeAudio] can write on this device: `m4a`

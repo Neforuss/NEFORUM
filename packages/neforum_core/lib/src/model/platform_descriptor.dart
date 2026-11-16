@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'article.dart' show ArticleFormat;
 import 'audio.dart' show AudioMimeTypes;
 import 'paragraph_media.dart' show ParagraphMediaStyle;
 import 'post_option.dart';
@@ -123,6 +124,27 @@ class TextRules {
   /// link in the body is pointless (YouTube description still fine → true).
   final bool linkInText;
   final String? notes;
+
+  /// These rules with a longer or shorter [maxLength] and their [notes]
+  /// (1.4.4: an account's paid plan, see `SubscriptionPlans`).
+  TextRules copyWith({int? maxLength, String? notes}) => TextRules(
+        maxLength: maxLength ?? this.maxLength,
+        counting: counting,
+        urlWeight: urlWeight,
+        titleMax: titleMax,
+        titleRequired: titleRequired,
+        titleSupported: titleSupported,
+        supportsThreads: supportsThreads,
+        supportsContentWarning: supportsContentWarning,
+        supportsMarkdown: supportsMarkdown,
+        supportsHtml: supportsHtml,
+        supportsHashtags: supportsHashtags,
+        hashtagsAsField: hashtagsAsField,
+        maxHashtags: maxHashtags,
+        mentionCountsDomain: mentionCountsDomain,
+        linkInText: linkInText,
+        notes: notes ?? this.notes,
+      );
 }
 
 /// Media constraints for one platform.
@@ -154,6 +176,7 @@ class MediaRules {
     this.audioVideoMaxFrames,
     this.maxItems,
     this.gifAlone = false,
+    this.gifAsVideo = false,
     this.paragraphMedia = ParagraphMediaStyle.none,
   });
 
@@ -167,6 +190,11 @@ class MediaRules {
 
   /// An animated GIF goes in a post of its own (X).
   final bool gifAlone;
+
+  /// 1.4.4: the network takes no GIF (it is not in [imageMimeTypes]), but a
+  /// GIF stays in the post: the app makes an animated one an MP4 video and a
+  /// one-frame one a still picture ([PhotoFit.gifAsVideo]). Instagram.
+  final bool gifAsVideo;
   final bool requiresMedia;
   final bool allowsMixedImageVideo;
   final int? imageMaxBytes;
@@ -241,6 +269,38 @@ class MediaRules {
     if (max == null || durationMs == null) return true;
     return (durationMs / 1000 * (audioVideoFrameRate ?? 30)).ceil() <= max;
   }
+
+  /// These rules with other video limits and [notes] (1.4.4: an account's
+  /// paid plan, see `SubscriptionPlans`).
+  MediaRules copyWith({int? videoMaxBytes, int? videoMaxSeconds, String? notes}) => MediaRules(
+        maxImages: maxImages,
+        maxVideos: maxVideos,
+        requiresMedia: requiresMedia,
+        allowsMixedImageVideo: allowsMixedImageVideo,
+        imageMaxBytes: imageMaxBytes,
+        videoMaxBytes: videoMaxBytes ?? this.videoMaxBytes,
+        videoMaxSeconds: videoMaxSeconds ?? this.videoMaxSeconds,
+        imageMimeTypes: imageMimeTypes,
+        videoMimeTypes: videoMimeTypes,
+        supportsAltText: supportsAltText,
+        requiresPublicMediaUrl: requiresPublicMediaUrl,
+        mediaPerThreadPart: mediaPerThreadPart,
+        notes: notes ?? this.notes,
+        maxAudios: maxAudios,
+        audioMaxBytes: audioMaxBytes,
+        audioMimeTypes: audioMimeTypes,
+        keepsAudioBytes: keepsAudioBytes,
+        audioWithOtherMedia: audioWithOtherMedia,
+        audioAsVideo: audioAsVideo,
+        audioAsLink: audioAsLink,
+        audioAsVideoWhenPossible: audioAsVideoWhenPossible,
+        audioVideoFrameRate: audioVideoFrameRate,
+        audioVideoMaxFrames: audioVideoMaxFrames,
+        maxItems: maxItems,
+        gifAlone: gifAlone,
+        gifAsVideo: gifAsVideo,
+        paragraphMedia: paragraphMedia,
+      );
 
   bool get supportsAnyMedia => maxImages > 0 || maxVideos > 0 || maxAudios > 0;
 
@@ -337,7 +397,20 @@ class PlatformDescriptor {
     this.polls,
     this.categories = const {},
     this.options = const [],
+    this.articleFormat,
+    this.articleOptionKey,
   });
+
+  /// 1.4.4: the format the platform takes a post's article in
+  /// ([Post.article]); null: it takes the post's text and media only.
+  final ArticleFormat? articleFormat;
+
+  /// 1.4.4: set when the article is something a target opts into (an X
+  /// Article): the post option ([options]) that, `true`, sends it; without
+  /// it the target gets the short version. Only accounts that post by
+  /// themselves can opt in. Null: every target of the platform gets the
+  /// article ([articleFormat]).
+  final String? articleOptionKey;
 
   /// Stable identifier used in storage and the registry, e.g. `mastodon`.
   final String id;
@@ -412,6 +485,34 @@ class PlatformDescriptor {
       [for (final o in options) if (o.isUserFacing && o.appliesTo(tier)) o];
 
   bool supportsTier(PlatformTier t) => tiers.contains(t);
+
+  /// This descriptor with other [text] and [media] rules: one account's own
+  /// limits (1.4.4: its paid plan, see `SubscriptionPlans`). Everything else,
+  /// [options] included, is this descriptor's own.
+  PlatformDescriptor copyWith({TextRules? text, MediaRules? media}) => PlatformDescriptor(
+        id: id,
+        name: name,
+        tiers: tiers,
+        defaultTier: defaultTier,
+        text: text ?? this.text,
+        media: media ?? this.media,
+        accountRequirements: accountRequirements,
+        apiCostSummary: apiCostSummary,
+        shortName: shortName,
+        iconKey: iconKey,
+        homepage: homepage,
+        defaultQuotas: defaultQuotas,
+        personalAccountOk: personalAccountOk,
+        setupGuide: setupGuide,
+        serverSideScheduling: serverSideScheduling,
+        supportsLinkField: supportsLinkField,
+        family: family,
+        polls: polls,
+        categories: categories,
+        options: options,
+        articleFormat: articleFormat,
+        articleOptionKey: articleOptionKey,
+      );
 
   @override
   String toString() => 'PlatformDescriptor($id)';

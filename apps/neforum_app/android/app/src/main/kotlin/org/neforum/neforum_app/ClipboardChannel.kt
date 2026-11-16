@@ -32,7 +32,26 @@ class ClipboardChannel(private val activity: Activity) {
     private fun handle(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "copyImage" -> copyImage(call, result)
+            "copyHtml" -> copyHtml(call, result)
             else -> result.notImplemented()
+        }
+    }
+
+    /** 1.4.4: articles. Formatted text with its words as plain text. */
+    private fun copyHtml(call: MethodCall, result: MethodChannel.Result) {
+        val html = call.argument<String>("html") ?: ""
+        val text = call.argument<String>("text") ?: ""
+        if (html.isEmpty() && text.isEmpty()) {
+            result.success(false)
+            return
+        }
+        try {
+            val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = if (html.isEmpty()) ClipData.newPlainText("Text", text) else ClipData.newHtmlText("Text", text, html)
+            clipboard.setPrimaryClip(clip)
+            result.success(true)
+        } catch (e: Exception) {
+            result.success(false)
         }
     }
 

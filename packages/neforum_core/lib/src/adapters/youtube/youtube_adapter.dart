@@ -106,6 +106,17 @@ class YouTubeAdapter extends PlatformAdapter {
   @override
   PlatformDescriptor get descriptor => youtubeDescriptor;
 
+  /// 15 minutes for a channel without long uploads ([YouTubeLongUploads]).
+  @override
+  PlatformDescriptor descriptorForAccount(ConnectedAccount account) =>
+      (subscriptionTierOf(account)?.isFree ?? false) ? YouTubeLongUploads.standardDescriptor : youtubeDescriptor;
+
+  /// API channels: long uploads, read from YouTube on connect. Hand-off
+  /// accounts upload in YouTube itself, which says so there.
+  @override
+  SubscriptionPlans? subscriptionPlansFor(PlatformTier tier) =>
+      tier == PlatformTier.byokApi ? YouTubeLongUploads.plans : null;
+
   @override
   List<ConnectSpec> get connectSpecs => youtubeConnectSpecs;
 
@@ -183,6 +194,7 @@ class YouTubeAdapter extends PlatformAdapter {
     final handle = snip['customUrl'] as String?;
     final thumbs = _map(snip['thumbnails']);
     final avatar = (_map(thumbs['default'])['url'] as String?) ?? (_map(thumbs['medium'])['url'] as String?);
+    final longUploads = YouTubeLongUploads.tierIdFor(_map(channel['status'])['longUploadsStatus']);
 
     return ConnectResult(
       account: ConnectedAccount(
@@ -200,6 +212,7 @@ class YouTubeAdapter extends PlatformAdapter {
           YouTubeConfigKeys.redirectUri: redirect.toString(),
           // Google returns the granted scopes; users may untick boxes.
           YouTubeConfigKeys.canDeleteVideos: granted == null || scopesAllowDelete(granted),
+          if (longUploads != null) ...AccountSubscription.entries(longUploads, source: SubscriptionSource.detected, at: ctx.now()),
         },
       ),
       secrets: _tokensToSecrets(tokens, {if (clientSecret.isNotEmpty) YouTubeSecretKeys.clientSecret: clientSecret}, ctx),
@@ -366,10 +379,21 @@ class YouTubeAdapter extends PlatformAdapter {
           'youtube.tags_too_long', 'Tags use $tagLength/500 characters on YouTube (commas and quotes count)',
           field: 'tags'));
     }
+    // 1.4.4: a channel YouTube reported is held to its own limit by the rules
+    // check (15 minutes without long uploads); only an unknown one gets a note.
+    final known = account.tier == PlatformTier.byokApi && AccountSubscription.storedTierId(account) != null;
+    final standard = subscriptionTierOf(account)?.isFree ?? false;
     for (final v in videos) {
-      if (v.durationMs != null && v.durationMs! > 15 * 60 * 1000) {
-        issues.add(const ValidationIssue.info('youtube.long_video',
-            'Videos over 15 minutes need a phone-verified YouTube channel', field: 'media'));
+      if (v.durationMs != null && v.durationMs! > YouTubeLongUploads.standardVideoMaxSeconds * 1000) {
+        if (standard) {
+          issues.add(const ValidationIssue.info('youtube.long_uploads_off',
+              'YouTube says this channel cannot upload videos over 15 minutes yet. Verify it by phone at '
+                  'youtube.com/verify, then reconnect it in Accounts.',
+              field: 'media'));
+        } else if (!known) {
+          issues.add(const ValidationIssue.info('youtube.long_video',
+              'Videos over 15 minutes need a phone-verified YouTube channel', field: 'media'));
+        }
       }
     }
     if (account.tier != PlatformTier.byokApi) return issues;

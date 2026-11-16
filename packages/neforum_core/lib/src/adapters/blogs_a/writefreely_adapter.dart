@@ -1,9 +1,11 @@
 import 'dart:typed_data';
 
+import '../../article/article_renderer.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post.dart' show Visibility;
@@ -79,6 +81,7 @@ class WriteFreelyAdapter extends PlatformAdapter {
     setupGuide: 'docs/platforms/writefreely.md',
     serverSideScheduling: false,
     supportsLinkField: false,
+    articleFormat: ArticleFormat.writeFreelyMarkdown,
   );
 
   @override
@@ -326,18 +329,34 @@ class WriteFreelyAdapter extends PlatformAdapter {
       throw const AdapterException(PublishError.unsupported('WriteFreely posts cannot contain uploaded videos'));
     }
 
-    final images = <String>[];
-    for (var i = 0; i < variant.media.length; i++) {
-      final m = variant.media[i];
-      final url = await _hostImage(m, i, variant.media.length, account, anonymous ? null : token, ctx);
-      images.add('![${_altForMarkdown(m.altText)}]($url)');
+    final doc = variant.article;
+    final String body;
+    if (doc != null) {
+      // 1.4.4: the article as Markdown, photos where they are in it, sound
+      // files as links, tags as #hashtags at the end.
+      final pictures = [for (final m in variant.media) if (!m.isAudio) m];
+      final assets = <ArticleAsset>[
+        for (var i = 0; i < pictures.length; i++)
+          ArticleAsset(pictures[i], url: await _hostImage(pictures[i], i, pictures.length, account, anonymous ? null : token, ctx)),
+        ...await hostArticleAudio(variant, ctx, platform: 'WriteFreely'),
+      ];
+      body = renderMarkdown(doc, ArticleAssets(assets),
+              dialect: ArticleMarkdownDialect.writeFreely, network: descriptor.name, tags: variant.tags)
+          .output;
+    } else {
+      final images = <String>[];
+      for (var i = 0; i < variant.media.length; i++) {
+        final m = variant.media[i];
+        final url = await _hostImage(m, i, variant.media.length, account, anonymous ? null : token, ctx);
+        images.add('![${_altForMarkdown(m.altText)}]($url)');
+      }
+      body = [variant.text.trim(), ...images].where((s) => s.isNotEmpty).join('\n\n');
     }
-    final body = [variant.text.trim(), ...images].where((s) => s.isNotEmpty).join('\n\n');
     final title = (variant.title ?? '').trim();
     final lang = _lang(variant.language);
     final rtl = variant.extra['rtl'] is bool ? variant.extra['rtl'] as bool : _rtlLanguages.contains(lang);
     final font = blogStr(variant.extra['font']);
-    final slug = blogStr(variant.extra['slug']);
+    final slug = blogStr(variant.extra['slug']) ?? articleText(doc?.slug);
     final payload = <String, Object?>{
       'body': body,
       if (title.isNotEmpty) 'title': title,

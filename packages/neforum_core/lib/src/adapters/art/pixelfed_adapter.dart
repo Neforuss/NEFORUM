@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:http/http.dart' as http;
+import 'package:uuid/uuid.dart';
 
+import '../../auth/jwt.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
@@ -74,7 +76,7 @@ PlatformDescriptor pixelfedDescriptorFor(MastodonInstanceProfile p) {
       ),
     ],
     accountRequirements: 'Any account on a Pixelfed server. You only type your server address and approve NEFORUM in '
-        'the browser.',
+        'the browser, or paste a personal access token from your server\'s settings.',
     apiCostSummary: 'Free on every server, with no developer account or app review.',
     setupGuide: 'docs/platforms/pixelfed.md',
   );
@@ -94,7 +96,14 @@ const _instanceField = ConnectField(
       '(`@you@pixelfed.social`).',
 );
 
-/// Connect forms: OAuth (open API) and hand-off.
+/// The connect form's personal access token field. A token here replaces the
+/// browser sign-in.
+const String pixelfedTokenField = 'access_token';
+
+/// The connect form's field for the token's end date (`YYYY-MM-DD`).
+const String pixelfedTokenEndField = 'token_end_date';
+
+/// Connect forms: OAuth or a personal access token (open API), and hand-off.
 const pixelfedConnectSpecs = [
   ConnectSpec(
     tier: PlatformTier.openApi,
@@ -102,7 +111,9 @@ const pixelfedConnectSpecs = [
     intro: '**No developer account needed.** Type the address of your Pixelfed server and press Connect. NEFORUM '
         'registers itself on that server as an app called "NEFORUM", opens your browser, and you approve it there '
         '(sign in first if asked).\n\n'
-        'NEFORUM asks for `read write`, the permission Pixelfed accepts, and uses it only to publish your posts.',
+        'NEFORUM asks for `read write`, the permission Pixelfed accepts, and uses it only to publish your posts.\n\n'
+        '**Or paste a personal access token** instead of using the browser: on your server open **Settings > '
+        'Applications > Personal Access Tokens**, create one with `read` and `write`, and paste it below.',
     redirectNote: 'Registered automatically: http://127.0.0.1:52771/callback on Windows and Linux, neforum://callback '
         'on Android, iOS and macOS. If you enter your own client ID, register that same address in the app you '
         'created on your server.',
@@ -110,6 +121,23 @@ const pixelfedConnectSpecs = [
     customSchemeRedirectOk: true,
     fields: [
       _instanceField,
+      ConnectField(
+        key: pixelfedTokenField,
+        label: 'Personal access token (optional)',
+        kind: FieldKind.password,
+        required: false,
+        secret: true,
+        help: 'Leave empty to sign in through the browser. Or create one on your server under Settings > '
+            'Applications > Personal Access Tokens with the scopes `read` and `write`, and paste it here.',
+      ),
+      ConnectField(
+        key: pixelfedTokenEndField,
+        label: 'Token end date (optional)',
+        required: false,
+        placeholder: 'YYYY-MM-DD',
+        help: 'Only with a personal access token. Leave empty and NEFORUM reads the date from the token, or counts '
+            'one year from today (how long Pixelfed tokens last). NEFORUM warns you two weeks before it ends.',
+      ),
       ConnectField(
         key: 'client_id',
         label: 'Client ID (advanced, optional)',
@@ -158,9 +186,12 @@ class PixelfedAdapter extends MastodonAdapter {
 
   /// Laravel Passport revokes a refresh token once it is used
   /// (`$revokeRefreshTokenAfterUse = true`), so two devices can end each
-  /// other's sign-in.
+  /// other's sign-in. A personal access token has no refresh token.
   @override
-  bool rotatesRefreshTokensFor(ConnectedAccount account) => account.tier != PlatformTier.handoff;
+  bool rotatesRefreshTokensFor(ConnectedAccount account) => account.tier != PlatformTier.handoff && !usesPersonalToken(account);
+
+  /// [account] signed in with a pasted personal access token, not the browser.
+  static bool usesPersonalToken(ConnectedAccount account) => account.config['authMethod'] == 'token';
 
   /// How long before the access token ends a post renews it. On defaults the
   /// refresh token outlives the access token by only 35 days, so renewing only
@@ -185,9 +216,25 @@ class PixelfedAdapter extends MastodonAdapter {
   /// token may be dead too: another device may have spent this refresh token,
   /// which the coordinator can find out. Where nothing explains it, the publish
   /// service posts on the token.
+  ///
+  /// A personal access token cannot be renewed. Once the token's own date
+  /// (its JWT `exp`) has passed, the person has to make a new one; a date they
+  /// typed or NEFORUM counted is not proof enough to stop a post, so the
+  /// server answers then.
   @override
   Future<Map<String, String>?> refreshSecrets(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
     if (account.tier == PlatformTier.handoff) return null;
+    if (usesPersonalToken(account)) {
+      final token = OAuthTokens.fromSecrets(secrets)?.accessToken;
+      if (token == null || token.isEmpty) {
+        throw const AdapterException(PublishError.auth('No access token stored for this account. Reconnect it.'));
+      }
+      final end = jwtExpiry(token);
+      if (end != null && !ctx.now().isBefore(end)) {
+        throw AdapterException(PublishError.auth(personalTokenEndedMessage(account.configString('domain', 'your server'))));
+      }
+      return null;
+    }
     if (!renewsEarly(account, secrets, ctx.now())) return super.refreshSecrets(account, secrets, ctx);
     try {
       return await renewToken(account, secrets, OAuthTokens.fromSecrets(secrets)!, ctx);
@@ -211,7 +258,8 @@ class PixelfedAdapter extends MastodonAdapter {
   PlatformDescriptor descriptorFor(MastodonInstanceProfile p) => pixelfedDescriptorFor(p);
 
   /// Refuses servers that run other software (they belong under Mastodon),
-  /// then connects as the Mastodon adapter does.
+  /// then connects as the Mastodon adapter does, or with the personal access
+  /// token the person pasted.
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
     final Uri base;
@@ -219,6 +267,10 @@ class PixelfedAdapter extends MastodonAdapter {
       base = MastodonInstanceProfile.normalizeInstance(input['instance'] ?? '');
     } on FormatException catch (e) {
       throw ConnectException(e.message, field: 'instance');
+    }
+    final token = personalToken(input[pixelfedTokenField] ?? '');
+    if (tier == PlatformTier.openApi && token.isNotEmpty) {
+      return _connectPersonalToken(base, token, input[pixelfedTokenEndField] ?? '', ctx);
     }
     final software = await _softwareOf(base, ctx);
     if (software != null && !software.isPixelfed) {
@@ -228,6 +280,123 @@ class PixelfedAdapter extends MastodonAdapter {
       );
     }
     return super.connect(tier, input, ctx);
+  }
+
+  /// What the person pasted, without the spaces and a `Bearer ` prefix copied
+  /// along with it.
+  static String personalToken(String raw) => raw.trim().replaceFirst(RegExp(r'^bearer\s+', caseSensitive: false), '').trim();
+
+  /// What a post says once a personal access token has ended.
+  static String personalTokenEndedMessage(String host) =>
+      'Your Pixelfed personal access token has ended. Create a new one on $host under Settings > Applications > '
+      'Personal Access Tokens (read and write), then reconnect the account with it.';
+
+  /// The end date typed into the connect form: `YYYY-MM-DD` (the start of that
+  /// day, UTC, so NEFORUM never warns late) or a full ISO 8601 date. Null when
+  /// left empty. Throws [ConnectException] for anything else, and for a date
+  /// that has passed at [now].
+  static DateTime? parseTokenEndDate(String raw, {required DateTime now}) {
+    final s = raw.trim();
+    if (s.isEmpty) return null;
+    DateTime? end;
+    final day = RegExp(r'^(\d{4})-(\d{2})-(\d{2})$').firstMatch(s);
+    if (day != null) {
+      final y = int.parse(day.group(1)!), m = int.parse(day.group(2)!), d = int.parse(day.group(3)!);
+      final t = DateTime.utc(y, m, d);
+      // DateTime rolls 2027-02-30 over to March: refuse it instead.
+      if (t.year == y && t.month == m && t.day == d) end = t;
+    } else if (s.contains('T')) {
+      end = DateTime.tryParse(s)?.toUtc();
+    }
+    if (end == null) {
+      throw const ConnectException('Enter the token\'s end date as YYYY-MM-DD, for example 2027-11-16, or leave it empty.',
+          field: pixelfedTokenEndField);
+    }
+    if (!now.isBefore(end)) {
+      throw const ConnectException('That end date has passed, so the token no longer works. Create a new one.',
+          field: pixelfedTokenEndField);
+    }
+    return end;
+  }
+
+  /// When a personal access token ends, and where that date came from: the
+  /// earlier of the date the person typed and the token's own `exp` (a
+  /// Pixelfed token is a JWT), so NEFORUM never warns late. With neither, one
+  /// year from [now]: Passport's default life for these tokens.
+  static (DateTime, SignInDateSource) personalTokenEnd(String token, DateTime? entered, {required DateTime now}) {
+    final own = jwtSignInEnd(token, now: now);
+    if (entered != null && (own == null || entered.isBefore(own))) return (entered, SignInDateSource.userEntered);
+    if (own != null) return (own, SignInDateSource.serverReported);
+    return (now.toUtc().add(SignInPolicies.pixelfedPersonalTokenLife), SignInDateSource.computed);
+  }
+
+  /// Connects with a pasted personal access token: checks the server is
+  /// Pixelfed, checks the token with `GET /api/v1/accounts/verify_credentials`,
+  /// and stores it with its end date. No app is registered and no browser
+  /// opens.
+  Future<ConnectResult> _connectPersonalToken(Uri base, String token, String endInput, AdapterContext ctx) async {
+    final now = ctx.now();
+    final entered = parseTokenEndDate(endInput, now: now);
+    try {
+      ctx.progress('Looking up ${base.host}');
+      final api = MastodonApi(ctx, base);
+      final found = await api.fetchInstance();
+      if (found == null) {
+        throw ConnectException('${base.host} does not look like a Pixelfed server (no /api/v1/instance).', field: 'instance');
+      }
+      final sw = await api.fetchNodeInfoSoftware();
+      final p = sw == null ? found : found.withSoftware(sw.$1, sw.$2);
+      if (!p.isPixelfed) {
+        throw ConnectException('${base.host} runs ${p.softwareLabel}, not Pixelfed. Add it as a Mastodon account instead.',
+            field: 'instance');
+      }
+      ctx.progress('Checking your token');
+      final Map<String, dynamic> me;
+      try {
+        me = await MastodonApi(ctx, p.base, accessToken: token).verifyCredentials();
+      } on HttpFailure catch (e) {
+        throw switch (e.statusCode) {
+          401 => ConnectException(
+              '${p.domain} did not accept this token (HTTP 401). Check that you copied all of it, and that it was not '
+              'revoked and has not ended. If it has, create a new one under Settings > Applications > Personal '
+              'Access Tokens.',
+              field: pixelfedTokenField),
+          403 => ConnectException(
+              '${p.domain} refused to show your profile with this token (HTTP 403). Create a token with the scopes '
+              '`read` and `write`.',
+              field: pixelfedTokenField),
+          _ => e,
+        };
+      }
+      final username = (me['username'] as String?) ?? (me['acct'] as String?) ?? 'unknown';
+      final display = (me['display_name'] as String?)?.trim();
+      final (end, source) = personalTokenEnd(token, entered, now: now);
+      return ConnectResult(
+        account: ConnectedAccount(
+          id: const Uuid().v4(),
+          platformId: id,
+          tier: PlatformTier.openApi,
+          displayName: '${display == null || display.isEmpty ? username : display} (${p.domain})',
+          handle: '@$username@${p.domain}',
+          avatarUrl: me['avatar'] as String?,
+          profileUrl: me['url'] as String?,
+          createdAt: now,
+          config: {
+            ...p.toConfig(),
+            'remoteAccountId': '${me['id']}',
+            'authMethod': 'token',
+          },
+        ),
+        secrets: OAuthTokens(accessToken: token, tokenType: 'Bearer', expiresAt: end)
+            .toSecrets({SignInSecretKeys.expiresAtSource: source.name}),
+      );
+    } on HttpFailure catch (e) {
+      throw ConnectException(MastodonApi.mapFailure(e, now: now, context: 'Connecting to ${base.host}').message);
+    } on TimeoutException {
+      throw ConnectException('${base.host} did not answer in time. Check the address and your connection.', field: 'instance');
+    } on http.ClientException catch (e) {
+      throw ConnectException('Could not reach ${base.host}: ${e.message}', field: 'instance');
+    }
   }
 
   /// The server's software, or null when it cannot be told (the Mastodon

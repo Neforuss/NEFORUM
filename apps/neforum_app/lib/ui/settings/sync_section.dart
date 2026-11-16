@@ -192,8 +192,12 @@ class SyncJoinDialog extends StatelessWidget {
 /// Choose the storage, fill in where the file is, and the passphrase.
 class SyncSetupDialog extends ConsumerStatefulWidget {
   /// [opened]: a sync file tapped in the Files app, already chosen.
-  const SyncSetupDialog({super.key, this.opened});
+  /// [only]: 1.4.4, the first-start shortcuts. Only that kind of storage is
+  /// listed, and when this device has just one of it (Google Drive,
+  /// directly) its form opens straight away. "Other storage" lists them all.
+  const SyncSetupDialog({super.key, this.opened, this.only});
   final PickedLocation? opened;
+  final SyncBackendKind? only;
 
   @override
   ConsumerState<SyncSetupDialog> createState() => _SyncSetupDialogState();
@@ -201,6 +205,9 @@ class SyncSetupDialog extends ConsumerStatefulWidget {
 
 class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
   SyncProvider? _provider;
+
+  /// The kind of storage the list is narrowed to (see [SyncSetupDialog.only]).
+  SyncBackendKind? _only;
   final _fields = <String, TextEditingController>{};
   final _passphrase = TextEditingController();
   final _passphraseFormat = PassphraseInputFormatter();
@@ -265,7 +272,17 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
       _bookmark = opened.bookmark;
       _isFile = opened.isFile;
     }
+    final only = widget.only;
+    if (only != null && opened == null && current == null) {
+      _only = only;
+      final choices = _available(only);
+      if (choices.length == 1) _pick(choices.single);
+    }
   }
+
+  /// The storage of [kind] this device can use, in the catalog's order.
+  List<SyncProvider> _available(SyncBackendKind kind) =>
+      [for (final x in syncProviders) if (x.kind == kind && x.availableOn(ios: Env.isIOS, android: Env.isAndroid)) x];
 
   @override
   void dispose() {
@@ -539,7 +556,7 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
     final nf = context.nf;
     final p = _provider;
     return AlertDialog(
-      title: Text(p == null ? 'Where should the sync file go?' : 'Sync with ${p.name}'),
+      title: Text(p == null ? (_only != null ? 'Where is your sync file?' : 'Where should the sync file go?') : 'Sync with ${p.name}'),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -559,7 +576,17 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
         ),
       ),
       actions: [
-        if (p != null) TextButton(onPressed: _busy ? null : () => setState(() => _provider = null), child: const Text('Back')),
+        if (p != null)
+          TextButton(
+            onPressed: _busy
+                ? null
+                : () => setState(() {
+                      _provider = null;
+                      // A list of one is no choice: back to every kind.
+                      if (_only != null && _available(_only!).length < 2) _only = null;
+                    }),
+            child: const Text('Back'),
+          ),
         TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Cancel')),
         if (p != null) FilledButton(onPressed: _busy ? null : _connect, child: Text(_busy ? 'Connecting…' : 'Turn on sync')),
       ],
@@ -574,10 +601,26 @@ class _SyncSetupDialogState extends ConsumerState<SyncSetupDialog> {
           Text(sub, style: context.text.bodySmall?.copyWith(color: nf.textMuted)),
           const SizedBox(height: Space.xs),
           Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [
-            for (final x in syncProviders.where((x) => x.kind == kind && x.availableOn(ios: Env.isIOS, android: Env.isAndroid)))
-              ActionChip(label: Text(x.name), onPressed: () => _pick(x)),
+            for (final x in _available(kind)) ActionChip(label: Text(x.name), onPressed: () => _pick(x)),
           ]),
         ]);
+    final only = _only;
+    if (only != null) {
+      return [
+        Text('Pick the storage your other devices use.', style: context.text.bodyMedium),
+        switch (only) {
+          SyncBackendKind.googleDrive => group('Google Drive, directly', 'NEFORUM signs in to Google Drive itself with your own Google Cloud key.', only),
+          SyncBackendKind.folder => group(
+              Env.isIOS ? 'iCloud Drive or a cloud app' : (Env.isAndroid ? 'A cloud app or a synced folder' : 'A cloud app on this computer'),
+              Env.isMobile ? 'Then pick the sync file, or its folder, in the Files app.' : 'Then choose the folder it syncs, where the sync file is.',
+              only),
+          SyncBackendKind.webdav => group('WebDAV', 'NEFORUM reaches the server itself.', only),
+          SyncBackendKind.s3 => group('S3-compatible storage', 'NEFORUM reaches the bucket itself.', only),
+        },
+        const SizedBox(height: Space.sm),
+        TextButton(onPressed: () => setState(() => _only = null), child: const Text('Other storage')),
+      ];
+    }
     return [
       Text('Pick the storage you already use. Use the same one on every device.', style: context.text.bodyMedium),
       group('Google Drive, directly', 'NEFORUM signs in to Google Drive itself with your own Google Cloud key. Works on every device: use it on all of them.',

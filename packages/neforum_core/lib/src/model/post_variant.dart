@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'article.dart';
 import 'artwork.dart';
 import 'media.dart';
 import 'paragraph_media.dart';
@@ -37,6 +38,7 @@ class PostVariant {
     this.seriesPosts = const [],
     this.postedThreadIds = const [],
     this.paragraphMedia = const {},
+    this.article,
   });
 
   /// Body text. When the post was split into a thread this is the first part.
@@ -113,6 +115,19 @@ class PostVariant {
   /// the post goes out as it always did.
   final ParagraphMediaLinks paragraphMedia;
 
+  /// 1.4.4: the post's article ([Post.article]) as this network gets it:
+  /// without the blocks the target leaves out
+  /// ([PostOverrides.excludedBlockIds]). Its files are found in [media]
+  /// ([ArticleDocument.mediaIn]); a block whose file is not there is left
+  /// out and reported. Set only for a network that takes articles
+  /// ([PlatformDescriptor.articleFormat]) and a target without words of its
+  /// own; null: the adapter posts [text] as it always did. [text] then holds
+  /// the article as composer text ([ArticleDocument.toComposerText]), for
+  /// hand-offs and checks.
+  final ArticleDocument? article;
+
+  bool get hasArticle => article != null;
+
   /// Whether the adapter shows this post section by section
   /// ([paragraphSections]).
   bool get hasParagraphMedia => paragraphMedia.isNotEmpty && !isThread;
@@ -184,7 +199,9 @@ class PostVariant {
     List<PostVariant>? seriesPosts,
     List<String>? postedThreadIds,
     ParagraphMediaLinks? paragraphMedia,
+    ArticleDocument? article,
     bool clearLink = false,
+    bool clearArticle = false,
   }) =>
       PostVariant(
         text: text ?? this.text,
@@ -213,6 +230,9 @@ class PostVariant {
         // By media id: a file replaced by a copy made from it keeps its
         // paragraph, and one left out simply has none.
         paragraphMedia: paragraphMedia ?? this.paragraphMedia,
+        // By media id, like the paragraph links: a fitted copy stands for
+        // its photo.
+        article: clearArticle ? null : (article ?? this.article),
       );
 
   /// This variant without the media items [test] matches. Every other item

@@ -85,6 +85,19 @@ struct StillVideoRequest {
   uint32_t frame_rate = 30;
 };
 
+// 1.4.4: still pictures one after another (framesVideo, an animated GIF):
+// |frame_paths| are PNGs of exactly frame_width x frame_height, each shown
+// for |frame_counts| frames at |frame_rate| frames per second. The video gets
+// a silent AAC track.
+struct FramesVideoRequest {
+  std::vector<std::wstring> frame_paths;
+  std::vector<int> frame_counts;
+  std::wstring output_path;
+  int frame_width = 0;
+  int frame_height = 0;
+  uint32_t frame_rate = 30;
+};
+
 // A sound file converted to "mp3" or "m4a" (transcodeAudio).
 struct AudioTranscodeRequest {
   std::wstring input_path;
@@ -131,6 +144,13 @@ bool RenderStillVideoFile(const StillVideoRequest& request,
                           const std::function<void(double)>& progress,
                           const std::atomic<bool>& cancelled,
                           std::string* error_code, std::string* error);
+
+// Writes an H.264/AAC MP4 of the pictures, one after another, with silence.
+// Same failure contract as ComposeVideoFile.
+bool RenderFramesVideoFile(const FramesVideoRequest& request,
+                           const std::function<void(double)>& progress,
+                           const std::atomic<bool>& cancelled,
+                           std::string* error_code, std::string* error);
 
 // The formats TranscodeAudioFile can write here: "m4a" with an AAC encoder,
 // "mp3" with an MP3 encoder (Windows 8 and later have one).

@@ -85,9 +85,11 @@ const PlatformDescriptor pinterestDescriptor = PlatformDescriptor(
   personalAccountOk: false,
   accountRequirements: 'Automatic posting needs a Pinterest business account (converting a personal account is free '
       'and keeps your profile) and your own Pinterest developer app, which Pinterest must approve before it works. '
-      'Until Pinterest also grants the app Standard access, Pins it creates are only visible to you.',
-  apiCostSummary: 'Free. With Trial access Pinterest allows about 300 new Pins and 1000 API calls per day, and the Pins '
-      'stay private to you; Standard access (after a video review by Pinterest) makes them public.',
+      'Until Pinterest also grants the app Standard access, it can only make test Pins in Pinterest\'s API Sandbox, '
+      'which only you can see.',
+  apiCostSummary: 'Free. With Trial access Pinterest allows about 300 new Pins and 1000 API calls per day, as test Pins '
+      'in its API Sandbox that only you can see (no video Pins); Standard access (after a video review by Pinterest) '
+      'makes them public.',
   setupGuide: 'docs/platforms/pinterest.md',
   serverSideScheduling: false,
   supportsLinkField: true,

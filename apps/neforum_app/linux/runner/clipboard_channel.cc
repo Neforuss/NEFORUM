@@ -2,6 +2,8 @@
 
 #include <gtk/gtk.h>
 
+#include <cstring>
+
 namespace {
 
 GtkClipboard* SystemClipboard() {
@@ -47,6 +49,67 @@ bool CopyImage(FlValue* args) {
   gtk_clipboard_set_can_store(clipboard, nullptr, 0);
   g_object_unref(pixbuf);
   return true;
+}
+
+// 1.4.4: articles. Formatted text: text/html for editors that paste
+// formatting, and the words as plain text for the rest. GTK asks for the
+// data when an app pastes; NEFORUM keeps it until the clipboard changes.
+struct HtmlClip {
+  gchar* html;
+  gchar* text;
+};
+
+enum { kTargetHtml = 1, kTargetText = 2 };
+
+void GetHtmlClip(GtkClipboard* clipboard, GtkSelectionData* selection,
+                 guint info, gpointer user_data) {
+  auto* clip = static_cast<HtmlClip*>(user_data);
+  if (info == kTargetHtml) {
+    gtk_selection_data_set(selection, gtk_selection_data_get_target(selection),
+                           8, reinterpret_cast<const guchar*>(clip->html),
+                           static_cast<gint>(strlen(clip->html)));
+  } else {
+    gtk_selection_data_set_text(selection, clip->text, -1);
+  }
+}
+
+void ClearHtmlClip(GtkClipboard* clipboard, gpointer user_data) {
+  auto* clip = static_cast<HtmlClip*>(user_data);
+  g_free(clip->html);
+  g_free(clip->text);
+  g_free(clip);
+}
+
+bool CopyHtml(FlValue* args) {
+  if (args == nullptr || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) {
+    return false;
+  }
+  FlValue* html = fl_value_lookup_string(args, "html");
+  FlValue* text = fl_value_lookup_string(args, "text");
+  const gchar* h = html != nullptr && fl_value_get_type(html) == FL_VALUE_TYPE_STRING
+                       ? fl_value_get_string(html)
+                       : "";
+  const gchar* t = text != nullptr && fl_value_get_type(text) == FL_VALUE_TYPE_STRING
+                       ? fl_value_get_string(text)
+                       : "";
+  if (*h == '\0' && *t == '\0') return false;
+  auto* clip = g_new0(HtmlClip, 1);
+  clip->html = g_strdup(h);
+  clip->text = g_strdup(t);
+  GtkTargetList* list = gtk_target_list_new(nullptr, 0);
+  if (*h != '\0') {
+    gtk_target_list_add(list, gdk_atom_intern_static_string("text/html"), 0, kTargetHtml);
+  }
+  gtk_target_list_add_text_targets(list, kTargetText);
+  gint count = 0;
+  GtkTargetEntry* targets = gtk_target_table_new_from_list(list, &count);
+  GtkClipboard* clipboard = SystemClipboard();
+  gboolean set = gtk_clipboard_set_with_data(clipboard, targets, count, GetHtmlClip, ClearHtmlClip, clip);
+  if (set) gtk_clipboard_set_can_store(clipboard, nullptr, 0);
+  gtk_target_table_free(targets, count);
+  gtk_target_list_unref(list);
+  if (!set) ClearHtmlClip(clipboard, clip);
+  return set;
 }
 
 void RespondWithImage(GtkClipboard* clipboard, GdkPixbuf* pixbuf,
@@ -98,6 +161,12 @@ void HandleMethodCall(FlMethodChannel* channel, FlMethodCall* method_call,
   if (g_strcmp0(method, "copyImage") == 0) {
     g_autoptr(FlValue) result =
         fl_value_new_bool(CopyImage(fl_method_call_get_args(method_call)));
+    fl_method_call_respond_success(method_call, result, nullptr);
+    return;
+  }
+  if (g_strcmp0(method, "copyHtml") == 0) {
+    g_autoptr(FlValue) result =
+        fl_value_new_bool(CopyHtml(fl_method_call_get_args(method_call)));
     fl_method_call_respond_success(method_call, result, nullptr);
     return;
   }

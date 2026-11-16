@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../../article/article_renderer.dart';
 import '../../auth/auth_broker.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
@@ -107,6 +109,7 @@ class MicropubAdapter extends PlatformAdapter {
     apiCostSummary: 'The protocol is free and has no published rate limits. Micro.blog needs a paid hosted plan for '
         'a hosted blog; your own site costs whatever your hosting costs.',
     setupGuide: 'docs/platforms/micropub.md',
+    articleFormat: ArticleFormat.micropubHtml,
     serverSideScheduling: false,
     supportsLinkField: false,
   );
@@ -410,6 +413,7 @@ class MicropubAdapter extends PlatformAdapter {
 
     final mediaRaw = account.configString('mediaEndpoint');
     final media = mediaRaw.isEmpty ? null : Uri.parse(mediaRaw);
+    if (v.article != null) return _publishArticle(v, v.article!, account, endpoint, media, token, ctx);
     final photos = v.media.where((m) => m.isImage).toList();
     final videos = v.media.where((m) => m.isVideo).toList();
 
@@ -460,6 +464,85 @@ class MicropubAdapter extends PlatformAdapter {
           raw: blogSnippet(res.body)));
     }
     ctx.log.info('Posted to ${endpoint.host}: $url');
+    return PublishResult.ok(remoteId: url, remoteUrl: url, publishedAt: ctx.now());
+  }
+
+  /// 1.4.4: an article, in Micropub's JSON syntax (HTML content can only be
+  /// sent that way, W3C Micropub 3.3.2): `content: [{html}]` with the files
+  /// placed in it, `name`, `summary`, `category`, the cover as `featured`
+  /// and `photo` (with its alt text), and the `mp-` commands. The files go
+  /// to the site's media endpoint, else to the user's media host.
+  Future<PublishResult> _publishArticle(PostVariant v, ArticleDocument doc, ConnectedAccount account, Uri endpoint, Uri? mediaEndpoint,
+      String token, AdapterContext ctx) async {
+    final assets = <ArticleAsset>[];
+    final files = v.media;
+    for (var i = 0; i < files.length; i++) {
+      final m = files[i];
+      final String url;
+      if (mediaEndpoint != null) {
+        url = await _uploadMedia(mediaEndpoint, token, m, i + 1, files.length, ctx);
+      } else {
+        final host = ctx.mediaHost;
+        if (host == null) {
+          throw const AdapterException(PublishError.configuration(
+              'Your site has no media endpoint, so the article\'s files must be on a media host first. '
+              'Set one up in Settings > Media hosting.'));
+        }
+        ctx.uploading(m, 'Uploading file ${i + 1} of ${files.length} to ${host.name}');
+        url = await hostPermanently(host, m, await ctx.readMedia(m), 'Micropub', ctx);
+      }
+      assets.add(ArticleAsset(m, url: url));
+    }
+    final all = ArticleAssets(assets);
+    final html = renderSemanticHtml(doc, all, network: descriptor.name, fields: ArticleRenderer.micropubFields).output;
+    final pairs = <MapEntry<String, String>>[];
+    _addExtras(pairs, v, account);
+    if (!pairs.any((p) => p.key == 'post-status') && doc.isDraft) pairs.add(const MapEntry('post-status', 'draft'));
+    if (!pairs.any((p) => p.key == 'mp-slug') && articleText(doc.slug) != null) pairs.add(MapEntry('mp-slug', doc.slug!.trim()));
+    final properties = <String, List<Object>>{
+      if (html.isNotEmpty)
+        'content': [
+          {'html': html},
+        ],
+    };
+    final title = v.title?.trim();
+    if (title != null && title.isNotEmpty) properties['name'] = [title];
+    final summary = articleText(doc.excerpt);
+    if (summary != null) properties['summary'] = [summary];
+    if (v.tags.isNotEmpty) properties['category'] = [...v.tags];
+    final cover = doc.cover == null ? null : all.find(doc.cover!.mediaId);
+    if (cover != null && cover.media.isImage) {
+      final alt = doc.cover!.altFor(cover.media);
+      properties['featured'] = [cover.url];
+      properties['photo'] = [
+        alt.isEmpty ? cover.url : {'value': cover.url, 'alt': alt},
+      ];
+    }
+    for (final p in pairs) {
+      final key = p.key.endsWith('[]') ? p.key.substring(0, p.key.length - 2) : p.key;
+      (properties[key] ??= []).add(p.value);
+    }
+    final body = {
+      'type': ['h-entry'],
+      'properties': properties,
+    };
+    final res = await guardBlog(
+        'Micropub post',
+        () => ctx.creating(
+            'Posting the article to ${endpoint.host}',
+            () => ctx.http.send('POST', endpoint,
+                headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json', 'Content-Type': 'application/json; charset=utf-8'},
+                bytes: Uint8List.fromList(utf8.encode(jsonEncode(body))))),
+        mapHttp: (f) => micropubError(f, context: 'Micropub post'));
+    final location = res.headers['location'];
+    final url = location != null && location.isNotEmpty
+        ? endpoint.resolve(location.trim()).toString()
+        : blogStr(res.jsonMap['url']) ?? blogStr(res.jsonMap['preview']);
+    if (url == null) {
+      throw AdapterException(PublishError.platform('Your site accepted the post (HTTP ${res.statusCode}) but did not say where it is',
+          raw: blogSnippet(res.body)));
+    }
+    ctx.log.info('Posted the article to ${endpoint.host}: $url');
     return PublishResult.ok(remoteId: url, remoteUrl: url, publishedAt: ctx.now());
   }
 

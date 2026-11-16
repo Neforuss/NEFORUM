@@ -16,6 +16,12 @@ Future<int> mediaFileLength(String path) async {
   }
 }
 
+void writeMediaFileSync(String path, List<int> bytes) {
+  final file = File(path);
+  file.parent.createSync(recursive: true);
+  file.writeAsBytesSync(bytes, flush: true);
+}
+
 Future<void> deleteMediaFile(String path) async {
   try {
     await File(path).delete();

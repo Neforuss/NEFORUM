@@ -1,0 +1,21 @@
+<h2>Intro &amp; &lt;setup&gt;</h2>
+<p>Plain <strong>bold</strong>, <em>italic</em>, <code>code()</code> and <a href="https://example.com/a?b=1&amp;c=2">a link</a> *not emphasis* 2 &lt; 3<br>next line</p>
+<figure><img src="https://cdn.example.test/i1" alt="Ref alt"><figcaption>A caption · Jane Doe</figcaption></figure>
+<figure><img src="https://cdn.example.test/g1" alt="G1"><img src="https://cdn.example.test/g2" alt="G2"><img src="https://cdn.example.test/g3" alt=""><figcaption>Three photos</figcaption></figure>
+<h3>Details</h3>
+<figure><video controls src="https://cdn.example.test/v1"></video><figcaption>The video</figcaption></figure>
+<figure><audio controls src="https://cdn.example.test/a1"></audio><figcaption>The track</figcaption></figure>
+<p><a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ">https://www.youtube.com/watch?v=dQw4w9WgXcQ</a></p>
+<blockquote><p>To be or not to be.<br><cite>Hamlet</cite></p></blockquote>
+<ul><li>first</li><li><strong>second</strong></li></ul>
+<ol start="3"><li>three</li><li>four</li></ol>
+<pre><code class="language-dart">void main() {
+  print(&quot;```&quot;);
+}</code></pre>
+<hr>
+<p>The end. See <a href="https://example.org/x_y">https://example.org/x_y</a>.</p>
+
+---- report
+dropped subtitle subtitle: Micropub has no subtitle field; the subtitle is left out
+dropped canonical_url canonicalUrl: Micropub has no canonical URL field; it is left out
+degraded embed_as_link emb: Micropub gets the embed as a link

@@ -41,6 +41,16 @@ Future<void> askAboutUpdateChecks(BuildContext context, WidgetRef ref) async {
   await ref.read(updateCheckProvider.notifier).setMode(automatic == true ? UpdateCheckMode.automatic : UpdateCheckMode.off);
 }
 
+/// Shown on iPhone and iPad next to an available update. Feather's "Semi
+/// Local" install serves the IPA from the phone's own IPv4 address; on an
+/// IPv6-only carrier with 464XLAT (T-Mobile US and others) that address is
+/// the non-routed 192.0.0.2, so Safari reports "not connected to the
+/// internet". The fix lives in the sideloading app; see
+/// docs/install-iphone.md.
+const String kIosSideloadWifiNote =
+    'On iPhone and iPad, install the new IPA over Wi-Fi. On mobile data, sideloading apps such as Feather '
+    'can fail with 192.0.0.2 or "not connected to the internet".';
+
 /// Opens the download page in the browser.
 Future<void> openDownloadPage() => launchUrl(Uri.parse(kDownloadPageUrl), mode: LaunchMode.externalApplication);
 
@@ -99,7 +109,10 @@ class UpdateSettingsSection extends ConsumerWidget {
       ),
       SettingRow(
         title: available == null ? 'Version $kAppVersion' : 'NEFORUM ${available.version} is available',
-        description: checked == null ? 'Never checked.' : 'Last checked ${TimeFormatting.from(s, context).moment(checked)}.',
+        description: [
+          checked == null ? 'Never checked.' : 'Last checked ${TimeFormatting.from(s, context).moment(checked)}.',
+          if (available != null && Env.isIOS) kIosSideloadWifiNote,
+        ].join('\n\n'),
         stackOnCompact: true,
         trailing: Wrap(spacing: Space.sm, runSpacing: Space.sm, children: [
           if (available != null)

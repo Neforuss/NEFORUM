@@ -17,10 +17,11 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as img;
 import 'package:integration_test/integration_test.dart';
+import 'package:neforum_app/media/gif_video.dart';
 import 'package:neforum_app/platform/video_compositor.dart';
 import 'package:neforum_app/state/shrunk_videos.dart';
 import 'package:neforum_app/state/video_frames.dart';
-import 'package:neforum_core/neforum_core.dart' show videoHasSound;
+import 'package:neforum_core/neforum_core.dart' show PhotoFit, PhotoFitMode, videoHasSound;
 
 /// Far longer than any of these files takes; a call that hangs fails the
 /// test instead of stalling CI.
@@ -33,7 +34,7 @@ const int _durationToleranceMs = 250;
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('frame, transcode, audioVideo, audioFormats and transcodeAudio on Windows', (tester) async {
+  testWidgets('frame, transcode, audioVideo, audioFormats, transcodeAudio and framesVideo on Windows', (tester) async {
     final dir = await Directory.systemTemp.createTemp('neforum-video-tools-');
     addTearDown(() async {
       try {
@@ -216,6 +217,59 @@ void main() {
       throwsA(isA<VideoCompositionException>()),
     );
     expect(File(none).existsSync(), isFalse);
+
+    // --- framesVideo (1.4.4): an animated GIF for Instagram ----------------
+    // Red, green, blue, 200 ms each: 600 ms a pass, 9 passes to reach 5 s.
+    final encoder = img.GifEncoder();
+    for (final c in [img.ColorRgb8(230, 20, 20), img.ColorRgb8(20, 210, 40), img.ColorRgb8(30, 40, 230)]) {
+      encoder.addFrame(img.Image(width: 160, height: 90)..clear(c), duration: 20);
+    }
+    final gif = encoder.finish()!;
+    final animation = readGifAnimation(gif)!;
+    final timeline = gifVideoTimeline(animation.frameDelaysMs);
+    expect((timeline.loops, timeline.frameCount), (9, 162));
+    const story = PhotoFit(mimeTypes: {'image/jpeg'}, minAspect: 9 / 16, maxAspect: 9 / 16, gifAsVideo: true);
+    final size = gifVideoFrameSize(animation.width, animation.height, story, PhotoFitMode.pad);
+    expect(size, (width: 720, height: 1280));
+    final used = timeline.framesUsed.toList()..sort();
+    final pngs = [for (final i in used) path('gif frame $i.png')];
+    expect(renderGifFramesJob((gif, size.width, size.height, PhotoFitMode.pad, used, pngs)), isTrue);
+    final gifVideo = path('gif.mp4');
+    final gifProgress = <double>[];
+    watch = Stopwatch()..start();
+    await compositor
+        .renderFramesVideo(
+          framePaths: [for (final s in timeline.spans) pngs[used.indexOf(s.frame)]],
+          frameCounts: [for (final s in timeline.spans) s.count],
+          outputPath: gifVideo,
+          frameWidth: size.width,
+          frameHeight: size.height,
+          onProgress: gifProgress.add,
+        )
+        .timeout(_limit);
+    debugPrint('framesVideo: ${watch.elapsedMilliseconds} ms, ${File(gifVideo).lengthSync()} bytes');
+    final gifProbe = await probed(gifVideo);
+    expect((gifProbe.width, gifProbe.height), (720, 1280));
+    expect(gifProbe.durationMs, closeTo(5400, _durationToleranceMs));
+    expect(gifProbe.hasAudio, isTrue, reason: 'a silent AAC track: networks may refuse a video without sound');
+    expect(_videoFrames(File(gifVideo).readAsBytesSync()), 162, reason: 'every frame of the timeline, 30 a second');
+    expect(gifProgress.last, 1);
+    // The GIF's timing: red in its first 200 ms, green in the next, blue after.
+    for (final (ms, channel) in [(100, 0), (300, 1), (500, 2), (700, 0)]) {
+      final at = await compositor.frameAt(gifVideo, ms, maxSide: 64).timeout(_limit);
+      final px = img.decodePng(at!.png)!.getPixel(at.width ~/ 2, at.height ~/ 2);
+      final rgb = [px.r.toInt(), px.g.toInt(), px.b.toInt()];
+      expect(rgb.indexOf(rgb.reduce(math.max)), channel, reason: 'at $ms ms: $rgb');
+    }
+    // A picture that cannot be read fails and leaves no file.
+    final broken = path('broken.mp4');
+    await expectLater(
+      compositor
+          .renderFramesVideo(framePaths: [path('missing.png')], frameCounts: const [30], outputPath: broken, frameWidth: 720, frameHeight: 1280)
+          .timeout(_limit),
+      throwsA(isA<VideoCompositionException>()),
+    );
+    expect(File(broken).existsSync(), isFalse);
   });
 }
 

@@ -306,7 +306,8 @@ void main() {
     await NotificationService.instance.init();
     Future<AppServices> workspace(Directory dir, {required bool demo}) async {
       final storage = await openAppStorage(overrideDir: dir.path);
-      await storage.writeJson('settings.json', {'updateCheck': 'off'});
+      // The first-start questions answered: they would cover the pages.
+      await storage.writeJson('settings.json', {'updateCheck': 'off', 'syncOfferAnsweredAt': '2026-11-01T00:00:00.000Z'});
       return AppServices.create(demo: demo, storage: storage);
     }
 

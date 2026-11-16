@@ -13,10 +13,12 @@ import '../text/rules_validator.dart';
 import 'adapter_context.dart';
 import 'connect_spec.dart';
 import 'reconnect_input.dart';
+import 'subscription_tiers.dart';
 
 export '../model/sign_in_lifetime.dart';
 export '../publish/publish_progress.dart' show ProgressFamily, ProgressShape, ProgressSlot;
 export 'sign_in_policies.dart';
+export 'subscription_tiers.dart';
 
 /// The contract every platform implements.
 ///
@@ -35,6 +37,65 @@ abstract class PlatformAdapter {
   /// note length). Text is split and media trimmed with it, so it must be
   /// cheap and pure.
   PlatformDescriptor descriptorForAccount(ConnectedAccount account) => descriptor;
+
+  // ------------------------------------------------- paid plans (1.4.4)
+
+  /// The plans of this network that change its limits for accounts on
+  /// [tier] (X Premium, Parler Premium, a verified YouTube channel), or null
+  /// when no plan changes anything NEFORUM checks. An adapter that answers
+  /// applies the plan in [descriptorForAccount] ([subscriptionTierOf]).
+  SubscriptionPlans? subscriptionPlansFor(PlatformTier tier) => null;
+
+  /// [account]'s plan: the one stored on it, else what an older version of
+  /// NEFORUM stored ([legacySubscriptionTierId]), else
+  /// [SubscriptionPlans.assumedId]. Null when the network has no plans for
+  /// the account's way of posting.
+  SubscriptionTier? subscriptionTierOf(ConnectedAccount account) {
+    final plans = subscriptionPlansFor(account.tier);
+    if (plans == null) return null;
+    return plans.tierWithId(AccountSubscription.storedTierId(account)) ??
+        plans.tierWithId(legacySubscriptionTierId(account)) ??
+        plans.tierWithId(plans.assumedId) ??
+        plans.free;
+  }
+
+  /// The plan an account connected before 1.4.4 kept under its own key
+  /// (Parler's `premium` switch), or null.
+  String? legacySubscriptionTierId(ConnectedAccount account) => null;
+
+  /// [account] with the plan [tierId] stored, set by [source] (the network's
+  /// answer at [at], or the person's choice). Adapters that kept the plan
+  /// under an older key keep that key in step, so a device still on an older
+  /// version reads the same plan through Sync.
+  ConnectedAccount withSubscriptionTier(ConnectedAccount account, String tierId,
+      {SubscriptionSource source = SubscriptionSource.chosen, DateTime? at}) {
+    final config = {...account.config, ...AccountSubscription.entries(tierId, source: source, at: at)};
+    if (source == SubscriptionSource.chosen) config.remove(AccountSubscription.checkedAtKey);
+    return account.copyWith(config: config);
+  }
+
+  /// Asks the network which plan [account] has now, for "Ask again" on the
+  /// account card, where [SubscriptionPlans.detected]. Null when the network
+  /// gave no answer it could be read from. Throws [AdapterException] when the
+  /// call failed (the card says why); never changes the account itself.
+  Future<SubscriptionTier?> readSubscriptionTier(
+          ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async =>
+      null;
+
+  /// [readSubscriptionTier] has an answer for [account], so the account card
+  /// offers to ask. Elsewhere a detected plan is read again on Reconnect.
+  bool canReadSubscriptionTier(ConnectedAccount account) => false;
+
+  /// [result] with the plan the connect form chose ([SubscriptionPlans.connectField]),
+  /// for a way of posting whose plan the person chooses. Unchanged when the
+  /// form had no such answer or the network reports the plan itself.
+  ConnectResult withChosenSubscription(PlatformTier tier, Map<String, String> input, ConnectResult result) {
+    final plans = subscriptionPlansFor(tier);
+    if (plans == null || plans.detected) return result;
+    final chosen = plans.fromInput(input[AccountSubscription.tierKey]);
+    if (chosen == null) return result;
+    return ConnectResult(account: withSubscriptionTier(result.account, chosen.id), secrets: result.secrets);
+  }
 
   /// The adapter finishes a thread that broke off: given
   /// [PostVariant.postedThreadIds] it posts only the parts after them,
@@ -159,7 +220,7 @@ abstract class PlatformAdapter {
   /// Platform-specific validation on top of the generic rules check. Called
   /// by the composer live, so keep it synchronous and cheap.
   List<ValidationIssue> validate(PostVariant variant, ConnectedAccount account) =>
-      RulesValidator.validate(variant, descriptor, tier: account.tier);
+      RulesValidator.validate(variant, descriptorForAccount(account), tier: account.tier);
 
   /// Publishes through the API. Must not throw for platform/user errors —
   /// return `PublishResult.failure` instead; only programming errors may

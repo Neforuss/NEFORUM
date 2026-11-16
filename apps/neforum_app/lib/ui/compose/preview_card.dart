@@ -36,6 +36,7 @@ import '../../widgets/media_thumb.dart';
 import '../../widgets/selection_marks.dart';
 import '../../widgets/surfaces.dart';
 import 'caption_editor_sheet.dart';
+import 'article_preview.dart';
 import 'card_background_sheet.dart';
 import 'card_design_view.dart';
 import 'card_designer_sheet.dart';
@@ -133,6 +134,9 @@ class PreviewCard extends ConsumerWidget {
     final family = previewFamilyFor(d.id, artPlatform: d.isArtPlatform);
     final rules = d.text;
     final used = rules.maxLength == null ? v.text.characters.length : TextCounter.count(v.text, rules);
+    // 1.4.4: articles. The article's own report is shown in full by its section.
+    final articleMode = ref.watch(composerProvider.select((c) => c.isArticle));
+    final shownIssues = v.hasArticle ? [for (final i in p.issues) if (i.field != 'article') i] : p.issues;
 
     final body = switch (family) {
       PreviewFamily.microblog => _Microblog(p: p),
@@ -184,14 +188,29 @@ class PreviewCard extends ConsumerWidget {
           ),
         Divider(height: 1, color: nf.border),
         Padding(padding: const EdgeInsets.all(Space.md + 2), child: body),
+        // 1.4.4: articles. What this network gets of the article, before
+        // posting; or, while the post is an article, what it gets instead.
+        if (v.hasArticle) ...[
+          Divider(height: 1, color: nf.border),
+          ArticlePreviewSection(key: ValueKey('article-section-${p.account.id}'), preview: p),
+        ] else if (articleShortVersionNote(p, articleMode: articleMode) case final note?)
+          Padding(
+            key: ValueKey('article-short-note-${p.account.id}'),
+            padding: const EdgeInsets.fromLTRB(Space.md + 2, 0, Space.md + 2, Space.md),
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Icon(Icons.short_text_rounded, size: 15, color: nf.textFaint),
+              const SizedBox(width: Space.sm),
+              Expanded(child: Text(note, style: context.text.bodySmall?.copyWith(color: nf.textMuted, fontSize: 12))),
+            ]),
+          ),
         // 1.3.4: what does not fit in one post goes on in further posts.
         if (v.seriesPosts.isNotEmpty) ...[
           Divider(height: 1, color: nf.border),
           Padding(padding: const EdgeInsets.all(Space.md + 2), child: _SeriesPreview(key: ValueKey('series-preview-${d.id}'), variant: v, platform: d)),
         ],
-        if (p.issues.isNotEmpty) ...[
+        if (shownIssues.isNotEmpty) ...[
           Divider(height: 1, color: nf.border),
-          _Issues(issues: p.issues),
+          _Issues(issues: shownIssues),
         ],
         if (customized)
           Align(
@@ -1833,6 +1852,7 @@ class _Blog extends StatelessWidget {
     final nf = context.nf;
     final v = p.variant;
     final title = (v.title ?? '').isNotEmpty ? v.title! : (v.text.split('\n').firstWhere((l) => l.trim().isNotEmpty, orElse: () => 'Untitled'));
+    final words = v.article?.toPlainText() ?? v.text;
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       if (_textCardOf(v.media) case final card?) ...[
         _TextCardPreview(p: p, placeholder: card),
@@ -1842,10 +1862,13 @@ class _Blog extends StatelessWidget {
         const SizedBox(height: Space.md),
       ],
       Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.headlineSmall?.copyWith(fontSize: 19)),
+      // 1.4.4: articles. The subtitle, and the words without their marks.
+      if ((v.article?.subtitle ?? '').trim().isNotEmpty)
+        Text(v.article!.subtitle!.trim(), maxLines: 2, overflow: TextOverflow.ellipsis, style: context.text.titleSmall?.copyWith(color: nf.textMuted)),
       const SizedBox(height: Space.xs),
-      Text('By ${p.account.displayName} · ${_readingTime(v.text)} min read', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
+      Text('By ${p.account.displayName} · ${_readingTime(words)} min read', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
       const SizedBox(height: Space.sm),
-      Text(v.text.trim().isEmpty ? 'Start writing…' : v.text, maxLines: 3, overflow: TextOverflow.ellipsis, style: context.text.bodyMedium?.copyWith(color: nf.textMuted)),
+      Text(words.trim().isEmpty ? 'Start writing…' : words, maxLines: 3, overflow: TextOverflow.ellipsis, style: context.text.bodyMedium?.copyWith(color: nf.textMuted)),
       if (v.tags.isNotEmpty) ...[
         const SizedBox(height: Space.sm + 2),
         Wrap(spacing: Space.xs, runSpacing: Space.xs, children: [

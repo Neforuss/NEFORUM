@@ -1,9 +1,11 @@
 import 'dart:convert';
 
+import '../../article/article_renderer.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/media.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
@@ -89,6 +91,7 @@ class HashnodeAdapter extends PlatformAdapter {
     apiCostSummary: 'Since May 2026 Hashnode only answers API calls for blogs on Hashnode Pro (paid per seat). '
         'Within Pro the limits are generous (500 write calls a minute).',
     setupGuide: 'docs/platforms/hashnode.md',
+    articleFormat: ArticleFormat.hashnodeMarkdown,
     serverSideScheduling: false,
     supportsLinkField: false,
   );
@@ -317,7 +320,20 @@ class HashnodeAdapter extends PlatformAdapter {
 
     var markdown = v.text;
     String? cover = blogStr(v.extra['coverImageUrl']);
-    if (v.hasMedia) {
+    final doc = v.article;
+    if (doc != null) {
+      // 1.4.4: the article as Hashnode Markdown, photos where they are in it;
+      // its cover is the cover image unless the post set a link of its own.
+      final pictures = [for (final m in v.media) if (!m.isAudio) m];
+      final assets = ArticleAssets([
+        for (var i = 0; i < pictures.length; i++)
+          ArticleAsset(pictures[i], url: await _uploadImage(api, pictures[i], i + 1, pictures.length, ctx)),
+        ...await hostArticleAudio(v, ctx, platform: 'Hashnode'),
+      ]);
+      markdown = renderMarkdown(doc, assets, dialect: ArticleMarkdownDialect.hashnode, network: descriptor.name).output;
+      final coverAsset = doc.cover == null ? null : assets.find(doc.cover!.mediaId);
+      if (coverAsset != null && coverAsset.media.isImage) cover ??= coverAsset.url;
+    } else if (v.hasMedia) {
       final urls = <String>[];
       for (var i = 0; i < v.media.length; i++) {
         urls.add(await _uploadImage(api, v.media[i], i + 1, v.media.length, ctx));
@@ -342,9 +358,9 @@ class HashnodeAdapter extends PlatformAdapter {
       'title': v.title!.trim(),
       'contentMarkdown': markdown,
       if (tags.isNotEmpty) 'tags': tags,
-      if (blogStr(v.extra['subtitle']) != null) 'subtitle': blogStr(v.extra['subtitle']),
-      if (blogStr(v.extra['slug']) != null) 'slug': blogStr(v.extra['slug']),
-      if (blogStr(v.extra['canonicalUrl']) != null) 'originalArticleURL': blogStr(v.extra['canonicalUrl']),
+      'subtitle': ?(blogStr(v.extra['subtitle']) ?? articleText(doc?.subtitle)),
+      'slug': ?(blogStr(v.extra['slug']) ?? articleText(doc?.slug)),
+      'originalArticleURL': ?(blogStr(v.extra['canonicalUrl']) ?? articleText(doc?.canonicalUrl)),
       if (v.extra['disableComments'] == true) 'disableComments': true,
       // PublishPostInput has a flat `coverImage: String`; the old
       // `coverImageOptions` object is rejected with BAD_USER_INPUT.

@@ -12,6 +12,7 @@ import '../../state/composer.dart';
 import '../../state/providers.dart';
 import '../../theme/app_theme.dart';
 import '../../theme/tokens.dart';
+import '../../widgets/anchored_menu.dart';
 
 // 1.4.3: symbols. The Symbols, Kaomoji and Text styles tabs of the character
 // panel (emoji_sheet.dart). Each inserts at the cursor of the text field the
@@ -142,7 +143,9 @@ class _GroupRow extends StatelessWidget {
       );
 }
 
-/// The menu of every group of a tab, beside its chips.
+/// The menu of every group of a tab, beside its chips: one component for
+/// every group list of the panel ([AnchoredMenuButton], drawn above the
+/// panel; see anchored_menu.dart for why a popup menu was drawn under it).
 class _GroupMenu extends StatelessWidget {
   const _GroupMenu({super.key, required this.groups, required this.selected, required this.onSelected, this.dividerBefore});
   final List<CharacterGroup> groups;
@@ -153,23 +156,12 @@ class _GroupMenu extends StatelessWidget {
   final String? dividerBefore;
 
   @override
-  Widget build(BuildContext context) {
-    final nf = context.nf;
-    return PopupMenuButton<String>(
-      tooltip: 'All groups',
-      onSelected: onSelected,
-      itemBuilder: (_) => [
-        for (final g in groups) ...[
-          if (g.id == dividerBefore) const PopupMenuDivider(),
-          PopupMenuItem(value: g.id, child: Text(g.title, style: context.text.bodyMedium?.copyWith(fontWeight: g.id == selected ? FontWeight.w700 : null))),
-        ],
-      ],
-      child: Padding(
-        padding: const EdgeInsets.all(Space.xs),
-        child: Icon(Icons.expand_more_rounded, size: 22, color: nf.textMuted),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => AnchoredMenuButton<String>(
+        tooltip: 'All groups',
+        selected: selected,
+        onSelected: onSelected,
+        items: [for (final g in groups) AnchoredMenuItem(value: g.id, label: g.title, dividerBefore: g.id == dividerBefore)],
+      );
 }
 
 /// A note under a tab's content.

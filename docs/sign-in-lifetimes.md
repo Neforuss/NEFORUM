@@ -1,6 +1,6 @@
 # How long each sign-in lasts
 
-Every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in. Everything here was read from the vendor's own pages or source code on **2026-11-06** (EmDash, added in 1.4.3: **2026-11-13**). Vendors change these rules: check the source link if a date looks wrong.
+Every network NEFORUM posts to, how long its sign-in lasts, whether NEFORUM can renew it, and when you have to step in. Everything here was read from the vendor's own pages or source code on **2026-11-06** (EmDash, added in 1.4.3: **2026-11-13**; Pixelfed personal access tokens and Pinterest sandbox tokens, added in 1.4.4: **2026-11-16**). Vendors change these rules: check the source link if a date looks wrong.
 
 **NEFORUM renews only when a post goes out.** There is no background job. So "Renews when NEFORUM posts" also means that an account you stop posting to can run out.
 
@@ -9,7 +9,7 @@ Words used in the Status column:
 - **VERIFIED**: the vendor's own page or source says it. Where two of its pages disagree, the row says so.
 - **UNVERIFIED**: no vendor page read settles it. The row says what would. A page that says nothing about expiry is not evidence that a token never expires, so these rows say "no published limit" and not "never expires".
 
-A date in NEFORUM reads "at the latest" where the *Known early revocation* column says something can end the sign-in first, and "about" where NEFORUM worked it out from a documented rule.
+A date in NEFORUM reads "at the latest" where the *Known early revocation* column says something can end the sign-in first, and "about" where NEFORUM worked it out from a documented rule. A date you typed yourself (a Pixelfed token's end date) is shown as yours.
 
 ## All 51 networks
 
@@ -78,7 +78,9 @@ A date in NEFORUM reads "at the latest" where the *Known early revocation* colum
 | Mastodon: Akkoma | Your server sets how long | Yes, when NEFORUM posts | When renewal fails | Yes: you or your server | [Akkoma cheatsheet](https://docs.akkoma.dev/stable/configuration/cheatsheet/) | 2026-11-06 | UNVERIFIED default. Settled the same way |
 | Mastodon: Mitra | 30 days by default | No | Every 30 days on default settings | Yes: you or your server | [Mitra changelog](https://codeberg.org/silverpill/mitra/raw/branch/main/CHANGELOG.md) | 2026-11-06 | UNVERIFIED that it has no refresh grant. Settled by Mitra's `/oauth/token` source |
 | Mastodon: other servers | Your server decides | Not needed | Unknown | Yes: you or your server | [Friendica Token.php](https://raw.githubusercontent.com/friendica/friendica/develop/src/Module/OAuth/Token.php) | 2026-11-06 | UNVERIFIED. Settled per server. A date the server sends is shown |
+| Pixelfed: personal access token | One year on default settings. The token carries its own end date, which NEFORUM reads when you connect; you can also type it | No | Before the token ends: create a new one and reconnect with it | Yes: deleting the token, or your server | [Laravel Passport, Passport.php](https://github.com/laravel/passport/blob/13.x/src/Passport.php) | 2026-11-16 | VERIFIED. Passport gives these tokens one year by default and Pixelfed 0.15.2 keeps it |
 | Matrix: token pasted from Element | Unknown to NEFORUM. Possibly 5 minutes on Matrix Authentication Service | No | When it stops working | Yes: signing that Element session out | [MAS configuration](https://element-hq.github.io/matrix-authentication-service/reference/configuration.html) | 2026-11-06 | UNVERIFIED which servers keep that default. Settled by pasting one on matrix.org and retrying after 10 minutes |
+| Pinterest: sandbox token pasted from the app page | 30 days from when it was made. NEFORUM counts them from when you paste it | No | Before the 30 days are up: generate a new sandbox token and reconnect | Yes: removing the app | [Pinterest API Sandbox](https://developers.pinterest.com/docs/developer-tools/sandbox/) | 2026-11-16 | VERIFIED. The sandbox page says the token lasts 30 days and offers no refresh for it |
 | Micropub: Micro.blog app token | No published limit | Not needed | When you delete it | Yes: Account > Edit Apps | [Micro.blog API authentication](https://help.micro.blog/2018/api-authentication/) | 2026-11-06 | UNVERIFIED. Settled by Micro.blog support |
 | Write.as / WriteFreely: Write.as hosted | No published limit | Not needed | After logout | Yes: `DELETE /api/auth/me` | [Write.as API](https://developers.write.as/docs/api/) | 2026-11-06 | UNVERIFIED: the hosted setting is not visible. Settled by a Write.as statement |
 

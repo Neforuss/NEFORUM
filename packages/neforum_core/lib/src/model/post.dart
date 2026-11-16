@@ -1,5 +1,6 @@
 import 'package:meta/meta.dart';
 
+import 'article.dart';
 import 'artwork.dart';
 import 'audio.dart';
 import 'audio_tags.dart';
@@ -67,6 +68,7 @@ class PostOverrides {
     this.extra = const {},
     this.scheduledAt,
     this.storyMediaIds,
+    this.excludedBlockIds = const [],
   });
 
   /// Keys NEFORUM 1.2 does not know (it ignores them on load). [scheduledAt]
@@ -84,6 +86,7 @@ class PostOverrides {
         extra: Map<String, dynamic>.from(json['extra'] as Map? ?? const {}),
         scheduledAt: json['scheduledAt'] == null ? null : DateTime.parse(json['scheduledAt'] as String).toLocal(),
         storyMediaIds: (json['storyMediaIds'] as List?)?.cast<String>(),
+        excludedBlockIds: [for (final id in json['excludedBlockIds'] as List? ?? const []) if (id is String) id],
       );
 
   final String? text;
@@ -109,6 +112,12 @@ class PostOverrides {
   /// the feed post's media. See `PostVariant.storyMedia`.
   final List<String>? storyMediaIds;
 
+  /// 1.4.4: the blocks of the post's article ([Post.article], by
+  /// [ArticleBlock.id]) this target does not get; [ArticleDocument.coverId]
+  /// leaves out the cover. Empty: the whole article. Only networks that take
+  /// articles use it.
+  final List<String> excludedBlockIds;
+
   bool get isEmpty =>
       text == null &&
       title == null &&
@@ -119,7 +128,8 @@ class PostOverrides {
       visibility == null &&
       extra.isEmpty &&
       scheduledAt == null &&
-      storyMediaIds == null;
+      storyMediaIds == null &&
+      excludedBlockIds.isEmpty;
 
   PostOverrides copyWith({
     String? text,
@@ -132,6 +142,7 @@ class PostOverrides {
     Map<String, dynamic>? extra,
     DateTime? scheduledAt,
     List<String>? storyMediaIds,
+    List<String>? excludedBlockIds,
     bool clearText = false,
     bool clearMediaIds = false,
     bool clearScheduledAt = false,
@@ -148,6 +159,7 @@ class PostOverrides {
         extra: extra ?? this.extra,
         scheduledAt: clearScheduledAt ? null : (scheduledAt ?? this.scheduledAt),
         storyMediaIds: clearStoryMediaIds ? null : (storyMediaIds ?? this.storyMediaIds),
+        excludedBlockIds: excludedBlockIds ?? this.excludedBlockIds,
       );
 
   Map<String, dynamic> toJson() => {
@@ -161,6 +173,7 @@ class PostOverrides {
         if (extra.isNotEmpty) 'extra': extra,
         if (scheduledAt != null) 'scheduledAt': scheduledAt!.toUtc().toIso8601String(),
         if (storyMediaIds != null) 'storyMediaIds': storyMediaIds,
+        if (excludedBlockIds.isNotEmpty) 'excludedBlockIds': excludedBlockIds,
       };
 }
 
@@ -287,6 +300,7 @@ class Post {
     this.audioDetails = const {},
     this.mediaParts = const {},
     this.paragraphMedia = const {},
+    this.article,
   });
 
   /// Times are stored in UTC and come back in local time, so that day and
@@ -325,6 +339,7 @@ class Post {
             if (e.value is int) '${e.key}': e.value as int,
         },
         paragraphMedia: ParagraphMedia.fromJson(json['paragraphMedia']),
+        article: json['article'] is Map ? ArticleDocument.fromJson(Map<String, dynamic>.from(json['article'] as Map)) : null,
       );
 
   final String id;
@@ -396,6 +411,18 @@ class Post {
 
   /// The links of [paragraphMedia] the networks use: none on a thread.
   bool get hasParagraphMedia => paragraphMedia.isNotEmpty && additionalParts.isEmpty;
+
+  /// 1.4.4: the post written as an article (blocks, cover, excerpt...) for
+  /// the networks that take one ([PlatformDescriptor.articleFormat]: the
+  /// blogs, Tumblr, X Articles); null (the default) is a post without one,
+  /// and every network gets [text] and [media] as before. The social
+  /// networks always get [text] and [media]: the article's short version
+  /// ([ArticleDocument.toPlainPost]) or words of their own. The title, tags
+  /// and schedule of the article are this post's [title], [tags] and
+  /// [scheduledAt].
+  final ArticleDocument? article;
+
+  bool get hasArticle => article != null;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -529,11 +556,13 @@ class Post {
     Map<String, AudioTags>? audioDetails,
     Map<String, int>? mediaParts,
     ParagraphMediaLinks? paragraphMedia,
+    ArticleDocument? article,
     bool clearScheduledAt = false,
     bool clearTitle = false,
     bool clearLink = false,
     bool clearPoll = false,
     bool clearArtwork = false,
+    bool clearArticle = false,
   }) =>
       Post(
         id: id,
@@ -558,6 +587,7 @@ class Post {
         audioDetails: audioDetails ?? this.audioDetails,
         mediaParts: mediaParts ?? this.mediaParts,
         paragraphMedia: paragraphMedia ?? this.paragraphMedia,
+        article: clearArticle ? null : (article ?? this.article),
       );
 
   /// Replaces the target with the same account id.
@@ -595,6 +625,7 @@ class Post {
           },
         if (mediaParts.isNotEmpty) 'mediaParts': mediaParts,
         if (paragraphMedia.isNotEmpty) 'paragraphMedia': ParagraphMedia.toJson(paragraphMedia),
+        if (article != null) 'article': article!.toJson(),
       };
 }
 

@@ -2,8 +2,10 @@ import 'package:flutter/foundation.dart';
 import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import '../media/photo_fitter.dart';
+import '../platform/video_compositor.dart';
 import 'audio_renditions.dart';
 import 'captioned_photos.dart';
+import 'gif_videos.dart';
 import 'services.dart';
 import 'settings.dart';
 import 'shrunk_videos.dart';
@@ -41,7 +43,12 @@ PhotoFit? effectivePhotoFit(PlatformAdapter adapter, ConnectedAccount account, P
 /// overrides receive them, in place of the original. Call after
 /// [attachTextCards]. A photo that cannot be read (HEIC) is left as it is, so
 /// its target still fails with the platform's own message.
-Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) async {
+///
+/// 1.4.4: an animated GIF where the platform takes none (Instagram's API,
+/// [PhotoFit.gifAsVideo]) gets an MP4 made by [compositor] (the app's by
+/// default) instead of a still copy; a GIF that does not move, or one on a
+/// device that cannot make videos, gets the still copy.
+Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings, {VideoCompositor? compositor}) async {
   final mode = settings.photoFit;
   // Photos with the caption written on them are managed by
   // attachCaptionedPhotos, smaller copies of videos by attachShrunkVideos and
@@ -69,6 +76,30 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
   final resolver = VariantResolver(settings.resolverOptions);
   final userMedia = [for (final m in p.media) if (!m.generated) m];
   final used = <String, MediaAttachment>{};
+  // 1.4.4: whether this device can make a GIF a video; asked once, at the
+  // first GIF.
+  Future<bool>? canMakeVideos;
+
+  // The video [m] (a GIF) becomes under [rules]: one made before for the same
+  // rules (also where no video can be made now, a background run), else a
+  // new one where this device makes videos. Null for a GIF that does not
+  // move, or when it cannot be made: then it gets a still picture.
+  Future<MediaAttachment?> gifVideo(MediaAttachment m, PhotoFit rules) async {
+    final key = '${m.id}|${gifVideoFitKey(rules, mode)}';
+    final made = used[key] ?? pool[key];
+    // The GIF's alt text, as it is now.
+    if (made != null) return used[key] = made.copyWith(altText: m.altText, clearAltText: m.altText == null);
+    final videos = compositor ?? VideoCompositor.instance;
+    if (!await (canMakeVideos ??= videos.isSupported())) return null;
+    try {
+      final video = await makeGifVideo(s, m, await s.media.read(m), rules, mode, compositor: videos);
+      if (video != null) used[key] = video;
+      return video;
+    } on Object catch (e) {
+      debugPrint('Could not read ${m.fileName ?? m.id}: $e');
+      return null;
+    }
+  }
 
   for (final original in post.targets) {
     final t = p.targetFor(original.accountId)!;
@@ -87,6 +118,13 @@ Future<Post> attachFittedPhotos(AppServices s, Post post, AppSettings settings) 
         if (m == null || m.generated || rules.problemsOf(m).isEmpty) {
           next.add(id);
           continue;
+        }
+        if (m.kind == MediaKind.gif && rules.gifAsVideo) {
+          final video = await gifVideo(m, rules);
+          if (video != null) {
+            next.add(video.id);
+            continue;
+          }
         }
         final key = '${m.id}|${rules.keyFor(mode)}';
         var copy = used[key] ?? pool[key];

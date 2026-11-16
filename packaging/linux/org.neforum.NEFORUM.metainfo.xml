@@ -73,6 +73,11 @@
   </supports>
 
   <releases>
+    <release version="1.4.4" date="2026-11-16">
+      <description>
+        <p>An article editor for blogs: blocks with photos, galleries and videos placed anywhere, cover image, excerpt, slug, tags and canonical URL, in each blog's own format. Paid plans such as X Premium raise each account's limits. Pixelfed signs in with a personal access token, Pinterest Trial apps post to the API Sandbox, GIFs play as videos on Instagram, and the first start offers to join an existing sync.</p>
+      </description>
+    </release>
     <release version="1.4.3" date="2026-11-14">
       <description>
         <p>Two new networks, Parler and Locals, and a new account type for EmDash blogs. The emoji panel gains symbols, kaomoji and text styles. Text cards can be horizontal, with bold words and an attribution line. You choose the order your accounts publish in, each network shows its own options (Telegram first), sign-ins renew themselves, and X posts take up to 20 photos and videos. A post is no longer recorded as sent when it was not, a slow Nostr relay no longer fails a post, and the AppImage updates itself from Settings.</p>
