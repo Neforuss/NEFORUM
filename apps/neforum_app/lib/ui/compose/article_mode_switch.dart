@@ -28,7 +28,12 @@ final articleNetworksProvider = Provider<List<String>>((ref) {
 /// articles is selected, or while the post is an article. Switching keeps
 /// everything written (see [ComposerNotifier.enterArticleMode]).
 class ArticleModeSwitch extends ConsumerWidget {
-  const ArticleModeSwitch({super.key});
+  const ArticleModeSwitch({super.key, this.underPost = false});
+
+  /// Under the post's text fields instead of above them: where the account
+  /// grid is open, the room between the grid and the text field is the
+  /// field's, so the switch goes under the post (as Publishing order does).
+  final bool underPost;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,7 +44,7 @@ class ArticleModeSwitch extends ConsumerWidget {
     final notifier = ref.read(composerProvider.notifier);
     final names = networks.length <= 3 ? networks.join(', ') : '${networks.take(2).join(', ')} and ${networks.length - 2} more';
     return Padding(
-      padding: const EdgeInsets.only(bottom: Space.lg),
+      padding: underPost ? const EdgeInsets.only(top: Space.lg) : const EdgeInsets.only(bottom: Space.lg),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: Space.sm, runSpacing: Space.xs, crossAxisAlignment: WrapCrossAlignment.center, children: [
           SegmentedButton<bool>(

@@ -1349,6 +1349,17 @@ void main() {
         await _end(t);
       });
 
+      // 1.4.4: with WordPress, Tumblr and Substack chosen the Post / Article
+      // switch shows; between the grid and the field it took the field's room.
+      testWidgets('with a blog chosen, the Post / Article switch goes under the field, not above it, text x$scale', (t) async {
+        await _boot(t, accounts: _twentyOne(), textScale: scale);
+        final switcher = find.byKey(const ValueKey('article-mode-switch'));
+        expect(switcher, findsOneWidget, reason: 'WordPress, Tumblr and Substack take articles');
+        expect(t.getRect(switcher).top, greaterThan(t.getRect(_editor).bottom));
+        expect(_fieldOnScreen(t), greaterThanOrEqualTo(_line(t)));
+        await _end(t);
+      });
+
       testWidgets('as few accounts as leave the room keep their names, with two lines of the field, text x$scale', (t) async {
         final accounts = _twentyOne().take(9).toList();
         await _boot(t, accounts: accounts, textScale: scale);

@@ -357,13 +357,16 @@ class _WriteColumn extends ConsumerWidget {
           ),
         TargetPicker(grid: targetGrid, keyboardOpen: keyboardOpen, availableHeight: box.maxHeight - PageBody.topPadding(context) - titleHeight),
         const SizedBox(height: Space.lg),
-        // 1.4.4: articles. Post or Article, while a blog is selected.
-        const ArticleModeSwitch(),
+        // 1.4.4: articles. Post or Article, while a blog is selected. Under
+        // the account grid the room above the text field is the field's
+        // (composerTextRoom), so there the switch goes under the post.
+        if (!targetGrid || c.isArticle) const ArticleModeSwitch(),
         if (c.isArticle)
           const ArticleEditor()
         else ...[
           EditorCard(focusNode: focusNode),
           const ThreadPartEditors(),
+          if (targetGrid) const ArticleModeSwitch(underPost: true),
         ],
         // 1.4.3: the account grid's header keeps its room for the accounts.
         if (targetGrid) const PublishingOrderLink(),
