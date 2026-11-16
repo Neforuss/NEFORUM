@@ -6,7 +6,7 @@ It is not for posts. Text, image, poll and text-card posts on your channel's **P
 
 ## Steps
 
-These steps create your own Google app for "Your own API keys" (about 10 minutes). Read *Before you use the API* below first. NEFORUM signs in with the same address on Windows, macOS, Linux, Android and iOS.
+These steps create your own Google app for "Your own API keys" (about 10 minutes). Read *Before you use the API* below first, and connect from NEFORUM on Windows, macOS or Linux.
 
 1. Open <https://console.cloud.google.com/projectcreate> and create a project (any name, e.g. "NEFORUM for me").
 2. Open <https://console.cloud.google.com/apis/library/youtube.googleapis.com> and click **Enable** on **YouTube Data API v3**.
@@ -46,7 +46,7 @@ Status as of October 2026.
 
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
-| **Your own API keys** (default; YouTube Data API v3) | A Google account with a YouTube channel, plus a free Google Cloud project with a "Desktop app" OAuth client that you create. | Free (no paid plan exists) | Fully automatic upload with title, description, tags, visibility and scheduling. **May be locked to private** (see below). |
+| **Your own API keys** (default; YouTube Data API v3) | A Google account with a YouTube channel, plus a free Google Cloud project with a "Desktop app" OAuth client that you create. Connect from NEFORUM on Windows, macOS or Linux. | Free (no paid plan exists) | Fully automatic upload with title, description, tags, visibility and scheduling. **May be locked to private** (see below). |
 | **Hand-off** | Any YouTube account, plus the YouTube app (phone) or a browser (desktop) | Free | You finish the upload in YouTube yourself. The video is public, unlisted or private, whichever you pick there. |
 
 ### Before you use the API
@@ -56,7 +56,7 @@ Status as of October 2026.
 - **Quota:** each Google Cloud project gets **100 uploads (`videos.insert` calls) per day**, in a separate quota bucket (since 2026-06-01). All other calls share **10,000 units per day**; reading your channel costs 1 unit. Quotas reset at **midnight Pacific time**. Even failed requests count. YouTube can also stop a channel that uploads too much (`uploadLimitExceeded`).
 - **Testing vs. production:** if your Google Auth Platform app stays in *Testing*, Google ends your sign-in **every 7 days** and you have to reconnect. Click **Publish app** (step 5 of *Steps*) to avoid that. Google then shows an "unverified app" warning during sign-in. That warning is normal for your own app. NEFORUM may not be able to show this 7-day date: Google documents the field that reports it only for time-limited access.
 - **Unused for 6 months:** even in production, Google ends a sign-in that has not been used for 6 months. NEFORUM renews only when it posts, so post at least that often or reconnect. Google also keeps at most 100 sign-ins per Google account per app and silently ends the oldest.
-- **The sign-in address is the same everywhere.** Google only accepts `http://127.0.0.1` sign-ins for "Desktop app" clients. It rejects `neforum://` (custom schemes must contain a dot and belong to an iOS/Android client), so NEFORUM asks for `http://127.0.0.1:52771/callback` on every device. Windows and Linux answer it with a small server inside NEFORUM; Android, iOS and macOS answer it with a relay inside NEFORUM that hands the sign-in to the app's browser window, as Google Drive sync does.
+- **Connect from the desktop app.** Google only accepts `http://127.0.0.1` sign-ins for "Desktop app" clients. It rejects `neforum://` (custom schemes must contain a dot and belong to an iOS/Android client), so the Connect button doesn't work on Android/iOS.
 - Channels that are not phone-verified can't upload videos longer than **15 minutes**. Verify at <https://www.youtube.com/verify>. With your own keys, NEFORUM asks YouTube when you connect (the channel's `longUploadsStatus`), and the account card shows "Verified channel" or "Standard channel". A standard channel is held to 15 minutes in the composer. After verifying, reconnect the account so NEFORUM reads it again. Channels connected before NEFORUM 1.4.4 keep the 12-hour limit until they reconnect. See [paid plans](../paid-tiers.md).
 
 ## The video's details

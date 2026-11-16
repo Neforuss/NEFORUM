@@ -16,7 +16,7 @@ These steps set up hand-off (recommended).
 
 ## Steps: your own API keys (advanced; private posts only)
 
-Read *Before you use the API* below first. NEFORUM signs in with the same address on Windows, macOS, Linux, Android and iOS.
+Read *Before you use the API* below first. Do the last steps in NEFORUM on Windows, macOS or Linux.
 
 1. Set your TikTok account to private: TikTok app > Settings and privacy > Privacy > Private account.
    - Otherwise TikTok refuses the upload with `unaudited_client_can_only_post_to_private_accounts`.
@@ -48,14 +48,14 @@ Status as of October 2026.
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
 | **Hand-off** (default) | Any TikTok account + the TikTok app (phone) or a browser (desktop) | Free | You tap **Post** in TikTok yourself. The post is public, private or whatever else you choose there. |
-| **Your own API keys** (Content Posting API) | A TikTok developer app (sandbox) | Free | Fully automatic, but **PRIVATE ONLY** ("Only me") until TikTok audits your app. |
+| **Your own API keys** (Content Posting API) | A TikTok developer app (sandbox), connected from NEFORUM on Windows, macOS or Linux | Free | Fully automatic, but **PRIVATE ONLY** ("Only me") until TikTok audits your app. |
 
 ### Before you use the API
 
 - **Every post is forced to private ("Only me").** TikTok: "All content posted by unaudited clients will be restricted to private viewing mode." Your app is unaudited unless TikTok approves it in a separate **Content Posting API audit**, which needs a demo video of a compliant app. TikTok's review guidelines say "Apps must not be for private or personal use", so a personal app is unlikely to pass.
 - **Your TikTok account must be set to private** (step 1 of the API steps).
 - **You must use a sandbox.** An app that has not passed App review cannot sign anyone in, not even you. A sandbox lets up to 10 "target users" (you) sign in and post, privately.
-- **The sign-in address is the same everywhere.** TikTok only accepts `http://127.0.0.1:PORT/...` redirects for apps like NEFORUM, not `neforum://`, so NEFORUM asks for `http://127.0.0.1:52771/callback` on every device. Windows and Linux answer it with a small server inside NEFORUM; Android, iOS and macOS answer it with a relay inside NEFORUM that hands the sign-in to the app's browser window.
+- **Connect from the desktop app.** TikTok only accepts `http://127.0.0.1:PORT/...` redirects for apps like NEFORUM. It does not accept `neforum://` redirects, so the connect button does not work on Android/iOS.
 - Limits: around 15 API posts per account per day (TikTok says the number "varies"), 6 upload starts per minute, 5 pending inbox drafts per 24 hours, and a limited number of users posting through your app each day.
 
 ## How it works

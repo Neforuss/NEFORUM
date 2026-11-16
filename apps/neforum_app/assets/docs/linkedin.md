@@ -1,6 +1,6 @@
 # LinkedIn setup guide
 
-This guide connects **your own LinkedIn profile** to NEFORUM with a free LinkedIn developer app, so NEFORUM posts there automatically. NEFORUM sends LinkedIn the same return address on every device (Windows, macOS, Linux, Android and iOS); without a developer app, use the hand-off steps.
+This guide connects **your own LinkedIn profile** to NEFORUM with a free LinkedIn developer app, so NEFORUM posts there automatically. Connect from NEFORUM on Windows, macOS or Linux; on phones, use the hand-off steps.
 
 ## Steps
 
@@ -56,7 +56,7 @@ What the automatic tier **cannot** do:
 - **Schedule on LinkedIn's side.** The API only publishes immediately. NEFORUM's own scheduler sends the post at the right time, so NEFORUM has to be running then, with a sign-in less than 60 days old.
 - Read your posts, comments or statistics back.
 - Mention people. Mentions need LinkedIn member IDs, and NEFORUM cannot look those up. `@` is shown as plain text. Hashtags such as `#flutter` work.
-- Send you back to an app address such as `neforum://callback`. LinkedIn only returns to a web address, so NEFORUM asks for `http://127.0.0.1:52771/callback` on every device. Windows and Linux answer it with a small server inside NEFORUM; Android, iOS and macOS answer it with a relay inside NEFORUM that hands the sign-in to the app's browser window.
+- Connect from a phone. LinkedIn only sends you back to a web address (not to an app). Connect LinkedIn from NEFORUM on Windows, macOS or Linux. On phones, use the hand-off tier.
 
 The client secret and your sign-in token stay in NEFORUM's secret store on your device. Don't share the secret. Anyone who has it can act as your app.
 
