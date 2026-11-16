@@ -167,6 +167,7 @@ AppSettings populatedSettings() => AppSettings(
       notificationOsAskedAt: DateTime.utc(2026, 11, 2),
       notificationHintShownAt: DateTime.utc(2026, 11, 3),
       notificationBannerClosedAt: DateTime.utc(2026, 11, 4),
+      syncOfferAnsweredAt: DateTime.utc(2026, 11, 5), // 1.4.4: first-start sync
       updateCheckedAt: DateTime.utc(2026, 10, 30),
       updateLatestRelease: const {'version': '9.9.9'},
       updateDismissedVersion: '9.9.8',

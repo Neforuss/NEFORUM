@@ -117,6 +117,7 @@ const Map<String, String> kDeviceOnlySettings = {
   'notificationOsAskedAt': "When this device's OS last asked about notifications.",
   'notificationHintShownAt': 'When the quiet line about notifications was shown on this device.',
   'notificationBannerClosedAt': 'When the banner about notifications was closed on this device.',
+  'syncOfferAnsweredAt': 'When this install answered the first-start question about joining a sync; each new install asks for itself.',
   // Not settings records, but not device-only either: the media hosts travel
   // as one record with their keys (mediaHosts:all), so a host never arrives
   // without the keys it needs.
