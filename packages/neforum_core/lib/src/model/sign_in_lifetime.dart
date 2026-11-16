@@ -43,6 +43,10 @@ enum SignInDateSource {
   /// NEFORUM worked it out from a documented rule. Shown as "about".
   computed,
 
+  /// The person typed it when they connected: the end date of a token they
+  /// made themselves (a Pixelfed personal access token).
+  userEntered,
+
   /// No date, or a stored date with no recorded origin (anything stored before
   /// NEFORUM 1.4). The date still shows; the next renewal records its origin.
   unknown;
@@ -52,6 +56,7 @@ enum SignInDateSource {
   static SignInDateSource parse(String? name) => switch (name) {
         'serverReported' => serverReported,
         'computed' => computed,
+        'userEntered' => userEntered,
         _ => unknown,
       };
 }

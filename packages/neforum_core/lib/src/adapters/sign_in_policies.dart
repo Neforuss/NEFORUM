@@ -220,7 +220,24 @@ abstract final class SignInPolicies {
     sourceUrl: 'https://raw.githubusercontent.com/pixelfed/pixelfed/dev/config/instance.php',
     note: 'Your server can change these limits.',
   );
-  static SignInPolicy pixelfed(ConnectedAccount account) => _api(account, pixelfedPolicy);
+
+  /// How long a Pixelfed personal access token lasts: Laravel Passport's
+  /// default (`personalAccessTokensExpireIn`, one year), which Pixelfed 0.15.2
+  /// does not change. Read 2026-11-16. The token is a JWT that carries its own
+  /// `exp`, which NEFORUM stores when it connects.
+  static const Duration pixelfedPersonalTokenLife = Duration(days: 365);
+
+  /// A Pixelfed personal access token: no refresh token, so nothing renews it.
+  static const SignInPolicy pixelfedPersonalToken = SignInPolicy(
+    limit: SignInLimit.date,
+    renewal: SignInRenewal.never,
+    earlyRevocationPossible: true,
+    sourceUrl: 'https://github.com/laravel/passport/blob/13.x/src/Passport.php',
+    note: 'Make a new token on your server before then and reconnect with it.',
+  );
+
+  static SignInPolicy pixelfed(ConnectedAccount account) =>
+      _api(account, _authMethod(account, 'token') ? pixelfedPersonalToken : pixelfedPolicy);
 
   static const SignInPolicy blueskyPolicy = SignInPolicy(
     limit: SignInLimit.date,
