@@ -18,6 +18,7 @@ import '../media/text_card.dart';
 import '../media/text_card_background.dart';
 import '../platform/notifications.dart';
 import '../platform/publish_host.dart';
+import 'article_mode.dart';
 import 'artwork_targets.dart';
 import 'audio_renditions.dart';
 import 'automatic_targets.dart';
@@ -82,6 +83,8 @@ class ComposerState {
     this.automaticTargets = false, // 1.4.3: Automatic only
     this.targetChoices = const {}, // 1.4.3: Automatic only
     this.paragraphMedia = const {}, // 1.4.3
+    this.article, // 1.4.4: articles
+    this.articleMemory = const ArticleModeMemory(), // 1.4.4: articles
   });
 
   /// Set when editing an existing draft or scheduled post.
@@ -232,6 +235,19 @@ class ComposerState {
   /// user types: the links move with their paragraphs.
   final ParagraphMediaLinks paragraphMedia;
 
+  /// 1.4.4: articles. Set while the composer is in Article mode: the post
+  /// written as blocks for the blogs ([Post.article]). [text], [media]'s
+  /// order and [paragraphMedia] then follow it (its short version, for the
+  /// social networks); see article_mode.dart. Null: the plain composer.
+  final ArticleDocument? article;
+
+  /// 1.4.4: articles. What the last switch between the plain composer and
+  /// Article mode left, so switching back loses nothing.
+  final ArticleModeMemory articleMemory;
+
+  /// 1.4.4: articles. The composer is in Article mode.
+  bool get isArticle => article != null;
+
   /// The paragraphs of [text], as the links count them.
   List<String> get paragraphs => ParagraphMedia.split(text);
 
@@ -327,6 +343,8 @@ class ComposerState {
       poll != null ||
       contentWarning != null ||
       tags.isNotEmpty ||
+      // 1.4.4: articles. A subtitle, excerpt or cover alone is worth keeping.
+      (article != null && article != const ArticleDocument()) ||
       overrides.values.any((o) => !withoutPlacement(o).isEmpty);
 
   ComposerState copyWith({
@@ -380,6 +398,9 @@ class ComposerState {
     bool? automaticTargets, // 1.4.3: Automatic only
     Map<String, TargetChoice>? targetChoices, // 1.4.3: Automatic only
     ParagraphMediaLinks? paragraphMedia, // 1.4.3
+    ArticleDocument? article, // 1.4.4: articles
+    bool clearArticle = false, // 1.4.4: articles
+    ArticleModeMemory? articleMemory, // 1.4.4: articles
   }) =>
       ComposerState(
         editingPostId: clearEditingPostId ? null : (editingPostId ?? this.editingPostId),
@@ -422,6 +443,8 @@ class ComposerState {
         automaticTargets: automaticTargets ?? this.automaticTargets, // 1.4.3: Automatic only
         targetChoices: targetChoices ?? this.targetChoices, // 1.4.3: Automatic only
         paragraphMedia: paragraphMedia ?? this.paragraphMedia, // 1.4.3
+        article: clearArticle ? null : (article ?? this.article), // 1.4.4: articles
+        articleMemory: articleMemory ?? this.articleMemory, // 1.4.4: articles
       );
 
   /// [mediaParts] for the post [toPost] builds, which leaves out empty parts:
@@ -474,6 +497,7 @@ class ComposerState {
       audioQuality: audioQuality,
       mediaParts: postMediaParts,
       paragraphMedia: postParagraphMedia,
+      article: article, // 1.4.4: articles
       audioDetails: {
         for (final e in audioDetails.entries)
           if (!e.value.isEmpty && media.any((m) => m.id == e.key && m.isAudio && !m.generated)) e.key: e.value,
@@ -682,6 +706,107 @@ class ComposerNotifier extends Notifier<ComposerState> {
 
   /// 1.4.3: removes every paragraph link.
   void clearParagraphMedia() => state = state.copyWith(paragraphMedia: const {});
+
+  /// 1.4.4: articles. [s] with [doc] as its article, the short version
+  /// ([articlePlainFields]) written to its text, file order and paragraph
+  /// links, and every network's left-out blocks kept to blocks [doc] still
+  /// has.
+  ComposerState _withArticle(ComposerState s, ArticleDocument doc) {
+    final plain = articlePlainFields(doc, s.media);
+    return s.copyWith(
+      article: doc,
+      text: plain.text,
+      paragraphMedia: plain.paragraphMedia,
+      media: plain.media,
+      overrides: {
+        for (final e in s.overrides.entries)
+          e.key: e.value.excludedBlockIds.isEmpty ? e.value : e.value.copyWith(excludedBlockIds: presentBlockIds(e.value.excludedBlockIds, doc)),
+      },
+    );
+  }
+
+  /// 1.4.4: articles. Replaces the article (Article mode only).
+  void setArticle(ArticleDocument doc) {
+    if (state.article == null) return;
+    state = _withArticle(state, doc);
+  }
+
+  /// 1.4.4: articles. Switches the composer to Article mode. The post's
+  /// words become blocks ([articleFromPlain]); a thread's parts become one
+  /// article. When the text is still what leaving Article mode left, the
+  /// article left then comes back exactly.
+  void enterArticleMode() {
+    final s = state;
+    if (s.article != null) return;
+    final memory = s.articleMemory;
+    final attached = {for (final m in s.media) m.id};
+    final ArticleDocument doc;
+    if (memory.article != null && memory.leftText == s.text && s.additionalParts.isEmpty && memory.article!.mediaIds.every(attached.contains)) {
+      doc = memory.article!;
+    } else {
+      var earlier = memory.article;
+      for (final id in earlier?.mediaIds ?? const <String>[]) {
+        if (!attached.contains(id)) earlier = earlier!.withoutMedia(id);
+      }
+      doc = articleFromPlain(s.additionalParts.isEmpty ? s.text : s.joinedParts,
+          media: s.media, paragraphMedia: s.additionalParts.isEmpty ? s.paragraphMedia : const {}, earlier: earlier);
+    }
+    final snapshot = PlainComposerSnapshot(
+      text: s.text,
+      additionalParts: s.additionalParts,
+      mediaParts: s.mediaParts,
+      paragraphMedia: s.paragraphMedia,
+      mediaOrder: [for (final m in s.media) m.id],
+    );
+    state = _withArticle(
+      s.copyWith(
+        additionalParts: const [],
+        mediaParts: const {},
+        articleMemory: ArticleModeMemory(plain: snapshot, madeArticle: doc),
+      ),
+      doc,
+    );
+  }
+
+  /// 1.4.4: articles. Back to the plain composer. With the article as Article
+  /// mode made it, the plain post comes back exactly as it was; otherwise
+  /// the text is the article's short version ([ArticleDocument.toPlainPost]).
+  /// The article is remembered for switching back.
+  void leaveArticleMode() {
+    final s = state;
+    final doc = s.article;
+    if (doc == null) return;
+    final memory = s.articleMemory;
+    final plain = memory.plain;
+    final attached = {for (final m in s.media) m.id};
+    var next = s.copyWith(clearArticle: true, revision: s.revision + 1);
+    if (plain != null && memory.madeArticle == doc && plain.mediaOrder.toSet().containsAll(attached) && attached.containsAll(plain.mediaOrder)) {
+      final byId = {for (final m in s.media) m.id: m};
+      next = next.copyWith(
+        text: plain.text,
+        additionalParts: plain.additionalParts,
+        mediaParts: plain.mediaParts,
+        paragraphMedia: plain.paragraphMedia,
+        media: [for (final id in plain.mediaOrder) byId[id]!],
+      );
+    }
+    state = next.copyWith(
+      articleMemory: ArticleModeMemory(article: doc, leftText: next.text),
+      // The blocks a network left out mean nothing without the article.
+      overrides: {
+        for (final e in s.overrides.entries)
+          if (!e.value.copyWith(excludedBlockIds: const []).isEmpty) e.key: e.value.copyWith(excludedBlockIds: const []),
+      },
+    );
+  }
+
+  /// 1.4.4: articles. The article blocks ([ArticleBlock.id], or
+  /// [ArticleDocument.coverId]) network account [accountId] does not get.
+  void setExcludedBlocks(String accountId, List<String> ids) {
+    final current = state.overrides[accountId] ?? const PostOverrides();
+    final next = current.copyWith(excludedBlockIds: ids);
+    state = state.copyWith(overrides: next.isEmpty ? ({...state.overrides}..remove(accountId)) : {...state.overrides, accountId: next});
+  }
 
   /// Replaces the text programmatically (editor fields resync).
   void prefill(String text) => state = state.copyWith(text: text, revision: state.revision + 1);
@@ -1006,6 +1131,8 @@ class ComposerNotifier extends Notifier<ComposerState> {
       },
       artwork: state.artwork,
       revision: state.revision + 1,
+      // 1.4.4: articles. Article mode stays, with an empty article.
+      article: state.article == null ? null : const ArticleDocument(),
     );
   }
 
@@ -1092,6 +1219,11 @@ class ComposerNotifier extends Notifier<ComposerState> {
   }
 
   void removeMedia(String mediaId) {
+    // 1.4.4: articles. The blocks that showed only this file go with it.
+    final article = state.article;
+    if (article != null && article.mediaIds.contains(mediaId)) {
+      state = _withArticle(state, article.withoutMedia(mediaId));
+    }
     state = state.copyWith(
       // The track details go with the sound file they describe.
       audioDetails: state.audioDetails.containsKey(mediaId) ? ({...state.audioDetails}..remove(mediaId)) : null,
@@ -1247,6 +1379,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
         textCardWithText: textCardWithTextOfPost(post, platformOf),
         mediaParts: p.mediaParts,
         paragraphMedia: p.paragraphMedia, // 1.4.3
+        article: p.article, // 1.4.4: articles
         audioDetails: p.audioDetails,
         textCardCustomFont: textCardCustomFontOfPost(post), // 1.3.1: cards
         textCardDesign: textCardDesignOfPost(post), // 1.3.1: cards
@@ -1319,6 +1452,7 @@ class ComposerNotifier extends Notifier<ComposerState> {
       textCardWithText: state.textCardWithText,
       mediaParts: state.mediaParts,
       paragraphMedia: state.paragraphMedia, // 1.4.3
+      article: state.article, // 1.4.4: articles
       audioDetails: state.audioDetails,
       textCardCustomFont: state.textCardCustomFont, // 1.3.1: cards
       textCardDesign: state.textCardDesign, // 1.3.1: cards

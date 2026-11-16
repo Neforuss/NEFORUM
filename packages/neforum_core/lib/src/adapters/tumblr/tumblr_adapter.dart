@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:uuid/uuid.dart';
 
+import '../../article/article_renderer.dart';
 import '../../auth/auth_broker.dart';
 import '../../auth/oauth1.dart';
 import '../../auth/oauth2_pkce.dart';
@@ -9,6 +10,7 @@ import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../media_hosts/media_host.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/media.dart';
 import '../../model/paragraph_media.dart';
 import '../../model/platform_descriptor.dart';
@@ -68,6 +70,7 @@ class TumblrAdapter extends PlatformAdapter {
   static const PlatformDescriptor tumblrDescriptor = PlatformDescriptor(
     id: 'tumblr',
     options: tumblrOptions,
+    articleFormat: ArticleFormat.tumblrNpf,
     name: 'Tumblr',
     iconKey: 'tumblr',
     homepage: 'https://www.tumblr.com',
@@ -655,7 +658,8 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
   /// The state the post is created with, before scheduling turns it into
   /// `queue`.
   static String _effectiveState(PostVariant v) =>
-      _stateValue(v.extra['state']) ?? (v.visibility == Visibility.private ? 'private' : 'published');
+      _stateValue(v.extra['state']) ??
+      (v.visibility == Visibility.private ? 'private' : ((v.article?.isDraft ?? false) ? 'draft' : 'published'));
 
   static String? _stateValue(Object? raw) {
     if (raw is! String) return null;
@@ -709,9 +713,12 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
 
     final uploads = <TumblrUpload>[];
     final mediaBlocks = <Map<String, Object?>>[];
-    for (var i = 0; i < variant.media.length; i++) {
-      final m = variant.media[i];
-      ctx.progress('Preparing ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${variant.media.length}');
+    final assets = <ArticleAsset>[];
+    final doc = variant.article;
+    final files = [for (final m in variant.media) if (doc == null || !m.isAudio) m];
+    for (var i = 0; i < files.length; i++) {
+      final m = files[i];
+      ctx.progress('Preparing ${m.isVideo ? 'video' : 'image'} ${i + 1} of ${files.length}');
       final identifier = 'media$i';
       final bytes = await ctx.readMedia(m);
       uploads.add(TumblrUpload(
@@ -721,15 +728,26 @@ Use `localhost`, not `127.0.0.1`: Tumblr refuses to save 127.0.0.1 addresses ("T
         contentType: m.mimeType,
       ));
       mediaBlocks.add(m.isVideo ? TumblrApi.videoBlock(m, identifier) : TumblrApi.imageBlock(m, identifier));
+      assets.add(ArticleAsset(m, url: '', remoteId: identifier));
     }
 
+    // 1.4.4: an article is the post's blocks in order (NPF), each file a
+    // part of the one request; its sound files are links on the media host.
+    final npf = doc == null
+        ? null
+        : renderNpf(doc, ArticleAssets([...assets, ...await hostArticleAudio(variant, ctx, platform: 'Tumblr')]),
+                title: variant.title, network: descriptor.name)
+            .output;
     final schedule = _schedule(variant, ctx.now());
+    final source = _sourceUrl(variant) ?? articleText(doc?.canonicalUrl);
     final body = <String, Object?>{
-      'content': buildContent(variant, mediaBlocks),
+      'content': npf == null ? buildContent(variant, mediaBlocks) : npf['content'],
+      if (npf?['layout'] case final layout?) 'layout': layout,
       'state': schedule.state,
       if (schedule.publishOn != null) 'publish_on': schedule.publishOn!.toUtc().toIso8601String(),
       if (TumblrApi.tagsField(variant.tags) case final tags?) 'tags': tags,
-      if (_sourceUrl(variant) case final source?) 'source_url': source,
+      'source_url': ?source,
+      if (articleText(doc?.slug) case final slug?) 'slug': slug,
     };
 
     final url = TumblrApi.postsEndpoint(blogId);

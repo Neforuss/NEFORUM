@@ -16,6 +16,8 @@ import '../activity/time_format.dart';
 import '../queue/post_menu.dart';
 import '../router.dart';
 import 'action_bar.dart';
+import 'article_editor.dart';
+import 'article_mode_switch.dart';
 import 'differentiation_panel.dart';
 import 'editor_card.dart';
 import 'media_tray.dart';
@@ -355,15 +357,21 @@ class _WriteColumn extends ConsumerWidget {
           ),
         TargetPicker(grid: targetGrid, keyboardOpen: keyboardOpen, availableHeight: box.maxHeight - PageBody.topPadding(context) - titleHeight),
         const SizedBox(height: Space.lg),
-        EditorCard(focusNode: focusNode),
-        const ThreadPartEditors(),
+        // 1.4.4: articles. Post or Article, while a blog is selected.
+        const ArticleModeSwitch(),
+        if (c.isArticle)
+          const ArticleEditor()
+        else ...[
+          EditorCard(focusNode: focusNode),
+          const ThreadPartEditors(),
+        ],
         // 1.4.3: the account grid's header keeps its room for the accounts.
         if (targetGrid) const PublishingOrderLink(),
         if (!c.isEmpty) ...[
           const SizedBox(height: Space.lg),
           const DifferentiationPanel(),
         ],
-        if (c.isEmpty && c.additionalParts.isEmpty) ...[
+        if (c.isEmpty && c.additionalParts.isEmpty && !c.isArticle) ...[
           const SizedBox(height: Space.lg),
           _Starters(onFocus: focusNode.requestFocus),
         ],

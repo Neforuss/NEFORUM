@@ -76,7 +76,11 @@ class PreviewPane extends ConsumerWidget {
                 Text('${previews.length} ${previews.length == 1 ? 'network' : 'networks'}', style: context.text.bodySmall?.copyWith(color: nf.textFaint)),
                 const Spacer(),
                 if (readiness.blocked > 0)
-                  Text('${readiness.blocked} need attention', style: context.text.labelMedium?.copyWith(color: nf.danger)),
+                  // Shortened rather than pushed past the pane's edge with large text.
+                  Flexible(
+                    child: Text('${readiness.blocked} need attention',
+                        maxLines: 1, overflow: TextOverflow.ellipsis, style: context.text.labelMedium?.copyWith(color: nf.danger)),
+                  ),
               ]),
             );
           }

@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../article/article_render.dart' show ArticleAsset;
 import '../audio/audio_publishing.dart';
 import '../audio/audio_text_template.dart';
 import '../http/neforum_http.dart' show HttpFilePart;
@@ -26,10 +27,14 @@ import 'platform_adapter.dart';
 /// its own becomes the post's link instead, titled with its track details
 /// (`linkTitle` and `linkDescription` in [PostVariant.extra], unless the
 /// user set them), so the network shows a card rather than a bare address.
+///
+/// A variant with an article ([PostVariant.article]) comes back as it is:
+/// its sound blocks are links the article's serializer writes
+/// ([hostArticleAudio]).
 Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
     {required String platform, bool markdown = false, bool linkCard = false}) async {
   final sound = [for (final m in variant.media) if (m.isAudio) m];
-  if (sound.isEmpty) return variant;
+  if (sound.isEmpty || variant.article != null) return variant;
   final host = ctx.mediaHost;
   if (host == null) {
     throw AdapterException(PublishError.configuration(
@@ -68,6 +73,30 @@ Future<PostVariant> withAudioLinks(PostVariant variant, AdapterContext ctx,
     return rest.copyWith(text: parts.first, threadParts: parts);
   }
   return rest.copyWith(text: withLinks(variant.text));
+}
+
+/// 1.4.4: the sound files of [variant] put on the user's media host, for an
+/// article whose sound blocks become links ([PostVariant.article]): each as
+/// an [ArticleAsset] at its lasting address. Empty without sound files.
+///
+/// Throws [AdapterException] when there is no media host or an upload fails,
+/// as [withAudioLinks] does.
+Future<List<ArticleAsset>> hostArticleAudio(PostVariant variant, AdapterContext ctx, {required String platform}) async {
+  final sound = [for (final m in variant.media) if (m.isAudio) m];
+  if (sound.isEmpty) return const [];
+  final host = ctx.mediaHost;
+  if (host == null) {
+    throw AdapterException(PublishError.configuration(
+        '$platform takes a sound file only as a link, so the file must be on a media host first. '
+        'Set one up in Settings > Media hosting.'));
+  }
+  final out = <ArticleAsset>[];
+  for (var i = 0; i < sound.length; i++) {
+    final m = sound[i];
+    ctx.uploading(m, 'Uploading sound file ${i + 1} of ${sound.length} to ${host.name}');
+    out.add(ArticleAsset(m, url: await hostPermanently(host, m, await ctx.readMedia(m), platform, ctx)));
+  }
+  return out;
 }
 
 /// "Album · 2024" (or one of them, or the genre) for a link card's

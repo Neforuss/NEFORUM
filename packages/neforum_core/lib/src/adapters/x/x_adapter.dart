@@ -4,11 +4,13 @@ import 'dart:convert';
 import 'package:http/http.dart' show ClientException;
 import 'package:uuid/uuid.dart';
 
+import '../../article/article_renderer.dart';
 import '../../auth/oauth1.dart';
 import '../../auth/oauth2_pkce.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../http/neforum_http.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/media.dart';
 import '../../model/photo_fit.dart';
 import '../../model/platform_descriptor.dart';
@@ -136,6 +138,8 @@ class XAdapter extends PlatformAdapter {
     setupGuide: 'docs/platforms/x.md',
     serverSideScheduling: false,
     supportsLinkField: false,
+    articleFormat: ArticleFormat.xArticle,
+    articleOptionKey: kXArticleKey,
   );
 
   /// Every OAuth 2.0 refresh returns a new refresh token and invalidates the
@@ -585,7 +589,51 @@ Photos and videos are attached through the share sheet on Android and iOS. On Wi
           ? 'The X keys of this account are missing; reconnect it and paste the four keys again'
           : 'No X sign-in stored for this account; reconnect it'));
     }
+    // The resolver gives the variant the article only when this option is
+    // on (PlatformDescriptor.articleOptionKey).
+    final article = variant.article;
+    if (article != null && variant.extra[kXArticleKey] == true) return _publishArticle(variant, article, account, api, ctx);
     return _publishWith(variant, account, api, ctx, <String, String>{});
+  }
+
+  /// 1.4.4: the post's article as an X Article (the "Post as an X Article"
+  /// option, [kXArticleKey]): its photos uploaded, `POST /2/articles/draft`,
+  /// then `POST /2/articles/{id}/publish` unless the article is a draft.
+  /// The Article is published as a post, whose address is returned.
+  Future<PublishResult> _publishArticle(PostVariant v, ArticleDocument doc, ConnectedAccount account, XApi api, AdapterContext ctx) async {
+    final title = (v.title ?? '').trim();
+    if (title.isEmpty) return PublishResult.failure(const PublishError.validation('X Articles need a title'));
+    try {
+      final images = [for (final m in v.media) if (m.isImage) m];
+      final ids = images.isEmpty ? const <String>[] : await api.uploadAll(images);
+      final assets = ArticleAssets([for (var i = 0; i < images.length; i++) ArticleAsset(images[i], url: '', remoteId: ids[i])]);
+      final body = renderXArticle(doc, assets, title: title, network: descriptor.name).output;
+      final draft = doc.isDraft;
+      final articleId = draft
+          ? await ctx.creating('Saving the X Article draft', () => api.createArticleDraft(body))
+          : await api.createArticleDraft(body);
+      if (draft) {
+        ctx.log.info('X Article draft $articleId saved');
+        return PublishResult.ok(remoteId: articleId, publishedAt: ctx.now(), notice: 'The Article is saved as a draft on X.');
+      }
+      final postId = await ctx.creating('Publishing the X Article', () => api.publishArticle(articleId));
+      final handle = (account.handle ?? '').replaceFirst(RegExp('^@'), '');
+      ctx.log.info('X Article $articleId published as post $postId');
+      return PublishResult.ok(
+        remoteId: postId,
+        remoteUrl: handle.isEmpty ? 'https://x.com/i/web/status/$postId' : 'https://x.com/$handle/status/$postId',
+        publishedAt: ctx.now(),
+      );
+    } on AdapterException catch (e) {
+      return PublishResult.failure(e.error);
+    } on HttpFailure catch (e) {
+      return PublishResult.failure(XApi.mapError(e, now: ctx.now()));
+    } on TimeoutException catch (e) {
+      return PublishResult.failure(
+          PublishError.network('X did not answer in time: ${NeforumHttp.transportMessage(e)}', raw: NeforumHttp.transportDetails(e)));
+    } on ClientException catch (e) {
+      return PublishResult.failure(PublishError.network('Could not reach X: ${e.message}', raw: NeforumHttp.transportDetails(e)));
+    }
   }
 
   /// Posts [variant] with [api]. [uploaded] holds the X media id of every

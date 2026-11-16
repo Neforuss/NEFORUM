@@ -1,5 +1,7 @@
+import '../../article/article_renderer.dart';
 import '../../handoff/handoff_plan.dart';
 import '../../model/account.dart';
+import '../../model/article.dart';
 import '../../model/platform_descriptor.dart';
 import '../../model/post_variant.dart';
 import '../../model/validation.dart';
@@ -55,6 +57,7 @@ class SubstackAdapter extends HandoffOnlyAdapter {
     apiCostSummary: 'Free. Substack has no API for posting Notes, so NEFORUM copies your text and opens Substack; '
         'you paste it and tap Post.',
     setupGuide: 'docs/platforms/substack.md',
+    articleFormat: ArticleFormat.handoffHtml,
   );
 
   @override
@@ -88,8 +91,14 @@ When you publish, NEFORUM copies your text and opens [Substack Notes](https://su
     return issues;
   }
 
+  /// Where a Substack writer starts a new post: their dashboard, reached
+  /// from the home page's profile menu.
+  static const String articleUrl = 'https://substack.com/home';
+
   @override
   HandoffPlan? buildHandoff(PostVariant variant, {ConnectedAccount? account}) {
+    final doc = variant.article;
+    if (doc != null) return _articleHandoff(variant, doc);
     final text = handoffFullText(variant);
     final hasMedia = variant.media.isNotEmpty;
     return HandoffPlan(
@@ -107,6 +116,42 @@ When you publish, NEFORUM copies your text and opens [Substack Notes](https://su
               'composer takes pasted images, or use the photo icon (after **Save media to Downloads**).\n4. Click **Post**.' : '3. Click **Post**.'}',
       mediaNote: 'Substack has no link that opens the note composer or fills it in, so your text is on the clipboard'
           '${hasMedia ? ' and you add the media yourself' : ''}.',
+    );
+  }
+
+  /// 1.4.4: an article goes to a Substack post, not a note: the article on
+  /// the clipboard as rich text (HTML, which the Substack editor keeps:
+  /// headings, lists, links, bold) and as Markdown, the title and subtitle
+  /// to copy into their fields, each file marked "[Photo: ...]" where the
+  /// user adds it.
+  HandoffPlan _articleHandoff(PostVariant variant, ArticleDocument doc) {
+    final out = ArticleRenderer.handoff(doc, network: 'Substack', media: variant.media);
+    final title = (variant.title ?? '').trim();
+    final subtitle = articleText(doc.subtitle);
+    final hasMedia = variant.media.isNotEmpty;
+    final steps = <String>[
+      'On Substack, open your publication\'s dashboard and press **Create new** > **Text post**.',
+      if (title.isNotEmpty) 'Copy the title into the title field${subtitle == null ? '' : ', and the subtitle under it'}.',
+      'Click the body and press Ctrl+V (⌘V on a Mac): the article is on the clipboard with its formatting.',
+      if (hasMedia) 'Replace each [Photo: ...] marker with that file (the image button, after **Save media to Downloads**).',
+      'Press **Continue** and publish.',
+    ];
+    return HandoffPlan(
+      platformId: descriptor.id,
+      preferred: HandoffMethod.manual,
+      clipboardText: nonEmptyOrNull(out.markdown),
+      clipboardHtml: nonEmptyOrNull(out.html),
+      shareText: nonEmptyOrNull(out.markdown),
+      shareFiles: variant.media,
+      androidPackage: androidPackage,
+      desktopUrl: articleUrl,
+      snippets: [
+        if (title.isNotEmpty) HandoffSnippet('Title', title),
+        if (subtitle != null) HandoffSnippet('Subtitle', subtitle),
+      ],
+      instructions: [for (var i = 0; i < steps.length; i++) '${i + 1}. ${steps[i]}'].join('\n'),
+      mediaNote: 'Substack has no API for posts, so the article is on the clipboard'
+          '${hasMedia ? ' and you add its photos where the [Photo: ...] markers are' : ''}.',
     );
   }
 }

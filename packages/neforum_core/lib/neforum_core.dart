@@ -13,6 +13,8 @@ export 'src/adapters/reconnect_input.dart';
 export 'src/adapters/stored_secret_keys.dart';
 // 1.4.1: the app's YouTube video options (thumbnail, categories).
 export 'src/adapters/youtube/youtube_adapter.dart' show YouTubeAdapter;
+// 1.4.4: the article document's per-network serializers.
+export 'src/article/article_renderer.dart';
 export 'src/audio/audio_publishing.dart';
 export 'src/audio/audio_tag_reader.dart';
 export 'src/audio/audio_tag_writer.dart';
@@ -33,6 +35,7 @@ export 'src/handoff/handoff_plan.dart';
 export 'src/http/neforum_http.dart';
 export 'src/media_hosts/media_hosts.dart';
 export 'src/model/account.dart';
+export 'src/model/article.dart';
 export 'src/model/artwork.dart';
 export 'src/model/audio.dart';
 export 'src/model/audio_tags.dart';

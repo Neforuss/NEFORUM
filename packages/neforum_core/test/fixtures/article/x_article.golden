@@ -1,0 +1,275 @@
+{
+  "title": "Rich title",
+  "content_state": {
+    "blocks": [
+      {
+        "key": "b0",
+        "text": "Intro & <setup>",
+        "type": "header-one",
+        "inline_style_ranges": [],
+        "entity_ranges": []
+      },
+      {
+        "key": "b1",
+        "text": "Plain bold, italic, code() and a link *not emphasis* 2 < 3\nnext line",
+        "type": "unstyled",
+        "inline_style_ranges": [
+          {
+            "offset": 6,
+            "length": 4,
+            "style": "bold"
+          },
+          {
+            "offset": 12,
+            "length": 6,
+            "style": "italic"
+          }
+        ],
+        "entity_ranges": [
+          {
+            "offset": 31,
+            "length": 6,
+            "key": 0
+          }
+        ]
+      },
+      {
+        "key": "b2",
+        "text": " ",
+        "type": "atomic",
+        "inline_style_ranges": [],
+        "entity_ranges": [
+          {
+            "offset": 0,
+            "length": 1,
+            "key": 1
+          }
+        ]
+      },
+      {
+        "key": "b3",
+        "text": " ",
+        "type": "atomic",
+        "inline_style_ranges": [],
+        "entity_ranges": [
+          {
+            "offset": 0,
+            "length": 1,
+            "key": 2
+          }
+        ]
+      },
+      {
+        "key": "b4",
+        "text": "Details",
+        "type": "header-two",
+        "inline_style_ranges": [],
+        "entity_ranges": []
+      },
+      {
+        "key": "b5",
+        "text": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "type": "unstyled",
+        "inline_style_ranges": [],
+        "entity_ranges": [
+          {
+            "offset": 0,
+            "length": 43,
+            "key": 3
+          }
+        ]
+      },
+      {
+        "key": "b6",
+        "text": "To be or not to be.\nHamlet",
+        "type": "blockquote",
+        "inline_style_ranges": [
+          {
+            "offset": 19,
+            "length": 7,
+            "style": "italic"
+          }
+        ],
+        "entity_ranges": []
+      },
+      {
+        "key": "b7",
+        "text": "first",
+        "type": "unordered-list-item",
+        "inline_style_ranges": [],
+        "entity_ranges": []
+      },
+      {
+        "key": "b8",
+        "text": "second",
+        "type": "unordered-list-item",
+        "inline_style_ranges": [
+          {
+            "offset": 0,
+            "length": 6,
+            "style": "bold"
+          }
+        ],
+        "entity_ranges": []
+      },
+      {
+        "key": "b9",
+        "text": "three",
+        "type": "ordered-list-item",
+        "inline_style_ranges": [],
+        "entity_ranges": []
+      },
+      {
+        "key": "b10",
+        "text": "four",
+        "type": "ordered-list-item",
+        "inline_style_ranges": [],
+        "entity_ranges": []
+      },
+      {
+        "key": "b11",
+        "text": " ",
+        "type": "atomic",
+        "inline_style_ranges": [],
+        "entity_ranges": [
+          {
+            "offset": 0,
+            "length": 1,
+            "key": 4
+          }
+        ]
+      },
+      {
+        "key": "b12",
+        "text": " ",
+        "type": "atomic",
+        "inline_style_ranges": [],
+        "entity_ranges": [
+          {
+            "offset": 0,
+            "length": 1,
+            "key": 5
+          }
+        ]
+      },
+      {
+        "key": "b13",
+        "text": "The end. See https://example.org/x_y.",
+        "type": "unstyled",
+        "inline_style_ranges": [],
+        "entity_ranges": [
+          {
+            "offset": 13,
+            "length": 23,
+            "key": 6
+          }
+        ]
+      }
+    ],
+    "entities": [
+      {
+        "key": "0",
+        "value": {
+          "type": "link",
+          "mutability": "mutable",
+          "data": {
+            "url": "https://example.com/a?b=1&c=2"
+          }
+        }
+      },
+      {
+        "key": "1",
+        "value": {
+          "type": "image",
+          "mutability": "immutable",
+          "data": {
+            "media_items": [
+              {
+                "media_category": "tweet_image",
+                "media_id": "1900000000000000001"
+              }
+            ],
+            "caption": "A caption · Jane Doe"
+          }
+        }
+      },
+      {
+        "key": "2",
+        "value": {
+          "type": "image",
+          "mutability": "immutable",
+          "data": {
+            "media_items": [
+              {
+                "media_category": "tweet_image",
+                "media_id": "1900000000000000002"
+              },
+              {
+                "media_category": "tweet_image",
+                "media_id": "1900000000000000003"
+              },
+              {
+                "media_category": "tweet_image",
+                "media_id": "1900000000000000004"
+              }
+            ],
+            "caption": "Three photos"
+          }
+        }
+      },
+      {
+        "key": "3",
+        "value": {
+          "type": "link",
+          "mutability": "mutable",
+          "data": {
+            "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+          }
+        }
+      },
+      {
+        "key": "4",
+        "value": {
+          "type": "markdown",
+          "mutability": "mutable",
+          "data": {
+            "markdown": "````dart\nvoid main() {\n  print(\"```\");\n}\n````"
+          }
+        }
+      },
+      {
+        "key": "5",
+        "value": {
+          "type": "divider",
+          "mutability": "immutable",
+          "data": {}
+        }
+      },
+      {
+        "key": "6",
+        "value": {
+          "type": "link",
+          "mutability": "mutable",
+          "data": {
+            "url": "https://example.org/x_y"
+          }
+        }
+      }
+    ]
+  },
+  "cover_media": {
+    "media_category": "tweet_image",
+    "media_id": "1900000000000000000"
+  }
+}
+
+---- report
+dropped subtitle subtitle: X has no subtitle field; the subtitle is left out
+dropped excerpt excerpt: X has no excerpt field; the excerpt is left out
+dropped slug slug: X makes the address itself; the slug is left out
+dropped canonical_url canonicalUrl: X has no canonical URL field; it is left out
+degraded inline_code p1: X Articles have no inline code; it is plain text
+dropped no_video vid: X Articles take no video through the API; the video is left out
+dropped no_audio aud: X Articles take no sound file; it is left out
+degraded embed_as_link emb: X Articles embed only X posts; this embed is a link
+degraded list_start ol: X numbers every list from 1; this list started at 3

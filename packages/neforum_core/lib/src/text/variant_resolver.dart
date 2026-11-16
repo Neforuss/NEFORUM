@@ -3,8 +3,10 @@ import 'dart:math' as math;
 import 'package:characters/characters.dart';
 import 'package:meta/meta.dart';
 
+import '../article/article_renderer.dart';
 import '../audio/audio_publishing.dart';
 import '../model/account.dart';
+import '../model/article.dart';
 import '../model/media.dart';
 import '../model/paragraph_media.dart';
 import '../model/platform_descriptor.dart';
@@ -89,13 +91,33 @@ class VariantResolver {
     final issues = <ValidationIssue>[];
     final t = d.text;
 
+    // ---- article (1.4.4) -------------------------------------------------
+    // A network that takes articles gets the post's article, without the
+    // blocks this target leaves out, unless the target has words of its own.
+    // Its files are the article's, in reading order (cover first), never a
+    // thread's or a series': an article is one post.
+    // A network where the article is opted into (an X Article) sends it only
+    // when the target's option, else the account's, says so.
+    final articleFormat = d.articleFormat;
+    final optIn = d.articleOptionKey;
+    final optedIn = optIn == null ||
+        ((account == null || account.tier.isAutomatic) &&
+            (canonicalOptionKeys(d.options, o.extra)[optIn] ??
+                    canonicalOptionKeys(d.options, (account?.config['postDefaults'] as Map?)?.cast<String, dynamic>() ?? const {})[optIn]) ==
+                true);
+    final article = post.article != null && articleFormat != null && o.text == null && optedIn
+        ? post.article!.withoutBlocks(o.excludedBlockIds)
+        : null;
+
     // ---- media ---------------------------------------------------------
     // Generated media (text cards) only goes where a target asks for it.
     // Sound files (and the copies made from them) carry the tags they go out
     // with: the file's own under the user's edits.
-    var chosen = post.withEffectiveAudioTags(o.mediaIds == null
-        ? post.media.where((m) => !m.generated).toList()
-        : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)]);
+    var chosen = post.withEffectiveAudioTags(article != null
+        ? article.mediaIn(post.media)
+        : o.mediaIds == null
+            ? post.media.where((m) => !m.generated).toList()
+            : [for (final id in o.mediaIds!) ...post.media.where((m) => m.id == id)]);
     // The story's own copies (Post + Story), checked by the adapter.
     final storyIds = o.storyMediaIds;
     var storyMedia = storyIds == null ? const <MediaAttachment>[] : [for (final id in storyIds) ...post.media.where((m) => m.id == id)];
@@ -109,7 +131,8 @@ class VariantResolver {
     // post themselves, never a hand-off. The files then go in the order of
     // their paragraphs.
     final paragraphStyle = d.media.paragraphMedia;
-    final links = paragraphStyle == ParagraphMediaStyle.none ||
+    final links = article != null ||
+            paragraphStyle == ParagraphMediaStyle.none ||
             !post.hasParagraphMedia ||
             post.text.trim().isEmpty ||
             o.text != null ||
@@ -138,7 +161,12 @@ class VariantResolver {
     String adapt(String s) => NetworkTextTransforms.adapt(words(s), d);
     final written = <String>[];
     final writtenIndex = <int>[];
-    if (o.text == null) {
+    if (article != null) {
+      // The article as one text: what hand-offs paste and checks count.
+      final whole = article.toComposerText();
+      if (whole.trim().isNotEmpty) written.add(adapt(whole.trimRight()));
+      writtenIndex.add(0);
+    } else if (o.text == null) {
       for (final p in post.parts) {
         if (p.trim().isNotEmpty) written.add(adapt(p.trimRight()));
         writtenIndex.add(written.isEmpty ? 0 : written.length - 1);
@@ -194,7 +222,8 @@ class VariantResolver {
     // A network that sends a linked post section by section cuts each
     // section to its own messages, so the text is not made a thread here.
     final bySections = links.isNotEmpty && paragraphStyle == ParagraphMediaStyle.sections && t.supportsThreads;
-    if (!cardOnly && !bySections && threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
+    // An article is never cut: its network's serializer takes it whole.
+    if (article == null && !cardOnly && !bySections && threadParts.isEmpty && t.maxLength != null && !TextCounter.fits(text, t)) {
       final n = TextCounter.count(text, t);
       switch (options.overflow) {
         case OverflowStrategy.threadOrError:
@@ -222,7 +251,7 @@ class VariantResolver {
     // never dropped: the posts of the thread on a network whose every post
     // carries its own media, else a series of separate posts after this one.
     // A hand-off carries one post.
-    final threaded = canThread && d.media.mediaPerThreadPart && !cardOnly;
+    final threaded = canThread && d.media.mediaPerThreadPart && !cardOnly && article == null;
     // A written thread there: each item goes with the first post made from
     // its part. Anywhere else all media starts with the one (or first) post.
     final byPart = threaded && threadParts.length > 1 && written.length > 1 && post.mediaParts.isNotEmpty;
@@ -260,7 +289,14 @@ class VariantResolver {
     } else {
       final groups = groupsByPart[0] ?? const <List<MediaAttachment>>[];
       media = groups.firstOrNull ?? const [];
-      if (groups.length > 1) {
+      if (article != null) {
+        // An article is one post with no per-post count of a social post:
+        // every file the network can take goes, in the article's order (a
+        // type it refuses was left out above, with a warning). Real limits
+        // of a format (30 photos in NPF) are the serializer's, reported.
+        final taken = {for (final g in groups) ...g};
+        media = [for (final m in chosen) if (taken.contains(m)) m];
+      } else if (groups.length > 1) {
         final rest = groups.skip(1).toList();
         if (account?.tier == PlatformTier.handoff) {
           final left = rest.fold(0, (n, g) => n + g.length);
@@ -305,14 +341,16 @@ class VariantResolver {
       // without a separate field. From the text as written: a title is plain
       // text, so it gets no Markdown escapes (card emphasis asterisks are
       // still dropped where the network shows no Markdown).
-      final firstPart = o.text ?? post.parts.where((p) => p.trim().isNotEmpty).firstOrNull;
+      final firstPart = article != null ? article.toPlainText() : o.text ?? post.parts.where((p) => p.trim().isNotEmpty).firstOrNull;
       final firstLine = words(firstPart ?? '').split('\n').map((l) => l.trim()).firstWhere((l) => l.isNotEmpty, orElse: () => '');
       if (firstLine.isNotEmpty) {
         title = t.titleMax != null && firstLine.length > t.titleMax! ? '${_cutToUnits(firstLine, t.titleMax! - 1)}…' : firstLine;
         issues.add(ValidationIssue.info('title.derived', 'Title taken from the first line for ${d.name}', field: 'title'));
       }
     }
-    if (!t.titleSupported) title = null;
+    // An article always has its title (a hand-off copies it into the
+    // network's title field).
+    if (!t.titleSupported && article == null) title = null;
 
     // ---- poll ----------------------------------------------------------
     final poll = post.poll;
@@ -376,6 +414,24 @@ class VariantResolver {
       }
     }
 
+    // ---- article report ------------------------------------------------
+    // The post's link goes at the end of the article, as it went at the end
+    // of the text. What the network cannot carry is in the checks.
+    var sentArticle = article;
+    if (sentArticle != null && articleFormat != null) {
+      if (link != null && link.trim().isNotEmpty && !d.supportsLinkField && t.linkInText && !sentArticle.toComposerText().contains(link.trim())) {
+        sentArticle = sentArticle.copyWith(blocks: [
+          ...sentArticle.blocks,
+          ArticleParagraph(sentArticle.newBlockId('link'), [ArticleSpan(link.trim(), link: link.trim())]),
+        ]);
+      }
+      // A hand-off pastes the article as HTML with markers for its files.
+      final reportFormat = account?.tier == PlatformTier.handoff ? ArticleFormat.handoffHtml : articleFormat;
+      issues.addAll(ArticleRenderer.report(sentArticle, reportFormat,
+              media: media, network: d.name, excerptOverride: ArticleRenderer.excerptOption(extra, reportFormat))
+          .toValidationIssues());
+    }
+
     return PostVariant(
       text: text,
       threadParts: threadParts,
@@ -401,6 +457,7 @@ class VariantResolver {
       mediaPartIndexes: mediaPartIndexes,
       seriesPosts: series,
       paragraphMedia: paragraphMedia,
+      article: sentArticle,
     );
   }
 

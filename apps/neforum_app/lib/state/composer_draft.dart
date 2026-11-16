@@ -104,9 +104,9 @@ class ComposerDraftKeeper {
   }
 }
 
-/// Nothing worth keeping: no words, title, link, photos or poll, and not an
-/// edit of a saved post.
-bool isComposerBlank(ComposerState c) => c.isEmpty && c.poll == null && c.editingPostId == null;
+/// Nothing worth keeping: no words, title, link, photos or poll, not an edit
+/// of a saved post, and not in Article mode (1.4.4).
+bool isComposerBlank(ComposerState c) => c.isEmpty && c.poll == null && c.editingPostId == null && c.article == null;
 
 @visibleForTesting
 Map<String, dynamic> composerDraftToJson(ComposerState c) => {
@@ -193,5 +193,7 @@ ComposerState? composerDraftFromJson(Map<String, dynamic> j) {
         : const {},
     // 1.4.3: kept by the composer's own paragraph numbers, like the post's.
     paragraphMedia: p.paragraphMedia,
+    // 1.4.4: articles. Saved inside the post; the composer is in Article mode.
+    article: p.article,
   );
 }

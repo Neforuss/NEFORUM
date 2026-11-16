@@ -1,0 +1,370 @@
+{
+  "content": [
+    {
+      "type": "text",
+      "subtype": "heading1",
+      "text": "Rich title"
+    },
+    {
+      "type": "text",
+      "subtype": "heading2",
+      "text": "A subtitle"
+    },
+    {
+      "type": "image",
+      "media": [
+        {
+          "type": "image/jpeg",
+          "identifier": "media0",
+          "width": 1200,
+          "height": 800
+        }
+      ],
+      "alt_text": "Cover alt",
+      "caption": "Cover caption"
+    },
+    {
+      "type": "text",
+      "subtype": "heading1",
+      "text": "Intro & <setup>"
+    },
+    {
+      "type": "text",
+      "text": "Plain bold, italic, code() and a link *not emphasis* 2 < 3",
+      "formatting": [
+        {
+          "start": 6,
+          "end": 10,
+          "type": "bold"
+        },
+        {
+          "start": 12,
+          "end": 18,
+          "type": "italic"
+        },
+        {
+          "start": 31,
+          "end": 37,
+          "type": "link",
+          "url": "https://example.com/a?b=1&c=2"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "text": "next line"
+    },
+    {
+      "type": "image",
+      "media": [
+        {
+          "type": "image/jpeg",
+          "identifier": "media1",
+          "width": 1200,
+          "height": 800
+        }
+      ],
+      "alt_text": "Ref alt",
+      "caption": "A caption · Jane Doe"
+    },
+    {
+      "type": "image",
+      "media": [
+        {
+          "type": "image/jpeg",
+          "identifier": "media2",
+          "width": 1200,
+          "height": 800
+        }
+      ],
+      "alt_text": "G1"
+    },
+    {
+      "type": "image",
+      "media": [
+        {
+          "type": "image/jpeg",
+          "identifier": "media3",
+          "width": 1200,
+          "height": 800
+        }
+      ],
+      "alt_text": "G2"
+    },
+    {
+      "type": "image",
+      "media": [
+        {
+          "type": "image/jpeg",
+          "identifier": "media4",
+          "width": 1200,
+          "height": 800
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "text": "Three photos",
+      "formatting": [
+        {
+          "start": 0,
+          "end": 12,
+          "type": "italic"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "subtype": "heading2",
+      "text": "Details"
+    },
+    {
+      "type": "video",
+      "media": {
+        "type": "video/mp4",
+        "identifier": "media5",
+        "width": 1080,
+        "height": 1920
+      }
+    },
+    {
+      "type": "text",
+      "text": "The video",
+      "formatting": [
+        {
+          "start": 0,
+          "end": 9,
+          "type": "italic"
+        }
+      ]
+    },
+    {
+      "type": "link",
+      "url": "https://cdn.example.test/a1",
+      "title": "The track"
+    },
+    {
+      "type": "link",
+      "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    },
+    {
+      "type": "text",
+      "subtype": "quote",
+      "text": "To be or not to be."
+    },
+    {
+      "type": "text",
+      "text": "Hamlet",
+      "formatting": [
+        {
+          "start": 0,
+          "end": 6,
+          "type": "italic"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "subtype": "unordered-list-item",
+      "text": "first"
+    },
+    {
+      "type": "text",
+      "subtype": "unordered-list-item",
+      "text": "second",
+      "formatting": [
+        {
+          "start": 0,
+          "end": 6,
+          "type": "bold"
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "subtype": "ordered-list-item",
+      "text": "three"
+    },
+    {
+      "type": "text",
+      "subtype": "ordered-list-item",
+      "text": "four"
+    },
+    {
+      "type": "text",
+      "subtype": "chat",
+      "text": "void main() {"
+    },
+    {
+      "type": "text",
+      "subtype": "chat",
+      "text": "  print(\"```\");"
+    },
+    {
+      "type": "text",
+      "subtype": "chat",
+      "text": "}"
+    },
+    {
+      "type": "text",
+      "text": "* * *"
+    },
+    {
+      "type": "text",
+      "text": "The end. See https://example.org/x_y.",
+      "formatting": [
+        {
+          "start": 13,
+          "end": 36,
+          "type": "link",
+          "url": "https://example.org/x_y"
+        }
+      ]
+    }
+  ],
+  "layout": [
+    {
+      "type": "rows",
+      "display": [
+        {
+          "blocks": [
+            0
+          ]
+        },
+        {
+          "blocks": [
+            1
+          ]
+        },
+        {
+          "blocks": [
+            2
+          ]
+        },
+        {
+          "blocks": [
+            3
+          ]
+        },
+        {
+          "blocks": [
+            4
+          ]
+        },
+        {
+          "blocks": [
+            5
+          ]
+        },
+        {
+          "blocks": [
+            6
+          ]
+        },
+        {
+          "blocks": [
+            7,
+            8,
+            9
+          ]
+        },
+        {
+          "blocks": [
+            10
+          ]
+        },
+        {
+          "blocks": [
+            11
+          ]
+        },
+        {
+          "blocks": [
+            12
+          ]
+        },
+        {
+          "blocks": [
+            13
+          ]
+        },
+        {
+          "blocks": [
+            14
+          ]
+        },
+        {
+          "blocks": [
+            15
+          ]
+        },
+        {
+          "blocks": [
+            16
+          ]
+        },
+        {
+          "blocks": [
+            17
+          ]
+        },
+        {
+          "blocks": [
+            18
+          ]
+        },
+        {
+          "blocks": [
+            19
+          ]
+        },
+        {
+          "blocks": [
+            20
+          ]
+        },
+        {
+          "blocks": [
+            21
+          ]
+        },
+        {
+          "blocks": [
+            22
+          ]
+        },
+        {
+          "blocks": [
+            23
+          ]
+        },
+        {
+          "blocks": [
+            24
+          ]
+        },
+        {
+          "blocks": [
+            25
+          ]
+        },
+        {
+          "blocks": [
+            26
+          ]
+        }
+      ]
+    }
+  ]
+}
+
+---- report
+dropped excerpt excerpt: Tumblr has no excerpt field; the excerpt is left out
+degraded cover_in_body cover: Tumblr has no cover image; the cover goes at the top of the post
+degraded inline_code p1: Tumblr has no inline code; it is plain text
+degraded gallery_caption_as_text gal: Tumblr galleries have no caption of their own; it goes in a line under the photos
+degraded video_caption_as_text vid: Tumblr videos have no caption; it goes in a line under the video
+degraded audio_as_link aud: Tumblr gets the sound file as a link to it on your media host
+degraded list_start ol: Tumblr numbers every list from 1; this list started at 3
+degraded code_as_text code: Tumblr has no code blocks; the code is monospaced text, without its empty lines
+degraded divider_as_text hr: Tumblr has no dividers; a line of * * * stands for it

@@ -352,7 +352,12 @@ class _HandoffSheetState extends ConsumerState<HandoffSheet> {
   }
 
   Future<void> _copy({bool quiet = false}) async {
-    await Clipboard.setData(ClipboardData(text: _text));
+    // 1.4.4: articles. An article goes on the clipboard as formatted text
+    // too, so the blog's editor pastes its headings, lists and links.
+    final html = plan.clipboardHtml;
+    if (html == null || html.isEmpty || !await ClipboardMedia.copyHtml(html, text: _text)) {
+      await Clipboard.setData(ClipboardData(text: _text));
+    }
     if (!mounted) return;
     setState(() {
       _copied = true;
