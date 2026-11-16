@@ -1,6 +1,6 @@
 # Snapchat setup guide
 
-This guide connects Snapchat by **hand-off only**: your photo or video opens in Snapchat, you paste the caption and send it to **My Story**, **Spotlight** or friends. Nothing to set up, no developer app, no sign-in.
+This guide connects Snapchat by **hand-off only**: your photo or video opens in Snapchat, and you paste the caption and send it to **My Story**, **Spotlight** or friends. There is nothing else to set up: no developer app and no sign-in in NEFORUM.
 
 ## Steps
 

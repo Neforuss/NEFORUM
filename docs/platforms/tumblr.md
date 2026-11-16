@@ -140,7 +140,7 @@ With a browser paired ([Browser extension](../browser-extension.md)), NEFORUM op
 | A video | `https://www.tumblr.com/new/video` |
 | A link and text, no media | `https://www.tumblr.com/new/link`: the link goes into Tumblr's URL field (Tumblr turns it into a link card) and your text below it |
 
-This replaces the share tool described below, which is a simplified page that takes text only (photos only as links on a media host), and nothing is put on your media host. Tags go in with **Insert** in the extension's panel.
+With the extension, NEFORUM uses this editor instead of the share tool described below (a simplified page that takes text only, and photos only as links on a media host), so nothing is put on your media host. Tags go in with **Insert** in the extension's panel.
 
 #### Text and link posts
 
@@ -174,7 +174,7 @@ NEFORUM opens the share sheet with your photos or video. Pick **Tumblr** (the An
 
 ## Limits
 
-- **No threads.** Tumblr has no reply chains. A long text simply becomes a long post.
+- **No threads.** Tumblr has no reply chains. A long text becomes one long post.
 - **No content warnings or community labels.** Tumblr's "mature" labels cannot be set through the API. Set them on tumblr.com after posting.
 - **No unlisted or followers-only posts.** Such posts are published publicly. Use *private* to hide a post.
 - **One video at a time.** Tumblr refuses a new video while the previous one is still processing. NEFORUM shows "still processing your previous video" and retries a few minutes later.

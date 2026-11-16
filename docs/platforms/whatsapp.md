@@ -1,6 +1,6 @@
 # WhatsApp setup guide
 
-This guide connects WhatsApp by **hand-off only**: WhatsApp opens with your text or media, and you pick a chat, **My status** or a **Channel** and tap **Send**. Nothing to set up, no developer app, no sign-in.
+This guide connects WhatsApp by **hand-off only**: WhatsApp opens with your text or media, and you pick a chat, **My status** or a **Channel** and tap **Send**. There is nothing else to set up: no developer app and no sign-in in NEFORUM.
 
 ## Steps
 

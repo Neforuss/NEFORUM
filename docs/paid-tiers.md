@@ -1,10 +1,16 @@
 # Paid plans and account limits
 
-Some networks let a paying or verified account post more: longer posts, longer videos. Since 1.4.4 NEFORUM keeps the plan of **each account** and uses that account's limits everywhere: the character counter, the rules check, splitting long text into a thread (a long post that fits one post is sent as one post), the video length and size check, and the preview.
+Some networks let a paying or verified account post longer text or longer videos. Since 1.4.4, NEFORUM keeps the plan of **each account** and uses that account's limits everywhere:
+
+- the character counter;
+- the rules check;
+- splitting long text into a thread (a long post that fits in one post on that account is sent as one post);
+- the video length and size check;
+- the preview.
 
 ## Steps
 
-1. Connect the account as usual. Where the network says which plan an account has (X with your own keys, YouTube with your own keys), NEFORUM reads it when you connect. Otherwise the connect form asks: a **Parler Premium** switch, or an **X plan** list for X by hand-off.
+1. Connect the account as usual. Where the network says which plan an account has (X with your own keys, YouTube with your own keys), NEFORUM reads it when you connect. Otherwise the connect form asks you, with a **Parler Premium** switch, or an **X plan** list for X by hand-off.
 2. Open **Accounts**. The account card shows the plan, who set it ("Read from X on 16 Nov 2026" or "Chosen by you") and what it changes.
 3. To change it, tap the pencil beside the plan and pick another one. For X with your own keys, **Ask X again** reads it from X once more (one profile read on your X developer account).
 4. After you buy or cancel a plan, or verify a YouTube channel, change the plan on the card or reconnect the account so NEFORUM reads it again.
@@ -37,13 +43,13 @@ Status as of 16 November 2026. "API" is what NEFORUM uses when it posts for you;
 
 - The plan lives in the account's settings (`subscriptionTier`, `subscriptionSource`, `subscriptionCheckedAt`), so it travels with the account through Sync and backups.
 - Every network that has plans declares them once in NEFORUM's core (`PlatformAdapter.subscriptionPlansFor`); the account's limits come from `descriptorForAccount`, which the composer, the preview, the rules check, the thread splitter and the publisher all use.
-- A plan NEFORUM read from the network is marked "Read from"; one you picked is "Chosen by you". Picking a plan on the card always wins until the next reconnect of an account whose plan the network reports.
-- If you choose a paid plan the account does not have, the network refuses the long post or video. X then says the post is too long; set the plan back to free and post again.
+- A plan NEFORUM read from the network is marked "Read from"; one you picked is marked "Chosen by you". A plan you pick on the card always wins. On an account whose plan the network reports, it wins until you next reconnect that account.
+- If you choose a paid plan the account does not have, the network refuses the long post or video. X then says the post is too long. Set the plan back to free and post again.
 
 ## Known limitations
 
 - X: the new "X Subscription" plans are not named in X's API docs yet. An account X reports with a plan name NEFORUM does not know gets the Premium limits; if X refuses a long post for it, choose **X free** on the card.
-- X: business and government accounts (`verified_type`) count as Verified Organization with Premium limits, following X's "X Premium / verified" wording. Not verified with such an account.
+- X: business and government accounts (`verified_type`) count as Verified Organization with Premium limits, following X's "X Premium / verified" wording. This has not been tested with such an account.
 - YouTube hand-off and Telegram hand-off do not track plans yet.
 
 ## Sources

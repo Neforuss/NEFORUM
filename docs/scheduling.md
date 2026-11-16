@@ -1,6 +1,6 @@
 # Scheduling a post
 
-The schedule sheet opens from the composer's Schedule button and from **Reschedule** in the queue. Pick a quick time, a day and time, or a random time, then press **Schedule**. In the composer, that sets the time, and the composer's own Schedule button then schedules the post.
+The schedule sheet opens from the composer's Schedule button and from **Reschedule** in the queue. Pick a quick time, a day and time, or a random time, then press **Schedule**. When you opened the sheet from the composer, that button only sets the time: the post is scheduled when you then press the composer's own Schedule button.
 
 ## A random time
 
@@ -20,11 +20,11 @@ The sheet states the range in words. Year, month, day, hour and minute are all r
 
 ## What the sheet tells you
 
-The lines under the time are worked out for that time, from the same check NEFORUM uses when it hands the post over. None of them stop you scheduling.
+The lines under the time are worked out for that time, using the same check NEFORUM runs when it hands the post over. None of them stops you from scheduling.
 
 | Line | When |
 |---|---|
-| NEFORUM hands this post to the network, which publishes it even if this device is off | The network holds posts, this time is inside its limits, and **Let platforms hold scheduled posts** is on |
+| NEFORUM hands this post to the network, which publishes it even if this device is off | The network holds posts, this time is inside its limits, and **Let platforms hold scheduled posts** (Settings > Scheduling) is on |
 | The network's own limit, in its words | The time is too soon or too far ahead for that network to hold, so it stays on this device |
 | What this device has to do | The post waits on this device: keep NEFORUM running on a computer, background posting on Android, a **Publish now** notification on iPhone and iPad |
 | More than 30 days away | The post waits on this device for that long |
@@ -37,13 +37,13 @@ Sign-in dates come from a status file kept on each device. The sheet reads no ke
 
 ## Times that have passed
 
-A time under one minute ahead, or already past, is refused: it would go out at once. The sheet will not confirm one, and the composer's Schedule button says the time has passed and offers to pick a new one, with nothing saved. A draft can hold an old time for as long as it stays open, which is why both check.
+NEFORUM refuses a time less than one minute ahead, or already past, because the post would go out at once. The sheet will not confirm such a time. The composer's Schedule button says the time has passed and offers to pick a new one, and nothing is saved. Both check, because a time you picked can pass while the draft stays open.
 
 ## Clock changes
 
 - **Tomorrow morning** and **Next Monday** are worked out on the calendar, so they stay right on a day of 23 or 25 hours.
 - A day and time the clocks skip shows the real time it becomes and says so.
-- A move to another time zone keeps the moment and the display follows it.
+- If you move to another time zone, the post keeps the same moment in time and the time shown changes to match.
 
 ## Publishing order
 

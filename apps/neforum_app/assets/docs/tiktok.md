@@ -47,7 +47,7 @@ Status as of October 2026.
 
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
-| **Hand-off** (default) | Any TikTok account + the TikTok app (phone) or a browser (desktop) | Free | You tap **Post** in TikTok yourself. Public, private, whatever you choose there. |
+| **Hand-off** (default) | Any TikTok account + the TikTok app (phone) or a browser (desktop) | Free | You tap **Post** in TikTok yourself. The post is public, private or whatever else you choose there. |
 | **Your own API keys** (Content Posting API) | A TikTok developer app (sandbox), connected from NEFORUM on Windows/macOS | Free | Fully automatic, but **PRIVATE ONLY** ("Only me") until TikTok audits your app. |
 
 ### Before you use the API
@@ -62,11 +62,11 @@ Status as of October 2026.
 
 ### Hand-off
 
-Why the clipboard? TikTok ignores text handed to it with shared files, and it has no web link that opens a prefilled composer (nothing like X's "intent" links).
+NEFORUM puts the caption on the clipboard because TikTok ignores text handed to it with shared files, and it has no web link that opens a prefilled composer (nothing like X's "intent" links).
 
 ### Your own API keys
 
-NEFORUM keeps the client secret and tokens in your device's secure storage. NEFORUM renews the access token when it posts, and shows the end date TikTok reports for the sign-in; reconnect by then. TikTok's pages disagree on the numbers: the text says 2 hours and 180 days, a sample on the same page 24 hours and 365 days. TikTok replaces the renewal key every time, so without **Settings > Sync** an account stays connected on only one device.
+NEFORUM keeps the client secret and tokens in your device's secure storage. NEFORUM renews the access token when it posts, and shows the end date TikTok reports for the sign-in; reconnect by then. TikTok's pages disagree on the numbers: the text says 2 hours and 180 days, while a sample on the same page shows 24 hours and 365 days. TikTok replaces the renewal key every time, so without **Settings > Sync** an account stays connected on only one device.
 
 What NEFORUM sends:
 

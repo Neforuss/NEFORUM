@@ -2,7 +2,7 @@
 
 **YouTube videos** uploads videos to your channel: NEFORUM uploads them automatically with your own Google app, or prepares the upload for you to finish in YouTube (hand-off). Each upload is **one video** with a **title** (required) and a **description**.
 
-It is not for posts. Text, image, poll and text-card posts on your channel's **Posts** tab are **YouTube Posts**, a separate network in NEFORUM ([its guide](youtube_posts.md)): Google has no API for them, so they go by hand-off. Before NEFORUM 1.4.1 this network was called just "YouTube", which was easy to take for the Posts tab.
+It is not for posts. Text, image, poll and text-card posts on your channel's **Posts** tab are **YouTube Posts**, a separate network in NEFORUM ([its guide](youtube_posts.md)): Google has no API for them, so they go by hand-off. Before NEFORUM 1.4.1 this network was called just "YouTube", which was easy to mistake for the Posts tab.
 
 ## Steps
 
@@ -32,7 +32,7 @@ These steps create your own Google app for "Your own API keys" (about 10 minutes
 
 ## Steps: hand-off
 
-1. In NEFORUM: **Accounts > Add > YouTube > Hand-off**. Nothing else to set up.
+1. In NEFORUM: **Accounts > Add > YouTube videos > Hand-off**. Nothing else to set up.
 2. Publish your post. NEFORUM copies the title, description and tags to your clipboard and opens YouTube:
    - **Android / iOS:** the share sheet opens with your video. Pick **YouTube**. The YouTube app opens its upload editor with the video (the iOS YouTube app has a share extension since version 19.47.7).
    - **Desktop:** NEFORUM opens <https://www.youtube.com/upload> (YouTube Studio's upload dialog). Drop the file in.
@@ -47,7 +47,7 @@ Status as of October 2026.
 | Tier | What you need | Cost | Result |
 |---|---|---|---|
 | **Your own API keys** (default; YouTube Data API v3) | A Google account with a YouTube channel, plus a free Google Cloud project with a "Desktop app" OAuth client that you create. Connect from NEFORUM on Windows or macOS. | Free (no paid plan exists) | Fully automatic upload with title, description, tags, visibility and scheduling. **May be locked to private** (see below). |
-| **Hand-off** | Any YouTube account, plus the YouTube app (phone) or a browser (desktop) | Free | You finish the upload in YouTube yourself. Public, unlisted, private, whatever you pick there. |
+| **Hand-off** | Any YouTube account, plus the YouTube app (phone) or a browser (desktop) | Free | You finish the upload in YouTube yourself. The video is public, unlisted or private, whichever you pick there. |
 
 ### Before you use the API
 
@@ -67,7 +67,7 @@ In the composer, open **Customize** on the YouTube videos preview. Under **YouTu
 - **Category**: one of the categories YouTube offers when you upload (People & Blogs is YouTube's own default).
 - **Made for kids**: YouTube asks this of every video. A video made for kids gets no personalised ads and no comments.
 - **Altered or synthetic content**: realistic content made or changed with AI or other tools; YouTube shows viewers a label.
-- **Tell my subscribers**: off uploads the video without a notification to subscribers.
+- **Tell my subscribers**: when it is off, the video is uploaded without a notification to subscribers.
 - **Thumbnail**: your own picture instead of a frame YouTube picks. YouTube asks for a JPEG or PNG, 1280 x 720 and under 2 MB (it takes up to 50 MB through the API). NEFORUM keeps it with the post and sets it right after the upload.
   - It needs a **verified channel** (youtube.com/verify). If YouTube refuses the thumbnail, the video still counts as posted, and the post's details say why (for example: the channel is not verified, or it has set too many thumbnails lately). Then pick it in YouTube Studio.
   - A **hand-off** upload cannot set it: pick the thumbnail in YouTube Studio's upload window.
@@ -100,12 +100,12 @@ NEFORUM stores the tokens and the client secret only in this device's secure sto
 
 ### Hand-off
 
-Why the clipboard? YouTube takes only the video file from the share sheet, and its upload page has no link parameters for a title or description. You also set the schedule, tags and thumbnail in YouTube.
+NEFORUM puts the title, description and tags on the clipboard because YouTube takes only the video file from the share sheet, and its upload page has no link parameters for a title or description. You also set the schedule, tags and thumbnail in YouTube.
 
 ## Limits
 
 - NEFORUM loads the whole video into memory before uploading, so very large files (several GB) may fail on devices with little RAM. Interrupted uploads resume where they stopped, up to 3 times. If the upload session expires, NEFORUM has to start over, which uses another upload from your daily quota.
-- No custom thumbnails, playlists, captions or Community posts.
+- No playlists, captions or Community posts. A custom thumbnail works through **Thumbnail** above.
 - If YouTube rejects the video after processing (copyright, duplicate, too long), you'll see it in YouTube Studio. NEFORUM only reports problems YouTube returns during the upload.
 
 ## Sources

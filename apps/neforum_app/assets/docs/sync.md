@@ -1,6 +1,6 @@
 # Sync between devices
 
-This guide keeps your accounts, their keys, your posts and your settings the same on all your computers and phones, through **one encrypted file** in storage you already use. There is no NEFORUM server and no NEFORUM account, and your storage provider only ever sees an encrypted file.
+Sync keeps your accounts, their keys, your posts and your settings the same on all your computers and phones. It works through **one encrypted file** that sits in storage you already use, such as a cloud drive. There is no NEFORUM server and no NEFORUM account, and your storage provider only ever sees an encrypted file.
 
 ## Steps: On your first device
 
@@ -25,14 +25,14 @@ This guide keeps your accounts, their keys, your posts and your settings the sam
 
 ## Steps: Google Drive (direct)
 
-This uses your own Google Cloud project, once, the same way NEFORUM's YouTube connection does (you can reuse that project).
+Google Drive (direct) needs your own Google Cloud project. You set it up once, the same way as for NEFORUM's YouTube connection, and you can reuse that project.
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), create a project, or open the one you use for YouTube.
 2. **APIs & Services > Library**: enable the **Google Drive API**.
 3. **OAuth consent screen** (Google Auth Platform): choose **External** and fill in the app name and your email.
 4. Under **Data access**, add the scope `.../auth/drive.file`. This scope only lets NEFORUM see files it made itself.
 5. **Audience > Test users**: click **Add users** and add **your own Google address**.
-   - Add every Google account you will sign in with, on any device: the one whose Drive should hold the sync file. Without this, Google refuses the sign-in.
+   - Add every Google account you will sign in with on any of your devices. That is the account whose Drive should hold the sync file. If an account is not on this list, Google refuses its sign-in.
    - This Google Cloud app is only for you. You don't share it, and nobody else uses your Client ID.
 6. Optional: also under **Audience**, click **Publish app**.
    - While an app is in "Testing", Google ends its sign-ins after 7 days, and NEFORUM asks you to sign in again. With only the `drive.file` scope, publishing needs no review from Google.
@@ -56,28 +56,37 @@ Every device must use the same storage and the same file. For example: your PC, 
 
 The first time a device syncs with a file that already exists:
 
-- **Nothing is deleted.** Everything only one side has (an account, its keys, a post) is kept, and goes to the other side. Media hosts have two slots, so see below.
-- **The setup with the most accounts wins.** Where the device and the file have different versions of the same thing (a setting, an account's details, a media host), the side with more accounts keeps its version (an account the file holds twice counts once). If both have as many accounts, the side whose oldest account was connected first wins. If that is a tie too, the file wins, because your other devices already use it. You see which side wins before you join, and you can pick the other one.
-- **One account, not two.** Mastodon, Pixelfed, TikTok and most hand-off accounts get a different id on each device, so one account connected on two devices can arrive twice. NEFORUM makes it one account, keeps the newer sign-in (its details and keys together), and moves posts and default targets to it. See "When accounts are merged" below.
-- **Media hosts, slot by slot.** The winning side keeps its hosts in their slots (main and fallback). A host of the other side goes into a slot left empty, so it is kept, and a device without a media host never removes another device's. Only when the winning side uses both slots is a host of the other side replaced, and NEFORUM names it before you join.
+- **Nothing is deleted.** Anything that only one side has, such as an account, its keys or a post, is kept and copied to the other side. Media hosts work a little differently because they have two slots; see the last point.
+- **The setup with the most accounts wins.** Sometimes the device and the file hold different versions of the same thing: a setting, an account's details or a media host. Then the side with more accounts keeps its version. An account that the file holds twice counts once.
+  - If both sides have the same number of accounts, the side whose oldest account was connected first wins.
+  - If that is a tie too, the file wins, because your other devices already use it.
+  - You see which side wins before you join, and you can pick the other one.
+- **One account, not two.** Mastodon, Pixelfed, TikTok and most hand-off accounts (where you press Post yourself) get a different id on each device, so one account connected on two devices can arrive twice. NEFORUM turns the two copies into one account. It keeps the newer sign-in (its details and keys together) and moves posts and default targets to it. See "When accounts are merged" below.
+- **Media hosts, slot by slot.** Each side has a main slot and a fallback slot. The winning side keeps its hosts in their slots. A host from the other side goes into an empty slot, so it is kept. A device without a media host never removes another device's host. A host from the other side is replaced only when the winning side uses both slots, and NEFORUM names that host before you join.
 
-After the first sync, each change travels on its own, including a setting put back to its default and a media host you remove.
+After the first sync, each change travels on its own. That includes a setting you put back to its default and a media host you remove.
 
 ### When accounts are merged
 
 NEFORUM merges two copies of one account only in these cases:
 
-- **Mastodon, Pixelfed and TikTok accounts** with the same id on their server (or the same TikTok user for the same app): on any sync, on any device, also on devices that joined long ago. This is how two devices that join at the same moment, or a sync that was interrupted, end with one account.
-- **Other accounts with a made-up id**, matched by their handle (capital letters and a leading @ ignored): only when one copy is new to the sync file in that sync. Two copies that both were in the file already are never merged.
-- **Hand-off accounts:** only on a device's first sync, when a hand-off made on that device has the same name or handle as one in the sync file, on the same site (WordPress, Ghost and WriteFreely blogs are told apart by their whole address, path included).
+- **Mastodon, Pixelfed and TikTok accounts** with the same id on their server (or the same TikTok user for the same app). This happens on any sync and on any device, including devices that joined long ago. That way, two devices that join at the same moment, or a sync that was interrupted, still end up with one account.
+- **Other accounts with a made-up id**, matched by their handle, ignoring capital letters and a leading @. This happens only when one of the two copies is new to the sync file in that sync. Two copies that were both in the file already are never merged.
+- **Hand-off accounts**, only on a device's first sync. The hand-off made on that device must have the same name or handle as one in the sync file, on the same site. WordPress, Ghost and WriteFreely blogs are told apart by their whole address, path included.
 
-NEFORUM never merges two accounts whose ids come from the accounts themselves (X, Bluesky, YouTube, Reddit, a WordPress blog and most others), accounts on two different servers or sites, or accounts with two different handles. The first sync's dry run lists the merges it will make.
+NEFORUM never merges:
 
-After a merge, the old copy and its keys stay on the device until the sync file holds the merged account. A post that still names the old copy, such as a draft you were editing, moves to the merged account on the next sync, for 90 days. A device with NEFORUM 1.3.4 leaves such a post as it is, and does not remove the link from the sync file; the next device with 1.3.5 to sync moves the post.
+- two accounts whose ids come from the accounts themselves (X, Bluesky, YouTube, Reddit, a WordPress blog and most others);
+- accounts on two different servers or sites;
+- accounts with two different handles.
+
+Before the first sync, the dry run (the summary of what joining will do) lists the merges it will make.
+
+After a merge, the old copy and its keys stay on the device until the sync file holds the merged account. A post that still names the old copy, such as a draft you were editing, moves to the merged account on the next sync. NEFORUM keeps the link from the old copy to the merged account for 90 days. A device with NEFORUM 1.3.4 leaves such a post as it is and does not remove the link from the sync file; the next device with 1.3.5 to sync moves the post.
 
 ### Where the file can live
 
-**Google Drive (direct)** (computers, iPhone, iPad and Android). NEFORUM talks to Google Drive itself. It keeps the file in a **NEFORUM Sync** folder in your My Drive. This is the way to use Google Drive on a phone or tablet: Google Drive's iPhone and iPad app does not let other apps pick its folders, and it often does not hand files over to them. **Every device must use Google Drive (direct)**, your computers too, because NEFORUM cannot see a file that Google Drive for desktop put in another folder.
+**Google Drive (direct)** (computers, iPhone, iPad and Android). NEFORUM talks to Google Drive itself and keeps the file in a **NEFORUM Sync** folder in your My Drive. Use this to sync through Google Drive on a phone or tablet. Google Drive's iPhone and iPad app does not let other apps pick its folders, and it often does not hand files over to them. **Every device must use Google Drive (direct)**, your computers too, because NEFORUM cannot see a file that Google Drive for desktop put in another folder.
 
 **A cloud app on your computer.** NEFORUM writes the file into a folder; your cloud app does the syncing.
 
@@ -89,17 +98,17 @@ After a merge, the old copy and its keys stay on the device until the sync file 
 
 Keep the folder **available offline** ("Always keep on this device" in OneDrive, "Available offline" in Dropbox). Otherwise the cloud app may not download the newest file before NEFORUM reads it.
 
-**A cloud app on your iPhone, iPad or Android phone.** Pick a location in the system file picker (the Files app on iPhone and iPad), and the cloud app does the syncing. How well this works depends on the cloud app, not on NEFORUM:
+**A cloud app on your iPhone, iPad or Android phone.** Pick a location in the system file picker (the Files app on iPhone and iPad), and the cloud app does the syncing. How well this works depends on the cloud app rather than on NEFORUM. There are three ways to pick:
 
-- **Choose folder**: NEFORUM keeps `NEFORUM.neforumsync` in the folder. Works with iCloud Drive, Dropbox and On My iPhone, and should work with the Nextcloud app (version 6 or newer). On Android it works with a folder that Syncthing-Fork or another sync app keeps in step. OneDrive, Box, MEGA, pCloud, Proton Drive and Synology Drive do not let other apps pick their folders: in the folder picker they look grayed out.
+- **Choose folder**: NEFORUM keeps `NEFORUM.neforumsync` in the folder. This works with iCloud Drive, Dropbox and On My iPhone, and should work with the Nextcloud app (version 6 or newer). On Android it works with a folder that Syncthing-Fork or another sync app keeps in step. OneDrive, Box, MEGA, pCloud, Proton Drive and Synology Drive do not let other apps pick their folders, so they look grayed out in the folder picker.
 - **Choose the sync file**: pick the `NEFORUM.neforumsync` that your computer already made. This is for apps whose folders cannot be picked. OneDrive, Box and pCloud let NEFORUM open and save that one file, though the cloud app may take a while to upload changes. MEGA, Proton Drive and Sync.com are not recommended.
 - **Create the sync file**: when the phone is your first device, save a new, empty sync file into the cloud app, and NEFORUM fills it in. If the cloud app asks whether to replace an existing file, cancel and use **Choose the sync file** instead.
 
-On an iPhone or iPad you can also tap `NEFORUM.neforumsync` in the Files app, in iCloud Drive or On My iPhone. NEFORUM opens **Settings > Sync** with that file already chosen; just add the passphrase. Files inside other cloud apps keep that app's own icon and do not open NEFORUM: the cloud app decides that, not NEFORUM.
+On an iPhone or iPad you can also tap `NEFORUM.neforumsync` in the Files app, in iCloud Drive or On My iPhone. NEFORUM opens **Settings > Sync** with that file already chosen, and you only add the passphrase. Files inside other cloud apps keep that app's own icon and do not open NEFORUM, because the cloud app controls what happens when you tap its files.
 
 Install the cloud app and sign in first. On an iPhone, if the app is missing from the picker, open the Files app, tap **Browse**, then **⋯ > Edit**, and turn it on.
 
-NEFORUM keeps access to what you picked after a restart. On iPhone and iPad it asks the cloud app for the newest file before every read, and hands over every write for upload. When you turn sync on, NEFORUM checks that it may change files there, without touching the sync file.
+NEFORUM keeps access to what you picked after a restart. On iPhone and iPad it asks the cloud app for the newest file before every read, and hands every write to the cloud app to upload. When you turn sync on, NEFORUM checks that it is allowed to change files there, without touching the sync file.
 
 **WebDAV** (computers, iPhone, iPad and Android). NEFORUM talks to the server itself.
 
@@ -137,9 +146,13 @@ NEFORUM syncs when it starts, every five minutes, and a few seconds after you ch
 
 Each account, post and setting merges on its own, so changes on different things never clash. When the same thing was changed on two devices before they synced:
 
-- A post that went out, was tried (even if it failed or was cancelled) or is being published beats another device's version that has not got that far, even a newer edit, so nothing is posted twice. Between two versions that got as far, the newer edit wins, by each device's clock.
-- An account's sign-in (the developer app or server it is connected through, its ids and its keys) comes as one piece between devices with 1.3.5, also when a sync arrives while NEFORUM is posting or renewing that sign-in, with one rare exception named at the end of this point. When you reconnect it through another app or server on one device while another device renews the old sign-in, the most recent connection wins, even though the renewed keys expire later, so the new app is never paired with the old keys, or the other way round. Through the same app with the same settings, the keys renewed last win, because those are the ones the network still accepts. A device with 1.3.4 can break this; see the limitation below. One rare window remains, inherited from 1.3.4: if another device renewed the old sign-in since the last sync, a sync that runs in the very instant you finish reconnecting the account can still pair the new app with the old keys. If the account asks to be reconnected right after you reconnected it, reconnect it once more.
-- Your own changes to an account (switched on or off, renamed, quotas), a setting and a media host carry no time of the change. When the same one was changed on two devices before either synced, the device that syncs second keeps its own version, even when the other change was made later. This assumes both devices' clocks are right: a device whose clock runs ahead can keep its version even when it syncs first. To be sure a change sticks, make it on one device and let it sync before you change the same thing on another.
+- A post that went out, was tried (even if it failed or was cancelled) or is being published beats another device's version that has not got that far, even a newer edit. This keeps a post from going out twice. Between two versions that got equally far, the newer edit wins, by each device's clock.
+- An account's sign-in is the developer app or server it is connected through, plus its ids and its keys. Between devices with 1.3.5, the sign-in travels as one piece, also when a sync arrives while NEFORUM is posting or renewing that sign-in. There is one rare exception, described at the end of this point.
+  - Suppose you reconnect the account through another app or server on one device while another device renews the old sign-in. The most recent connection wins, even though the renewed keys expire later, so the new app is never paired with the old keys, or the other way round.
+  - When both devices use the same app with the same settings, the keys renewed last win, because those are the ones the network still accepts.
+  - A device with 1.3.4 can break this; see the limitation below.
+  - The rare exception, inherited from 1.3.4: if another device renewed the old sign-in since the last sync, a sync that runs in the very instant you finish reconnecting the account can still pair the new app with the old keys. If the account asks to be reconnected right after you reconnected it, reconnect it once more.
+- NEFORUM does not record when you changed a setting, a media host, or your own details on an account (switched on or off, renamed, quotas). When the same one was changed on two devices before either synced, the device that syncs second keeps its own version, even when the other change was made later. This assumes both devices' clocks are right: a device whose clock runs ahead can keep its version even when it syncs first. To be sure a change sticks, make it on one device and let it sync before you change the same thing on another.
 - An edit beats a deletion, so nothing you were working on disappears.
 
 Cloud apps sometimes keep two copies when two devices save at the same moment, for example "NEFORUM (conflicted copy).neforumsync". NEFORUM merges such copies into the main file and then removes them.
@@ -171,17 +184,17 @@ You can avoid renewals on Tumblr by connecting with **OAuth 1.0a keys**, which a
 
 **A scheduled post is published by the device it was scheduled on**, because that device has its photos and videos. Your other devices show the post but leave it alone.
 
-If that device stays silent (switched off, or NEFORUM closed) and the post is more than 30 minutes overdue, another device publishes it instead. It only does so if it has all of the post's photos and videos, so a text-only post can always be picked up.
+If that device stops syncing (it is switched off, or NEFORUM is closed) and the post is more than 30 minutes overdue, another device publishes it instead. It only does so if it has all of the post's photos and videos, so any of your devices can pick up a text-only post.
 
-If a phone's background task cannot reach the sync location, it goes by what the last sync saw.
+If a phone's background task cannot reach the sync location, it decides from what the last sync saw.
 
 Platforms that hold scheduled posts themselves (see **Settings > Scheduling**) publish on time either way.
 
-**Known limitation: a different time per network and NEFORUM 1.2.** NEFORUM 1.2 does not know times per network. If a device with 1.2 publishes such a post (it picked up an overdue post, or the post was scheduled there), it sends it to every network at the earliest of the times. Update every synced device to 1.3 or later before you use **Different time per network**.
+**Known limitation: a different time per network and NEFORUM 1.2.** NEFORUM 1.2 does not know about a different time per network. A device with 1.2 can end up publishing such a post, because it picked up an overdue post or because the post was scheduled there. It then sends the post to every network at the earliest of the times. Update every synced device to 1.3 or later before you use **Different time per network**.
 
 ## Safety
 
-- The file uses the same encryption as **Move to another device**. The passphrase is stretched with Argon2id (19 MiB, 2 passes) and everything is encrypted with AES-256-GCM. Any change to the file makes it unreadable instead of wrong.
+- The file uses the same encryption as **Move to another device**. The passphrase is stretched with Argon2id (19 MiB, 2 passes), which makes guessing it slow, and everything is encrypted with AES-256-GCM. If the file is changed in any way outside NEFORUM, it can no longer be opened, so NEFORUM never reads wrong data from it.
 - The passphrase and your storage password stay in this device's system keychain.
 - NEFORUM never makes the file public. It needs no sharing link, and a private bucket is enough.
 - To change the passphrase, turn Sync off on every device, delete `NEFORUM.neforumsync`, then set it up again with the new passphrase.
@@ -189,7 +202,7 @@ Platforms that hold scheduled posts themselves (see **Settings > Scheduling**) p
 ## Troubleshooting
 
 **"The sync passphrase does not open the sync file"**
-Use the passphrase you chose on your first device. If it looks like a code (letters and digits only, 24 at most) and you set it in small letters before NEFORUM 1.4.3, type it the way you set it: NEFORUM tries it that way too.
+Use the passphrase you chose on your first device. If it looks like a code (letters and digits only, 24 at most) and you set it in small letters before NEFORUM 1.4.3, type it in small letters the way you set it. NEFORUM tries it that way too.
 
 **"The folder is not there"**
 Start the cloud app, or reconnect the drive.

@@ -16,7 +16,7 @@ Account: a Chrome Web Store developer account (one-time US$5 registration fee), 
 
 **Language**: English
 
-**Description** (names no sites: the store rejected the first submission for "keyword spam" (violation Yellow Argon) because this description listed the supported sites. The guide's table holds that list instead.):
+**Description**. It names no sites. The store rejected the first submission for "keyword spam" (violation Yellow Argon) because this description listed the supported sites, so the guide's table holds that list instead.
 
 ```text
 The companion extension of NEFORUM, the free and open-source cross-poster (https://neforus.com/neforum/). It needs the NEFORUM desktop app on the same computer (Windows, macOS or Linux).
@@ -74,7 +74,7 @@ All in [extensions/browser/store/images](../extensions/browser/store/images):
 
 **Are you using remote code?** No. All JavaScript is in the package (no `eval`, no remotely hosted scripts, no bundler output).
 
-**Data usage**: the extension does not collect user data: nothing it handles leaves the computer. It moves the user's own post from the NEFORUM app on 127.0.0.1 into the page the user opened, and tells that app whether it was filled in and posted. Leave every data type unchecked.
+**Data usage**: the extension does not collect user data, and nothing it handles leaves the computer. It moves the user's own post from the NEFORUM app on 127.0.0.1 into the page the user opened, and tells that app whether it was filled in and posted. Leave every data type unchecked.
 
 If a reviewer asks for a declaration anyway, the conservative answer is **Website content** and **Personal communications** (the post being published), both "handled on the device only, never transmitted to the developer or third parties".
 

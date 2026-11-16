@@ -32,7 +32,7 @@ NEFORUM uses Hashnode's GraphQL API at `https://gql-beta.hashnode.com`. That is 
 
 | Tier | What you need | Cost | Limits |
 |---|---|---|---|
-| **Your own API key** (Personal Access Token) | A Hashnode account and a blog on **Hashnode Pro** | Pro is billed per seat. Third-party coverage reports about $5 per seat per month; check your dashboard for the current price. | Published targets of 500 write calls per minute (not enforced). A post with *n* images uses 1 + 2*n* write calls. |
+| **Your own API key** (Personal Access Token) | A Hashnode account and a blog on **Hashnode Pro** | Pro is billed per seat. Third-party coverage reports about $5 per seat per month; check your dashboard for the current price. | Hashnode publishes a target of 500 write calls per minute but does not enforce it. A post with *n* images uses 1 + 2*n* write calls. |
 | **Hand-off** | A Hashnode account, signed in in your browser | Free | NEFORUM copies the article to the clipboard and opens Hashnode. You paste it and press **Publish**. |
 
 There's no OAuth app, redirect address or review. Hashnode publishes no end date for the token. Revoke it on the same page.

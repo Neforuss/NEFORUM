@@ -54,7 +54,7 @@ The Admin API key is never sent as is. For each request NEFORUM creates a short-
 - payload `{"iat": <now>, "exp": <now + 5 minutes>, "aud": "/admin/"}`
 - signed with HMAC-SHA256 using the **hex-decoded** secret half of the key
 
-The token is sent as `Authorization: Ghost <token>`, together with `Accept-Version: v5.0`. Because the token is made fresh every time, nothing ever expires or needs refreshing. Your device's clock must be correct, though. A clock that's more than a few minutes off makes Ghost reject the token with "HTTP 401".
+The token is sent as `Authorization: Ghost <token>`, together with `Accept-Version: v5.0`. Because the token is made fresh for every request, there is no sign-in that expires or needs refreshing. Your device's clock must be correct, though. A clock that's more than a few minutes off makes Ghost reject the token with "HTTP 401".
 
 When you connect, NEFORUM reads `GET /ghost/api/admin/site/` to get the site title and public address. It then checks the key with `GET /ghost/api/admin/posts/?limit=1`.
 
