@@ -74,6 +74,38 @@ class PinterestAdapter extends PlatformAdapter {
   static const accessTrial = 'trial';
   static const accessStandard = 'standard';
 
+  /// Which Pinterest host the account's token belongs to. Accounts saved
+  /// before 1.4.4 have no value and are production.
+  static const cfgEnvironment = 'environment';
+  static const envProduction = 'production';
+  static const envSandbox = 'sandbox';
+
+  /// How the account signed in: absent for the browser (OAuth), [authSandboxToken]
+  /// for a token pasted from the app page. `token` is one of the typed sign-in
+  /// methods, so a reconnect asks for a new token instead of opening the browser.
+  static const cfgAuthMethod = 'authMethod';
+  static const authSandboxToken = 'token';
+
+  /// The board a sandbox account creates when the person named none, or named
+  /// one by id or address (production boards do not exist in the sandbox).
+  static const sandboxBoardName = 'NEFORUM';
+
+  /// The account's calls go to Pinterest's API Sandbox.
+  static bool isSandbox(ConnectedAccount account) => account.configString(cfgEnvironment) == envSandbox;
+
+  /// The account holds a sandbox token pasted from the app page (30 days, no
+  /// renewal).
+  static bool usesSandboxToken(ConnectedAccount account) => account.configString(cfgAuthMethod) == authSandboxToken;
+
+  /// The account was connected as a Trial app (the default for an unknown level).
+  static bool isTrial(ConnectedAccount account) => account.configString(cfgAccessLevel, accessTrial) == accessTrial;
+
+  /// Saved as Trial before 1.4.4, so its token is a production one. Pinterest
+  /// no longer lets a Trial app create Pins there (code 29), so a reconnect
+  /// moves it to the sandbox.
+  static bool movesToSandbox(ConnectedAccount account) =>
+      account.tier == PlatformTier.byokApi && account.config[cfgAccessLevel] == accessTrial && account.config[cfgEnvironment] == null;
+
   @override
   SignInPolicy signInPolicyFor(ConnectedAccount account) => SignInPolicies.pinterestFor(account);
 
@@ -85,9 +117,28 @@ class PinterestAdapter extends PlatformAdapter {
   @override
   Map<String, String>? reconnectInput(ConnectedAccount account, Map<String, String> secrets, {Uri? redirect}) {
     final out = super.reconnectInput(account, secrets, redirect: redirect);
+    if (out == null) return null;
     final host = Uri.tryParse(account.configString(cfgRedirectUri))?.host;
-    if (out != null && (host == 'localhost' || host == '127.0.0.1')) out['redirectHost'] = host!;
+    if (host == 'localhost' || host == '127.0.0.1') out['redirectHost'] = host!;
+    // A production board id means nothing in the sandbox: its name finds or
+    // makes the sandbox board.
+    final name = account.configString(cfgBoardName).trim();
+    if (movesToSandbox(account) && name.isNotEmpty) out['board'] = name;
     return out;
+  }
+
+  /// A Trial account saved before 1.4.4 has a production token, which cannot
+  /// create Pins. Renewing it would keep it there, so Reconnect goes on to the
+  /// browser sign-in, which moves it to the sandbox.
+  @override
+  Future<Map<String, String>?> renewSignInNow(ConnectedAccount account, Map<String, String> secrets, AdapterContext ctx) async {
+    if (movesToSandbox(account)) throw const AdapterException(PublishError.auth(_moveToSandboxMessage));
+    if (usesSandboxToken(account)) {
+      throw const AdapterException(PublishError.auth(
+          'A pasted Pinterest sandbox token cannot be renewed. Generate a new one on your app\'s page (Configure > '
+          'Generate access token, Sandbox) and paste it when you reconnect Pinterest in Accounts.'));
+    }
+    return super.renewSignInNow(account, secrets, ctx);
   }
 
   @override
@@ -102,10 +153,9 @@ class PinterestAdapter extends PlatformAdapter {
           usesBrowser: true,
           loopbackRedirectOk: true,
           customSchemeRedirectOk: false,
-          redirectNote: 'Register both http://localhost:52771/callback and http://127.0.0.1:52771/callback under '
-              '"Redirect URIs" when you create the app (Pinterest locks them while the app is reviewed). '
-              'Pinterest does not document app links such as neforum://callback, so connect Pinterest from '
-              'NEFORUM on a computer.',
+          redirectNote: 'Register exactly http://localhost:52771/callback under "Redirect URIs" (Pinterest accepts '
+              'http only for localhost, and an https address never matches: NEFORUM listens on http). Pinterest '
+              'does not document app links such as neforum://callback, so connect Pinterest from NEFORUM on a computer.',
           intro: _byokIntro,
           fields: [
             ConnectField(
@@ -116,18 +166,21 @@ class PinterestAdapter extends PlatformAdapter {
             ),
             ConnectField(
               key: 'appSecret',
-              label: 'App secret key',
+              label: 'App secret key (optional with a sandbox token)',
               kind: FieldKind.password,
               secret: true,
+              required: false,
               help: 'Same page, "App secret key" (click **Show key**). Pinterest only shows it after it approved '
-                  'Trial access. It stays on this device.',
+                  'Trial access. It stays on this device. Not needed when you paste a sandbox token below.',
             ),
             ConnectField(
               key: 'board',
               label: 'Board',
               required: false,
               placeholder: 'My recipes',
-              help: 'Name (or id) of the board your Pins go to. Leave empty if you have only one board.',
+              help: 'Name (or id) of the board your Pins go to. Leave empty if you have only one board. With Trial '
+                  'access NEFORUM makes this board in the sandbox if it is not there yet ("$sandboxBoardName" if you '
+                  'leave it empty).',
             ),
             ConnectField(
               key: 'accessLevel',
@@ -136,7 +189,19 @@ class PinterestAdapter extends PlatformAdapter {
               required: false,
               options: [accessTrial, accessStandard],
               defaultValue: accessTrial,
-              help: 'Shown on your app card. **trial**: Pins are only visible to you. **standard**: Pins are public.',
+              help: 'As shown on your app card. **trial**: NEFORUM posts to Pinterest\'s API Sandbox, the only place '
+                  'Pinterest lets Trial apps create Pins. Those are test Pins that only you can see. **standard**: '
+                  'public Pins.',
+            ),
+            ConnectField(
+              key: 'sandboxToken',
+              label: 'Sandbox access token (optional)',
+              kind: FieldKind.password,
+              secret: true,
+              required: false,
+              help: 'Trial access, instead of the browser sign-in: on your app\'s page open **Configure**, find '
+                  '**Generate access token**, choose **Sandbox**, click **Generate token** and paste it here the same '
+                  'day. It lasts 30 days and cannot be renewed; NEFORUM warns you before it ends.',
             ),
             ConnectField(
               key: 'redirectHost',
@@ -145,7 +210,9 @@ class PinterestAdapter extends PlatformAdapter {
               required: false,
               options: ['localhost', '127.0.0.1'],
               defaultValue: 'localhost',
-              help: '**localhost** = http://localhost:52771/callback, **127.0.0.1** = http://127.0.0.1:52771/callback.',
+              help: '**localhost** = http://localhost:52771/callback, the one to register. Pinterest accepts http '
+                  'only for localhost, so pick **127.0.0.1** only if your app already lists exactly '
+                  'http://127.0.0.1:52771/callback. An https address never matches.',
             ),
           ],
         ),
@@ -169,11 +236,11 @@ class PinterestAdapter extends PlatformAdapter {
 
 1. If your Pinterest account is personal, convert it for free: Pinterest **Settings > Account management > Convert to a business account**.
 2. Go to <https://developers.pinterest.com/apps/> and click **Connect app**. Fill in the app name (e.g. "NEFORUM for <your name>"), a short description, a website and a privacy-policy link.
-3. In **Redirect URIs** add exactly `http://localhost:52771/callback` and also `http://127.0.0.1:52771/callback`. Do it now: Pinterest locks redirect URIs while it reviews the app.
+3. In **Redirect URIs** add exactly `http://localhost:52771/callback`. Use `http` (Pinterest accepts http only for localhost), not `https` and not `127.0.0.1`: Pinterest compares the address character for character. Do it now: Pinterest locks redirect URIs while it reviews the app.
 4. Submit and wait until Pinterest approves **Trial access** (reviewed on business days; it can take a week or more). The app secret appears only after approval.
-5. Copy the **App ID** and **App secret key** into the fields below, type the board to post to, click Connect and allow every permission in the browser (boards, Pins, account).
+5. Copy the **App ID** and **App secret key** into the fields below, type the board to post to, keep Access level **trial**, click Connect and allow every permission in the browser (boards, Pins, account).
 
-**Trial access keeps your Pins private** (only you can see them) and allows about 300 Pins per day. To make them public, click **Upgrade** on your app card and send Pinterest a screen recording of NEFORUM connecting and creating a Pin (Standard access review).''';
+**Trial access means test Pins only.** Pinterest lets Trial apps create Pins only in its API Sandbox: those Pins are visible to you alone, on your own profile, and video Pins are not possible there. Instead of step 5's browser sign-in you can paste a sandbox token (app page > **Configure** > **Generate access token** > **Sandbox**); it lasts 30 days. For public Pins, click **Upgrade** on your app card and send Pinterest a screen recording of NEFORUM connecting and creating a Pin (Standard access review), then reconnect with Access level **standard**.''';
 
   @override
   Future<ConnectResult> connect(PlatformTier tier, Map<String, String> input, AdapterContext ctx) async {
@@ -196,13 +263,20 @@ class PinterestAdapter extends PlatformAdapter {
     final appId = (input['appId'] ?? '').trim();
     final appSecret = (input['appSecret'] ?? '').trim();
     final boardInput = (input['board'] ?? '').trim();
+    final sandboxToken = (input['sandboxToken'] ?? '').trim();
     final access = (input['accessLevel'] ?? '').trim().toLowerCase() == accessStandard ? accessStandard : accessTrial;
     if (appId.isEmpty) throw const ConnectException('Enter the App ID of your Pinterest app', field: 'appId');
+    if (sandboxToken.isNotEmpty) return _connectWithSandboxToken(appId, appSecret, boardInput, access, sandboxToken, ctx);
     if (appSecret.isEmpty) {
       throw const ConnectException(
-          'Enter the App secret key of your Pinterest app (it is shown once Pinterest approved Trial access)',
+          'Enter the App secret key of your Pinterest app (it is shown once Pinterest approved Trial access), '
+          'or paste a sandbox token',
           field: 'appSecret');
     }
+    // Trial apps may create Pins only in the API Sandbox, and a token works
+    // only on the host that made it: the code goes to the sandbox token
+    // endpoint, and every later call to the sandbox.
+    final sandbox = access == accessTrial;
 
     final AuthBroker broker;
     try {
@@ -211,7 +285,7 @@ class PinterestAdapter extends PlatformAdapter {
       throw const ConnectException('Connecting Pinterest needs a browser sign-in, which is not available here');
     }
     final redirect = _redirectFor(broker, specFor(PlatformTier.byokApi), input['redirectHost']);
-    final client = _oauthClient(appId, appSecret, continuousRefresh: true);
+    final client = _oauthClient(appId, appSecret, sandbox: sandbox, continuousRefresh: true);
 
     final OAuthTokens tokens;
     try {
@@ -220,26 +294,73 @@ class PinterestAdapter extends PlatformAdapter {
       final code = client.extractCode(back, request);
       tokens = await client.exchangeCode(ctx.http, code: code, redirectUri: redirect, now: ctx.now());
     } on OAuthException catch (e) {
-      throw ConnectException(_oauthMessage(e, redirect));
+      throw ConnectException(oauthMessage(e, redirect));
     }
 
-    final api = PinterestApi(ctx: ctx, accessToken: tokens.accessToken);
+    final api = PinterestApi(ctx: ctx, accessToken: tokens.accessToken, sandbox: sandbox);
+    final (user, board) = await _userAndBoard(api, boardInput, onUnauthorized: null);
+    return ConnectResult(
+      account: _account(user, board, ctx, {
+        cfgAppId: appId,
+        cfgAccessLevel: access,
+        cfgEnvironment: sandbox ? envSandbox : envProduction,
+        cfgRedirectUri: redirect.toString(),
+      }),
+      secrets: _secretsFrom(tokens, {secretAppSecret: appSecret}, ctx.now()),
+    );
+  }
+
+  /// A sandbox token pasted from the app page's "Generate access token": no
+  /// browser, no refresh token, 30 days from when it was made. NEFORUM counts
+  /// them from now, marked as worked out, so the warnings come on time when
+  /// the token is pasted the day it was made, as the help asks.
+  Future<ConnectResult> _connectWithSandboxToken(
+      String appId, String appSecret, String boardInput, String access, String token, AdapterContext ctx) async {
+    final api = PinterestApi(ctx: ctx, accessToken: token, sandbox: true);
+    final (user, board) = await _userAndBoard(api, boardInput,
+        onUnauthorized: 'Pinterest did not accept this sandbox token. On your app\'s page open Configure > Generate '
+            'access token, choose Sandbox, generate a new token and paste it. A production token does not work in '
+            'the sandbox.');
+    final now = ctx.now();
+    return ConnectResult(
+      account: _account(user, board, ctx, {
+        cfgAppId: appId,
+        cfgAccessLevel: access,
+        cfgEnvironment: envSandbox,
+        cfgAuthMethod: authSandboxToken,
+      }),
+      secrets: {
+        OAuthTokens.keyAccessToken: token,
+        OAuthTokens.keyTokenType: 'bearer',
+        OAuthTokens.keyExpiresAt: now.add(PinterestApi.sandboxTokenLife).toUtc().toIso8601String(),
+        SignInSecretKeys.expiresAtSource: SignInDateSource.computed.name,
+        if (appSecret.isNotEmpty) secretAppSecret: appSecret,
+      },
+    );
+  }
+
+  /// Reads the signed-in user and picks (in the sandbox: finds or makes) the
+  /// board. [onUnauthorized] replaces the message for a refused token.
+  Future<(PinterestUser, PinterestBoard)> _userAndBoard(PinterestApi api, String boardInput,
+      {required String? onUnauthorized}) async {
     final PinterestUser user;
     final List<PinterestBoard> boards;
     try {
       user = await api.userAccount();
       boards = await api.boards();
     } on HttpFailure catch (e) {
+      if (onUnauthorized != null && e.statusCode == 401) throw ConnectException(onUnauthorized, field: 'sandboxToken');
       throw ConnectException('Signed in, but ${PinterestApi.mapFailure(e, context: 'Pinterest').message}');
     }
     if (user.username.isEmpty) throw const ConnectException('Pinterest did not return your username; try again');
     if (user.accountType != null && user.accountType != 'BUSINESS') {
-      ctx.log.warn('Pinterest account ${user.username} is ${user.accountType}, not a business account');
+      api.ctx.log.warn('Pinterest account ${user.username} is ${user.accountType}, not a business account');
     }
-    final board = resolveBoard(boards, boardInput);
+    return (user, api.sandbox ? await _sandboxBoard(api, boards, boardInput) : resolveBoard(boards, boardInput));
+  }
 
-    return ConnectResult(
-      account: ConnectedAccount(
+  ConnectedAccount _account(PinterestUser user, PinterestBoard board, AdapterContext ctx, Map<String, Object?> config) =>
+      ConnectedAccount(
         id: 'pinterest:${user.id ?? user.username}',
         platformId: id,
         tier: PlatformTier.byokApi,
@@ -250,17 +371,40 @@ class PinterestAdapter extends PlatformAdapter {
         profileUrl: 'https://www.pinterest.com/${user.username}/',
         createdAt: ctx.now(),
         config: {
-          cfgAppId: appId,
+          ...config,
           cfgBoardId: board.id,
           cfgBoardName: board.name,
           cfgUsername: user.username,
           if (user.accountType != null) cfgAccountType: user.accountType,
-          cfgAccessLevel: access,
-          cfgRedirectUri: redirect.toString(),
         },
-      ),
-      secrets: _secretsFrom(tokens, {secretAppSecret: appSecret}, ctx.now()),
-    );
+      );
+
+  /// The sandbox board: one that matches [input], else a new one. Pinterest
+  /// leaves production boards out of the sandbox's board list, so a first
+  /// sandbox sign-in usually finds none.
+  static Future<PinterestBoard> _sandboxBoard(PinterestApi api, List<PinterestBoard> boards, String input) async {
+    if (input.isEmpty && boards.length > 1) return resolveBoard(boards, input); // asks which, listing them
+    if (input.isEmpty && boards.length == 1) return boards.single;
+    if (input.isNotEmpty) {
+      final found = findBoard(boards, input);
+      if (found != null) return found;
+    }
+    final name = sandboxBoardNameFor(input);
+    try {
+      return await api.createBoard(name, description: 'Test Pins from NEFORUM (Pinterest API Sandbox)');
+    } on HttpFailure catch (e) {
+      throw ConnectException(
+          'Signed in, but Pinterest would not make the sandbox board "$name" (${PinterestApi.mapFailure(e, context: 'Pinterest').message})',
+          field: 'board');
+    }
+  }
+
+  /// The name for a new sandbox board: what the person typed, unless that was
+  /// a production board's id or address, which name nothing in the sandbox.
+  static String sandboxBoardNameFor(String input) {
+    final t = input.trim();
+    if (t.isEmpty || RegExp(r'^\d+$').hasMatch(t) || (Uri.tryParse(t)?.hasScheme ?? false)) return sandboxBoardName;
+    return t;
   }
 
   /// Uses the broker's redirect, but swaps the loopback host to the one the
@@ -289,6 +433,14 @@ class PinterestAdapter extends PlatformAdapter {
       if (boards.length == 1) return boards.single;
       throw ConnectException('Type the board to post to. Your boards: $names', field: 'board');
     }
+    final found = findBoard(boards, input);
+    if (found != null) return found;
+    throw ConnectException('No board called "$input". Your boards: $names', field: 'board');
+  }
+
+  /// The board [input] names (id, name, or the last segment of a board URL),
+  /// or null.
+  static PinterestBoard? findBoard(List<PinterestBoard> boards, String input) {
     var wanted = input;
     final asUri = Uri.tryParse(input);
     if (asUri != null && asUri.hasScheme && asUri.pathSegments.where((s) => s.isNotEmpty).isNotEmpty) {
@@ -305,7 +457,7 @@ class PinterestAdapter extends PlatformAdapter {
     for (final b in boards) {
       if (_slug(b.name) == slug) return b;
     }
-    throw ConnectException('No board called "$input". Your boards: $names', field: 'board');
+    return null;
   }
 
   /// Board URL slug: Pinterest drops apostrophes ("Mom's Recipes" ->
@@ -318,9 +470,12 @@ class PinterestAdapter extends PlatformAdapter {
 
   /// [continuousRefresh] asks for a continuous (60-day, renewable) refresh
   /// token. It is only a code-exchange parameter.
-  static OAuth2Client _oauthClient(String appId, String appSecret, {bool continuousRefresh = false}) => OAuth2Client(
+  ///
+  /// [sandbox]: the token endpoint on `api-sandbox.pinterest.com`, which makes
+  /// and renews sandbox tokens. The consent page is the same for both.
+  static OAuth2Client _oauthClient(String appId, String appSecret, {required bool sandbox, bool continuousRefresh = false}) => OAuth2Client(
         authorizationEndpoint: PinterestApi.authorizationEndpoint,
-        tokenEndpoint: PinterestApi.tokenEndpoint,
+        tokenEndpoint: PinterestApi.tokenEndpointFor(sandbox: sandbox),
         clientId: appId,
         clientSecret: appSecret,
         scopes: PinterestApi.scopes,
@@ -356,11 +511,19 @@ class PinterestAdapter extends PlatformAdapter {
     return out;
   }
 
-  static String _oauthMessage(OAuthException e, Uri redirect) {
+  /// What a refused sign-in means, in words the person can act on.
+  static String oauthMessage(OAuthException e, Uri redirect) {
     final d = '${e.error ?? ''} ${e.description ?? ''}'.toLowerCase();
     if (d.contains('redirect')) {
-      return 'Pinterest rejected the redirect URI. Add exactly $redirect under "Redirect URIs" in your Pinterest app '
-          '(or pick the other redirect option below) and try again.';
+      final https = redirect.replace(scheme: 'https');
+      final localhost = redirect.replace(host: 'localhost');
+      final fix = redirect.host == 'localhost'
+          ? 'add $redirect there (Pinterest accepts http for localhost)'
+          : 'add $localhost there (Pinterest accepts http only for localhost) and choose "localhost" below';
+      return 'Pinterest says the redirect URI does not match the one registered in your app. NEFORUM sent exactly '
+          '$redirect. Pinterest compares every character, so $https (https instead of http) does not match, nor '
+          'does 127.0.0.1 in place of localhost. On developers.pinterest.com open your app > Configure > Redirect '
+          'URIs, $fix, and try again.';
     }
     if (d.contains('scope')) {
       return 'Pinterest refused a permission. Connect again and allow every permission NEFORUM asks for.';
@@ -381,6 +544,12 @@ class PinterestAdapter extends PlatformAdapter {
     final tokens = OAuthTokens.fromSecrets(secrets);
     if (tokens == null) throw const AdapterException(PublishError.auth(_reconnectMessage));
     final now = ctx.now();
+    // A pasted sandbox token has nothing to renew it with: it works until its
+    // 30 days are up, and then only a new one helps.
+    if (usesSandboxToken(account)) {
+      if (tokens.isExpired(now: now, leeway: Duration.zero)) throw const AdapterException(PublishError.auth(_sandboxTokenEndedMessage));
+      return null;
+    }
     final due = tokens.isExpired(now: now, leeway: refreshLeeway);
     if (!due && !_renewalIsOld(secrets, tokens, now)) return null;
 
@@ -397,7 +566,7 @@ class PinterestAdapter extends PlatformAdapter {
       throw const AdapterException(PublishError.auth(_expiredMessage));
     }
     try {
-      final fresh = await _oauthClient(appId, appSecret).refresh(ctx.http, refreshToken: refresh, now: now);
+      final fresh = await _oauthClient(appId, appSecret, sandbox: isSandbox(account)).refresh(ctx.http, refreshToken: refresh, now: now);
       return _secretsFrom(fresh, secrets, now);
     } on OAuthException catch (e) {
       // The access token still works: an early renewal never costs the post.
@@ -428,6 +597,13 @@ class PinterestAdapter extends PlatformAdapter {
   static const String _expiredMessage =
       'Your Pinterest sign-in has expired (it lapses 60 days after its last renewal). Reconnect Pinterest in Accounts.';
   static const String _reconnectMessage = 'Pinterest is not signed in. Reconnect Pinterest in Accounts.';
+  static const String _sandboxTokenEndedMessage =
+      'Your Pinterest sandbox token has run out (they last 30 days). On developers.pinterest.com open your app > '
+      'Configure > Generate access token, choose Sandbox, generate a new token and paste it when you reconnect '
+      'Pinterest in Accounts.';
+  static const String _moveToSandboxMessage =
+      'Pinterest lets apps with Trial access create Pins only in its API Sandbox, and this account still signs in '
+      'to production. Sign in again to move it to the sandbox. ${PinterestApi.sandboxPinsNote}';
 
   // ------------------------------------------------------------ validate
 
@@ -454,10 +630,19 @@ class PinterestAdapter extends PlatformAdapter {
               field: 'account'));
         }
       }
-      if (account.configString(cfgAccessLevel, accessTrial) == accessTrial) {
+      if (isSandbox(account)) {
         issues.add(const ValidationIssue.warning('pinterest.trial_private',
-            'Your Pinterest app has Trial access: this Pin will only be visible to you until Pinterest grants '
-            'Standard access',
+            'This Pinterest account posts to Pinterest\'s API Sandbox (Trial access). ${PinterestApi.sandboxPinsNote}',
+            field: 'account'));
+        if (variant.media.any((m) => m.isVideo)) {
+          issues.add(const ValidationIssue.error('pinterest.sandbox_video',
+              'Pinterest\'s API Sandbox cannot make video Pins. Post a photo, or get Standard access for video Pins',
+              field: 'media'));
+        }
+      } else if (isTrial(account)) {
+        issues.add(const ValidationIssue.warning('pinterest.trial_private',
+            'Your Pinterest app has Trial access, and Pinterest lets Trial apps create Pins only in its API Sandbox. '
+            'If this Pin is refused, reconnect Pinterest to move the account there. ${PinterestApi.sandboxPinsNote}',
             field: 'account'));
       }
     } else if (account.tier == PlatformTier.handoff &&
@@ -512,7 +697,7 @@ class PinterestAdapter extends PlatformAdapter {
     } on AdapterException catch (e) {
       return PublishResult.failure(e.error);
     } on HttpFailure catch (e) {
-      return PublishResult.failure(PinterestApi.mapFailure(e, context: 'Posting to Pinterest'));
+      return PublishResult.failure(PinterestApi.mapFailure(e, context: 'Posting to Pinterest', trialAccess: isTrial(account)));
     } on Error {
       rethrow; // programming errors only
     } on Object catch (e) {
@@ -542,7 +727,7 @@ class PinterestAdapter extends PlatformAdapter {
     final tokens = OAuthTokens.fromSecrets(secrets);
     if (tokens == null) return PublishResult.failure(const PublishError.auth(_reconnectMessage));
     if (tokens.isExpired(now: ctx.now(), leeway: Duration.zero)) {
-      return PublishResult.failure(const PublishError.auth(_expiredMessage));
+      return PublishResult.failure(PublishError.auth(usesSandboxToken(account) ? _sandboxTokenEndedMessage : _expiredMessage));
     }
     final boardId = (variant.extraAs<String>(extraBoardId) ?? account.configString(cfgBoardId)).trim();
     if (boardId.isEmpty) {
@@ -561,6 +746,12 @@ class PinterestAdapter extends PlatformAdapter {
     if (videos.length > 1) {
       return PublishResult.failure(const PublishError.validation('A Pin can hold only one video'));
     }
+    final sandbox = isSandbox(account);
+    if (sandbox && videos.isNotEmpty) {
+      // "You cannot create video Pins" (the sandbox page).
+      return PublishResult.failure(const PublishError.validation(
+          'Pinterest\'s API Sandbox (Trial access) cannot make video Pins. Post a photo, or get Standard access for video Pins.'));
+    }
     if (images.length > PinterestLimits.maxImages) {
       return PublishResult.failure(PublishError.validation(
           '${images.length} images; a Pinterest carousel holds at most ${PinterestLimits.maxImages}'));
@@ -569,6 +760,7 @@ class PinterestAdapter extends PlatformAdapter {
     final api = PinterestApi(
       ctx: ctx,
       accessToken: tokens.accessToken,
+      sandbox: sandbox,
       videoPollInterval: videoPollInterval,
       videoPollAttempts: videoPollAttempts,
     );
@@ -613,7 +805,7 @@ class PinterestAdapter extends PlatformAdapter {
     try {
       pinId = await api.createPin(body, inlineImages: !isVideo);
     } on HttpFailure catch (e) {
-      return PublishResult.failure(PinterestApi.mapFailure(e, context: 'Creating the Pin', videoPin: isVideo));
+      return PublishResult.failure(PinterestApi.mapFailure(e, context: 'Creating the Pin', videoPin: isVideo, trialAccess: isTrial(account)));
     }
     return PublishResult.ok(remoteId: pinId, remoteUrl: PinterestApi.pinUrl(pinId), publishedAt: ctx.now());
   }

@@ -94,7 +94,11 @@ void main() {
       expect(spec.loopbackRedirectOk, isTrue);
       expect(spec.customSchemeRedirectOk, isFalse);
       expect(spec.intro, contains('http://localhost:52771/callback'));
-      expect(spec.intro, contains('http://127.0.0.1:52771/callback'));
+      // 1.4.4: Pinterest accepts http only with localhost; the guide no longer
+      // asks for the 127.0.0.1 address.
+      expect(spec.intro, isNot(contains('http://127.0.0.1:52771/callback')));
+      expect(spec.redirectNote, isNot(contains('http://127.0.0.1')));
+      expect(spec.fields.firstWhere((f) => f.key == 'redirectHost').defaultValue, 'localhost');
       expect(spec.intro, contains('https://developers.pinterest.com/apps/'));
       expect(spec.fields.firstWhere((f) => f.key == 'appSecret').secret, isTrue);
       expect(spec.fields.firstWhere((f) => f.key == 'appId').secret, isFalse);
@@ -103,7 +107,7 @@ void main() {
   });
 
   group('connect', () {
-    test('authorization code with Basic auth, then user_account and boards (paginated)', () async {
+    test('Standard access: authorization code with Basic auth, then user_account and boards (paginated), all production', () async {
       final calls = <http.Request>[];
       final broker = FakeAuthBroker(code: 'the-code');
       final ctx = testContext(
@@ -135,7 +139,7 @@ void main() {
         },
       );
       final result = await adapter.connect(
-          PlatformTier.byokApi, {'appId': 'app123', 'appSecret': 'secret456', 'board': 'summer-recipes'}, ctx);
+          PlatformTier.byokApi, {'appId': 'app123', 'appSecret': 'secret456', 'board': 'summer-recipes', 'accessLevel': 'standard'}, ctx);
 
       final auth = broker.lastAuthorizationUrl!;
       expect(auth.scheme, 'https');
@@ -176,7 +180,8 @@ void main() {
       expect(a.config['boardId'], '549755885175');
       expect(a.config['boardName'], 'Summer Recipes');
       expect(a.config['appId'], 'app123');
-      expect(a.config['accessLevel'], 'trial');
+      expect(a.config['accessLevel'], 'standard');
+      expect(a.config['environment'], 'production');
       expect(a.config['redirectUri'], 'http://localhost:52771/callback');
 
       final s = result.secrets;
@@ -638,6 +643,293 @@ void main() {
             _secrets(expiresAt: testNow, refreshExpiresAt: testNow.subtract(const Duration(days: 1))), ctx),
         throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)),
       );
+    });
+  });
+
+  group('API Sandbox (Trial access, 1.4.4)', () {
+    // Pinterest's answer to a Trial app creating a Pin in production.
+    final code29 = _json({
+      'code': 29,
+      'message': 'Apps with Trial access may not create Pins in production https://api.pinterest.com - use API Sandbox '
+          'https://api-sandbox.pinterest.com instead.',
+    }, 403);
+
+    ConnectedAccount sandboxAccount({bool pasted = false}) => _account(config: {
+          'appId': 'app123',
+          'boardId': '7001',
+          'boardName': 'NEFORUM',
+          'username': 'ada',
+          'accessLevel': 'trial',
+          'environment': 'sandbox',
+          if (pasted) 'authMethod': 'token',
+        });
+
+    /// A fake sandbox: answers only on api-sandbox.pinterest.com, and records
+    /// every call. Board pages come back empty with a bookmark first, as the
+    /// sandbox page warns they can.
+    Future<http.Response> Function(http.Request) sandboxServer(List<http.Request> calls, {List<Map<String, Object?>> boards = const []}) =>
+        (r) async {
+          calls.add(r);
+          if (r.url.host != 'api-sandbox.pinterest.com') return http.Response('production host called: ${r.url}', 500);
+          switch ('${r.method} ${r.url.path}') {
+            case 'POST /v5/oauth/token':
+              return _json(_tokenResponse);
+            case 'GET /v5/user_account':
+              return _json({'id': '42', 'username': 'ada', 'account_type': 'BUSINESS'});
+            case 'GET /v5/boards':
+              if (r.url.queryParameters['bookmark'] == null) return _json({'items': <Object>[], 'bookmark': 'b2'});
+              return _json({'items': boards, 'bookmark': null});
+            case 'POST /v5/boards':
+              return _json({'id': '7001', 'name': _body(r)['name'], 'privacy': 'PUBLIC'}, 201);
+            case 'POST /v5/pins':
+              return _json({'id': '5550001'}, 201);
+          }
+          return http.Response('unexpected ${r.method} ${r.url}', 500);
+        };
+
+    test('code 29 on a Trial account: a clear message that offers Reconnect to the sandbox, not the raw error', () async {
+      final ctx = testContext(handler: (r) async => code29);
+      final result = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]),
+          _account(config: const {'appId': 'app123', 'boardId': '1', 'accessLevel': 'trial'}), _secrets(), ctx);
+      final e = result.error!;
+      expect(e.kind, PublishErrorKind.auth, reason: 'auth offers "Reconnect and retry"');
+      expect(refusesSignIn(e), isTrue);
+      expect(e.message, contains('API Sandbox'));
+      expect(e.message, contains('Reconnect Pinterest'));
+      expect(e.message, contains('test Pins'));
+      expect(e.message, contains('Standard access'));
+      expect(e.message, isNot(startsWith('Apps with Trial access')));
+      expect(e.raw, contains('"code":29'), reason: 'the raw answer stays in the details');
+    });
+
+    test('code 29 on an account added as Standard: says the access level is wrong (Reconnect would not help)', () async {
+      final ctx = testContext(handler: (r) async => code29);
+      final result = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), _account(), _secrets(), ctx);
+      expect(result.error!.kind, PublishErrorKind.configuration);
+      expect(result.error!.message, contains('added as Standard access'));
+      expect(result.error!.message, contains('"trial"'));
+    });
+
+    test('code 29 is recognised by its message as well as its code', () {
+      HttpFailure f(Map<String, Object?> body) =>
+          HttpFailure(NeforumResponse(403, const {}, utf8.encode(jsonEncode(body)), Uri.parse('https://api.pinterest.com/v5/pins')));
+      expect(PinterestApi.isTrialProductionRefusal(f({'code': 29, 'message': ''})), isTrue);
+      expect(PinterestApi.isTrialProductionRefusal(f({'message': 'use API Sandbox https://api-sandbox.pinterest.com instead.'})), isTrue);
+      expect(PinterestApi.isTrialProductionRefusal(f({'code': 3, 'message': 'Your application consumer type is not supported'})), isFalse);
+    });
+
+    test('Trial browser sign-in: the code goes to the sandbox token endpoint and every call to the sandbox; a board is made there', () async {
+      final calls = <http.Request>[];
+      final broker = FakeAuthBroker(code: 'c');
+      final result = await adapter.connect(PlatformTier.byokApi, {'appId': 'app123', 'appSecret': 'secret456', 'board': 'Summer Recipes'},
+          testContext(broker: broker, handler: sandboxServer(calls)));
+
+      expect(broker.lastAuthorizationUrl!.host, 'www.pinterest.com', reason: 'one consent page for both hosts');
+      expect(broker.lastAuthorizationUrl!.queryParameters['redirect_uri'], 'http://localhost:52771/callback');
+      expect(calls.map((c) => '${c.method} ${c.url}').toList(), [
+        'POST https://api-sandbox.pinterest.com/v5/oauth/token',
+        'GET https://api-sandbox.pinterest.com/v5/user_account',
+        'GET https://api-sandbox.pinterest.com/v5/boards?page_size=250',
+        'GET https://api-sandbox.pinterest.com/v5/boards?page_size=250&bookmark=b2',
+        'POST https://api-sandbox.pinterest.com/v5/boards',
+      ]);
+      expect(calls.first.headers['Authorization'], _basic);
+      expect(_body(calls.last)['name'], 'Summer Recipes');
+      final a = result.account;
+      expect(a.config['environment'], 'sandbox');
+      expect(a.config['accessLevel'], 'trial');
+      expect(a.config['boardId'], '7001');
+      expect(a.config.containsKey('authMethod'), isFalse, reason: 'a browser sign-in reconnects through the browser');
+      expect(result.secrets['refresh_token'], 'pinr.NEW');
+    });
+
+    test('a sandbox board that exists is used, not made again; an id or address names no sandbox board', () async {
+      final calls = <http.Request>[];
+      final result = await adapter.connect(PlatformTier.byokApi, {'appId': 'app123', 'appSecret': 'secret456', 'board': 'summer recipes'},
+          testContext(broker: FakeAuthBroker(), handler: sandboxServer(calls, boards: [{'id': '8002', 'name': 'Summer Recipes'}])));
+      expect(result.account.config['boardId'], '8002');
+      expect(calls.where((c) => c.method == 'POST' && c.url.path == '/v5/boards'), isEmpty);
+      expect(PinterestAdapter.sandboxBoardNameFor(''), 'NEFORUM');
+      expect(PinterestAdapter.sandboxBoardNameFor('549755885175'), 'NEFORUM');
+      expect(PinterestAdapter.sandboxBoardNameFor('https://www.pinterest.com/ada/recipes/'), 'NEFORUM');
+      expect(PinterestAdapter.sandboxBoardNameFor('Recipes'), 'Recipes');
+    });
+
+    test('after switching, every call goes to the sandbox: boards, Pins and the token renewal', () async {
+      final calls = <http.Request>[];
+      final server = sandboxServer(calls);
+      // 1. A Trial account from 1.4.3 (production) is refused with code 29.
+      final old = _account(config: const {
+        'appId': 'app123',
+        'boardId': '549755885175',
+        'boardName': 'Recipes',
+        'username': 'ada',
+        'accessLevel': 'trial',
+        'redirectUri': 'http://localhost:52771/callback',
+      });
+      final refused = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), old, _secrets(), testContext(handler: (r) async => code29));
+      expect(refused.error!.kind, PublishErrorKind.auth);
+
+      // 2. Reconnect: renewing the production token would keep it there.
+      await expectLater(adapter.renewSignInNow(old, _secrets(), testContext(handler: (r) async => fail('no renewal request'))),
+          throwsA(isA<AdapterException>().having((e) => e.error.kind, 'kind', PublishErrorKind.auth)));
+      final input = adapter.reconnectInput(old, _secrets())!;
+      expect(input['accessLevel'], 'trial');
+      expect(input['board'], 'Recipes', reason: 'a production board id means nothing in the sandbox');
+      expect(input['redirectHost'], 'localhost');
+      final reconnected = await adapter.connect(PlatformTier.byokApi, input, testContext(broker: FakeAuthBroker(), handler: server));
+      final account = reconnected.account;
+      expect(PinterestAdapter.isSandbox(account), isTrue);
+      expect(PinterestAdapter.movesToSandbox(account), isFalse);
+
+      // 3. Publish and renew with the new account.
+      final posted = await adapter.publish(PostVariant(text: 'Lemon tart', media: [fakeImage()]), account, reconnected.secrets, testContext(handler: server));
+      expect(posted.success, isTrue, reason: '${posted.error}');
+      expect(posted.remoteId, '5550001');
+      final renewed = await adapter.refreshSecrets(account, {...reconnected.secrets, 'expires_at': testNow.toIso8601String()}, testContext(handler: server));
+      expect(renewed!['access_token'], 'pina.NEW');
+
+      expect(calls, isNotEmpty);
+      for (final c in calls) {
+        expect(c.url.host, 'api-sandbox.pinterest.com', reason: '${c.method} ${c.url}');
+      }
+      expect(calls.map((c) => '${c.method} ${c.url.path}'),
+          containsAll(['GET /v5/boards', 'POST /v5/boards', 'POST /v5/pins', 'POST /v5/oauth/token']));
+      expect(_body(calls.lastWhere((c) => c.url.path == '/v5/pins'))['board_id'], '7001');
+    });
+
+    test('Standard accounts and accounts saved before 1.4.4 as Standard stay on production', () async {
+      expect(PinterestAdapter.isSandbox(_account()), isFalse);
+      expect(PinterestAdapter.movesToSandbox(_account()), isFalse);
+      final calls = <http.Request>[];
+      final ctx = testContext(handler: (r) async {
+        calls.add(r);
+        return _json({'access_token': 'pina.R', 'refresh_token': 'pinr.R', 'expires_in': 2592000});
+      });
+      await adapter.renewSignInNow(_account(), _secrets(), ctx);
+      expect(calls.single.url.toString(), 'https://api.pinterest.com/v5/oauth/token');
+    });
+
+    test('the sandbox cannot make video Pins: refused before any request, and flagged in the composer', () async {
+      final result = await adapter.publish(PostVariant(text: 'x', media: [fakeVideo()]), sandboxAccount(), _secrets(),
+          testContext(handler: (r) async => fail('no request expected')));
+      expect(result.error!.kind, PublishErrorKind.validation);
+      expect(result.error!.message, contains('video Pins'));
+      final issues = adapter.validate(PostVariant(text: 'x', media: [fakeVideo()]), sandboxAccount());
+      expect(issues.map((i) => i.code), containsAll(['pinterest.sandbox_video', 'pinterest.trial_private']));
+    });
+
+    test('the composer says plainly: test Pins only you can see; public Pins need Standard access', () {
+      final warning = adapter.validate(PostVariant(text: 'x', media: [fakeImage()]), sandboxAccount()).singleWhere((i) => i.code == 'pinterest.trial_private');
+      expect(warning.message, contains('API Sandbox'));
+      expect(warning.message, contains('test Pins'));
+      expect(warning.message, contains('only you can see'));
+      expect(warning.message, contains('Standard access'));
+      expect(warning.message, contains('Upgrade'));
+      expect(adapter.validate(PostVariant(text: 'x', media: [fakeImage()]), _account()).map((i) => i.code), isNot(contains('pinterest.trial_private')));
+    });
+
+    group('a pasted sandbox token', () {
+      test('connects without a browser or app secret, all calls to the sandbox, and records its 30-day end', () async {
+        final calls = <http.Request>[];
+        final result = await adapter.connect(
+            PlatformTier.byokApi, {'appId': 'app123', 'sandboxToken': ' pina.SANDBOX ', 'board': ''}, testContext(handler: sandboxServer(calls)));
+        expect(calls.map((c) => '${c.method} ${c.url.host}${c.url.path}').toSet(), {
+          'GET api-sandbox.pinterest.com/v5/user_account',
+          'GET api-sandbox.pinterest.com/v5/boards',
+          'POST api-sandbox.pinterest.com/v5/boards',
+        });
+        expect(calls.first.headers['Authorization'], 'Bearer pina.SANDBOX');
+        expect(_body(calls.last)['name'], 'NEFORUM');
+        final a = result.account;
+        expect(a.config['environment'], 'sandbox');
+        expect(a.config['authMethod'], 'token');
+        expect(result.secrets['access_token'], 'pina.SANDBOX');
+        expect(result.secrets['expires_at'], testNow.add(const Duration(days: 30)).toIso8601String());
+        expect(result.secrets['expires_at_source'], 'computed');
+        expect(result.secrets.containsKey('refresh_token'), isFalse);
+        expect(result.secrets.containsKey('app_secret'), isFalse);
+        // A new token is something only the person can bring.
+        expect(adapter.reconnectInput(a, result.secrets), isNull);
+      });
+
+      test('a refused token says how to make a sandbox one', () async {
+        final ctx = testContext(handler: (r) async => _json({'code': 2, 'message': 'Authentication failed.'}, 401));
+        await expectLater(
+          adapter.connect(PlatformTier.byokApi, {'appId': 'app123', 'sandboxToken': 'pina.PROD'}, ctx),
+          throwsA(isA<ConnectException>()
+              .having((e) => e.field, 'field', 'sandboxToken')
+              .having((e) => e.message, 'message', allOf(contains('Generate access token'), contains('Sandbox')))),
+        );
+      });
+
+      test('the sign-in ends 30 days on, cannot renew, and is warned about like any must-reconnect sign-in', () async {
+        final result = await adapter.connect(PlatformTier.byokApi, {'appId': 'app123', 'sandboxToken': 'pina.S'}, testContext(handler: sandboxServer([])));
+        final policy = adapter.signInPolicyFor(result.account);
+        expect(policy, same(SignInPolicies.pinterestSandboxToken));
+        expect((policy.limit, policy.renewal), (SignInLimit.date, SignInRenewal.never));
+        final stored = stampNewSignIn(result.secrets, now: testNow);
+
+        final early = deriveSignInLifetime(policy, stored, now: testNow.add(const Duration(days: 1)));
+        expect(early.state, SignInState.endsOn);
+        expect(early.expiresAt, testNow.add(const Duration(days: 30)));
+        expect(early.about, isTrue, reason: 'counted from the connect, so shown as "about"');
+        expect(early.endsSoon, isFalse);
+        expect(early.renewsItself, isFalse);
+
+        final late = deriveSignInLifetime(policy, stored, now: testNow.add(const Duration(days: 20)));
+        expect(late.endsSoon, isTrue, reason: '10 days left: inside the 14-day warning');
+        final status = SignInStatus.fromLifetime(result.account.id, late, hasConnection: true);
+        expect(signInWarningCaseOf(status), SignInWarningCase.mustReconnect);
+        expect(kSignInWarningDays[SignInWarningCase.mustReconnect], [14, 7, 3, 1, 0]);
+
+        final over = deriveSignInLifetime(policy, stored, now: testNow.add(const Duration(days: 31)));
+        expect(over.state, SignInState.ended);
+      });
+
+      test('no renewal request before the end; after it, a message about making a new token', () async {
+        final noCalls = testContext(handler: (r) async => fail('no request expected'));
+        final fresh = {'access_token': 'pina.S', 'expires_at': testNow.add(const Duration(days: 2)).toIso8601String()};
+        expect(await adapter.refreshSecrets(sandboxAccount(pasted: true), fresh, noCalls), isNull,
+            reason: 'not renewed 3 days early, as a browser sign-in would be: there is nothing to renew it with');
+        final ended = {'access_token': 'pina.S', 'expires_at': testNow.subtract(const Duration(minutes: 1)).toIso8601String()};
+        await expectLater(
+          adapter.refreshSecrets(sandboxAccount(pasted: true), ended, noCalls),
+          throwsA(isA<AdapterException>().having((e) => e.error.message, 'message', contains('Generate access token'))),
+        );
+        final post = await adapter.publish(PostVariant(text: 'x', media: [fakeImage()]), sandboxAccount(pasted: true), ended, noCalls);
+        expect(post.error!.kind, PublishErrorKind.auth);
+        expect(post.error!.message, contains('sandbox token'));
+      });
+    });
+  });
+
+  group('redirect URI mismatch (1.4.4)', () {
+    Future<ConnectException> refused(String host) async {
+      final ctx = testContext(
+        broker: FakeAuthBroker(),
+        handler: (r) async => _json({'error': 'invalid_request', 'error_description': 'The provided redirect URI does not match the with the registered URI'}, 400),
+      );
+      try {
+        await adapter.connect(PlatformTier.byokApi, {'appId': 'app123', 'appSecret': 'secret456', 'redirectHost': host}, ctx);
+      } on ConnectException catch (e) {
+        return e;
+      }
+      fail('expected a ConnectException');
+    }
+
+    test('names what NEFORUM sent and the http vs https mismatch', () async {
+      final e = await refused('localhost');
+      expect(e.message, contains('http://localhost:52771/callback'));
+      expect(e.message, contains('https://localhost:52771/callback (https instead of http)'));
+      expect(e.message, contains('Redirect URIs'));
+    });
+
+    test('with 127.0.0.1 it points to the localhost address Pinterest accepts', () async {
+      final e = await refused('127.0.0.1');
+      expect(e.message, contains('NEFORUM sent exactly http://127.0.0.1:52771/callback'));
+      expect(e.message, contains('add http://localhost:52771/callback there'));
+      expect(e.message, contains('choose "localhost"'));
     });
   });
 
