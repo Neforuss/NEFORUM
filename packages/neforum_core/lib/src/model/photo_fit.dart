@@ -25,8 +25,8 @@ enum PhotoFitMode {
 /// The photos a platform takes, as rules a photo can be changed to meet:
 /// shape, file type, file size and pixel limits. NEFORUM makes a fitted copy
 /// of a photo that breaks one ([PhotoFit.problemsOf]) instead of failing the
-/// post. GIFs are never changed (they would lose their animation), nor are
-/// videos.
+/// post. GIFs are left alone (they would lose their animation) unless the
+/// rules say they become a video ([gifAsVideo]); videos are never changed.
 @immutable
 class PhotoFit {
   const PhotoFit({
@@ -38,6 +38,7 @@ class PhotoFit {
     this.maxSideSum,
     this.exactSizes,
     this.label = '',
+    this.gifAsVideo = false,
   });
 
   /// The platform's generic photo rules: file types and size.
@@ -69,6 +70,14 @@ class PhotoFit {
   /// Where the rules come from, for messages ("Instagram feed photos").
   final String label;
 
+  /// 1.4.4: the platform takes no GIF (Instagram's API), so a GIF is fitted
+  /// too: an animated one becomes an MP4 video the app makes, played as a
+  /// video there; a one-frame GIF, or an animated one on a device that
+  /// cannot make videos, becomes a still picture like any other photo.
+  /// [problemsOf], [standIn] and [describe] give the still picture; the app
+  /// swaps in the video.
+  final bool gifAsVideo;
+
   /// Shapes within this much of a limit count as inside it.
   static const double aspectTolerance = 0.005;
 
@@ -81,8 +90,10 @@ class PhotoFit {
     int? maxSideSum,
     List<({int width, int height})>? exactSizes,
     String? label,
+    bool? gifAsVideo,
   }) =>
       PhotoFit(
+        gifAsVideo: gifAsVideo ?? this.gifAsVideo,
         minAspect: minAspect ?? this.minAspect,
         maxAspect: maxAspect ?? this.maxAspect,
         mimeTypes: mimeTypes ?? this.mimeTypes,
@@ -100,10 +111,14 @@ class PhotoFit {
   /// Can NEFORUM change [m] at all? Still photos only.
   static bool canFit(MediaAttachment m) => m.kind == MediaKind.image;
 
+  /// Can these rules change [m]: still photos, and GIFs when they become a
+  /// video ([gifAsVideo]).
+  bool fits(MediaAttachment m) => canFit(m) || (gifAsVideo && m.kind == MediaKind.gif);
+
   /// What [m] breaks, in words ("its shape (3:4)", "its size"). Empty when it
   /// is fine as it is, or cannot be changed.
   List<FitProblem> problemsOf(MediaAttachment m) {
-    if (!canFit(m)) return const [];
+    if (!fits(m)) return const [];
     final out = <FitProblem>[];
     final r = m.aspectRatio;
     if (r != null) {
@@ -201,7 +216,7 @@ class PhotoFit {
         _ => 'given borders',
       }} to ${ratioLabel(target)}');
     }
-    if (problems.contains(FitProblem.fileType)) parts.add('made a JPEG');
+    if (problems.contains(FitProblem.fileType)) parts.add(m.kind == MediaKind.gif ? 'made a still JPEG' : 'made a JPEG');
     final exact = fittedSize(m, mode);
     if (problems.contains(FitProblem.pixels)) {
       parts.add(exactSizes != null && exact != null ? 'resized to ${exact.width} x ${exact.height}' : 'scaled down');

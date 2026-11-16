@@ -154,6 +154,7 @@ class MediaRules {
     this.audioVideoMaxFrames,
     this.maxItems,
     this.gifAlone = false,
+    this.gifAsVideo = false,
     this.paragraphMedia = ParagraphMediaStyle.none,
   });
 
@@ -167,6 +168,11 @@ class MediaRules {
 
   /// An animated GIF goes in a post of its own (X).
   final bool gifAlone;
+
+  /// 1.4.4: the network takes no GIF (it is not in [imageMimeTypes]), but a
+  /// GIF stays in the post: the app makes an animated one an MP4 video and a
+  /// one-frame one a still picture ([PhotoFit.gifAsVideo]). Instagram.
+  final bool gifAsVideo;
   final bool requiresMedia;
   final bool allowsMixedImageVideo;
   final int? imageMaxBytes;

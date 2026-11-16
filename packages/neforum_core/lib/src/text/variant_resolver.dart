@@ -641,8 +641,11 @@ class VariantResolver {
       // API) stays: the app turns it into one it takes (PhotoFit), and
       // otherwise the check says why. Dropping it would leave the target
       // without the photo the user picked for it.
+      // 1.4.4: a GIF where the app makes it a video (Instagram) stays too.
       final typeOk = asVideo.contains(x) ||
-          (isVideo ? m.videoMimeTypes.contains(x.mimeType) : m.imageMimeTypes.contains(x.mimeType) || x.kind == MediaKind.image);
+          (isVideo
+              ? m.videoMimeTypes.contains(x.mimeType)
+              : m.imageMimeTypes.contains(x.mimeType) || x.kind == MediaKind.image || (x.kind == MediaKind.gif && m.gifAsVideo));
       final kindOk = isVideo ? m.maxVideos > 0 : m.maxImages > 0;
       if (!kindOk) {
         noKind++;

@@ -62,7 +62,8 @@ import java.util.concurrent.Executors
  * The same channel reads preview frames with MediaMetadataRetriever and runs
  * the other Transformer exports through [export]: transcode (a [Presentation]
  * scale and requested encoder bitrates), audioVideo (a still picture sequence
- * beside the sound's sequence) and transcodeAudio (the sound alone as AAC).
+ * beside the sound's sequence), framesVideo (pictures one after another with
+ * forced silence: an animated GIF) and transcodeAudio (the sound alone as AAC).
  */
 @OptIn(UnstableApi::class)
 class VideoCompositor(private val context: Context, messenger: BinaryMessenger) {
@@ -105,6 +106,7 @@ class VideoCompositor(private val context: Context, messenger: BinaryMessenger) 
             "frame" -> frame(call, result)
             "transcode" -> transcode(call, result)
             "audioVideo" -> audioVideo(call, result)
+            "framesVideo" -> framesVideo(call, result)
             "audioFormats" -> io.execute {
                 // Android encodes AAC but has no MP3 encoder.
                 val formats = if (hasEncoder(MimeTypes.AUDIO_AAC)) listOf("m4a") else emptyList()
@@ -504,6 +506,71 @@ class VideoCompositor(private val context: Context, messenger: BinaryMessenger) 
         }
     }
 
+    /**
+     * 1.4.4: still pictures one after another (an animated GIF, drawn by
+     * Dart): each PNG of [framePaths] for its number of [frameCounts] frames
+     * at the frame rate, one image item after another in one sequence. The
+     * sequence forces an audio track, which Transformer fills with silence:
+     * networks may refuse a video without sound. Each picture lasts until
+     * the frame where the next one starts, in whole milliseconds counted from
+     * the start, so rounding never adds up.
+     */
+    private fun framesVideo(call: MethodCall, result: MethodChannel.Result) {
+        fun int(key: String) = call.argument<Number>(key)?.toInt() ?: 0
+        val paths = call.argument<List<Any?>>("framePaths").orEmpty().map { it as? String ?: "" }
+        val counts = call.argument<List<Any?>>("frameCounts").orEmpty().map { (it as? Number)?.toInt() ?: 0 }
+        val output = call.argument<String>("outputPath").orEmpty()
+        val width = int("frameWidth")
+        val height = int("frameHeight")
+        val frameRate = int("frameRate").let { if (it in 1..60) it else STILL_FRAME_RATE }
+        val id = call.argument<Number>("id")?.toLong() ?: 0L
+        val frameOk = width in 16..4096 && height in 16..4096 && width % 2 == 0 && height % 2 == 0
+        val listsOk = paths.isNotEmpty() && paths.size == counts.size && paths.none { it.isEmpty() || it == output } &&
+            counts.all { it >= 1 } && counts.sum() <= MAX_FRAMES
+        if (!frameOk || !listsOk || output.isEmpty()) {
+            result.error("args", "The video request is not complete.", null)
+            return
+        }
+        if (running != null) {
+            result.error("busy", "Another video is being made.", null)
+            return
+        }
+        io.execute {
+            val readable = paths.toSet().all { File(it).canRead() }
+            main.post {
+                if (!readable) {
+                    result.error("framesVideo", "A picture of the video could not be read.", null)
+                    return@post
+                }
+                val effects = Effects(
+                    emptyList<AudioProcessor>(),
+                    listOf<Effect>(Presentation.createForWidthAndHeight(width, height, Presentation.LAYOUT_SCALE_TO_FIT)),
+                )
+                var frames = 0L
+                val items = paths.indices.map { i ->
+                    val startMs = frames * 1000 / frameRate
+                    frames += counts[i]
+                    val endMs = frames * 1000 / frameRate
+                    EditedMediaItem.Builder(
+                        MediaItem.Builder()
+                            .setUri(Uri.fromFile(File(paths[i])))
+                            .setMimeType(MimeTypes.IMAGE_PNG)
+                            .setImageDurationMs(maxOf(1L, endMs - startMs))
+                            .build(),
+                    )
+                        .setFrameRate(frameRate)
+                        .setEffects(effects)
+                        .build()
+                }
+                val sequence = EditedMediaItemSequence.Builder(*items.toTypedArray())
+                    .experimentalSetForceAudioTrack(true)
+                    .build()
+                val composition = Composition.Builder(sequence).build()
+                export(id, output, "framesVideo", "video", result, encoders(SILENCE_BITRATE)) { it.start(composition, output) }
+            }
+        }
+    }
+
     private fun soundDurationMs(path: String): Long {
         val retriever = MediaMetadataRetriever()
         try {
@@ -595,6 +662,12 @@ class VideoCompositor(private val context: Context, messenger: BinaryMessenger) 
 
         /** Still pictures are written at a rate every network accepts. */
         const val STILL_FRAME_RATE = 30
+
+        /** Most frames a framesVideo request may have: 60 s at 60 a second. */
+        const val MAX_FRAMES = 3600
+
+        /** The silent track of a framesVideo: costs next to nothing. */
+        const val SILENCE_BITRATE = 64_000
 
         /** AAC bitrates Android's encoders take at 44.1 and 48 kHz, mono or stereo. */
         const val MIN_AUDIO_BITRATE = 32_000

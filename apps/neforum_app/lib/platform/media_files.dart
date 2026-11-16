@@ -8,6 +8,10 @@ String? newMediaFilePath(String? dataDir, String id, String extension) => impl.n
 /// Size in bytes of the file at [path]; 0 when it cannot be read.
 Future<int> mediaFileLength(String path) => impl.mediaFileLength(path);
 
+/// Writes [bytes] to [path], making its folder; for work off the UI thread
+/// (frames of a GIF before they become a video). Throws on the web.
+void writeMediaFileSync(String path, List<int> bytes) => impl.writeMediaFileSync(path, bytes);
+
 /// Deletes the file at [path] if there is one (a copy native code left
 /// unfinished or over its limit).
 Future<void> deleteMediaFile(String path) => impl.deleteMediaFile(path);
