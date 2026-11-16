@@ -9,6 +9,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart' show debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -584,6 +585,37 @@ void main() {
       expect(find.text('Download'), findsOneWidget);
       expect(find.text('Update now'), findsNothing);
       await tester.pumpWidget(const SizedBox());
+    });
+
+    testWidgets('on iPhone and iPad an available update says to install it over Wi-Fi', (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
+      await pumpSection(tester, null);
+      expect(find.text('Download'), findsOneWidget);
+      expect(find.textContaining(kIosSideloadWifiNote), findsOneWidget);
+      expect(kIosSideloadWifiNote, allOf(contains('Wi-Fi'), contains('192.0.0.2'), contains('Feather')));
+      await tester.pumpWidget(const SizedBox());
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    test('the README and the iPhone install guide carry the same Wi-Fi warning', () {
+      const warning = 'If a sideloading app such as Feather shows 192.0.0.2 or "not connected to the internet" on mobile data, install over Wi-Fi.';
+      final guide = File('../../docs/install-iphone.md').readAsStringSync().replaceAll('\r\n', '\n');
+      expect(guide, contains(warning));
+      expect(guide.split('\n').skip(2).first, startsWith('1. '), reason: 'guides start with their numbered steps');
+      final readme = File('../../README.md').readAsStringSync();
+      final iphoneRow = readme.split('\n').firstWhere((l) => l.startsWith('| iPhone and iPad |'));
+      expect(iphoneRow, allOf(contains('Wi-Fi'), contains('192.0.0.2'), contains('docs/install-iphone.md')));
+    });
+
+    testWidgets('Android and desktops do not get the iPhone Wi-Fi note', (tester) async {
+      for (final platform in [TargetPlatform.android, TargetPlatform.linux, TargetPlatform.windows, TargetPlatform.macOS]) {
+        debugDefaultTargetPlatformOverride = platform;
+        await pumpSection(tester, null);
+        expect(find.textContaining('192.0.0.2'), findsNothing, reason: '$platform');
+        await tester.pumpWidget(const SizedBox());
+      }
+      debugDefaultTargetPlatformOverride = null;
     });
 
     Future<List<String>> pumpDialog(WidgetTester tester, _FakeSelfUpdate updater) async {
