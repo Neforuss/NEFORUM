@@ -1,3 +1,4 @@
+import 'dart:convert' show ascii, utf8;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -58,6 +59,55 @@ abstract final class ClipboardMedia {
       debugPrint('Could not copy the image: $e');
       return false;
     }
+  }
+
+  /// 1.4.4: articles. Puts [html] on the clipboard as formatted text
+  /// (text/html: "HTML Format" on Windows, public.html on Apple, text/html
+  /// on Linux and Android) together with [text] as plain text, so a blog's
+  /// editor pastes headings, lists, links and bold as they are and a plain
+  /// field pastes the words. Returns false when it could not (the web, an
+  /// older runner): the caller then copies [text] alone.
+  static Future<bool> copyHtml(String html, {required String text}) async {
+    if (!supported) return false;
+    try {
+      return await _channel.invokeMethod<bool>('copyHtml', <String, Object?>{
+            'html': html,
+            'text': text,
+            if (Env.isWindows) 'cfHtml': cfHtml(html),
+          }) ??
+          false;
+    } on Object catch (e) {
+      debugPrint('Could not copy the formatted text: $e');
+      return false;
+    }
+  }
+
+  /// [html] in the Windows clipboard's "HTML Format" (CF_HTML): a header with
+  /// the byte offsets (in the UTF-8 text) of the document and of the
+  /// fragment between `<!--StartFragment-->` and `<!--EndFragment-->`,
+  /// zero-terminated.
+  @visibleForTesting
+  static Uint8List cfHtml(String html) {
+    const pre = '<html><body>\r\n<!--StartFragment-->';
+    const post = '<!--EndFragment-->\r\n</body></html>';
+    String header(int startHtml, int endHtml, int startFragment, int endFragment) {
+      String n(int v) => v.toString().padLeft(10, '0');
+      return 'Version:0.9\r\nStartHTML:${n(startHtml)}\r\nEndHTML:${n(endHtml)}\r\n'
+          'StartFragment:${n(startFragment)}\r\nEndFragment:${n(endFragment)}\r\n';
+    }
+
+    final body = utf8.encode(html);
+    final headerLength = header(0, 0, 0, 0).length;
+    final startFragment = headerLength + pre.length;
+    final endFragment = startFragment + body.length;
+    final endHtml = endFragment + post.length;
+    return Uint8List.fromList([
+      ...ascii.encode(header(headerLength, endHtml, startFragment, endFragment)),
+      ...ascii.encode(pre),
+      ...body,
+      ...ascii.encode(post),
+      0,
+    ]);
   }
 
   /// What a paste into the composer can attach (Windows, macOS and Linux):

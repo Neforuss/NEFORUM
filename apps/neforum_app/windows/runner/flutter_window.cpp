@@ -84,6 +84,38 @@ bool CopyImage(HWND owner, const flutter::EncodableMap& args) {
   return any;
 }
 
+// 1.4.4: articles. Puts formatted text on the clipboard: |args|["cfHtml"]
+// ("HTML Format", built by ClipboardMedia.cfHtml in Dart) for editors that
+// paste formatting, and |args|["text"] as CF_UNICODETEXT for the rest.
+bool CopyHtml(HWND owner, const flutter::EncodableMap& args) {
+  const auto* html = Bytes(args, "cfHtml");
+  std::wstring text;
+  auto t = args.find(flutter::EncodableValue("text"));
+  if (t != args.end()) {
+    if (const auto* s = std::get_if<std::string>(&t->second); s && !s->empty()) {
+      int n = MultiByteToWideChar(CP_UTF8, 0, s->c_str(), -1, nullptr, 0);
+      if (n > 1) {
+        text.resize(n - 1);
+        MultiByteToWideChar(CP_UTF8, 0, s->c_str(), -1, text.data(), n);
+      }
+    }
+  }
+  if ((!html || html->empty()) && text.empty()) return false;
+  bool open = false;
+  for (int i = 0; i < 10 && !(open = OpenClipboard(owner) != FALSE); i++) Sleep(25);
+  if (!open) return false;
+  EmptyClipboard();
+  bool any = false;
+  if (html && !html->empty()) {
+    any |= SetData(RegisterClipboardFormatW(L"HTML Format"), GlobalCopy(html->data(), html->size()));
+  }
+  if (!text.empty()) {
+    any |= SetData(CF_UNICODETEXT, GlobalCopy(text.c_str(), text.size() * sizeof(wchar_t), sizeof(wchar_t)));
+  }
+  CloseClipboard();
+  return any;
+}
+
 std::vector<uint8_t> GlobalBytes(HANDLE h) {
   std::vector<uint8_t> out;
   if (!h) return out;
@@ -179,6 +211,10 @@ bool FlutterWindow::OnCreate() {
           return;
         }
         const auto* args = std::get_if<flutter::EncodableMap>(call.arguments());
+        if (call.method_name() == "copyHtml" && args) {
+          result->Success(flutter::EncodableValue(CopyHtml(GetHandle(), *args)));
+          return;
+        }
         if (call.method_name() != "copyImage" || !args) {
           result->NotImplemented();
           return;

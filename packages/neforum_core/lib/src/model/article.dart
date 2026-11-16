@@ -952,6 +952,24 @@ List<ArticleSpan>? _inline(String text) {
   return out;
 }
 
+/// 1.4.4: one block's text as the article editor shows it (`**bold**`,
+/// `*italic*`, `` `code` ``, `[words](https://...)`) read back as spans.
+/// Lossless: text whose marks would not be written back exactly by
+/// [composerInline] is kept as one plain span, as written, so what the user
+/// sees in the editor is what goes out. The spaces around the text are kept
+/// as plain text.
+List<ArticleSpan> articleInlineFromMarkup(String text) {
+  if (text.isEmpty) return const [];
+  final core = text.trim();
+  if (core.isEmpty) return [ArticleSpan(text)];
+  final start = text.indexOf(core);
+  final lead = text.substring(0, start);
+  final trail = text.substring(start + core.length);
+  final parsed = _inline(core);
+  final body = parsed != null && composerInline(parsed) == core ? parsed : [ArticleSpan(core)];
+  return [if (lead.isNotEmpty) ArticleSpan(lead), ...body, if (trail.isNotEmpty) ArticleSpan(trail)];
+}
+
 /// [spans] written back the way the composer writes them.
 String composerInline(List<ArticleSpan> spans) {
   final out = StringBuffer();

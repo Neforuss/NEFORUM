@@ -124,6 +124,22 @@ class ClipboardPlugin: NSObject, FlutterPlugin {
   }
 
   func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
+    // 1.4.4: articles. Formatted text with its words as plain text.
+    if call.method == "copyHtml" {
+      let args = call.arguments as? [String: Any] ?? [:]
+      let html = args["html"] as? String ?? ""
+      let text = args["text"] as? String ?? ""
+      guard !html.isEmpty || !text.isEmpty else {
+        result(false)
+        return
+      }
+      var item: [String: Any] = [:]
+      if !html.isEmpty { item[UTType.html.identifier] = html }
+      if !text.isEmpty { item[UTType.utf8PlainText.identifier] = text }
+      UIPasteboard.general.setItems([item], options: [:])
+      result(true)
+      return
+    }
     guard call.method == "copyImage" else {
       result(FlutterMethodNotImplemented)
       return

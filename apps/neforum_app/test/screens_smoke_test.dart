@@ -11,11 +11,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:neforum_app/platform/storage.dart';
+import 'package:neforum_app/state/composer.dart';
 import 'package:neforum_app/state/providers.dart';
 import 'package:neforum_app/state/services.dart';
 import 'package:neforum_app/theme/tokens.dart';
 import 'package:neforum_app/ui/root.dart';
 import 'package:neforum_app/ui/router.dart';
+import 'package:neforum_core/neforum_core.dart' hide Visibility;
 
 import 'seamless_checks.dart';
 
@@ -74,6 +76,9 @@ Future<void> _renderAll(
   Brightness brightness, {
   Map<String, Object>? settings,
   void Function(String route)? check,
+  List<ConnectedAccount> extraAccounts = const [],
+  void Function(ProviderContainer container)? prepare,
+  List<String> routes = _routes,
 }) async {
   tester.view.physicalSize = size.value;
   tester.view.devicePixelRatio = 1;
@@ -81,7 +86,13 @@ Future<void> _renderAll(
   tester.platformDispatcher.platformBrightnessTestValue = brightness;
   addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
 
-  final services = await tester.runAsync(() => AppServices.create(demo: true, storage: _MemoryStorage(settings)));
+  final services = await tester.runAsync(() async {
+    final s = await AppServices.create(demo: true, storage: _MemoryStorage(settings));
+    for (final a in extraAccounts) {
+      await s.accounts.upsert(a);
+    }
+    return s;
+  });
 
   await tester.pumpWidget(ProviderScope(
     overrides: [servicesProvider.overrideWithValue(services!)],
@@ -89,12 +100,17 @@ Future<void> _renderAll(
   ));
   await tester.pump(const Duration(milliseconds: 300));
 
-  final router = ProviderScope.containerOf(tester.element(find.byType(MaterialApp))).read(routerProvider);
+  final container = ProviderScope.containerOf(tester.element(find.byType(MaterialApp)));
+  final router = container.read(routerProvider);
+  if (prepare != null) {
+    prepare(container);
+    await tester.pump();
+  }
   final errors = <FlutterErrorDetails>[];
   final previous = FlutterError.onError;
   FlutterError.onError = errors.add;
   try {
-    for (final route in _routes) {
+    for (final route in routes) {
       router.go(route);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
@@ -143,6 +159,47 @@ void main() {
             expect(visibleChromeEdges(tester, nf), isEmpty, reason: '$route at ${size.key}');
           },
         );
+      });
+    }
+  }
+  // 1.4.4: articles. The composer in Article mode, with a blog and the
+  // social networks selected and an article holding every kind of block, at
+  // every size in both themes, and seamless at phone and desktop width.
+  final wordpress = ConnectedAccount(id: 'smoke-wp', platformId: 'wordpress', tier: PlatformTier.openApi, displayName: 'Blog', createdAt: DateTime.utc(2026));
+  void article(ProviderContainer c) {
+    final n = c.read(composerProvider.notifier);
+    n.selectAccounts(['smoke-wp', 'demo-mastodon', 'demo-x', 'demo-instagram']);
+    n.setTitle('A title long enough to wrap on a phone screen, and then some');
+    n.setText('## A heading\n\nWords with **bold**, *italic* and a [link](https://example.org).\n\n- one\n- two');
+    n.enterArticleMode();
+    final doc = c.read(composerProvider).article!;
+    n.setArticle(doc.copyWith(subtitle: 'A subtitle', excerpt: 'Short', blocks: [
+      ...doc.blocks,
+      const ArticleQuote('q', [ArticleSpan('A quote')], citation: 'Someone'),
+      const ArticleCode('c', 'print("hello")', language: 'python'),
+      const ArticleEmbed('e', 'https://www.youtube.com/watch?v=x', caption: 'A video'),
+      const ArticleDivider('d'),
+    ]));
+    n.setExcludedBlocks('smoke-wp', ['q']);
+  }
+
+  for (final brightness in [Brightness.dark, Brightness.light]) {
+    for (final size in _sizes.entries) {
+      testWidgets('the composer in Article mode renders at ${size.key} (${brightness.name})', (tester) async {
+        await _renderAll(tester, size, brightness, extraAccounts: [wordpress], prepare: article, routes: const ['/compose']);
+      });
+    }
+    for (final size in _sizes.entries.where((e) => e.key == 'phone' || e.key == 'desktop')) {
+      testWidgets('the composer in Article mode renders seamless at ${size.key} (${brightness.name})', (tester) async {
+        await _renderAll(tester, size, brightness,
+            extraAccounts: [wordpress],
+            prepare: article,
+            routes: const ['/compose'],
+            settings: {'seamlessSurfaces': true, 'navigationChrome': 'theme'}, check: (route) {
+          final nf = Theme.of(tester.element(find.byType(Scaffold).first)).extension<NfColors>()!;
+          expect(nf.seamless, isTrue);
+          expect(visibleCardOutlines(tester), isEmpty, reason: 'Article mode at ${size.key}');
+        });
       });
     }
   }
